@@ -1,0 +1,15 @@
+field	value
+native_environment	Linux REAPER 7.82 / Default 7 / isolated configuration / Xvfb :132 / 1280x900 / audio device unavailable
+native_actions	43486 Show/hide selected project regions; 43487 Show/hide all project regions; 43488 Show/hide selected project regions and markers; 43489 Show/hide all project regions and markers
+native_single_region_toggle	With a Region selected, action 43486 changed its visibility; one Ctrl+Z restored the prior state.
+native_global_regions_toggle	Action 43487 hid the Region ruler lane.
+native_global_combined_toggle	Action 43489 showed both ruler lanes when either Regions or Markers was hidden; when both lanes were visible, it hid both. The saved project after the combined hide contains RULERLANECFG 6.
+native_selected_combined_toggle	Action 43488 behavior for a mixed Region/Marker selection was not verified.
+native_project_after	region-visibility-after-native.rpp
+native_project_after_sha256	fc817374aa2b4bca10472d2855d5c76dab969fd370c76b79bbf4eff220ae16db
+native_manager_screenshot	region-visibility-manager-native.png
+native_manager_screenshot_sha256	cc00daed511a162969994a6f83dafd90c4c6900b1b1fbe93c16b73c4bb778e3e
+native_action_list_screenshot	region-visibility-action-list-native.png
+native_action_list_screenshot_sha256	b36f584f02159ef960e4e6b3dcaea7d4a6e30e19ebff391ca2860aa99c830901
+screenshot_scope	Manager Visible column and Main-section Action List names; screenshots are window crops from REAPER, not pixel-parity captures.
+limitation	Audio hardware was unavailable. The native mixed-selection action 43488 and combined-selection edge cases remain unverified; PROJECT-REGIONS-001 stays in_progress.

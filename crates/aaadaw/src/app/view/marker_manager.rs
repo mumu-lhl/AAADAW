@@ -96,6 +96,14 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
             }
             Entry::Region(region) => {
                 let region_id = region.id();
+                let visibility_control: Element<'_, Message> = checkbox(region.is_visible())
+                    .on_toggle_maybe((!commands::project_edit_busy(app)).then_some(
+                        move |visible| {
+                            Message::MarkerManagerSetRegionVisibility(region_id, visible)
+                        },
+                    ))
+                    .width(Length::Fixed(50.0))
+                    .into();
                 let start = format_position(&app.project, region.start_ticks());
                 let end = format_position(&app.project, region.end_ticks());
                 let length = super::super::item_properties::format_marker_length(
@@ -127,7 +135,7 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
                 });
                 (
                     row_button,
-                    text("—").width(Length::Fixed(50.0)).into(),
+                    visibility_control,
                     button("Edit").on_press(Message::MarkerManagerEditRegion(region_id)),
                     button("Delete").on_press_maybe(
                         (!commands::project_edit_busy(app))

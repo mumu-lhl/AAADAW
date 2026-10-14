@@ -2647,7 +2647,15 @@ impl App {
             Message::CloseRegionProperties => task = self.close_region_properties(),
             Message::OpenMarkerManager => task = self.open_marker_manager(),
             Message::ToggleProjectMarkersOnRuler => task = self.toggle_project_markers_on_ruler(),
+            Message::ToggleProjectRegionsOnRuler => task = self.toggle_project_regions_on_ruler(),
+            Message::ToggleProjectRegionsAndMarkersOnRuler => {
+                task = self.toggle_project_regions_and_markers_on_ruler()
+            }
             Message::ToggleSelectedProjectMarkers => self.toggle_selected_project_markers(),
+            Message::ToggleSelectedProjectRegions => self.toggle_selected_project_regions(),
+            Message::ToggleSelectedProjectRegionsAndMarkers => {
+                self.toggle_selected_project_regions_and_markers()
+            }
             Message::CloseMarkerManager => task = self.close_marker_manager(),
             Message::MarkerManagerFilterChanged(value) => {
                 if let Some(manager) = &mut self.marker_manager {
@@ -2674,6 +2682,9 @@ impl App {
             }
             Message::MarkerManagerSetMarkerVisibility(marker_id, visible) => {
                 self.set_marker_visibility_from_manager(marker_id, visible)
+            }
+            Message::MarkerManagerSetRegionVisibility(region_id, visible) => {
+                self.set_region_visibility_from_manager(region_id, visible)
             }
             Message::MarkerManagerEditMarker(marker_id) => {
                 task = self.open_marker_properties(marker_id)

@@ -16,6 +16,7 @@ pub struct ProjectSnapshot {
     pub midi_items: Vec<MidiItemSnapshot>,
     pub markers: Vec<ProjectMarkerSnapshot>,
     pub show_project_markers: bool,
+    pub show_project_regions: bool,
     pub regions: Vec<ProjectRegionSnapshot>,
     pub tempo_points: Vec<TempoPointSnapshot>,
     pub meter_points: Vec<MeterPointSnapshot>,
@@ -49,6 +50,7 @@ pub struct ProjectRegionSnapshot {
     pub start_ticks: u64,
     pub end_ticks: u64,
     pub name: String,
+    pub visible: bool,
 }
 
 impl From<&ProjectRegion> for ProjectRegionSnapshot {
@@ -59,6 +61,7 @@ impl From<&ProjectRegion> for ProjectRegionSnapshot {
             start_ticks: region.start_ticks(),
             end_ticks: region.end_ticks(),
             name: region.name().to_owned(),
+            visible: region.is_visible(),
         }
     }
 }

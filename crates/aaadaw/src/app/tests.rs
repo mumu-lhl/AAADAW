@@ -849,6 +849,101 @@ fn selected_marker_visibility_action_matches_native_mixed_selection_and_undo() {
 }
 
 #[test]
+fn selected_region_visibility_actions_batch_selection_with_one_undo() {
+    let mut app = App::default();
+    let selected_regions_command = CommandId::ToggleSelectedProjectRegions;
+    let selected_both_command = CommandId::ToggleSelectedProjectRegionsAndMarkers;
+    assert_eq!(
+        commands::stable_id(selected_regions_command).as_deref(),
+        Some("ruler.toggle-selected-project-regions")
+    );
+    assert_eq!(
+        commands::find(
+            &app,
+            "Ruler: Show/hide selected project regions and markers"
+        ),
+        Some(selected_both_command)
+    );
+
+    for (start_ticks, end_ticks, name) in [
+        (0, 960, "Hidden"),
+        (960, 1_920, "Visible"),
+        (1_920, 2_880, "Unselected"),
+    ] {
+        app.project
+            .apply(DawAction::InsertProjectRegion {
+                start_ticks,
+                end_ticks,
+                name: name.to_owned(),
+            })
+            .unwrap();
+    }
+    let regions = app.project.regions();
+    let hidden = regions[0].id();
+    let selected_visible = regions[1].id();
+    assert_eq!(regions[2].name(), "Unselected");
+    app.project
+        .apply(DawAction::SetProjectRegionVisibility {
+            region_id: hidden,
+            visible: false,
+        })
+        .unwrap();
+    app.selected_render_regions = HashSet::from([hidden, selected_visible]);
+
+    assert!(commands::is_enabled(&app, selected_regions_command));
+    let _ = app.update(Message::ExecuteCommand(selected_regions_command));
+    assert!(app.project.regions()[0].is_visible());
+    assert!(app.project.regions()[1].is_visible());
+    assert!(app.project.regions()[2].is_visible());
+    let _ = app.update(Message::Undo);
+    assert!(!app.project.regions()[0].is_visible());
+    assert!(app.project.regions()[1].is_visible());
+    assert!(app.project.regions()[2].is_visible());
+
+    app.project
+        .apply(DawAction::InsertProjectMarker {
+            position_ticks: 480,
+            name: "Selected marker".to_owned(),
+        })
+        .unwrap();
+    let marker_id = app.project.markers()[0].id();
+    app.selected_render_markers = HashSet::from([marker_id]);
+    assert!(commands::is_enabled(&app, selected_both_command));
+    let _ = app.update(Message::ExecuteCommand(selected_both_command));
+    assert!(app.project.regions()[0].is_visible());
+    assert!(app.project.markers()[0].is_visible());
+    let _ = app.update(Message::Undo);
+    assert!(!app.project.regions()[0].is_visible());
+    assert!(app.project.markers()[0].is_visible());
+}
+
+#[test]
+fn region_lane_view_actions_are_checked_and_undoable_together() {
+    let mut app = App::default();
+    let regions_command = CommandId::ToggleProjectRegionsOnRuler;
+    let combined_command = CommandId::ToggleProjectRegionsAndMarkersOnRuler;
+    let view_entries = commands::for_menu(&app, MainMenu::View);
+    assert!(
+        view_entries
+            .iter()
+            .any(|entry| entry.id == regions_command && entry.checked)
+    );
+    assert!(commands::toggle_state(&app, combined_command).unwrap());
+
+    let _ = app.update(Message::ExecuteCommand(regions_command));
+    assert!(!app.project.show_project_regions());
+    let _ = app.update(Message::Undo);
+    assert!(app.project.show_project_regions());
+
+    let _ = app.update(Message::ExecuteCommand(combined_command));
+    assert!(!app.project.show_project_regions());
+    assert!(!app.project.show_project_markers());
+    let _ = app.update(Message::Undo);
+    assert!(app.project.show_project_regions());
+    assert!(app.project.show_project_markers());
+}
+
+#[test]
 fn marker_manager_delete_respects_project_edit_busy_guard() {
     let mut app = App::default();
     app.project

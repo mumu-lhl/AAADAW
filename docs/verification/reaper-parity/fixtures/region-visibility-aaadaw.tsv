@@ -1,0 +1,26 @@
+field	value
+aaadaw_environment	Linux AAADAW / Xvfb :134 / 1280x900 / isolated XDG profile / audio device unavailable
+aaadaw_binary_sha256	640a9c18bc852ba44dbe5034f7e8c0c16a645ed641b67b9a077b2bda54172a7a
+aaadaw_binary_build_id	f5ee05bab6682cb8975333fa5871651d411bcd48
+runtime_workaround	Ignored target/runtime-pkgconfig GLib/GObject/GIO metadata and target/runtime-libs symlinks; no system package changes.
+fixture_project	region-visibility-demo.aaadaw
+fixture_project_sha256	44b0c7e022e4766d0f0db418bce55181337be62b0f96715751d53d58e9a6c89e
+arrange_screenshot	region-visibility-arrange-aaadaw.png
+arrange_screenshot_sha256	7630779eb666e8736ae594d7146e8b9534ed2a816cbbd6b7e50481f5288344e9
+view_menu_screenshot	region-visibility-view-menu-aaadaw.png
+view_menu_screenshot_sha256	b1d026ff66ebf26c472a6bea69e11470816c54f6f20378347a1e3f4fd8615a7b
+manager_hidden_screenshot	region-visibility-manager-hidden-aaadaw.png
+manager_hidden_screenshot_sha256	7d933664ebb97dd3436efe83f6a9e1a059e8da898d6d9018ffc913c7dbaa0acb
+action_list_screenshot	region-visibility-action-list-aaadaw.png
+action_list_screenshot_sha256	b27d3f01e7befbd56fdf12050e0d9830a736a5369f0a25ea81e6e1dabd21d6cf
+selected_region_shown_screenshot	region-visibility-selected-shown-aaadaw.png
+selected_region_shown_screenshot_sha256	5c47c1ffaee1e8d0b3ad2d3d09ffef054f984523a4f786fe53a96704a9d62579
+undo_screenshot	region-visibility-undo-aaadaw.png
+undo_screenshot_sha256	e67291749bb4e3d6d0eb9cc1460cd244bdf30e2352ea941aea588151b6f15a36
+redo_screenshot	region-visibility-redo-aaadaw.png
+redo_screenshot_sha256	5c47c1ffaee1e8d0b3ad2d3d09ffef054f984523a4f786fe53a96704a9d62579
+runtime_observation	Action List action ruler.toggle-selected-project-regions changed the selected Region from hidden to shown; Ctrl+Z restored hidden, and Ctrl+Shift+Z showed it again.
+menu_observation	View menu Region ruler item and checked state were captured; no AAADAW global-combined action was executed in this runtime pass.
+verification	Core visibility/Undo/snapshot test and Storage schema 47-to-48 migration/round-trip tests passed; AAADAW app tests typechecked and Clippy passed. App test linking was attempted, stopped when free disk space fell below 100 MiB, and did not produce a runnable test binary. After package-level cleanup the desktop binary rebuilt with the same SHA-256/Build ID and launched again on Xvfb :134.
+comparison_scope	New desktop binary startup, Arrange Region rendering, Manager Visible state, Action List discovery, selected Region action, Undo/Redo, and View menu state.
+limitation	No pixel geometry/theme parity claim; native action 43488 mixed selection and AAADAW global-combined runtime behavior remain open; PROJECT-REGIONS-001 remains in_progress.

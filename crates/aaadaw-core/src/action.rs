@@ -80,6 +80,15 @@ pub enum DawAction {
     SetProjectMarkersVisibleOnRuler {
         visible: bool,
     },
+    /// Change whether one project region is shown in the ruler.
+    SetProjectRegionVisibility {
+        region_id: RegionId,
+        visible: bool,
+    },
+    /// Change visibility of the project region lane in the ruler.
+    SetProjectRegionsVisibleOnRuler {
+        visible: bool,
+    },
     /// Remove a project marker by stable identity.
     DeleteProjectMarker {
         marker_id: MarkerId,

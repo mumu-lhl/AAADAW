@@ -20,7 +20,7 @@
 | P1 | 进行中 | [快捷键基础能力](../verification/reaper-parity/keyboard-foundation.md)；Action List Filter 与轨道名焦点的首批原厂键盘行为已核验并纳入回归；Section、完整 Action List、数字键盘/物理键和事务仍待推进 |
 | P2 | 进行中 | Desktop/Touch profile 已分离；Arrange/Mixer/Media Browser 同时显示、独立分割比例及布局持久化；浮动 Docker 等仍待开发 |
 | P3 | 进行中 | 普通轨道输出目标、接收路径 Solo、默认 0 dB 声像与旧工程策略迁移；并行 Post-fader Send/Receive 基础已实现；三种 Tap、嵌套文件夹/Parent Send 与压缩基础已实现；通道/MIDI 等仍待开发 |
-| P4 | 进行中 | Item 手动淡化曲线及工程/DSP 基础；Project Marker 插入/导航/删除/编号动作/标尺选择拖动/属性窗/基础 Manager，以及 Project Region 数据、时间选择插入、Manager 属性和基础时间尺显示已接入；LoopPoints 独立状态/链接动作、Action List on/off 状态、40632/40633 Loop 边界导航、Ruler 手势、项目级范围与全局 link 偏好保存恢复已接入；播放中 play cursor、Repeat、Region 原厂交互、tempo/timebase、GUI 边界与自动 Crossfade 待推进 |
+| P4 | 进行中 | Item 手动淡化曲线及工程/DSP 基础；Project Marker 插入/导航/删除/编号动作/可见性/标尺选择拖动/属性窗/基础 Manager，以及 Project Region 数据、可见性、时间选择插入、Manager 属性和基础时间尺显示已接入；LoopPoints 独立状态/链接动作、Action List on/off 状态、40632/40633 Loop 边界导航、Ruler 手势、项目级范围与全局 link 偏好保存恢复已接入；播放中 play cursor、Repeat、Region 原厂交互、tempo/timebase、GUI 边界与自动 Crossfade 待推进 |
 | P5 | 未开始 | 高级编辑与 Take/Comp |
 | P6 | 进行中 | 工厂 Play/Stop 与 Play/Pause 已分离；Repeat、完整状态与录音/设备行为待实现/实测 |
 | P7 | 未开始 | MIDI |
@@ -981,3 +981,11 @@ Linux REAPER 7.82 / Default 7 实窗中，先把一个所选 Marker 设为隐藏
 新构建 AAADAW 二进制以 Xvfb 实窗操作 Manager 的 Ctrl 多选、Action List 运行、混合状态显示、单步 Undo/Redo，以及全可见集合隐藏。原厂工程与截图、AAADAW 截图、二进制/图片哈希和对照范围见 [多选 Marker 可见性 fixture](../verification/reaper-parity/fixtures/marker-selected-visibility-multiselect.tsv)。
 
 `cargo check -p aaadaw --no-default-features --tests` 与 AAADAW app/test Clippy `-D warnings`、fmt、diff 检查通过；本轮 app 测试源码已类型检查，实窗完成上述交互验证，未重新链接 app 测试套件。`PROJECT-MARKERS-001`、UI-013 与 P4 继续 `in_progress`：Manager 的 Ruler Lane、Render Matrix、Lane Manager、Options 和完整布局/主题、同位置 Marker 行为、负时间/timebase、Region 全套交互与其它项目语义仍待实现和原厂验证。
+
+### 2026-10-14 Project Region 可见性与桌面运行恢复
+
+在同一 P4 分支上，Project Region 现在保存独立的单项 `Visible` 和整个 Region 标尺显示状态。两者进入可撤销 Core action、快照和 SQLite schema 48；schema 47 工程迁移后均默认显示。Region/Marker Manager 的 Regions 行显示 Visible 复选框，View 菜单加入 Region 标尺显隐项，Action List 注册所选 Region、全部 Region 及 Region/Marker 组合动作。Arrange 绘制和命中测试跳过隐藏标尺或隐藏 Region。所选 Region 的多项改变合并为一个事务。
+
+Linux REAPER 7.82 / Default 7 原厂实窗验证 action 43486 切换所选 Region，并以一次 Ctrl+Z 恢复；43487 隐藏 Region 标尺；43489 在任一标尺隐藏时显示两者、两者均显示时隐藏两者。原厂 Action List 与 Manager 截图、工程状态及哈希见[原厂记录](../verification/reaper-parity/fixtures/region-visibility-native.tsv)。新 AAADAW 桌面二进制通过 ignored `target/runtime-pkgconfig` 与 `target/runtime-libs` 下的 GLib 链接元数据成功构建并在独立 Xvfb `:134` 启动；未改系统包。实窗验证了 Region Visible 状态、所选 Region Action List 动作、隐藏→显示、Undo 隐藏、Redo 显示，且保存了 Arrange、View 菜单、Manager、Action List 与历史状态截图。二进制 Build ID、SHA-256、各截图哈希和具体范围见[AAADAW 运行清单](../verification/reaper-parity/fixtures/region-visibility-aaadaw.tsv)。
+
+Core 可见性/Undo/快照测试 1/1、Storage 往返及 schema 36→37 Region 迁移测试 1/1、schema 47→48 可见性默认迁移测试 1/1 通过。Core/Storage check、AAADAW app/test 类型检查、AAADAW Clippy `-D warnings`、新桌面二进制构建、fmt 和 `git diff --check` 通过。App 测试链接曾启动，但可用空间下降到约 100 MiB 时中止，未生成或运行测试套件；随后 `cargo clean -p aaadaw` 回收 1.7 GiB，并重新构建、启动同哈希和 Build ID 的桌面二进制。运行清单如实记录此限制。`PROJECT-REGIONS-001`、`PROJECT-MARKERS-001`、UI-013 和 P4 继续 `in_progress`：原厂 action 43488 的混合 Region/Marker 选区语义、AAADAW 组合动作实窗运行、完整属性/Manager、时间基准、边界手势和主题验收仍未完成。

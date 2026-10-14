@@ -4265,6 +4265,7 @@ impl shader::Program<crate::app::Message> for TimelineProgram<'_> {
                 .project
                 .regions()
                 .iter()
+                .filter(|region| self.project.show_project_regions() && region.is_visible())
                 .filter(|region| {
                     let start_x = project_marker_x(
                         region.start_ticks(),
@@ -4948,7 +4949,12 @@ impl canvas::Program<crate::app::Message> for RulerProgram<'_> {
                 }
             }
         }
-        for region in self.project.regions() {
+        for region in self
+            .project
+            .regions()
+            .iter()
+            .filter(|region| self.project.show_project_regions() && region.is_visible())
+        {
             let drag = state
                 .region_drag
                 .filter(|drag| drag.region_id == region.id() && drag.moved);
@@ -5271,10 +5277,14 @@ fn project_region_hit<'a>(
     state: &TimelineState,
     position: Point,
 ) -> Option<(&'a aaadaw_core::ProjectRegion, ProjectRegionDragTarget)> {
+    if !project.show_project_regions() {
+        return None;
+    }
     if position.y >= 14.0 {
         project
             .regions()
             .iter()
+            .filter(|region| region.is_visible())
             .flat_map(|region| {
                 [
                     (region, ProjectRegionDragTarget::Start, region.start_ticks()),
@@ -5292,6 +5302,7 @@ fn project_region_hit<'a>(
         project
             .regions()
             .iter()
+            .filter(|region| region.is_visible())
             .filter_map(|region| {
                 let start_x = project_marker_x(
                     region.start_ticks(),
@@ -5694,8 +5705,8 @@ mod tests {
         TimelineInteractionState, TimelineState, automation_sample_between,
         fx_automation_band_at_y, fx_automation_lane_resize_target, fx_automation_tick_at,
         item_trim_edge_at_x, loop_point_body_hit, loop_point_target_at, loop_points_at_drag_target,
-        midi_note_preview_geometry, project_marker_x, row_at_y, slowest_tempo_in_viewport,
-        snap_tick_to_grid, tick_at_x, time_selection_edge_at_tick,
+        midi_note_preview_geometry, project_marker_x, project_region_hit, row_at_y,
+        slowest_tempo_in_viewport, snap_tick_to_grid, tick_at_x, time_selection_edge_at_tick,
     };
     use aaadaw_core::{
         DawAction, FxParameterAutomationPoint, Project, ProjectSettings, TempoCurve, TimeSignature,
@@ -6918,6 +6929,43 @@ mod tests {
         );
         assert_eq!(primitive.marker_ticks, vec![720]);
         assert_eq!(primitive.region_spans, vec![(960, 1_920)]);
+        assert!(project_region_hit(&project, &timeline, Point::new(700.0, 4.0)).is_some());
+
+        let region_id = project.regions()[0].id();
+        project
+            .apply(DawAction::SetProjectRegionVisibility {
+                region_id,
+                visible: false,
+            })
+            .unwrap();
+        let program = timeline.program(&project, None);
+        let primitive = iced::widget::shader::Program::draw(
+            &program,
+            &TimelineInteractionState::default(),
+            mouse::Cursor::Unavailable,
+            Rectangle::new(Point::ORIGIN, Size::new(800.0, 500.0)),
+        );
+        assert!(primitive.region_spans.is_empty());
+        assert!(project_region_hit(&project, &timeline, Point::new(700.0, 4.0)).is_none());
+
+        project
+            .apply(DawAction::SetProjectRegionVisibility {
+                region_id,
+                visible: true,
+            })
+            .unwrap();
+        project
+            .apply(DawAction::SetProjectRegionsVisibleOnRuler { visible: false })
+            .unwrap();
+        let program = timeline.program(&project, None);
+        let primitive = iced::widget::shader::Program::draw(
+            &program,
+            &TimelineInteractionState::default(),
+            mouse::Cursor::Unavailable,
+            Rectangle::new(Point::ORIGIN, Size::new(800.0, 500.0)),
+        );
+        assert!(primitive.region_spans.is_empty());
+        assert!(project_region_hit(&project, &timeline, Point::new(700.0, 4.0)).is_none());
 
         let hidden_marker_id = project.markers()[0].id();
         project

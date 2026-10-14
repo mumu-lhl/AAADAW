@@ -29,6 +29,7 @@ pub struct ProjectRegion {
     pub(crate) start_ticks: u64,
     pub(crate) end_ticks: u64,
     pub(crate) name: String,
+    pub(crate) visible: bool,
 }
 
 impl ProjectRegion {
@@ -50,6 +51,7 @@ impl ProjectRegion {
             start_ticks,
             end_ticks,
             name,
+            visible: true,
         })
     }
 
@@ -76,5 +78,10 @@ impl ProjectRegion {
     /// Returns the region's display name.
     pub fn name(&self) -> &str {
         &self.name
+    }
+
+    /// Whether this region is shown in the project ruler.
+    pub fn is_visible(&self) -> bool {
+        self.visible
     }
 }

@@ -38,6 +38,8 @@ pub(crate) enum CommandId {
     ShowMixer,
     OpenMarkerManager,
     ToggleProjectMarkersOnRuler,
+    ToggleProjectRegionsOnRuler,
+    ToggleProjectRegionsAndMarkersOnRuler,
     ToggleMixerPanel,
     AddMidiItem,
     AddProjectMarker,
@@ -49,6 +51,8 @@ pub(crate) enum CommandId {
     NextProjectMarker,
     DeleteProjectMarkerNearCursor,
     ToggleSelectedProjectMarkers,
+    ToggleSelectedProjectRegions,
+    ToggleSelectedProjectRegionsAndMarkers,
     MoveProjectMarkerSlot(u8),
     ImportAudio,
     OpenItemProperties,
@@ -165,6 +169,8 @@ enum CommandKind {
     ShowMixer,
     OpenMarkerManager,
     ToggleProjectMarkersOnRuler,
+    ToggleProjectRegionsOnRuler,
+    ToggleProjectRegionsAndMarkersOnRuler,
     ToggleMixerPanel,
     AddMidiItem,
     AddProjectMarker,
@@ -176,6 +182,8 @@ enum CommandKind {
     NextProjectMarker,
     DeleteProjectMarkerNearCursor,
     ToggleSelectedProjectMarkers,
+    ToggleSelectedProjectRegions,
+    ToggleSelectedProjectRegionsAndMarkers,
     MoveProjectMarkerSlot(u8),
     ImportAudio,
     OpenItemProperties,
@@ -616,6 +624,26 @@ const COMMANDS: &[CommandDefinition] = &[
         separator_before: false,
     },
     CommandDefinition {
+        kind: CommandKind::ToggleProjectRegionsOnRuler,
+        menu: Some(MainMenu::View),
+        category: "Ruler",
+        label: "Ruler: Show/hide all project regions",
+        aliases: &["show/hide all project regions", "toggle region ruler"],
+        shortcuts: &[],
+        destructive: false,
+        separator_before: false,
+    },
+    CommandDefinition {
+        kind: CommandKind::ToggleProjectRegionsAndMarkersOnRuler,
+        menu: None,
+        category: "Ruler",
+        label: "Ruler: Show/hide all project regions and markers",
+        aliases: &["show/hide all project regions and markers"],
+        shortcuts: &[],
+        destructive: false,
+        separator_before: false,
+    },
+    CommandDefinition {
         kind: CommandKind::AddMidiItem,
         menu: Some(MainMenu::Insert),
         category: "Insert",
@@ -824,6 +852,26 @@ const COMMANDS: &[CommandDefinition] = &[
             "show/hide selected project markers",
             "toggle selected marker visibility",
         ],
+        shortcuts: &[],
+        destructive: false,
+        separator_before: false,
+    },
+    CommandDefinition {
+        kind: CommandKind::ToggleSelectedProjectRegions,
+        menu: None,
+        category: "Ruler",
+        label: "Ruler: Show/hide selected project regions",
+        aliases: &["show/hide selected project regions"],
+        shortcuts: &[],
+        destructive: false,
+        separator_before: false,
+    },
+    CommandDefinition {
+        kind: CommandKind::ToggleSelectedProjectRegionsAndMarkers,
+        menu: None,
+        category: "Ruler",
+        label: "Ruler: Show/hide selected project regions and markers",
+        aliases: &["show/hide selected project regions and markers"],
         shortcuts: &[],
         destructive: false,
         separator_before: false,
@@ -2283,6 +2331,10 @@ fn command_kind_id(kind: CommandKind) -> &'static str {
         CommandKind::ShowMixer => "view.mixer-workspace",
         CommandKind::OpenMarkerManager => "view.marker-manager",
         CommandKind::ToggleProjectMarkersOnRuler => "ruler.toggle-project-markers",
+        CommandKind::ToggleProjectRegionsOnRuler => "ruler.toggle-project-regions",
+        CommandKind::ToggleProjectRegionsAndMarkersOnRuler => {
+            "ruler.toggle-project-regions-and-markers"
+        }
         CommandKind::ToggleMixerPanel => "view.toggle-mixer",
         CommandKind::AddMidiItem => "insert.midi-item",
         CommandKind::AddProjectMarker => "insert.project-marker",
@@ -2314,6 +2366,10 @@ fn command_kind_id(kind: CommandKind) -> &'static str {
         CommandKind::NextProjectMarker => "navigation.next-project-marker",
         CommandKind::DeleteProjectMarkerNearCursor => "markers.delete-near-cursor",
         CommandKind::ToggleSelectedProjectMarkers => "ruler.toggle-selected-project-markers",
+        CommandKind::ToggleSelectedProjectRegions => "ruler.toggle-selected-project-regions",
+        CommandKind::ToggleSelectedProjectRegionsAndMarkers => {
+            "ruler.toggle-selected-project-regions-and-markers"
+        }
         CommandKind::MoveProjectMarkerSlot(slot) => numbered_project_marker_action_id(slot),
         CommandKind::ImportAudio => "insert.import-audio",
         CommandKind::OpenItemProperties => "item.properties",
@@ -2440,6 +2496,10 @@ pub(super) fn dispatch(app: &mut App, command: CommandId) -> Task<Message> {
         CommandId::ShowMixer => Message::ShowMainWorkspace(MainWorkspace::Mixer),
         CommandId::OpenMarkerManager => Message::OpenMarkerManager,
         CommandId::ToggleProjectMarkersOnRuler => Message::ToggleProjectMarkersOnRuler,
+        CommandId::ToggleProjectRegionsOnRuler => Message::ToggleProjectRegionsOnRuler,
+        CommandId::ToggleProjectRegionsAndMarkersOnRuler => {
+            Message::ToggleProjectRegionsAndMarkersOnRuler
+        }
         CommandId::ToggleMixerPanel => Message::ToggleMixerPanel,
         CommandId::AddMidiItem => Message::AddMidiItem,
         CommandId::AddProjectMarker => Message::AddProjectMarker,
@@ -2479,6 +2539,10 @@ pub(super) fn dispatch(app: &mut App, command: CommandId) -> Task<Message> {
         CommandId::NextProjectMarker => Message::NextProjectMarker,
         CommandId::DeleteProjectMarkerNearCursor => Message::DeleteProjectMarkerNearCursor,
         CommandId::ToggleSelectedProjectMarkers => Message::ToggleSelectedProjectMarkers,
+        CommandId::ToggleSelectedProjectRegions => Message::ToggleSelectedProjectRegions,
+        CommandId::ToggleSelectedProjectRegionsAndMarkers => {
+            Message::ToggleSelectedProjectRegionsAndMarkers
+        }
         CommandId::MoveProjectMarkerSlot(slot) => Message::MoveProjectMarkerSlot(slot),
         CommandId::ImportAudio => Message::PickPath(PathPickerTarget::ImportAudioToProject),
         CommandId::OpenItemProperties => Message::OpenItemProperties,
@@ -2745,7 +2809,9 @@ fn command_enabled(app: &App, kind: CommandKind, track: Option<TrackState>) -> b
         | CommandKind::OpenProjectSettings
         | CommandKind::OpenActionList
         | CommandKind::OpenMarkerManager => true,
-        CommandKind::ToggleProjectMarkersOnRuler => !project_edit_busy(app),
+        CommandKind::ToggleProjectMarkersOnRuler
+        | CommandKind::ToggleProjectRegionsOnRuler
+        | CommandKind::ToggleProjectRegionsAndMarkersOnRuler => !project_edit_busy(app),
         CommandKind::SaveProjectAs => !project_edit_busy(app),
         CommandKind::SaveProjectNewVersion => !project_file_busy(app),
         CommandKind::ExportWav => {
@@ -2814,6 +2880,27 @@ fn command_enabled(app: &App, kind: CommandKind, track: Option<TrackState>) -> b
                     .markers()
                     .iter()
                     .any(|marker| app.selected_render_markers.contains(&marker.id()))
+        }
+        CommandKind::ToggleSelectedProjectRegions => {
+            !project_edit_busy(app)
+                && app
+                    .project
+                    .regions()
+                    .iter()
+                    .any(|region| app.selected_render_regions.contains(&region.id()))
+        }
+        CommandKind::ToggleSelectedProjectRegionsAndMarkers => {
+            !project_edit_busy(app)
+                && (app
+                    .project
+                    .regions()
+                    .iter()
+                    .any(|region| app.selected_render_regions.contains(&region.id()))
+                    || app
+                        .project
+                        .markers()
+                        .iter()
+                        .any(|marker| app.selected_render_markers.contains(&marker.id())))
         }
         CommandKind::MoveProjectMarkerSlot(_) => !project_edit_busy(app),
         CommandKind::ToggleItemProperties if app.item_properties_window_id.is_some() => true,
@@ -3061,6 +3148,10 @@ fn command_id(kind: CommandKind) -> CommandId {
         CommandKind::ShowMixer => CommandId::ShowMixer,
         CommandKind::OpenMarkerManager => CommandId::OpenMarkerManager,
         CommandKind::ToggleProjectMarkersOnRuler => CommandId::ToggleProjectMarkersOnRuler,
+        CommandKind::ToggleProjectRegionsOnRuler => CommandId::ToggleProjectRegionsOnRuler,
+        CommandKind::ToggleProjectRegionsAndMarkersOnRuler => {
+            CommandId::ToggleProjectRegionsAndMarkersOnRuler
+        }
         CommandKind::ToggleMixerPanel => CommandId::ToggleMixerPanel,
         CommandKind::AddMidiItem => CommandId::AddMidiItem,
         CommandKind::AddProjectMarker => CommandId::AddProjectMarker,
@@ -3072,6 +3163,10 @@ fn command_id(kind: CommandKind) -> CommandId {
         CommandKind::NextProjectMarker => CommandId::NextProjectMarker,
         CommandKind::DeleteProjectMarkerNearCursor => CommandId::DeleteProjectMarkerNearCursor,
         CommandKind::ToggleSelectedProjectMarkers => CommandId::ToggleSelectedProjectMarkers,
+        CommandKind::ToggleSelectedProjectRegions => CommandId::ToggleSelectedProjectRegions,
+        CommandKind::ToggleSelectedProjectRegionsAndMarkers => {
+            CommandId::ToggleSelectedProjectRegionsAndMarkers
+        }
         CommandKind::MoveProjectMarkerSlot(slot) => CommandId::MoveProjectMarkerSlot(slot),
         CommandKind::ImportAudio => CommandId::ImportAudio,
         CommandKind::OpenItemProperties => CommandId::OpenItemProperties,
@@ -3432,6 +3527,10 @@ pub(super) fn toggle_state(app: &App, command: CommandId) -> Option<bool> {
             app.media_panel_dock.mixer_open
         }),
         CommandId::ToggleProjectMarkersOnRuler => Some(app.project.show_project_markers()),
+        CommandId::ToggleProjectRegionsOnRuler => Some(app.project.show_project_regions()),
+        CommandId::ToggleProjectRegionsAndMarkersOnRuler => {
+            Some(app.project.show_project_regions() && app.project.show_project_markers())
+        }
         CommandId::LoopTime(LoopTimeCommand::ToggleLinked) => Some(app.timeline.loop_points_linked),
         CommandId::SelectedTrack(TrackCommand::ToggleFolder) => app
             .selected_track_id()

@@ -34,6 +34,43 @@ impl App {
         Task::none()
     }
 
+    pub(super) fn toggle_project_regions_on_ruler(&mut self) -> Task<Message> {
+        if commands::project_edit_busy(self) {
+            self.status = "Stop playback or finish the current project operation before changing ruler visibility".to_owned();
+            return Task::none();
+        }
+        let visible = !self.project.show_project_regions();
+        self.apply_action(
+            DawAction::SetProjectRegionsVisibleOnRuler { visible },
+            "Project region ruler visibility changed",
+        );
+        Task::none()
+    }
+
+    pub(super) fn toggle_project_regions_and_markers_on_ruler(&mut self) -> Task<Message> {
+        if commands::project_edit_busy(self) {
+            self.status = "Stop playback or finish the current project operation before changing ruler visibility".to_owned();
+            return Task::none();
+        }
+        // REAPER's combined action shows both lanes if either one is hidden.
+        let visible = !(self.project.show_project_regions() && self.project.show_project_markers());
+        self.apply_action(
+            DawAction::BatchTransaction {
+                tx_id: self.revision,
+                actions: vec![
+                    DawAction::SetProjectRegionsVisibleOnRuler { visible },
+                    DawAction::SetProjectMarkersVisibleOnRuler { visible },
+                ],
+            },
+            if visible {
+                "Project region and marker ruler lanes shown"
+            } else {
+                "Project region and marker ruler lanes hidden"
+            },
+        );
+        Task::none()
+    }
+
     pub(super) fn toggle_selected_project_markers(&mut self) {
         if commands::project_edit_busy(self) {
             self.status = "Stop playback or finish the current project operation before changing marker visibility".to_owned();
@@ -81,6 +118,104 @@ impl App {
             }
         };
         self.apply_action(action, message);
+    }
+
+    pub(super) fn toggle_selected_project_regions(&mut self) {
+        if commands::project_edit_busy(self) {
+            self.status = "Stop playback or finish the current project operation before changing region visibility".to_owned();
+            return;
+        }
+        let selected: Vec<_> = self
+            .project
+            .regions()
+            .iter()
+            .filter(|region| self.selected_render_regions.contains(&region.id()))
+            .collect();
+        if selected.is_empty() {
+            self.status = "Select one or more project regions first".to_owned();
+            return;
+        }
+        let visible = selected.iter().any(|region| !region.is_visible());
+        let actions = selected
+            .into_iter()
+            .filter(|region| region.is_visible() != visible)
+            .map(|region| DawAction::SetProjectRegionVisibility {
+                region_id: region.id(),
+                visible,
+            })
+            .collect();
+        self.apply_visibility_action_group(
+            actions,
+            if visible {
+                "Selected project regions shown"
+            } else {
+                "Selected project regions hidden"
+            },
+        );
+    }
+
+    pub(super) fn toggle_selected_project_regions_and_markers(&mut self) {
+        if commands::project_edit_busy(self) {
+            self.status = "Stop playback or finish the current project operation before changing ruler visibility".to_owned();
+            return;
+        }
+        let selected_regions: Vec<_> = self
+            .project
+            .regions()
+            .iter()
+            .filter(|region| self.selected_render_regions.contains(&region.id()))
+            .collect();
+        let selected_markers: Vec<_> = self
+            .project
+            .markers()
+            .iter()
+            .filter(|marker| self.selected_render_markers.contains(&marker.id()))
+            .collect();
+        if selected_regions.is_empty() && selected_markers.is_empty() {
+            self.status = "Select one or more project regions or markers first".to_owned();
+            return;
+        }
+        let visible = selected_regions.iter().any(|region| !region.is_visible())
+            || selected_markers.iter().any(|marker| !marker.is_visible());
+        let actions = selected_regions
+            .into_iter()
+            .filter(|region| region.is_visible() != visible)
+            .map(|region| DawAction::SetProjectRegionVisibility {
+                region_id: region.id(),
+                visible,
+            })
+            .chain(
+                selected_markers
+                    .into_iter()
+                    .filter(|marker| marker.is_visible() != visible)
+                    .map(|marker| DawAction::SetProjectMarkerVisibility {
+                        marker_id: marker.id(),
+                        visible,
+                    }),
+            )
+            .collect();
+        self.apply_visibility_action_group(
+            actions,
+            if visible {
+                "Selected project regions and markers shown"
+            } else {
+                "Selected project regions and markers hidden"
+            },
+        );
+    }
+
+    fn apply_visibility_action_group(&mut self, actions: Vec<DawAction>, message: &str) {
+        match actions.len() {
+            0 => {}
+            1 => self.apply_action(actions.into_iter().next().unwrap(), message),
+            _ => self.apply_action(
+                DawAction::BatchTransaction {
+                    tx_id: self.revision,
+                    actions,
+                },
+                message,
+            ),
+        }
     }
 
     pub(super) fn open_marker_manager(&mut self) -> Task<Message> {
@@ -174,6 +309,30 @@ impl App {
         self.apply_action(
             DawAction::SetProjectMarkerVisibility { marker_id, visible },
             "Project marker visibility changed",
+        );
+    }
+
+    pub(super) fn set_region_visibility_from_manager(
+        &mut self,
+        region_id: RegionId,
+        visible: bool,
+    ) {
+        if commands::project_edit_busy(self) {
+            self.status = "Stop playback or finish the current project operation before changing region visibility".to_owned();
+            return;
+        }
+        if !self
+            .project
+            .regions()
+            .iter()
+            .any(|region| region.id() == region_id)
+        {
+            self.status = "Project region no longer exists".to_owned();
+            return;
+        }
+        self.apply_action(
+            DawAction::SetProjectRegionVisibility { region_id, visible },
+            "Project region visibility changed",
         );
     }
 

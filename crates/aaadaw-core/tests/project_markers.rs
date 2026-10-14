@@ -195,3 +195,38 @@ fn marker_and_ruler_visibility_are_undoable_and_survive_snapshots() {
     assert!(project.redo().unwrap());
     assert!(!project.markers()[0].is_visible());
 }
+
+#[test]
+fn region_and_ruler_visibility_are_undoable_and_survive_snapshots() {
+    let mut project = Project::new();
+    project
+        .apply(DawAction::InsertProjectRegion {
+            start_ticks: 960,
+            end_ticks: 1_920,
+            name: "Hidden region".to_owned(),
+        })
+        .unwrap();
+    let region_id = project.regions()[0].id();
+    project
+        .apply(DawAction::SetProjectRegionVisibility {
+            region_id,
+            visible: false,
+        })
+        .unwrap();
+    project
+        .apply(DawAction::SetProjectRegionsVisibleOnRuler { visible: false })
+        .unwrap();
+
+    assert!(!project.regions()[0].is_visible());
+    assert!(!project.show_project_regions());
+    let restored = Project::from_snapshot(project.snapshot()).unwrap();
+    assert_eq!(restored.regions(), project.regions());
+    assert!(!restored.show_project_regions());
+
+    assert!(project.undo().unwrap());
+    assert!(project.show_project_regions());
+    assert!(project.undo().unwrap());
+    assert!(project.regions()[0].is_visible());
+    assert!(project.redo().unwrap());
+    assert!(!project.regions()[0].is_visible());
+}

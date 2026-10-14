@@ -23,7 +23,7 @@ use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 /// Latest database schema version understood by this release.
-pub const CURRENT_SCHEMA_VERSION: u32 = 47;
+pub const CURRENT_SCHEMA_VERSION: u32 = 48;
 
 const MIGRATION_29: &str = "ALTER TABLE project_meta ADD COLUMN start_measure INTEGER NOT NULL DEFAULT 1 CHECK(start_measure BETWEEN -2147483648 AND 2147483647);";
 const MIGRATION_30: &str = "ALTER TABLE project_meta ADD COLUMN bpm_basis INTEGER NOT NULL DEFAULT 1 CHECK(bpm_basis BETWEEN 0 AND 5);";
@@ -862,11 +862,22 @@ mod project_marker_storage_tests {
                 name: "Intro".to_owned(),
             })
             .unwrap();
+        let hidden_region_id = project.regions()[0].id();
+        project
+            .apply(DawAction::SetProjectRegionVisibility {
+                region_id: hidden_region_id,
+                visible: false,
+            })
+            .unwrap();
+        project
+            .apply(DawAction::SetProjectRegionsVisibleOnRuler { visible: false })
+            .unwrap();
         let expected = project.regions().to_vec();
 
         let mut store = ProjectStore::open(&path).unwrap();
         store.save(&project).unwrap();
         assert_eq!(store.load().unwrap().regions(), expected);
+        assert!(!store.load().unwrap().show_project_regions());
         drop(store);
 
         let connection = Connection::open(&path).unwrap();
@@ -884,6 +895,39 @@ mod project_marker_storage_tests {
             .pragma_query_value(None, "user_version", |row| row.get(0))
             .unwrap();
         assert_eq!(schema_version, i64::from(CURRENT_SCHEMA_VERSION));
+    }
+
+    #[test]
+    fn schema_47_region_visibility_migration_defaults_to_visible() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("regions-schema-47.aaadaw");
+        let mut project = Project::new();
+        project
+            .apply(DawAction::InsertProjectRegion {
+                start_ticks: 0,
+                end_ticks: 1_920,
+                name: "Intro".to_owned(),
+            })
+            .unwrap();
+        let mut store = ProjectStore::open(&path).unwrap();
+        store.save(&project).unwrap();
+        drop(store);
+
+        let connection = Connection::open(&path).unwrap();
+        connection
+            .execute_batch(
+                "ALTER TABLE project_regions DROP COLUMN visible;
+                 ALTER TABLE project_meta DROP COLUMN show_project_regions;
+                 PRAGMA user_version = 47;",
+            )
+            .unwrap();
+        drop(connection);
+
+        let store = ProjectStore::open(&path).unwrap();
+        let loaded = store.load().unwrap();
+        assert!(loaded.show_project_regions());
+        assert!(loaded.regions()[0].is_visible());
+        assert_eq!(store.schema_version().unwrap(), CURRENT_SCHEMA_VERSION);
     }
 }
 
@@ -2588,7 +2632,7 @@ impl ProjectStore {
         let metadata = self
             .connection
             .query_row(
-                "SELECT sample_rate, ppq, initial_tempo_bpm, pan_mode, start_measure, bpm_basis, base_ruler_label_spacing_on_measure, project_start_time_offset_seconds, project_start_time_fractional_frame_offset_allowed, force_tempo_changes_to_whole_samples, show_project_markers FROM project_meta WHERE singleton = 1",
+                "SELECT sample_rate, ppq, initial_tempo_bpm, pan_mode, start_measure, bpm_basis, base_ruler_label_spacing_on_measure, project_start_time_offset_seconds, project_start_time_fractional_frame_offset_allowed, force_tempo_changes_to_whole_samples, show_project_markers, show_project_regions FROM project_meta WHERE singleton = 1",
                 [],
                 |row| {
                     Ok((
@@ -2603,6 +2647,7 @@ impl ProjectStore {
                         row.get::<_, i64>(8)?,
                         row.get::<_, i64>(9)?,
                         row.get::<_, i64>(10)?,
+                        row.get::<_, i64>(11)?,
                     ))
                 },
             )
@@ -2619,6 +2664,7 @@ impl ProjectStore {
             project_start_time_fractional_frame_offset_allowed,
             force_tempo_changes_to_whole_samples,
             show_project_markers,
+            show_project_regions,
         )) = metadata
         else {
             let rows: i64 = self.connection.query_row(
@@ -2686,6 +2732,15 @@ impl ProjectStore {
                 ));
             }
         };
+        let show_project_regions = match show_project_regions {
+            0 => false,
+            1 => true,
+            _ => {
+                return Err(StorageError::InvalidStoredData(
+                    "unsupported project region lane visibility",
+                ));
+            }
+        };
 
         let settings = ProjectSettings::new(
             from_sql_u32(sample_rate)?,
@@ -2732,6 +2787,7 @@ impl ProjectStore {
             midi_items,
             markers,
             show_project_markers,
+            show_project_regions,
             regions,
             tempo_points,
             meter_points,
@@ -3085,6 +3141,18 @@ fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
                     )?;
                 }
             }
+            48 => {
+                if !table_has_column(&transaction, "project_meta", "show_project_regions")? {
+                    transaction.execute_batch(
+                        "ALTER TABLE project_meta ADD COLUMN show_project_regions INTEGER NOT NULL DEFAULT 1 CHECK(show_project_regions IN (0,1));",
+                    )?;
+                }
+                if !table_has_column(&transaction, "project_regions", "visible")? {
+                    transaction.execute_batch(
+                        "ALTER TABLE project_regions ADD COLUMN visible INTEGER NOT NULL DEFAULT 1 CHECK(visible IN (0,1));",
+                    )?;
+                }
+            }
             missing => return Err(StorageError::MissingMigration(missing - 1)),
         }
         transaction.pragma_update(None, "user_version", next_version)?;
@@ -3137,8 +3205,8 @@ fn write_snapshot(
         params![i64::from(settings.frame_rate().storage_code())],
     )?;
     transaction.execute(
-        "INSERT INTO project_meta(singleton, sample_rate, ppq, initial_tempo_bpm, pan_mode, start_measure, bpm_basis, base_ruler_label_spacing_on_measure, project_start_time_offset_seconds, project_start_time_fractional_frame_offset_allowed, force_tempo_changes_to_whole_samples, show_project_markers) \
-         VALUES(1, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+        "INSERT INTO project_meta(singleton, sample_rate, ppq, initial_tempo_bpm, pan_mode, start_measure, bpm_basis, base_ruler_label_spacing_on_measure, project_start_time_offset_seconds, project_start_time_fractional_frame_offset_allowed, force_tempo_changes_to_whole_samples, show_project_markers, show_project_regions) \
+         VALUES(1, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
         params![
             i64::from(settings.sample_rate()),
             i64::from(settings.ppq()),
@@ -3154,6 +3222,7 @@ fn write_snapshot(
             settings.project_start_time_fractional_frame_offset_allowed(),
             settings.force_tempo_changes_to_whole_samples(),
             snapshot.show_project_markers,
+            snapshot.show_project_regions,
         ],
     )?;
 
@@ -3401,13 +3470,14 @@ fn write_snapshot(
     }
     for region in &snapshot.regions {
         transaction.execute(
-            "INSERT INTO project_regions(id, region_number, start_ticks, end_ticks, name) VALUES(?1, ?2, ?3, ?4, ?5)",
+            "INSERT INTO project_regions(id, region_number, start_ticks, end_ticks, name, visible) VALUES(?1, ?2, ?3, ?4, ?5, ?6)",
             params![
                 to_sql_integer(region.id)?,
                 i64::from(region.number),
                 to_sql_integer(region.start_ticks)?,
                 to_sql_integer(region.end_ticks)?,
-                region.name
+                region.name,
+                region.visible
             ],
         )?;
     }
@@ -4266,7 +4336,7 @@ fn read_project_regions(
     connection: &Connection,
 ) -> Result<Vec<ProjectRegionSnapshot>, StorageError> {
     let mut statement = connection.prepare(
-        "SELECT id, region_number, start_ticks, end_ticks, name FROM project_regions ORDER BY start_ticks, id",
+        "SELECT id, region_number, start_ticks, end_ticks, name, visible FROM project_regions ORDER BY start_ticks, id",
     )?;
     let rows = statement
         .query_map([], |row| {
@@ -4276,17 +4346,28 @@ fn read_project_regions(
                 row.get::<_, i64>(2)?,
                 row.get::<_, i64>(3)?,
                 row.get::<_, String>(4)?,
+                row.get::<_, i64>(5)?,
             ))
         })?
         .collect::<Result<Vec<_>, _>>()?;
     rows.into_iter()
-        .map(|(id, number, start_ticks, end_ticks, name)| {
+        .map(|(id, number, start_ticks, end_ticks, name, visible)| {
+            let visible = match visible {
+                0 => false,
+                1 => true,
+                _ => {
+                    return Err(StorageError::InvalidStoredData(
+                        "unsupported project region visibility",
+                    ));
+                }
+            };
             Ok(ProjectRegionSnapshot {
                 id: from_sql_u64(id)?,
                 number: from_sql_u32(number)?,
                 start_ticks: from_sql_u64(start_ticks)?,
                 end_ticks: from_sql_u64(end_ticks)?,
                 name,
+                visible,
             })
         })
         .collect()

@@ -435,6 +435,7 @@ struct ProjectState {
     midi_items: Vec<MidiItem>,
     markers: Vec<ProjectMarker>,
     show_project_markers: bool,
+    show_project_regions: bool,
     regions: Vec<ProjectRegion>,
     tempo_map: TempoMap,
     meter_map: MeterMap,
@@ -455,6 +456,7 @@ impl Default for ProjectState {
             midi_items: Vec::new(),
             markers: Vec::new(),
             show_project_markers: true,
+            show_project_regions: true,
             regions: Vec::new(),
             tempo_map: TempoMap::default(),
             meter_map: MeterMap::default(),
@@ -515,6 +517,10 @@ enum ProjectEvent {
         after: Vec<ProjectMarker>,
     },
     ProjectMarkerLaneVisibilityChanged {
+        before: bool,
+        after: bool,
+    },
+    ProjectRegionLaneVisibilityChanged {
         before: bool,
         after: bool,
     },
@@ -789,6 +795,12 @@ impl ProjectEvent {
             },
             Self::ProjectMarkerLaneVisibilityChanged { before, after } => {
                 Self::ProjectMarkerLaneVisibilityChanged {
+                    before: *after,
+                    after: *before,
+                }
+            }
+            Self::ProjectRegionLaneVisibilityChanged { before, after } => {
+                Self::ProjectRegionLaneVisibilityChanged {
                     before: *after,
                     after: *before,
                 }
@@ -1540,6 +1552,9 @@ impl Project {
             ProjectEvent::ProjectMarkerLaneVisibilityChanged { before, after } if before == after
         ) || matches!(
             &event,
+            ProjectEvent::ProjectRegionLaneVisibilityChanged { before, after } if before == after
+        ) || matches!(
+            &event,
             ProjectEvent::TrackRazorEditAreasChanged { before, after } if before == after
         ) {
             return Ok(());
@@ -1616,6 +1631,11 @@ impl Project {
     /// Whether the project marker lane is visible in the ruler.
     pub fn show_project_markers(&self) -> bool {
         self.state.show_project_markers
+    }
+
+    /// Whether the project region lane is visible in the ruler.
+    pub fn show_project_regions(&self) -> bool {
+        self.state.show_project_regions
     }
 
     /// Returns the project's regions ordered by timeline start and stable identity.
@@ -1758,6 +1778,7 @@ impl Project {
                 .map(ProjectMarkerSnapshot::from)
                 .collect(),
             show_project_markers: self.state.show_project_markers,
+            show_project_regions: self.state.show_project_regions,
             regions: self
                 .state
                 .regions
@@ -1791,6 +1812,7 @@ impl Project {
     pub fn from_snapshot(snapshot: ProjectSnapshot) -> Result<Self, SnapshotError> {
         let settings = snapshot.settings;
         let show_project_markers = snapshot.show_project_markers;
+        let show_project_regions = snapshot.show_project_regions;
         let mut send_ids = HashSet::new();
         let mut max_send_id = None;
         let mut tempo_map = TempoMap::new(settings);
@@ -1871,16 +1893,16 @@ impl Project {
                 return Err(SnapshotError::InvalidProjectData);
             }
             max_region_id = Some(max_region_id.map_or(region.id, |max: u64| max.max(region.id)));
-            regions.push(
-                ProjectRegion::new(
-                    RegionId::from_raw(region.id),
-                    region.number,
-                    region.start_ticks,
-                    region.end_ticks,
-                    region.name,
-                )
-                .ok_or(SnapshotError::InvalidProjectData)?,
-            );
+            let mut project_region = ProjectRegion::new(
+                RegionId::from_raw(region.id),
+                region.number,
+                region.start_ticks,
+                region.end_ticks,
+                region.name,
+            )
+            .ok_or(SnapshotError::InvalidProjectData)?;
+            project_region.visible = region.visible;
+            regions.push(project_region);
         }
         regions.sort_unstable_by_key(|region| (region.start_ticks, region.id.value()));
 
@@ -2139,6 +2161,7 @@ impl Project {
                 midi_items,
                 markers,
                 show_project_markers,
+                show_project_regions,
                 regions,
                 tempo_map,
                 meter_map,
@@ -2341,6 +2364,22 @@ impl Project {
                     after: visible,
                 }
             }
+            DawAction::SetProjectRegionsVisibleOnRuler { visible } => {
+                ProjectEvent::ProjectRegionLaneVisibilityChanged {
+                    before: state.show_project_regions,
+                    after: visible,
+                }
+            }
+            DawAction::SetProjectRegionVisibility { region_id, visible } => {
+                let before = state.regions.clone();
+                let mut after = before.clone();
+                let region = after
+                    .iter_mut()
+                    .find(|region| region.id == region_id)
+                    .ok_or(ActionError::ProjectRegionNotFound { region_id })?;
+                region.visible = visible;
+                ProjectEvent::ProjectRegionsChanged { before, after }
+            }
             DawAction::DeleteProjectMarker { marker_id } => {
                 let before = state.markers.clone();
                 if !before.iter().any(|marker| marker.id == marker_id) {
@@ -2392,8 +2431,10 @@ impl Project {
                     .iter_mut()
                     .find(|region| region.id == region_id)
                     .ok_or(ActionError::ProjectRegionNotFound { region_id })?;
+                let visible = region.visible;
                 *region = ProjectRegion::new(region_id, number, start_ticks, end_ticks, name)
                     .ok_or(ActionError::InvalidProjectRegion)?;
+                region.visible = visible;
                 after.sort_unstable_by_key(|region| (region.start_ticks, region.id.value()));
                 ProjectEvent::ProjectRegionsChanged { before, after }
             }
@@ -4097,6 +4138,12 @@ impl Project {
                     return Err(ActionError::HistoryInvariantViolation);
                 }
                 state.show_project_markers = *after;
+            }
+            ProjectEvent::ProjectRegionLaneVisibilityChanged { before, after } => {
+                if state.show_project_regions != *before {
+                    return Err(ActionError::HistoryInvariantViolation);
+                }
+                state.show_project_regions = *after;
             }
             ProjectEvent::ProjectRegionsChanged { before, after } => {
                 if state.regions != *before || !valid_project_regions(after) {
