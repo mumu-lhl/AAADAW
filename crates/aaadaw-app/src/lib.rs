@@ -503,6 +503,8 @@ impl PreparedAudioPlayback {
         let mix_controller = self.graph.track_mix_controller();
         let master_mix_controller = self.graph.master_mix_controller();
         let item_fade_controller = self.graph.item_fade_controller();
+        let item_volume_controller = self.graph.item_volume_controller();
+        let item_take_mix_controller = self.graph.item_take_mix_controller();
         let midi_preview_controller = self.graph.midi_preview_controller();
         let master_output_safety = self.graph.master_output_safety_controller();
         let input_monitor_controller = self.graph.input_monitor_controller();
@@ -516,6 +518,8 @@ impl PreparedAudioPlayback {
             mix_controller,
             master_mix_controller,
             item_fade_controller,
+            item_volume_controller,
+            item_take_mix_controller,
             midi_preview_controller,
             master_output_safety,
             input_monitor_controller,
@@ -547,6 +551,8 @@ impl PreparedAudioPlayback {
         let mix_controller = self.graph.track_mix_controller();
         let master_mix_controller = self.graph.master_mix_controller();
         let item_fade_controller = self.graph.item_fade_controller();
+        let item_volume_controller = self.graph.item_volume_controller();
+        let item_take_mix_controller = self.graph.item_take_mix_controller();
         let midi_preview_controller = self.graph.midi_preview_controller();
         let master_output_safety = self.graph.master_output_safety_controller();
         let input_monitor_controller = self.graph.input_monitor_controller();
@@ -576,6 +582,8 @@ impl PreparedAudioPlayback {
             mix_controller,
             master_mix_controller,
             item_fade_controller,
+            item_volume_controller,
+            item_take_mix_controller,
             midi_preview_controller,
             master_output_safety,
             input_monitor_controller,
@@ -748,6 +756,8 @@ pub struct RunningAudioPlayback {
     mix_controller: TrackMixController,
     master_mix_controller: aaadaw_engine::MasterMixController,
     item_fade_controller: aaadaw_engine::ItemFadeController,
+    item_volume_controller: aaadaw_engine::ItemVolumeController,
+    item_take_mix_controller: aaadaw_engine::ItemTakeMixController,
     midi_preview_controller: aaadaw_engine::MidiPreviewController,
     master_output_safety: MasterOutputSafetyController,
     input_monitor_controller: Option<AudioInputMonitorController>,
@@ -804,6 +814,16 @@ impl RunningAudioPlayback {
         fades: aaadaw_core::AudioItemFades,
     ) -> bool {
         self.item_fade_controller.set_fades(item_id, fades)
+    }
+
+    /// Publishes an audio item's live linear volume without replacing the graph.
+    pub fn set_item_volume(&self, item_id: aaadaw_core::ItemId, volume: f32) -> bool {
+        self.item_volume_controller.set_volume(item_id, volume)
+    }
+
+    /// Publishes an audio item's active take mix without replacing the graph.
+    pub fn set_item_take_mix(&self, item_id: aaadaw_core::ItemId, volume: f32, pan: f32) -> bool {
+        self.item_take_mix_controller.set_mix(item_id, volume, pan)
     }
 
     /// Updates live stereo Master output controls.
@@ -1092,6 +1112,8 @@ impl RunningAudioPlayback {
         let mix_controller = prepared.graph.track_mix_controller();
         let master_mix_controller = prepared.graph.master_mix_controller();
         let item_fade_controller = prepared.graph.item_fade_controller();
+        let item_volume_controller = prepared.graph.item_volume_controller();
+        let item_take_mix_controller = prepared.graph.item_take_mix_controller();
         let midi_preview_controller = prepared.graph.midi_preview_controller();
         let master_output_safety = prepared.graph.master_output_safety_controller();
         master_output_safety.set_ceiling(self.master_output_safety.ceiling());
@@ -1140,6 +1162,8 @@ impl RunningAudioPlayback {
         self.mix_controller = mix_controller;
         self.master_mix_controller = master_mix_controller;
         self.item_fade_controller = item_fade_controller;
+        self.item_volume_controller = item_volume_controller;
+        self.item_take_mix_controller = item_take_mix_controller;
         self.midi_preview_controller.release();
         self.midi_preview_controller = midi_preview_controller;
         self.master_output_safety = master_output_safety;
@@ -1378,6 +1402,8 @@ pub struct RunningJackPlayback {
     mix_controller: TrackMixController,
     master_mix_controller: aaadaw_engine::MasterMixController,
     item_fade_controller: aaadaw_engine::ItemFadeController,
+    item_volume_controller: aaadaw_engine::ItemVolumeController,
+    item_take_mix_controller: aaadaw_engine::ItemTakeMixController,
     midi_preview_controller: aaadaw_engine::MidiPreviewController,
     master_output_safety: MasterOutputSafetyController,
     input_monitor_controller: Option<AudioInputMonitorController>,
@@ -1433,6 +1459,16 @@ impl RunningJackPlayback {
         fades: aaadaw_core::AudioItemFades,
     ) -> bool {
         self.item_fade_controller.set_fades(item_id, fades)
+    }
+
+    /// Publishes an audio item's live linear volume without replacing the graph.
+    pub fn set_item_volume(&self, item_id: aaadaw_core::ItemId, volume: f32) -> bool {
+        self.item_volume_controller.set_volume(item_id, volume)
+    }
+
+    /// Publishes an audio item's active take mix without replacing the graph.
+    pub fn set_item_take_mix(&self, item_id: aaadaw_core::ItemId, volume: f32, pan: f32) -> bool {
+        self.item_take_mix_controller.set_mix(item_id, volume, pan)
     }
 
     /// Updates live stereo Master output controls.
@@ -1560,6 +1596,8 @@ impl RunningJackPlayback {
         let mix_controller = prepared.graph.track_mix_controller();
         let master_mix_controller = prepared.graph.master_mix_controller();
         let item_fade_controller = prepared.graph.item_fade_controller();
+        let item_volume_controller = prepared.graph.item_volume_controller();
+        let item_take_mix_controller = prepared.graph.item_take_mix_controller();
         let midi_preview_controller = prepared.graph.midi_preview_controller();
         let master_output_safety = prepared.graph.master_output_safety_controller();
         master_output_safety.set_ceiling(self.master_output_safety.ceiling());
@@ -1570,6 +1608,8 @@ impl RunningJackPlayback {
         self.mix_controller = mix_controller;
         self.master_mix_controller = master_mix_controller;
         self.item_fade_controller = item_fade_controller;
+        self.item_volume_controller = item_volume_controller;
+        self.item_take_mix_controller = item_take_mix_controller;
         self.midi_preview_controller.release();
         self.midi_preview_controller = midi_preview_controller;
         self.master_output_safety = master_output_safety;

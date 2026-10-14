@@ -2795,6 +2795,99 @@ fn item_fades_roundtrip_readonly_legacy_default_and_invalid_values() {
 }
 
 #[test]
+fn audio_item_mix_roundtrips_and_schema_38_migrates_with_neutral_defaults() {
+    let path = project_path();
+    let mut project = Project::new();
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Audio".into(),
+        })
+        .unwrap();
+    let track_id = project.tracks()[0].id();
+    project
+        .apply(DawAction::InsertAudioItem {
+            track_id,
+            media_ref: "asset://constant".into(),
+            start_sample: 100,
+            source_offset_samples: 200,
+            length_samples: 48_000,
+        })
+        .unwrap();
+    let item_id = project.audio_items()[0].id();
+    project
+        .apply(DawAction::SetAudioItemVolume {
+            item_id,
+            volume: 0.5,
+        })
+        .unwrap();
+    project
+        .apply(DawAction::SetAudioItemTakeMix {
+            item_id,
+            volume: 0.25,
+            pan: -0.5,
+        })
+        .unwrap();
+
+    let mut store = ProjectStore::open(&path).unwrap();
+    store.save(&project).unwrap();
+    assert_eq!(store.load().unwrap().snapshot(), project.snapshot());
+    store.close().unwrap();
+
+    let connection = Connection::open(&path).unwrap();
+    connection
+        .execute_batch(
+            "ALTER TABLE audio_items DROP COLUMN take_pan; \
+             ALTER TABLE audio_items DROP COLUMN take_volume; \
+             ALTER TABLE audio_items DROP COLUMN volume; \
+             PRAGMA user_version = 38;",
+        )
+        .unwrap();
+    drop(connection);
+    assert!(matches!(
+        ProjectStore::load_read_only(&path),
+        Err(StorageError::ReadOnlySchemaVersion {
+            found: 38,
+            required: CURRENT_SCHEMA_VERSION
+        })
+    ));
+
+    let store = ProjectStore::open(&path).unwrap();
+    assert_eq!(store.schema_version().unwrap(), CURRENT_SCHEMA_VERSION);
+    let migrated = store.load().unwrap();
+    assert_eq!(migrated.audio_items()[0].volume(), 1.0);
+    assert_eq!(migrated.audio_items()[0].take_volume(), 1.0);
+    assert_eq!(migrated.audio_items()[0].take_pan(), 0.0);
+    assert_eq!(migrated.audio_items()[0].media_ref(), "asset://constant");
+    store.close().unwrap();
+
+    let connection = Connection::open(&path).unwrap();
+    assert!(
+        connection
+            .execute("UPDATE audio_items SET volume = 17.0", [])
+            .is_err()
+    );
+    assert!(
+        connection
+            .execute("UPDATE audio_items SET take_volume = 17.0", [])
+            .is_err()
+    );
+    assert!(
+        connection
+            .execute("UPDATE audio_items SET take_pan = 1.1", [])
+            .is_err()
+    );
+    connection
+        .execute_batch(
+            "PRAGMA ignore_check_constraints = ON; UPDATE audio_items SET volume = 17.0;",
+        )
+        .unwrap();
+    drop(connection);
+    assert!(ProjectStore::load_read_only(&path).is_err());
+    remove_database(&path);
+}
+
+#[test]
 fn native_fade_mode_roundtrip_and_schema25_legacy_shape_preservation() {
     use aaadaw_core::{AudioFade, AudioItemFades, FadeCurve, FadeCurveParameters, FadeShape};
     let path = project_path();

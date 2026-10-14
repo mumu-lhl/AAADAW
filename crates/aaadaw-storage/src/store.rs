@@ -23,7 +23,7 @@ use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 /// Latest database schema version understood by this release.
-pub const CURRENT_SCHEMA_VERSION: u32 = 38;
+pub const CURRENT_SCHEMA_VERSION: u32 = 40;
 
 const MIGRATION_29: &str = "ALTER TABLE project_meta ADD COLUMN start_measure INTEGER NOT NULL DEFAULT 1 CHECK(start_measure BETWEEN -2147483648 AND 2147483647);";
 const MIGRATION_30: &str = "ALTER TABLE project_meta ADD COLUMN bpm_basis INTEGER NOT NULL DEFAULT 1 CHECK(bpm_basis BETWEEN 0 AND 5);";
@@ -75,6 +75,20 @@ CREATE TABLE IF NOT EXISTS arrangement_time_ranges (
         loop_start_seconds <= loop_end_seconds
     ))
 );
+"#;
+
+const MIGRATION_39: &str = r#"
+ALTER TABLE audio_items ADD COLUMN volume REAL NOT NULL DEFAULT 1.0
+    CHECK(volume >= 0.0 AND volume <= 16.0);
+"#;
+
+const MIGRATION_40_TAKE_VOLUME: &str = r#"
+ALTER TABLE audio_items ADD COLUMN take_volume REAL NOT NULL DEFAULT 1.0
+    CHECK(take_volume >= 0.0 AND take_volume <= 16.0);
+"#;
+const MIGRATION_40_TAKE_PAN: &str = r#"
+ALTER TABLE audio_items ADD COLUMN take_pan REAL NOT NULL DEFAULT 0.0
+    CHECK(take_pan >= -1.0 AND take_pan <= 1.0);
 "#;
 
 const MIGRATION_28: &str = "CREATE TABLE IF NOT EXISTS project_notes(singleton INTEGER PRIMARY KEY CHECK(singleton = 1), title TEXT NOT NULL, author TEXT NOT NULL, notes TEXT NOT NULL, show_on_load INTEGER NOT NULL CHECK(show_on_load IN (0,1)), word_wrap INTEGER NOT NULL CHECK(word_wrap IN (0,1))); INSERT OR IGNORE INTO project_notes VALUES(1, '', '', '', 0, 1);";
@@ -381,6 +395,9 @@ CREATE TABLE IF NOT EXISTS audio_items (
     start_sample INTEGER NOT NULL CHECK (start_sample >= 0),
     source_offset_samples INTEGER NOT NULL CHECK (source_offset_samples >= 0),
     length_samples INTEGER NOT NULL CHECK (length_samples > 0),
+    volume REAL NOT NULL DEFAULT 1.0 CHECK (volume >= 0.0 AND volume <= 16.0),
+    take_volume REAL NOT NULL DEFAULT 1.0 CHECK (take_volume >= 0.0 AND take_volume <= 16.0),
+    take_pan REAL NOT NULL DEFAULT 0.0 CHECK (take_pan >= -1.0 AND take_pan <= 1.0),
     UNIQUE (track_id, position)
 );
 CREATE INDEX IF NOT EXISTS audio_items_by_project_position ON audio_items(position, id);
@@ -512,8 +529,8 @@ impl std::error::Error for StorageError {
 mod arrangement_view_state_tests {
     use super::{ProjectStore, StorageError};
     use crate::{
-        ArrangementTimeRangeState, ArrangementViewState, FxAutomationLaneViewState,
-        VolumeAutomationLaneViewState,
+        ArrangementTimeRangeState, ArrangementViewState, CURRENT_SCHEMA_VERSION,
+        FxAutomationLaneViewState, VolumeAutomationLaneViewState,
     };
     use aaadaw_core::{DawAction, Project, TrackFxPlugin};
 
@@ -643,7 +660,7 @@ mod arrangement_view_state_tests {
         drop(connection);
 
         let store = ProjectStore::open(&path).unwrap();
-        assert_eq!(store.schema_version().unwrap(), 38);
+        assert_eq!(store.schema_version().unwrap(), CURRENT_SCHEMA_VERSION);
         assert_eq!(store.load().unwrap().tracks()[0].name(), "Original");
         assert_eq!(
             store.load_arrangement_view_state().unwrap(),
@@ -694,6 +711,7 @@ mod arrangement_view_state_tests {
 #[cfg(test)]
 mod project_marker_storage_tests {
     use super::ProjectStore;
+    use crate::CURRENT_SCHEMA_VERSION;
     use aaadaw_core::{DawAction, Project};
     use rusqlite::Connection;
 
@@ -733,7 +751,7 @@ mod project_marker_storage_tests {
             .connection
             .pragma_query_value(None, "user_version", |row| row.get(0))
             .unwrap();
-        assert_eq!(schema_version, 38);
+        assert_eq!(schema_version, i64::from(CURRENT_SCHEMA_VERSION));
     }
 
     #[test]
@@ -836,7 +854,7 @@ mod project_marker_storage_tests {
             .connection
             .pragma_query_value(None, "user_version", |row| row.get(0))
             .unwrap();
-        assert_eq!(schema_version, 38);
+        assert_eq!(schema_version, i64::from(CURRENT_SCHEMA_VERSION));
     }
 }
 
@@ -2907,6 +2925,21 @@ fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
             }
             37 => transaction.execute_batch(MIGRATION_37)?,
             38 => transaction.execute_batch(MIGRATION_38)?,
+            39 => {
+                transaction.execute_batch(AUDIO_ITEMS_TABLE)?;
+                if !table_has_column(&transaction, "audio_items", "volume")? {
+                    transaction.execute_batch(MIGRATION_39)?;
+                }
+            }
+            40 => {
+                transaction.execute_batch(AUDIO_ITEMS_TABLE)?;
+                if !table_has_column(&transaction, "audio_items", "take_volume")? {
+                    transaction.execute_batch(MIGRATION_40_TAKE_VOLUME)?;
+                }
+                if !table_has_column(&transaction, "audio_items", "take_pan")? {
+                    transaction.execute_batch(MIGRATION_40_TAKE_PAN)?;
+                }
+            }
             missing => return Err(StorageError::MissingMigration(missing - 1)),
         }
         transaction.pragma_update(None, "user_version", next_version)?;
@@ -3076,7 +3109,8 @@ fn write_snapshot(
     for (position, item) in snapshot.audio_items.iter().enumerate() {
         transaction.execute(
             "INSERT INTO audio_items(id, track_id, position, media_ref, start_sample, \
-             source_offset_samples, length_samples) VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+             source_offset_samples, length_samples, volume, take_volume, take_pan) \
+             VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
             params![
                 to_sql_integer(item.id)?,
                 to_sql_integer(item.track_id)?,
@@ -3084,7 +3118,10 @@ fn write_snapshot(
                 item.media_ref,
                 to_sql_integer(item.start_sample)?,
                 to_sql_integer(item.source_offset_samples)?,
-                to_sql_integer(item.length_samples)?
+                to_sql_integer(item.length_samples)?,
+                f64::from(item.volume),
+                f64::from(item.take_volume),
+                f64::from(item.take_pan)
             ],
         )?;
         transaction.execute(
@@ -3675,7 +3712,7 @@ fn read_audio_items(connection: &Connection) -> Result<Vec<AudioItemSnapshot>, S
     }
     let mut statement = connection.prepare(
         "SELECT id, track_id, position, media_ref, start_sample, source_offset_samples, \
-         length_samples FROM audio_items ORDER BY position",
+         length_samples, volume, take_volume, take_pan FROM audio_items ORDER BY position",
     )?;
     let rows = statement
         .query_map([], |row| {
@@ -3687,16 +3724,43 @@ fn read_audio_items(connection: &Connection) -> Result<Vec<AudioItemSnapshot>, S
                 row.get::<_, i64>(4)?,
                 row.get::<_, i64>(5)?,
                 row.get::<_, i64>(6)?,
+                row.get::<_, f64>(7)?,
+                row.get::<_, f64>(8)?,
+                row.get::<_, f64>(9)?,
             ))
         })?
         .collect::<Result<Vec<_>, _>>()?;
     let items = rows
         .into_iter()
         .map(
-            |(id, track_id, position, media_ref, start_sample, source_offset, length)| {
+            |(
+                id,
+                track_id,
+                position,
+                media_ref,
+                start_sample,
+                source_offset,
+                length,
+                volume,
+                take_volume,
+                take_pan,
+            )| {
                 let _ = from_sql_u64(position)?;
+                if !volume.is_finite() || !(0.0..=16.0).contains(&volume) {
+                    return Err(StorageError::Snapshot(SnapshotError::InvalidProjectData));
+                }
+                if !take_volume.is_finite()
+                    || !(0.0..=16.0).contains(&take_volume)
+                    || !take_pan.is_finite()
+                    || !(-1.0..=1.0).contains(&take_pan)
+                {
+                    return Err(StorageError::Snapshot(SnapshotError::InvalidProjectData));
+                }
                 Ok(AudioItemSnapshot {
                     fades: fades.remove(&from_sql_u64(id)?).unwrap_or_default(),
+                    volume: volume as f32,
+                    take_volume: take_volume as f32,
+                    take_pan: take_pan as f32,
                     id: from_sql_u64(id)?,
                     track_id: from_sql_u64(track_id)?,
                     media_ref,

@@ -25,11 +25,15 @@ mod cpal_input;
 ))]
 mod cpal_output;
 mod item_fades;
+mod item_take_mix;
+mod item_volume;
 #[cfg(feature = "jack-backend")]
 mod jack_input;
 #[cfg(feature = "jack-backend")]
 mod jack_output;
 pub use item_fades::ItemFadeController;
+pub use item_take_mix::ItemTakeMixController;
+pub use item_volume::ItemVolumeController;
 mod master_mix;
 mod master_output;
 pub use master_mix::MasterMixController;
@@ -1663,6 +1667,8 @@ struct RenderGraphSources {
     cursors: Vec<Option<u64>>,
     item_ids: Vec<Option<ItemId>>,
     fades: Vec<aaadaw_core::AudioItemFades>,
+    volumes: Vec<f32>,
+    take_mixes: Vec<(f32, f32)>,
 }
 
 fn compile_fx_routes(
@@ -1880,6 +1886,10 @@ pub struct AudioRenderGraph {
     source_item_ids: Vec<Option<ItemId>>,
     source_fades: Vec<item_fades::ItemFadeReader>,
     item_fade_controller: ItemFadeController,
+    source_volumes: Vec<item_volume::ItemVolumeReader>,
+    item_volume_controller: ItemVolumeController,
+    source_take_mixes: Vec<item_take_mix::ItemTakeMixReader>,
+    item_take_mix_controller: ItemTakeMixController,
     scratch: Vec<Vec<[f32; 2]>>,
     input_monitor: Option<AudioMonitorConsumer>,
     input_monitor_gate: Option<AudioInputMonitorGate>,
@@ -1910,6 +1920,8 @@ impl AudioRenderGraph {
             cursors: vec![None; streams.len()],
             item_ids: vec![None; streams.len()],
             fades: vec![aaadaw_core::AudioItemFades::default(); streams.len()],
+            volumes: vec![1.0; streams.len()],
+            take_mixes: vec![(1.0, 0.0); streams.len()],
             streams: streams
                 .into_iter()
                 .map(AudioItemPcmConsumer::Mono)
@@ -1988,6 +2000,8 @@ impl AudioRenderGraph {
             cursors: Vec::with_capacity(item_streams.len()),
             item_ids: Vec::with_capacity(item_streams.len()),
             fades: Vec::with_capacity(item_streams.len()),
+            volumes: Vec::with_capacity(item_streams.len()),
+            take_mixes: Vec::with_capacity(item_streams.len()),
         };
         for (item, stream) in project.audio_items().iter().zip(item_streams) {
             if item.id() != stream.item_id {
@@ -2019,6 +2033,10 @@ impl AudioRenderGraph {
             sources.cursors.push(Some(source_start_sample));
             sources.item_ids.push(Some(item.id()));
             sources.fades.push(item.fades());
+            sources.volumes.push(item.volume());
+            sources
+                .take_mixes
+                .push((item.take_volume(), item.take_pan()));
         }
 
         Self::build(project, sources, instruments, effects, max_block_frames)
@@ -2135,6 +2153,10 @@ impl AudioRenderGraph {
         }
         let (item_fade_controller, source_fades) =
             item_fades::compile(&sources.item_ids, sources.fades);
+        let (item_volume_controller, source_volumes) =
+            item_volume::compile(&sources.item_ids, sources.volumes);
+        let (item_take_mix_controller, source_take_mixes) =
+            item_take_mix::compile(&sources.item_ids, sources.take_mixes);
         Ok(Self {
             mixer,
             master_mix: master_mix::MasterOutputMix::new(
@@ -2170,6 +2192,10 @@ impl AudioRenderGraph {
             source_item_ids: sources.item_ids,
             source_fades,
             item_fade_controller,
+            source_volumes,
+            item_volume_controller,
+            source_take_mixes,
+            item_take_mix_controller,
             scratch,
             input_monitor: None,
             input_monitor_gate: None,
@@ -2181,6 +2207,16 @@ impl AudioRenderGraph {
     /// Returns the control-side handle for live manual Item fade publication.
     pub fn item_fade_controller(&self) -> ItemFadeController {
         self.item_fade_controller.clone()
+    }
+
+    /// Returns the control-side handle for live Item volume publication.
+    pub fn item_volume_controller(&self) -> ItemVolumeController {
+        self.item_volume_controller.clone()
+    }
+
+    /// Returns the control-side handle for live take volume and pan publication.
+    pub fn item_take_mix_controller(&self) -> ItemTakeMixController {
+        self.item_take_mix_controller.clone()
     }
 
     /// Returns the project sample rate used by its tempo map.
@@ -3064,13 +3100,22 @@ impl AudioRenderGraph {
                         overlap_start,
                     );
                     let fades = self.source_fades[stream_index].read();
+                    let volume = self.source_volumes[stream_index].read();
+                    let (take_volume, take_pan) = self.source_take_mixes[stream_index].read();
                     for (index, frame) in input[offset..offset + length].iter_mut().enumerate() {
-                        let gain = fades.gain_at(
-                            overlap_start - item_start + index as u64,
-                            item_end - item_start,
-                        );
+                        let gain = volume
+                            * take_volume
+                            * fades.gain_at(
+                                overlap_start - item_start + index as u64,
+                                item_end - item_start,
+                            );
                         frame[0] *= gain;
                         frame[1] *= gain;
+                        if take_pan < 0.0 {
+                            frame[1] *= 1.0 + take_pan;
+                        } else {
+                            frame[0] *= 1.0 - take_pan;
+                        }
                     }
                     underrun_samples = underrun_samples.saturating_add(underruns);
                     if underruns > 0

@@ -680,12 +680,12 @@ fn audio_item_snap_target(
     })
 }
 
-fn action_updates_item_fades(action: &DawAction) -> bool {
+fn action_updates_item_mix(action: &DawAction) -> bool {
     match action {
-        DawAction::SetAudioItemFades { .. } => true,
-        DawAction::BatchTransaction { actions, .. } => {
-            actions.iter().any(action_updates_item_fades)
-        }
+        DawAction::SetAudioItemFades { .. }
+        | DawAction::SetAudioItemVolume { .. }
+        | DawAction::SetAudioItemTakeMix { .. } => true,
+        DawAction::BatchTransaction { actions, .. } => actions.iter().any(action_updates_item_mix),
         _ => false,
     }
 }
@@ -7175,7 +7175,7 @@ impl App {
         let master_mix_before = self.project.master_mix();
         #[cfg(feature = "audio-device")]
         let sample_rate_before = self.project.settings().sample_rate();
-        let publish_item_fades = action_updates_item_fades(&action);
+        let publish_item_mix = action_updates_item_mix(&action);
         #[cfg(feature = "audio-device")]
         let rebuild_playback_graph = action_rebuilds_playback_graph(&action);
         let live_mix_track = match &action {
@@ -7229,9 +7229,11 @@ impl App {
                 if self.project.master_mix() != master_mix_before {
                     self.sync_master_mix_to_playback();
                 }
-                if publish_item_fades {
+                if publish_item_mix {
                     for item in self.project.audio_items() {
                         self.sync_item_fades_to_playback(item.id());
+                        self.sync_item_volume_to_playback(item.id());
+                        self.sync_item_take_mix_to_playback(item.id());
                     }
                 }
                 if let Some(track_id) = live_mute_solo_track {
@@ -7295,10 +7297,42 @@ impl App {
         let _ = item_id;
     }
 
+    fn sync_item_volume_to_playback(&self, item_id: ItemId) {
+        #[cfg(feature = "audio-device")]
+        if let Some(item) = self
+            .project
+            .audio_items()
+            .iter()
+            .find(|item| item.id() == item_id)
+            && let Some(playback) = &self.playback
+        {
+            let _ = playback.set_item_volume(item_id, item.volume());
+        }
+        #[cfg(not(feature = "audio-device"))]
+        let _ = item_id;
+    }
+
+    fn sync_item_take_mix_to_playback(&self, item_id: ItemId) {
+        #[cfg(feature = "audio-device")]
+        if let Some(item) = self
+            .project
+            .audio_items()
+            .iter()
+            .find(|item| item.id() == item_id)
+            && let Some(playback) = &self.playback
+        {
+            let _ = playback.set_item_take_mix(item_id, item.take_volume(), item.take_pan());
+        }
+        #[cfg(not(feature = "audio-device"))]
+        let _ = item_id;
+    }
+
     fn sync_all_track_mix_to_playback(&self) {
         self.sync_master_mix_to_playback();
         for item in self.project.audio_items() {
             self.sync_item_fades_to_playback(item.id());
+            self.sync_item_volume_to_playback(item.id());
+            self.sync_item_take_mix_to_playback(item.id());
         }
         for track in self.project.tracks() {
             self.sync_track_mix_to_playback(track.id());

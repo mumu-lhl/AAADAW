@@ -98,6 +98,12 @@ pub enum ActionError {
     InvalidAudioItemLength,
     /// A manual audio Item fade duration must be finite and nonnegative.
     InvalidAudioItemFade,
+    /// An audio item volume must be finite and between silence and +24 dB.
+    InvalidAudioItemVolume,
+    /// An audio item's active take volume must be finite and between silence and +24 dB.
+    InvalidAudioItemTakeVolume,
+    /// An audio item's active take pan must be finite and between full left and full right.
+    InvalidAudioItemTakePan,
     /// An audio item's project start and duration exceed the sample range.
     InvalidAudioItemPosition,
     /// The requested audio item does not exist in the project.
@@ -267,6 +273,15 @@ impl fmt::Display for ActionError {
             }
             Self::InvalidAudioItemFade => {
                 write!(formatter, "audio Item fade duration must be finite and nonnegative")
+            }
+            Self::InvalidAudioItemVolume => formatter.write_str(
+                "audio item volume must be finite and between 0 and 16 (−∞ to +24 dB)",
+            ),
+            Self::InvalidAudioItemTakeVolume => formatter.write_str(
+                "active take volume must be finite and between 0 and 16 (−∞ to +24 dB)",
+            ),
+            Self::InvalidAudioItemTakePan => {
+                formatter.write_str("active take pan must be finite and between -1 and 1")
             }
             Self::InvalidAudioItemLength => {
                 formatter.write_str("audio item length must be positive")

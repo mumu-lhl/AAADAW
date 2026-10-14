@@ -149,8 +149,8 @@ impl App {
         self.timeline.context_item = None;
         self.timeline.context_fade = None;
         let (id, task) = iced::window::open(iced::window::Settings {
-            size: iced::Size::new(526.0, 350.0),
-            min_size: Some(iced::Size::new(526.0, 350.0)),
+            size: iced::Size::new(526.0, 390.0),
+            min_size: Some(iced::Size::new(526.0, 390.0)),
             ..iced::window::Settings::default()
         });
         self.item_properties_window_id = Some(id);
@@ -181,6 +181,8 @@ impl App {
         };
         let id = item.id();
         let current = item.fades();
+        let current_take_volume = item.take_volume();
+        let current_take_pan = item.take_pan();
         let sample_rate = self.project.settings().sample_rate();
         let placement = match draft.placement_in_project(item, &self.project) {
             Ok(placement) => placement,
@@ -204,6 +206,28 @@ impl App {
                 return Task::none();
             }
         };
+        let take_volume = if draft.changed[9] {
+            match parse_take_volume_db(&draft.fields[9]) {
+                Ok(volume) => volume,
+                Err(error) => {
+                    self.item_properties.as_mut().expect("open draft").error = Some(error);
+                    return Task::none();
+                }
+            }
+        } else {
+            current_take_volume
+        };
+        let take_pan = if draft.changed[10] {
+            match parse_take_pan(&draft.fields[10]) {
+                Ok(pan) => pan,
+                Err(error) => {
+                    self.item_properties.as_mut().expect("open draft").error = Some(error);
+                    return Task::none();
+                }
+            }
+        } else {
+            current_take_pan
+        };
         let mut actions = Vec::new();
         if changes_placement {
             actions.push(aaadaw_core::DawAction::EditAudioItem {
@@ -216,6 +240,13 @@ impl App {
         }
         if fades != current {
             actions.push(aaadaw_core::DawAction::SetAudioItemFades { item_id: id, fades });
+        }
+        if take_volume != current_take_volume || take_pan != current_take_pan {
+            actions.push(aaadaw_core::DawAction::SetAudioItemTakeMix {
+                item_id: id,
+                volume: take_volume,
+                pan: take_pan,
+            });
         }
         if !actions.is_empty() {
             let action = if actions.len() == 1 {
@@ -230,6 +261,8 @@ impl App {
             if !self.project.audio_items().iter().any(|item| {
                 item.id() == id
                     && item.fades() == fades
+                    && item.take_volume() == take_volume
+                    && item.take_pan() == take_pan
                     && ItemPlacement::from_item(item) == placement
             }) {
                 self.item_properties.as_mut().expect("open draft").error =
@@ -267,6 +300,8 @@ pub(crate) enum ItemPropertyField {
     Position,
     Length,
     SourceOffset,
+    TakeVolume,
+    TakePan,
 }
 
 impl ItemPropertyField {
@@ -278,8 +313,8 @@ impl ItemPropertyField {
 #[derive(Debug, Clone)]
 pub(crate) struct ItemProperties {
     pub(crate) item_id: ItemId,
-    pub(crate) fields: [String; 9],
-    changed: [bool; 9],
+    pub(crate) fields: [String; 11],
+    changed: [bool; 11],
     pub(crate) unit: TimeUnit,
     frame_rate: aaadaw_core::FrameRate,
     pub(crate) error: Option<String>,
@@ -426,7 +461,13 @@ impl ItemProperties {
     }
 
     pub(crate) fn from_item(item: &AudioItem, sample_rate: u32, unit: TimeUnit) -> Self {
-        let mut draft = Self::new(item.id(), item.fades(), sample_rate);
+        let mut draft = Self::new(
+            item.id(),
+            item.fades(),
+            item.take_volume(),
+            item.take_pan(),
+            sample_rate,
+        );
         draft.unit = unit;
         for (index, samples) in [
             item.start_sample(),
@@ -492,7 +533,13 @@ impl ItemProperties {
         })
     }
 
-    pub(crate) fn new(item_id: ItemId, fades: AudioItemFades, sample_rate: u32) -> Self {
+    pub(crate) fn new(
+        item_id: ItemId,
+        fades: AudioItemFades,
+        take_volume: f32,
+        take_pan: f32,
+        sample_rate: u32,
+    ) -> Self {
         let input = fades.fade_in.curve().parameters();
         let output = fades.fade_out.curve().parameters();
         Self {
@@ -507,8 +554,10 @@ impl ItemProperties {
                 "0:00.000".to_owned(),
                 "0:00.000".to_owned(),
                 "0:00.000".to_owned(),
+                format_take_volume_db(take_volume),
+                format_take_pan(take_pan),
             ],
-            changed: [false; 9],
+            changed: [false; 11],
             unit: TimeUnit::Time,
             frame_rate: aaadaw_core::FrameRate::default(),
             error: None,
@@ -632,6 +681,84 @@ fn format_samples(samples: u64, sample_rate: u32, unit: TimeUnit) -> String {
     }
 }
 
+fn format_take_volume_db(volume: f32) -> String {
+    if volume == 0.0 {
+        "-inf dB".to_owned()
+    } else {
+        format!("{:.2}dB", 20.0 * volume.log10())
+    }
+}
+
+fn parse_take_volume_db(text: &str) -> Result<f32, String> {
+    let text = text.trim();
+    let text = text
+        .strip_suffix("dB")
+        .or_else(|| text.strip_suffix("db"))
+        .unwrap_or(text)
+        .trim();
+    if matches!(text.to_ascii_lowercase().as_str(), "-inf" | "-infinity") || text == "-∞" {
+        return Ok(0.0);
+    }
+    let decibels = text
+        .parse::<f32>()
+        .map_err(|_| "Enter take volume in dB or -inf for silence".to_owned())?;
+    if !decibels.is_finite() || !(-150.0..=24.0).contains(&decibels) {
+        return Err("Take volume must be -inf or between -150 and +24 dB".to_owned());
+    }
+    let volume = 10.0_f32.powf(decibels / 20.0);
+    if !volume.is_finite() || volume > aaadaw_core::MAX_AUDIO_ITEM_TAKE_VOLUME {
+        return Err("Take volume is outside the supported range".to_owned());
+    }
+    Ok(volume)
+}
+
+fn format_take_pan(pan: f32) -> String {
+    if pan == 0.0 {
+        return "center".to_owned();
+    }
+    let percentage = pan.abs() * 100.0;
+    let number = format!("{percentage:.2}")
+        .trim_end_matches('0')
+        .trim_end_matches('.')
+        .to_owned();
+    format!("{number}%{}", if pan < 0.0 { "L" } else { "R" })
+}
+
+fn parse_take_pan(text: &str) -> Result<f32, String> {
+    let text = text.trim();
+    if text.eq_ignore_ascii_case("center") {
+        return Ok(0.0);
+    }
+    if let Some(percent) = text.strip_suffix("%L").or_else(|| text.strip_suffix("%l")) {
+        let percent = percent
+            .trim()
+            .parse::<f32>()
+            .map_err(|_| "Enter take pan as center, a signed value, or a percentage".to_owned())?;
+        if percent.is_finite() && (0.0..=100.0).contains(&percent) {
+            return Ok(-percent / 100.0);
+        }
+        return Err("Take pan percentage must be between 0%L and 100%L".to_owned());
+    }
+    if let Some(percent) = text.strip_suffix("%R").or_else(|| text.strip_suffix("%r")) {
+        let percent = percent
+            .trim()
+            .parse::<f32>()
+            .map_err(|_| "Enter take pan as center, a signed value, or a percentage".to_owned())?;
+        if percent.is_finite() && (0.0..=100.0).contains(&percent) {
+            return Ok(percent / 100.0);
+        }
+        return Err("Take pan percentage must be between 0%R and 100%R".to_owned());
+    }
+    let pan = text
+        .parse::<f32>()
+        .map_err(|_| "Enter take pan as center, a signed value, or a percentage".to_owned())?;
+    if pan.is_finite() && (-1.0..=1.0).contains(&pan) {
+        Ok(pan)
+    } else {
+        Err("Take pan must be between -1 and +1".to_owned())
+    }
+}
+
 fn parse_time(text: &str) -> Result<f64, String> {
     let fields = text.trim().split(':').collect::<Vec<_>>();
     if fields.is_empty() || fields.len() > 3 {
@@ -688,6 +815,34 @@ mod tests {
     use aaadaw_core::{DawAction, Project};
 
     #[test]
+    fn take_volume_db_round_trips_unity_attenuation_and_silence() {
+        assert_eq!(parse_take_volume_db("0.00dB").unwrap(), 1.0);
+        assert!((parse_take_volume_db("-6.02 dB").unwrap() - 0.5).abs() < 0.001);
+        assert_eq!(parse_take_volume_db("-inf").unwrap(), 0.0);
+        assert_eq!(parse_take_volume_db("-∞").unwrap(), 0.0);
+        assert_eq!(format_take_volume_db(1.0), "0.00dB");
+        assert_eq!(format_take_volume_db(0.0), "-inf dB");
+        assert!((parse_take_volume_db(&format_take_volume_db(0.5)).unwrap() - 0.5).abs() < 0.001);
+    }
+
+    #[test]
+    fn take_volume_db_rejects_invalid_and_out_of_range_values() {
+        for text in ["", "quiet", "NaN", "inf", "-150.01", "24.01"] {
+            assert!(parse_take_volume_db(text).is_err(), "accepted {text:?}");
+        }
+    }
+
+    #[test]
+    fn take_pan_formats_and_parses_native_center_and_left_right_percentages() {
+        for (text, expected) in [("center", 0.0), ("50%L", -0.5), ("25%R", 0.25)] {
+            assert!((parse_take_pan(text).unwrap() - expected).abs() < f32::EPSILON);
+            assert_eq!(format_take_pan(expected), text);
+        }
+        assert!(parse_take_pan("101%R").is_err());
+        assert!(parse_take_pan("1.1").is_err());
+    }
+
+    #[test]
     fn signed_project_start_offset_affects_item_position_not_duration_or_source_offset() {
         let mut project = Project::new();
         project
@@ -711,7 +866,10 @@ mod tests {
 
         let item = &project.audio_items()[0];
         let mut time = ItemProperties::from_project_item(item, &project, TimeUnit::Time);
-        assert_eq!(&time.fields[6..], &["-0:04.000", "0:01.000", "0:02.000"]);
+        assert_eq!(
+            &time.fields[6..],
+            &["-0:04.000", "0:01.000", "0:02.000", "0.00dB", "center"]
+        );
         time.edit(ItemPropertyField::Position, "0:00.000".into());
         assert_eq!(
             time.placement_in_project(item, &project).unwrap(),
@@ -752,7 +910,10 @@ mod tests {
             .unwrap();
         let item = &project.audio_items()[0];
         let mut draft = ItemProperties::from_item(item, 48000, TimeUnit::Samples);
-        assert_eq!(&draft.fields[6..], &["16001", "48000", "23"]);
+        assert_eq!(
+            &draft.fields[6..],
+            &["16001", "48000", "23", "0.00dB", "center"]
+        );
         assert!(!draft.has_changes());
         draft.edit(ItemPropertyField::Position, "24000".into());
         draft.edit(ItemPropertyField::InCurvature, "0.25".into());
@@ -772,7 +933,10 @@ mod tests {
         draft.edit(ItemPropertyField::Length, "NaN".into());
         draft.set_unit(TimeUnit::Samples, item, 48000);
         assert_eq!(draft.unit, TimeUnit::Samples);
-        assert_eq!(&draft.fields[6..], &["16001", "48000", "23"]);
+        assert_eq!(
+            &draft.fields[6..],
+            &["16001", "48000", "23", "0.00dB", "center"]
+        );
         assert!(!draft.has_changes());
         draft.edit(ItemPropertyField::Position, "-0.4".into());
         assert!(draft.placement(item, 48000).is_err());
@@ -800,7 +964,7 @@ mod tests {
             ItemProperties::from_project_item(&project.audio_items()[0], &project, TimeUnit::Hmsf);
         assert_eq!(
             &draft.fields[6..],
-            &["00:00:00:10", "00:00:00:07", "0:00.125"]
+            &["00:00:00:10", "00:00:00:07", "0:00.125", "0.00dB", "center"]
         );
         draft.edit(ItemPropertyField::InCurvature, "0.25".into());
         assert_eq!(
@@ -844,7 +1008,7 @@ mod tests {
         );
         assert_eq!(
             &draft.fields[6..],
-            &["00:00:00:10", "00:00:00:07", "0:00.125"]
+            &["00:00:00:10", "00:00:00:07", "0:00.125", "0.00dB", "center"]
         );
     }
 
@@ -875,7 +1039,7 @@ mod tests {
         let mut draft = ItemProperties::from_project_item(item, &project, TimeUnit::Hmsf);
         assert_eq!(
             &draft.fields[6..],
-            &["00:00:00:08", "00:00:00:06", "0:00.125"]
+            &["00:00:00:08", "00:00:00:06", "0:00.125", "0.00dB", "center"]
         );
         assert_eq!(
             draft.placement_in_project(item, &project).unwrap(),
@@ -922,7 +1086,10 @@ mod tests {
             .unwrap();
         let item = &project.audio_items()[0];
         let mut draft = ItemProperties::from_project_item(item, &project, TimeUnit::Beats);
-        assert_eq!(&draft.fields[6..], &["1.1.67", "0.0.50", "0:00.125"]);
+        assert_eq!(
+            &draft.fields[6..],
+            &["1.1.67", "0.0.50", "0:00.125", "0.00dB", "center"]
+        );
         assert_eq!(
             draft.placement_in_project(item, &project).unwrap(),
             ItemPlacement::from_item(item)

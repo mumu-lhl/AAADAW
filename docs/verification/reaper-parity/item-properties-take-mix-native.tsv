@@ -1,0 +1,15 @@
+property	value
+target	Linux REAPER 7.82/linux-x86_64, Default 7.0 factory theme/configuration
+window	Media Item Properties, 526x693 client area
+fixture	Unsaved disposable project; one selected audio item
+media_item_D_VOL	0.5
+native_take_volume_default	0.00 dB
+native_take_pan_default	center
+native_take_volume_after_entry	-6.02 dB
+native_take_pan_after_entry	center
+volume_pan_row_location	Take properties
+native_default_dialog_sha256	8154716759e227d0ac95c9f73f53fa473b608524ec532b77b21703fd00a157a1
+native_applied_dialog_sha256	a7df52966d43b577a84eaf552253261bcafc5a5793e4492436e386dea76c05f3
+aaadaw_default_dialog_sha256	4c66370e160d452f4d1904cce55c6129b4dc98a5d99b26142e088fd21369919d
+aaadaw_applied_dialog_sha256	76d00c11e5afa5eeb54c40c383c008e6935c4b9d9f10cbd7a3bb9f0bf34792d1
+render_comparison	Not performed after changing take volume; native take gain and pan coefficients remain unverified

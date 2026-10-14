@@ -11,11 +11,20 @@ runs on a background worker, feeds media through bounded queues, writes output i
 does not change project history or the active playback graph. The UI reports frame progress and
 can cancel a render.
 
-The `Selected media items` source is a separate path: it streams each selected item's trimmed
-media, applies modeled item fades, then reuses the output sample-rate conversion, channel mapping,
-normalization, and WAV writer. It bypasses the track and Master graph. Native item/take FX and
-track-fader behavior for this REAPER source remain unverified and are tracked separately in the
-REAPER parity record.
+The `Selected media items` source builds an in-memory project snapshot containing only the chosen
+audio item, while keeping its original timeline position and its track, routing, and mix state. It
+then uses the regular render graph, so modeled item/take volume and take pan, fades, track processing, and Master
+processing follow the same path as other renders. Keeping the original sample position also keeps
+track automation aligned to the project clock. Other media items and MIDI parts are removed from
+the render snapshot, preventing them from leaking into the file. Output bounds are the selected
+item's start and end, with no additional tail. The saved project and playback graph are unchanged.
+
+The Linux REAPER 7.82 probe confirmed that selected-item output includes item gain and track-fader
+gain: with both set to 0.5, a source at `[0.125, 0.375]` rendered as `[0.03125, 0.09375]`. Native
+Item Properties inspection separately confirmed that its Volume/pan row edits the active take; the
+take-volume render coefficient and native pan law still need waveform comparison.
+Master-fader behavior and native item/take FX, automation, folder, and send behavior still need
+direct comparison; the parity record tracks those gaps separately.
 
 Each finite floating-point output sample is clamped to [-1, 1], multiplied by 2^23, rounded to the
 nearest integer, then saturated to the signed 24-bit range and written little-endian. The renderer

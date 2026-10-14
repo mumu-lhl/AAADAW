@@ -39,7 +39,7 @@ schema 25 新增 `audio_item_fades` 表；旧 Item 没有行时恢复零长度�
 
 真实 PCM 在 source 相加到轨道 FX 输入前应用一次淡化，时钟不受媒体 source offset 影响；处理涵盖 Item 起止、跨 callback 与中途 seek，不改变未放置 Item 的传统连续轨道源及输入监听路径。
 
-尚待：GUI 淡化手柄及曲线菜单、原厂手势/修饰键、自动 Crossfade、自动分割淡化、Take/Item gain 和 Item Properties 全界面。基础模型不宣称这些能力已经完成。
+尚待：GUI 淡化手柄及曲线菜单、原厂手势/修饰键、自动 Crossfade、自动分割淡化、完整 Take/Item gain 行为和 Item Properties 全界面。基础模型不宣称这些能力已经完成。
 
 ## 本地验证
 
@@ -48,7 +48,7 @@ schema 25 新增 `audio_item_fades` 表；旧 Item 没有行时恢复零长度�
 回归覆盖真实双声道 PCM、七种曲线、非零 Item 起点及 source offset、跨 13 帧 callback、淡出区域 seek、小数/超长长度、Undo/Redo、完整复制、Snapshot、批处理失败原子性、schema 24 默认迁移、只读重开字节不变与非法长度拒绝。默认已有无分配 callback 回归也通过；本切片没有对 GUI 淡化手柄作未执行的验收。
 
 
-补充原厂 UI 观察：选中单个音频 Item、F2 打开 Media Item Properties，客户端 526×693。该窗口同时包含 Fade in/out 时间、两组 Curve 字段和曲线按钮；超长淡出仍显示 0:02.000，而 Item Length 显示 0:01.000，与保存请求长度的 API 行为一致。完整属性字段和批量编辑将另行实现和验收，未用简化 Inspector 代替。
+补充原厂 UI 观察：选中单个音频 Item、F2 打开 Media Item Properties，客户端 526×693。该窗口同时包含 Fade in/out 时间、两组 Curve 字段和曲线按钮；超长淡出仍显示 0:02.000，而 Item Length 显示 0:01.000，与保存请求长度的 API 行为一致。Volume/pan 位于 Take properties：media-item `D_VOL=0.5` 时原窗显示 take `0.00dB`/`center`；输入 `-6.02dB` 并重新打开后字段保留该 take 值。原始窗口截图和字段事实记录见 [`item-properties-take-mix-native.tsv`](item-properties-take-mix-native.tsv)。这项实测说明 take 音量与 media-item `D_VOL` 是不同参数；原厂 take 音量渲染增益及 pan DSP 仍待波形核对。AAADAW 已将该行映射到独立 take mix，并使用无锁/无分配的原子参数对；显示和模型测试不代表完整窗口、批量编辑或 DSP 等价。
 
 ## 实时发布切片
 
@@ -111,7 +111,7 @@ AAADAW 实窗 [淡入菜单](item-fade-ui/curve-menu-in.png)和 [淡出菜单](i
 
 ## Item Properties 淡化数值编辑基础
 
-独立 Media Item Properties 窗口接入 Item 菜单和 F2，区分“打开”（原厂动作 40009）与“切换”（41589，默认 F2）。在主窗口或属性窗口获得焦点时，F2 都可切换关闭；用户显式绑定优先。当前仅单个 Audio Item 的淡化字段，窗口 526×210；原厂完整 526×693 属性窗口包含其他 Item/Take/Source 能力，尚未完成其字段及几何。
+独立 Media Item Properties 窗口接入 Item 菜单和 F2，区分“打开”（原厂动作 40009）与“切换”（41589，默认 F2）。在主窗口或属性窗口获得焦点时，F2 都可切换关闭；用户显式绑定优先。窗口可编辑单个 Audio Item 的淡化、位置/长度、源起点和 Take Volume/pan 草稿；schema 40 保存 take volume 与 pan，实时图以单个原子对发布。REAPER 原窗 526×693，AAADAW 窗口 526×390；AAADAW 当前缺少大量 Item/Take/Source 字段、开关、滑块和控制，不能视为完整属性窗复刻。
 
 输入草稿与工程分离，Apply/OK 经 SetAudioItemFades 一次提交；Cancel/Escape 不改工程。未编辑字段保留完整小数长度及 Legacy/Native 模式，编辑曲率保留同端 S 和另一端参数。非法/非有限输入留在草稿并显示错误；曲率有限值按实测限制至 −1..1。旧工程窗口草稿不能应用到另一工程 generation。
 

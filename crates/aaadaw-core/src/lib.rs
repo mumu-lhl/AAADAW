@@ -21,7 +21,7 @@ mod timecode;
 mod track;
 
 pub use action::DawAction;
-pub use audio::AudioItem;
+pub use audio::{AudioItem, MAX_AUDIO_ITEM_TAKE_VOLUME, MAX_AUDIO_ITEM_VOLUME};
 pub use error::ActionError;
 pub use fades::{AudioFade, AudioItemFades, FadeCurve, FadeCurveParameters, FadeShape};
 pub use markers::{MAX_PROJECT_MARKER_NUMBER, MarkerId, ProjectMarker};

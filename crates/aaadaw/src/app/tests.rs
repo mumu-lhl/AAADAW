@@ -10850,7 +10850,7 @@ fn item_properties_stage_fades_preserve_precision_and_apply_one_history_entry() 
             fades: original,
         })
         .unwrap();
-    app.item_properties = Some(ItemProperties::new(id, original, 48000));
+    app.item_properties = Some(ItemProperties::new(id, original, 1.0, 0.0, 48000));
     let revision = app.revision;
     let _ = app.update(Message::ApplyItemProperties(false));
     assert_eq!(app.project.audio_items()[0].fades(), original);
@@ -10863,6 +10863,14 @@ fn item_properties_stage_fades_preserve_precision_and_apply_one_history_entry() 
         ItemPropertyField::OutLength,
         "0:00.1255".into(),
     ));
+    let _ = app.update(Message::ItemPropertyFieldChanged(
+        ItemPropertyField::TakeVolume,
+        "-6.02dB".into(),
+    ));
+    let _ = app.update(Message::ItemPropertyFieldChanged(
+        ItemPropertyField::TakePan,
+        "25%L".into(),
+    ));
     assert_eq!(app.project.audio_items()[0].fades(), original);
     let _ = app.update(Message::ApplyItemProperties(false));
     let applied = app.project.audio_items()[0].fades();
@@ -10872,10 +10880,17 @@ fn item_properties_stage_fades_preserve_precision_and_apply_one_history_entry() 
     );
     assert_eq!(applied.fade_out.length_samples(), 6024.0);
     assert_eq!(applied.fade_out.curve(), original.fade_out.curve());
+    assert_eq!(app.project.audio_items()[0].volume(), 1.0);
+    assert!((app.project.audio_items()[0].take_volume() - 0.5).abs() < 0.001);
+    assert_eq!(app.project.audio_items()[0].take_pan(), -0.25);
     let _ = app.update(Message::Undo);
     assert_eq!(app.project.audio_items()[0].fades(), original);
+    assert_eq!(app.project.audio_items()[0].take_volume(), 1.0);
+    assert_eq!(app.project.audio_items()[0].take_pan(), 0.0);
     let _ = app.update(Message::Redo);
     assert_eq!(app.project.audio_items()[0].fades(), applied);
+    assert!((app.project.audio_items()[0].take_volume() - 0.5).abs() < 0.001);
+    assert_eq!(app.project.audio_items()[0].take_pan(), -0.25);
     let _ = app.update(Message::ItemPropertyFieldChanged(
         ItemPropertyField::InLength,
         "NaN".into(),
@@ -10890,7 +10905,7 @@ fn item_properties_stage_fades_preserve_precision_and_apply_one_history_entry() 
         fade_in: AudioFade::new(19200.0, FadeShape::FastStart).unwrap(),
         fade_out: AudioFade::new(28800.0, FadeShape::FastStart).unwrap(),
     };
-    let mut draft = ItemProperties::new(id, both, 48000);
+    let mut draft = ItemProperties::new(id, both, 1.0, 0.0, 48000);
     draft.edit(ItemPropertyField::InLength, "0:00.800".into());
     let adjusted = draft.fades(both, 48000, 48000).unwrap();
     assert_eq!(adjusted.fade_in.length_samples(), 38400.0);
@@ -10926,7 +10941,13 @@ fn item_properties_cannot_apply_a_draft_to_another_project_generation() {
         })
         .unwrap();
     let item = &app.project.audio_items()[0];
-    app.item_properties = Some(ItemProperties::new(item.id(), item.fades(), 48000));
+    app.item_properties = Some(ItemProperties::new(
+        item.id(),
+        item.fades(),
+        item.take_volume(),
+        item.take_pan(),
+        48000,
+    ));
     let _ = app.update(Message::ItemPropertyFieldChanged(
         ItemPropertyField::InLength,
         "0.25".into(),

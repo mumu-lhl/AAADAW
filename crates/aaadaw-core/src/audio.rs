@@ -5,7 +5,11 @@ use crate::{ItemId, TrackId};
 /// `start_sample` and `length_samples` use the project's sample clock;
 /// `source_offset_samples` is relative to the referenced media source. The
 /// media reference is opaque to the core and resolved by the media layer.
-#[derive(Clone, Debug, Eq, PartialEq)]
+pub const MAX_AUDIO_ITEM_VOLUME: f32 = 16.0;
+/// Maximum linear volume for an audio item's active take.
+pub const MAX_AUDIO_ITEM_TAKE_VOLUME: f32 = 16.0;
+
+#[derive(Clone, Debug, PartialEq)]
 pub struct AudioItem {
     pub(crate) id: ItemId,
     pub(crate) track_id: TrackId,
@@ -14,6 +18,9 @@ pub struct AudioItem {
     pub(crate) source_offset_samples: u64,
     pub(crate) length_samples: u64,
     pub(crate) fades: crate::AudioItemFades,
+    pub(crate) volume: f32,
+    pub(crate) take_volume: f32,
+    pub(crate) take_pan: f32,
 }
 
 impl AudioItem {
@@ -50,6 +57,21 @@ impl AudioItem {
     /// Returns the manual fade parameters.
     pub fn fades(&self) -> crate::AudioItemFades {
         self.fades
+    }
+
+    /// Returns this item's linear playback volume, where 1.0 is unity and 0.0 is silent.
+    pub fn volume(&self) -> f32 {
+        self.volume
+    }
+
+    /// Returns the active take's linear playback volume.
+    pub fn take_volume(&self) -> f32 {
+        self.take_volume
+    }
+
+    /// Returns the active take's stereo balance in the inclusive range -1..=1.
+    pub fn take_pan(&self) -> f32 {
+        self.take_pan
     }
 
     /// Returns the exclusive end position in project samples.

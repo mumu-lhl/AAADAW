@@ -258,6 +258,17 @@ pub enum DawAction {
         item_id: ItemId,
         fades: crate::AudioItemFades,
     },
+    /// Set an audio item's linear playback volume (0 is silent, 1 is unity).
+    SetAudioItemVolume {
+        item_id: ItemId,
+        volume: f32,
+    },
+    /// Set the active audio take's linear volume and stereo balance together.
+    SetAudioItemTakeMix {
+        item_id: ItemId,
+        volume: f32,
+        pan: f32,
+    },
     /// Duplicate the complete audio Item at a new track and position.
     DuplicateAudioItemAt {
         item_id: ItemId,

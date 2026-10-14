@@ -178,6 +178,21 @@
         "take_start_in_source": "0:00.125",
         "take_source_unit": "Time"
       }
+    },
+    {
+      "operation": "Inspect Volume/pan with media-item D_VOL=0.5; enter -6.02 dB and reopen",
+      "take_properties": {
+        "volume_pan_row": "Take properties",
+        "before": {
+          "volume_db": 0.0,
+          "pan": "center"
+        },
+        "after": {
+          "volume_db": -6.02,
+          "pan": "center"
+        }
+      },
+      "evidence": "item-properties-take-mix-native.tsv"
     }
   ],
   "notes": [
@@ -185,6 +200,6 @@
     "When both end lengths change, fade-out wins overlap regardless of typing order.",
     "Only editing fade-in length lets fade-in win and reduces fade-out.",
     "Lengths in this note are seconds. API/state model may preserve oversized requests; the observed Properties Apply path normalizes edited lengths.",
-    "Native screenshots remain in scratch only; no native image or theme asset is included."
+    "Original REAPER window captures are retained in the verification images directory; take-gain render and pan-law waveform comparisons remain unverified."
   ]
 }

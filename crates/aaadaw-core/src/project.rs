@@ -648,6 +648,16 @@ enum ProjectEvent {
         before: crate::AudioItemFades,
         after: crate::AudioItemFades,
     },
+    AudioItemVolumeChanged {
+        item_id: ItemId,
+        before: f32,
+        after: f32,
+    },
+    AudioItemTakeMixChanged {
+        item_id: ItemId,
+        before: (f32, f32),
+        after: (f32, f32),
+    },
     AudioItemChanged {
         before: AudioItem,
         after: AudioItem,
@@ -999,6 +1009,24 @@ impl ProjectEvent {
                 before,
                 after,
             } => Self::AudioItemFadesChanged {
+                item_id: *item_id,
+                before: *after,
+                after: *before,
+            },
+            Self::AudioItemVolumeChanged {
+                item_id,
+                before,
+                after,
+            } => Self::AudioItemVolumeChanged {
+                item_id: *item_id,
+                before: *after,
+                after: *before,
+            },
+            Self::AudioItemTakeMixChanged {
+                item_id,
+                before,
+                after,
+            } => Self::AudioItemTakeMixChanged {
                 item_id: *item_id,
                 before: *after,
                 after: *before,
@@ -1419,7 +1447,9 @@ impl Project {
                     | ProjectEvent::TrackVolumeAutomationChanged { .. }
                     | ProjectEvent::TrackPanChanged { .. }
                     | ProjectEvent::TrackPhaseChanged { .. }
-                    | ProjectEvent::AudioItemFadesChanged { .. },
+                    | ProjectEvent::AudioItemFadesChanged { .. }
+                    | ProjectEvent::AudioItemVolumeChanged { .. }
+                    | ProjectEvent::AudioItemTakeMixChanged { .. },
             )
         )
     }
@@ -1434,7 +1464,9 @@ impl Project {
                     | ProjectEvent::TrackVolumeAutomationChanged { .. }
                     | ProjectEvent::TrackPanChanged { .. }
                     | ProjectEvent::TrackPhaseChanged { .. }
-                    | ProjectEvent::AudioItemFadesChanged { .. },
+                    | ProjectEvent::AudioItemFadesChanged { .. }
+                    | ProjectEvent::AudioItemVolumeChanged { .. }
+                    | ProjectEvent::AudioItemTakeMixChanged { .. },
             )
         )
     }
@@ -1621,6 +1653,9 @@ impl Project {
                 .iter()
                 .map(|item| AudioItemSnapshot {
                     fades: item.fades,
+                    volume: item.volume,
+                    take_volume: item.take_volume,
+                    take_pan: item.take_pan,
                     id: item.id.value(),
                     track_id: item.track_id.value(),
                     media_ref: item.media_ref.clone(),
@@ -1895,6 +1930,12 @@ impl Project {
             if !item_ids.insert(item.id)
                 || !track_ids.contains(&item.track_id)
                 || item.media_ref.trim().is_empty()
+                || !item.volume.is_finite()
+                || !(0.0..=crate::MAX_AUDIO_ITEM_VOLUME).contains(&item.volume)
+                || !item.take_volume.is_finite()
+                || !(0.0..=crate::MAX_AUDIO_ITEM_TAKE_VOLUME).contains(&item.take_volume)
+                || !item.take_pan.is_finite()
+                || !(-1.0..=1.0).contains(&item.take_pan)
                 || item.length_samples == 0
                 || item.start_sample.checked_add(item.length_samples).is_none()
             {
@@ -1903,6 +1944,9 @@ impl Project {
             max_item_id = Some(max_item_id.map_or(item.id, |max: u64| max.max(item.id)));
             audio_items.push(AudioItem {
                 fades: item.fades,
+                volume: item.volume,
+                take_volume: item.take_volume,
+                take_pan: item.take_pan,
                 id: ItemId::from_raw(item.id),
                 track_id: TrackId::from_raw(item.track_id),
                 media_ref: item.media_ref,
@@ -2728,6 +2772,9 @@ impl Project {
                     .ok_or(ActionError::ItemIdExhausted)?;
                 let item = AudioItem {
                     fades: crate::AudioItemFades::default(),
+                    volume: 1.0,
+                    take_volume: 1.0,
+                    take_pan: 0.0,
                     id: ItemId::from_raw(ids.next_item_id),
                     track_id,
                     media_ref,
@@ -2941,6 +2988,9 @@ impl Project {
                     .ok_or(ActionError::ItemIdExhausted)?;
                 let item = AudioItem {
                     fades: crate::AudioItemFades::default(),
+                    volume: 1.0,
+                    take_volume: 1.0,
+                    take_pan: 0.0,
                     id: ItemId::from_raw(ids.next_item_id),
                     track_id,
                     media_ref,
@@ -2967,6 +3017,51 @@ impl Project {
                     item_id,
                     before: item.fades,
                     after: fades,
+                }
+            }
+            DawAction::SetAudioItemVolume { item_id, volume } => {
+                if !volume.is_finite() || !(0.0..=crate::MAX_AUDIO_ITEM_VOLUME).contains(&volume) {
+                    return Err(ActionError::InvalidAudioItemVolume);
+                }
+                let item = state
+                    .audio_items
+                    .iter()
+                    .find(|item| item.id == item_id)
+                    .ok_or(ActionError::AudioItemNotFound { item_id })?;
+                if is_frozen_render(state, item_id) {
+                    return Err(ActionError::FrozenRenderCannotBeEdited { item_id });
+                }
+                ProjectEvent::AudioItemVolumeChanged {
+                    item_id,
+                    before: item.volume,
+                    after: volume,
+                }
+            }
+            DawAction::SetAudioItemTakeMix {
+                item_id,
+                volume,
+                pan,
+            } => {
+                if !volume.is_finite()
+                    || !(0.0..=crate::MAX_AUDIO_ITEM_TAKE_VOLUME).contains(&volume)
+                {
+                    return Err(ActionError::InvalidAudioItemTakeVolume);
+                }
+                if !pan.is_finite() || !(-1.0..=1.0).contains(&pan) {
+                    return Err(ActionError::InvalidAudioItemTakePan);
+                }
+                let item = state
+                    .audio_items
+                    .iter()
+                    .find(|item| item.id == item_id)
+                    .ok_or(ActionError::AudioItemNotFound { item_id })?;
+                if is_frozen_render(state, item_id) {
+                    return Err(ActionError::FrozenRenderCannotBeEdited { item_id });
+                }
+                ProjectEvent::AudioItemTakeMixChanged {
+                    item_id,
+                    before: (item.take_volume, item.take_pan),
+                    after: (volume, pan),
                 }
             }
             DawAction::DuplicateAudioItemAt {
@@ -4192,6 +4287,45 @@ impl Project {
                 }
                 item.fades = *after;
             }
+            ProjectEvent::AudioItemVolumeChanged {
+                item_id,
+                before,
+                after,
+            } => {
+                let item = state
+                    .audio_items
+                    .iter_mut()
+                    .find(|item| item.id == *item_id)
+                    .ok_or(ActionError::HistoryInvariantViolation)?;
+                if item.volume != *before
+                    || !after.is_finite()
+                    || !(0.0..=crate::MAX_AUDIO_ITEM_VOLUME).contains(after)
+                {
+                    return Err(ActionError::HistoryInvariantViolation);
+                }
+                item.volume = *after;
+            }
+            ProjectEvent::AudioItemTakeMixChanged {
+                item_id,
+                before,
+                after,
+            } => {
+                let item = state
+                    .audio_items
+                    .iter_mut()
+                    .find(|item| item.id == *item_id)
+                    .ok_or(ActionError::HistoryInvariantViolation)?;
+                if (item.take_volume, item.take_pan) != *before
+                    || !after.0.is_finite()
+                    || !(0.0..=crate::MAX_AUDIO_ITEM_TAKE_VOLUME).contains(&after.0)
+                    || !after.1.is_finite()
+                    || !(-1.0..=1.0).contains(&after.1)
+                {
+                    return Err(ActionError::HistoryInvariantViolation);
+                }
+                item.take_volume = after.0;
+                item.take_pan = after.1;
+            }
             ProjectEvent::AudioItemChanged { before, after } => {
                 let index = state
                     .audio_items
@@ -4466,6 +4600,12 @@ impl Project {
 
 fn valid_audio_item(item: &AudioItem) -> bool {
     !item.media_ref.trim().is_empty()
+        && item.volume.is_finite()
+        && (0.0..=crate::MAX_AUDIO_ITEM_VOLUME).contains(&item.volume)
+        && item.take_volume.is_finite()
+        && (0.0..=crate::MAX_AUDIO_ITEM_TAKE_VOLUME).contains(&item.take_volume)
+        && item.take_pan.is_finite()
+        && (-1.0..=1.0).contains(&item.take_pan)
         && item.length_samples > 0
         && item.start_sample.checked_add(item.length_samples).is_some()
 }

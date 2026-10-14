@@ -46,6 +46,12 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
         ]
         .spacing(6),
         row![
+            text("Volume/pan:").width(120),
+            field(ItemPropertyField::TakeVolume, 90),
+            field(ItemPropertyField::TakePan, 90)
+        ]
+        .spacing(6),
+        row![
             text("Fade in:").width(80),
             field(ItemPropertyField::InLength, 130)
         ]

@@ -154,9 +154,12 @@ pub struct TrackFxParameterValueSnapshot {
     pub value: f64,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct AudioItemSnapshot {
     pub fades: crate::AudioItemFades,
+    pub volume: f32,
+    pub take_volume: f32,
+    pub take_pan: f32,
     pub id: u64,
     pub track_id: u64,
     pub media_ref: String,
