@@ -1,0 +1,27 @@
+field	value
+aaadaw_environment	Linux AAADAW / Xvfb :134 / 1280x900 / isolated XDG profile / audio unavailable
+aaadaw_binary_sha256	640a9c18bc852ba44dbe5034f7e8c0c16a645ed641b67b9a077b2bda54172a7a
+aaadaw_binary_build_id	f5ee05bab6682cb8975333fa5871651d411bcd48
+fixture_project	region-visibility-demo.aaadaw
+fixture_project_sha256	44b0c7e022e4766d0f0db418bce55181337be62b0f96715751d53d58e9a6c89e
+command_id	ruler.toggle-project-regions-and-markers
+command_label	Ruler: Show/hide all project regions and markers
+action_list_screenshot	region-visibility-global-combined-action-list-aaadaw.png
+action_list_screenshot_sha256	0819c80da588fad1f6e05d3ecd7458409f9bdd1bb4a50ba11b4c94991c7dccc9
+mixed_before_screenshot	region-visibility-global-region-hidden-markers-visible-aaadaw.png
+mixed_before_screenshot_sha256	268b3555ce4087ab24a1e22280b0f34dbf6349117de0219ea971a82c9e352512
+mixed_action_result	With Region lane hidden and Marker lane visible, the combined action showed both lanes.
+shown_screenshot	region-visibility-global-combined-shown-aaadaw.png
+shown_screenshot_sha256	74ccc94f3f0b9e4f482b72114a7c3e98dc05a09abcf0126b352d4fbebc1a20b3
+mixed_undo_result	Ctrl+Z restored Region hidden and Marker visible.
+mixed_undo_screenshot	region-visibility-global-combined-mixed-undo-aaadaw.png
+mixed_undo_screenshot_sha256	a3d9d885fdb11b5e523077748fb1ba4e719dffa2fa24f79998038fa2c98361bc
+both_visible_action_result	With both lanes visible, the combined action hid both lanes.
+both_hidden_screenshot	region-visibility-global-combined-hidden-aaadaw.png
+both_hidden_screenshot_sha256	4610050bcc9d3fb639dcfa9b7a7f4bb5f67094312c1717f1193d86f1e7107de6
+both_visible_undo_result	Ctrl+Z restored both lanes visible.
+both_hidden_redo_result	Ctrl+Shift+Z hid both lanes again.
+both_hidden_redo_screenshot	region-visibility-global-combined-hidden-redo-aaadaw.png
+both_hidden_redo_screenshot_sha256	06450940cf769ff5de42cef6f7997f9a3f15cced3327ed7752fda988ca7c454d
+verification	Real desktop command, both lane-state branches, Undo and Redo were observed. The app test source covers mixed-lane Undo/Redo; strict Clippy/typecheck are required validation. The app test binary was not linked or run because the earlier link attempt exhausted available disk space.
+limitation	This verifies the combined lane action semantics only; it does not establish complete REAPER window geometry, theme or interaction parity. PROJECT-REGIONS-001 remains in_progress.

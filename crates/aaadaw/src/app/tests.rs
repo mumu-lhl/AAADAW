@@ -921,7 +921,7 @@ fn selected_region_visibility_actions_batch_selection_with_one_undo_and_redo() {
 }
 
 #[test]
-fn region_lane_view_actions_are_checked_and_undoable_together() {
+fn region_lane_view_actions_match_mixed_lane_undo_and_redo() {
     let mut app = App::default();
     let regions_command = CommandId::ToggleProjectRegionsOnRuler;
     let combined_command = CommandId::ToggleProjectRegionsAndMarkersOnRuler;
@@ -942,6 +942,19 @@ fn region_lane_view_actions_are_checked_and_undoable_together() {
     assert!(!app.project.show_project_regions());
     assert!(!app.project.show_project_markers());
     let _ = app.update(Message::Undo);
+    assert!(app.project.show_project_regions());
+    assert!(app.project.show_project_markers());
+
+    let _ = app.update(Message::ExecuteCommand(regions_command));
+    assert!(!app.project.show_project_regions());
+    assert!(app.project.show_project_markers());
+    let _ = app.update(Message::ExecuteCommand(combined_command));
+    assert!(app.project.show_project_regions());
+    assert!(app.project.show_project_markers());
+    let _ = app.update(Message::Undo);
+    assert!(!app.project.show_project_regions());
+    assert!(app.project.show_project_markers());
+    let _ = app.update(Message::Redo);
     assert!(app.project.show_project_regions());
     assert!(app.project.show_project_markers());
 }

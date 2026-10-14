@@ -995,3 +995,9 @@ Core 可见性/Undo/快照测试 1/1、Storage 往返及 schema 36→37 Region �
 Linux REAPER 7.82 / Default 7 的 Region/Marker Manager 中 Ctrl-选择隐藏的 R1 Region 与可见的 M1 Marker，再从 Action List 执行 Main action 43488。原厂将两项统一设为可见；单次 Ctrl+Z 恢复“R1 隐藏、M1 可见”，Main action 40030 Redo 再次统一显示，未选 M2/M3 状态保持不变。筛选后的 Action List、混合选择、执行、Undo、Redo 截图及保存的 `.rpp` 状态均有 SHA-256，见[原厂可见性探针](../verification/reaper-parity/fixtures/region-visibility-native.tsv)。
 
 该结果支持 AAADAW 已实现的“选中集合中有隐藏项就全部显示，否则全部隐藏”规则。AAADAW 新构建桌面版也在同一混合工程中运行该 Action List 命令，实测两项统一显示、Ctrl+Z 恢复混合状态、Ctrl+Shift+Z 再次显示；实窗截图、Build ID、SHA-256 与工程样例见[AAADAW 组合动作运行清单](../verification/reaper-parity/fixtures/region-visibility-selected-combined-aaadaw.tsv)。新增 App 回归补上混合 Region/Marker 集合的 Redo 断言。此次只实测一种混合选择组合，不将其泛化为所有选择顺序与 Lane 状态。App 测试链接仍受磁盘约束未运行，Clippy `-D warnings` 和类型检查通过；AAADAW 全局 Regions+Markers 标尺动作仍待实窗验证。`PROJECT-REGIONS-001`、UI-013 和 P4 继续 `in_progress`。
+
+### 2026-10-14 Action 43489：AAADAW 全局 Region/Marker 标尺显隐
+
+在 Linux AAADAW 新桌面二进制中，使用同一个 Region/Marker fixture 操作 Action List 的 `ruler.toggle-project-regions-and-markers`。Region 标尺隐藏、Marker 标尺显示时执行动作，两条标尺均显示；Ctrl+Z 恢复混合状态；Ctrl+Shift+Z 再次显示两者。随后从两者可见状态执行动作，两条标尺均隐藏；Ctrl+Z 恢复两者可见，Ctrl+Shift+Z 再次隐藏。Action List、混合状态、显示、Undo、隐藏与 Redo 截图及 binary hash/Build ID 见[全局组合动作运行清单](../verification/reaper-parity/fixtures/region-visibility-global-combined-aaadaw.tsv)。该状态转换与 Linux REAPER 7.82 Main action 43489 的实窗结果一致。
+
+App 测试 `region_lane_view_actions_match_mixed_lane_undo_and_redo` 现覆盖混合 Lane 状态下组合动作的显示、Undo/Redo，也覆盖两者可见时一次动作隐藏两者。测试源码已通过 AAADAW app/test Clippy `-D warnings` 和类型检查；app 测试链接因容器磁盘空间不足未生成测试二进制，未运行。此前记录“全局组合动作尚待实窗验证”现由本次结果更新；Region Manager 字段/布局、边界手势、ID 分配、时间格式、循环/Repeat、Native 项目互操作与完整主题几何仍未验收，`PROJECT-REGIONS-001`、`PROJECT-MARKERS-001`、UI-013 和 P4 保持 `in_progress`。

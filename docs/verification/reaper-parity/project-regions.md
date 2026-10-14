@@ -30,9 +30,10 @@
 - `timeline_shader_receives_project_markers_for_full_height_lines` 同时确认 Region 区间被交给 GPU Arrange primitive；这验证数据接线，不构成原厂像素或色彩验收。
 - `region_and_ruler_visibility_are_undoable_and_survive_snapshots` 验证领域动作、Undo/Redo 与快照；Storage 回归验证 schema 47→48 默认可见迁移及 Region/标尺状态往返。应用测试已通过类型检查和 Clippy；App 测试链接曾启动但因空间不足中止，未运行套件，因此以新构建桌面版的真实窗口交互补充验证。
 - `selected_region_visibility_actions_batch_selection_with_one_undo_and_redo` 源码回归覆盖混合 Region/Marker 集合统一显示、单步 Undo/Redo 与动作注册；测试源码已通过类型检查和 Clippy，App 测试 suite 因链接磁盘空间不足未运行。原厂 action 43488 的实际混合选区、Undo/Redo 实窗证据见[原厂记录](fixtures/region-visibility-native.tsv)。
+- `region_lane_view_actions_match_mixed_lane_undo_and_redo` 覆盖 Region 标尺隐藏、Marker 标尺显示时，组合动作显示两者并能 Undo/Redo；同一测试也覆盖两者可见时组合隐藏。AAADAW 实窗两种初始状态的组合动作、Undo/Redo 和 Action List 搜索截图见[全局组合动作运行清单](fixtures/region-visibility-global-combined-aaadaw.tsv)。测试源码通过 Clippy/类型检查，app 测试二进制因可用磁盘空间不足未完成链接或运行。
 
 最终代码验证：`DISPLAY=:101 rtk cargo nextest run --workspace --no-fail-fast -j 1` 为 952/952 通过、0 跳过（66 个测试二进制）；workspace all-target Clippy `-D warnings`、`cargo check --workspace --all-targets`、`cargo build -p aaadaw`、fmt 和 `git diff --check` 通过。Region 不改变实时音频 callback 的数据结构或同步方式，项目编辑仍受现有 playback/recording busy guard 约束。
 
 ## 尚未对齐
 
-Region 的完整原厂行为仍未完成：本次验证了 40615/40616 的目标选择与 Edit Region 对话框组成，但 AAADAW 目前只映射动作语义，尚未复刻该原厂窗口及其字段/按钮。标尺点击/移动/边界拖动与 `1/4` 默认网格仅由 AAADAW 手势测试覆盖，鼠标区域、阈值、Snap 修饰键、重叠边界命中和 preview/Undo 尚未在原厂实窗对照；Region Manager 的行内编辑、列可见性/排序/拖动、颜色、Ruler Lane、管理器选区范围、边界吸附、ID 分配与重编号、负时间和所有时间格式、循环/Repeat 行为、播放中操作、Tempo/Meter 变化下的位置保持、原生工程格式导入/导出及完整 Default 7 窗口几何/视觉对照也仍未完成。AAADAW 的全部 Regions+Markers 标尺动作尚未实窗验证；App 测试套件未能链接完成或运行。矩阵 `PROJECT-REGIONS-001`、`PROJECT-MARKERS-001`、UI-013 与 P4 保持 `in_progress`；本文件只记录实现范围和验证边界。
+Region 的完整原厂行为仍未完成：本次验证了 40615/40616 的目标选择与 Edit Region 对话框组成，但 AAADAW 目前只映射动作语义，尚未复刻该原厂窗口及其字段/按钮。标尺点击/移动/边界拖动与 `1/4` 默认网格仅由 AAADAW 手势测试覆盖，鼠标区域、阈值、Snap 修饰键、重叠边界命中和 preview/Undo 尚未在原厂实窗对照；Region Manager 的行内编辑、列可见性/排序/拖动、颜色、Ruler Lane、管理器选区范围、边界吸附、ID 分配与重编号、负时间和所有时间格式、循环/Repeat 行为、播放中操作、Tempo/Meter 变化下的位置保持、原生工程格式导入/导出及完整 Default 7 窗口几何/视觉对照也仍未完成。AAADAW 全局 Regions+Markers 标尺组合动作现已验证两种 Lane 初始状态及 Undo/Redo；App 测试套件未能链接完成或运行。矩阵 `PROJECT-REGIONS-001`、`PROJECT-MARKERS-001`、UI-013 与 P4 保持 `in_progress`；本文件只记录实现范围和验证边界。

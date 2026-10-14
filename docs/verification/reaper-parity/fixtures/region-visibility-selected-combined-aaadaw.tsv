@@ -23,4 +23,4 @@ redo_screenshot_sha256	225ad36483262fef16a3d467088bb735d3c71150bcec5f1c2d2e13a7d
 action_list_screenshot	region-visibility-selected-combined-action-list-aaadaw.png
 action_list_screenshot_sha256	355844315e68514b42cab910d41408bf53cd302270c3826299cc0359deedcabe
 verification	Real desktop action, Undo and Redo passed. App test source asserts mixed selection and Redo; strict Clippy/typecheck pass. App test harness linking was attempted and stopped due insufficient disk; it was not run.
-limitation	The all-Regions-and-Markers ruler-lane action remains untested in the AAADAW runtime. No full geometry/theme parity claim.
+limitation	The all-Regions-and-Markers ruler-lane action was verified separately in both mixed and fully visible lane states; other selection permutations and full geometry/theme parity remain unverified.
