@@ -1,0 +1,6 @@
+version	AAADAW Linux X11 working tree
+display	Xvfb :126 1280x1024 with xfwm4; isolated fresh XDG directories
+audio	unavailable in this build; transport remained stopped
+step	input_sequence	menu	selected_command	track_count	project_effect	screenshot	sha256	observation
+wrap_up	open File menu; ArrowUp	File	Project settings...	0	no action executed	fixtures/menu-file-wrap-up-aaadaw.png	1eaaf2dd3541edeafcb80d0a4b392f480cf09297f42e71cd96a6e5839a9286f7	ArrowUp wraps to the last enabled File entry; menu command coverage differs from REAPER
+wrap_down	ArrowDown	File	New project	0	no action executed	fixtures/menu-file-wrap-down-aaadaw.png	400b5fef5300eb6d5d80735f24d58e825b1d7445e5cb4e9a2ee11241caa3899d	ArrowDown from the last enabled entry wraps to the first; no project action runs

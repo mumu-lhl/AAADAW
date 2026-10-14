@@ -5201,8 +5201,19 @@ fn keyboard_navigation_switches_menus_and_wraps_enabled_commands() {
         MainMenu::File,
     )));
     assert_eq!(app.active_menu, Some(MainMenu::File));
+    let enabled_commands = commands::for_menu(&app, MainMenu::File)
+        .into_iter()
+        .filter(|entry| entry.enabled)
+        .map(|entry| entry.id)
+        .collect::<Vec<_>>();
     let first = app.menu_selected_command;
     assert!(first.is_some());
+    assert_eq!(first, enabled_commands.first().copied());
+
+    let _ = app.update(Message::MenuKeyboard(MenuNavigation::PreviousCommand));
+    assert_eq!(app.menu_selected_command, enabled_commands.last().copied());
+    let _ = app.update(Message::MenuKeyboard(MenuNavigation::NextCommand));
+    assert_eq!(app.menu_selected_command, first);
 
     let _ = app.update(Message::MenuKeyboard(MenuNavigation::NextCommand));
     assert_ne!(app.menu_selected_command, first);
