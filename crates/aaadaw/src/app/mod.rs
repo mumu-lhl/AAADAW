@@ -196,6 +196,22 @@ struct MidiNoteClipboard {
     last_paste: Option<(ItemId, u64)>,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct AudioItemClipboard {
+    project_generation: u64,
+    project_sample_rate: u32,
+    span_samples: u64,
+    items: Vec<AudioItemClipboardEntry>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct AudioItemClipboardEntry {
+    media_ref: String,
+    source_offset_samples: u64,
+    length_samples: u64,
+    track_offset: usize,
+}
+
 #[cfg(all(
     feature = "cpal-backend",
     any(target_os = "windows", target_os = "macos", target_os = "android")
@@ -391,6 +407,7 @@ struct App {
     midi_editor_follow_playhead: bool,
     midi_editor_window_size: iced::Size,
     midi_note_clipboard: MidiNoteClipboard,
+    audio_item_clipboard: Option<AudioItemClipboard>,
     plugin_picker_window_id: Option<iced::window::Id>,
     plugin_picker_track_id: Option<TrackId>,
     plugin_picker_instrument_track_id: Option<TrackId>,
@@ -4373,6 +4390,8 @@ impl App {
             }
             Message::DeleteSelectedItems => self.delete_selected_items(),
             Message::TrimItemsToSelectedArea => self.trim_items_to_selected_area(),
+            Message::CopyLoopOfSelectedArea => self.copy_loop_of_selected_area(),
+            Message::PasteItems => self.paste_audio_items(),
             Message::SelectAllItems => self.select_all_items(),
             Message::SelectAllItemsInTrack => self.select_all_items_in_track(),
             Message::SelectAllItemsInTimeSelection => self.select_all_items_in_time_selection(),
@@ -9220,7 +9239,7 @@ impl App {
         } else {
             vec![self.timeline.edit_cursor_tick]
         };
-        let mut media_refs = self
+        let media_refs = self
             .project
             .audio_items()
             .iter()
@@ -9234,6 +9253,14 @@ impl App {
             })
             .map(|item| item.media_ref().to_owned())
             .collect::<Vec<_>>();
+        self.audio_source_sample_rates(media_refs)
+    }
+
+    fn audio_source_sample_rates(
+        &self,
+        media_refs: impl IntoIterator<Item = String>,
+    ) -> Result<HashMap<String, u32>, String> {
+        let mut media_refs = media_refs.into_iter().collect::<Vec<_>>();
         media_refs.sort_unstable();
         media_refs.dedup();
         if media_refs.is_empty() {
@@ -9243,7 +9270,7 @@ impl App {
         let path = self
             .media_store_path()
             .filter(|path| path.is_file())
-            .ok_or_else(|| "audio media store is unavailable for splitting".to_owned())?;
+            .ok_or_else(|| "audio media store is unavailable".to_owned())?;
         let store = ProjectStore::open(&path).map_err(|error| error.to_string())?;
         let mut rates = HashMap::with_capacity(media_refs.len());
         let mut metadata_result = Ok(());
@@ -9902,6 +9929,243 @@ impl App {
         self.apply_action(action, "Selected items trimmed to selected area");
     }
 
+    fn copy_loop_of_selected_area(&mut self) {
+        let Some(selection) = self.timeline.time_selection else {
+            return;
+        };
+        if selection.start_tick >= selection.end_tick {
+            return;
+        }
+        let (selection_start_sample, selection_end_sample) = match (
+            self.project.sample_at_tick(selection.start_tick),
+            self.project.sample_at_tick(selection.end_tick),
+        ) {
+            (Ok(start), Ok(end)) => (start, end),
+            (Err(error), _) | (_, Err(error)) => {
+                self.status = format!("Could not copy loop of selected area: {error}");
+                return;
+            }
+        };
+        let span_samples = selection_end_sample.saturating_sub(selection_start_sample);
+        if span_samples == 0 {
+            return;
+        }
+
+        let mut containing_items = self
+            .project
+            .audio_items()
+            .iter()
+            .filter(|item| self.timeline.selected_items.contains(&item.id()))
+            .filter_map(|item| {
+                let end_sample = item.start_sample().checked_add(item.length_samples())?;
+                (item.start_sample() <= selection_start_sample
+                    && end_sample >= selection_end_sample)
+                    .then_some(item)
+            })
+            .collect::<Vec<_>>();
+        if containing_items.is_empty() {
+            return;
+        }
+        containing_items.sort_unstable_by_key(|item| item.id().value());
+        let source_rates = match self.audio_source_sample_rates(
+            containing_items
+                .iter()
+                .map(|item| item.media_ref().to_owned()),
+        ) {
+            Ok(rates) => rates,
+            Err(error) => {
+                self.status = format!("Could not copy loop of selected area: {error}");
+                return;
+            }
+        };
+        let track_indices = self
+            .project
+            .tracks()
+            .iter()
+            .enumerate()
+            .map(|(index, track)| (track.id(), index))
+            .collect::<HashMap<_, _>>();
+        let first_track_index = containing_items
+            .iter()
+            .filter_map(|item| track_indices.get(&item.track_id()).copied())
+            .min();
+        let Some(first_track_index) = first_track_index else {
+            return;
+        };
+        let project_sample_rate = self.project.settings().sample_rate();
+        let mut entries = Vec::with_capacity(containing_items.len());
+        for item in containing_items {
+            let Some(source_sample_rate) = source_rates.get(item.media_ref()).copied() else {
+                self.status = format!(
+                    "Could not copy loop of selected area: source sample rate is unavailable for {}",
+                    item.media_ref()
+                );
+                return;
+            };
+            let Some(track_index) = track_indices.get(&item.track_id()).copied() else {
+                continue;
+            };
+            let Some(source_delta) = rescale_samples(
+                selection_start_sample - item.start_sample(),
+                project_sample_rate,
+                source_sample_rate,
+            ) else {
+                self.status =
+                    "Could not copy loop of selected area: source offset is too large".to_owned();
+                return;
+            };
+            let Some(source_offset_samples) =
+                item.source_offset_samples().checked_add(source_delta)
+            else {
+                self.status =
+                    "Could not copy loop of selected area: source offset is too large".to_owned();
+                return;
+            };
+            entries.push(AudioItemClipboardEntry {
+                media_ref: item.media_ref().to_owned(),
+                source_offset_samples,
+                length_samples: span_samples,
+                track_offset: track_index - first_track_index,
+            });
+        }
+        if entries.is_empty() {
+            return;
+        }
+        self.audio_item_clipboard = Some(AudioItemClipboard {
+            project_generation: self.project_generation,
+            project_sample_rate: self.project.settings().sample_rate(),
+            span_samples,
+            items: entries,
+        });
+        self.status = format!(
+            "Copied loop from {} audio item{}",
+            self.audio_item_clipboard
+                .as_ref()
+                .map_or(0, |clipboard| clipboard.items.len()),
+            if self
+                .audio_item_clipboard
+                .as_ref()
+                .is_some_and(|clipboard| clipboard.items.len() == 1)
+            {
+                ""
+            } else {
+                "s"
+            }
+        );
+    }
+
+    pub(super) fn can_paste_audio_items(&self) -> bool {
+        let Some(clipboard) = self.audio_item_clipboard.as_ref().filter(|clipboard| {
+            clipboard.project_generation == self.project_generation && !clipboard.items.is_empty()
+        }) else {
+            return false;
+        };
+        let Some(anchor_index) = self
+            .selected_track_id()
+            .and_then(|track_id| {
+                self.project
+                    .tracks()
+                    .iter()
+                    .position(|track| track.id() == track_id)
+            })
+            .or_else(|| (!self.project.tracks().is_empty()).then_some(0))
+        else {
+            return false;
+        };
+        clipboard.items.iter().all(|item| {
+            anchor_index
+                .checked_add(item.track_offset)
+                .is_some_and(|index| index < self.project.tracks().len())
+        })
+    }
+
+    fn paste_audio_items(&mut self) {
+        if commands::project_edit_busy(self) {
+            self.status =
+                "Stop playback or finish the current project operation before pasting items"
+                    .to_owned();
+            return;
+        }
+        if !self.can_paste_audio_items() {
+            return;
+        }
+        let Some(clipboard) = self.audio_item_clipboard.clone() else {
+            return;
+        };
+        let Some(anchor_index) = self
+            .selected_track_id()
+            .and_then(|track_id| {
+                self.project
+                    .tracks()
+                    .iter()
+                    .position(|track| track.id() == track_id)
+            })
+            .or_else(|| (!self.project.tracks().is_empty()).then_some(0))
+        else {
+            return;
+        };
+        let Ok(start_sample) = self.project.sample_at_tick(self.timeline.edit_cursor_tick) else {
+            self.status = "Could not paste items at the edit cursor".to_owned();
+            return;
+        };
+        let Some(length_samples) = rescale_samples(
+            clipboard.span_samples,
+            clipboard.project_sample_rate,
+            self.project.settings().sample_rate(),
+        ) else {
+            self.status = "Could not paste items: copied audio span is too large".to_owned();
+            return;
+        };
+        let actions = clipboard
+            .items
+            .iter()
+            .filter_map(|item| {
+                let track_index = anchor_index.checked_add(item.track_offset)?;
+                let track_id = self.project.tracks().get(track_index)?.id();
+                Some(DawAction::InsertAudioItem {
+                    track_id,
+                    media_ref: item.media_ref.clone(),
+                    start_sample,
+                    source_offset_samples: item.source_offset_samples,
+                    length_samples,
+                })
+            })
+            .collect::<Vec<_>>();
+        if actions.is_empty() {
+            return;
+        }
+        let previous_ids = self
+            .project
+            .audio_items()
+            .iter()
+            .map(|item| item.id())
+            .chain(self.project.midi_items().iter().map(|item| item.id()))
+            .collect::<HashSet<_>>();
+        let previous_revision = self.revision;
+        let action = if actions.len() == 1 {
+            actions
+                .into_iter()
+                .next()
+                .expect("one paste action is present")
+        } else {
+            DawAction::BatchTransaction {
+                tx_id: self.revision,
+                actions,
+            }
+        };
+        self.apply_action(action, "Audio items pasted");
+        if self.revision != previous_revision {
+            let selected = self
+                .project
+                .audio_items()
+                .iter()
+                .filter(|item| !previous_ids.contains(&item.id()))
+                .map(|item| (item.id(), item.track_id()))
+                .collect::<Vec<_>>();
+            self.timeline.select_items(selected);
+        }
+    }
+
     fn delete_selected_items(&mut self) {
         let mut item_ids = self
             .timeline
@@ -10050,6 +10314,17 @@ fn snap_tick_up(tick: u64, grid_ticks: u64) -> u64 {
     let grid_ticks = grid_ticks.max(1);
     let quotient = tick / grid_ticks + u64::from(!tick.is_multiple_of(grid_ticks));
     quotient.saturating_mul(grid_ticks)
+}
+
+fn rescale_samples(samples: u64, from_sample_rate: u32, to_sample_rate: u32) -> Option<u64> {
+    if from_sample_rate == 0 || to_sample_rate == 0 {
+        return None;
+    }
+    u64::try_from(
+        (u128::from(samples) * u128::from(to_sample_rate) + u128::from(from_sample_rate) / 2)
+            / u128::from(from_sample_rate),
+    )
+    .ok()
 }
 
 fn split_audio_item_actions(

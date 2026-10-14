@@ -6800,12 +6800,27 @@ fn item_menu_exposes_native_remove_and_select_all_availability_for_an_empty_proj
     assert_eq!(trim_items.label, "Trim items to selected area");
     assert!(trim_items.enabled);
 
+    let copy_loop = entries.get(2).expect("Copy loop should follow Trim items");
+    assert_eq!(copy_loop.id, CommandId::CopyLoopOfSelectedArea);
+    assert_eq!(copy_loop.label, "Copy loop of selected area of items");
+    assert_eq!(copy_loop.shortcut.as_deref(), Some("Ctrl+Alt+L"));
+    assert!(copy_loop.enabled);
+
     let select_all = entries
-        .get(2)
-        .expect("Select all should follow the removal section");
+        .get(3)
+        .expect("Select all should follow the item-copy section");
     assert_eq!(select_all.id, CommandId::SelectAllItems);
     assert_eq!(select_all.label, "Select all");
     assert!(select_all.enabled);
+
+    let edit_entries = commands::for_menu(&app, MainMenu::Edit);
+    let paste = edit_entries
+        .iter()
+        .find(|entry| entry.id == CommandId::PasteItems)
+        .expect("Edit menu should expose Paste items/tracks");
+    assert_eq!(paste.label, "Paste");
+    assert_eq!(paste.shortcut.as_deref(), Some("Ctrl+V"));
+    assert!(!paste.enabled);
 
     let revision = app.revision;
     let _ = app.update(Message::ExecuteCommand(CommandId::SelectAllItems));
@@ -6813,6 +6828,183 @@ fn item_menu_exposes_native_remove_and_select_all_availability_for_an_empty_proj
     assert!(app.project.midi_items().is_empty());
     assert!(app.timeline.selected_items.is_empty());
     assert_eq!(app.revision, revision);
+}
+
+#[test]
+fn copy_loop_of_selected_audio_area_pastes_source_sections_on_one_undo_step() {
+    let directory = tempfile::tempdir().unwrap();
+    let project_path = directory.path().join("copy-loop.aaadaw");
+    let media_ref = "asset://copy-loop-test";
+    let mut store = ProjectStore::open(&project_path).unwrap();
+    store
+        .import_audio_asset(media_ref, "copy-loop.wav", std::io::Cursor::new([0_u8; 4]))
+        .unwrap();
+    store
+        .set_audio_asset_metadata(
+            media_ref,
+            &aaadaw_storage::AudioAssetMetadata {
+                container: "wav".to_owned(),
+                codec: "pcm".to_owned(),
+                sample_rate: Some(48_000),
+                channel_count: Some(1),
+                bits_per_sample: Some(16),
+                frame_count: Some(600_000),
+                duration_nanos: Some(12_500_000_000),
+                byte_len: Some(4),
+            },
+        )
+        .unwrap();
+    store.close().unwrap();
+
+    let mut app = App {
+        project_path: Some(project_path),
+        ..App::default()
+    };
+    app.project
+        .apply(DawAction::SetProjectSampleRate {
+            sample_rate: 44_100,
+        })
+        .unwrap();
+    for _ in 0..3 {
+        let _ = app.update(Message::AddTrack);
+    }
+    let track_ids = app
+        .project
+        .tracks()
+        .iter()
+        .map(|track| track.id())
+        .collect::<Vec<_>>();
+    let full_length = app.project.sample_at_tick(19_200).unwrap();
+    let partial_start = app.project.sample_at_tick(7_680).unwrap();
+    app.project
+        .apply(DawAction::InsertAudioItem {
+            track_id: track_ids[0],
+            media_ref: media_ref.to_owned(),
+            start_sample: 0,
+            source_offset_samples: 128,
+            length_samples: full_length,
+        })
+        .unwrap();
+    app.project
+        .apply(DawAction::InsertAudioItem {
+            track_id: track_ids[1],
+            media_ref: media_ref.to_owned(),
+            start_sample: 0,
+            source_offset_samples: 256,
+            length_samples: full_length,
+        })
+        .unwrap();
+    app.project
+        .apply(DawAction::InsertAudioItem {
+            track_id: track_ids[2],
+            media_ref: media_ref.to_owned(),
+            start_sample: partial_start,
+            source_offset_samples: 512,
+            length_samples: full_length,
+        })
+        .unwrap();
+    app.project
+        .apply(DawAction::InsertMidiItem {
+            track_id: track_ids[2],
+            start_tick: 0,
+            length_ticks: 19_200,
+        })
+        .unwrap();
+    let full_first_id = app.project.audio_items()[0].id();
+    let full_second_id = app.project.audio_items()[1].id();
+    let partial_id = app.project.audio_items()[2].id();
+    let midi_id = app.project.midi_items()[0].id();
+    app.timeline.select_items(vec![
+        (full_first_id, track_ids[0]),
+        (full_second_id, track_ids[1]),
+        (partial_id, track_ids[2]),
+        (midi_id, track_ids[2]),
+    ]);
+    app.timeline.time_selection = Some(crate::timeline::TimeSelection {
+        start_tick: 5_760,
+        end_tick: 13_440,
+    });
+    let selected_before = app.timeline.selected_items.clone();
+    let revision_before = app.revision;
+    let source_delta = u64::try_from(
+        (u128::from(app.project.sample_at_tick(5_760).unwrap()) * 48_000
+            + u128::from(app.project.settings().sample_rate()) / 2)
+            / u128::from(app.project.settings().sample_rate()),
+    )
+    .unwrap();
+    let selection_length =
+        app.project.sample_at_tick(13_440).unwrap() - app.project.sample_at_tick(5_760).unwrap();
+
+    let _ = app.update(Message::ExecuteCommand(CommandId::CopyLoopOfSelectedArea));
+
+    let clipboard = app
+        .audio_item_clipboard
+        .clone()
+        .expect("copy action should populate the audio item clipboard");
+    assert_eq!(clipboard.items.len(), 2);
+    assert_eq!(clipboard.items[0].track_offset, 0);
+    assert_eq!(clipboard.items[1].track_offset, 1);
+    assert_eq!(clipboard.items[0].source_offset_samples, 128 + source_delta);
+    assert_eq!(clipboard.items[1].source_offset_samples, 256 + source_delta);
+    assert_eq!(clipboard.items[0].length_samples, selection_length);
+    assert_eq!(clipboard.span_samples, selection_length);
+    assert_eq!(clipboard.project_sample_rate, 44_100);
+    assert_eq!(app.timeline.selected_items, selected_before);
+    assert_eq!(app.revision, revision_before);
+
+    app.project
+        .apply(DawAction::SetProjectSampleRate {
+            sample_rate: 48_000,
+        })
+        .unwrap();
+    app.timeline.selected_track = Some(track_ids[0]);
+    app.timeline.edit_cursor_tick = 57_600;
+    let paste_start = app.project.sample_at_tick(57_600).unwrap();
+    let paste_length =
+        u64::try_from((u128::from(selection_length) * 48_000 + 44_100 / 2) / 44_100).unwrap();
+    let _ = app.update(Message::ExecuteCommand(CommandId::PasteItems));
+
+    let pasted = app
+        .project
+        .audio_items()
+        .iter()
+        .filter(|item| item.start_sample() == paste_start)
+        .collect::<Vec<_>>();
+    assert_eq!(pasted.len(), 2);
+    assert_eq!(pasted[0].track_id(), track_ids[0]);
+    assert_eq!(pasted[1].track_id(), track_ids[1]);
+    assert_eq!(pasted[0].source_offset_samples(), 128 + source_delta);
+    assert_eq!(pasted[1].source_offset_samples(), 256 + source_delta);
+    assert_eq!(pasted[0].length_samples(), paste_length);
+    assert_eq!(app.revision, revision_before + 1);
+    assert_eq!(app.timeline.selected_items.len(), 2);
+    assert!(commands::is_enabled(&app, CommandId::PasteItems));
+
+    let _ = app.update(Message::Undo);
+    assert!(
+        app.project
+            .audio_items()
+            .iter()
+            .all(|item| item.start_sample() != paste_start)
+    );
+    assert_eq!(app.audio_item_clipboard.as_ref(), Some(&clipboard));
+
+    app.timeline.selected_track = Some(track_ids[1]);
+    app.timeline.edit_cursor_tick = 76_800;
+    let second_paste_start = app.project.sample_at_tick(76_800).unwrap();
+    let _ = app.update(Message::ExecuteCommand(CommandId::PasteItems));
+    let second_paste = app
+        .project
+        .audio_items()
+        .iter()
+        .filter(|item| item.start_sample() == second_paste_start)
+        .collect::<Vec<_>>();
+    assert_eq!(second_paste.len(), 2);
+    assert_eq!(second_paste[0].track_id(), track_ids[1]);
+    assert_eq!(second_paste[1].track_id(), track_ids[2]);
+
+    app.project_generation = app.project_generation.saturating_add(1);
+    assert!(!commands::is_enabled(&app, CommandId::PasteItems));
 }
 
 #[test]

@@ -24,6 +24,7 @@ pub(crate) enum CommandId {
     OpenActionList,
     Undo,
     Redo,
+    PasteItems,
     ToggleMediaBrowserPanel,
     ToggleOfflineJobsPanel,
     ShowArrangement,
@@ -68,6 +69,7 @@ pub(crate) enum CommandId {
     DuplicateSelectedMidiItem,
     DeleteSelectedItems,
     TrimItemsToSelectedArea,
+    CopyLoopOfSelectedArea,
     SplitSelectedItemsAtCursor,
     SplitSelectedItemsAtTimeSelection,
     AddTrack,
@@ -131,6 +133,7 @@ enum CommandKind {
     OpenActionList,
     Undo,
     Redo,
+    PasteItems,
     ToggleMediaBrowserPanel,
     ToggleOfflineJobsPanel,
     ShowArrangement,
@@ -175,6 +178,7 @@ enum CommandKind {
     DuplicateSelectedMidiItem,
     DeleteSelectedItems,
     TrimItemsToSelectedArea,
+    CopyLoopOfSelectedArea,
     SplitSelectedItemsAtCursor,
     SplitSelectedItemsAtTimeSelection,
     AddTrack,
@@ -209,12 +213,17 @@ const NEW_PROJECT_SHORTCUT: &[Shortcut] = &[Shortcut::character('n', Modifiers::
 const SAVE_SHORTCUT: &[Shortcut] = &[Shortcut::character('s', Modifiers::COMMAND)];
 const PREFERENCES_SHORTCUT: &[Shortcut] = &[Shortcut::character('p', Modifiers::COMMAND)];
 const UNDO_SHORTCUT: &[Shortcut] = &[Shortcut::character('z', Modifiers::COMMAND)];
+const PASTE_ITEMS_SHORTCUT: &[Shortcut] = &[Shortcut::character('v', Modifiers::CTRL)];
 const REDO_SHORTCUT: &[Shortcut] = &[
     Shortcut::character('z', Modifiers::COMMAND.union(Modifiers::SHIFT)),
     Shortcut::character('y', Modifiers::COMMAND),
 ];
 const DUPLICATE_ITEM_SHORTCUT: &[Shortcut] = &[Shortcut::character('d', Modifiers::COMMAND)];
 const DELETE_ITEMS_SHORTCUT: &[Shortcut] = &[Shortcut::delete_backspace()];
+const COPY_LOOP_OF_SELECTED_AREA_SHORTCUT: &[Shortcut] = &[Shortcut::character(
+    'l',
+    Modifiers::CTRL.union(Modifiers::ALT),
+)];
 const SPLIT_ITEMS_SHORTCUT: &[Shortcut] = &[Shortcut::character('s', Modifiers::NONE)];
 const ADD_PROJECT_MARKER_SHORTCUT: &[Shortcut] = &[Shortcut::character('m', Modifiers::NONE)];
 const INSERT_REGION_FROM_TIME_SELECTION_SHORTCUT: &[Shortcut] =
@@ -382,6 +391,16 @@ const COMMANDS: &[CommandDefinition] = &[
         shortcuts: REDO_SHORTCUT,
         destructive: false,
         separator_before: false,
+    },
+    CommandDefinition {
+        kind: CommandKind::PasteItems,
+        menu: Some(MainMenu::Edit),
+        category: "Edit",
+        label: "Paste items/tracks",
+        aliases: &["paste items", "paste tracks"],
+        shortcuts: PASTE_ITEMS_SHORTCUT,
+        destructive: false,
+        separator_before: true,
     },
     CommandDefinition {
         kind: CommandKind::ToggleMediaBrowserPanel,
@@ -1043,6 +1062,19 @@ const COMMANDS: &[CommandDefinition] = &[
         separator_before: false,
     },
     CommandDefinition {
+        kind: CommandKind::CopyLoopOfSelectedArea,
+        menu: Some(MainMenu::Item),
+        category: "Item",
+        label: "Copy loop of selected area of audio items",
+        aliases: &[
+            "copy loop of selected area of items",
+            "copy selected audio area as loop",
+        ],
+        shortcuts: COPY_LOOP_OF_SELECTED_AREA_SHORTCUT,
+        destructive: false,
+        separator_before: false,
+    },
+    CommandDefinition {
         kind: CommandKind::SplitSelectedItemsAtCursor,
         menu: Some(MainMenu::Item),
         category: "Item",
@@ -1374,6 +1406,8 @@ fn macro_step_supported(kind: CommandKind) -> bool {
             | CommandKind::ToggleSelectionOfItemUnderMouse
             | CommandKind::DuplicateSelectedAudioItem
             | CommandKind::DuplicateSelectedMidiItem
+            | CommandKind::PasteItems
+            | CommandKind::CopyLoopOfSelectedArea
             | CommandKind::SplitSelectedItemsAtCursor
             | CommandKind::SplitSelectedItemsAtTimeSelection
             | CommandKind::AddTrack
@@ -1417,12 +1451,32 @@ pub(super) fn for_menu(app: &App, menu: MainMenu) -> Vec<CommandEntry> {
             let trim_items = menu_entries.remove(index);
             menu_entries.insert(1.min(menu_entries.len()), trim_items);
         }
+        if let Some(index) = menu_entries
+            .iter()
+            .position(|entry| entry.id == CommandId::CopyLoopOfSelectedArea)
+        {
+            let copy_loop = menu_entries.remove(index);
+            menu_entries.insert(2.min(menu_entries.len()), copy_loop);
+        }
+        if let Some(copy_loop) = menu_entries
+            .iter_mut()
+            .find(|entry| entry.id == CommandId::CopyLoopOfSelectedArea)
+        {
+            copy_loop.label = "Copy loop of selected area of items".to_owned();
+        }
         if let Some(select_all) = menu_entries
             .iter_mut()
             .find(|entry| entry.id == CommandId::SelectAllItems)
         {
             select_all.label = "Select all".to_owned();
         }
+    }
+    if menu == MainMenu::Edit
+        && let Some(paste) = menu_entries
+            .iter_mut()
+            .find(|entry| entry.id == CommandId::PasteItems)
+    {
+        paste.label = "Paste".to_owned();
     }
     if menu == MainMenu::Help
         && let Some(mut action_list) = all_entries
@@ -1887,6 +1941,7 @@ fn command_kind_id(kind: CommandKind) -> &'static str {
         CommandKind::OpenActionList => "actions.show-list",
         CommandKind::Undo => "edit.undo",
         CommandKind::Redo => "edit.redo",
+        CommandKind::PasteItems => "edit.paste-items",
         CommandKind::ToggleMediaBrowserPanel => "view.media-browser-panel",
         CommandKind::ToggleOfflineJobsPanel => "view.offline-jobs-panel",
         CommandKind::ShowArrangement => "view.arrangement-workspace",
@@ -1953,6 +2008,7 @@ fn command_kind_id(kind: CommandKind) -> &'static str {
         CommandKind::DuplicateSelectedMidiItem => "item.duplicate-midi",
         CommandKind::DeleteSelectedItems => "item.delete-selected",
         CommandKind::TrimItemsToSelectedArea => "item.trim-to-selection",
+        CommandKind::CopyLoopOfSelectedArea => "item.copy-loop-selected-area",
         CommandKind::SplitSelectedItemsAtCursor => "item.split-at-cursor",
         CommandKind::SplitSelectedItemsAtTimeSelection => "item.split-at-selection",
         CommandKind::AddTrack => "track.add",
@@ -2020,6 +2076,7 @@ pub(super) fn dispatch(app: &mut App, command: CommandId) -> Task<Message> {
         CommandId::OpenActionList => Message::OpenActionList,
         CommandId::Undo => Message::Undo,
         CommandId::Redo => Message::Redo,
+        CommandId::PasteItems => Message::PasteItems,
         CommandId::ToggleMediaBrowserPanel => Message::ToggleMediaBrowserPanel,
         CommandId::ToggleOfflineJobsPanel => Message::ToggleOfflineJobsPanel,
         CommandId::ShowArrangement => Message::ShowMainWorkspace(MainWorkspace::Arrangement),
@@ -2134,6 +2191,7 @@ pub(super) fn dispatch(app: &mut App, command: CommandId) -> Task<Message> {
         }
         CommandId::DeleteSelectedItems => Message::DeleteSelectedItems,
         CommandId::TrimItemsToSelectedArea => Message::TrimItemsToSelectedArea,
+        CommandId::CopyLoopOfSelectedArea => Message::CopyLoopOfSelectedArea,
         CommandId::SplitSelectedItemsAtCursor => Message::SplitSelectedItemsAtCursor,
         CommandId::SplitSelectedItemsAtTimeSelection => Message::SplitSelectedItemsAtTimeSelection,
         CommandId::AddTrack => Message::AddTrack,
@@ -2336,6 +2394,8 @@ fn command_enabled(app: &App, kind: CommandKind, track: Option<TrackState>) -> b
                 && app.master_mix_commit_at.is_none()
                 && history_command_enabled(app, app.project.can_redo_track_mix())
         }
+        CommandKind::PasteItems => !project_edit_busy(app) && app.can_paste_audio_items(),
+        CommandKind::CopyLoopOfSelectedArea => true,
         CommandKind::ToggleMediaBrowserPanel => true,
         CommandKind::ToggleOfflineJobsPanel => true,
         CommandKind::ShowArrangement | CommandKind::ShowMixer | CommandKind::ToggleMixerPanel => {
@@ -2613,6 +2673,8 @@ fn command_id(kind: CommandKind) -> CommandId {
         CommandKind::DuplicateSelectedMidiItem => CommandId::DuplicateSelectedMidiItem,
         CommandKind::DeleteSelectedItems => CommandId::DeleteSelectedItems,
         CommandKind::TrimItemsToSelectedArea => CommandId::TrimItemsToSelectedArea,
+        CommandKind::CopyLoopOfSelectedArea => CommandId::CopyLoopOfSelectedArea,
+        CommandKind::PasteItems => CommandId::PasteItems,
         CommandKind::SplitSelectedItemsAtCursor => CommandId::SplitSelectedItemsAtCursor,
         CommandKind::SplitSelectedItemsAtTimeSelection => {
             CommandId::SplitSelectedItemsAtTimeSelection
