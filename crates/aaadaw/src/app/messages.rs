@@ -213,7 +213,6 @@ pub(crate) enum Message {
     MidiExportMarkersChanged(bool),
     MidiExportMarkerTypeChanged(aaadaw_core::MidiMarkerType),
     MidiExportHashOnlyChanged(bool),
-    MidiExportHiddenMarkersChanged(bool),
     OpenProjectSettings,
     CloseProjectSettings,
     ApplyProjectSettings,

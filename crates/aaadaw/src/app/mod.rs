@@ -1885,7 +1885,6 @@ impl App {
                     | Message::MidiExportMarkersChanged(_)
                     | Message::MidiExportMarkerTypeChanged(_)
                     | Message::MidiExportHashOnlyChanged(_)
-                    | Message::MidiExportHiddenMarkersChanged(_)
                     | Message::ShowMainWorkspace(_)
                     | Message::MobileNavigateBack
                     | Message::ToggleItemProperties
@@ -2478,23 +2477,32 @@ impl App {
                 }
             }
             Message::MidiExportMarkersChanged(enabled) => {
-                if let Some(dialog) = &mut self.midi_export_dialog {
+                if !self.project.markers().is_empty()
+                    && let Some(dialog) = &mut self.midi_export_dialog
+                {
                     dialog.export_markers = enabled;
                 }
             }
             Message::MidiExportMarkerTypeChanged(marker_type) => {
-                if let Some(dialog) = &mut self.midi_export_dialog {
+                if !self.project.markers().is_empty()
+                    && self
+                        .midi_export_dialog
+                        .as_ref()
+                        .is_some_and(|dialog| dialog.export_markers)
+                    && let Some(dialog) = &mut self.midi_export_dialog
+                {
                     dialog.marker_type = marker_type;
                 }
             }
             Message::MidiExportHashOnlyChanged(enabled) => {
-                if let Some(dialog) = &mut self.midi_export_dialog {
+                if !self.project.markers().is_empty()
+                    && self
+                        .midi_export_dialog
+                        .as_ref()
+                        .is_some_and(|dialog| dialog.export_markers)
+                    && let Some(dialog) = &mut self.midi_export_dialog
+                {
                     dialog.only_markers_starting_with_hash = enabled;
-                }
-            }
-            Message::MidiExportHiddenMarkersChanged(enabled) => {
-                if let Some(dialog) = &mut self.midi_export_dialog {
-                    dialog.export_hidden_markers = enabled;
                 }
             }
             Message::ProjectMidiExported(path, result) => {

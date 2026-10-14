@@ -952,6 +952,8 @@ Nightly + Cranelift 定向回归 2/2、最终源码上的 AAADAW app 目标全�
 
 ### 2026-10-14 File 菜单 Export project MIDI...
 
-Linux REAPER 7.82 原厂对话框探针确认 Main action 40849、无快捷键，以及 Type 1 / PPQN 960 默认值；tempo/meter、SMPTE 和 marker 导出默认关闭。AAADAW 已实现对应的导出设置窗口与 SMF 编码：Type 0/1、PPQN 转换、可选速度/拍号/SMPTE、marker/cue 和 `#` 筛选；文件写入在后台使用临时文件原子替换。缩放 PPQN 时会保留至少一个导出 tick 的正音符时长，避免 Note Off 排在 Note On 前导致挂音。原厂对话框截图、默认状态和未完成边界见 [Export MIDI 验收记录](../verification/reaper-parity/menu-export-midi.md)。核心编码回归 6/6 通过；AAADAW app/tests 目标通过 `cargo check` 与 `clippy -D warnings` 的 Rust 类型和静态检查，期间使用仅提供 pkg-config 元数据的临时 GLib/GObject `.pc` 桩。它们没有提供库或链接能力，所以桌面程序尚未链接、运行，AAADAW 实窗截图仍待补证。
+Linux REAPER 7.82 原厂对话框探针确认 Main action 40849、无快捷键，以及 Type 1 / PPQN 960 默认值；tempo/meter、SMPTE 和 marker 导出默认关闭。AAADAW 已实现对应的导出设置窗口与 SMF 编码：Type 0/1、PPQN 转换、可选速度/拍号/SMPTE、marker/cue 和 `#` 筛选；文件写入在后台使用临时文件原子替换。缩放 PPQN 时会保留至少一个导出 tick 的正音符时长，避免 Note Off 排在 Note On 前导致挂音。原厂与 AAADAW 对照截图及未完成边界见 [Export MIDI 验收记录](../verification/reaper-parity/menu-export-midi.md)。核心编码回归 6/6、AAADAW action app 回归 1/1 通过；桌面二进制也已用本地 pkg-config/linker 条目链接并在 Xvfb 下运行。实窗默认 Type 1/PPQN 960 导出得到 39 字节、1 轨的 format-1 MIDI 文件；窗口截图和文件哈希均已登记。
 
-导出隐藏 marker 的能力受当前项目模型没有 hidden 属性限制；SMPTE 仅覆盖 SMF 可编码的帧率。AAADAW 实窗对照、原厂生成文件字节对比、hidden marker 模型和完整交互仍未完成，`FILE-MIDI-EXPORT-001` 与 `SHELL-MENU-KEYBOARD-001` 保持 `in_progress`。
+通过仓库内 ignored `target/` 下的本地 pkg-config/linker 条目补足 GLib 开发元数据后，新的桌面二进制已成功链接并在 Xvfb `:124` 上持续运行；系统包未改动。截图验证确认实窗 File 菜单可打开 MIDI 导出窗口，窗口实际为 520×298，与原厂尺寸吻合；默认 Type 1/PPQN 960，marker 模式和筛选控件在空工程中正确禁用。实窗默认导出再次生成可识别的 format-1、单轨、39 字节 MIDI，SHA-256 与之前结果相同。更新后的菜单、对话框和导出成功截图及哈希记录在 [验收记录](../verification/reaper-parity/menu-export-midi.md)。`cargo test -p aaadaw --bin aaadaw export` 通过 34 项，其中包含两个 MIDI 界面回归；核心编码测试 6/6 通过，稳定版 Clippy `-D warnings`、rustfmt 和 diff 检查也通过。
+
+对照截图显示剩余界面差异：AAADAW 使用深色主题，控件样式仍与原厂不同；File 菜单命令顺序和条目覆盖也不完整。项目模型没有 hidden-marker 状态，因此该控件保持禁用；原厂生成 MIDI 的逐事件比较、焦点/全量设置交互及其余 REAPER 界面仍未完成。`FILE-MIDI-EXPORT-001` 与 `SHELL-MENU-KEYBOARD-001` 继续保持 `in_progress`。

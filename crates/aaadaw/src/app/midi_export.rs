@@ -63,8 +63,8 @@ impl App {
         }
         self.midi_export_dialog = Some(MidiExportDialogState::for_project(&self.project));
         let (window_id, task) = iced::window::open(iced::window::Settings {
-            size: iced::Size::new(560.0, 390.0),
-            min_size: Some(iced::Size::new(520.0, 360.0)),
+            size: iced::Size::new(520.0, 298.0),
+            min_size: Some(iced::Size::new(500.0, 298.0)),
             ..iced::window::Settings::default()
         });
         self.midi_export_window_id = Some(window_id);

@@ -61,19 +61,25 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
         row![
             checkbox(draft.export_markers)
                 .label("Export project markers as MIDI:")
-                .on_toggle(Message::MidiExportMarkersChanged),
+                .on_toggle_maybe(has_markers.then_some(Message::MidiExportMarkersChanged),),
             radio(
                 "markers",
                 MidiMarkerType::Markers,
                 Some(draft.marker_type),
                 Message::MidiExportMarkerTypeChanged,
-            ),
+            )
+            .style(move |theme, status| {
+                marker_radio_style(theme, status, marker_options_enabled)
+            }),
             radio(
                 "cues",
                 MidiMarkerType::Cues,
                 Some(draft.marker_type),
                 Message::MidiExportMarkerTypeChanged,
-            ),
+            )
+            .style(move |theme, status| {
+                marker_radio_style(theme, status, marker_options_enabled)
+            }),
         ]
         .spacing(8)
         .align_y(Alignment::Center),
@@ -82,9 +88,7 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
             .on_toggle_maybe(marker_options_enabled.then_some(Message::MidiExportHashOnlyChanged),),
         checkbox(draft.export_hidden_markers)
             .label("Export hidden markers")
-            .on_toggle_maybe(
-                marker_options_enabled.then_some(Message::MidiExportHiddenMarkersChanged),
-            ),
+            .on_toggle_maybe(None::<fn(bool) -> Message>),
         rule::horizontal(1),
         row![
             iced::widget::Space::new().width(Length::Fill),
@@ -96,11 +100,29 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
         .spacing(8)
         .align_y(Alignment::Center),
     ]
-    .spacing(10)
-    .padding(14);
+    .spacing(2)
+    .padding(10);
 
     container(content)
         .width(Length::Fill)
         .height(Length::Fill)
         .into()
+}
+
+fn marker_radio_style(
+    theme: &iced::Theme,
+    status: iced::widget::radio::Status,
+    enabled: bool,
+) -> iced::widget::radio::Style {
+    if enabled {
+        return iced::widget::radio::default(theme, status);
+    }
+    let disabled = iced::Color::from_rgb8(112, 116, 120);
+    iced::widget::radio::Style {
+        background: iced::Color::TRANSPARENT.into(),
+        dot_color: disabled,
+        border_width: 1.0,
+        border_color: disabled,
+        text_color: Some(disabled),
+    }
 }

@@ -5730,6 +5730,24 @@ fn native_export_project_midi_action_opens_the_export_settings_window() {
 }
 
 #[test]
+fn midi_export_marker_options_are_inert_for_an_empty_project() {
+    let mut app = App::default();
+    let _ = app.update(Message::OpenMidiExportDialog);
+
+    let _ = app.update(Message::MidiExportMarkersChanged(true));
+    let _ = app.update(Message::MidiExportMarkerTypeChanged(
+        aaadaw_core::MidiMarkerType::Cues,
+    ));
+    let _ = app.update(Message::MidiExportHashOnlyChanged(true));
+
+    let dialog = app.midi_export_dialog.as_ref().unwrap();
+    assert!(!dialog.export_markers);
+    assert_eq!(dialog.marker_type, aaadaw_core::MidiMarkerType::Markers);
+    assert!(!dialog.only_markers_starting_with_hash);
+    assert!(!dialog.export_hidden_markers);
+}
+
+#[test]
 fn track_controls_and_undo_change_project_only_through_actions() {
     let mut app = App::default();
     let _ = app.update(Message::AddTrack);
