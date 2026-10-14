@@ -885,7 +885,7 @@ MIDI Properties 仍缺 item timebase、take playback rate/pitch/mix、剩余 sou
 
 ### 2026-10-14 Delete by focus：轨道确认与 no-prompting
 
-REAPER 7.82 原生探针在 TCP 点击后同时选中轨道与 MIDI item，再按 Delete，显示 `Delete 1 selected track?`；取消没有项目变化。将焦点保持在 TCP 并运行 Action List 的 `- no prompting` 变体会直接删除轨道及其 MIDI item，原厂状态变化计数只增加一次。AAADAW 现维护 Arrange、TrackPanel、Automation 三类最近目标区；普通 Delete 在 TrackPanel 弹确认框，Escape/Cancel/遮罩取消无修改，确认经现有依赖顺序删除事务执行；no-prompting 使用同一事务但不弹框。Arrange item 和 Automation point 根据各自目标区删除。焦点状态目前限定为主 Arrange/Mixer 内最后一次目标区交互，不等同全部 REAPER 子窗口和控件的真实键盘焦点。
+REAPER 7.82 原生探针在 TCP 点击后同时选中轨道与 MIDI item，再按 Delete，显示 `Delete 1 selected track?`；取消没有项目变化。将焦点保持在 TCP 并运行 Action List 的 `- no prompting` 变体会直接删除轨道及其 MIDI item，原厂状态变化计数只增加一次。AAADAW 现维护 Arrange、TrackPanel、Automation 三类最近目标区；普通 Delete 在 TrackPanel 弹确认框，Escape/Cancel/遮罩取消无修改，确认经现有依赖顺序删除事务执行；no-prompting 使用同一事务但不弹框。Arrange item 和 Automation point 根据各自目标区删除。实窗点击轨道名后 Delete 也已验证进入轨道确认；轨道名现在单击选中、双击才进入名称编辑。焦点状态目前限定为主 Arrange/Mixer 内最后一次目标区交互，不等同全部 REAPER 子窗口和控件的真实键盘焦点。
 
 实窗截图验证了 AAADAW 确认框和无提示删除后的空轨道状态；原厂对应截图及计数证据见 [Delete by focus runtime evidence](../verification/reaper-parity/fixtures/delete-by-focus-runtime-native.tsv)。AAADAW nightly + Cranelift 应用 551/551 测试通过；Stable workspace all-target Clippy `-D warnings` 和 fmt/diff 检查通过。未做完整焦点窗口或像素验收，`INPUT-BIND-001` 仍为 `in_progress`。
 
@@ -901,3 +901,9 @@ Core 快照/Undo、Storage schema 38 迁移、App Apply/Cancel/Undo/Redo 和 Eng
 多个 Audio/MIDI item 同时选择时，Item Properties 显示共同 Mute 值；值不一致时明确显示 Mixed values，并提供直接的 Mute all/Unmute all 目标。用户应用后，所有实际需要变化的 item 共享一个 Undo/Redo 步骤。包含 MIDI 的 selection 只有在 MIDI item 确实需要改变 mute 时才会在播放中拒绝修改，避免现有 MIDI 播放计划过期。
 
 回归验证混合 Audio/MIDI selection 的 Mixed 状态、统一 Apply、单步 Undo/Redo、Cancel，以及播放中 MIDI 改变保护和项目 I/O 忙碌时仍可编辑草稿；Nightly + Cranelift aaadaw 应用层 nextest 549/549 passed，0 skipped。Stable workspace all-target Clippy `-D warnings`、fmt 与 diff 检查通过。本轮没有 AAADAW 实窗截图或新 REAPER 探针；批量属性目前只覆盖 Mute，其他字段、混合值布局与完整原厂几何仍未完成，`ITEM-PROPERTIES-001` 保持 `in_progress`。
+
+### 2026-10-14 TCP 轨道名单击与双击编辑
+
+原有交互把轨道名单击直接交给文本输入框，导致 Delete 被输入控件消费，无法像 REAPER TCP 那样以轨道为目标。名称现在默认是只读标签：单击选择轨道并设置 TrackPanel 删除目标，双击进入现有可撤销名称编辑器；编辑中的文本控件继续接收键盘输入。实窗验证了单击后 Delete 打开轨道确认，以及双击后名称输入框获得焦点；截图和哈希分别记录在 [Delete by focus runtime evidence](../verification/reaper-parity/fixtures/delete-by-focus-runtime-native.tsv) 与 [双击编辑 fixture](../verification/reaper-parity/fixtures/track-name-double-click-aaadaw.tsv)。
+
+Nightly + Cranelift AAADAW 测试 551/551 passed；Stable workspace all-target Clippy `-D warnings`、fmt 和 diff 检查通过。`track_rename_is_undoable` 覆盖名称编辑、提交和可撤销行为。该修正只覆盖 TCP/MCP 名称控件；`INPUT-FOCUS-001` 继续 `in_progress`，完整文本控件、键盘布局、插件和子窗口焦点矩阵尚未验收。

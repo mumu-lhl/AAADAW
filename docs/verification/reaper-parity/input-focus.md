@@ -14,6 +14,8 @@
 
 专项回归 `focused_track_name_editor_routes_native_text_escape_and_undo_keys` 覆盖同一分流：捕获的 Space 不生成全局快捷键，捕获的 Escape 取消轨道名称草稿且保留两种范围，忽略的 `Ctrl+Z` 撤销最近的插轨且保留时间范围。该测试通过 nightly+Cranelift nextest 1/1。
 
+REAPER 的 TCP 轨道名单击选中轨道，文本编辑需要双击或明确的 Rename 命令。AAADAW 现在默认渲染只读轨道名：单击通过 TrackPanel 路由，双击打开原有可撤销名称编辑器；编辑器获得焦点后仍由文本控件接收 Delete。实际 AAADAW 双击截图显示名称输入框获得焦点，步骤与 SHA-256 见[双击编辑 TSV](fixtures/track-name-double-click-aaadaw.tsv)和[双击编辑截图](fixtures/track-name-double-click-aaadaw.png)。Delete by focus 的 AAADAW 实窗截图显示单击名称后进入轨道确认框，详见[运行时证据 TSV](fixtures/delete-by-focus-runtime-native.tsv)和[轨道删除确认截图](fixtures/delete-track-confirmation-aaadaw.png)。
+
 ## Action List Filter
 
 在同一 Linux REAPER 7.82 / Default 7 隔离会话打开 Action List（40605），点击 Filter 后输入 `undo`，列表显示 `Edit: Undo` 与 `Edit: Show undo history window`。Filter 聚焦时按 `Ctrl+Z`，查询和临时工程均不变：轨道仍为 1 条，传输保持停止，项目状态计数仍为 2。关闭 Action List、把焦点交还主窗口后再次按 `Ctrl+Z`，轨道数降为 0，状态计数升至 3。Filter 末尾输入空格不会启动播放；Filter 聚焦时 Escape 关闭 Action List。逐步状态见 [原厂 TSV](fixtures/action-list-focus-native.tsv)，按键前后截图见 [搜索](fixtures/action-list-search-before-ctrl-z-native.png)、[Ctrl+Z](fixtures/action-list-search-after-ctrl-z-native.png)、[空格](fixtures/action-list-filter-space-native.png)和 [Escape](fixtures/action-list-filter-escape-native.png)。可复现探针为 [probe-action-list-focus.lua](../../../scripts/reaper_parity/probe-action-list-focus.lua)；测试使用隔离未保存工程，Xvfb 下音频设备关闭，传输全程停止。

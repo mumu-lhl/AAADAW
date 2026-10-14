@@ -9443,6 +9443,7 @@ impl App {
         self.track_name_edits
             .insert(track_id, track.name().to_owned());
         self.begin_track_draft(track_id, TrackDraftField::Name);
+        self.timeline.delete_focus = timeline::DeleteFocusTarget::TrackPanel;
         self.timeline.select_track_only(track_id);
         let input_id = messages::track_name_input_id(track_id);
         Task::batch([

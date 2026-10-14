@@ -1162,14 +1162,27 @@ pub(super) fn track_fx_button(track: &Track) -> Element<'static, Message> {
 
 pub(super) fn track_name_input<'a>(app: &'a App, track: &'a Track) -> Element<'a, Message> {
     let track_id = track.id();
-    let has_error = app
-        .track_draft_errors
-        .contains_key(&(track_id, TrackDraftField::Name));
-    let edited_name = app
+    let name = app
         .track_name_edits
         .get(&track_id)
         .map_or(track.name(), String::as_str);
-    let input = text_input("Track name", edited_name)
+    if !app.track_name_edits.contains_key(&track_id) {
+        let label = mouse_area(
+            container(text(name).size(12))
+                .width(Length::Fill)
+                .padding([2, 4]),
+        )
+        .on_press(Message::Timeline(TimelineEvent::SelectTrackWithModifiers {
+            track_id,
+            modifiers: app.keyboard_modifiers,
+        }))
+        .on_double_click(Message::BeginTrackNameEdit(track_id));
+        return label.into();
+    }
+    let has_error = app
+        .track_draft_errors
+        .contains_key(&(track_id, TrackDraftField::Name));
+    let input = text_input("Track name", name)
         .id(super::super::messages::track_name_input_id(track_id))
         .on_input(move |name| Message::TrackNameChanged(track_id, name))
         .on_submit(Message::CommitTrackName(track_id))

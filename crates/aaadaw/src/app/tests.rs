@@ -7325,8 +7325,20 @@ fn track_rename_is_undoable() {
     let _ = app.update(Message::AddTrack);
     let track_id = app.project.tracks()[0].id();
 
+    assert!(!app.track_name_edits.contains_key(&track_id));
+    let _ = app.update(Message::Timeline(
+        super::super::timeline::TimelineEvent::SelectTrack(track_id),
+    ));
+    assert_eq!(
+        app.timeline.delete_focus,
+        super::super::timeline::DeleteFocusTarget::TrackPanel
+    );
     let _ = app.update(Message::BeginTrackNameEdit(track_id));
     assert_eq!(app.track_name_edits.get(&track_id).unwrap(), "Audio 1");
+    assert_eq!(
+        app.timeline.delete_focus,
+        super::super::timeline::DeleteFocusTarget::TrackPanel
+    );
     let _ = app.update(Message::TrackNameChanged(track_id, "Lead Vox".to_owned()));
     let _ = app.update(Message::CommitTrackName(track_id));
     assert_eq!(app.project.tracks()[0].name(), "Lead Vox");

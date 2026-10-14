@@ -10,9 +10,9 @@ native_no_prompt_action	Keep TCP as target, run Action List row ending in - no p
 native_no_prompt_result	Track and MIDI item counts change 1/1 to 0/0; native project state-change count increases once
 native_no_prompt_screenshot	delete-track-no-prompt-native.png
 native_no_prompt_sha256	7f2b3e2cdbbfd58b5c74dd57f17c75556eed399bcf65f0c8f9c24568a1f8f415
-aaadaw_test	Linux AAADAW 1280x800 main window; select one TCP track and run Delete / no-prompting action
+aaadaw_test	Linux AAADAW 1280x800 main window; single-click TCP track name, press Delete; Cancel the prompt before running the no-prompting action
 aaadaw_confirmation_screenshot	delete-track-confirmation-aaadaw.png
-aaadaw_confirmation_sha256	750e653cee637ea7c5cd6e2d52279bc32cf2c9d3590109a1f264745d9a53872f
+aaadaw_confirmation_sha256	2051229bc313c8941be6c501155b38e42bb0a82521ce7ee697ab46ebe95bc9f0
 aaadaw_no_prompt_screenshot	delete-track-no-prompt-aaadaw.png
 aaadaw_no_prompt_sha256	d590b2a415747d71121b5a7569d6e92e3ba27d41ff0656add4ac6c283c0c4038
 aaadaw_behavior	Arrange item selection, TrackPanel selection and Automation point selection choose their own delete targets; standard track deletion prompts, no-prompting deletes directly
