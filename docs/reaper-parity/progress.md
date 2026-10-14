@@ -526,7 +526,7 @@ Help/About 及 Options、九项菜单访问键和左右导航定向 nightly+Cran
 
 Linux REAPER 7.82 / Default 7 的 Main 动作导出中，40697 `Remove items/tracks/envelope points (depending on focus)` 默认绑定 Delete；40006 `Item: Remove items` 无默认绑定。AAADAW 已将 Delete 从 Item 菜单命令移到稳定 Action List ID `edit.delete-focused`。实现按当前时间线选区处理 Audio/MIDI items、FX/音量 automation 点或轨道；多选轨道先按文件夹/输出/发送依赖顺序删除，并合并为一个 Undo 事务。测试还验证有 item 与轨道同时选中时 item 优先，Undo 恢复数据。
 
-本次应用全量 nightly+Cranelift nextest 551/551 通过、0 跳过；Stable all-target strict Clippy、fmt 与 diff 检查通过。`INPUT-BIND-001` 仍 `in_progress`：原厂导出能证明名称和默认键，但尚未探测原厂在不同窗口的焦点优先级；AAADAW 当前按选择类别路由，还没有把实际键盘焦点窗口纳入动作分派。Main 外 Section、完整动作目录、特殊键/Scope/MIDI/OSC、导入导出和完整 GUI 验收也仍缺。
+本次应用全量 nightly+Cranelift nextest 551/551 通过、0 跳过；Stable all-target strict Clippy、fmt 与 diff 检查通过。提交后又在独立 Xvfb 对照截取两边 701×475 Action List 窗口：[REAPER](../verification/reaper-parity/fixtures/delete-by-focus-action-list-native.png)、[AAADAW](../verification/reaper-parity/fixtures/delete-by-focus-action-list-aaadaw.png)。画面确认两边主动作描述与 Delete 绑定一致，也显示 REAPER 另有尚未收录的 no-prompting 变体；这不是运行时焦点路由或像素验收。`INPUT-BIND-001` 仍 `in_progress`：原厂不同窗口的焦点优先级尚未探测；AAADAW 当前按选择类别路由，还没有把实际键盘焦点窗口纳入动作分派。Main 外 Section、完整动作目录、特殊键/Scope/MIDI/OSC、导入导出和完整 GUI 验收也仍缺。
 
 ### 2026-10-13 Main Action 40182：Select all items
 
