@@ -69,6 +69,13 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
         ]
         .spacing(6),
         row![
+            text("Phase:").width(120),
+            checkbox(draft.phase_inverted)
+                .label("Invert phase")
+                .on_toggle(Message::ItemPropertyPhaseChanged)
+        ]
+        .spacing(6),
+        row![
             text("Fade in:").width(80),
             field(ItemPropertyField::InLength, 130)
         ]

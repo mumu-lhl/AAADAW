@@ -213,6 +213,7 @@ struct AudioItemClipboardEntry {
     source_section_length_samples: u64,
     length_samples: u64,
     muted: bool,
+    phase_inverted: bool,
     track_offset: usize,
 }
 
@@ -711,6 +712,7 @@ fn action_updates_item_mix(action: &DawAction) -> bool {
         DawAction::SetAudioItemFades { .. }
         | DawAction::SetAudioItemVolume { .. }
         | DawAction::SetAudioItemMute { .. }
+        | DawAction::SetAudioItemPhase { .. }
         | DawAction::SetAudioItemTakeMix { .. } => true,
         DawAction::BatchTransaction { actions, .. } => actions.iter().any(action_updates_item_mix),
         _ => false,
@@ -1868,6 +1870,7 @@ impl App {
                     | Message::ItemPropertyFieldChanged(..)
                     | Message::ItemPropertyLoopSourceChanged(_)
                     | Message::ItemPropertyMuteChanged(_)
+                    | Message::ItemPropertyPhaseChanged(_)
                     | Message::MidiItemPropertyNameChanged(_)
                     | Message::CloseItemProperties
                     | Message::MarkerNameChanged(_)
@@ -2445,6 +2448,11 @@ impl App {
                     draft.set_muted(muted);
                 } else if let Some(draft) = &mut self.midi_item_properties {
                     draft.set_muted(muted);
+                }
+            }
+            Message::ItemPropertyPhaseChanged(inverted) => {
+                if let Some(draft) = &mut self.item_properties {
+                    draft.set_phase_inverted(inverted);
                 }
             }
             Message::MidiItemPropertyNameChanged(name) => {
@@ -7495,12 +7503,28 @@ impl App {
         let _ = item_id;
     }
 
+    fn sync_item_phase_to_playback(&self, item_id: ItemId) {
+        #[cfg(feature = "audio-device")]
+        if let Some(item) = self
+            .project
+            .audio_items()
+            .iter()
+            .find(|item| item.id() == item_id)
+            && let Some(playback) = &self.playback
+        {
+            let _ = playback.set_item_phase(item_id, item.is_phase_inverted());
+        }
+        #[cfg(not(feature = "audio-device"))]
+        let _ = item_id;
+    }
+
     fn sync_all_track_mix_to_playback(&self) {
         self.sync_master_mix_to_playback();
         for item in self.project.audio_items() {
             self.sync_item_fades_to_playback(item.id());
             self.sync_item_volume_to_playback(item.id());
             self.sync_item_mute_to_playback(item.id());
+            self.sync_item_phase_to_playback(item.id());
             self.sync_item_take_mix_to_playback(item.id());
         }
         for track in self.project.tracks() {
@@ -10833,6 +10857,7 @@ impl App {
                 source_section_length_samples,
                 length_samples: span_samples,
                 muted: item.is_muted(),
+                phase_inverted: item.is_phase_inverted(),
                 track_offset: track_index - first_track_index,
             });
         }
@@ -11014,6 +11039,7 @@ impl App {
                     source_section_start_samples: item.source_section_start_samples,
                     length_samples,
                     muted: item.muted,
+                    phase_inverted: item.phase_inverted,
                     source_section_length_samples: item.source_section_length_samples,
                 })
             })

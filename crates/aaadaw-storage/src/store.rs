@@ -23,7 +23,7 @@ use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 /// Latest database schema version understood by this release.
-pub const CURRENT_SCHEMA_VERSION: u32 = 45;
+pub const CURRENT_SCHEMA_VERSION: u32 = 46;
 
 const MIGRATION_29: &str = "ALTER TABLE project_meta ADD COLUMN start_measure INTEGER NOT NULL DEFAULT 1 CHECK(start_measure BETWEEN -2147483648 AND 2147483647);";
 const MIGRATION_30: &str = "ALTER TABLE project_meta ADD COLUMN bpm_basis INTEGER NOT NULL DEFAULT 1 CHECK(bpm_basis BETWEEN 0 AND 5);";
@@ -410,6 +410,7 @@ CREATE TABLE IF NOT EXISTS audio_items (
     take_volume REAL NOT NULL DEFAULT 1.0 CHECK (take_volume >= 0.0 AND take_volume <= 16.0),
     take_pan REAL NOT NULL DEFAULT 0.0 CHECK (take_pan >= -1.0 AND take_pan <= 1.0),
     muted INTEGER NOT NULL DEFAULT 0 CHECK (muted IN (0, 1)),
+    phase_inverted INTEGER NOT NULL DEFAULT 0 CHECK (phase_inverted IN (0, 1)),
     UNIQUE (track_id, position)
 );
 CREATE INDEX IF NOT EXISTS audio_items_by_project_position ON audio_items(position, id);
@@ -2806,6 +2807,15 @@ fn ensure_audio_item_mute_column(connection: &Connection) -> Result<(), StorageE
     Ok(())
 }
 
+fn ensure_audio_item_phase_column(connection: &Connection) -> Result<(), StorageError> {
+    if !table_has_column(connection, "audio_items", "phase_inverted")? {
+        connection.execute_batch(
+            "ALTER TABLE audio_items ADD COLUMN phase_inverted INTEGER NOT NULL DEFAULT 0 CHECK(phase_inverted IN (0, 1));",
+        )?;
+    }
+    Ok(())
+}
+
 fn ensure_midi_item_mute_column(connection: &Connection) -> Result<(), StorageError> {
     if !table_has_column(connection, "items", "muted")? {
         connection.execute_batch(
@@ -3030,6 +3040,11 @@ fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
                     ensure_midi_item_mute_column(&transaction)?;
                 }
             }
+            46 => {
+                if table_exists(&transaction, "audio_items")? {
+                    ensure_audio_item_phase_column(&transaction)?;
+                }
+            }
             missing => return Err(StorageError::MissingMigration(missing - 1)),
         }
         transaction.pragma_update(None, "user_version", next_version)?;
@@ -3040,6 +3055,7 @@ fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
     ensure_audio_item_loop_columns(connection)?;
     ensure_audio_item_loop_section_start_column(connection)?;
     ensure_audio_item_mute_column(connection)?;
+    ensure_audio_item_phase_column(connection)?;
     ensure_midi_item_mute_column(connection)?;
     connection.execute_batch(AUDIO_ASSETS_TABLE)?;
     ensure_audio_asset_metadata_columns(connection)?;
@@ -3216,9 +3232,9 @@ fn write_snapshot(
     for (position, item) in snapshot.audio_items.iter().enumerate() {
         transaction.execute(
             "INSERT INTO audio_items(id, track_id, position, media_ref, start_sample, \
-             source_offset_samples, length_samples, volume, take_volume, take_pan, muted, loop_source, \
+             source_offset_samples, length_samples, volume, take_volume, take_pan, muted, phase_inverted, loop_source, \
              source_section_start_samples, source_section_length_samples) \
-             VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+             VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
             params![
                 to_sql_integer(item.id)?,
                 to_sql_integer(item.track_id)?,
@@ -3231,6 +3247,7 @@ fn write_snapshot(
                 f64::from(item.take_volume),
                 f64::from(item.take_pan),
                 item.muted,
+                item.phase_inverted,
                 item.loop_source,
                 item.source_section_start_samples
                     .map(to_sql_integer)
@@ -3868,7 +3885,7 @@ fn read_audio_items(connection: &Connection) -> Result<Vec<AudioItemSnapshot>, S
     }
     let mut statement = connection.prepare(
         "SELECT id, track_id, position, media_ref, start_sample, source_offset_samples, \
-         length_samples, volume, take_volume, take_pan, muted, loop_source, \
+         length_samples, volume, take_volume, take_pan, muted, phase_inverted, loop_source, \
          source_section_start_samples, source_section_length_samples \
          FROM audio_items ORDER BY position",
     )?;
@@ -3887,8 +3904,9 @@ fn read_audio_items(connection: &Connection) -> Result<Vec<AudioItemSnapshot>, S
                 row.get::<_, f64>(9)?,
                 row.get::<_, i64>(10)?,
                 row.get::<_, i64>(11)?,
-                row.get::<_, Option<i64>>(12)?,
+                row.get::<_, i64>(12)?,
                 row.get::<_, Option<i64>>(13)?,
+                row.get::<_, Option<i64>>(14)?,
             ))
         })?
         .collect::<Result<Vec<_>, _>>()?;
@@ -3907,6 +3925,7 @@ fn read_audio_items(connection: &Connection) -> Result<Vec<AudioItemSnapshot>, S
                 take_volume,
                 take_pan,
                 muted,
+                phase_inverted_value,
                 loop_source,
                 source_section_start,
                 source_section_length,
@@ -3932,6 +3951,11 @@ fn read_audio_items(connection: &Connection) -> Result<Vec<AudioItemSnapshot>, S
                     1 => true,
                     _ => return Err(StorageError::Snapshot(SnapshotError::InvalidProjectData)),
                 };
+                let phase_inverted = match phase_inverted_value {
+                    0 => false,
+                    1 => true,
+                    _ => return Err(StorageError::Snapshot(SnapshotError::InvalidProjectData)),
+                };
                 let source_section_start_samples =
                     source_section_start.map(from_sql_u64).transpose()?;
                 let source_section_length_samples =
@@ -3952,6 +3976,7 @@ fn read_audio_items(connection: &Connection) -> Result<Vec<AudioItemSnapshot>, S
                     source_offset_samples: from_sql_u64(source_offset)?,
                     length_samples: from_sql_u64(length)?,
                     muted,
+                    phase_inverted,
                     loop_source,
                     source_section_start_samples,
                     source_section_length_samples,
@@ -4349,6 +4374,7 @@ mod loop_source_storage_tests {
                 media_ref: "asset://loop-source".to_owned(),
                 start_sample: 10,
                 source_offset_samples: 120,
+                phase_inverted: false,
                 source_section_start_samples: 100,
                 length_samples: 4_800,
                 muted: false,
@@ -4528,6 +4554,7 @@ mod loop_source_storage_tests {
                 media_ref: "asset://legacy-loop".to_owned(),
                 start_sample: 0,
                 source_offset_samples: 240,
+                phase_inverted: false,
                 source_section_start_samples: 200,
                 length_samples: 4_800,
                 muted: false,

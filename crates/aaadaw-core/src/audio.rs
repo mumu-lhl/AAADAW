@@ -18,6 +18,7 @@ pub struct AudioItem {
     pub(crate) source_offset_samples: u64,
     pub(crate) length_samples: u64,
     pub(crate) muted: bool,
+    pub(crate) phase_inverted: bool,
     pub(crate) loop_source: bool,
     pub(crate) source_section_start_samples: Option<u64>,
     pub(crate) source_section_length_samples: Option<u64>,
@@ -61,6 +62,11 @@ impl AudioItem {
     /// Returns whether this audio item is muted.
     pub fn is_muted(&self) -> bool {
         self.muted
+    }
+
+    /// Returns whether this item's active take has inverted playback polarity.
+    pub fn is_phase_inverted(&self) -> bool {
+        self.phase_inverted
     }
 
     /// Returns whether the item's source repeats when playback reaches its end.

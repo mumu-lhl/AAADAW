@@ -1669,6 +1669,7 @@ struct RenderGraphSources {
     fades: Vec<aaadaw_core::AudioItemFades>,
     volumes: Vec<f32>,
     muted: Vec<bool>,
+    phase_inverted: Vec<bool>,
     take_mixes: Vec<(f32, f32)>,
 }
 
@@ -1923,6 +1924,7 @@ impl AudioRenderGraph {
             fades: vec![aaadaw_core::AudioItemFades::default(); streams.len()],
             volumes: vec![1.0; streams.len()],
             muted: vec![false; streams.len()],
+            phase_inverted: vec![false; streams.len()],
             take_mixes: vec![(1.0, 0.0); streams.len()],
             streams: streams
                 .into_iter()
@@ -2004,6 +2006,7 @@ impl AudioRenderGraph {
             fades: Vec::with_capacity(item_streams.len()),
             volumes: Vec::with_capacity(item_streams.len()),
             muted: Vec::with_capacity(item_streams.len()),
+            phase_inverted: Vec::with_capacity(item_streams.len()),
             take_mixes: Vec::with_capacity(item_streams.len()),
         };
         for (item, stream) in project.audio_items().iter().zip(item_streams) {
@@ -2038,6 +2041,7 @@ impl AudioRenderGraph {
             sources.fades.push(item.fades());
             sources.volumes.push(item.volume());
             sources.muted.push(item.is_muted());
+            sources.phase_inverted.push(item.is_phase_inverted());
             sources
                 .take_mixes
                 .push((item.take_volume(), item.take_pan()));
@@ -2157,8 +2161,12 @@ impl AudioRenderGraph {
         }
         let (item_fade_controller, source_fades) =
             item_fades::compile(&sources.item_ids, sources.fades);
-        let (item_volume_controller, source_volumes) =
-            item_volume::compile(&sources.item_ids, sources.volumes, sources.muted);
+        let (item_volume_controller, source_volumes) = item_volume::compile(
+            &sources.item_ids,
+            sources.volumes,
+            sources.muted,
+            sources.phase_inverted,
+        );
         let (item_take_mix_controller, source_take_mixes) =
             item_take_mix::compile(&sources.item_ids, sources.take_mixes);
         Ok(Self {
@@ -3104,8 +3112,9 @@ impl AudioRenderGraph {
                         overlap_start,
                     );
                     let fades = self.source_fades[stream_index].read();
-                    let (volume, muted) = self.source_volumes[stream_index].read();
+                    let (volume, muted, phase_inverted) = self.source_volumes[stream_index].read();
                     let volume = if muted { 0.0 } else { volume };
+                    let polarity = if phase_inverted { -1.0 } else { 1.0 };
                     let (take_volume, take_pan) = self.source_take_mixes[stream_index].read();
                     for (index, frame) in input[offset..offset + length].iter_mut().enumerate() {
                         let gain = volume
@@ -3114,8 +3123,8 @@ impl AudioRenderGraph {
                                 overlap_start - item_start + index as u64,
                                 item_end - item_start,
                             );
-                        frame[0] *= gain;
-                        frame[1] *= gain;
+                        frame[0] *= gain * polarity;
+                        frame[1] *= gain * polarity;
                         if take_pan < 0.0 {
                             frame[1] *= 1.0 + take_pan;
                         } else {

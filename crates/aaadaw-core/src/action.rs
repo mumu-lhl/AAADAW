@@ -265,6 +265,7 @@ pub enum DawAction {
         source_offset_samples: u64,
         length_samples: u64,
         muted: bool,
+        phase_inverted: bool,
         source_section_start_samples: u64,
         source_section_length_samples: u64,
     },
@@ -277,6 +278,11 @@ pub enum DawAction {
     SetAudioItemMute {
         item_id: ItemId,
         muted: bool,
+    },
+    /// Invert or restore the active audio take's polarity.
+    SetAudioItemPhase {
+        item_id: ItemId,
+        inverted: bool,
     },
     /// Set both manual Item fades as one undoable edit.
     SetAudioItemFades {

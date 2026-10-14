@@ -1690,6 +1690,7 @@ impl Project {
                     source_offset_samples: item.source_offset_samples,
                     length_samples: item.length_samples,
                     muted: item.muted,
+                    phase_inverted: item.phase_inverted,
                     loop_source: item.loop_source,
                     source_section_start_samples: item.source_section_start_samples,
                     source_section_length_samples: item.source_section_length_samples,
@@ -2005,6 +2006,7 @@ impl Project {
                 source_offset_samples: item.source_offset_samples,
                 length_samples: item.length_samples,
                 muted: item.muted,
+                phase_inverted: item.phase_inverted,
                 loop_source: item.loop_source,
                 source_section_start_samples: item.source_section_start_samples,
                 source_section_length_samples: item.source_section_length_samples,
@@ -2861,6 +2863,7 @@ impl Project {
                     source_offset_samples: 0,
                     length_samples,
                     muted: false,
+                    phase_inverted: false,
                     loop_source: false,
                     source_section_start_samples: None,
                     source_section_length_samples: None,
@@ -3081,6 +3084,7 @@ impl Project {
                     source_offset_samples,
                     length_samples,
                     muted: false,
+                    phase_inverted: false,
                     loop_source: true,
                     source_section_start_samples: None,
                     source_section_length_samples: None,
@@ -3098,6 +3102,7 @@ impl Project {
                 source_offset_samples,
                 length_samples,
                 muted,
+                phase_inverted,
                 source_section_start_samples,
                 source_section_length_samples,
             } => {
@@ -3146,6 +3151,7 @@ impl Project {
                     source_offset_samples,
                     length_samples,
                     muted,
+                    phase_inverted,
                     loop_source: true,
                     source_section_start_samples: Some(source_section_start_samples),
                     source_section_length_samples: Some(source_section_length_samples),
@@ -3184,6 +3190,22 @@ impl Project {
                 let before = item.clone();
                 let after = AudioItem {
                     muted,
+                    ..before.clone()
+                };
+                ProjectEvent::AudioItemChanged { before, after }
+            }
+            DawAction::SetAudioItemPhase { item_id, inverted } => {
+                let item = state
+                    .audio_items
+                    .iter()
+                    .find(|item| item.id == item_id)
+                    .ok_or(ActionError::AudioItemNotFound { item_id })?;
+                if is_frozen_render(state, item_id) {
+                    return Err(ActionError::FrozenRenderCannotBeEdited { item_id });
+                }
+                let before = item.clone();
+                let after = AudioItem {
+                    phase_inverted: inverted,
                     ..before.clone()
                 };
                 ProjectEvent::AudioItemChanged { before, after }

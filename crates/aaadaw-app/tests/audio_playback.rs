@@ -137,6 +137,60 @@ fn prepares_and_renders_an_embedded_audio_item() {
 }
 
 #[test]
+fn inverted_audio_items_export_with_reversed_polarity() {
+    let database_path = unique_path("aaadaw");
+    let render_path = unique_path("wav");
+    let wav = pcm_wav(&[8_192; 8], 48_000);
+    let mut store = ProjectStore::open(&database_path).expect("project should open");
+    store
+        .import_audio_asset("asset://phase-inverted", "phase.wav", Cursor::new(&wav))
+        .expect("WAV should embed");
+    let mut project = project_with_audio_item("asset://phase-inverted".to_owned(), 8);
+    let item_id = project.audio_items()[0].id();
+    project
+        .apply(DawAction::SetAudioItemPhase {
+            item_id,
+            inverted: true,
+        })
+        .expect("audio item should invert phase");
+
+    let prepared = prepare_audio_playback_with_resampling_quality(
+        &project,
+        &store,
+        16,
+        8,
+        ResamplingQuality::Sinc192,
+    )
+    .expect("phase-inverted source should prepare for offline rendering");
+    render_prepared_audio_to_pcm24_wav(
+        prepared,
+        &project,
+        &render_path,
+        8,
+        &AtomicBool::new(false),
+        |_, _| {},
+    )
+    .expect("phase-inverted source should export");
+    let mut decoder = aaadaw_media::AudioStreamDecoder::open(&render_path)
+        .expect("offline output should be a readable WAV");
+    let mut rendered = Vec::new();
+    while let Some(chunk) = decoder.next_chunk().expect("offline WAV should decode") {
+        rendered.extend_from_slice(chunk.samples());
+    }
+    assert_eq!(rendered.len(), 16);
+    let expected = -0.25 * std::f32::consts::FRAC_1_SQRT_2;
+    assert!(
+        rendered
+            .iter()
+            .all(|sample| (*sample - expected).abs() < 1.0e-6)
+    );
+
+    store.close().expect("project should close");
+    remove_database(&database_path);
+    let _ = std::fs::remove_file(render_path);
+}
+
+#[test]
 fn muted_audio_items_stay_silent_in_realtime_and_offline_rendering() {
     let database_path = unique_path("aaadaw");
     let render_path = unique_path("wav");
@@ -228,6 +282,7 @@ fn copied_loop_sources_repeat_in_realtime_and_offline_project_rendering() {
                 media_ref: "asset://looped-playback".to_owned(),
                 start_sample: 0,
                 source_offset_samples: 1,
+                phase_inverted: false,
                 source_section_start_samples: 1,
                 length_samples: 5,
                 muted: false,

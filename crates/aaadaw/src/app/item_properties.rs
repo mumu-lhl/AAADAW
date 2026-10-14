@@ -254,6 +254,9 @@ impl App {
         let current_muted = item.is_muted();
         let target_muted = draft.muted;
         let changes_mute = draft.mute_changed && target_muted != current_muted;
+        let current_phase = item.is_phase_inverted();
+        let target_phase = draft.phase_inverted;
+        let changes_phase = draft.phase_changed && target_phase != current_phase;
         if (changes_placement || changes_loop_source) && self.playback_active() {
             let error =
                 "Close audio output before editing item placement or source looping".to_owned();
@@ -313,6 +316,12 @@ impl App {
                 muted: target_muted,
             });
         }
+        if changes_phase {
+            actions.push(aaadaw_core::DawAction::SetAudioItemPhase {
+                item_id: id,
+                inverted: target_phase,
+            });
+        }
         if fades != current {
             actions.push(aaadaw_core::DawAction::SetAudioItemFades { item_id: id, fades });
         }
@@ -350,6 +359,12 @@ impl App {
                             target_muted
                         } else {
                             current_muted
+                        }
+                    && item.is_phase_inverted()
+                        == if changes_phase {
+                            target_phase
+                        } else {
+                            current_phase
                         }
             }) {
                 self.item_properties.as_mut().expect("open draft").error =
@@ -590,8 +605,10 @@ pub(crate) struct ItemProperties {
     pub(crate) fields: [String; 11],
     pub(crate) loop_source: bool,
     pub(crate) muted: bool,
+    pub(crate) phase_inverted: bool,
     loop_source_changed: bool,
     mute_changed: bool,
+    phase_changed: bool,
     changed: [bool; 11],
     pub(crate) unit: TimeUnit,
     frame_rate: aaadaw_core::FrameRate,
@@ -759,6 +776,7 @@ impl ItemProperties {
         }
         draft.loop_source = item.is_loop_source();
         draft.muted = item.is_muted();
+        draft.phase_inverted = item.is_phase_inverted();
         draft
     }
 
@@ -772,7 +790,10 @@ impl ItemProperties {
     }
 
     pub(crate) fn has_changes(&self) -> bool {
-        self.loop_source_changed || self.mute_changed || self.changed.iter().any(|changed| *changed)
+        self.loop_source_changed
+            || self.mute_changed
+            || self.phase_changed
+            || self.changed.iter().any(|changed| *changed)
     }
 
     fn placement(&self, item: &AudioItem, sample_rate: u32) -> Result<ItemPlacement, String> {
@@ -839,8 +860,10 @@ impl ItemProperties {
             ],
             loop_source: false,
             muted: false,
+            phase_inverted: false,
             loop_source_changed: false,
             mute_changed: false,
+            phase_changed: false,
             changed: [false; 11],
             unit: TimeUnit::Time,
             frame_rate: aaadaw_core::FrameRate::default(),
@@ -863,6 +886,12 @@ impl ItemProperties {
     pub(crate) fn set_muted(&mut self, muted: bool) {
         self.muted = muted;
         self.mute_changed = true;
+        self.error = None;
+    }
+
+    pub(crate) fn set_phase_inverted(&mut self, inverted: bool) {
+        self.phase_inverted = inverted;
+        self.phase_changed = true;
         self.error = None;
     }
 

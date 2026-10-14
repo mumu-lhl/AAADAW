@@ -21,10 +21,10 @@ impl ItemVolumeController {
         };
         let mut current = value.load(Ordering::Acquire);
         loop {
-            let (_, muted) = unpack(current);
+            let (_, muted, phase_inverted) = unpack(current);
             match value.compare_exchange_weak(
                 current,
-                pack(volume, muted),
+                pack(volume, muted, phase_inverted),
                 Ordering::AcqRel,
                 Ordering::Acquire,
             ) {
@@ -41,10 +41,30 @@ impl ItemVolumeController {
         };
         let mut current = value.load(Ordering::Acquire);
         loop {
-            let (volume, _) = unpack(current);
+            let (volume, _, phase_inverted) = unpack(current);
             match value.compare_exchange_weak(
                 current,
-                pack(volume, muted),
+                pack(volume, muted, phase_inverted),
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            ) {
+                Ok(_) => return true,
+                Err(actual) => current = actual,
+            }
+        }
+    }
+
+    /// Publishes an item's polarity without replacing the graph or changing its gain.
+    pub fn set_phase_inverted(&self, item_id: ItemId, inverted: bool) -> bool {
+        let Some((_, value)) = self.0.iter().find(|(id, _)| *id == item_id) else {
+            return false;
+        };
+        let mut current = value.load(Ordering::Acquire);
+        loop {
+            let (volume, muted, _) = unpack(current);
+            match value.compare_exchange_weak(
+                current,
+                pack(volume, muted, inverted),
                 Ordering::AcqRel,
                 Ordering::Acquire,
             ) {
@@ -57,12 +77,12 @@ impl ItemVolumeController {
 
 pub(super) struct ItemVolumeReader {
     shared: Option<Arc<AtomicU64>>,
-    cached: (f32, bool),
+    cached: (f32, bool, bool),
 }
 
 impl ItemVolumeReader {
-    /// Reads a coherent volume/mute pair without locking, allocating, or waiting.
-    pub(super) fn read(&mut self) -> (f32, bool) {
+    /// Reads coherent item gain, mute, and phase state without locking, allocating, or waiting.
+    pub(super) fn read(&mut self) -> (f32, bool, bool) {
         if let Some(shared) = &self.shared {
             let value = unpack(shared.load(Ordering::Acquire));
             if valid_volume(value.0) {
@@ -77,22 +97,23 @@ pub(super) fn compile(
     ids: &[Option<ItemId>],
     volumes: Vec<f32>,
     muted: Vec<bool>,
+    phase_inverted: Vec<bool>,
 ) -> (ItemVolumeController, Vec<ItemVolumeReader>) {
     let mut entries = Vec::new();
     let readers = ids
         .iter()
         .copied()
-        .zip(volumes.into_iter().zip(muted))
-        .map(|(id, (volume, muted))| {
+        .zip(volumes.into_iter().zip(muted).zip(phase_inverted))
+        .map(|(id, ((volume, muted), phase_inverted))| {
             debug_assert!(valid_volume(volume));
             let shared = id.map(|id| {
-                let value = Arc::new(AtomicU64::new(pack(volume, muted)));
+                let value = Arc::new(AtomicU64::new(pack(volume, muted, phase_inverted)));
                 entries.push((id, value.clone()));
                 value
             });
             ItemVolumeReader {
                 shared,
-                cached: (volume, muted),
+                cached: (volume, muted, phase_inverted),
             }
         })
         .collect();
@@ -103,12 +124,16 @@ fn valid_volume(volume: f32) -> bool {
     volume.is_finite() && (0.0..=MAX_AUDIO_ITEM_VOLUME).contains(&volume)
 }
 
-fn pack(volume: f32, muted: bool) -> u64 {
-    (u64::from(volume.to_bits()) << 32) | u64::from(muted)
+fn pack(volume: f32, muted: bool, phase_inverted: bool) -> u64 {
+    (u64::from(volume.to_bits()) << 32) | u64::from(phase_inverted) << 1 | u64::from(muted)
 }
 
-fn unpack(value: u64) -> (f32, bool) {
-    (f32::from_bits((value >> 32) as u32), value & 1 != 0)
+fn unpack(value: u64) -> (f32, bool, bool) {
+    (
+        f32::from_bits((value >> 32) as u32),
+        value & 1 != 0,
+        value & 2 != 0,
+    )
 }
 
 #[cfg(test)]
@@ -142,25 +167,32 @@ mod tests {
     #[test]
     fn item_volume_updates_are_published_without_rebuilding_the_controller() {
         let [item_id, _] = item_ids();
-        let (controller, mut readers) = compile(&[Some(item_id)], vec![1.0], vec![false]);
-        assert_eq!(readers[0].read(), (1.0, false));
+        let (controller, mut readers) =
+            compile(&[Some(item_id)], vec![1.0], vec![false], vec![false]);
+        assert_eq!(readers[0].read(), (1.0, false, false));
         assert!(controller.set_volume(item_id, 0.5));
-        assert_eq!(readers[0].read(), (0.5, false));
+        assert_eq!(readers[0].read(), (0.5, false, false));
         assert!(controller.set_volume(item_id, 0.0));
-        assert_eq!(readers[0].read(), (0.0, false));
+        assert_eq!(readers[0].read(), (0.0, false, false));
         assert!(controller.set_volume(item_id, 1.0));
         assert!(controller.set_muted(item_id, true));
-        assert_eq!(readers[0].read(), (1.0, true));
+        assert_eq!(readers[0].read(), (1.0, true, false));
         assert!(controller.set_volume(item_id, 0.5));
-        assert_eq!(readers[0].read(), (0.5, true));
+        assert_eq!(readers[0].read(), (0.5, true, false));
         assert!(controller.set_muted(item_id, false));
-        assert_eq!(readers[0].read(), (0.5, false));
+        assert_eq!(readers[0].read(), (0.5, false, false));
+        assert!(controller.set_phase_inverted(item_id, true));
+        assert_eq!(readers[0].read(), (0.5, false, true));
+        assert!(controller.set_muted(item_id, true));
+        assert_eq!(readers[0].read(), (0.5, true, true));
+        assert!(controller.set_phase_inverted(item_id, false));
+        assert_eq!(readers[0].read(), (0.5, true, false));
     }
 
     #[test]
     fn item_volume_controller_rejects_unknown_items_and_out_of_range_values() {
         let [item_id, other_id] = item_ids();
-        let (controller, _) = compile(&[Some(item_id)], vec![1.0], vec![false]);
+        let (controller, _) = compile(&[Some(item_id)], vec![1.0], vec![false], vec![false]);
         assert!(!controller.set_volume(other_id, 0.5));
         assert!(!controller.set_volume(item_id, f32::NAN));
         assert!(!controller.set_volume(item_id, -0.1));

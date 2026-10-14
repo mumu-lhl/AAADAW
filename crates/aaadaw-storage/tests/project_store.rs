@@ -2888,6 +2888,12 @@ fn audio_item_mix_roundtrips_and_schema_38_migrates_with_neutral_defaults() {
             pan: -0.5,
         })
         .unwrap();
+    project
+        .apply(DawAction::SetAudioItemPhase {
+            item_id,
+            inverted: true,
+        })
+        .unwrap();
 
     let mut store = ProjectStore::open(&path).unwrap();
     store.save(&project).unwrap();
@@ -2897,7 +2903,8 @@ fn audio_item_mix_roundtrips_and_schema_38_migrates_with_neutral_defaults() {
     let connection = Connection::open(&path).unwrap();
     connection
         .execute_batch(
-            "ALTER TABLE audio_items DROP COLUMN take_pan; \
+            "ALTER TABLE audio_items DROP COLUMN phase_inverted; \
+             ALTER TABLE audio_items DROP COLUMN take_pan; \
              ALTER TABLE audio_items DROP COLUMN take_volume; \
              ALTER TABLE audio_items DROP COLUMN volume; \
              PRAGMA user_version = 38;",
@@ -2918,6 +2925,7 @@ fn audio_item_mix_roundtrips_and_schema_38_migrates_with_neutral_defaults() {
     assert_eq!(migrated.audio_items()[0].volume(), 1.0);
     assert_eq!(migrated.audio_items()[0].take_volume(), 1.0);
     assert_eq!(migrated.audio_items()[0].take_pan(), 0.0);
+    assert!(!migrated.audio_items()[0].is_phase_inverted());
     assert_eq!(migrated.audio_items()[0].media_ref(), "asset://constant");
     store.close().unwrap();
 

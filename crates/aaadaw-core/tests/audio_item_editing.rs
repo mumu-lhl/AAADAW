@@ -68,6 +68,7 @@ fn bounded_source_loop_can_be_disabled_and_undo_restores_its_flag() {
             source_offset_samples: 120,
             length_samples: 4_800,
             muted: false,
+            phase_inverted: false,
             source_section_start_samples: 100,
             source_section_length_samples: 240,
         })
@@ -133,6 +134,38 @@ fn audio_item_mute_is_undoable_and_keeps_item_gain_unchanged() {
     assert!(project.redo().expect("mute should redo"));
     assert!(project.audio_items()[0].is_muted());
     assert_eq!(project.audio_items()[0].volume(), 0.5);
+}
+
+#[test]
+fn audio_item_phase_is_undoable_and_persisted_in_snapshots() {
+    let (mut project, track_id) = project_with_track();
+    project
+        .apply(DawAction::InsertAudioItem {
+            track_id,
+            media_ref: "asset://phase".to_owned(),
+            start_sample: 0,
+            source_offset_samples: 0,
+            length_samples: 4_800,
+        })
+        .expect("audio item should insert");
+    let item_id = project.audio_items()[0].id();
+    project
+        .apply(DawAction::SetAudioItemPhase {
+            item_id,
+            inverted: true,
+        })
+        .expect("item polarity should invert");
+    assert!(project.audio_items()[0].is_phase_inverted());
+    assert!(
+        Project::from_snapshot(project.snapshot())
+            .unwrap()
+            .audio_items()[0]
+            .is_phase_inverted()
+    );
+    assert!(project.undo().unwrap());
+    assert!(!project.audio_items()[0].is_phase_inverted());
+    assert!(project.redo().unwrap());
+    assert!(project.audio_items()[0].is_phase_inverted());
 }
 
 #[test]

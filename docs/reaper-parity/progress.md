@@ -870,3 +870,10 @@ MIDI Item Properties 增加 Name 草稿字段。Name、Position、Length、Start
 App 测试覆盖全部五字段一次 Apply/Undo/Redo、空名称导致批量字段原子拒绝，以及改名后 Cancel。Nightly + Cranelift workspace nextest 1066/1066 passed，排除两项 X11 依赖测试；Stable workspace all-target Clippy `-D warnings`、fmt 和 diff 检查通过。本轮未录 AAADAW 截图或重新探测 REAPER。
 
 MIDI Properties 仍缺 item timebase、take playback rate/pitch/mix、剩余 source controls、fades、批量/混合值和完整窗口几何；不关闭 `ITEM-PROPERTIES-001` 或 `ITEM-MUTE-001`。
+
+
+### 2026-10-14 Audio Item Invert phase
+
+参考 Media Item Properties 截图中的 `Invert phase`，音频 item 现在有可保存、可撤销的 Take 极性状态。SQLite schema 46 对旧工程迁移为正常相位；新建与冻结 item 默认正常，复制保留原设置。属性窗勾选通过项目 action 应用；实时图将 volume/mute/phase 合并在现有原子状态中，回调逐帧对左右通道乘以 `-1`，不锁定、不分配、不重建图。新建播放/离线 render 图从项目状态初始化。
+
+Core 快照/Undo、Storage schema 38 迁移、App Apply/Cancel/Undo/Redo 和 Engine 实时 PCM 正反相定向测试 4/4 通过；另外验证了离线 WAV PCM 极性，以及 loop-area 复制粘贴在 Undo/Redo 和再次粘贴中保留相位。Nightly + Cranelift workspace nextest 1069/1069 passed，排除两项需 X11 的 CLAP GUI 测试；Stable workspace all-target Clippy `-D warnings`、fmt 与 diff 检查通过。参考图哈希及本轮未录新截图/未探测 REAPER 的限制见 [Item phase verification](../verification/reaper-parity/item-phase.md)。`ITEM-PROPERTIES-001` 仍保持 `in_progress`，属性窗其余 Take/source 字段及完整原厂几何/截图对照未完成。

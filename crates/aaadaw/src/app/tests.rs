@@ -484,6 +484,7 @@ fn item_nudge_contents_wraps_inside_a_bounded_loop_source_section() {
             media_ref: media_ref.to_owned(),
             start_sample: 0,
             source_offset_samples: 80_000,
+            phase_inverted: false,
             source_section_start_samples: 80_000,
             length_samples: 24_000,
             muted: false,
@@ -7647,6 +7648,12 @@ fn copy_loop_of_selected_audio_area_pastes_source_sections_on_one_undo_step() {
             muted: true,
         })
         .unwrap();
+    app.project
+        .apply(DawAction::SetAudioItemPhase {
+            item_id: full_second_id,
+            inverted: true,
+        })
+        .unwrap();
     app.timeline.select_items(vec![
         (full_first_id, track_ids[0]),
         (full_second_id, track_ids[1]),
@@ -7685,6 +7692,8 @@ fn copy_loop_of_selected_audio_area_pastes_source_sections_on_one_undo_step() {
     assert_eq!(clipboard.items[1].source_offset_samples, 256 + source_delta);
     assert!(clipboard.items[0].muted);
     assert!(!clipboard.items[1].muted);
+    assert!(!clipboard.items[0].phase_inverted);
+    assert!(clipboard.items[1].phase_inverted);
     assert_eq!(clipboard.items[0].length_samples, selection_length);
     assert_eq!(
         clipboard.items[0].source_section_length_samples,
@@ -7725,6 +7734,8 @@ fn copy_loop_of_selected_audio_area_pastes_source_sections_on_one_undo_step() {
     assert_eq!(pasted[0].length_samples(), paste_length);
     assert!(pasted[0].is_muted());
     assert!(!pasted[1].is_muted());
+    assert!(!pasted[0].is_phase_inverted());
+    assert!(pasted[1].is_phase_inverted());
     assert!(pasted.iter().all(|item| item.is_loop_source()));
     assert_eq!(
         pasted[0].source_section_length_samples(),
@@ -7753,6 +7764,8 @@ fn copy_loop_of_selected_audio_area_pastes_source_sections_on_one_undo_step() {
     assert_eq!(restored_paste.len(), 2);
     assert!(restored_paste[0].is_muted());
     assert!(!restored_paste[1].is_muted());
+    assert!(!restored_paste[0].is_phase_inverted());
+    assert!(restored_paste[1].is_phase_inverted());
     let _ = app.update(Message::Undo);
     assert!(
         app.project
@@ -7774,6 +7787,8 @@ fn copy_loop_of_selected_audio_area_pastes_source_sections_on_one_undo_step() {
     assert_eq!(second_paste.len(), 2);
     assert_eq!(second_paste[0].track_id(), track_ids[1]);
     assert_eq!(second_paste[1].track_id(), track_ids[2]);
+    assert!(!second_paste[0].is_phase_inverted());
+    assert!(second_paste[1].is_phase_inverted());
 
     app.project_generation = app.project_generation.saturating_add(1);
     assert!(!commands::is_enabled(&app, CommandId::PasteItems));
@@ -13007,6 +13022,7 @@ fn item_properties_toggle_loop_source_preserves_section_and_undoes() {
             source_offset_samples: 120,
             length_samples: 4_800,
             muted: false,
+            phase_inverted: false,
             source_section_start_samples: 100,
             source_section_length_samples: 240,
         })
@@ -13028,7 +13044,7 @@ fn item_properties_toggle_loop_source_preserves_section_and_undoes() {
 }
 
 #[test]
-fn item_properties_mute_applies_with_undo_and_preserves_gain() {
+fn item_properties_mute_and_phase_apply_atomically_with_undo() {
     use super::item_properties::{ItemProperties, TimeUnit};
 
     let mut app = App::default();
@@ -13051,14 +13067,21 @@ fn item_properties_mute_applies_with_undo_and_preserves_gain() {
     let mut draft = ItemProperties::from_item(&item, 48_000, TimeUnit::Samples);
     draft.set_muted(true);
     app.item_properties = Some(draft);
+    let _ = app.update(Message::ItemPropertyPhaseChanged(true));
 
     let _ = app.update(Message::ApplyItemProperties(false));
     assert!(app.project.audio_items()[0].is_muted());
+    assert!(app.project.audio_items()[0].is_phase_inverted());
     assert_eq!(app.project.audio_items()[0].volume(), 1.0);
     let _ = app.update(Message::Undo);
     assert!(!app.project.audio_items()[0].is_muted());
+    assert!(!app.project.audio_items()[0].is_phase_inverted());
     let _ = app.update(Message::Redo);
     assert!(app.project.audio_items()[0].is_muted());
+    assert!(app.project.audio_items()[0].is_phase_inverted());
+    let _ = app.update(Message::ItemPropertyPhaseChanged(false));
+    let _ = app.update(Message::CloseItemProperties);
+    assert!(app.project.audio_items()[0].is_phase_inverted());
 }
 
 #[test]
