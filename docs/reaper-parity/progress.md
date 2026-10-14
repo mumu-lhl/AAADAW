@@ -812,3 +812,11 @@ Nightly + Cranelift `aaadaw-core`、`aaadaw-storage` 与 `aaadaw` nextest 749/74
 Audio Contents Nudge 现在按源采样率把偏移限制在 loop source 的固定段内（完整源循环使用媒体帧范围），并保持循环段边界、item 时间位置和长度不变；Undo 仍作为同一步工程修改。复制范围跨过已有 loop 边界时当前明确拒绝，因为单一连续媒体段不能准确表示拼接后的循环内容。
 
 Nightly + Cranelift 的 Core/Storage/Media/App/desktop nextest 为 869/869 passed、0 skipped；Stable workspace all-target Clippy `-D warnings`、fmt 与 diff 检查通过。Linux REAPER 7.82 的 Copy loop 探针曾确认 `B_LOOPSRC=1` 和源段长度；本轮没有重新探测 Contents 回绕边界，也没有为新增音频行为制作 REAPER/AAADAW 实窗截图。`ITEM-AUDIO-COPYLOOP-001` 与 `ITEM-NUDGE-SET-001` 继续 `in_progress`：原厂回绕与跨边界复制语义、Item/take mix/fade/rate 元数据、目标专属 Set/Snap、完整剪贴板与整套 UI 对齐仍待完成。全源循环在当前模型与媒体 worker 可用，但 UI 尚未提供对应的 B_LOOPSRC 切换入口。
+
+### 2026-10-14 Item Properties Loop source
+
+依据 Linux REAPER 7.82 / Default 7 的现有 `Media Item Properties` 原厂截图及 `B_LOOPSRC=1` 探针，普通新插入音频项现默认启用 Loop source；Item Properties 增加 `Loop source` 复选框。切换使用项目历史的一步 undo/redo，并在音频输出打开时拒绝会导致 worker 状态过期的切换。
+
+bounded source section 的起点和长度现在独立于循环开关保存：关掉循环后 worker 从当前源偏移播放到 section 尾部，然后结束，不会重启 decoder 或重复；SQLite 与 snapshot 接受该有效状态，Contents Nudge 仅对实际循环的区段做绕回。旧 schema 的迁移默认值保持关闭，避免改变已有工程。
+
+回归覆盖 Core action 默认值和开关 Undo/Redo、bounded metadata 的 snapshot/storage 往返、关闭后单次媒体播放、属性窗 Apply/Undo/Redo。Nightly + Cranelift 五包 workspace nextest 872/872 passed、0 skipped；Stable workspace all-target Clippy `-D warnings`、fmt、diff 检查及 parity matrix（98 个唯一 ID、15 列）通过。本轮使用的是已有 REAPER 原厂截图作为控件/默认值参照，没有新录制 AAADAW 实窗截图或重跑原厂探针；属性窗口的其余字段、尺寸/布局和像素对齐仍不完整，`ITEM-PROPERTIES-001`、`ITEM-AUDIO-COPYLOOP-001` 继续 `in_progress`。

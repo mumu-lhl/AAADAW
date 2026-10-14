@@ -163,3 +163,9 @@ AAADAW 实窗 [淡入菜单](item-fade-ui/curve-menu-in.png)和 [淡出菜单](i
 实际 AAADAW 窗口验证：初始 16001/12000/6000 样本显示 `1.1.67` / `0.0.50` / `0:00.125`（[选择 Beats](item-fade-ui/properties-beats-selected.png)）；一次 Apply 写入 24000/24000/12000 样本及 S=0.75（[Apply](item-fade-ui/properties-beats-applied.png)）。一次 Undo 恢复全部位置/长度/源偏移及 S=0.50（[Undo](item-fade-ui/properties-beats-undo.png)），Redo 恢复全部应用值（[Redo](item-fade-ui/properties-beats-redo.png)）；配置写入 `time_unit=beats`，重启恢复工程后保持 Beats 和已应用值（[重启](item-fade-ui/properties-beats-restart.png)）。截图仅含 AAADAW 自有窗口。尚未补齐原厂完整属性窗口几何。
 
 切换单位丢弃未应用 Beats 位置和 S 草稿，恢复已应用值并禁用 Apply（[刷新](item-fade-ui/properties-beats-refresh.png)）。最终 `cargo xtest --features aaadaw/audio-device --no-fail-fast`：842 passed / 0 skipped；默认 workspace Clippy warnings denied、fmt 与 diff 检查通过。
+
+### Loop source control (2026-10-14)
+
+The existing Linux REAPER 7.82 / Default 7 Media Item Properties reference at `images/reaper-item-properties-volume.png` shows `Loop source` enabled by default; the existing native Copy loop fixture records `B_LOOPSRC=1` after insertion. AAADAW now defaults new audio items to enabled and exposes an undoable `Loop source` checkbox in this dialog. The underlying bounded source-section start and length survive turning looping off; playback then runs the section once and stops at its end. Core, storage, media and app regressions cover the flag, retained section, Apply, Undo and Redo.
+
+This is a control/state slice only. No new AAADAW screenshot or native probe was captured for this change. The rest of the Media Item Properties fields, native window geometry and visual comparison remain open; see `docs/reaper-parity/progress.md` and the `ITEM-PROPERTIES-001` parity row.

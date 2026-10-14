@@ -26,6 +26,10 @@ fn audio_items_can_be_inserted_edited_deleted_and_restored() {
         .expect("audio item insertion should succeed");
     let initial = project.audio_items()[0].clone();
     assert_eq!(initial.end_sample(), 144_000);
+    assert!(
+        initial.is_loop_source(),
+        "new items follow REAPER's default"
+    );
 
     project
         .apply(DawAction::EditAudioItem {
@@ -51,6 +55,43 @@ fn audio_items_can_be_inserted_edited_deleted_and_restored() {
     assert!(project.audio_items().is_empty());
     assert!(project.undo().expect("deletion should undo"));
     assert_eq!(project.audio_items()[0], edited);
+}
+
+#[test]
+fn bounded_source_loop_can_be_disabled_and_undo_restores_its_flag() {
+    let (mut project, track_id) = project_with_track();
+    project
+        .apply(DawAction::InsertLoopedAudioItem {
+            track_id,
+            media_ref: "asset://bounded-loop".to_owned(),
+            start_sample: 0,
+            source_offset_samples: 120,
+            length_samples: 4_800,
+            source_section_start_samples: 100,
+            source_section_length_samples: 240,
+        })
+        .expect("bounded source loop should insert");
+    let item_id = project.audio_items()[0].id();
+
+    project
+        .apply(DawAction::SetAudioItemLoopSource {
+            item_id,
+            enabled: false,
+        })
+        .expect("source loop should be disabled");
+    let item = &project.audio_items()[0];
+    assert!(!item.is_loop_source());
+    assert_eq!(item.source_section_start_samples(), Some(100));
+    assert_eq!(item.source_section_length_samples(), Some(240));
+
+    assert!(project.undo().expect("loop toggle should undo"));
+    assert!(project.audio_items()[0].is_loop_source());
+    assert!(project.redo().expect("loop toggle should redo"));
+    assert!(!project.audio_items()[0].is_loop_source());
+    assert_eq!(
+        project.audio_items()[0].source_section_start_samples(),
+        Some(100)
+    );
 }
 
 #[test]

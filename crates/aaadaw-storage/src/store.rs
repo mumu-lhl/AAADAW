@@ -3896,7 +3896,6 @@ fn read_audio_items(connection: &Connection) -> Result<Vec<AudioItemSnapshot>, S
                 let source_section_length_samples =
                     source_section_length.map(from_sql_u64).transpose()?;
                 if source_section_length_samples.is_some() != source_section_start_samples.is_some()
-                    || (source_section_length_samples.is_some() && !loop_source)
                 {
                     return Err(StorageError::Snapshot(SnapshotError::InvalidProjectData));
                 }
@@ -4304,6 +4303,13 @@ mod loop_source_storage_tests {
                 source_section_length_samples: 2_400,
             })
             .unwrap();
+        let item_id = project.audio_items()[0].id();
+        project
+            .apply(DawAction::SetAudioItemLoopSource {
+                item_id,
+                enabled: false,
+            })
+            .unwrap();
 
         let mut store = ProjectStore::open(&path).unwrap();
         store.save(&project).unwrap();
@@ -4312,7 +4318,7 @@ mod loop_source_storage_tests {
         let store = ProjectStore::open(&path).unwrap();
         let loaded = store.load().unwrap();
         let item = &loaded.audio_items()[0];
-        assert!(item.is_loop_source());
+        assert!(!item.is_loop_source());
         assert_eq!(item.source_section_start_samples(), Some(100));
         assert_eq!(item.source_section_length_samples(), Some(2_400));
     }

@@ -1975,7 +1975,7 @@ impl Project {
                     item.source_section_length_samples,
                 ) {
                     (false, None, None) | (true, None, None) => false,
-                    (true, Some(section_start), Some(section_length)) => {
+                    (_, Some(section_start), Some(section_length)) => {
                         section_length == 0
                             || section_start
                                 .checked_add(section_length)
@@ -3074,7 +3074,7 @@ impl Project {
                     start_sample,
                     source_offset_samples,
                     length_samples,
-                    loop_source: false,
+                    loop_source: true,
                     source_section_start_samples: None,
                     source_section_length_samples: None,
                 };
@@ -3146,6 +3146,22 @@ impl Project {
                     index: state.audio_items.len(),
                     item,
                 }
+            }
+            DawAction::SetAudioItemLoopSource { item_id, enabled } => {
+                let item = state
+                    .audio_items
+                    .iter()
+                    .find(|item| item.id == item_id)
+                    .ok_or(ActionError::AudioItemNotFound { item_id })?;
+                if is_frozen_render(state, item_id) {
+                    return Err(ActionError::FrozenRenderCannotBeEdited { item_id });
+                }
+                let before = item.clone();
+                let after = AudioItem {
+                    loop_source: enabled,
+                    ..before.clone()
+                };
+                ProjectEvent::AudioItemChanged { before, after }
             }
             DawAction::SetAudioItemFades { item_id, fades } => {
                 let item = state
@@ -4777,6 +4793,19 @@ fn valid_audio_item(item: &AudioItem) -> bool {
         && (-1.0..=1.0).contains(&item.take_pan)
         && item.length_samples > 0
         && item.start_sample.checked_add(item.length_samples).is_some()
+        && match (
+            item.source_section_start_samples,
+            item.source_section_length_samples,
+        ) {
+            (None, None) => true,
+            (Some(start), Some(length)) => {
+                length > 0
+                    && start.checked_add(length).is_some_and(|end| {
+                        item.source_offset_samples >= start && item.source_offset_samples < end
+                    })
+            }
+            _ => false,
+        }
 }
 
 fn is_frozen_render(state: &ProjectState, item_id: ItemId) -> bool {

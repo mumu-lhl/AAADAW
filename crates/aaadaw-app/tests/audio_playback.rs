@@ -383,7 +383,14 @@ fn stereo_audio_item_keeps_channel_separation_in_playback_and_offline_export() {
     store
         .import_audio_asset("asset://stereo", "stereo.wav", Cursor::new(&wav))
         .expect("stereo WAV should embed");
-    let project = project_with_audio_item("asset://stereo".to_owned(), 4);
+    let mut project = project_with_audio_item("asset://stereo".to_owned(), 4);
+    let item_id = project.audio_items()[0].id();
+    project
+        .apply(DawAction::SetAudioItemLoopSource {
+            item_id,
+            enabled: false,
+        })
+        .expect("stereo fixture should play its source once");
 
     let prepared = prepare_audio_playback(&project, &store, 16, 4)
         .expect("embedded stereo source should prepare");

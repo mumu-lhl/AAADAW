@@ -267,6 +267,11 @@ pub enum DawAction {
         source_section_start_samples: u64,
         source_section_length_samples: u64,
     },
+    /// Enable or disable looping for an audio item's current source section.
+    SetAudioItemLoopSource {
+        item_id: ItemId,
+        enabled: bool,
+    },
     /// Set both manual Item fades as one undoable edit.
     SetAudioItemFades {
         item_id: ItemId,

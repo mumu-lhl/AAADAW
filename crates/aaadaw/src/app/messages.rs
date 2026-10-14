@@ -233,6 +233,7 @@ pub(crate) enum Message {
     NudgeSelectedItems(i8),
     ItemPropertiesUnitChanged(super::item_properties::TimeUnit),
     ItemPropertyFieldChanged(super::item_properties::ItemPropertyField, String),
+    ItemPropertyLoopSourceChanged(bool),
     ApplyItemProperties(bool),
     CloseItemProperties,
     MarkerNameChanged(String),

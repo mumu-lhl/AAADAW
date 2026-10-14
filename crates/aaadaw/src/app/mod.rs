@@ -2425,6 +2425,11 @@ impl App {
                     draft.edit(field, text);
                 }
             }
+            Message::ItemPropertyLoopSourceChanged(enabled) => {
+                if let Some(draft) = &mut self.item_properties {
+                    draft.set_loop_source(enabled);
+                }
+            }
             Message::ApplyItemProperties(close) => task = self.apply_item_properties(close),
             Message::MarkerNameChanged(value) => {
                 if let Some(draft) = &mut self.marker_properties {
@@ -10703,10 +10708,11 @@ impl App {
                     "Could not copy loop of selected area: source offset is too large".to_owned();
                 return;
             };
-            let source_offset_samples = if let (Some(section_start), Some(section_length)) = (
-                item.source_section_start_samples(),
-                item.source_section_length_samples(),
-            ) {
+            let source_offset_samples = if item.is_loop_source()
+                && let (Some(section_start), Some(section_length)) = (
+                    item.source_section_start_samples(),
+                    item.source_section_length_samples(),
+                ) {
                 let Some(section_end) = section_start.checked_add(section_length) else {
                     self.status =
                         "Could not copy loop of selected area: source section is too large"

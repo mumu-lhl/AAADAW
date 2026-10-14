@@ -292,6 +292,13 @@ fn decoded_audio_item_is_trimmed_resampled_and_scheduled_on_the_sample_clock() {
             length_samples: 4,
         })
         .expect("audio item should be inserted");
+    let item_id = project.audio_items()[0].id();
+    project
+        .apply(DawAction::SetAudioItemLoopSource {
+            item_id,
+            enabled: false,
+        })
+        .expect("test item should use one-pass source playback");
     let item = project.audio_items()[0].clone();
     let (producer, consumer) = pcm_stream(8).expect("stream capacity should be positive");
     let worker = spawn_audio_item_stream(&item, &path, 48_000, producer)
@@ -420,6 +427,70 @@ fn looped_audio_item_reopens_seekable_source_and_repeats_the_bounded_section() {
         assert!((frame[0] - expected_sample * center_gain).abs() < 1.0e-4);
         assert!((frame[1] - expected_sample * center_gain).abs() < 1.0e-4);
     }
+}
+
+#[test]
+fn disabled_loop_source_plays_a_bounded_section_once_then_stops() {
+    let bytes = pcm_wav(&[8_192, 16_384, 24_576, -8_192], 48_000);
+    let mut project = Project::with_settings(
+        aaadaw_core::ProjectSettings::default()
+            .with_pan_mode(aaadaw_core::PanMode::LegacyMonoStereo),
+    );
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Bounded source".to_owned(),
+        })
+        .expect("audio track should be created");
+    project
+        .apply(DawAction::InsertLoopedAudioItem {
+            track_id: project.tracks()[0].id(),
+            media_ref: "asset://bounded-source-once".to_owned(),
+            start_sample: 0,
+            source_offset_samples: 2,
+            source_section_start_samples: 1,
+            length_samples: 10,
+            source_section_length_samples: 3,
+        })
+        .expect("bounded source should be inserted");
+    let item_id = project.audio_items()[0].id();
+    project
+        .apply(DawAction::SetAudioItemLoopSource {
+            item_id,
+            enabled: false,
+        })
+        .expect("looping should be disabled");
+    let item = project.audio_items()[0].clone();
+
+    let (producer, consumer) = pcm_stream(16).expect("queue should fit source section");
+    let worker = spawn_audio_item_stream_from_reader(
+        &item,
+        Cursor::new(bytes.clone()),
+        Some(bytes.len() as u64),
+        Some("wav"),
+        48_000,
+        producer,
+    )
+    .expect("bounded source feeder should start");
+    worker.join().expect("worker should stop at section end");
+
+    let mut graph = AudioRenderGraph::new_for_audio_items(
+        &project,
+        vec![AudioItemStream::new(item.id(), consumer)],
+        10,
+    )
+    .expect("single-pass item stream should match project item");
+    graph.transport_mut().start();
+    let mut output = [[0.0; 2]; 10];
+    graph
+        .render_into(&mut output)
+        .expect("single-pass section should render");
+    let center_gain = std::f32::consts::FRAC_1_SQRT_2;
+    for (frame, expected_sample) in output[..2].iter().zip([0.75_f32, -0.25]) {
+        assert!((frame[0] - expected_sample * center_gain).abs() < 1.0e-4);
+        assert!((frame[1] - expected_sample * center_gain).abs() < 1.0e-4);
+    }
+    assert_eq!(output[2..], [[0.0, 0.0]; 8]);
 }
 
 #[test]

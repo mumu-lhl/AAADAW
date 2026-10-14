@@ -192,8 +192,13 @@ impl App {
             }
         };
         let changes_placement = placement != ItemPlacement::from_item(item);
-        if changes_placement && self.playback_active() {
-            let error = "Close audio output before editing item placement".to_owned();
+        let current_loop_source = item.is_loop_source();
+        let target_loop_source = draft.loop_source;
+        let changes_loop_source =
+            draft.loop_source_changed && target_loop_source != current_loop_source;
+        if (changes_placement || changes_loop_source) && self.playback_active() {
+            let error =
+                "Close audio output before editing item placement or source looping".to_owned();
             self.status = error.clone();
             self.item_properties.as_mut().expect("open draft").error = Some(error);
             return Task::none();
@@ -238,6 +243,12 @@ impl App {
                 length_samples: placement.length,
             });
         }
+        if changes_loop_source {
+            actions.push(aaadaw_core::DawAction::SetAudioItemLoopSource {
+                item_id: id,
+                enabled: target_loop_source,
+            });
+        }
         if fades != current {
             actions.push(aaadaw_core::DawAction::SetAudioItemFades { item_id: id, fades });
         }
@@ -264,6 +275,12 @@ impl App {
                     && item.take_volume() == take_volume
                     && item.take_pan() == take_pan
                     && ItemPlacement::from_item(item) == placement
+                    && item.is_loop_source()
+                        == if changes_loop_source {
+                            target_loop_source
+                        } else {
+                            current_loop_source
+                        }
             }) {
                 self.item_properties.as_mut().expect("open draft").error =
                     Some(self.status.clone());
@@ -314,6 +331,8 @@ impl ItemPropertyField {
 pub(crate) struct ItemProperties {
     pub(crate) item_id: ItemId,
     pub(crate) fields: [String; 11],
+    pub(crate) loop_source: bool,
+    loop_source_changed: bool,
     changed: [bool; 11],
     pub(crate) unit: TimeUnit,
     frame_rate: aaadaw_core::FrameRate,
@@ -479,6 +498,7 @@ impl ItemProperties {
         {
             draft.fields[index + 6] = format_samples(samples, sample_rate, unit);
         }
+        draft.loop_source = item.is_loop_source();
         draft
     }
 
@@ -492,7 +512,7 @@ impl ItemProperties {
     }
 
     pub(crate) fn has_changes(&self) -> bool {
-        self.changed.iter().any(|changed| *changed)
+        self.loop_source_changed || self.changed.iter().any(|changed| *changed)
     }
 
     fn placement(&self, item: &AudioItem, sample_rate: u32) -> Result<ItemPlacement, String> {
@@ -557,6 +577,8 @@ impl ItemProperties {
                 format_take_volume_db(take_volume),
                 format_take_pan(take_pan),
             ],
+            loop_source: false,
+            loop_source_changed: false,
             changed: [false; 11],
             unit: TimeUnit::Time,
             frame_rate: aaadaw_core::FrameRate::default(),
@@ -567,6 +589,12 @@ impl ItemProperties {
     pub(crate) fn edit(&mut self, field: ItemPropertyField, text: String) {
         self.fields[field.index()] = text;
         self.changed[field.index()] = true;
+        self.error = None;
+    }
+
+    pub(crate) fn set_loop_source(&mut self, enabled: bool) {
+        self.loop_source = enabled;
+        self.loop_source_changed = true;
         self.error = None;
     }
 

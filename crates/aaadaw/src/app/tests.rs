@@ -341,6 +341,12 @@ fn item_nudge_left_trim_and_contents_use_source_sample_frames() {
         })
         .unwrap();
     let item_id = app.project.audio_items()[0].id();
+    app.project
+        .apply(DawAction::SetAudioItemLoopSource {
+            item_id,
+            enabled: false,
+        })
+        .unwrap();
     app.timeline.rebuild(&app.project);
     app.timeline.select_items(vec![(item_id, track_id)]);
     let _ = app.update(Message::ItemNudgeTargetChanged(Target::LeftTrim));
@@ -12951,6 +12957,44 @@ fn item_properties_stage_fades_preserve_precision_and_apply_one_history_entry() 
     let adjusted = draft.fades(both, 48000, 48000).unwrap();
     assert_eq!(adjusted.fade_in.length_samples(), 19200.0);
     assert_eq!(adjusted.fade_out.length_samples(), 28800.0);
+}
+
+#[test]
+fn item_properties_toggle_loop_source_preserves_section_and_undoes() {
+    use super::item_properties::{ItemProperties, TimeUnit};
+
+    let mut app = App::default();
+    app.project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Audio".into(),
+        })
+        .unwrap();
+    app.project
+        .apply(DawAction::InsertLoopedAudioItem {
+            track_id: app.project.tracks()[0].id(),
+            media_ref: "asset://item-properties-loop".into(),
+            start_sample: 0,
+            source_offset_samples: 120,
+            length_samples: 4_800,
+            source_section_start_samples: 100,
+            source_section_length_samples: 240,
+        })
+        .unwrap();
+    let item = app.project.audio_items()[0].clone();
+    let mut draft = ItemProperties::from_item(&item, 48_000, TimeUnit::Samples);
+    draft.set_loop_source(false);
+    app.item_properties = Some(draft);
+
+    let _ = app.update(Message::ApplyItemProperties(false));
+    let item = &app.project.audio_items()[0];
+    assert!(!item.is_loop_source());
+    assert_eq!(item.source_section_start_samples(), Some(100));
+    assert_eq!(item.source_section_length_samples(), Some(240));
+    let _ = app.update(Message::Undo);
+    assert!(app.project.audio_items()[0].is_loop_source());
+    let _ = app.update(Message::Redo);
+    assert!(!app.project.audio_items()[0].is_loop_source());
 }
 
 #[test]

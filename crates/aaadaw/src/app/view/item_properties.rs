@@ -2,7 +2,7 @@ use super::super::{
     App, Message,
     item_properties::{ItemPropertyField, TimeUnit},
 };
-use iced::widget::{button, column, container, pick_list, row, text, text_input};
+use iced::widget::{button, checkbox, column, container, pick_list, row, text, text_input};
 use iced::{Element, Length};
 
 pub(super) fn view(app: &App) -> Element<'_, Message> {
@@ -28,6 +28,13 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
                 Some(draft.unit),
                 Message::ItemPropertiesUnitChanged
             )
+        ]
+        .spacing(6),
+        row![
+            text("Source:").width(120),
+            checkbox(draft.loop_source)
+                .label("Loop source")
+                .on_toggle(Message::ItemPropertyLoopSourceChanged)
         ]
         .spacing(6),
         row![

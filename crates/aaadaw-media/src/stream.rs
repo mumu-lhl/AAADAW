@@ -781,10 +781,10 @@ struct WorkerConfig {
 struct SourceLoopSection {
     start_frame: u64,
     length_frames: Option<u64>,
+    looping: bool,
 }
 
 fn source_loop_section(item: &AudioItem) -> Option<SourceLoopSection> {
-    item.is_loop_source().then_some(())?;
     match (
         item.source_section_start_samples(),
         item.source_section_length_samples(),
@@ -792,11 +792,14 @@ fn source_loop_section(item: &AudioItem) -> Option<SourceLoopSection> {
         (Some(start_frame), Some(length_frames)) => Some(SourceLoopSection {
             start_frame,
             length_frames: Some(length_frames),
+            looping: item.is_loop_source(),
         }),
-        (None, None) => Some(SourceLoopSection {
+        (None, None) if item.is_loop_source() => Some(SourceLoopSection {
             start_frame: 0,
             length_frames: None,
+            looping: true,
         }),
+        (None, None) => None,
         _ => None,
     }
 }
@@ -881,7 +884,7 @@ fn run_worker<P: FeedProducer>(
         quality,
         source_loop_section,
     } = config;
-    let (loop_base_source_offset, loop_section_length, mut loop_source_frames_remaining) =
+    let (loop_base_source_offset, loop_section_length, mut loop_source_frames_remaining, looping) =
         match source_loop_section {
             Some(section) => {
                 let remaining = if let Some(length) = section.length_frames {
@@ -907,9 +910,14 @@ fn run_worker<P: FeedProducer>(
                     }
                     None
                 };
-                (Some(section.start_frame), section.length_frames, remaining)
+                (
+                    Some(section.start_frame),
+                    section.length_frames,
+                    remaining,
+                    section.looping,
+                )
             }
-            None => (None, None, None),
+            None => (None, None, None, false),
         };
     let initial_loop_source_frames = loop_source_frames_remaining;
     let mut source_frames_in_current_cycle = 0_u64;
@@ -940,11 +948,13 @@ fn run_worker<P: FeedProducer>(
         },
         None => None,
     };
-    if let (Some(source_rate), Some(loop_frames), Some(initial_frames)) = (
-        initial_sample_rate,
-        loop_section_length,
-        initial_loop_source_frames,
-    ) {
+    if looping
+        && let (Some(source_rate), Some(loop_frames), Some(initial_frames)) = (
+            initial_sample_rate,
+            loop_section_length,
+            initial_loop_source_frames,
+        )
+    {
         let output_loop_frames = scale_frames_rounded(loop_frames, source_rate, output_sample_rate);
         let output_initial_frames =
             scale_frames_rounded(initial_frames, source_rate, output_sample_rate);
@@ -960,7 +970,9 @@ fn run_worker<P: FeedProducer>(
     let _ = startup.send(Ok(()));
     let mut decoded_frames = Vec::new();
     let mut source_channels = None;
-    let mut loop_buffer = loop_section_length
+    let mut loop_buffer = looping
+        .then_some(loop_section_length)
+        .flatten()
         .and_then(|frame_count| usize::try_from(frame_count).ok())
         .filter(|frame_count| {
             frame_count
@@ -1060,6 +1072,21 @@ fn run_worker<P: FeedProducer>(
                     false
                 };
                 if loop_boundary {
+                    if !looping {
+                        if let Some(resampler) = &mut resampler {
+                            let mut output = resampler.finish();
+                            skip_output(&mut output, &mut output_samples_to_skip);
+                            limit_output(&mut output, &mut output_samples_remaining);
+                            push_with_backpressure(
+                                &mut producer,
+                                &output,
+                                &cancelled,
+                                &position,
+                                &mut output_timeline_sample,
+                            );
+                        }
+                        return Ok(());
+                    }
                     if initial_loop_pass {
                         initial_loop_pass = false;
                         restart_loop_decoder::<P>(
@@ -1093,7 +1120,7 @@ fn run_worker<P: FeedProducer>(
                 if loop_source_frames_remaining.is_some_and(|remaining| remaining > 0) {
                     return Err(MediaError::AudioLoopSectionExceedsSource);
                 }
-                if loop_base_source_offset.is_some() && loop_section_length.is_none() {
+                if looping && loop_base_source_offset.is_some() && loop_section_length.is_none() {
                     if source_offset_remaining > 0 || source_frames_in_current_cycle == 0 {
                         return Err(MediaError::AudioLoopSectionExceedsSource);
                     }
