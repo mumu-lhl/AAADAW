@@ -180,6 +180,7 @@ impl Shortcut {
         }
     }
 
+    #[cfg(test)]
     pub(super) const fn delete_backspace() -> Self {
         Self {
             key: ShortcutKey::DeleteBackspace,

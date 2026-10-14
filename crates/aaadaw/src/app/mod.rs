@@ -4332,6 +4332,7 @@ impl App {
                 self.apply_edit(action, "MIDI item quantized to 1/16");
             }
             Message::DeleteTrack(track_id) => self.delete_track(track_id),
+            Message::DeleteByFocus => task = self.delete_by_focus(),
             Message::MoveTrack(track_id, direction) => self.move_track(track_id, direction),
             Message::TrackNameChanged(track_id, name) => {
                 self.track_name_edits.insert(track_id, name);
@@ -8440,6 +8441,84 @@ impl App {
         }
         self.clear_track_drafts(track_id);
         self.apply_action(DawAction::DeleteTrack { track_id }, "Track deleted");
+    }
+
+    fn delete_by_focus(&mut self) -> Task<Message> {
+        if !self.timeline.selected_items.is_empty() {
+            self.delete_selected_items();
+            return Task::none();
+        }
+        if let Some(event) = self.timeline.selected_automation_point_delete_event() {
+            return self.update(Message::Timeline(event));
+        }
+        self.delete_selected_tracks(self.selected_track_ids());
+        Task::none()
+    }
+
+    fn delete_selected_tracks(&mut self, track_ids: Vec<TrackId>) {
+        if self.project_graph_edit_busy() {
+            self.status = "Stop playback or recording before deleting tracks".into();
+            return;
+        }
+        let selected = track_ids
+            .into_iter()
+            .filter(|id| self.project.tracks().iter().any(|track| track.id() == *id))
+            .collect::<HashSet<_>>();
+        if selected.is_empty() {
+            return;
+        }
+
+        let mut remaining = selected.clone();
+        let mut ordered = Vec::with_capacity(remaining.len());
+        while !remaining.is_empty() {
+            let next = self.project.tracks().iter().find_map(|candidate| {
+                (remaining.contains(&candidate.id())
+                    && !self.project.tracks().iter().any(|dependent| {
+                        dependent.id() != candidate.id()
+                            && remaining.contains(&dependent.id())
+                            && (dependent.parent_track() == Some(candidate.id())
+                                || dependent.output_track() == Some(candidate.id())
+                                || dependent
+                                    .sends()
+                                    .iter()
+                                    .any(|send| send.destination() == candidate.id()))
+                    }))
+                .then_some(candidate.id())
+            });
+            let Some(track_id) = next else {
+                self.status = "Selected tracks have a cyclic deletion dependency".into();
+                return;
+            };
+            remaining.remove(&track_id);
+            ordered.push(track_id);
+        }
+
+        if self
+            .track_mix_gesture
+            .is_some_and(|gesture| selected.contains(&gesture.track_id))
+        {
+            self.cancel_track_mix_gesture();
+        }
+        let revision = self.revision;
+        let actions = ordered
+            .iter()
+            .copied()
+            .map(|track_id| DawAction::DeleteTrack { track_id })
+            .collect::<Vec<_>>();
+        let action = if actions.len() == 1 {
+            actions.into_iter().next().expect("one selected track")
+        } else {
+            DawAction::BatchTransaction {
+                tx_id: self.revision,
+                actions,
+            }
+        };
+        self.apply_action(action, "Selected tracks deleted");
+        if self.revision != revision {
+            for track_id in selected {
+                self.clear_track_drafts(track_id);
+            }
+        }
     }
 
     fn commit_track_name(&mut self, track_id: TrackId) {

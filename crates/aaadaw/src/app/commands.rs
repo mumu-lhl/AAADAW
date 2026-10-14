@@ -73,6 +73,7 @@ pub(crate) enum CommandId {
     DuplicateSelectedAudioItem,
     DuplicateSelectedMidiItem,
     DeleteSelectedItems,
+    DeleteByFocus,
     TrimItemsToSelectedArea,
     CopyLoopOfSelectedArea,
     EncloseMediaItemsInRazorEdit,
@@ -189,6 +190,7 @@ enum CommandKind {
     DuplicateSelectedAudioItem,
     DuplicateSelectedMidiItem,
     DeleteSelectedItems,
+    DeleteByFocus,
     TrimItemsToSelectedArea,
     CopyLoopOfSelectedArea,
     EncloseMediaItemsInRazorEdit,
@@ -233,7 +235,7 @@ const REDO_SHORTCUT: &[Shortcut] = &[
     Shortcut::character('y', Modifiers::COMMAND),
 ];
 const DUPLICATE_ITEM_SHORTCUT: &[Shortcut] = &[Shortcut::character('d', Modifiers::COMMAND)];
-const DELETE_ITEMS_SHORTCUT: &[Shortcut] = &[Shortcut::delete_backspace()];
+const DELETE_BY_FOCUS_SHORTCUT: &[Shortcut] = &[Shortcut::named(Named::Delete, Modifiers::NONE)];
 const COPY_LOOP_OF_SELECTED_AREA_SHORTCUT: &[Shortcut] = &[Shortcut::character(
     'l',
     Modifiers::CTRL.union(Modifiers::ALT),
@@ -1117,7 +1119,17 @@ const COMMANDS: &[CommandDefinition] = &[
             "delete selected item",
             "delete items",
         ],
-        shortcuts: DELETE_ITEMS_SHORTCUT,
+        shortcuts: &[],
+        destructive: true,
+        separator_before: false,
+    },
+    CommandDefinition {
+        kind: CommandKind::DeleteByFocus,
+        menu: None,
+        category: "Edit",
+        label: "Remove items/tracks/envelope points (depending on focus)",
+        aliases: &["delete by focus", "remove focused objects"],
+        shortcuts: DELETE_BY_FOCUS_SHORTCUT,
         destructive: true,
         separator_before: false,
     },
@@ -2141,6 +2153,7 @@ fn command_kind_id(kind: CommandKind) -> &'static str {
         CommandKind::DuplicateSelectedAudioItem => "item.duplicate-audio",
         CommandKind::DuplicateSelectedMidiItem => "item.duplicate-midi",
         CommandKind::DeleteSelectedItems => "item.delete-selected",
+        CommandKind::DeleteByFocus => "edit.delete-focused",
         CommandKind::TrimItemsToSelectedArea => "item.trim-to-selection",
         CommandKind::CopyLoopOfSelectedArea => "item.copy-loop-selected-area",
         CommandKind::EncloseMediaItemsInRazorEdit => "item.enclose-media-in-razor-edit",
@@ -2331,6 +2344,7 @@ pub(super) fn dispatch(app: &mut App, command: CommandId) -> Task<Message> {
             Message::DuplicateMidiItem(item_id)
         }
         CommandId::DeleteSelectedItems => Message::DeleteSelectedItems,
+        CommandId::DeleteByFocus => Message::DeleteByFocus,
         CommandId::TrimItemsToSelectedArea => Message::TrimItemsToSelectedArea,
         CommandId::CopyLoopOfSelectedArea => Message::CopyLoopOfSelectedArea,
         CommandId::EncloseMediaItemsInRazorEdit => Message::EncloseMediaItemsInRazorEdit,
@@ -2642,6 +2656,15 @@ fn command_enabled(app: &App, kind: CommandKind, track: Option<TrackState>) -> b
         CommandKind::DeleteSelectedItems => {
             !project_edit_busy(app) && !app.timeline.selected_items.is_empty()
         }
+        CommandKind::DeleteByFocus => {
+            !project_edit_busy(app)
+                && (!app.timeline.selected_items.is_empty()
+                    || !app.selected_track_ids().is_empty()
+                    || app
+                        .timeline
+                        .selected_automation_point_delete_event()
+                        .is_some())
+        }
         CommandKind::TrimItemsToSelectedArea => !project_edit_busy(app),
         CommandKind::SelectAllItems => true,
         CommandKind::SelectAllItemsInTrack => app.selected_track_id().is_some_and(|track_id| {
@@ -2849,6 +2872,7 @@ fn command_id(kind: CommandKind) -> CommandId {
         CommandKind::DuplicateSelectedAudioItem => CommandId::DuplicateSelectedAudioItem,
         CommandKind::DuplicateSelectedMidiItem => CommandId::DuplicateSelectedMidiItem,
         CommandKind::DeleteSelectedItems => CommandId::DeleteSelectedItems,
+        CommandKind::DeleteByFocus => CommandId::DeleteByFocus,
         CommandKind::TrimItemsToSelectedArea => CommandId::TrimItemsToSelectedArea,
         CommandKind::CopyLoopOfSelectedArea => CommandId::CopyLoopOfSelectedArea,
         CommandKind::EncloseMediaItemsInRazorEdit => CommandId::EncloseMediaItemsInRazorEdit,

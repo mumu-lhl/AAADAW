@@ -2047,6 +2047,21 @@ impl TimelineState {
         self.selected_tracks.contains(&track_id) || self.selected_track == Some(track_id)
     }
 
+    pub(crate) fn selected_automation_point_delete_event(&self) -> Option<TimelineEvent> {
+        if let Some((track_id, chain_index, parameter_id, index)) =
+            self.selected_fx_automation_point
+        {
+            return Some(TimelineEvent::DeleteFxAutomationPoint {
+                track_id,
+                chain_index,
+                parameter_id,
+                index,
+            });
+        }
+        self.selected_volume_automation_point
+            .map(|(track_id, index)| TimelineEvent::DeleteVolumeAutomationPoint { track_id, index })
+    }
+
     pub(crate) fn select_track_only(&mut self, track_id: TrackId) {
         if !self.cache.track_ids.contains(&track_id) {
             return;

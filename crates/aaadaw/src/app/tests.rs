@@ -2420,6 +2420,30 @@ fn arrangement_automation_add_move_delete_selection_and_undo() {
 }
 
 #[test]
+fn delete_by_focus_removes_selected_volume_automation_point_and_undoes() {
+    let mut app = App::default();
+    let _ = app.update(Message::AddTrack);
+    let track_id = app.project.tracks()[0].id();
+    let sample = app.project.sample_at_tick(960).unwrap();
+    let point = aaadaw_core::VolumeAutomationPoint::new(sample, -6.0).unwrap();
+    let _ = app.update(Message::Timeline(
+        super::super::timeline::TimelineEvent::SetVolumeAutomation(track_id, vec![point]),
+    ));
+    let _ = app.update(Message::Timeline(
+        super::super::timeline::TimelineEvent::SelectVolumeAutomationPoint { track_id, index: 0 },
+    ));
+
+    let revision = app.revision;
+    let _ = app.update(Message::ExecuteCommand(CommandId::DeleteByFocus));
+
+    assert!(app.project.tracks()[0].volume_automation().is_empty());
+    assert_eq!(app.project.tracks().len(), 1);
+    assert_eq!(app.revision, revision + 1);
+    let _ = app.update(Message::Undo);
+    assert_eq!(app.project.tracks()[0].volume_automation(), &[point]);
+}
+
+#[test]
 fn arrangement_fx_automation_edits_points_undoes_and_redoes() {
     let mut app = App::default();
     let _ = app.update(Message::AddTrack);
@@ -3564,16 +3588,16 @@ fn keyboard_shortcuts_and_menu_hints_share_command_definitions() {
             Modifiers::NONE,
             &HashMap::new()
         ),
-        Some(Message::ExecuteCommand(CommandId::DeleteSelectedItems))
+        Some(Message::ExecuteCommand(CommandId::DeleteByFocus))
     ));
-    assert!(matches!(
+    assert!(
         shortcut_message(
             Key::Named(iced::keyboard::key::Named::Backspace),
             Modifiers::NONE,
             &HashMap::new()
-        ),
-        Some(Message::ExecuteCommand(CommandId::DeleteSelectedItems))
-    ));
+        )
+        .is_none()
+    );
     assert!(matches!(
         shortcut_message(Key::Character("s"), Modifiers::NONE, &HashMap::new()),
         Some(Message::ExecuteCommand(
@@ -4176,7 +4200,7 @@ fn documented_first_project_shortcuts_match_action_defaults() {
         ("edit.undo", "Mod+Z"),
         ("edit.redo", "Mod+Shift+Z; Mod+Y"),
         ("item.duplicate", "Mod+D"),
-        ("item.delete-selected", "Delete/Backspace"),
+        ("edit.delete-focused", "Delete"),
         ("item.split-at-cursor", "S"),
     ] {
         let entry = shortcuts
@@ -7512,7 +7536,18 @@ fn item_menu_exposes_native_remove_and_select_all_availability_for_an_empty_proj
         .expect("Item menu should start with Remove items");
     assert_eq!(remove_items.id, CommandId::DeleteSelectedItems);
     assert_eq!(remove_items.label, "Remove items");
+    assert_eq!(remove_items.shortcut, None);
     assert!(!remove_items.enabled);
+
+    let delete_by_focus = commands::shortcut_entries(&app)
+        .into_iter()
+        .find(|entry| entry.id == "edit.delete-focused")
+        .expect("REAPER's focus-sensitive Delete action should be registered");
+    assert_eq!(
+        delete_by_focus.label,
+        "Remove items/tracks/envelope points (depending on focus)"
+    );
+    assert_eq!(delete_by_focus.default_binding, "Delete");
 
     let trim_items = entries
         .get(1)
@@ -8461,6 +8496,86 @@ fn track_delete_is_undoable() {
     let _ = app.update(Message::Undo);
     assert_eq!(app.project.tracks().len(), 1);
     assert_eq!(app.project.tracks()[0].id(), track_id);
+}
+
+#[test]
+fn delete_by_focus_prefers_selected_items_and_deletes_selected_tracks_atomically() {
+    let mut app = App::default();
+    let _ = app.update(Message::AddTrack);
+    let _ = app.update(Message::AddTrack);
+    let parent = app.project.tracks()[0].id();
+    let child = app.project.tracks()[1].id();
+    let _ = app.update(Message::RoutingChange(DawAction::SetTrackFolder {
+        track_id: parent,
+        enabled: true,
+    }));
+    let _ = app.update(Message::RoutingChange(DawAction::SetTrackParent {
+        track_id: child,
+        parent: Some(parent),
+    }));
+    app.project
+        .apply(DawAction::InsertMidiItem {
+            track_id: child,
+            start_tick: 0,
+            length_ticks: 960,
+        })
+        .expect("test MIDI item should be inserted");
+    let item_id = app.project.midi_items()[0].id();
+    app.timeline.rebuild(&app.project);
+    let _ = app.update(Message::Timeline(
+        super::super::timeline::TimelineEvent::SelectTrackWithModifiers {
+            track_id: parent,
+            modifiers: Modifiers::NONE,
+        },
+    ));
+    let _ = app.update(Message::Timeline(
+        super::super::timeline::TimelineEvent::SelectTrackWithModifiers {
+            track_id: child,
+            modifiers: Modifiers::CTRL,
+        },
+    ));
+    let _ = app.update(Message::Timeline(
+        super::super::timeline::TimelineEvent::SelectItem {
+            item_id: Some(item_id),
+            additive: false,
+            range: false,
+        },
+    ));
+
+    let revision = app.revision;
+    let _ = app.update(Message::ExecuteCommand(CommandId::DeleteByFocus));
+
+    assert!(app.project.midi_items().is_empty());
+    assert_eq!(app.project.tracks().len(), 2);
+    assert_eq!(app.revision, revision + 1);
+    let _ = app.update(Message::Undo);
+    assert_eq!(app.project.midi_items()[0].id(), item_id);
+
+    app.timeline.selected_items.clear();
+    app.timeline.selected_item = None;
+    let _ = app.update(Message::Timeline(
+        super::super::timeline::TimelineEvent::SelectTrackWithModifiers {
+            track_id: parent,
+            modifiers: Modifiers::NONE,
+        },
+    ));
+    let _ = app.update(Message::Timeline(
+        super::super::timeline::TimelineEvent::SelectTrackWithModifiers {
+            track_id: child,
+            modifiers: Modifiers::CTRL,
+        },
+    ));
+    let revision = app.revision;
+    let _ = app.update(Message::ExecuteCommand(CommandId::DeleteByFocus));
+
+    assert!(app.project.tracks().is_empty());
+    assert_eq!(app.revision, revision + 1);
+    let _ = app.update(Message::Undo);
+    assert_eq!(app.project.tracks().len(), 2);
+    assert_eq!(app.project.tracks()[0].id(), parent);
+    assert_eq!(app.project.tracks()[1].id(), child);
+    assert_eq!(app.project.tracks()[1].parent_track(), Some(parent));
+    assert_eq!(app.project.midi_items()[0].id(), item_id);
 }
 
 #[test]

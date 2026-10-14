@@ -407,6 +407,7 @@ pub(crate) enum Message {
     DeleteMidiNote(ItemId, NoteId),
     QuantizeMidiItem(ItemId),
     DeleteTrack(TrackId),
+    DeleteByFocus,
     MoveTrack(TrackId, i8),
     BeginTrackNameEdit(TrackId),
     TrackNameChanged(TrackId, String),

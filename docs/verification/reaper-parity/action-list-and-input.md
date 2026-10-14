@@ -116,6 +116,12 @@ AAADAW 注册稳定 ID `item.snap-left`、`item.snap-right` 与 `item.snap-neare
 
 探针以四分音符直网格验证；Swing 网格、播放期间的原厂动作状态及完整 Arrange/Action List 视觉和焦点尚未比对，`ITEM-SELECT-018/019/020` 仍为 `in_progress`，不能据此视为整体 Item parity 完成。
 
+## 2026-10-14 Main action 40697：依焦点移除对象
+
+Linux REAPER 7.82 / Default 7 的默认动作导出 `linux-7.82/actions.tsv` 记录 Main action 40697 `Remove items/tracks/envelope points (depending on focus)` 的默认键为 Delete；相邻的 40006 `Item: Remove items` 没有默认键。AAADAW 现在分别注册 Action List 动作 `edit.delete-focused` 和 Item 菜单命令 `Remove items`：Delete 只绑定前者，菜单命令不再错误显示 Delete/Backspace。
+
+目前 AAADAW 按时间线选择分派：有选中的 Audio/MIDI items 时删除这些 items；否则删除选中的 FX/音量 automation 点；否则将已选轨道作为一组删除，先删依赖轨道以保留父子文件夹/路由约束，多轨删除只占一个 Undo 步骤。回归 `delete_by_focus_prefers_selected_items_and_deletes_selected_tracks_atomically` 与 `delete_by_focus_removes_selected_volume_automation_point_and_undoes` 覆盖此行为、Action List 默认绑定和 Undo。原厂目录能确认名称与快捷键，但还没有隔离运行时探针证明各焦点窗口的目标优先级；AAADAW 也尚未将键盘焦点窗口纳入分派，所以不同窗口中多类对象同时选中时的真实优先级仍是差异。Main 以外 Section、其余默认动作和完整 Action List/UI 验收同样未完成，`INPUT-BIND-001` 继续 `in_progress`。
+
 ## 未完成项
 
 Main 以外的 Section、完整默认动作与功能、动作导入导出、菜单编辑器、原厂自定义动作窗口、特殊键/Scope/MIDI/OSC 输入和完整重复绑定优先级仍未对齐。Add 自动提交已在后续修正。主题和几何尚未完成像素比较，矩阵保持 `in_progress`。
