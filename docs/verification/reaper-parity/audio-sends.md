@@ -6,7 +6,7 @@
 
 实际 REAPER 离线探针：Source 为常量 0.125，Receiver 为常量 0.25，Other 无媒体；Source 主输出开启并分别发送到 Receiver、Other。48 kHz、1 秒、stereo PCM，中间样本：Solo Receiver 左右各 0.375，只开放通往 Receiver 的上游路径；Solo Source 左右各 0.375，开放三条输出路径并抑制接收轨道自身媒体。单输出探针见 [前一切片](ordinary-track-routing.md)。未覆盖硬件录音与第三方插件。
 
-实现稳定 SendId 的多条独立 Post-fader 音频发送，包括相同目标、音量、线性声像、静音、反相、主输出独立开关和重定向。Receive 是同一连接的反向视图。Project/DawAction 维护引用、参数和整个 DAG；禁用连接也参与环路检查，禁止删除仍被引用的目标。撤销、批量失败与 Snapshot 分配器恢复均有回归。
+实现稳定 SendId 的多条独立音频发送，包括相同目标、Post-fader / Pre-FX / Pre-fader 三种 Tap、音量、线性声像、静音、反相、主输出独立开关和重定向。Receive 是同一连接的反向视图。Project/DawAction 维护引用、参数和整个 DAG；禁用连接也参与环路检查，禁止删除仍被引用的目标。撤销、批量失败与 Snapshot 分配器恢复均有回归。三种 Tap 的原厂 PCM 测量、schema 20 迁移、GUI 控件和引擎缓冲边界验证见 [Audio Send Taps](audio-send-taps.md)。
 
 引擎按主输出与所有 Send 拓扑排序。每轨 FX 后的 fader/pan、automation、ramp、meter 只计算一次，再扇出到各路径；回调使用预分配 scratch。Solo 区分上游来源与下游接收，避免无关 Master/Other 路径漏音。冻结单轨时清除隔离快照的外部 Send，并恢复该快照主输出，不改原工程路由。
 
@@ -28,4 +28,4 @@ schema 19 增加 tracks.main_send_enabled（旧工程默认开启）及有 ID/�
 
 ## 剩余差异
 
-Pre-FX/Pre-fader、MIDI Send、通道映射/多通道、硬件输出、文件夹 Parent Send、反馈/PDC、Routing Matrix/Wiring、完整路由窗口布局与操作仍待实现。该切片的内部 MIDI 动态恢复缺口已由[后续回归](midi-live-audibility.md)修复；MIDI 路由与外部追赶仍待开发。P3 与全量对齐未完成。
+MIDI Send、通道映射/多通道、硬件输出、文件夹 Parent Send、反馈/PDC、Routing Matrix/Wiring、完整路由窗口布局与操作仍待实现。该切片的内部 MIDI 动态恢复缺口已由[后续回归](midi-live-audibility.md)修复；MIDI 路由与外部追赶仍待开发。P3 与全量对齐未完成。
