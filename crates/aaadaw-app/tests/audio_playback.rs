@@ -533,6 +533,111 @@ fn transport_loop_preparation_repeats_a_trimmed_stereo_item_with_loop_source_dis
 }
 
 #[test]
+fn transport_loop_preparation_repeats_the_source_segment_of_a_containing_item() {
+    let database_path = unique_path("aaadaw");
+    let source_frames: Vec<_> = (0_i16..48)
+        .map(|index| {
+            let sample = (index - 24) * 512;
+            [sample, -sample]
+        })
+        .collect();
+    let wav = stereo_pcm_wav(&source_frames, 48_000);
+    let mut store = ProjectStore::open(&database_path).expect("project should open");
+    store
+        .import_audio_asset(
+            "asset://containing-loop",
+            "containing.wav",
+            Cursor::new(&wav),
+        )
+        .expect("containing source should embed");
+    let mut project = Project::with_settings(
+        aaadaw_core::ProjectSettings::default()
+            .with_pan_mode(aaadaw_core::PanMode::LegacyMonoStereo),
+    );
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Containing loop item".to_owned(),
+        })
+        .expect("track should be created");
+    project
+        .apply(DawAction::InsertAudioItem {
+            track_id: project.tracks()[0].id(),
+            media_ref: "asset://containing-loop".to_owned(),
+            start_sample: 8,
+            source_offset_samples: 4,
+            length_samples: 32,
+        })
+        .expect("audio item should contain the Loop range");
+    project
+        .apply(DawAction::SetAudioItemLoopSource {
+            item_id: project.audio_items()[0].id(),
+            enabled: false,
+        })
+        .expect("the item source loop should be disabled");
+    let loop_range = TransportLoopRange::new(16, 32).expect("loop should be nonempty");
+
+    let prepared = prepare_audio_playback_at_with_loop_range(
+        &project,
+        &store,
+        20,
+        Some(loop_range),
+        64,
+        32,
+        ResamplingQuality::Sinc64,
+    )
+    .expect("an item containing the complete Loop range should prepare");
+    let (mut graph, feeders) = prepared.into_parts();
+    assert_eq!(feeders.len(), 1);
+    std::thread::sleep(std::time::Duration::from_millis(20));
+    graph.transport_mut().start();
+    let mut output = [[0.0_f32; 2]; 32];
+    let stats = graph
+        .render_into(&mut output)
+        .expect("the contained source segment should repeat across two wraps");
+    assert_eq!(stats.underrun_samples, 0);
+    for (index, frame) in output.iter().enumerate() {
+        let source_index = 12 + (index + 4) % 16;
+        assert!((frame[0] - source_frames[source_index][0] as f32 / 32_768.0).abs() < 1.0e-6);
+        assert!((frame[1] - source_frames[source_index][1] as f32 / 32_768.0).abs() < 1.0e-6);
+    }
+    assert_eq!(graph.transport_mut().position_samples(), 20);
+    for feeder in feeders {
+        feeder
+            .cancel()
+            .expect("containing loop feeder should stop cleanly");
+    }
+    drop(graph);
+
+    project
+        .apply(DawAction::InsertAudioItem {
+            track_id: project.tracks()[0].id(),
+            media_ref: "asset://containing-loop".to_owned(),
+            start_sample: 24,
+            source_offset_samples: 0,
+            length_samples: 8,
+        })
+        .expect("partial-overlap audio item should be inserted");
+    assert!(matches!(
+        prepare_audio_playback_at_with_loop_range(
+            &project,
+            &store,
+            20,
+            Some(loop_range),
+            64,
+            32,
+            ResamplingQuality::Sinc64,
+        ),
+        Err(PlaybackBuildError::Media(
+            aaadaw_media::MediaError::InvalidTimelineLoop
+        ))
+    ));
+
+    store.close().expect("project should close");
+    remove_database(&database_path);
+}
+
+#[test]
 fn transport_loop_preparation_repeats_midi_notes_at_the_project_loop_boundary() {
     let database_path = unique_path("aaadaw");
     let store = ProjectStore::open(&database_path).expect("project should open");
