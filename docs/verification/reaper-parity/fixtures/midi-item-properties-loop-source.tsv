@@ -16,4 +16,9 @@ app_regression	midi_item_properties_toggle_loop_source_preserves_source_length_a
 engine_regression	event_plan_stops_repeating_midi_source_when_loop_source_is_disabled
 app_test_suite	Stable nextest; 585 passed; 0 skipped
 engine_test_suite	Nightly+Cranelift nextest with bundled Xvfb; 187 passed; 0 skipped
-remaining_scope	Other MIDI Item Properties controls and full native window geometry; user-visible source loop length; empty trimmed source-length recovery
+aaadaw_source_length_build_id	cefd0b9deef9f55f3d07f233dca911297cb761d2
+aaadaw_source_length_binary_sha256	81f1b343d1d26e796819219b43d085880f7fda6060518f0270c8f7e9ead66e28
+aaadaw_source_length_live_ui	Xvfb :270; isolated XDG profile; created and selected MIDI item through visible controls; F2 opened Item Properties; changed source length from 3840 to 7680 PPQ and clicked Apply
+aaadaw_source_length_window	Media Item Properties; xwininfo 526x390; visible item length remained 2 seconds
+aaadaw_source_length_screenshot	midi-item-properties-source-length-aaadaw.png; 1280x800; SHA-256 4be933b643d448ef2c65378826c8613adef488098fee9b8c5a34ae923858cbef
+remaining_scope	Native source-length control and shortening behavior; empty trimmed source-length recovery; other MIDI Item Properties controls and full native window geometry
