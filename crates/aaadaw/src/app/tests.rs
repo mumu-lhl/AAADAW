@@ -382,6 +382,163 @@ fn item_nudge_audio_boundary_targets_match_their_distinct_edge_semantics() {
 }
 
 #[test]
+fn item_nudge_edge_targets_support_snap_for_mixed_audio_midi_selection() {
+    use super::item_nudge::Target;
+
+    for snap_to_unit in [false, true] {
+        for target in [
+            Target::LeftTrim,
+            Target::LeftEdge,
+            Target::EndPosition,
+            Target::RightTrim,
+        ] {
+            let (mut app, project_path) = item_nudge_set_edge_test_app();
+            let original_audio = app.project.audio_items()[0].clone();
+            let original_midi = app.project.midi_items()[0].clone();
+            app.project
+                .apply(DawAction::SetMidiControllers {
+                    item_id: original_midi.id(),
+                    controllers: vec![MidiControllerData {
+                        controller: 1,
+                        tick: 1_920,
+                        value: 80,
+                    }],
+                })
+                .unwrap();
+            app.project
+                .apply(DawAction::SetMidiPitchBends {
+                    item_id: original_midi.id(),
+                    pitch_bends: vec![aaadaw_core::MidiPitchBendData {
+                        tick: 2_880,
+                        value: 9_000,
+                    }],
+                })
+                .unwrap();
+            let original_midi = app.project.midi_items()[0].clone();
+            let delta_samples = if snap_to_unit { 1_008_i128 } else { 989_i128 };
+            let midi_start_sample = app
+                .project
+                .sample_at_tick(original_midi.start_tick())
+                .unwrap();
+            let midi_end_tick = original_midi.start_tick() + original_midi.length_ticks();
+            let midi_end_sample = app.project.sample_at_tick(midi_end_tick).unwrap();
+            let shifted_midi_start_tick = app
+                .project
+                .tick_at_sample((i128::from(midi_start_sample) + delta_samples) as u64)
+                .unwrap();
+            let shifted_midi_end_tick = app
+                .project
+                .tick_at_sample((i128::from(midi_end_sample) + delta_samples) as u64)
+                .unwrap();
+            let revision = app.revision;
+
+            let _ = app.update(Message::ItemNudgeTargetChanged(target));
+            let _ = app.update(Message::ItemNudgeValueChanged("20.6".to_owned()));
+            let _ = app.update(Message::ItemNudgeSnapToUnitChanged(snap_to_unit));
+            let _ = app.update(Message::NudgeSelectedItems(1));
+
+            let edited_audio = app.project.audio_items()[0].clone();
+            let edited_midi = app.project.midi_items()[0].clone();
+            let (expected_audio_start, expected_audio_length, expected_audio_offset) = match target
+            {
+                Target::LeftTrim => (
+                    original_audio.start_sample() + delta_samples as u64,
+                    original_audio.length_samples() - delta_samples as u64,
+                    if snap_to_unit { 926 } else { 909 },
+                ),
+                Target::LeftEdge => (
+                    original_audio.start_sample() + delta_samples as u64,
+                    original_audio.length_samples() - delta_samples as u64,
+                    original_audio.source_offset_samples(),
+                ),
+                Target::EndPosition => (
+                    original_audio.start_sample() + delta_samples as u64,
+                    original_audio.length_samples(),
+                    original_audio.source_offset_samples(),
+                ),
+                Target::RightTrim => (
+                    original_audio.start_sample(),
+                    original_audio.length_samples() + delta_samples as u64,
+                    original_audio.source_offset_samples(),
+                ),
+                _ => unreachable!(),
+            };
+            assert_eq!(app.revision, revision + 1, "{target}, snap={snap_to_unit}");
+            assert_eq!(
+                (
+                    edited_audio.start_sample(),
+                    edited_audio.length_samples(),
+                    edited_audio.source_offset_samples(),
+                ),
+                (
+                    expected_audio_start,
+                    expected_audio_length,
+                    expected_audio_offset,
+                ),
+                "Audio: {target}, snap={snap_to_unit}"
+            );
+            match target {
+                Target::LeftTrim | Target::LeftEdge => {
+                    assert_eq!(edited_midi.start_tick(), shifted_midi_start_tick);
+                    assert_eq!(
+                        edited_midi.length_ticks(),
+                        midi_end_tick - shifted_midi_start_tick
+                    );
+                    if target == Target::LeftTrim {
+                        assert_ne!(
+                            edited_midi.source_offset_ticks(),
+                            original_midi.source_offset_ticks()
+                        );
+                    } else {
+                        assert_eq!(
+                            edited_midi.source_offset_ticks(),
+                            original_midi.source_offset_ticks()
+                        );
+                    }
+                }
+                Target::EndPosition => {
+                    assert_eq!(edited_midi.start_tick(), shifted_midi_start_tick);
+                    assert_eq!(edited_midi.length_ticks(), original_midi.length_ticks());
+                    assert_eq!(
+                        edited_midi.source_offset_ticks(),
+                        original_midi.source_offset_ticks()
+                    );
+                }
+                Target::RightTrim => {
+                    assert_eq!(edited_midi.start_tick(), original_midi.start_tick());
+                    assert_eq!(
+                        edited_midi.length_ticks(),
+                        shifted_midi_end_tick - original_midi.start_tick()
+                    );
+                    assert_eq!(
+                        edited_midi.source_offset_ticks(),
+                        original_midi.source_offset_ticks()
+                    );
+                }
+                _ => unreachable!(),
+            }
+            assert_eq!(edited_midi.notes(), original_midi.notes());
+            assert_eq!(edited_midi.controllers(), original_midi.controllers());
+            assert_eq!(edited_midi.pitch_bends(), original_midi.pitch_bends());
+            assert_eq!(app.timeline.selected_items.len(), 2);
+            assert!(
+                app.item_nudge_dialog.error.is_none(),
+                "{target}, snap={snap_to_unit}"
+            );
+
+            let _ = app.update(Message::Undo);
+            assert_eq!(app.project.audio_items()[0], original_audio);
+            assert_eq!(app.project.midi_items()[0], original_midi);
+            let _ = app.update(Message::Redo);
+            assert_eq!(app.project.audio_items()[0], edited_audio);
+            assert_eq!(app.project.midi_items()[0], edited_midi);
+            drop(app);
+            let _ = std::fs::remove_file(project_path);
+        }
+    }
+}
+
+#[test]
 fn item_nudge_left_trim_and_contents_use_source_sample_frames() {
     use super::item_nudge::Target;
 

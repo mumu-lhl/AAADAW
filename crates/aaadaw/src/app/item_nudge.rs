@@ -272,12 +272,15 @@ impl App {
                     | Target::EndPosition
                     | Target::RightTrim => {
                         if self.item_nudge_dialog.snap_to_unit {
-                            self.item_nudge_dialog.error = Some(
-                                "Snap to unit is not supported for this item target yet".to_owned(),
-                            );
-                        } else {
-                            self.nudge_selected_audio_target(signed_delta);
+                            signed_delta = match self.snap_delta_to_selected_anchor(signed_delta) {
+                                Ok(delta) => delta,
+                                Err(error) => {
+                                    self.item_nudge_dialog.error = Some(error);
+                                    return;
+                                }
+                            };
                         }
+                        self.nudge_selected_edge_targets(signed_delta);
                     }
                     Target::Contents => {
                         self.nudge_selected_contents(signed_delta);
@@ -1262,27 +1265,22 @@ impl App {
         self.item_nudge_dialog.error = None;
     }
 
-    fn nudge_selected_audio_target(&mut self, delta_samples: i128) {
+    fn nudge_selected_edge_targets(&mut self, delta_samples: i128) {
         let selected_ids = &self.timeline.selected_items;
-        if self
-            .project
-            .midi_items()
-            .iter()
-            .any(|item| selected_ids.contains(&item.id()))
-        {
-            self.item_nudge_dialog.error = Some(
-                "This nudge target is currently supported for selected audio items only".to_owned(),
-            );
-            return;
-        }
         let items = self
             .project
             .audio_items()
             .iter()
             .filter(|item| selected_ids.contains(&item.id()))
             .collect::<Vec<_>>();
-        if items.is_empty() {
-            self.item_nudge_dialog.error = Some("No selected audio items".to_owned());
+        let midi_items = self
+            .project
+            .midi_items()
+            .iter()
+            .filter(|item| selected_ids.contains(&item.id()))
+            .collect::<Vec<_>>();
+        if items.is_empty() && midi_items.is_empty() {
+            self.item_nudge_dialog.error = Some("No selected items to nudge".to_owned());
             return;
         }
 
@@ -1411,7 +1409,66 @@ impl App {
                 });
             }
         }
-        if actions.is_empty() {
+        let mut action_batch = actions;
+        for item in &midi_items {
+            let (target_sample, relative_delta) = match self.item_nudge_dialog.target {
+                Target::LeftTrim | Target::LeftEdge => {
+                    let start_sample = match self.project.sample_at_tick(item.start_tick()) {
+                        Ok(sample) => sample,
+                        Err(error) => {
+                            self.item_nudge_dialog.error = Some(error.to_string());
+                            return;
+                        }
+                    };
+                    let Some(target_sample) = shifted_sample(start_sample, delta_samples) else {
+                        self.item_nudge_dialog.error = Some(
+                            "Selected items cannot move beyond the sample timeline".to_owned(),
+                        );
+                        return;
+                    };
+                    (target_sample, None)
+                }
+                Target::EndPosition => (0, Some(delta_samples)),
+                Target::RightTrim => {
+                    let end_tick = match item.start_tick().checked_add(item.length_ticks()) {
+                        Some(tick) => tick,
+                        None => {
+                            self.item_nudge_dialog.error =
+                                Some("MIDI item edge is outside the supported range".to_owned());
+                            return;
+                        }
+                    };
+                    let end_sample = match self.project.sample_at_tick(end_tick) {
+                        Ok(sample) => sample,
+                        Err(error) => {
+                            self.item_nudge_dialog.error = Some(error.to_string());
+                            return;
+                        }
+                    };
+                    let Some(target_sample) = shifted_sample(end_sample, delta_samples) else {
+                        self.item_nudge_dialog.error =
+                            Some("Selected item edge is outside the supported timeline".to_owned());
+                        return;
+                    };
+                    (target_sample, None)
+                }
+                _ => unreachable!("only edge targets reach this method"),
+            };
+            let item_actions = match self.midi_set_edge_actions(
+                &[item],
+                self.item_nudge_dialog.target,
+                target_sample,
+                relative_delta,
+            ) {
+                Ok(actions) => actions,
+                Err(error) => {
+                    self.item_nudge_dialog.error = Some(error);
+                    return;
+                }
+            };
+            action_batch.extend(item_actions);
+        }
+        if action_batch.is_empty() {
             self.item_nudge_dialog.error =
                 Some("Nudge did not change the selected items".to_owned());
             return;
@@ -1419,9 +1476,9 @@ impl App {
         self.apply_action(
             DawAction::BatchTransaction {
                 tx_id: self.revision,
-                actions,
+                actions: action_batch,
             },
-            "Selected audio items edited",
+            "Nudge items",
         );
         self.item_nudge_dialog.error = None;
     }
