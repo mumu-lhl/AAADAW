@@ -3868,11 +3868,7 @@ impl Project {
                 for data in notes {
                     if data.pitch > 127
                         || data.velocity > 127
-                        || data.duration == 0
-                        || data.tick < item.source_offset_ticks
-                        || data.tick.checked_add(data.duration).is_none_or(|end| {
-                            end > item.source_offset_ticks.saturating_add(item.length_ticks)
-                        })
+                        || !valid_midi_note_source_range(item, data.tick, data.duration)
                     {
                         return Err(ActionError::InvalidMidiNote);
                     }
@@ -3908,11 +3904,7 @@ impl Project {
                     .ok_or(ActionError::MidiItemNotFound { item_id })?;
                 if data.pitch > 127
                     || data.velocity > 127
-                    || data.duration == 0
-                    || data.tick < item.source_offset_ticks
-                    || data.tick.checked_add(data.duration).is_none_or(|end| {
-                        end > item.source_offset_ticks.saturating_add(item.length_ticks)
-                    })
+                    || !valid_midi_note_source_range(item, data.tick, data.duration)
                 {
                     return Err(ActionError::InvalidMidiNote);
                 }
@@ -3965,11 +3957,10 @@ impl Project {
                     .ok_or(ActionError::MidiItemNotFound { item_id })?;
                 controllers
                     .sort_unstable_by_key(|controller| (controller.tick, controller.controller));
-                let source_end_tick = item.source_offset_ticks.saturating_add(item.length_ticks);
+                let (source_start_tick, source_end_tick) = midi_item_source_tick_bounds(item);
                 if !valid_midi_controllers(&controllers)
                     || controllers.iter().any(|controller| {
-                        (controller.tick < item.source_offset_ticks
-                            || controller.tick >= source_end_tick)
+                        (controller.tick < source_start_tick || controller.tick >= source_end_tick)
                             && !item.controllers.contains(controller)
                     })
                 {
@@ -3991,10 +3982,10 @@ impl Project {
                     .find(|item| item.id == item_id)
                     .ok_or(ActionError::MidiItemNotFound { item_id })?;
                 pitch_bends.sort_unstable_by_key(|bend| bend.tick);
-                let source_end_tick = item.source_offset_ticks.saturating_add(item.length_ticks);
+                let (source_start_tick, source_end_tick) = midi_item_source_tick_bounds(item);
                 if !valid_midi_pitch_bends(&pitch_bends)
                     || pitch_bends.iter().any(|bend| {
-                        (bend.tick < item.source_offset_ticks || bend.tick >= source_end_tick)
+                        (bend.tick < source_start_tick || bend.tick >= source_end_tick)
                             && !item.pitch_bends.contains(bend)
                     })
                 {
@@ -4039,13 +4030,9 @@ impl Project {
                     let adjustment = (distance as f64 * f64::from(strength)).round() as i128;
                     let quantized_absolute = u64::try_from(absolute_tick as i128 + adjustment)
                         .map_err(|_| ActionError::InvalidMidiNote)?;
-                    let tick = quantized_absolute
-                        .saturating_sub(item.start_tick)
-                        .saturating_add(item.source_offset_ticks);
-                    if tick.checked_add(note.data.duration).is_none_or(|end| {
-                        tick < item.source_offset_ticks
-                            || end > item.source_offset_ticks.saturating_add(item.length_ticks)
-                    }) {
+                    let tick = midi_source_tick_at_project_tick(item, quantized_absolute)
+                        .ok_or(ActionError::InvalidMidiNote)?;
+                    if !valid_midi_note_source_range(item, tick, note.data.duration) {
                         return Err(ActionError::InvalidMidiNote);
                     }
                     if tick != note.data.tick {
@@ -4882,10 +4869,18 @@ impl Project {
                     .iter_mut()
                     .find(|item| item.id == *item_id)
                     .ok_or(ActionError::HistoryInvariantViolation)?;
+                let source_bounds = midi_item_source_tick_bounds(item);
                 let current_notes = Arc::make_mut(&mut item.notes);
                 for (index, note) in notes {
                     if *index > current_notes.len()
                         || current_notes.iter().any(|existing| existing.id == note.id)
+                        || note.data.pitch > 127
+                        || note.data.velocity > 127
+                        || !valid_midi_note_range_in_bounds(
+                            source_bounds,
+                            note.data.tick,
+                            note.data.duration,
+                        )
                     {
                         return Err(ActionError::HistoryInvariantViolation);
                     }
@@ -4919,15 +4914,7 @@ impl Project {
                 if before.id != after.id
                     || after.data.pitch > 127
                     || after.data.velocity > 127
-                    || after.data.duration == 0
-                    || after.data.tick < item.source_offset_ticks
-                    || after
-                        .data
-                        .tick
-                        .checked_add(after.data.duration)
-                        .is_none_or(|end| {
-                            end > item.source_offset_ticks.saturating_add(item.length_ticks)
-                        })
+                    || !valid_midi_note_source_range(item, after.data.tick, after.data.duration)
                 {
                     return Err(ActionError::HistoryInvariantViolation);
                 }
@@ -4950,7 +4937,14 @@ impl Project {
                     .iter_mut()
                     .find(|item| item.id == *item_id)
                     .ok_or(ActionError::HistoryInvariantViolation)?;
-                if item.controllers.as_ref() != before || !valid_midi_controllers(after) {
+                let (source_start, source_end) = midi_item_source_tick_bounds(item);
+                if item.controllers.as_ref() != before
+                    || !valid_midi_controllers(after)
+                    || after.iter().any(|controller| {
+                        (controller.tick < source_start || controller.tick >= source_end)
+                            && !before.contains(controller)
+                    })
+                {
                     return Err(ActionError::HistoryInvariantViolation);
                 }
                 item.controllers = Arc::new(after.clone());
@@ -4965,7 +4959,14 @@ impl Project {
                     .iter_mut()
                     .find(|item| item.id == *item_id)
                     .ok_or(ActionError::HistoryInvariantViolation)?;
-                if item.pitch_bends.as_ref() != before || !valid_midi_pitch_bends(after) {
+                let (source_start, source_end) = midi_item_source_tick_bounds(item);
+                if item.pitch_bends.as_ref() != before
+                    || !valid_midi_pitch_bends(after)
+                    || after.iter().any(|bend| {
+                        (bend.tick < source_start || bend.tick >= source_end)
+                            && !before.contains(bend)
+                    })
+                {
                     return Err(ActionError::HistoryInvariantViolation);
                 }
                 item.pitch_bends = Arc::new(after.clone());
@@ -4976,8 +4977,7 @@ impl Project {
                     .iter_mut()
                     .find(|item| item.id == *item_id)
                     .ok_or(ActionError::HistoryInvariantViolation)?;
-                let source_offset_ticks = item.source_offset_ticks;
-                let source_end_tick = source_offset_ticks.saturating_add(item.length_ticks);
+                let source_bounds = midi_item_source_tick_bounds(item);
                 let current_notes = Arc::make_mut(&mut item.notes);
                 for (note_id, before, after) in changes {
                     let note = current_notes
@@ -4985,10 +4985,11 @@ impl Project {
                         .find(|note| note.id == *note_id)
                         .ok_or(ActionError::HistoryInvariantViolation)?;
                     if note.data.tick != *before
-                        || *after < source_offset_ticks
-                        || after
-                            .checked_add(note.data.duration)
-                            .is_none_or(|end| end > source_end_tick)
+                        || !valid_midi_note_range_in_bounds(
+                            source_bounds,
+                            *after,
+                            note.data.duration,
+                        )
                     {
                         return Err(ActionError::HistoryInvariantViolation);
                     }
@@ -5097,6 +5098,44 @@ fn valid_midi_controllers(controllers: &[MidiControllerData]) -> bool {
             && controller.value <= 127
             && positions.insert((controller.controller, controller.tick))
     })
+}
+
+fn midi_item_source_tick_bounds(item: &MidiItem) -> (u64, u64) {
+    if item.is_loop_source() {
+        (0, item.source_loop_length_ticks())
+    } else {
+        (
+            item.source_offset_ticks(),
+            item.source_offset_ticks()
+                .saturating_add(item.length_ticks()),
+        )
+    }
+}
+
+fn valid_midi_note_source_range(item: &MidiItem, tick: u64, duration: u64) -> bool {
+    valid_midi_note_range_in_bounds(midi_item_source_tick_bounds(item), tick, duration)
+}
+
+fn valid_midi_note_range_in_bounds(
+    (source_start, source_end): (u64, u64),
+    tick: u64,
+    duration: u64,
+) -> bool {
+    duration > 0
+        && tick >= source_start
+        && tick
+            .checked_add(duration)
+            .is_some_and(|end| end <= source_end)
+}
+
+fn midi_source_tick_at_project_tick(item: &MidiItem, project_tick: u64) -> Option<u64> {
+    if item.is_loop_source() {
+        item.source_tick_at_project_tick(project_tick)
+    } else {
+        project_tick
+            .checked_sub(item.start_tick())?
+            .checked_add(item.source_offset_ticks())
+    }
 }
 
 fn valid_midi_pitch_bends(pitch_bends: &[MidiPitchBendData]) -> bool {

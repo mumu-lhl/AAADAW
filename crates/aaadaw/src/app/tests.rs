@@ -7748,7 +7748,7 @@ fn midi_editor_fit_uses_only_visible_notes_after_start_trim() {
                 },
                 MidiNoteData {
                     pitch: 120,
-                    tick: 4_200,
+                    tick: 0,
                     duration: 120,
                     velocity: 100,
                 },
@@ -8069,15 +8069,15 @@ fn piano_roll_navigation_zoom_keeps_its_anchor_and_fit_frames_the_notes() {
 fn piano_roll_fit_includes_long_phrases_and_wide_pitch_ranges() {
     let mut app = App::default();
     let _ = app.update(Message::AddTrack);
-    let _ = app.update(Message::AddMidiItem);
-    let item_id = app.project.midi_items()[0].id();
+    let track_id = app.project.tracks()[0].id();
     app.project
-        .apply(DawAction::EditMidiItem {
-            item_id,
+        .apply(DawAction::InsertMidiItem {
+            track_id,
             start_tick: 0,
             length_ticks: 100_000,
         })
-        .expect("long MIDI item should be editable");
+        .expect("long MIDI source should be inserted");
+    let item_id = app.project.midi_items()[0].id();
     for note in [
         MidiNoteData {
             pitch: 12,

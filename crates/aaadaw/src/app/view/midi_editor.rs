@@ -30,18 +30,164 @@ const MODULATION_LANE_HEIGHT: f32 = 72.0;
 const EXPRESSION_LANE_HEIGHT: f32 = 72.0;
 const CONTROLLER_CONTEXT_WIDTH: f32 = 112.0;
 const CONTROLLER_CONTEXT_HEIGHT: f32 = 24.0;
+const MAX_MIDI_EDITOR_LOOP_OCCURRENCES_PER_EVENT: usize = 4_096;
 
 fn source_tick_is_visible(item: &MidiItem, tick: u64) -> bool {
     let start_tick = item.source_offset_ticks();
-    (start_tick..start_tick.saturating_add(item.length_ticks())).contains(&tick)
+    let end_tick = start_tick.saturating_add(item.length_ticks());
+    source_event_occurrences(item, tick, start_tick, end_tick)
+        .next()
+        .is_some()
 }
 
-fn visible_note_duration(item: &MidiItem, note: &aaadaw_core::MidiNote) -> u64 {
-    note.duration().min(
-        item.source_offset_ticks()
-            .saturating_add(item.length_ticks())
-            .saturating_sub(note.tick()),
-    )
+/// Returns unwrapped source positions of event instances visible in the item and tick window.
+///
+/// MIDI Editor note rows use the source clock so that editing one displayed loop instance edits
+/// the shared source event. The unwrapped positions retain the loop iteration for layout while
+/// remaining compatible with source-relative drag deltas.
+fn source_event_occurrences(
+    item: &MidiItem,
+    event_tick: u64,
+    visible_start: u64,
+    visible_end: u64,
+) -> impl Iterator<Item = u64> {
+    let item_start = item.source_offset_ticks();
+    let item_end = item_start.saturating_add(item.length_ticks());
+    let range_start = item_start.max(visible_start);
+    let range_end = item_end.min(visible_end);
+    let (first_tick, interval) = if item.is_loop_source() {
+        let loop_length = item.source_loop_length_ticks();
+        if loop_length == 0 {
+            (None, None)
+        } else {
+            let event_phase = event_tick % loop_length;
+            let offset_phase = item_start % loop_length;
+            let phase = if event_phase >= offset_phase {
+                event_phase - offset_phase
+            } else {
+                loop_length - (offset_phase - event_phase)
+            };
+            let first = item_start.checked_add(phase).and_then(|first| {
+                if first >= range_start {
+                    Some(first)
+                } else {
+                    let distance = range_start - first;
+                    let iterations = distance.div_ceil(loop_length);
+                    iterations
+                        .checked_mul(loop_length)
+                        .and_then(|advance| first.checked_add(advance))
+                }
+            });
+            (first, Some(loop_length))
+        }
+    } else if event_tick >= range_start {
+        (Some(event_tick), None)
+    } else {
+        (None, None)
+    };
+    let mut next_tick = first_tick;
+    std::iter::from_fn(move || {
+        let tick = next_tick.filter(|tick| *tick < range_end)?;
+        next_tick = interval.and_then(|interval| tick.checked_add(interval));
+        Some(tick)
+    })
+    .take(MAX_MIDI_EDITOR_LOOP_OCCURRENCES_PER_EVENT)
+}
+
+fn visible_note_duration(
+    item: &MidiItem,
+    note: &aaadaw_core::MidiNote,
+    occurrence_tick: u64,
+) -> u64 {
+    let clip_end = item
+        .source_offset_ticks()
+        .saturating_add(item.length_ticks());
+    source_note_duration(item, note.tick(), note.duration())
+        .min(clip_end.saturating_sub(occurrence_tick))
+}
+
+fn source_note_duration(item: &MidiItem, source_tick: u64, duration: u64) -> u64 {
+    let mut duration = duration;
+    if item.is_loop_source() {
+        let loop_length = item.source_loop_length_ticks();
+        if loop_length > 0 {
+            let phase = source_tick % loop_length;
+            duration = duration.min(loop_length - phase);
+        }
+    }
+    duration
+}
+
+fn midi_note_insert_data(
+    item: &MidiItem,
+    local_tick: u64,
+    pitch: u8,
+    requested_duration: u64,
+    velocity: u8,
+) -> Option<MidiNoteData> {
+    if local_tick >= item.length_ticks() {
+        return None;
+    }
+    let display_tick = item.source_offset_ticks().checked_add(local_tick)?;
+    let tick = source_edit_tick(item, display_tick);
+    let duration = source_note_duration(
+        item,
+        tick,
+        requested_duration.min(item.length_ticks() - local_tick),
+    );
+    let (_, source_end) = midi_source_edit_bounds(item);
+    if duration == 0
+        || tick
+            .checked_add(duration)
+            .is_none_or(|end| end > source_end)
+    {
+        return None;
+    }
+    Some(MidiNoteData {
+        pitch,
+        tick,
+        duration,
+        velocity,
+    })
+}
+
+fn midi_source_edit_bounds(item: &MidiItem) -> (u64, u64) {
+    if item.is_loop_source() {
+        (0, item.source_loop_length_ticks().max(1))
+    } else {
+        let start = item.source_offset_ticks();
+        (start, start.saturating_add(item.length_ticks()))
+    }
+}
+
+fn source_loop_iteration(item: &MidiItem, event_tick: u64, occurrence_tick: u64) -> u64 {
+    if !item.is_loop_source() {
+        return 0;
+    }
+    let loop_length = item.source_loop_length_ticks();
+    if loop_length == 0 {
+        return 0;
+    }
+    occurrence_tick.saturating_sub(event_tick % loop_length) / loop_length
+}
+
+fn occurrence_source_tick(item: &MidiItem, event_tick: u64, iteration: u64) -> u64 {
+    if !item.is_loop_source() {
+        return event_tick;
+    }
+    let loop_length = item.source_loop_length_ticks();
+    if loop_length == 0 {
+        return event_tick;
+    }
+    (event_tick % loop_length).saturating_add(iteration.saturating_mul(loop_length))
+}
+
+fn source_edit_tick(item: &MidiItem, display_tick: u64) -> u64 {
+    if item.is_loop_source() && item.source_loop_length_ticks() > 0 {
+        display_tick % item.source_loop_length_ticks()
+    } else {
+        display_tick
+    }
 }
 
 fn visible_edit_cursor_tick(app: &App) -> u64 {
@@ -620,6 +766,7 @@ struct ControllerDrag {
     index: Option<usize>,
     original: Option<MidiControllerData>,
     current: MidiControllerData,
+    display_tick: u64,
 }
 
 impl ControllerLane<'_> {
@@ -637,21 +784,25 @@ impl ControllerLane<'_> {
         }
     }
 
-    fn point_data(&self, point: Point, ignore_snap: bool) -> MidiControllerData {
+    fn point_data(&self, point: Point, ignore_snap: bool) -> (MidiControllerData, u64) {
         let mapping = self.mapping();
-        MidiControllerData {
-            controller: self.controller,
-            tick: mapping
-                .snap_tick(mapping.tick_at_x(point.x), ignore_snap)
-                .max(self.item.source_offset_ticks())
-                .min(
-                    self.item
-                        .source_offset_ticks()
-                        .saturating_add(self.item.length_ticks())
-                        .saturating_sub(1),
-                ),
-            value: self.value_at_y(point.y),
-        }
+        let display_tick = mapping
+            .snap_tick(mapping.tick_at_x(point.x), ignore_snap)
+            .max(self.item.source_offset_ticks())
+            .min(
+                self.item
+                    .source_offset_ticks()
+                    .saturating_add(self.item.length_ticks())
+                    .saturating_sub(1),
+            );
+        (
+            MidiControllerData {
+                controller: self.controller,
+                tick: source_edit_tick(self.item, display_tick),
+                value: self.value_at_y(point.y),
+            },
+            display_tick,
+        )
     }
 
     fn value_at_y(&self, y: f32) -> u8 {
@@ -662,24 +813,27 @@ impl ControllerLane<'_> {
         }
     }
 
-    fn closest_point(&self, point: Point) -> Option<usize> {
+    fn closest_point(&self, point: Point) -> Option<(usize, u64)> {
         let mapping = self.mapping();
+        let item_start = self.item.source_offset_ticks();
+        let item_end = item_start.saturating_add(self.item.length_ticks());
         self.item
             .controllers()
             .iter()
             .enumerate()
-            .filter(|(_, controller)| {
-                controller.controller == self.controller
-                    && source_tick_is_visible(self.item, controller.tick)
+            .filter(|(_, controller)| controller.controller == self.controller)
+            .flat_map(|(index, controller)| {
+                source_event_occurrences(self.item, controller.tick, item_start, item_end)
+                    .map(move |tick| (index, tick, controller.value))
             })
-            .filter_map(|(index, controller)| {
-                let x_distance = mapping.x_at_tick(controller.tick) - point.x;
-                let y_distance = controller_y(controller.value, self.lane_height) - point.y;
+            .filter_map(|(index, tick, value)| {
+                let x_distance = mapping.x_at_tick(tick) - point.x;
+                let y_distance = controller_y(value, self.lane_height) - point.y;
                 let distance = x_distance.hypot(y_distance);
-                (distance <= 12.0).then_some((index, distance))
+                (distance <= 12.0).then_some((index, tick, distance))
             })
-            .min_by(|left, right| left.1.total_cmp(&right.1))
-            .map(|(index, _)| index)
+            .min_by(|left, right| left.2.total_cmp(&right.2))
+            .map(|(index, tick, _)| (index, tick))
     }
 }
 
@@ -755,7 +909,7 @@ impl canvas::Program<Message> for ControllerLane<'_> {
         if let Event::Keyboard(keyboard::Event::ModifiersChanged(modifiers)) = event {
             state.modifiers = *modifiers;
             if let (Some(point), Some(drag)) = (cursor.position_in(bounds), state.drag.as_mut()) {
-                drag.current = self.point_data(point, state.modifiers.shift());
+                (drag.current, drag.display_tick) = self.point_data(point, state.modifiers.shift());
                 return Some(canvas::Action::request_redraw());
             }
             return None;
@@ -789,27 +943,30 @@ impl canvas::Program<Message> for ControllerLane<'_> {
                     return Some(canvas::Action::capture());
                 }
                 let controllers = self.item.controllers().to_vec();
-                if let Some(index) = self.closest_point(point) {
+                if let Some((index, display_tick)) = self.closest_point(point) {
                     let original = controllers[index];
                     state.drag = Some(ControllerDrag {
                         controllers,
                         index: Some(index),
                         original: Some(original),
                         current: original,
+                        display_tick,
                     });
                 } else {
+                    let (current, display_tick) = self.point_data(point, state.modifiers.shift());
                     state.drag = Some(ControllerDrag {
                         controllers,
                         index: None,
                         original: None,
-                        current: self.point_data(point, state.modifiers.shift()),
+                        current,
+                        display_tick,
                     });
                 }
                 Some(canvas::Action::capture())
             }
             Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Right)) => {
                 let point = cursor.position_in(bounds)?;
-                let Some(index) = self.closest_point(point) else {
+                let Some((index, _)) = self.closest_point(point) else {
                     state.context_menu = None;
                     return Some(canvas::Action::capture());
                 };
@@ -829,13 +986,14 @@ impl canvas::Program<Message> for ControllerLane<'_> {
                 let Some(drag) = &mut state.drag else {
                     return None;
                 };
-                drag.current = self.point_data(point, state.modifiers.shift());
+                (drag.current, drag.display_tick) = self.point_data(point, state.modifiers.shift());
                 Some(canvas::Action::request_redraw())
             }
             Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
                 let mut drag = state.drag.take()?;
                 if let Some(point) = cursor.position_in(bounds) {
-                    drag.current = self.point_data(point, state.modifiers.shift());
+                    (drag.current, drag.display_tick) =
+                        self.point_data(point, state.modifiers.shift());
                 }
                 let mut controllers = drag.controllers;
                 if let Some(index) = drag.index {
@@ -905,25 +1063,51 @@ impl canvas::Program<Message> for ControllerLane<'_> {
         );
 
         let controllers = self.item.controllers();
-        let mut value = controllers
+        let item_start = self.item.source_offset_ticks();
+        let item_end = item_start.saturating_add(self.item.length_ticks());
+        let prior_window_start = if self.item.is_loop_source() {
+            item_start.max(
+                mapping
+                    .origin_tick
+                    .saturating_sub(self.item.source_loop_length_ticks()),
+            )
+        } else {
+            item_start
+        };
+        let mut prior_events = controllers
             .iter()
-            .filter(|controller| {
-                controller.controller == self.controller
-                    && source_tick_is_visible(self.item, controller.tick)
-                    && controller.tick < mapping.origin_tick
+            .filter(|controller| controller.controller == self.controller)
+            .flat_map(|controller| {
+                source_event_occurrences(
+                    self.item,
+                    controller.tick,
+                    prior_window_start,
+                    mapping.origin_tick,
+                )
+                .map(move |tick| (tick, controller.value))
             })
-            .max_by_key(|controller| controller.tick)
-            .map_or(0, |controller| controller.value);
+            .collect::<Vec<_>>();
+        prior_events.sort_unstable_by_key(|(tick, _)| *tick);
+        let mut value = prior_events.last().map_or(0, |(_, value)| *value);
         let mut segment_start = 0.0;
-        for controller in controllers.iter().filter(|controller| {
-            controller.controller == self.controller
-                && source_tick_is_visible(self.item, controller.tick)
-                && mapping.origin_tick <= controller.tick
-                && controller.tick <= end_tick
-        }) {
-            let x = mapping.x_at_tick(controller.tick).clamp(0.0, bounds.width);
+        let mut visible_events = controllers
+            .iter()
+            .filter(|controller| controller.controller == self.controller)
+            .flat_map(|controller| {
+                source_event_occurrences(
+                    self.item,
+                    controller.tick,
+                    mapping.origin_tick,
+                    end_tick.saturating_add(1).min(item_end),
+                )
+                .map(move |tick| (tick, controller.value))
+            })
+            .collect::<Vec<_>>();
+        visible_events.sort_unstable_by_key(|(tick, _)| *tick);
+        for (event_tick, event_value) in visible_events {
+            let x = mapping.x_at_tick(event_tick).clamp(0.0, bounds.width);
             let old_y = controller_y(value, bounds.height);
-            let new_y = controller_y(controller.value, bounds.height);
+            let new_y = controller_y(event_value, bounds.height);
             let path = canvas::Path::line(Point::new(segment_start, old_y), Point::new(x, old_y));
             frame.stroke(
                 &path,
@@ -946,13 +1130,13 @@ impl canvas::Program<Message> for ControllerLane<'_> {
                 Color::from_rgb8(175, 225, 196),
             );
             segment_start = x;
-            value = controller.value;
+            value = event_value;
         }
         if let Some(drag) = &state.drag {
             let invalid_target =
                 controller_target_is_duplicate(&drag.controllers, drag.index, drag.current);
             let current_x = mapping
-                .x_at_tick(drag.current.tick)
+                .x_at_tick(drag.display_tick)
                 .clamp(0.0, bounds.width);
             let current_y = controller_y(drag.current.value, bounds.height);
             let path = canvas::Path::line(
@@ -1065,6 +1249,7 @@ struct PitchBendDrag {
     index: Option<usize>,
     original: Option<MidiPitchBendData>,
     current: MidiPitchBendData,
+    display_tick: u64,
 }
 
 impl PitchBendLane<'_> {
@@ -1082,37 +1267,46 @@ impl PitchBendLane<'_> {
         }
     }
 
-    fn point_data(&self, point: Point, ignore_snap: bool) -> MidiPitchBendData {
+    fn point_data(&self, point: Point, ignore_snap: bool) -> (MidiPitchBendData, u64) {
         let mapping = self.mapping();
-        MidiPitchBendData {
-            tick: mapping
-                .snap_tick(mapping.tick_at_x(point.x), ignore_snap)
-                .max(self.item.source_offset_ticks())
-                .min(
-                    self.item
-                        .source_offset_ticks()
-                        .saturating_add(self.item.length_ticks())
-                        .saturating_sub(1),
-                ),
-            value: pitch_bend_value_at_y(point.y, self.lane_height),
-        }
+        let display_tick = mapping
+            .snap_tick(mapping.tick_at_x(point.x), ignore_snap)
+            .max(self.item.source_offset_ticks())
+            .min(
+                self.item
+                    .source_offset_ticks()
+                    .saturating_add(self.item.length_ticks())
+                    .saturating_sub(1),
+            );
+        (
+            MidiPitchBendData {
+                tick: source_edit_tick(self.item, display_tick),
+                value: pitch_bend_value_at_y(point.y, self.lane_height),
+            },
+            display_tick,
+        )
     }
 
-    fn closest_point(&self, point: Point) -> Option<usize> {
+    fn closest_point(&self, point: Point) -> Option<(usize, u64)> {
         let mapping = self.mapping();
+        let item_start = self.item.source_offset_ticks();
+        let item_end = item_start.saturating_add(self.item.length_ticks());
         self.item
             .pitch_bends()
             .iter()
             .enumerate()
-            .filter(|(_, bend)| source_tick_is_visible(self.item, bend.tick))
-            .filter_map(|(index, bend)| {
-                let x_distance = mapping.x_at_tick(bend.tick) - point.x;
-                let y_distance = pitch_bend_y(bend.value, self.lane_height) - point.y;
-                let distance = x_distance.hypot(y_distance);
-                (distance <= 12.0).then_some((index, distance))
+            .flat_map(|(index, bend)| {
+                source_event_occurrences(self.item, bend.tick, item_start, item_end)
+                    .map(move |tick| (index, tick, bend.value))
             })
-            .min_by(|left, right| left.1.total_cmp(&right.1))
-            .map(|(index, _)| index)
+            .filter_map(|(index, tick, value)| {
+                let x_distance = mapping.x_at_tick(tick) - point.x;
+                let y_distance = pitch_bend_y(value, self.lane_height) - point.y;
+                let distance = x_distance.hypot(y_distance);
+                (distance <= 12.0).then_some((index, tick, distance))
+            })
+            .min_by(|left, right| left.2.total_cmp(&right.2))
+            .map(|(index, tick, _)| (index, tick))
     }
 }
 
@@ -1139,7 +1333,7 @@ impl canvas::Program<Message> for PitchBendLane<'_> {
         if let Event::Keyboard(keyboard::Event::ModifiersChanged(modifiers)) = event {
             state.modifiers = *modifiers;
             if let (Some(point), Some(drag)) = (cursor.position_in(bounds), state.drag.as_mut()) {
-                drag.current = self.point_data(point, state.modifiers.shift());
+                (drag.current, drag.display_tick) = self.point_data(point, state.modifiers.shift());
                 return Some(canvas::Action::request_redraw());
             }
             return None;
@@ -1173,27 +1367,30 @@ impl canvas::Program<Message> for PitchBendLane<'_> {
                     return Some(canvas::Action::capture());
                 }
                 let bends = self.item.pitch_bends().to_vec();
-                if let Some(index) = self.closest_point(point) {
+                if let Some((index, display_tick)) = self.closest_point(point) {
                     let original = bends[index];
                     state.drag = Some(PitchBendDrag {
                         bends,
                         index: Some(index),
                         original: Some(original),
                         current: original,
+                        display_tick,
                     });
                 } else {
+                    let (current, display_tick) = self.point_data(point, state.modifiers.shift());
                     state.drag = Some(PitchBendDrag {
                         bends,
                         index: None,
                         original: None,
-                        current: self.point_data(point, state.modifiers.shift()),
+                        current,
+                        display_tick,
                     });
                 }
                 Some(canvas::Action::capture())
             }
             Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Right)) => {
                 let point = cursor.position_in(bounds)?;
-                let Some(index) = self.closest_point(point) else {
+                let Some((index, _)) = self.closest_point(point) else {
                     state.context_menu = None;
                     return Some(canvas::Action::capture());
                 };
@@ -1213,13 +1410,14 @@ impl canvas::Program<Message> for PitchBendLane<'_> {
                 let Some(drag) = &mut state.drag else {
                     return None;
                 };
-                drag.current = self.point_data(point, state.modifiers.shift());
+                (drag.current, drag.display_tick) = self.point_data(point, state.modifiers.shift());
                 Some(canvas::Action::request_redraw())
             }
             Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
                 let mut drag = state.drag.take()?;
                 if let Some(point) = cursor.position_in(bounds) {
-                    drag.current = self.point_data(point, state.modifiers.shift());
+                    (drag.current, drag.display_tick) =
+                        self.point_data(point, state.modifiers.shift());
                 }
                 let mut bends = drag.bends;
                 if let Some(index) = drag.index {
@@ -1299,24 +1497,53 @@ impl canvas::Program<Message> for PitchBendLane<'_> {
                 .with_color(Color::from_rgb8(106, 112, 118)),
         );
 
-        let mut value = self
+        let item_start = self.item.source_offset_ticks();
+        let item_end = item_start.saturating_add(self.item.length_ticks());
+        let prior_window_start = if self.item.is_loop_source() {
+            item_start.max(
+                mapping
+                    .origin_tick
+                    .saturating_sub(self.item.source_loop_length_ticks()),
+            )
+        } else {
+            item_start
+        };
+        let mut prior_events = self
             .item
             .pitch_bends()
             .iter()
-            .filter(|bend| {
-                source_tick_is_visible(self.item, bend.tick) && bend.tick < mapping.origin_tick
+            .flat_map(|bend| {
+                source_event_occurrences(
+                    self.item,
+                    bend.tick,
+                    prior_window_start,
+                    mapping.origin_tick,
+                )
+                .map(move |tick| (tick, bend.value))
             })
-            .max_by_key(|bend| bend.tick)
-            .map_or(8192, |bend| bend.value);
+            .collect::<Vec<_>>();
+        prior_events.sort_unstable_by_key(|(tick, _)| *tick);
+        let mut value = prior_events.last().map_or(8192, |(_, value)| *value);
         let mut segment_start = 0.0;
-        for bend in self.item.pitch_bends().iter().filter(|bend| {
-            source_tick_is_visible(self.item, bend.tick)
-                && mapping.origin_tick <= bend.tick
-                && bend.tick <= end_tick
-        }) {
-            let x = mapping.x_at_tick(bend.tick).clamp(0.0, bounds.width);
+        let mut visible_events = self
+            .item
+            .pitch_bends()
+            .iter()
+            .flat_map(|bend| {
+                source_event_occurrences(
+                    self.item,
+                    bend.tick,
+                    mapping.origin_tick,
+                    end_tick.saturating_add(1).min(item_end),
+                )
+                .map(move |tick| (tick, bend.value))
+            })
+            .collect::<Vec<_>>();
+        visible_events.sort_unstable_by_key(|(tick, _)| *tick);
+        for (event_tick, event_value) in visible_events {
+            let x = mapping.x_at_tick(event_tick).clamp(0.0, bounds.width);
             let old_y = pitch_bend_y(value, bounds.height);
-            let new_y = pitch_bend_y(bend.value, bounds.height);
+            let new_y = pitch_bend_y(event_value, bounds.height);
             let path = canvas::Path::line(Point::new(segment_start, old_y), Point::new(x, old_y));
             frame.stroke(
                 &path,
@@ -1337,13 +1564,13 @@ impl canvas::Program<Message> for PitchBendLane<'_> {
                 Color::from_rgb8(177, 201, 245),
             );
             segment_start = x;
-            value = bend.value;
+            value = event_value;
         }
         if let Some(drag) = &state.drag {
             let invalid_target =
                 pitch_bend_target_is_duplicate(&drag.bends, drag.index, drag.current);
             let x = mapping
-                .x_at_tick(drag.current.tick)
+                .x_at_tick(drag.display_tick)
                 .clamp(0.0, bounds.width);
             let y = pitch_bend_y(drag.current.value, bounds.height);
             let path =
@@ -1802,15 +2029,17 @@ impl canvas::Program<Message> for PianoRoll<'_> {
                     );
                 }
                 let touch_targets = cfg!(target_os = "android") || bounds.width < 720.0;
-                let note_hit = self.note_at_point(point, touch_targets);
+                let note_hit = self.note_at_point(point, touch_targets, bounds.width);
                 if self.region == RollRegion::Pitch && self.tool == MidiEditorTool::Erase {
                     state.last_empty_click = None;
-                    return Some(note_hit.map_or_else(canvas::Action::capture, |(note, _)| {
-                        canvas::Action::publish(Message::DeleteMidiNotes(
-                            self.item_id,
-                            vec![note.id()],
-                        ))
-                    }));
+                    return Some(
+                        note_hit.map_or_else(canvas::Action::capture, |(note, _, _)| {
+                            canvas::Action::publish(Message::DeleteMidiNotes(
+                                self.item_id,
+                                vec![note.id()],
+                            ))
+                        }),
+                    );
                 }
                 if self.region == RollRegion::Pitch
                     && self.tool == MidiEditorTool::Draw
@@ -1818,21 +2047,14 @@ impl canvas::Program<Message> for PianoRoll<'_> {
                 {
                     state.last_empty_click = None;
                     let mapping = self.mapping();
-                    let data = MidiNoteData {
-                        pitch: mapping.pitch_at_y(point.y),
-                        tick: self
-                            .item
-                            .source_offset_ticks()
-                            .saturating_add(mapping.snap_tick(mapping.tick_at_x(point.x), false)),
-                        duration: mapping.grid_ticks(),
-                        velocity: 96,
-                    };
-                    if data.tick.saturating_add(data.duration)
-                        <= self
-                            .item
-                            .source_offset_ticks()
-                            .saturating_add(self.item.length_ticks())
-                    {
+                    let local_tick = mapping.snap_tick(mapping.tick_at_x(point.x), false);
+                    if let Some(data) = midi_note_insert_data(
+                        self.item,
+                        local_tick,
+                        mapping.pitch_at_y(point.y),
+                        mapping.grid_ticks(),
+                        96,
+                    ) {
                         return Some(canvas::Action::publish(Message::AddMidiNoteAt(
                             self.item_id,
                             data,
@@ -1841,7 +2063,7 @@ impl canvas::Program<Message> for PianoRoll<'_> {
                     return Some(canvas::Action::capture());
                 }
                 let mapping = self.mapping();
-                let Some((note, resize)) = note_hit else {
+                let Some((note, resize, _occurrence_tick)) = note_hit else {
                     let now = Instant::now();
                     let double_click = state.last_empty_click.take().is_some_and(
                         |(previous_time, previous_point)| {
@@ -1851,21 +2073,15 @@ impl canvas::Program<Message> for PianoRoll<'_> {
                         },
                     );
                     if double_click {
-                        let data = MidiNoteData {
-                            pitch: mapping.pitch_at_y(point.y),
-                            tick: self.item.source_offset_ticks().saturating_add(
-                                mapping
-                                    .snap_tick(mapping.tick_at_x(point.x), state.modifiers.shift()),
-                            ),
-                            duration: mapping.grid_ticks(),
-                            velocity: 96,
-                        };
-                        if data.tick.saturating_add(data.duration)
-                            <= self
-                                .item
-                                .source_offset_ticks()
-                                .saturating_add(self.item.length_ticks())
-                        {
+                        let local_tick =
+                            mapping.snap_tick(mapping.tick_at_x(point.x), state.modifiers.shift());
+                        if let Some(data) = midi_note_insert_data(
+                            self.item,
+                            local_tick,
+                            mapping.pitch_at_y(point.y),
+                            mapping.grid_ticks(),
+                            96,
+                        ) {
                             return Some(canvas::Action::publish(Message::AddMidiNoteAt(
                                 self.item_id,
                                 data,
@@ -2002,20 +2218,29 @@ impl canvas::Program<Message> for PianoRoll<'_> {
                             HashSet::new()
                         };
                         for note in self.item.notes() {
-                            if !source_tick_is_visible(self.item, note.tick()) {
-                                continue;
-                            }
-                            let x = mapping.x_at_tick(note.tick());
-                            let note_right = x + note_width_pixels(
-                                note.duration(),
-                                self.ticks_per_beat,
-                                self.pixels_per_beat,
-                            );
                             let y = mapping.y_at_pitch(note.pitch());
                             let note_bottom = y + self.pitch_row_height;
-                            if x <= right && note_right >= left && y <= bottom && note_bottom >= top
-                            {
-                                selected.insert(note.id());
+                            let note_duration = visible_note_duration(self.item, note, note.tick());
+                            let (view_start, view_end) = self.content_tick_range(bounds.width);
+                            for occurrence in source_event_occurrences(
+                                self.item,
+                                note.tick(),
+                                view_start.saturating_sub(note_duration),
+                                view_end,
+                            ) {
+                                let x = mapping.x_at_tick(occurrence);
+                                let note_right = x + note_width_pixels(
+                                    visible_note_duration(self.item, note, occurrence),
+                                    self.ticks_per_beat,
+                                    self.pixels_per_beat,
+                                );
+                                if x <= right
+                                    && note_right >= left
+                                    && y <= bottom
+                                    && note_bottom >= top
+                                {
+                                    selected.insert(note.id());
+                                }
                             }
                         }
                         return Some(canvas::Action::publish(Message::SelectMidiNotes(selected)));
@@ -2041,20 +2266,14 @@ impl canvas::Program<Message> for PianoRoll<'_> {
                     );
                 }
                 state.hovered_velocity_note = None;
+                let source_bounds = midi_source_edit_bounds(self.item);
                 let edits = drag
                     .notes
                     .iter()
                     .map(|(note_id, data)| {
                         (
                             *note_id,
-                            note_drag_preview_data(
-                                &drag,
-                                *data,
-                                self.item.source_offset_ticks(),
-                                self.item
-                                    .source_offset_ticks()
-                                    .saturating_add(self.item.length_ticks()),
-                            ),
+                            note_drag_preview_data(&drag, *data, source_bounds.0, source_bounds.1),
                         )
                     })
                     .collect::<Vec<_>>();
@@ -2064,12 +2283,8 @@ impl canvas::Program<Message> for PianoRoll<'_> {
                         .iter()
                         .find(|note| note.id() == *id)
                         .is_some_and(|_| {
-                            data.tick < self.item.source_offset_ticks()
-                                || data.tick.saturating_add(data.duration)
-                                    > self
-                                        .item
-                                        .source_offset_ticks()
-                                        .saturating_add(self.item.length_ticks())
+                            data.tick < source_bounds.0
+                                || data.tick.saturating_add(data.duration) > source_bounds.1
                         })
                 });
                 if invalid_target {
@@ -2318,66 +2533,80 @@ impl canvas::Program<Message> for PianoRoll<'_> {
                 Color::from_rgba8(9, 12, 14, 0.4),
             );
         }
+        let content_mapping = self.content_mapping();
+        let (view_start, view_end) = self.content_tick_range(bounds.width);
         for note in self.item.notes() {
             if note.pitch() > self.high_pitch
                 || note.pitch() < self.high_pitch.saturating_sub(self.pitch_rows - 1)
             {
                 continue;
             }
-            if !source_tick_is_visible(self.item, note.tick()) {
-                continue;
-            }
-            let x = grid_left + self.content_mapping().x_at_tick(note.tick());
             let y = grid_top + mapping.y_at_pitch(note.pitch());
-            let width = note_width_pixels(
-                visible_note_duration(self.item, note),
-                self.ticks_per_beat,
-                self.pixels_per_beat,
-            );
-            let rect = canvas::Path::rectangle(
-                Point::new(x, y + 2.0),
-                Size::new(width, (self.pitch_row_height - 4.0).max(1.0)),
-            );
-            let color = if self.selected.contains(&note.id()) {
-                Color::from_rgb8(104, 179, 204)
-            } else {
-                Color::from_rgb8(69, 139, 160)
-            };
-            frame.fill(&rect, color);
-            if let Some(drag) = state
-                .drag
-                .as_ref()
-                .filter(|drag| drag.notes.iter().any(|(id, _)| *id == note.id()))
-            {
-                let preview = note_drag_preview_data(
-                    drag,
-                    note_data(note),
-                    self.item.source_offset_ticks(),
-                    self.item
-                        .source_offset_ticks()
-                        .saturating_add(self.item.length_ticks()),
+            let source_duration = visible_note_duration(self.item, note, note.tick());
+            for occurrence_tick in source_event_occurrences(
+                self.item,
+                note.tick(),
+                view_start.saturating_sub(source_duration),
+                view_end,
+            ) {
+                let x = grid_left + content_mapping.x_at_tick(occurrence_tick);
+                let width = note_width_pixels(
+                    visible_note_duration(self.item, note, occurrence_tick),
+                    self.ticks_per_beat,
+                    self.pixels_per_beat,
                 );
-                let preview_x = grid_left + self.content_mapping().x_at_tick(preview.tick);
-                let preview_y = grid_top + mapping.y_at_pitch(preview.pitch);
-                let preview_width =
-                    note_width_pixels(preview.duration, self.ticks_per_beat, self.pixels_per_beat);
-                let invalid_target = preview.tick < self.item.source_offset_ticks()
-                    || preview.tick.saturating_add(preview.duration)
-                        > self
-                            .item
-                            .source_offset_ticks()
-                            .saturating_add(self.item.length_ticks());
-                frame.fill_rectangle(
-                    Point::new(preview_x, preview_y + 2.0),
-                    Size::new(preview_width, (self.pitch_row_height - 4.0).max(1.0)),
-                    if invalid_target {
-                        Color::from_rgba8(230, 70, 65, 0.72)
-                    } else if drag.copy {
-                        Color::from_rgba8(117, 196, 143, 0.72)
-                    } else {
-                        Color::from_rgba8(214, 205, 111, 0.45)
-                    },
+                let rect = canvas::Path::rectangle(
+                    Point::new(x, y + 2.0),
+                    Size::new(width, (self.pitch_row_height - 4.0).max(1.0)),
                 );
+                let color = if self.selected.contains(&note.id()) {
+                    Color::from_rgb8(104, 179, 204)
+                } else {
+                    Color::from_rgb8(69, 139, 160)
+                };
+                frame.fill(&rect, color);
+                if let Some(drag) = state
+                    .drag
+                    .as_ref()
+                    .filter(|drag| drag.notes.iter().any(|(id, _)| *id == note.id()))
+                {
+                    let source_bounds = midi_source_edit_bounds(self.item);
+                    let preview = note_drag_preview_data(
+                        drag,
+                        note_data(note),
+                        source_bounds.0,
+                        source_bounds.1,
+                    );
+                    let iteration = source_loop_iteration(self.item, note.tick(), occurrence_tick);
+                    let preview_tick = occurrence_source_tick(self.item, preview.tick, iteration);
+                    let preview_x = grid_left + content_mapping.x_at_tick(preview_tick);
+                    let preview_y = grid_top + mapping.y_at_pitch(preview.pitch);
+                    let preview_duration =
+                        source_note_duration(self.item, preview.tick, preview.duration).min(
+                            self.item
+                                .source_offset_ticks()
+                                .saturating_add(self.item.length_ticks())
+                                .saturating_sub(preview_tick),
+                        );
+                    let preview_width = note_width_pixels(
+                        preview_duration,
+                        self.ticks_per_beat,
+                        self.pixels_per_beat,
+                    );
+                    let invalid_target = preview.tick < source_bounds.0
+                        || preview.tick.saturating_add(preview.duration) > source_bounds.1;
+                    frame.fill_rectangle(
+                        Point::new(preview_x, preview_y + 2.0),
+                        Size::new(preview_width, (self.pitch_row_height - 4.0).max(1.0)),
+                        if invalid_target {
+                            Color::from_rgba8(230, 70, 65, 0.72)
+                        } else if drag.copy {
+                            Color::from_rgba8(117, 196, 143, 0.72)
+                        } else {
+                            Color::from_rgba8(214, 205, 111, 0.45)
+                        },
+                    );
+                }
             }
         }
         if let Some(gesture) = state.empty_drag.filter(|gesture| gesture.marquee) {
@@ -2429,7 +2658,8 @@ impl canvas::Program<Message> for PianoRoll<'_> {
             {
                 let point = Point::new(position.x - KEY_WIDTH, position.y - HEADER_HEIGHT);
                 let touch_targets = cfg!(target_os = "android") || bounds.width < 720.0;
-                if let Some((_, resize)) = self.note_at_point(point, touch_targets) {
+                if let Some((_, resize, _)) = self.note_at_point(point, touch_targets, bounds.width)
+                {
                     return if resize {
                         mouse::Interaction::ResizingHorizontally
                     } else {
@@ -2522,12 +2752,11 @@ impl PianoRoll<'_> {
             drag.delta_tick = delta_tick;
         } else {
             let delta_pitch = ((drag.start.y - point.y) / self.pitch_row_height).round() as i16;
+            let (source_start, source_end) = midi_source_edit_bounds(self.item);
             (drag.delta_tick, drag.delta_pitch) = bounded_note_move_delta(
                 &drag.notes,
-                self.item.source_offset_ticks(),
-                self.item
-                    .source_offset_ticks()
-                    .saturating_add(self.item.length_ticks()),
+                source_start,
+                source_end,
                 delta_tick,
                 delta_pitch,
             );
@@ -2538,30 +2767,37 @@ impl PianoRoll<'_> {
         &self,
         point: Point,
         touch_targets: bool,
-    ) -> Option<(&aaadaw_core::MidiNote, bool)> {
+        width: f32,
+    ) -> Option<(&aaadaw_core::MidiNote, bool, u64)> {
         let mapping = self.content_mapping();
-        let note_bounds = |note: &aaadaw_core::MidiNote| {
-            let left = mapping.x_at_tick(note.tick());
-            let width = note_width_pixels(
-                visible_note_duration(self.item, note),
-                self.ticks_per_beat,
-                self.pixels_per_beat,
-            );
-            let top = mapping.y_at_pitch(note.pitch());
-            (left, width, top)
-        };
-        if let Some(note) = self.item.notes().iter().rev().find(|note| {
-            if !source_tick_is_visible(self.item, note.tick()) {
-                return false;
+        let (view_start, view_end) = self.content_tick_range(width);
+        for note in self.item.notes().iter().rev() {
+            let duration = visible_note_duration(self.item, note, note.tick());
+            for occurrence_tick in source_event_occurrences(
+                self.item,
+                note.tick(),
+                view_start.saturating_sub(duration),
+                view_end,
+            ) {
+                let left = mapping.x_at_tick(occurrence_tick);
+                let note_width = note_width_pixels(
+                    visible_note_duration(self.item, note, occurrence_tick),
+                    self.ticks_per_beat,
+                    self.pixels_per_beat,
+                );
+                let top = mapping.y_at_pitch(note.pitch());
+                if point.x >= left
+                    && point.x <= left + note_width
+                    && point.y >= top
+                    && point.y < top + self.pitch_row_height
+                {
+                    return Some((
+                        note,
+                        point.x >= left + note_width - resize_handle_width(note_width),
+                        occurrence_tick,
+                    ));
+                }
             }
-            let (left, width, top) = note_bounds(note);
-            point.x >= left
-                && point.x <= left + width
-                && point.y >= top
-                && point.y < top + self.pitch_row_height
-        }) {
-            let (left, width, _) = note_bounds(note);
-            return Some((note, point.x >= left + width - resize_handle_width(width)));
         }
         if !touch_targets {
             return None;
@@ -2570,12 +2806,27 @@ impl PianoRoll<'_> {
             .notes()
             .iter()
             .rev()
-            .filter(|note| source_tick_is_visible(self.item, note.tick()))
-            .filter_map(|note| {
-                let (left, width, top) = note_bounds(note);
-                let hit_width = width.max(48.0);
+            .flat_map(|note| {
+                let duration = visible_note_duration(self.item, note, note.tick());
+                source_event_occurrences(
+                    self.item,
+                    note.tick(),
+                    view_start.saturating_sub(duration),
+                    view_end,
+                )
+                .map(move |occurrence_tick| (note, occurrence_tick))
+            })
+            .filter_map(|(note, occurrence_tick)| {
+                let left = mapping.x_at_tick(occurrence_tick);
+                let note_width = note_width_pixels(
+                    visible_note_duration(self.item, note, occurrence_tick),
+                    self.ticks_per_beat,
+                    self.pixels_per_beat,
+                );
+                let top = mapping.y_at_pitch(note.pitch());
+                let hit_width = note_width.max(48.0);
                 let hit_height = self.pitch_row_height.max(48.0);
-                let hit_left = left - (hit_width - width) / 2.0;
+                let hit_left = left - (hit_width - note_width) / 2.0;
                 let hit_top = top - (hit_height - self.pitch_row_height) / 2.0;
                 let in_touch_target = point.x >= hit_left
                     && point.x <= hit_left + hit_width
@@ -2583,12 +2834,13 @@ impl PianoRoll<'_> {
                     && point.y <= hit_top + hit_height;
                 in_touch_target.then_some((
                     note,
-                    (point.x - (left + width / 2.0))
+                    occurrence_tick,
+                    (point.x - (left + note_width / 2.0))
                         .hypot(point.y - (top + self.pitch_row_height / 2.0)),
                 ))
             })
-            .min_by(|(_, left), (_, right)| left.total_cmp(right))
-            .map(|(note, _)| (note, false))
+            .min_by(|(_, _, left), (_, _, right)| left.total_cmp(right))
+            .map(|(note, occurrence_tick, _)| (note, false, occurrence_tick))
     }
 
     fn draw_velocity(
@@ -2712,6 +2964,14 @@ impl PianoRoll<'_> {
             .origin_tick
             .saturating_add(self.item.source_offset_ticks());
         mapping
+    }
+
+    fn content_tick_range(&self, width: f32) -> (u64, u64) {
+        let mapping = self.content_mapping();
+        (
+            mapping.origin_tick,
+            mapping.tick_at_x((width - KEY_WIDTH).max(0.0)),
+        )
     }
 }
 
@@ -2992,6 +3252,117 @@ mod tests {
     }
 
     #[test]
+    fn looped_source_occurrences_render_and_hit_test_after_wrapping_the_offset() {
+        let (mut project, item_id, _) = project_with_note(
+            9_600,
+            MidiNoteData {
+                pitch: 60,
+                tick: 960,
+                duration: 120,
+                velocity: 96,
+            },
+        );
+        project
+            .apply(aaadaw_core::DawAction::EditMidiItemPlacement {
+                item_id,
+                start_tick: 0,
+                length_ticks: 20_000,
+                source_offset_ticks: 9_120,
+            })
+            .unwrap();
+        project
+            .apply(aaadaw_core::DawAction::SetMidiControllers {
+                item_id,
+                controllers: vec![MidiControllerData {
+                    controller: 1,
+                    tick: 960,
+                    value: 64,
+                }],
+            })
+            .unwrap();
+        project
+            .apply(aaadaw_core::DawAction::SetMidiPitchBends {
+                item_id,
+                pitch_bends: vec![MidiPitchBendData {
+                    tick: 1_920,
+                    value: 12_000,
+                }],
+            })
+            .unwrap();
+        let item = &project.midi_items()[0];
+
+        assert_eq!(
+            source_event_occurrences(item, 960, 0, u64::MAX).collect::<Vec<_>>(),
+            [10_560, 20_160]
+        );
+        assert!(source_tick_is_visible(item, 960));
+        assert_eq!(
+            midi_note_insert_data(item, 1_440, 64, 240, 96),
+            Some(MidiNoteData {
+                pitch: 64,
+                tick: 960,
+                duration: 240,
+                velocity: 96,
+            })
+        );
+        assert_eq!(
+            midi_note_insert_data(item, 9_480, 64, 960, 96),
+            Some(MidiNoteData {
+                pitch: 64,
+                tick: 9_000,
+                duration: 600,
+                velocity: 96,
+            })
+        );
+
+        let selected = HashSet::new();
+        let roll = piano_roll_for_test(&project, item_id, &selected, MidiEditorTool::Select);
+        let hit = roll
+            .note_at_point(Point::new(146.0, 9.0), false, 500.0)
+            .expect("the wrapped source note should be editable in the piano roll");
+        assert_eq!(hit.0.tick(), 960);
+        assert_eq!(hit.2, 10_560);
+
+        let controller_lane = ControllerLane {
+            item,
+            item_id,
+            controller: 1,
+            lane_height: 72.0,
+            origin_tick: 0,
+            pixels_per_beat: 96.0,
+            ticks_per_beat: 960,
+            playhead_tick: None,
+            snap: MidiSnap::default(),
+        };
+        assert_eq!(
+            controller_lane.closest_point(Point::new(144.0, controller_y(64, 72.0))),
+            Some((0, 10_560))
+        );
+        let (controller_edit, controller_display_tick) =
+            controller_lane.point_data(Point::new(168.0, controller_y(96, 72.0)), true);
+        assert_eq!(controller_display_tick, 10_800);
+        assert_eq!(controller_edit.tick, 1_200);
+        let pitch_bend_lane = PitchBendLane {
+            item,
+            item_id,
+            lane_height: 72.0,
+            origin_tick: 0,
+            pixels_per_beat: 96.0,
+            ticks_per_beat: 960,
+            playhead_tick: None,
+            snap: MidiSnap::default(),
+        };
+        assert_eq!(
+            pitch_bend_lane.closest_point(Point::new(240.0, pitch_bend_y(12_000, 72.0))),
+            Some((0, 11_520))
+        );
+        let (pitch_bend_edit, pitch_bend_display_tick) =
+            pitch_bend_lane.point_data(Point::new(264.0, pitch_bend_y(10_000, 72.0)), true);
+        assert_eq!(pitch_bend_display_tick, 11_760);
+        assert_eq!(pitch_bend_edit.tick, 2_160);
+    }
+
+    #[test]
     fn touch_hitboxes_reach_48dp_without_changing_desktop_hits() {
         let (project, item_id, _) = project_with_note(
             3_840,
@@ -3006,8 +3377,8 @@ mod tests {
         let roll = piano_roll_for_test(&project, item_id, &selected, MidiEditorTool::Select);
         let point = Point::new(70.0, 24.0);
 
-        assert!(roll.note_at_point(point, false).is_none());
-        assert!(roll.note_at_point(point, true).is_some());
+        assert!(roll.note_at_point(point, false, 400.0).is_none());
+        assert!(roll.note_at_point(point, true, 400.0).is_some());
     }
 
     #[test]
@@ -3543,6 +3914,7 @@ mod tests {
                     tick: 0,
                     value: 64,
                 },
+                display_tick: 0,
             }),
             ..ControllerLaneInteraction::default()
         };
@@ -3577,6 +3949,7 @@ mod tests {
                     tick: 0,
                     value: 8192,
                 },
+                display_tick: 0,
             }),
             ..PitchBendLaneInteraction::default()
         };
@@ -4695,7 +5068,8 @@ mod tests {
 
             playhead_tick: None,
         };
-        let point = lane.point_data(Point::new(96.0, 36.0), false);
+        let (point, display_tick) = lane.point_data(Point::new(96.0, 36.0), false);
+        assert_eq!(display_tick, 960);
         assert_eq!(
             point,
             MidiControllerData {

@@ -18,4 +18,9 @@ latest_binary_smoke	2026-10-14; Xvfb :90; Build ID e1ab6146acaad9e9ea2d808e1f326
 latest_binary_smoke_screenshot	aaadaw-desktop-runtime-signed-offset.png; SHA-256 ae7790daa7323931332582152cd05219af623ac5530147835ee56910ba2ebd9b
 bounded_section_binary_smoke	2026-10-14; Xvfb :90; Build ID dab8bd42de48bc34d83479ed2607137c64ab4b7a; binary SHA-256 f70ba20a0bc8675f6465b0bdd8c2b47c3264489162bc9703ea2f2b93481b5272; 1280x800 main window visible
 bounded_section_binary_smoke_screenshot	aaadaw-desktop-runtime-startup.png; pixel-identical to aaadaw-desktop-runtime-startup.png; SHA-256 ae7790daa7323931332582152cd05219af623ac5530147835ee56910ba2ebd9b
-midi_loop_binary_smoke	2026-10-14; Xvfb :90; Build ID 0b3b3dfe381801986c1a53db45b9f66e6f7aa900; binary SHA-256 6f0345d4001c61d44cd0356759c7176117045ea58d5c359dcdf5a4f45edfc1f1; 1280x800 main window visible\nmidi_loop_binary_smoke_screenshot	aaadaw-desktop-runtime-startup.png; pixel-identical to startup fixture; SHA-256 ae7790daa7323931332582152cd05219af623ac5530147835ee56910ba2ebd9b\n
+midi_loop_binary_smoke	2026-10-14; Xvfb :90; Build ID 0b3b3dfe381801986c1a53db45b9f66e6f7aa900; binary SHA-256 6f0345d4001c61d44cd0356759c7176117045ea58d5c359dcdf5a4f45edfc1f1; 1280x800 main window visible
+midi_loop_binary_smoke_screenshot	aaadaw-desktop-runtime-startup.png; pixel-identical to startup fixture; SHA-256 ae7790daa7323931332582152cd05219af623ac5530147835ee56910ba2ebd9b
+looped_midi_binary_smoke	2026-10-15; Xvfb :90; Build ID 108001ad22857fcc7f5ce81960203f5ec333c693; binary SHA-256 929def7e6e1d7835a25c89a726af78969f3f328a7d9f9f118a2fd80b69247401; 1280x800 main window visible
+looped_midi_binary_smoke_screenshot	aaadaw-desktop-runtime-startup.png; pixel-identical to startup fixture; SHA-256 ae7790daa7323931332582152cd05219af623ac5530147835ee56910ba2ebd9b
+looped_midi_editor_window	2026-10-15; Xvfb :94; isolated XDG profile; UI-driven MIDI item create/add C4/extend to 11520 ticks/open Piano roll; xwininfo 1000x620
+looped_midi_editor_window_screenshot	midi-editor-loop-source-aaadaw.png; three occurrences of one loop-source note; SHA-256 e9e28b4f7ea6309ffe983b2b43486dc0870888291c3ea91f75bd389ac2ab2c7a
