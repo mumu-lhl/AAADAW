@@ -314,6 +314,51 @@ fn item_nudge_minutes_seconds_and_samples_units_match_native_snap_grids() {
 }
 
 #[test]
+fn item_nudge_grid_units_follow_arrangement_grid_and_native_snap_rounding() {
+    use super::item_nudge::{Target, Unit};
+
+    let cases = [(false, 1, 84_960), (true, 1, 96_000), (true, -1, 48_000)];
+    for (snap, direction, expected_sample) in cases {
+        let mut app = item_snap_test_app(60_960, 5_242);
+        let item = &app.project.audio_items()[0];
+        let item_id = item.id();
+        let track_id = item.track_id();
+        let original_offset = item.source_offset_samples();
+        let original_length = item.length_samples();
+        app.timeline.select_items(vec![(item_id, track_id)]);
+        let selection = app.timeline.selected_items.clone();
+        let revision_before = app.revision;
+
+        let _ = app.update(Message::ItemNudgeUnitChanged(Unit::Grid));
+        let _ = app.update(Message::ItemNudgeTargetChanged(Target::Position));
+        let _ = app.update(Message::ItemNudgeValueChanged("1".to_owned()));
+        let _ = app.update(Message::ItemNudgeSnapToUnitChanged(snap));
+        let _ = app.update(Message::NudgeSelectedItems(direction));
+
+        let moved = &app.project.audio_items()[0];
+        assert_eq!(
+            moved.start_sample(),
+            expected_sample,
+            "snap={snap}, direction={direction}"
+        );
+        assert_eq!(moved.source_offset_samples(), original_offset);
+        assert_eq!(moved.length_samples(), original_length);
+        assert_eq!(app.timeline.selected_items, selection);
+        assert_eq!(app.revision, revision_before + 1);
+        assert!(
+            app.item_nudge_dialog.error.is_none(),
+            "snap={snap}, direction={direction}"
+        );
+
+        let _ = app.update(Message::Undo);
+        assert_eq!(app.project.audio_items()[0].start_sample(), 60_960);
+        assert_eq!(app.timeline.selected_items, selection);
+        let _ = app.update(Message::Redo);
+        assert_eq!(app.project.audio_items()[0].start_sample(), expected_sample);
+    }
+}
+
+#[test]
 fn item_nudge_set_applies_absolute_and_relative_positions_to_mixed_selection() {
     let mut app = item_snap_test_app(0, 0);
     let _ = app.update(Message::ItemNudgeModeChanged(super::item_nudge::Mode::Set));

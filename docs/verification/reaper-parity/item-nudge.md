@@ -18,7 +18,7 @@ AAADAW 的 Action List 入口 `Item edit: Nudge/Set...` 与菜单短标签 `Nudg
 
 已实现的编辑路径：
 
-- Position / Nudge：支持与 REAPER 一致的 `milliseconds`、`minutes:seconds` 和 `samples` 输入；以当前单位的步长换算项目采样，开启 Snap 时按相应单位量化目的位置。混合选择同时移动 Audio 与 MIDI 项，保持长度、源偏移和 MIDI 内容；多项用一个共享 delta，间距不变，并作为一个可撤销工程事务。秒和采样单位的原厂值及 Undo/Redo 回归见 [Nudge 单位验证记录](item-nudge-units.md)。
+- Position / Nudge：支持 `milliseconds`、`minutes:seconds`、`grid units` 和 `samples`。Grid Units 使用当前 Arrangement PPQ 网格，经项目 Tempo Map 换算；Snap to grid 量化首个选中项，再以共享 delta 移动混合 Audio/MIDI 选择。秒、采样和网格单位的原厂值、截图与 Undo/Redo 回归见 [Nudge 单位验证记录](item-nudge-units.md)。`measures.beats`、`frames`、`pixels`、`item lengths`、`item selections` 与 `notes` 仍待实现。
 - Position / Set：支持绝对位置和相对位移；多选时以最早的所选项为锚点，对其它项应用同一位移。
 - Edit cursor：支持 Nudge 和绝对/相对 Set，不创建工程素材事务。
 - Audio / MIDI / Left Trim、Left Edge、End Position、Right Trim：Nudge 按步进量调整对应边界；启用 Snap to unit 时，以首个选中项的起点舍入一次，再对整个混合选择应用共同位移。四种目标的混合 Audio/MIDI Nudge、毫秒吸附和媒体相位见[边缘 Nudge/Snap 对照](item-nudge-edge-snap.md)。普通 Set 将每个所选项对应边界放到同一绝对目标，End Position 的 Relative Set 则以最后一个所选项的右边界计算共同位移。Left Trim 对 Audio 按边界距离及素材采样率推进源偏移；loop-source MIDI 按有符号位移更新 PPQ source phase，负向 trim 绕回源循环；non-loop MIDI 在边界穿过源事件时重基准事件和源长度。Left Edge 保留非循环 MIDI 的 source length；End Position 只移动 item；Right Trim 将 non-loop MIDI source length 更新为 source offset 加新的可见长度。所有所选项通过一个事务提交，错误 trim 整批拒绝。Linux REAPER 7.82 的 Audio、loop-source MIDI 与 non-loop MIDI 四种 Set target 错开多选结果、混合 Audio/MIDI 边缘结果、控件显示和撤销已记录，见[Set 边界目标对照](item-nudge-set-edge-targets.md)；其它 Unit/Snap 组合和变速 MIDI 仍未全部对照。

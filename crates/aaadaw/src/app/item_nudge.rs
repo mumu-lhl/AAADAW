@@ -27,6 +27,7 @@ pub(crate) enum Unit {
     Milliseconds,
     Samples,
     Time,
+    Grid,
 }
 
 impl std::fmt::Display for Unit {
@@ -35,6 +36,7 @@ impl std::fmt::Display for Unit {
             Self::Milliseconds => "milliseconds",
             Self::Samples => "samples",
             Self::Time => "minutes:seconds",
+            Self::Grid => "grid units",
         })
     }
 }
@@ -123,7 +125,9 @@ impl Dialog {
         self.unit = unit;
         self.error = None;
         self.value = match (self.mode, unit) {
-            (Mode::Nudge, Unit::Milliseconds | Unit::Samples | Unit::Time) => "1".to_owned(),
+            (Mode::Nudge, Unit::Milliseconds | Unit::Samples | Unit::Time | Unit::Grid) => {
+                "1".to_owned()
+            }
             (Mode::Set, Unit::Time) => "0:00.000".to_owned(),
             (Mode::Set, Unit::Samples) => "0".to_owned(),
             _ => self.value.clone(),
@@ -157,7 +161,10 @@ impl App {
 
     pub(super) fn change_item_nudge_unit(&mut self, unit: Unit) {
         let valid = match self.item_nudge_dialog.mode {
-            Mode::Nudge => matches!(unit, Unit::Milliseconds | Unit::Time | Unit::Samples),
+            Mode::Nudge => matches!(
+                unit,
+                Unit::Milliseconds | Unit::Time | Unit::Grid | Unit::Samples
+            ),
             Mode::Set => matches!(unit, Unit::Time | Unit::Samples),
         };
         if valid {
@@ -221,8 +228,8 @@ impl App {
         }
         if self.item_nudge_dialog.target == Target::EditCursor {
             if self.item_nudge_dialog.mode == Mode::Nudge {
-                let delta = match self.dialog_delta_samples(false) {
-                    Ok(delta) if delta > 0 => delta * i128::from(direction),
+                let delta = match self.nudge_delta_samples(direction) {
+                    Ok(delta) if delta != 0 => delta,
                     Ok(_) => {
                         self.item_nudge_dialog.error =
                             Some("Enter a nudge greater than zero".to_owned());
@@ -232,6 +239,26 @@ impl App {
                         self.item_nudge_dialog.error = Some(error);
                         return;
                     }
+                };
+                let delta = if self.item_nudge_dialog.snap_to_unit
+                    && self.item_nudge_dialog.unit == Unit::Grid
+                {
+                    let sample = match self.project.sample_at_tick(self.timeline.edit_cursor_tick) {
+                        Ok(sample) => sample,
+                        Err(error) => {
+                            self.item_nudge_dialog.error = Some(error.to_string());
+                            return;
+                        }
+                    };
+                    match self.snap_grid_delta_to_sample(sample, delta) {
+                        Ok(delta) => delta,
+                        Err(error) => {
+                            self.item_nudge_dialog.error = Some(error);
+                            return;
+                        }
+                    }
+                } else {
+                    delta
                 };
                 self.move_edit_cursor_by_samples(delta);
             } else {
@@ -243,8 +270,8 @@ impl App {
         }
         match self.item_nudge_dialog.mode {
             Mode::Nudge => {
-                let delta = match self.dialog_delta_samples(false) {
-                    Ok(delta) if delta > 0 => delta,
+                let delta = match self.nudge_delta_samples(direction) {
+                    Ok(delta) if delta != 0 => delta,
                     Ok(_) => {
                         self.item_nudge_dialog.error =
                             Some("Enter a nudge greater than zero".to_owned());
@@ -255,7 +282,7 @@ impl App {
                         return;
                     }
                 };
-                let mut signed_delta = delta * i128::from(direction);
+                let mut signed_delta = delta;
                 if self.item_nudge_dialog.target == Target::Position
                     && self.item_nudge_dialog.snap_to_unit
                 {
@@ -2111,6 +2138,7 @@ impl App {
             Unit::Time => {
                 project_time::parse_project_time(value).map_err(str::to_owned)? * sample_rate
             }
+            Unit::Grid => return Err("Grid units are only available for Nudge".to_owned()),
         };
         if !samples.is_finite() || samples.abs() >= i128::MAX as f64 {
             return Err("Nudge amount is outside the supported range".to_owned());
@@ -2157,6 +2185,7 @@ impl App {
             Unit::Milliseconds => (sample_rate + 500) / 1_000,
             Unit::Samples => 1,
             Unit::Time => sample_rate,
+            Unit::Grid => return Err("Grid snapping requires a selected item".to_owned()),
         };
         if unit == 0 {
             Err("Project sample rate is unavailable".to_owned())
@@ -2170,10 +2199,93 @@ impl App {
         let Some((_, first_sample)) = selected.first() else {
             return Err("No selected items to move".to_owned());
         };
+        if self.item_nudge_dialog.unit == Unit::Grid {
+            return self.snap_grid_delta_to_sample(*first_sample, delta_samples);
+        }
         let target = shifted_sample(*first_sample, delta_samples)
             .ok_or_else(|| "Selected items cannot move beyond the sample timeline".to_owned())?;
         let unit = self.snap_resolution_samples()?;
         Ok(i128::from(round_sample(target, unit)) - i128::from(*first_sample))
+    }
+
+    fn nudge_delta_samples(&self, direction: i8) -> Result<i128, String> {
+        if self.item_nudge_dialog.unit == Unit::Grid {
+            return self.grid_delta_samples(direction);
+        }
+        self.dialog_delta_samples(false)
+            .map(|delta| delta * i128::from(direction))
+    }
+
+    fn grid_delta_samples(&self, direction: i8) -> Result<i128, String> {
+        let grid_count = self
+            .item_nudge_dialog
+            .value
+            .trim()
+            .parse::<f64>()
+            .map_err(|_| "Enter a valid grid-unit amount".to_owned())?;
+        if !grid_count.is_finite() || grid_count <= 0.0 {
+            return Err("Grid-unit amount must be greater than zero".to_owned());
+        }
+        let anchor_sample = if self.item_nudge_dialog.target == Target::EditCursor {
+            self.project
+                .sample_at_tick(self.timeline.edit_cursor_tick)
+                .map_err(|error| error.to_string())?
+        } else {
+            self.selected_item_start_samples()?
+                .first()
+                .map(|(_, sample)| *sample)
+                .ok_or_else(|| "No selected items to move".to_owned())?
+        };
+        let start_tick = self
+            .project
+            .tick_at_sample_position(anchor_sample as f64)
+            .map_err(|error| error.to_string())?;
+        let interval = self
+            .timeline
+            .snap_grid
+            .tick_interval(self.project.settings().ppq())
+            .ok_or_else(|| "Current Snap Grid cannot be represented in project ticks".to_owned())?;
+        let target_tick = start_tick + f64::from(direction) * grid_count * interval as f64;
+        if !target_tick.is_finite() || target_tick < 0.0 {
+            return Err("Nudge would move the selected item before sample zero".to_owned());
+        }
+        let target_sample = self
+            .project
+            .sample_at_tick_position(target_tick)
+            .map_err(|error| error.to_string())?;
+        let delta = target_sample.round() - anchor_sample as f64;
+        if !delta.is_finite() || delta.abs() >= i128::MAX as f64 {
+            return Err("Grid-unit nudge is outside the supported range".to_owned());
+        }
+        Ok(delta as i128)
+    }
+
+    fn snap_grid_delta_to_sample(
+        &self,
+        anchor_sample: u64,
+        delta_samples: i128,
+    ) -> Result<i128, String> {
+        let target_sample = shifted_sample(anchor_sample, delta_samples)
+            .ok_or_else(|| "Selected items cannot move beyond the sample timeline".to_owned())?;
+        let target_tick = self
+            .project
+            .tick_at_sample_position(target_sample as f64)
+            .map_err(|error| error.to_string())?;
+        let interval = self
+            .timeline
+            .snap_grid
+            .tick_interval(self.project.settings().ppq())
+            .ok_or_else(|| "Current Snap Grid cannot be represented in project ticks".to_owned())?;
+        let snapped_tick = (target_tick / interval as f64).round() * interval as f64;
+        let snapped_sample = self
+            .project
+            .sample_at_tick_position(snapped_tick)
+            .map_err(|error| error.to_string())?;
+        if !snapped_sample.is_finite() || snapped_sample < 0.0 || snapped_sample >= u64::MAX as f64
+        {
+            return Err("Snapped item position is outside the supported range".to_owned());
+        }
+        Ok(snapped_sample.round() as i128 - i128::from(anchor_sample))
     }
 
     pub(super) fn selected_item_start_samples(&self) -> Result<Vec<(ItemId, u64)>, String> {

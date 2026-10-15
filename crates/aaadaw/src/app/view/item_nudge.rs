@@ -8,6 +8,7 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
         item_nudge::Mode::Nudge => &[
             item_nudge::Unit::Milliseconds,
             item_nudge::Unit::Time,
+            item_nudge::Unit::Grid,
             item_nudge::Unit::Samples,
         ],
         item_nudge::Mode::Set => &[item_nudge::Unit::Time, item_nudge::Unit::Samples],
@@ -37,9 +38,14 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
         .width(Length::Fixed(100.0))
         .padding([2, 6])
         .size(13);
+    let snap_label = if draft.unit == item_nudge::Unit::Grid {
+        "Snap to grid"
+    } else {
+        "Snap to unit"
+    };
     let snap_checkbox = container(
         checkbox(draft.snap_to_unit)
-            .label("Snap to unit")
+            .label(snap_label)
             .size(14)
             .spacing(6)
             .text_size(13)
