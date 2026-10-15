@@ -1089,6 +1089,130 @@ fn item_nudge_set_edge_targets_apply_absolute_edges_to_staggered_selection() {
 }
 
 #[test]
+fn item_nudge_set_edge_targets_match_native_staggered_looped_midi_selection() {
+    use super::item_nudge::Target;
+
+    let cases = [
+        (
+            Target::LeftTrim,
+            "0:04.000",
+            false,
+            [(7_680, 15_360, 3_840), (7_680, 23_040, 15_360)],
+        ),
+        (
+            Target::LeftEdge,
+            "0:04.000",
+            false,
+            [(7_680, 15_360, 0), (7_680, 23_040, 0)],
+        ),
+        (
+            Target::EndPosition,
+            "0:14.000",
+            false,
+            [(7_680, 19_200, 0), (7_680, 19_200, 0)],
+        ),
+        (
+            Target::RightTrim,
+            "0:14.000",
+            false,
+            [(3_840, 23_040, 0), (11_520, 15_360, 0)],
+        ),
+        (
+            Target::EndPosition,
+            "0:14.000",
+            true,
+            [(0, 19_200, 0), (7_680, 19_200, 0)],
+        ),
+    ];
+
+    for (target, value, relative_set, expected) in cases {
+        let (mut app, project_path) = item_nudge_set_edge_test_app();
+        let track_id = app.project.tracks()[1].id();
+        app.project
+            .apply(DawAction::InsertMidiItem {
+                track_id,
+                start_tick: 11_520,
+                length_ticks: 19_200,
+            })
+            .unwrap();
+        let last_id = app.project.midi_items()[1].id();
+        app.project
+            .apply(DawAction::SetMidiItemLoopSource {
+                item_id: last_id,
+                enabled: true,
+            })
+            .unwrap();
+        app.project
+            .apply(DawAction::AddMidiNotes {
+                item_id: last_id,
+                notes: vec![
+                    MidiNoteData {
+                        pitch: 60,
+                        tick: 960,
+                        duration: 960,
+                        velocity: 96,
+                    },
+                    MidiNoteData {
+                        pitch: 64,
+                        tick: 2_880,
+                        duration: 960,
+                        velocity: 108,
+                    },
+                ],
+            })
+            .unwrap();
+        let first_id = app.project.midi_items()[0].id();
+        let original = app.project.midi_items().to_vec();
+        let original_notes = original
+            .iter()
+            .map(|item| item.notes().to_vec())
+            .collect::<Vec<_>>();
+        app.timeline.rebuild(&app.project);
+        app.timeline
+            .select_items(vec![(first_id, track_id), (last_id, track_id)]);
+        let _ = app.update(Message::ItemNudgeModeChanged(super::item_nudge::Mode::Set));
+        let _ = app.update(Message::ItemNudgeTargetChanged(target));
+        if relative_set {
+            let _ = app.update(Message::ItemNudgeRelativeSetChanged(true));
+        }
+        let _ = app.update(Message::ItemNudgeValueChanged(value.to_owned()));
+
+        let _ = app.update(Message::ApplyItemNudgeSet);
+
+        assert!(app.item_nudge_dialog.error.is_none(), "target: {target}");
+        let actual = app
+            .project
+            .midi_items()
+            .iter()
+            .map(|item| {
+                (
+                    item.start_tick(),
+                    item.length_ticks(),
+                    item.source_offset_ticks(),
+                )
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(actual, expected, "target: {target}");
+        assert_eq!(
+            app.project
+                .midi_items()
+                .iter()
+                .map(|item| item.notes().to_vec())
+                .collect::<Vec<_>>(),
+            original_notes,
+            "target: {target}"
+        );
+        let edited = app.project.midi_items().to_vec();
+        let _ = app.update(Message::Undo);
+        assert_eq!(app.project.midi_items(), original, "target: {target}");
+        let _ = app.update(Message::Redo);
+        assert_eq!(app.project.midi_items(), edited, "target: {target}");
+        drop(app);
+        let _ = std::fs::remove_file(project_path);
+    }
+}
+
+#[test]
 fn item_nudge_set_end_position_relative_set_applies_a_delta_from_the_last_edge() {
     use super::item_nudge::Target;
 

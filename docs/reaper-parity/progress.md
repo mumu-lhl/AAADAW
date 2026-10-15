@@ -1206,3 +1206,14 @@ AAADAW Set edge handling now applies those per-item absolute boundaries; Relativ
 The rebuilt nightly Cranelift desktop executable, Build ID `027235a78569b58fbf6072409f0a74d65336d0c3`, SHA-256 `b6f8ce725ab437fab8f212d0d79e5709a4ff0176a8923243fd0e2414a7e319fa`, launched through the smoke helper on bundled Xvfb :90 with an actual 1280×800 main window. The startup image matches the baseline fixture byte-for-byte. The helper isolates XDG state, selects `WGPU_BACKEND=gl`, and resolves the missing system Xvfb / unset DISPLAY environment without changing application runtime code.
 
 `ITEM-NUDGE-SET-001`, P4 and the single PR #282 remain `in_progress`. Native staggered MIDI/mixed-media edges, other Unit/Snap combinations, variable-tempo MIDI edge precision, broader Undo parity, and full REAPER UI parity remain open.
+
+
+### 2026-10-15 Staggered loop-source MIDI Set edge parity
+
+REAPER 7.82 / Default 7 with two 10-second loop-source MIDI items at 2s and 6s confirms that Left Trim, Left Edge, End Position, and Right Trim use the same shared absolute edge destinations and timeline geometry as Audio. MIDI note PPQ stays unchanged. Left Trim applies a signed source-phase displacement: at a 4s target, the first item source offset becomes 2s and the later item wraps backward by 2s to 8s in its 10-second source loop. A fresh-project Left Trim is one native Undo step; Undo restores both original items and Redo reapplies both positions and wrapped phases. The probe, full native state TSV, and actual Left Trim window capture are archived under `docs/verification/reaper-parity`.
+
+AAADAW now carries the signed displacement through the MIDI tempo map and wraps a negative offset by that item's source-loop duration before converting back to PPQ. Audio keeps the separately measured absolute-distance Left Trim behavior. The new staggered MIDI regression covers all four edge targets, End Position Relative Set, note preservation, loop phase, and one-step Undo/Redo. Nightly Cranelift App nextest passed 603/603; Stable App Clippy `-D warnings`, rustfmt, parity-matrix parsing, and `git diff --check` passed.
+
+The latest nightly Cranelift desktop binary (Build ID `e284d4328a874c8155f86697481144d8bf124b34`, SHA-256 `11483a8e032fb40d03167a70b7fb19c69c76390f499c0a7a7392ec6239abe03e`) launched through the smoke helper on the bundled Xvfb :90 and rendered the real 1280×800 main window. Its screenshot is pixel-identical to the baseline fixture. The smoke path still works without `DISPLAY` or system Xvfb, using `WGPU_BACKEND=gl` and a fresh XDG profile.
+
+`ITEM-NUDGE-SET-001`, P4 and the single PR #282 remain `in_progress`. Native staggered mixed-media/non-loop MIDI edges, other Unit/Snap combinations, variable-tempo MIDI edge precision, broader Undo parity, and full REAPER UI parity remain open.

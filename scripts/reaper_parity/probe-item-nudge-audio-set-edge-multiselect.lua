@@ -75,6 +75,7 @@ local function poll_command()
     local action, label
     if command then action, label = command:match("^([^|]+)|?([^|]*)$") end
     if action == "reset" then
+      reaper.Undo_BeginBlock2(0)
       for i, item in ipairs(items) do
         reaper.SetMediaItemInfo_Value(item, "D_POSITION", i == 1 and 2 or 6)
         reaper.SetMediaItemInfo_Value(item, "D_LENGTH", 10)
@@ -84,6 +85,7 @@ local function poll_command()
         reaper.SetMediaItemSelected(item, true)
         reaper.UpdateItemInProject(item)
       end
+      reaper.Undo_EndBlock2(0, "Set edge multi-select probe reset", -1)
       state_before = reaper.GetProjectStateChangeCount(0)
       reaper.UpdateArrange()
       write_state("baseline_" .. label)

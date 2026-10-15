@@ -754,14 +754,30 @@ impl App {
                                 item.source_offset_ticks(),
                             )
                             .map_err(|error| error.to_string())?;
-                        let next_offset_samples =
-                            old_offset_samples + edge_delta.unsigned_abs() as f64;
-                        if !next_offset_samples.is_finite() || next_offset_samples < 0.0 {
+                        let mut next_offset_samples = old_offset_samples + edge_delta as f64;
+                        if !next_offset_samples.is_finite() {
                             return Err(
                                 "MIDI left trim is outside the supported source range".to_owned()
                             );
                         }
                         if item.is_loop_source() {
+                            if next_offset_samples < 0.0 {
+                                // REAPER wraps a MIDI loop's source phase when Set →
+                                // Left Trim extends the left edge before its old start.
+                                let loop_length_samples = self
+                                    .project
+                                    .midi_source_offset_samples(
+                                        next_start_tick,
+                                        item.source_loop_length_ticks(),
+                                    )
+                                    .map_err(|error| error.to_string())?;
+                                if !loop_length_samples.is_finite() || loop_length_samples <= 0.0 {
+                                    return Err("MIDI source loop is outside the supported range"
+                                        .to_owned());
+                                }
+                                next_offset_samples =
+                                    next_offset_samples.rem_euclid(loop_length_samples);
+                            }
                             self.project
                                 .midi_source_phase_at_offset_samples(
                                     next_start_tick,
@@ -770,6 +786,10 @@ impl App {
                                 )
                                 .map_err(|error| error.to_string())?
                         } else {
+                            if next_offset_samples < 0.0 {
+                                return Err("MIDI left trim is outside the supported source range"
+                                    .to_owned());
+                            }
                             self.project
                                 .midi_source_offset_ticks_at_samples(
                                     next_start_tick,
