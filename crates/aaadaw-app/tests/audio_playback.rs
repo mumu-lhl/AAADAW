@@ -609,6 +609,21 @@ fn transport_loop_preparation_repeats_the_source_segment_of_a_containing_item() 
     }
     drop(graph);
 
+    assert!(matches!(
+        prepare_audio_playback_at_with_loop_range(
+            &project,
+            &store,
+            8,
+            Some(loop_range),
+            64,
+            32,
+            ResamplingQuality::Sinc64,
+        ),
+        Err(PlaybackBuildError::Media(
+            aaadaw_media::MediaError::InvalidTimelineLoop
+        ))
+    ));
+
     project
         .apply(DawAction::InsertAudioItem {
             track_id: project.tracks()[0].id(),

@@ -1983,6 +1983,10 @@ pub fn prepare_audio_playback_at_with_loop_range(
         }
         if overlaps_transport_loop {
             let range = transport_loop_range.expect("overlap requires a transport loop range");
+            if timeline_sample < range.start_sample() && item.start_sample() < range.start_sample()
+            {
+                return Err(PlaybackBuildError::Media(MediaError::InvalidTimelineLoop));
+            }
             let feeder_sample =
                 if (range.start_sample()..range.end_sample()).contains(&timeline_sample) {
                     timeline_sample
