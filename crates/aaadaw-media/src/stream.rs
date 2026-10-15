@@ -170,9 +170,9 @@ pub fn spawn_stereo_audio_item_stream_with_quality(
 /// Feeds a stereo item that exactly covers one project transport loop range.
 ///
 /// This feeder runs until cancelled or dropped. It accepts a bounded loop-source section or a
-/// normal trimmed item with a nonnegative source offset. The item timeline must exactly match
-/// `timeline_loop_range`, the repeated source section must have the same frame count, and the
-/// decoded sample rate must match the output rate.
+/// normal trimmed item with a nonnegative source offset, regardless of that item's Loop source
+/// setting. The item timeline must exactly match `timeline_loop_range`, the repeated source
+/// section must have the same frame count, and the decoded sample rate must match the output rate.
 pub fn spawn_stereo_audio_item_stream_for_transport_loop(
     item: &AudioItem,
     timeline_loop_range: TransportLoopRange,
@@ -266,15 +266,12 @@ fn validate_transport_loop_item(
     {
         return Err(MediaError::InvalidTimelineLoop);
     }
-    if !item.is_loop_source() {
-        return Err(MediaError::InvalidTimelineLoop);
-    }
     let source_section = match (
         item.source_section_start_samples(),
         item.source_section_length_samples(),
     ) {
         (Some(_), Some(_)) => {
-            if item.source_offset_samples() != 0 {
+            if !item.is_loop_source() || item.source_offset_samples() != 0 {
                 return Err(MediaError::InvalidTimelineLoop);
             }
             source_loop_section(item)

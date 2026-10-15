@@ -1386,3 +1386,9 @@ The full app audio-playback suite passes 21/21 and `aaadaw-media` passes 39/39. 
 The earlier native REAPER 7.82 probe established that starting after Loop keeps the playhead there and advances linearly. App playback now applies that same rule to audio: if the start sample is beyond the Loop end, an overlapping item uses its ordinary seek feeder instead of being incorrectly forced into the exact-loop feeder. The regression starts at sample 35 in a stereo item spanning samples 24–40 while Loop is `[16,32)`, verifies source frames 19–23 without underruns, and confirms the transport reaches sample 40 without wrapping.
 
 The full `aaadaw-app` package passes 98/98 tests; `audio_playback` passes 22/22; all-target strict Clippy, formatting, and diff checks pass. Repeat remains `in_progress`: items that overlap a reachable Loop without matching its full range, sample-rate conversion, ordinary feeder rewind/refill, isolated CLAP scheduling, preference persistence, and native audio playback comparison remain open.
+
+### 2026-10-15 Transport Repeat ignores item Loop source mode
+
+Separated transport Repeat from the per-item Loop source toggle for the supported normal trimmed stereo path. A transport loop now repeats the ordinary source frames selected by a nonnegative trim even when that AudioItem's Loop source option is disabled; explicit bounded source sections still require their own Loop source mode and the existing zero-offset/equal-length contract. A two-wrap app regression verifies sample-accurate stereo output and zero underruns with Loop source disabled.
+
+The full `aaadaw-app` package remains 98/98, `audio_playback` 22/22, and `aaadaw-media` 39/39; strict media/app Clippy, rustfmt, and diff checks pass. This still covers only exact-range trimmed items at equal source/output rates; partial Loop overlap, rate conversion, refill, isolated CLAP playback, Repeat persistence, and native audio playback comparison remain open.

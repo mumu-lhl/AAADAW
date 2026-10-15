@@ -451,7 +451,7 @@ fn transport_loop_preparation_repeats_an_embedded_bounded_stereo_item() {
 }
 
 #[test]
-fn transport_loop_preparation_repeats_a_normal_trimmed_stereo_item() {
+fn transport_loop_preparation_repeats_a_trimmed_stereo_item_with_loop_source_disabled() {
     let database_path = unique_path("aaadaw");
     let source_frames: Vec<_> = (0_i16..32)
         .map(|index| {
@@ -485,6 +485,12 @@ fn transport_loop_preparation_repeats_a_normal_trimmed_stereo_item() {
             length_samples: loop_range.length_samples(),
         })
         .expect("normal trimmed audio item should be inserted");
+    project
+        .apply(DawAction::SetAudioItemLoopSource {
+            item_id: project.audio_items()[0].id(),
+            enabled: false,
+        })
+        .expect("the item source loop should be disabled");
 
     let prepared = prepare_audio_playback_at_with_loop_range(
         &project,
