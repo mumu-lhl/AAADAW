@@ -370,6 +370,11 @@ pub enum DawAction {
         item_id: ItemId,
         muted: bool,
     },
+    /// Enable or disable looping for a MIDI item's source without changing its stored length.
+    SetMidiItemLoopSource {
+        item_id: ItemId,
+        enabled: bool,
+    },
     /// Trim the visible start of a MIDI item without moving its stored events.
     TrimMidiItemStart {
         item_id: ItemId,

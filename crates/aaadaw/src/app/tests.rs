@@ -14628,6 +14628,56 @@ fn midi_item_properties_opens_applies_mute_and_keeps_notes_undoable() {
 }
 
 #[test]
+fn midi_item_properties_toggle_loop_source_preserves_source_length_and_undoes() {
+    let mut app = App::default();
+    app.project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "MIDI loop source".into(),
+        })
+        .unwrap();
+    let track_id = app.project.tracks()[0].id();
+    app.project
+        .apply(DawAction::InsertMidiItem {
+            track_id,
+            start_tick: 0,
+            length_ticks: 960,
+        })
+        .unwrap();
+    let item_id = app.project.midi_items()[0].id();
+    app.project
+        .apply(DawAction::EditMidiItemPlacement {
+            item_id,
+            start_tick: 0,
+            length_ticks: 1_920,
+            source_offset_ticks: 0,
+        })
+        .unwrap();
+    app.timeline.rebuild(&app.project);
+    app.timeline.selected_item = Some(item_id);
+    app.timeline.selected_items.insert(item_id);
+
+    let _ = app.update(Message::ToggleItemProperties);
+    assert!(app.midi_item_properties.is_some());
+    assert!(app.project.midi_items()[0].is_loop_source());
+    assert_eq!(app.project.midi_items()[0].source_loop_length_ticks(), 960);
+
+    let _ = app.update(Message::ItemPropertyLoopSourceChanged(false));
+    let _ = app.update(Message::ApplyItemProperties(false));
+
+    let item = &app.project.midi_items()[0];
+    assert!(!item.is_loop_source());
+    assert_eq!(item.source_loop_length_ticks(), 960);
+    assert_eq!(item.length_ticks(), 1_920);
+    let _ = app.update(Message::Undo);
+    assert!(app.project.midi_items()[0].is_loop_source());
+    assert_eq!(app.project.midi_items()[0].source_loop_length_ticks(), 960);
+    let _ = app.update(Message::Redo);
+    assert!(!app.project.midi_items()[0].is_loop_source());
+    assert_eq!(app.project.midi_items()[0].source_loop_length_ticks(), 960);
+}
+
+#[test]
 fn item_toggle_mute_action_matches_action_list_and_is_undoable() {
     let mut app = App::default();
     app.project

@@ -190,6 +190,13 @@ fn midi_item_view<'a>(draft: &'a MidiItemProperties) -> Element<'a, Message> {
         ]
         .spacing(6),
         row![
+            text("").width(120),
+            checkbox(draft.loop_source)
+                .label("Loop source")
+                .on_toggle(Message::ItemPropertyLoopSourceChanged)
+        ]
+        .spacing(6),
+        row![
             text("Position:").width(120),
             field(ItemPropertyField::Position, 130)
         ]

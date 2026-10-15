@@ -574,6 +574,7 @@ impl App {
         };
         let item_id = item.id();
         let current_muted = item.is_muted();
+        let current_loop_source = item.is_loop_source();
         let current_start = item.start_tick();
         let current_length = item.length_ticks();
         let current_source_offset = item.source_offset_ticks();
@@ -597,9 +598,12 @@ impl App {
                 || source_offset_ticks != current_source_offset);
         let target_muted = draft.muted;
         let changes_mute = draft.mute_changed && target_muted != current_muted;
+        let target_loop_source = draft.loop_source;
+        let changes_loop_source =
+            draft.loop_source_changed && target_loop_source != current_loop_source;
         let target_name = draft.name.clone();
         let changes_name = draft.name_changed && target_name != current_name;
-        if (changes_placement || changes_mute) && self.playback_active() {
+        if (changes_placement || changes_mute || changes_loop_source) && self.playback_active() {
             let error = "Stop playback before changing MIDI item properties".to_owned();
             self.status = error.clone();
             self.midi_item_properties
@@ -608,7 +612,7 @@ impl App {
                 .error = Some(error);
             return Task::none();
         }
-        let mut actions = Vec::with_capacity(3);
+        let mut actions = Vec::with_capacity(4);
         if changes_placement {
             actions.push(aaadaw_core::DawAction::EditMidiItemPlacement {
                 item_id,
@@ -621,6 +625,12 @@ impl App {
             actions.push(aaadaw_core::DawAction::SetMidiItemMute {
                 item_id,
                 muted: target_muted,
+            });
+        }
+        if changes_loop_source {
+            actions.push(aaadaw_core::DawAction::SetMidiItemLoopSource {
+                item_id,
+                enabled: target_loop_source,
             });
         }
         if changes_name {
@@ -645,6 +655,7 @@ impl App {
                     && item.length_ticks() == length_ticks
                     && item.source_offset_ticks() == source_offset_ticks
                     && item.is_muted() == target_muted
+                    && item.is_loop_source() == target_loop_source
                     && item.name() == target_name
             }) {
                 self.midi_item_properties
@@ -1380,8 +1391,10 @@ pub(crate) struct MidiItemProperties {
     pub(crate) unit: TimeUnit,
     frame_rate: aaadaw_core::FrameRate,
     pub(crate) muted: bool,
+    pub(crate) loop_source: bool,
     pub(crate) error: Option<String>,
     mute_changed: bool,
+    loop_source_changed: bool,
     name_changed: bool,
 }
 
@@ -1395,8 +1408,10 @@ impl MidiItemProperties {
             unit,
             frame_rate: project.settings().frame_rate(),
             muted: item.is_muted(),
+            loop_source: item.is_loop_source(),
             error: None,
             mute_changed: false,
+            loop_source_changed: false,
             name_changed: false,
         };
         let start_tick = item.start_tick() as f64;
@@ -1490,6 +1505,12 @@ impl MidiItemProperties {
         self.error = None;
     }
 
+    pub(crate) fn set_loop_source(&mut self, enabled: bool) {
+        self.loop_source = enabled;
+        self.loop_source_changed = true;
+        self.error = None;
+    }
+
     pub(crate) fn set_name(&mut self, name: String) {
         self.name = name;
         self.name_changed = true;
@@ -1497,7 +1518,10 @@ impl MidiItemProperties {
     }
 
     pub(crate) fn has_changes(&self) -> bool {
-        self.mute_changed || self.name_changed || self.changed.iter().any(|changed| *changed)
+        self.mute_changed
+            || self.loop_source_changed
+            || self.name_changed
+            || self.changed.iter().any(|changed| *changed)
     }
 
     fn placement_in_project(

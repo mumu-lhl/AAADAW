@@ -176,7 +176,7 @@ The MIDI Item Properties window now edits Position and Length in the same Time, 
 
 Focused regressions round-trip all four display units, including a negative project start-time offset for Time and H:M:S:F; reject zero length and a sample position outside exact `f64` integer range; and apply position, length, and mute together while preserving MIDI notes across Undo/Redo. Nightly + Cranelift workspace nextest passed 1065/1065 with two X11-dependent tests excluded. Stable strict Clippy, fmt, and diff checks passed. No AAADAW screenshot or new native probe was captured.
 
-The MIDI window still lacks item timebase, playback rate/pitch/mix, other source controls, fades, and the complete native geometry. This implementation does not close `ITEM-PROPERTIES-001` or `ITEM-MUTE-001`.
+The MIDI window now includes the `Loop source` toggle; its native and AAADAW window captures plus Apply/Undo/Redo and playback-event checks are recorded in [MIDI Item Properties Loop source verification](midi-item-properties-loop-source.md). The MIDI window still lacks item timebase, playback rate/pitch/mix, additional source controls, fades, and the complete native geometry. This implementation does not close `ITEM-PROPERTIES-001` or `ITEM-MUTE-001`.
 
 ### MIDI Item Name (2026-10-14)
 

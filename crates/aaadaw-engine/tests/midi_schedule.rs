@@ -201,6 +201,46 @@ fn event_plan_repeats_midi_notes_after_the_preserved_source_loop_length() {
 }
 
 #[test]
+fn event_plan_stops_repeating_midi_source_when_loop_source_is_disabled() {
+    let (mut project, _) = project_with_note(60, 120, 90);
+    let item_id = project.midi_items()[0].id();
+    project
+        .apply(DawAction::EditMidiItemPlacement {
+            item_id,
+            start_tick: 0,
+            length_ticks: 8_000,
+            source_offset_ticks: 0,
+        })
+        .expect("the visible MIDI item should extend past its source loop");
+    assert_eq!(project.midi_items()[0].source_loop_length_ticks(), 3_840);
+
+    project
+        .apply(DawAction::SetMidiItemLoopSource {
+            item_id,
+            enabled: false,
+        })
+        .expect("loop source should be disabled");
+    assert_eq!(project.midi_items()[0].source_loop_length_ticks(), 3_840);
+
+    let plan = MidiEventPlan::compile(&project).expect("non-looped MIDI should compile");
+    assert_eq!(plan.len(), 2);
+    let block_end = project.sample_at_tick(8_000).unwrap();
+    let mut events = [None; 4];
+    assert_eq!(
+        plan.events_for_block(0, block_end as usize + 1, &mut events)
+            .unwrap(),
+        2
+    );
+    let note_ons = events
+        .iter()
+        .flatten()
+        .filter(|event| event.kind == MidiEventKind::NoteOn)
+        .map(|event| event.sample_offset)
+        .collect::<Vec<_>>();
+    assert_eq!(note_ons, [project.sample_at_tick(120).unwrap() as usize]);
+}
+
+#[test]
 fn event_plan_applies_midi_source_offset_at_the_visible_start() {
     let mut project = Project::with_settings(
         aaadaw_core::ProjectSettings::default()

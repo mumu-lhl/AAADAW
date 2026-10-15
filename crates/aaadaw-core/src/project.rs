@@ -3657,6 +3657,19 @@ impl Project {
                 };
                 ProjectEvent::MidiItemChanged { before, after }
             }
+            DawAction::SetMidiItemLoopSource { item_id, enabled } => {
+                let before = state
+                    .midi_items
+                    .iter()
+                    .find(|item| item.id == item_id)
+                    .ok_or(ActionError::MidiItemNotFound { item_id })?
+                    .clone();
+                let after = MidiItem {
+                    loop_source: enabled,
+                    ..before.clone()
+                };
+                ProjectEvent::MidiItemChanged { before, after }
+            }
             DawAction::TrimMidiItemStart {
                 item_id,
                 start_tick,

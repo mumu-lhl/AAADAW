@@ -752,6 +752,7 @@ fn action_rebuilds_playback_graph(action: &DawAction) -> bool {
         | DawAction::SetTempoCurve { .. }
         | DawAction::SetTrackFxParameterAutomation { .. }
         | DawAction::EditMidiItemPlacement { .. }
+        | DawAction::SetMidiItemLoopSource { .. }
         | DawAction::SetMidiItemMute { .. }
         | DawAction::FreezeTrack { .. }
         | DawAction::UnfreezeTrack { .. } => true,
@@ -2572,6 +2573,8 @@ impl App {
             }
             Message::ItemPropertyLoopSourceChanged(enabled) => {
                 if let Some(draft) = &mut self.item_properties {
+                    draft.set_loop_source(enabled);
+                } else if let Some(draft) = &mut self.midi_item_properties {
                     draft.set_loop_source(enabled);
                 }
             }
