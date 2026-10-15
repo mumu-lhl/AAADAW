@@ -805,6 +805,40 @@ fn item_nudge_midi_contents_converts_time_using_the_item_tempo_map_position() {
 }
 
 #[test]
+fn item_nudge_midi_contents_uses_tempo_at_item_start_across_tempo_change() {
+    use super::item_nudge::Target;
+
+    let mut app = App::default();
+    app.project
+        .apply(DawAction::SetTempo {
+            start_tick: 7_680,
+            bpm: 60.0,
+        })
+        .unwrap();
+    let _ = app.update(Message::AddTrack);
+    let midi_track = app.project.tracks()[0].id();
+    app.project
+        .apply(DawAction::InsertMidiItem {
+            track_id: midi_track,
+            start_tick: 7_488,
+            length_ticks: 4_896,
+        })
+        .unwrap();
+    let midi_id = app.project.midi_items()[0].id();
+    app.timeline.rebuild(&app.project);
+    app.timeline.select_items(vec![(midi_id, midi_track)]);
+    let _ = app.update(Message::ItemNudgeTargetChanged(Target::Contents));
+    let _ = app.update(Message::ItemNudgeValueChanged("250".to_owned()));
+
+    let _ = app.update(Message::NudgeSelectedItems(1));
+
+    assert_eq!(app.project.midi_items()[0].start_tick(), 7_488);
+    assert_eq!(app.project.midi_items()[0].length_ticks(), 4_896);
+    assert_eq!(app.project.midi_items()[0].source_offset_ticks(), 4_416);
+    assert!(app.item_nudge_dialog.error.is_none());
+}
+
+#[test]
 fn item_nudge_mixed_contents_fails_atomically_when_audio_metadata_is_missing() {
     let mut app = item_snap_test_app(0, 0);
     let revision = app.revision;

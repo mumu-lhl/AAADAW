@@ -13,5 +13,5 @@ left_returns_both_to_initial	9.850000	0.100000	4.750000	0.000000	both remain 2.0
 undo_after_left_restores_prior_mixed_state	0.100000	9.850000	0.000000	4.750000	both remain 2.000s/5.000s/selected	960-2880;4800-6720 unchanged	1
 redo_after_undo_restores_left_result	9.850000	0.100000	4.750000	0.000000	both remain 2.000s/5.000s/selected	960-2880;4800-6720 unchanged	1
 screenshot	item-nudge-mixed-contents-native-dialog.png; 528x121; mixed selection; contents; 250 ms; Snap off; SHA-256 7799546c9410445f4e8a68b799397851e93729e9319868378afd4e508be457ff
-probe_script	../../scripts/reaper_parity/probe-item-nudge-mixed-contents.lua
+probe_script	../../../../scripts/reaper_parity/probe-item-nudge-mixed-contents.lua
 scope	One tested mixed selection and one Undo/Redo cycle; not a claim about deeper undo-history behavior or other snap/grid/tempo/source-section combinations.

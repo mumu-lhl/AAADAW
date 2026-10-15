@@ -844,6 +844,7 @@ impl App {
         else {
             return Err("Contents nudge is outside the supported range".to_owned());
         };
+        let settings = self.project.settings();
         let mut actions = Vec::with_capacity(items.len());
         for item in items {
             let source_loop_length = item.source_loop_length_ticks();
@@ -857,13 +858,18 @@ impl App {
             let Some(target_sample) = start_sample.checked_add(sample_delta) else {
                 return Err("Contents nudge is outside the supported range".to_owned());
             };
-            let target_tick = self
-                .project
-                .tick_at_sample(target_sample)
-                .map_err(|error| error.to_string())?;
-            let Some(tick_delta) = target_tick.checked_sub(item.start_tick()) else {
+            if target_sample > (1_u64 << 53) {
                 return Err("Contents nudge is outside the supported range".to_owned());
-            };
+            }
+            let ticks_per_sample = self.project.tempo_at_tick(item.start_tick())
+                * settings.bpm_basis().quarter_notes_per_beat()
+                * f64::from(settings.ppq())
+                / (60.0 * f64::from(settings.sample_rate()));
+            let tick_delta = (sample_delta as f64 * ticks_per_sample).round();
+            if !tick_delta.is_finite() || tick_delta > u64::MAX as f64 {
+                return Err("Contents nudge is outside the supported range".to_owned());
+            }
+            let tick_delta = tick_delta as u64;
             let source_delta = if delta_samples > 0 {
                 -i128::from(tick_delta)
             } else {

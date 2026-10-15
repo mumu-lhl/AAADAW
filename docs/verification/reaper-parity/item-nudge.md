@@ -37,4 +37,4 @@ AAADAW 的 Action List 入口 `Item edit: Nudge/Set...` 与菜单短标签 `Nudg
 
 ## 后续验收
 
-下一步为 looped MIDI source 加用户可见的循环/源长度控件，验证旧 trimmed source 长度恢复策略，并用 REAPER 变速工程复核 Contents Nudge 的 Tempo Map 换算及 Undo；同时继续推进 mixed Audio/MIDI 选择、其它 Target 的 Set/Snap 组合、所有 Unit、Get cursor、按钮与键盘焦点、多选锚点、跨轨顺序、播放/录制状态和 Undo 语义。负 offset 属性窗同尺寸实窗截图对照，以及 bounded-section pre-roll 逐采样比较也仍需完成。完成这些行为和画面对照前，`ITEM-NUDGE-SET-001` 与 Item 菜单/UI 总体验收继续为 `in_progress`。
+下一步为 looped MIDI source 加用户可见的循环/源长度控件并验证旧 trimmed source 长度恢复策略；MIDI Contents Nudge 已完成 stepped Tempo Point 与 mixed Audio/MIDI selection 原厂对照，linear tempo ramp 与更广的 Undo 边界仍开放。继续比较其它 Target 的 Set/Snap 组合、所有 Unit、Get cursor、按钮与键盘焦点、多选锚点、跨轨顺序及播放/录制状态。负 offset 属性窗同尺寸实窗截图对照，以及 bounded-section pre-roll 逐采样比较也仍需完成。完成这些行为和画面对照前，`ITEM-NUDGE-SET-001` 与 Item 菜单/UI 总体验收继续为 `in_progress`。
