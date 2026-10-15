@@ -881,6 +881,21 @@ impl App {
                 }
                 _ => return Err("Selected target is not a MIDI item edge".to_owned()),
             };
+            if target == Target::RightTrim && !item.is_loop_source() {
+                let next_source_length_ticks = next_source_offset_ticks
+                    .checked_add(next_length_ticks)
+                    .filter(|length| *length <= MAX_EXACT as u64)
+                    .ok_or_else(|| {
+                        "MIDI right trim is outside the supported source range".to_owned()
+                    })?;
+                if next_source_length_ticks != item.source_loop_length_ticks() {
+                    // REAPER resizes a non-loop MIDI source to the visible right edge
+                    // when Set → Right Trim is applied. A trimmed source offset stays
+                    // intact, so the new source length is offset + visible item length.
+                    midi_contents_edit =
+                        Some((next_source_offset_ticks, next_source_length_ticks, 0));
+                }
+            }
             if next_start_tick != item.start_tick()
                 || next_length_ticks != item.length_ticks()
                 || next_source_offset_ticks != item.source_offset_ticks()

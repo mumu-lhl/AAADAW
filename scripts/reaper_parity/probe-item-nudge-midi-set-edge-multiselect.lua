@@ -36,6 +36,8 @@ for index, position in ipairs(positions) do
 end
 reaper.SetEditCurPos(7, false, false)
 reaper.UpdateArrange()
+reaper.GetSet_ArrangeView2(0, true, 0, 0, 0, 20)
+reaper.UpdateArrange()
 reaper.Undo_EndBlock2(0, "Set edge MIDI multi-select probe setup", -1)
 
 local state_before = reaper.GetProjectStateChangeCount(0)
@@ -96,16 +98,9 @@ local function poll_command()
     local action, label
     if command then action, label = command:match("^([^|]+)|?([^|]*)$") end
     if action == "reset" then
-      reaper.Undo_BeginBlock2(0)
-      for index, item in ipairs(items) do
-        reaper.SetMediaItemInfo_Value(item, "D_POSITION", positions[index])
-        reaper.SetMediaItemInfo_Value(item, "D_LENGTH", 10)
-        reaper.SetMediaItemInfo_Value(item, "B_LOOPSRC", loop_source_value)
-        reaper.SetMediaItemTakeInfo_Value(takes[index], "D_STARTOFFS", 0)
-        reaper.SetMediaItemSelected(item, true)
-        reaper.UpdateItemInProject(item)
-      end
-      reaper.Undo_EndBlock2(0, "Set edge MIDI multi-select probe reset", -1)
+      assert(reaper.Undo_CanUndo2(0) == "Nudge items",
+        "reset requires a preceding Nudge items edge action")
+      reaper.Main_OnCommand(40029, 0)
       state_before = reaper.GetProjectStateChangeCount(0)
       reaper.UpdateArrange()
       write_state("baseline_" .. label)

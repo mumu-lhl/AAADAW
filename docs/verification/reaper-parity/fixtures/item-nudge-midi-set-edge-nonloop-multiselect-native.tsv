@@ -4,12 +4,33 @@ fixture	two selected MIDI items at 2s and 6s; each 10s long; loop_source=0; note
 baseline	state_change_count	4	state_change_delta	0	item_count	2	undo_label	Set edge MIDI multi-select probe setup
 baseline_item_1	position_s	2.000000000	length_s	10.000000000	loop_source	0	source_offset_s	0.000000000	source_length	20.000000000	length_is_qn	true	selected	1	notes	0,0,0,960.000,1920.000,0,60,96;1,0,0,2880.000,3840.000,0,64,108
 baseline_item_2	position_s	6.000000000	length_s	10.000000000	loop_source	0	source_offset_s	0.000000000	source_length	20.000000000	length_is_qn	true	selected	1	notes	0,0,0,960.000,1920.000,0,60,96;1,0,0,2880.000,3840.000,0,64,108
-nonloop_left_trim4	state_change_count	5	state_change_delta	1	item_count	2	undo_label	Nudge items
-nonloop_left_trim4_item_1	position_s	4.000000000	length_s	8.000000000	loop_source	0	source_offset_s	1.500000000	source_length	19.000000000	length_is_qn	true	selected	1	notes	0,0,0,0.000,960.000,0,60,96;1,0,0,1920.000,2880.000,0,64,108
-nonloop_left_trim4_item_2	position_s	4.000000000	length_s	12.000000000	loop_source	0	source_offset_s	0.000000000	source_length	24.000000000	length_is_qn	true	selected	1	notes	0,0,0,4800.000,5760.000,0,60,96;1,0,0,6720.000,7680.000,0,64,108
-undo_nonloop_left_trim4	state_change_count	6	state_change_delta	2	item_count	2	undo_label	Set edge MIDI multi-select probe setup
-undo_nonloop_left_trim4_item_1	position_s	2.000000000	length_s	10.000000000	loop_source	0	source_offset_s	0.000000000	source_length	20.000000000	length_is_qn	true	selected	1	notes	0,0,0,960.000,1920.000,0,60,96;1,0,0,2880.000,3840.000,0,64,108
-undo_nonloop_left_trim4_item_2	position_s	6.000000000	length_s	10.000000000	loop_source	0	source_offset_s	0.000000000	source_length	20.000000000	length_is_qn	true	selected	1	notes	0,0,0,960.000,1920.000,0,60,96;1,0,0,2880.000,3840.000,0,64,108
-redo_nonloop_left_trim4	state_change_count	7	state_change_delta	3	item_count	2	undo_label	Nudge items
-redo_nonloop_left_trim4_item_1	position_s	4.000000000	length_s	8.000000000	loop_source	0	source_offset_s	1.500000000	source_length	19.000000000	length_is_qn	true	selected	1	notes	0,0,0,0.000,960.000,0,60,96;1,0,0,1920.000,2880.000,0,64,108
-redo_nonloop_left_trim4_item_2	position_s	4.000000000	length_s	12.000000000	loop_source	0	source_offset_s	0.000000000	source_length	24.000000000	length_is_qn	true	selected	1	notes	0,0,0,4800.000,5760.000,0,60,96;1,0,0,6720.000,7680.000,0,64,108
+left_edge	state_change_count	5	state_change_delta	1	item_count	2	undo_label	Nudge items
+left_edge_item_1	position_s	4.000000000	length_s	8.000000000	loop_source	0	source_offset_s	0.000000000	source_length	20.000000000	length_is_qn	true	selected	1	notes	0,0,0,960.000,1920.000,0,60,96;1,0,0,2880.000,3840.000,0,64,108
+left_edge_item_2	position_s	4.000000000	length_s	12.000000000	loop_source	0	source_offset_s	0.000000000	source_length	20.000000000	length_is_qn	true	selected	1	notes	0,0,0,960.000,1920.000,0,60,96;1,0,0,2880.000,3840.000,0,64,108
+baseline_end_position	state_change_count	6	state_change_delta	0	item_count	2	undo_label	Set edge MIDI multi-select probe setup
+baseline_end_position_item_1	position_s	2.000000000	length_s	10.000000000	loop_source	0	source_offset_s	0.000000000	source_length	20.000000000	length_is_qn	true	selected	1	notes	0,0,0,960.000,1920.000,0,60,96;1,0,0,2880.000,3840.000,0,64,108
+baseline_end_position_item_2	position_s	6.000000000	length_s	10.000000000	loop_source	0	source_offset_s	0.000000000	source_length	20.000000000	length_is_qn	true	selected	1	notes	0,0,0,960.000,1920.000,0,60,96;1,0,0,2880.000,3840.000,0,64,108
+end_position	state_change_count	7	state_change_delta	1	item_count	2	undo_label	Nudge items
+end_position_item_1	position_s	4.000000000	length_s	10.000000000	loop_source	0	source_offset_s	0.000000000	source_length	20.000000000	length_is_qn	true	selected	1	notes	0,0,0,960.000,1920.000,0,60,96;1,0,0,2880.000,3840.000,0,64,108
+end_position_item_2	position_s	4.000000000	length_s	10.000000000	loop_source	0	source_offset_s	0.000000000	source_length	20.000000000	length_is_qn	true	selected	1	notes	0,0,0,960.000,1920.000,0,60,96;1,0,0,2880.000,3840.000,0,64,108
+baseline_right_trim	state_change_count	8	state_change_delta	0	item_count	2	undo_label	Set edge MIDI multi-select probe setup
+baseline_right_trim_item_1	position_s	2.000000000	length_s	10.000000000	loop_source	0	source_offset_s	0.000000000	source_length	20.000000000	length_is_qn	true	selected	1	notes	0,0,0,960.000,1920.000,0,60,96;1,0,0,2880.000,3840.000,0,64,108
+baseline_right_trim_item_2	position_s	6.000000000	length_s	10.000000000	loop_source	0	source_offset_s	0.000000000	source_length	20.000000000	length_is_qn	true	selected	1	notes	0,0,0,960.000,1920.000,0,60,96;1,0,0,2880.000,3840.000,0,64,108
+right_trim	state_change_count	9	state_change_delta	1	item_count	2	undo_label	Nudge items
+right_trim_item_1	position_s	2.000000000	length_s	12.000000000	loop_source	0	source_offset_s	0.000000000	source_length	24.000000000	length_is_qn	true	selected	1	notes	0,0,0,960.000,1920.000,0,60,96;1,0,0,2880.000,3840.000,0,64,108
+right_trim_item_2	position_s	6.000000000	length_s	8.000000000	loop_source	0	source_offset_s	0.000000000	source_length	16.000000000	length_is_qn	true	selected	1	notes	0,0,0,960.000,1920.000,0,60,96;1,0,0,2880.000,3840.000,0,64,108
+undo_right_trim	state_change_count	10	state_change_delta	2	item_count	2	undo_label	Set edge MIDI multi-select probe setup
+undo_right_trim_item_1	position_s	2.000000000	length_s	10.000000000	loop_source	0	source_offset_s	0.000000000	source_length	20.000000000	length_is_qn	true	selected	1	notes	0,0,0,960.000,1920.000,0,60,96;1,0,0,2880.000,3840.000,0,64,108
+undo_right_trim_item_2	position_s	6.000000000	length_s	10.000000000	loop_source	0	source_offset_s	0.000000000	source_length	20.000000000	length_is_qn	true	selected	1	notes	0,0,0,960.000,1920.000,0,60,96;1,0,0,2880.000,3840.000,0,64,108
+redo_right_trim	state_change_count	11	state_change_delta	3	item_count	2	undo_label	Nudge items
+redo_right_trim_item_1	position_s	2.000000000	length_s	12.000000000	loop_source	0	source_offset_s	0.000000000	source_length	24.000000000	length_is_qn	true	selected	1	notes	0,0,0,960.000,1920.000,0,60,96;1,0,0,2880.000,3840.000,0,64,108
+redo_right_trim_item_2	position_s	6.000000000	length_s	8.000000000	loop_source	0	source_offset_s	0.000000000	source_length	16.000000000	length_is_qn	true	selected	1	notes	0,0,0,960.000,1920.000,0,60,96;1,0,0,2880.000,3840.000,0,64,108
+baseline_left_trim_rebased	state_change_count	12	state_change_delta	0	item_count	2	undo_label	Set edge MIDI multi-select probe setup
+baseline_left_trim_rebased_item_1	position_s	2.000000000	length_s	10.000000000	loop_source	0	source_offset_s	0.000000000	source_length	20.000000000	length_is_qn	true	selected	1	notes	0,0,0,960.000,1920.000,0,60,96;1,0,0,2880.000,3840.000,0,64,108
+baseline_left_trim_rebased_item_2	position_s	6.000000000	length_s	10.000000000	loop_source	0	source_offset_s	0.000000000	source_length	20.000000000	length_is_qn	true	selected	1	notes	0,0,0,960.000,1920.000,0,60,96;1,0,0,2880.000,3840.000,0,64,108
+left_trim_rebased	state_change_count	13	state_change_delta	1	item_count	2	undo_label	Nudge items
+left_trim_rebased_item_1	position_s	4.000000000	length_s	8.000000000	loop_source	0	source_offset_s	1.500000000	source_length	19.000000000	length_is_qn	true	selected	1	notes	0,0,0,0.000,960.000,0,60,96;1,0,0,1920.000,2880.000,0,64,108
+left_trim_rebased_item_2	position_s	4.000000000	length_s	12.000000000	loop_source	0	source_offset_s	0.000000000	source_length	24.000000000	length_is_qn	true	selected	1	notes	0,0,0,4800.000,5760.000,0,60,96;1,0,0,6720.000,7680.000,0,64,108
+trim_after_left_trim	state_change_count	14	state_change_delta	2	item_count	2	undo_label	Nudge items
+trim_after_left_trim_item_1	position_s	4.000000000	length_s	10.000000000	loop_source	0	source_offset_s	1.500000000	source_length	23.000000000	length_is_qn	true	selected	1	notes	0,0,0,0.000,960.000,0,60,96;1,0,0,1920.000,2880.000,0,64,108
+trim_after_left_trim_item_2	position_s	4.000000000	length_s	10.000000000	loop_source	0	source_offset_s	0.000000000	source_length	20.000000000	length_is_qn	true	selected	1	notes	0,0,0,4800.000,5760.000,0,60,96;1,0,0,6720.000,7680.000,0,64,108

@@ -1228,3 +1228,14 @@ AAADAW now combines placement edits with `SetMidiItemContents` in one transactio
 The current stable desktop binary (ELF Build ID `ae5d78c679f41119b767d24ca48b015c01b0fe5b`, SHA-256 `22257c1a633ac6b3518cf68702b535733cbd0048d8db0856b91c796c62fab463`) ran through the repository desktop helper on bundled Xvfb :90. Its real 1280×800 main window was visible, and the [startup screenshot](../verification/reaper-parity/fixtures/aaadaw-nonloop-midi-set-edge-desktop-smoke.png) matches the baseline fixture byte-for-byte. The helper isolates XDG state and uses OpenGL, so it works in this session without `DISPLAY` or system Xvfb. Native fixture hashes are recorded in `fixtures/item-nudge.tsv`.
 
 `ITEM-NUDGE-SET-001`, P4 and the single PR #282 remain `in_progress`. Native non-loop MIDI Left Trim is now covered; non-loop MIDI Left Edge/End Position/Right Trim, staggered mixed-media selection, other Unit/Snap cases, variable-tempo edge precision, broader Undo parity, and complete REAPER UI parity remain open.
+
+
+### 2026-10-15 Staggered non-loop MIDI Set edge completion
+
+REAPER 7.82 / Default 7 native probes now cover the remaining non-loop MIDI Set targets for staggered items at 2s and 6s. Left Edge to 4s preserves both 20 QN source lengths; End Position to 14s moves both starts to 4s and also preserves those lengths. Right Trim to 14s keeps the starts at 2s/6s, changes visible lengths to 12s/8s, and extends/truncates source lengths to 24/16 QN without moving MIDI events. Applying Right Trim after Left Trim retains the first item's 1.5s source offset and yields a 23 QN source. Native Undo/Redo restores and reapplies the Right Trim as one action. State captures and real REAPER window screenshots are linked from the [native comparison record](../verification/reaper-parity/item-nudge-midi-set-edge-nonloop.md).
+
+AAADAW Set → Right Trim now updates a non-loop MIDI source length to source offset plus the new visible length, preserving all source events in the same transaction. The staggered regression covers Left Edge, End Position, direct Right Trim, and Right Trim after Left Trim, including source data, selection and Undo/Redo. The AAADAW App suite passed 605/605; App Clippy with `-D warnings`, rustfmt, `git diff --check`, and parity-matrix validation passed.
+
+The rebuilt desktop binary (ELF Build ID `fe205612074f843fc93c028843ede638dcf45283`, SHA-256 `5f3c68aa984b9d47a7cfa08fca911a283b17fcfdda8b5b135307cbe712074636`) launched through the repository helper on bundled Xvfb :90 and rendered the actual 1280×800 main window. Its screenshot SHA-256 `ae7790daa7323931332582152cd05219af623ac5530147835ee56910ba2ebd9b` is byte-identical to the startup baseline.
+
+`ITEM-NUDGE-SET-001`, P4 and the single PR #282 remain `in_progress`. Staggered mixed-media edge selection, other Unit/Snap combinations, variable-tempo MIDI edge precision, broader Undo parity, and complete REAPER UI parity remain open.
