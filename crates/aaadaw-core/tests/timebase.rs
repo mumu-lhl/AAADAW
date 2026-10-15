@@ -266,11 +266,11 @@ fn linear_tempo_ramps_integrate_and_invert_positions() {
         project
             .sample_at_tick(480)
             .expect("the ramp midpoint should convert"),
-        13_809
+        13_404
     );
     assert_eq!(
         project
-            .tick_at_sample(13_809)
+            .tick_at_sample(13_404)
             .expect("the ramp midpoint should convert back"),
         480
     );
@@ -278,11 +278,11 @@ fn linear_tempo_ramps_integrate_and_invert_positions() {
         project
             .sample_at_tick(960)
             .expect("the ramp endpoint should convert"),
-        33_271
+        32_000
     );
     assert_eq!(
         project
-            .tick_at_sample(33_271)
+            .tick_at_sample(32_000)
             .expect("the ramp endpoint should convert back"),
         960
     );
@@ -299,8 +299,38 @@ fn linear_tempo_ramps_integrate_and_invert_positions() {
         project
             .sample_at_tick(960)
             .expect("ramp position should convert"),
-        33_271
+        32_000
     );
+}
+
+#[test]
+fn linear_tempo_ramp_matches_reaper_project_time_interpolation() {
+    let mut project = Project::new();
+    project
+        .apply(DawAction::SetTempo {
+            start_tick: 7_680,
+            bpm: 60.0,
+        })
+        .unwrap();
+    project
+        .apply(DawAction::SetTempoCurve {
+            start_tick: 0,
+            curve: TempoCurve::Linear,
+        })
+        .unwrap();
+
+    assert_eq!(project.sample_at_tick(7_680).unwrap(), 256_000);
+    assert_eq!(project.tick_at_sample(256_000).unwrap(), 7_680);
+
+    let sample_rate = f64::from(project.settings().sample_rate());
+    let start = project
+        .tick_at_sample((3.9 * sample_rate).round() as u64)
+        .unwrap();
+    let end = project
+        .tick_at_sample((4.15 * sample_rate).round() as u64)
+        .unwrap();
+    assert_eq!(start, 6_119);
+    assert_eq!(end - start, 299);
 }
 
 #[test]
@@ -332,8 +362,8 @@ fn midi_source_phase_nudge_round_trips_through_a_linear_tempo_map() {
         .midi_source_phase_at_offset_samples(start_tick, source_loop_length, right_nudge_offset)
         .unwrap();
 
-    assert_eq!(start_tick, 5_927);
-    assert_eq!(source_loop_length, 4_974);
+    assert_eq!(start_tick, 6_119);
+    assert_eq!(source_loop_length, 4_985);
     assert!((source_phase as f64 - 4_537.985).abs() < 10.0);
 
     let left_nudge_phase = project
@@ -531,9 +561,12 @@ fn reference_sample_at_tick(specs: &[(u64, f64, TempoCurve)], tick: u64) -> u64 
         let elapsed_ticks = offset.min(segment_length);
         if *curve == TempoCurve::Linear {
             let progress = elapsed_ticks as f64 / segment_length as f64;
-            let bpm_at_offset = start_bpm + (end_bpm - start_bpm) * progress;
-            samples += scale * segment_length as f64 / (end_bpm - start_bpm)
-                * (bpm_at_offset / start_bpm).ln();
+            let average_bpm = (start_bpm + end_bpm) * 0.5;
+            let integrated_bpm = average_bpm * progress;
+            let discriminant =
+                (start_bpm * start_bpm + 2.0 * (end_bpm - start_bpm) * integrated_bpm).max(0.0);
+            let time_progress = 2.0 * integrated_bpm / (start_bpm + discriminant.sqrt());
+            samples += scale * segment_length as f64 / average_bpm * time_progress;
         } else {
             samples += scale * elapsed_ticks as f64 / start_bpm;
         }

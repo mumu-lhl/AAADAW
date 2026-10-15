@@ -2507,9 +2507,15 @@ fn item_nudge_set_looped_midi_contents_matches_native_linear_tempo_phase() {
         set_after.source_loop_length_ticks(),
         original.source_loop_length_ticks()
     );
-    assert_eq!(set_after.source_loop_length_ticks(), 4_974);
-    assert_eq!(set_after.source_offset_ticks(), 4_531);
-    assert!((set_after.source_offset_ticks() as f64 - 4_537.985).abs() < 8.0);
+    assert_eq!(set_after.source_loop_length_ticks(), 4_985);
+    assert_eq!(set_after.source_offset_ticks(), 4_538);
+    assert!((set_after.source_offset_ticks() as f64 - 4_537.985).abs() < 0.02);
+    let source_offset_seconds = app
+        .project
+        .midi_source_offset_samples(start_tick, set_after.source_offset_ticks())
+        .unwrap()
+        / sample_rate;
+    assert!((source_offset_seconds - 3.041_994_609).abs() < 0.000_03);
     assert_eq!(set_after.notes(), original.notes());
     assert_eq!(app.timeline.selected_items.len(), 1);
     assert!(app.timeline.selected_items.contains(&item_id));
@@ -3273,17 +3279,161 @@ fn item_nudge_midi_contents_matches_native_linear_tempo_phase() {
 
     assert_eq!(app.project.midi_items()[0].start_tick(), start_tick);
     assert_eq!(app.project.midi_items()[0].length_ticks(), length_ticks);
-    assert_eq!(source_loop_length, 4_974);
-    // REAPER reports 4537.985 PPQ; this project stores an integer 4974-tick loop.
+    assert_eq!(source_loop_length, 4_985);
+    // REAPER reports 4537.985 PPQ; the project stores the nearest integer phase.
     let source_phase = app.project.midi_items()[0].source_offset_ticks();
-    assert_eq!(source_phase, 4_531);
-    assert!((source_phase as f64 - 4_537.985).abs() < 8.0);
+    assert_eq!(source_phase, 4_538);
+    assert!((source_phase as f64 - 4_537.985).abs() < 0.02);
+    let source_offset_seconds = app
+        .project
+        .midi_source_offset_samples(start_tick, source_phase)
+        .unwrap()
+        / f64::from(sample_rate);
+    assert!((source_offset_seconds - 3.041_994_609).abs() < 0.000_03);
     assert!(app.item_nudge_dialog.error.is_none());
 
     let _ = app.update(Message::NudgeSelectedItems(-1));
 
     assert_eq!(app.project.midi_items()[0].source_offset_ticks(), 0);
     assert!(app.item_nudge_dialog.error.is_none());
+}
+
+#[test]
+fn item_nudge_nonloop_midi_left_trim_matches_linear_tempo_event_edges() {
+    use super::item_nudge::Target;
+
+    let mut app = App::default();
+    app.project
+        .apply(DawAction::SetTempo {
+            start_tick: 7_680,
+            bpm: 60.0,
+        })
+        .unwrap();
+    app.project
+        .apply(DawAction::SetTempoCurve {
+            start_tick: 0,
+            curve: aaadaw_core::TempoCurve::Linear,
+        })
+        .unwrap();
+    let sample_rate = app.project.settings().sample_rate();
+    let sample_at = |seconds: f64| (seconds * f64::from(sample_rate)).round() as u64;
+    let start_tick = app.project.tick_at_sample(sample_at(3.9)).unwrap();
+    let end_tick = app.project.tick_at_sample(sample_at(8.9)).unwrap();
+    let length_ticks = end_tick - start_tick;
+    let _ = app.update(Message::AddTrack);
+    let track_id = app.project.tracks()[0].id();
+    app.project
+        .apply(DawAction::InsertMidiItem {
+            track_id,
+            start_tick,
+            length_ticks,
+        })
+        .unwrap();
+    let midi_id = app.project.midi_items()[0].id();
+    app.project
+        .apply(DawAction::SetMidiItemLoopSource {
+            item_id: midi_id,
+            enabled: false,
+        })
+        .unwrap();
+    app.project
+        .apply(DawAction::SetMidiItemContents {
+            item_id: midi_id,
+            source_offset_ticks: 0,
+            source_loop_length_ticks: 5_760,
+            content_shift_ticks: 0,
+        })
+        .unwrap();
+    app.project
+        .apply(DawAction::AddMidiNotes {
+            item_id: midi_id,
+            notes: vec![
+                MidiNoteData {
+                    pitch: 60,
+                    tick: 960,
+                    duration: 960,
+                    velocity: 96,
+                },
+                MidiNoteData {
+                    pitch: 64,
+                    tick: 2_880,
+                    duration: 960,
+                    velocity: 108,
+                },
+            ],
+        })
+        .unwrap();
+    app.project
+        .apply(DawAction::SetMidiControllers {
+            item_id: midi_id,
+            controllers: vec![MidiControllerData {
+                controller: 1,
+                tick: 4_800,
+                value: 80,
+            }],
+        })
+        .unwrap();
+    app.project
+        .apply(DawAction::SetMidiPitchBends {
+            item_id: midi_id,
+            pitch_bends: vec![aaadaw_core::MidiPitchBendData {
+                tick: 4_500,
+                value: 6_000,
+            }],
+        })
+        .unwrap();
+    app.timeline.rebuild(&app.project);
+    app.timeline.select_items(vec![(midi_id, track_id)]);
+    let original = app.project.midi_items()[0].clone();
+    let _ = app.update(Message::ItemNudgeModeChanged(
+        super::item_nudge::Mode::Nudge,
+    ));
+    let _ = app.update(Message::ItemNudgeTargetChanged(Target::LeftTrim));
+    let _ = app.update(Message::ItemNudgeValueChanged("250".to_owned()));
+
+    let revision = app.revision;
+    let _ = app.update(Message::NudgeSelectedItems(1));
+
+    let edited = app.project.midi_items()[0].clone();
+    assert_eq!(app.revision, revision + 1);
+    assert_eq!(original.start_tick(), 6_119);
+    assert_eq!(edited.start_tick(), 6_418);
+    assert_eq!(original.length_ticks(), 4_985);
+    assert_eq!(edited.length_ticks(), 4_686);
+    assert_eq!(edited.source_offset_ticks(), 0);
+    assert_eq!(edited.source_loop_length_ticks(), 5_462);
+    assert_eq!(
+        edited
+            .notes()
+            .iter()
+            .map(|note| (note.tick(), note.duration()))
+            .collect::<Vec<_>>(),
+        vec![(662, 960), (2_582, 960)]
+    );
+    assert_eq!(
+        edited
+            .controllers()
+            .iter()
+            .map(|event| event.tick)
+            .collect::<Vec<_>>(),
+        vec![4_502]
+    );
+    assert_eq!(
+        edited
+            .pitch_bends()
+            .iter()
+            .map(|event| event.tick)
+            .collect::<Vec<_>>(),
+        vec![4_202]
+    );
+    assert_eq!(app.timeline.selected_items.len(), 1);
+    assert!(app.timeline.selected_items.contains(&midi_id));
+    assert!(app.item_nudge_dialog.error.is_none());
+
+    let _ = app.update(Message::Undo);
+    assert_eq!(app.project.midi_items()[0], original);
+    let _ = app.update(Message::Redo);
+    assert_eq!(app.project.midi_items()[0], edited);
 }
 
 #[test]

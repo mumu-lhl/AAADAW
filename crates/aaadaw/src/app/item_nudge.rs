@@ -760,8 +760,19 @@ impl App {
                     }
                     let source_offset_ticks = if target == Target::LeftTrim {
                         if mode == MidiEdgeEditMode::Nudge && !item.is_loop_source() {
+                            let target_tick_position = self
+                                .project
+                                .tick_at_sample_position(target_sample as f64)
+                                .map_err(|error| error.to_string())?;
                             let edge_delta_ticks =
-                                i128::from(next_start_tick) - i128::from(item.start_tick());
+                                (target_tick_position - item.start_tick() as f64).trunc();
+                            if !edge_delta_ticks.is_finite()
+                                || edge_delta_ticks.abs() > MAX_EXACT as f64
+                            {
+                                return Err("MIDI left trim is outside the supported source range"
+                                    .to_owned());
+                            }
+                            let edge_delta_ticks = edge_delta_ticks as i128;
                             let old_source_offset = i128::from(item.source_offset_ticks());
                             let desired_source_offset = old_source_offset
                                 .checked_add(edge_delta_ticks)

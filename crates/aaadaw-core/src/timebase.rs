@@ -669,7 +669,7 @@ pub enum TempoCurve {
     /// Hold the tempo until the next point.
     #[default]
     Step,
-    /// Change BPM linearly over the interval to the next point.
+    /// Change BPM linearly over project time between this and the next point.
     Linear,
     /// Interpolate linearly in log-BPM space, producing an exponential BPM ramp.
     Logarithmic,
@@ -1110,9 +1110,13 @@ fn ticks_from_sample_offset(
     let target = sample_offset / sample_scale;
     let ticks = match curve {
         TempoCurve::Linear => {
-            let slope = (end_bpm - start_bpm) / segment_length as f64;
-            let exponent = slope * target;
-            start_bpm * exponent.exp_m1() / slope
+            // REAPER's linear tempo ramp is linear in project time. Convert the
+            // elapsed time to the corresponding fraction of the beat interval.
+            let average_bpm = (start_bpm + end_bpm) * 0.5;
+            let time_progress = (target * average_bpm / segment_length as f64).clamp(0.0, 1.0);
+            let bpm_integral = start_bpm * time_progress
+                + (end_bpm - start_bpm) * time_progress * time_progress * 0.5;
+            segment_length as f64 * bpm_integral / average_bpm
         }
         TempoCurve::Logarithmic => {
             let log_ratio = end_bpm.ln() - start_bpm.ln();
@@ -1152,7 +1156,11 @@ fn ticks_from_sample_offset(
 fn tempo_at_progress(start_bpm: f64, end_bpm: f64, curve: TempoCurve, progress: f64) -> f64 {
     match curve {
         TempoCurve::Step => start_bpm,
-        TempoCurve::Linear => start_bpm + (end_bpm - start_bpm) * progress,
+        TempoCurve::Linear => {
+            let time_progress =
+                linear_time_progress_for_tick_progress(start_bpm, end_bpm, progress);
+            start_bpm + (end_bpm - start_bpm) * time_progress
+        }
         TempoCurve::Logarithmic => {
             (start_bpm.ln() + (end_bpm.ln() - start_bpm.ln()) * progress).exp()
         }
@@ -1197,11 +1205,10 @@ fn segment_integral_progress(
     }
     let integral = match curve {
         TempoCurve::Linear => {
-            let log_argument = (end_bpm - start_bpm) * progress / start_bpm;
-            if log_argument <= -1.0 {
-                return Err(TimebaseError::InvalidTempo);
-            }
-            segment_length as f64 * (log_argument.ln_1p()) / (end_bpm - start_bpm)
+            let average_bpm = (start_bpm + end_bpm) * 0.5;
+            segment_length as f64
+                * linear_time_progress_for_tick_progress(start_bpm, end_bpm, progress)
+                / average_bpm
         }
         TempoCurve::Logarithmic => {
             let log_ratio = end_bpm.ln() - start_bpm.ln();
@@ -1222,6 +1229,18 @@ fn segment_integral_progress(
         return Err(TimebaseError::PositionOutOfRange);
     }
     Ok(integral)
+}
+
+fn linear_time_progress_for_tick_progress(start_bpm: f64, end_bpm: f64, tick_progress: f64) -> f64 {
+    let delta_bpm = end_bpm - start_bpm;
+    let average_bpm = (start_bpm + end_bpm) * 0.5;
+    let integrated_bpm = average_bpm * tick_progress;
+    if delta_bpm.abs() <= f64::EPSILON * start_bpm.abs().max(end_bpm.abs()) {
+        return tick_progress;
+    }
+    let discriminant = (start_bpm * start_bpm + 2.0 * delta_bpm * integrated_bpm).max(0.0);
+    let denominator = start_bpm + discriminant.sqrt();
+    (2.0 * integrated_bpm / denominator).clamp(0.0, 1.0)
 }
 
 fn adaptive_simpson(

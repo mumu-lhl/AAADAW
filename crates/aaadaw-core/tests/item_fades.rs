@@ -183,8 +183,8 @@ fn fade_gesture_clock_preserves_fractional_positions_and_ramp_time() {
             curve: aaadaw_core::TempoCurve::Linear,
         })
         .unwrap();
-    let tick = 480.5;
-    let expected = 24_000.0 * (1.0_f64 + tick / 960.0).ln();
+    let tick = 480.5_f64;
+    let expected = 16_000.0 * ((1.0 + 3.0 * tick / 960.0).sqrt() - 1.0);
     assert!((project.sample_at_tick_position(tick).unwrap() - expected).abs() < 1e-8);
     assert!((project.tick_at_sample_position(expected).unwrap() - tick).abs() < 1e-8);
     for curve in [
