@@ -267,7 +267,6 @@ fn validate_transport_loop_item(
     if item.length_samples() == 0
         || item.start_sample() >= timeline_loop_range.end_sample()
         || item_end <= timeline_loop_range.start_sample()
-        || timeline_sample < timeline_loop_range.start_sample()
         || timeline_sample >= timeline_loop_range.end_sample()
     {
         return Err(MediaError::InvalidTimelineLoop);
@@ -281,13 +280,22 @@ fn validate_transport_loop_item(
         .start_sample()
         .checked_sub(item.start_sample())
         .ok_or(MediaError::InvalidTimelineLoop)?;
-    let feeder_sample = if (item_loop_range.start_sample()..item_loop_range.end_sample())
+    let feeder_sample = if timeline_sample < timeline_loop_range.start_sample()
+        && item.start_sample() < timeline_loop_range.start_sample()
+    {
+        timeline_sample.max(item.start_sample())
+    } else if (item_loop_range.start_sample()..item_loop_range.end_sample())
         .contains(&timeline_sample)
     {
         timeline_sample
     } else {
         item_loop_range.start_sample()
     };
+    let prefix_timeline_offset_samples = feeder_sample
+        .checked_sub(item.start_sample())
+        .ok_or(MediaError::InvalidTimelineLoop)?;
+    let prefix_timeline_length_samples =
+        item_loop_range.start_sample().saturating_sub(feeder_sample);
     let source_section = match (
         item.source_section_start_samples(),
         item.source_section_length_samples(),
@@ -309,16 +317,20 @@ fn validate_transport_loop_item(
             start_frame: 0,
             length_frames: Some(item_loop_range.length_samples()),
             looping: true,
+            prefix: None,
             project_mapping: Some(ProjectLoopSourceMapping {
                 source_offset_frames: item.source_offset_samples(),
                 timeline_offset_samples: loop_offset_from_item_start,
                 timeline_length_samples: item_loop_range.length_samples(),
+                prefix_timeline_offset_samples: (prefix_timeline_length_samples > 0)
+                    .then_some(prefix_timeline_offset_samples),
+                prefix_timeline_length_samples,
             }),
         },
         _ => return Err(MediaError::InvalidTimelineLoop),
     };
     Ok((
-        feeder_sample - item_loop_range.start_sample(),
+        feeder_sample.saturating_sub(item_loop_range.start_sample()),
         source_section,
         feeder_sample,
         item_loop_range,
@@ -951,6 +963,14 @@ struct ProjectLoopSourceMapping {
     source_offset_frames: i64,
     timeline_offset_samples: u64,
     timeline_length_samples: u64,
+    prefix_timeline_offset_samples: Option<u64>,
+    prefix_timeline_length_samples: u64,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct SourceLoopPrefix {
+    start_frame: u64,
+    length_frames: u64,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -958,6 +978,7 @@ struct SourceLoopSection {
     start_frame: u64,
     length_frames: Option<u64>,
     looping: bool,
+    prefix: Option<SourceLoopPrefix>,
     project_mapping: Option<ProjectLoopSourceMapping>,
 }
 
@@ -970,12 +991,14 @@ fn source_loop_section(item: &AudioItem) -> Option<SourceLoopSection> {
             start_frame,
             length_frames: Some(length_frames),
             looping: item.is_loop_source(),
+            prefix: None,
             project_mapping: None,
         }),
         (None, None) if item.is_loop_source() => Some(SourceLoopSection {
             start_frame: 0,
             length_frames: None,
             looping: true,
+            prefix: None,
             project_mapping: None,
         }),
         (None, None) => None,
@@ -1117,7 +1140,25 @@ fn run_worker<P: FeedProducer>(
                 } else {
                     None
                 };
-                let remaining = if negative_source_offset_frames > 0 {
+                let remaining = if let Some(prefix) = section.prefix {
+                    let Some(loop_length) = section.length_frames else {
+                        let error = MediaError::InvalidTimelineLoop;
+                        let _ = startup.send(Err(worker_startup_error(&error)));
+                        return Err(error);
+                    };
+                    if prefix.length_frames == 0 {
+                        let error = MediaError::InvalidTimelineLoop;
+                        let _ = startup.send(Err(worker_startup_error(&error)));
+                        return Err(error);
+                    }
+                    let Some(initial_length) = prefix.length_frames.checked_add(loop_length) else {
+                        let error = MediaError::AudioTooLong;
+                        let _ = startup.send(Err(worker_startup_error(&error)));
+                        return Err(error);
+                    };
+                    source_offset_remaining = prefix.start_frame;
+                    Some(initial_length)
+                } else if negative_source_offset_frames > 0 {
                     if section.looping || section.length_frames.is_none() {
                         let error = MediaError::InvalidAudioLoopSection;
                         let _ = startup.send(Err(worker_startup_error(&error)));
@@ -1184,6 +1225,14 @@ fn run_worker<P: FeedProducer>(
         let _ = startup.send(Err(worker_startup_error(&error)));
         return Err(error);
     }
+    if timeline_loop_range.is_some()
+        && source_loop_section.is_some_and(|section| section.prefix.is_some())
+        && initial_sample_rate.is_some_and(|source_rate| source_rate != output_sample_rate)
+    {
+        let error = MediaError::UnsupportedLoopResamplingPrefix;
+        let _ = startup.send(Err(worker_startup_error(&error)));
+        return Err(error);
+    }
     let initial_loop_source_frames = loop_source_frames_remaining;
     let mut source_frames_in_current_cycle = 0_u64;
     let mut initial_loop_pass = true;
@@ -1241,6 +1290,7 @@ fn run_worker<P: FeedProducer>(
         }
     }
     if timeline_loop_range.is_some()
+        && source_loop_section.is_none_or(|section| section.prefix.is_none())
         && initial_sample_rate.is_some_and(|source_rate| source_rate != output_sample_rate)
     {
         let Some(source_rate) = initial_sample_rate else {
@@ -1600,10 +1650,50 @@ fn resolve_project_loop_source_section(
     {
         return Err(MediaError::InvalidTimelineLoop);
     }
+    let prefix = match (
+        mapping.prefix_timeline_offset_samples,
+        mapping.prefix_timeline_length_samples,
+    ) {
+        (Some(prefix_offset), prefix_length) if prefix_length > 0 => {
+            if prefix_offset.checked_add(prefix_length) != Some(mapping.timeline_offset_samples) {
+                return Err(MediaError::InvalidTimelineLoop);
+            }
+            let prefix_source_offset =
+                scale_frames_exact(prefix_offset, output_sample_rate, source_sample_rate)
+                    .ok_or(MediaError::InvalidTimelineLoop)?;
+            let prefix_start_frame = mapping
+                .source_offset_frames
+                .checked_add(
+                    i64::try_from(prefix_source_offset)
+                        .map_err(|_| MediaError::InvalidTimelineLoop)?,
+                )
+                .and_then(|frame| u64::try_from(frame).ok())
+                .ok_or(MediaError::InvalidTimelineLoop)?;
+            let prefix_length_frames =
+                scale_frames_exact(prefix_length, output_sample_rate, source_sample_rate)
+                    .filter(|frames| *frames > 0)
+                    .ok_or(MediaError::InvalidTimelineLoop)?;
+            let prefix_output_length =
+                scale_frames_exact(prefix_length_frames, source_sample_rate, output_sample_rate)
+                    .ok_or(MediaError::InvalidTimelineLoop)?;
+            if prefix_output_length != prefix_length
+                || prefix_start_frame.checked_add(prefix_length_frames) != Some(source_start_frame)
+            {
+                return Err(MediaError::InvalidTimelineLoop);
+            }
+            Some(SourceLoopPrefix {
+                start_frame: prefix_start_frame,
+                length_frames: prefix_length_frames,
+            })
+        }
+        (None, 0) => None,
+        _ => return Err(MediaError::InvalidTimelineLoop),
+    };
     Ok(SourceLoopSection {
         start_frame: source_start_frame,
         length_frames: Some(source_length_frames),
         looping: section.looping,
+        prefix,
         project_mapping: None,
     })
 }
@@ -1723,10 +1813,15 @@ fn push_worker_output<P: FeedProducer>(
     let loop_end = loop_range.end_sample();
     let mut offset = 0;
     while offset < samples.len() && !cancelled.load(Ordering::Acquire) {
-        if *timeline_sample < loop_start || *timeline_sample >= loop_end {
+        if *timeline_sample >= loop_end {
             *timeline_sample = loop_start;
         }
-        let frames_to_boundary = usize::try_from(loop_end - *timeline_sample)
+        let boundary = if *timeline_sample < loop_start {
+            loop_start
+        } else {
+            loop_end
+        };
+        let frames_to_boundary = usize::try_from(boundary - *timeline_sample)
             .unwrap_or(usize::MAX)
             .min(samples.len() - offset);
         let pushed = producer.push_frames_at(

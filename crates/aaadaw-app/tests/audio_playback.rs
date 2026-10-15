@@ -686,20 +686,41 @@ fn transport_loop_preparation_repeats_the_source_segment_of_a_containing_item() 
     }
     drop(graph);
 
-    assert!(matches!(
-        prepare_audio_playback_at_with_loop_range(
-            &project,
-            &store,
-            8,
-            Some(loop_range),
-            64,
-            32,
-            ResamplingQuality::Sinc64,
-        ),
-        Err(PlaybackBuildError::Media(
-            aaadaw_media::MediaError::InvalidTimelineLoop
-        ))
-    ));
+    let prepared = prepare_audio_playback_at_with_loop_range(
+        &project,
+        &store,
+        12,
+        Some(loop_range),
+        64,
+        36,
+        ResamplingQuality::Sinc64,
+    )
+    .expect("pre-loop playback should hand off into the item's Loop overlap");
+    let (mut graph, feeders) = prepared.into_parts();
+    assert_eq!(feeders.len(), 1);
+    std::thread::sleep(std::time::Duration::from_millis(20));
+    graph.transport_mut().start();
+    let mut output = [[0.0_f32; 2]; 36];
+    let stats = graph
+        .render_into(&mut output)
+        .expect("linear prefix and Loop playback should render together");
+    assert_eq!(stats.underrun_samples, 0);
+    for (index, frame) in output.iter().enumerate() {
+        let source_index = if index < 4 {
+            8 + index
+        } else {
+            12 + (index - 4) % 16
+        };
+        assert!((frame[0] - source_frames[source_index][0] as f32 / 32_768.0).abs() < 1.0e-6);
+        assert!((frame[1] - source_frames[source_index][1] as f32 / 32_768.0).abs() < 1.0e-6);
+    }
+    assert_eq!(graph.transport_mut().position_samples(), 16);
+    for feeder in feeders {
+        feeder
+            .cancel()
+            .expect("pre-loop feeder should stop cleanly");
+    }
+    drop(graph);
 
     store.close().expect("project should close");
     remove_database(&database_path);
@@ -909,6 +930,24 @@ fn transport_loop_preparation_resamples_rate_aligned_source_segments() {
             .expect("resampled loop feeder should stop cleanly");
     }
     drop(graph);
+
+    let pre_loop_resampling = prepare_audio_playback_at_with_loop_range(
+        &project,
+        &store,
+        12,
+        Some(loop_range),
+        64,
+        64,
+        ResamplingQuality::Sinc64,
+    );
+    let Err(PlaybackBuildError::Media(aaadaw_media::MediaError::WorkerStartupFailed {
+        message,
+        ..
+    })) = pre_loop_resampling
+    else {
+        panic!("rate-converted pre-loop handoff must reject unsupported cyclic history");
+    };
+    assert!(message.contains("cannot preserve cyclic source history"));
 
     let mut bounded_project = Project::with_settings(
         aaadaw_core::ProjectSettings::default()

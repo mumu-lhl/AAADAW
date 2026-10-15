@@ -1981,16 +1981,16 @@ pub fn prepare_audio_playback_at_with_loop_range(
         }
         if overlaps_transport_loop {
             let range = transport_loop_range.expect("overlap requires a transport loop range");
-            if timeline_sample < range.start_sample() && item.start_sample() < range.start_sample()
-            {
-                return Err(PlaybackBuildError::Media(MediaError::InvalidTimelineLoop));
-            }
             let item_loop_range = TransportLoopRange::new(
                 item.start_sample().max(range.start_sample()),
                 item.end_sample().min(range.end_sample()),
             )
             .expect("overlapping item and transport ranges have a nonempty intersection");
-            let feeder_sample = if (item_loop_range.start_sample()..item_loop_range.end_sample())
+            let feeder_sample = if timeline_sample < range.start_sample()
+                && item.start_sample() < range.start_sample()
+            {
+                timeline_sample.max(item.start_sample())
+            } else if (item_loop_range.start_sample()..item_loop_range.end_sample())
                 .contains(&timeline_sample)
             {
                 timeline_sample
