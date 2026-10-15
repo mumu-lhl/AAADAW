@@ -53,3 +53,7 @@ nonloop_nudge_binary_smoke	2026-10-15; bundled REAPER Xvfb :90; Build ID 273bab9
 nonloop_nudge_binary_smoke_screenshot	aaadaw-desktop-runtime-startup.png; SHA-256 ae7790daa7323931332582152cd05219af623ac5530147835ee56910ba2ebd9b; byte-identical to startup fixture
 nonloop_nudge_live_ui	2026-10-15; Build ID 273bab95fca2ae204dcde1312dd6715401e21546; Xvfb :212; isolated XDG profile; N shortcut opened Nudge/Set Items; configured Nudge/Contents, 250 milliseconds; xwininfo 528x121; no selected item
 nonloop_nudge_live_ui_screenshot	aaadaw-desktop-runtime-live-nonloop-nudge.png; 1280x800; SHA-256 90e6a0a6161377c8dde0e72a05b62b67c20a9f672beb00a28ffc2eb634efee14
+nonloop_midi_underflow_binary_smoke	2026-10-15; bundled REAPER Xvfb :90; Build ID 2f0140b07bd07138d8e4ebfc02d963883ce2fff6; binary SHA-256 f1fc9b7cdf783a2e9c808d7ee7f119fbd110f39fea33d65f41d24488aeb13cf8; actual 1280x800 main window visible
+nonloop_midi_underflow_binary_smoke_screenshot	aaadaw-desktop-runtime-startup.png; SHA-256 ae7790daa7323931332582152cd05219af623ac5530147835ee56910ba2ebd9b; byte-identical to startup fixture
+nonloop_midi_underflow_live_ui	2026-10-15; Build ID 2f0140b07bd07138d8e4ebfc02d963883ce2fff6; Xvfb :244; isolated XDG profile; opened Item > Nudge/set items... from visible menu; xwininfo 528x121; Nudge/Contents, 1 millisecond; Snap off; no selected item
+nonloop_midi_underflow_live_ui_screenshot	aaadaw-desktop-runtime-live-nonloop-nudge-underflow.png; 1280x800; SHA-256 9d61e2c8bf1ac2c62efd51b5167a815e31127326603b6461838921ad243d1bd7

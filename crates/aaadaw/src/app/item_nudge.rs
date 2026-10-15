@@ -1114,15 +1114,34 @@ impl App {
                 } else {
                     (0.0, -(sample_delta as f64))
                 };
-                let source_offset_ticks = self
+                let mut source_offset_ticks = self
                     .project
                     .midi_source_offset_ticks_at_samples(item.start_tick(), source_offset_samples)
                     .map_err(|error| error.to_string())?;
-                let content_shift_ticks = if content_shift_samples == 0.0 {
+                let mut content_shift_ticks = if content_shift_samples == 0.0 {
                     0
                 } else {
                     self.midi_source_content_shift_ticks(item.start_tick(), content_shift_samples)?
                 };
+                if content_shift_ticks < 0 {
+                    let earliest_event_tick = item
+                        .notes()
+                        .iter()
+                        .map(|note| note.tick())
+                        .chain(item.controllers().iter().map(|controller| controller.tick))
+                        .chain(item.pitch_bends().iter().map(|bend| bend.tick))
+                        .min()
+                        .unwrap_or(0);
+                    let requested_shift_ticks = content_shift_ticks.unsigned_abs();
+                    let applied_shift_ticks = requested_shift_ticks.min(earliest_event_tick);
+                    let remaining_shift_ticks = requested_shift_ticks - applied_shift_ticks;
+                    content_shift_ticks = -i64::try_from(applied_shift_ticks).map_err(|_| {
+                        "Contents nudge is outside the supported source range".to_owned()
+                    })?;
+                    // REAPER keeps MIDI events at or after source PPQ zero. Any remaining
+                    // leftward displacement advances the take source offset instead.
+                    source_offset_ticks = remaining_shift_ticks;
+                }
                 let source_loop_length_ticks = if content_shift_ticks > 0 {
                     let content_shift_ticks = u64::try_from(content_shift_ticks).map_err(|_| {
                         "Contents nudge is outside the supported source range".to_owned()
@@ -1142,11 +1161,6 @@ impl App {
                         })?
                 } else {
                     source_loop_length
-                };
-                let source_offset_ticks = if content_shift_ticks < 0 {
-                    0
-                } else {
-                    source_offset_ticks
                 };
                 if source_offset_ticks != item.source_offset_ticks()
                     || content_shift_ticks != 0

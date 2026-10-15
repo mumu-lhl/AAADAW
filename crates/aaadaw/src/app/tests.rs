@@ -1284,6 +1284,97 @@ fn item_nudge_non_looped_midi_contents_rebases_left_from_zero_offset() {
 }
 
 #[test]
+fn item_nudge_non_looped_midi_contents_clamps_events_at_source_zero_and_offsets_remainder() {
+    use super::item_nudge::Target;
+    use aaadaw_core::MidiPitchBendData;
+
+    let mut app = App::default();
+    let _ = app.update(Message::AddTrack);
+    let track_id = app.project.tracks()[0].id();
+    app.project
+        .apply(DawAction::InsertMidiItem {
+            track_id,
+            start_tick: 3_840,
+            length_ticks: 9_600,
+        })
+        .unwrap();
+    let item_id = app.project.midi_items()[0].id();
+    app.project
+        .apply(DawAction::SetMidiItemLoopSource {
+            item_id,
+            enabled: false,
+        })
+        .unwrap();
+    app.project
+        .apply(DawAction::AddMidiNotes {
+            item_id,
+            notes: vec![
+                MidiNoteData {
+                    pitch: 60,
+                    tick: 100,
+                    duration: 300,
+                    velocity: 96,
+                },
+                MidiNoteData {
+                    pitch: 64,
+                    tick: 6_720,
+                    duration: 1_920,
+                    velocity: 108,
+                },
+            ],
+        })
+        .unwrap();
+    app.project
+        .apply(DawAction::SetMidiControllers {
+            item_id,
+            controllers: vec![MidiControllerData {
+                controller: 1,
+                tick: 250,
+                value: 80,
+            }],
+        })
+        .unwrap();
+    app.project
+        .apply(DawAction::SetMidiPitchBends {
+            item_id,
+            pitch_bends: vec![MidiPitchBendData {
+                tick: 360,
+                value: 9_000,
+            }],
+        })
+        .unwrap();
+    let original = app.project.midi_items()[0].clone();
+    app.timeline.rebuild(&app.project);
+    app.timeline.select_items(vec![(item_id, track_id)]);
+    let _ = app.update(Message::ItemNudgeTargetChanged(Target::Contents));
+    let _ = app.update(Message::ItemNudgeValueChanged("250".to_owned()));
+
+    let _ = app.update(Message::NudgeSelectedItems(-1));
+
+    let moved_left = app.project.midi_items()[0].clone();
+    assert_eq!(moved_left.source_offset_ticks(), 380);
+    assert_eq!(moved_left.source_loop_length_ticks(), 9_500);
+    assert_eq!(
+        moved_left
+            .notes()
+            .iter()
+            .map(|note| (note.tick(), note.duration()))
+            .collect::<Vec<_>>(),
+        vec![(0, 300), (6_620, 1_920)]
+    );
+    assert_eq!(moved_left.controllers()[0].tick, 150);
+    assert_eq!(moved_left.pitch_bends()[0].tick, 260);
+    assert_eq!(app.timeline.selected_items.len(), 1);
+    assert!(app.timeline.selected_items.contains(&item_id));
+    assert!(app.item_nudge_dialog.error.is_none());
+
+    let _ = app.update(Message::Undo);
+    assert_eq!(app.project.midi_items()[0], original);
+    let _ = app.update(Message::Redo);
+    assert_eq!(app.project.midi_items()[0], moved_left);
+}
+
+#[test]
 fn item_nudge_midi_contents_matches_reaper_when_snap_to_unit_is_enabled() {
     use super::item_nudge::Target;
 
