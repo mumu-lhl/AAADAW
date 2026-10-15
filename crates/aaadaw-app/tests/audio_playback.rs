@@ -828,6 +828,184 @@ fn transport_loop_preparation_repeats_items_that_partially_overlap_the_loop() {
 }
 
 #[test]
+fn transport_loop_preparation_resamples_rate_aligned_source_segments() {
+    let database_path = unique_path("aaadaw");
+    let source_frames: Vec<_> = (0_i16..32)
+        .map(|index| {
+            let sample = if (8..12).contains(&index) { 4_096 } else { 0 };
+            [sample, -sample]
+        })
+        .collect();
+    let wav = stereo_pcm_wav(&source_frames, 24_000);
+    let mut store = ProjectStore::open(&database_path).expect("project should open");
+    store
+        .import_audio_asset(
+            "asset://resampled-transport-loop",
+            "resampled-loop.wav",
+            Cursor::new(&wav),
+        )
+        .expect("resampled source should embed");
+    let mut project = Project::with_settings(
+        aaadaw_core::ProjectSettings::default()
+            .with_pan_mode(aaadaw_core::PanMode::LegacyMonoStereo),
+    );
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Resampled loop".to_owned(),
+        })
+        .expect("track should be created");
+    let loop_range = TransportLoopRange::new(16, 32).expect("loop should be nonempty");
+    project
+        .apply(DawAction::InsertAudioItem {
+            track_id: project.tracks()[0].id(),
+            media_ref: "asset://resampled-transport-loop".to_owned(),
+            start_sample: 8,
+            source_offset_samples: 4,
+            length_samples: 32,
+        })
+        .expect("rate-converted item should be inserted");
+    project
+        .apply(DawAction::SetAudioItemLoopSource {
+            item_id: project.audio_items()[0].id(),
+            enabled: false,
+        })
+        .expect("transport Repeat should not depend on item Loop source");
+
+    let prepared = prepare_audio_playback_at_with_loop_range(
+        &project,
+        &store,
+        20,
+        Some(loop_range),
+        64,
+        64,
+        ResamplingQuality::Sinc64,
+    )
+    .expect("an exactly rate-aligned loop source should resample");
+    let (mut graph, feeders) = prepared.into_parts();
+    assert_eq!(feeders.len(), 1);
+    std::thread::sleep(std::time::Duration::from_millis(20));
+    graph.transport_mut().start();
+    let mut output = [[0.0_f32; 2]; 48];
+    let stats = graph
+        .render_into(&mut output)
+        .expect("resampled source should repeat through three passes");
+    assert_eq!(stats.underrun_samples, 0);
+    assert!(output.iter().any(|frame| frame[0].abs() > 0.01));
+    for (index, (first, repeated)) in output[16..32].iter().zip(&output[32..48]).enumerate() {
+        assert!(
+            (first[0] - repeated[0]).abs() < 1.0e-6,
+            "left loop output differs at {index}: {first:?} vs {repeated:?}"
+        );
+        assert!(
+            (first[1] - repeated[1]).abs() < 1.0e-6,
+            "right loop output differs at {index}: {first:?} vs {repeated:?}"
+        );
+    }
+    assert_eq!(graph.transport_mut().position_samples(), 20);
+    for feeder in feeders {
+        feeder
+            .cancel()
+            .expect("resampled loop feeder should stop cleanly");
+    }
+    drop(graph);
+
+    let mut bounded_project = Project::with_settings(
+        aaadaw_core::ProjectSettings::default()
+            .with_pan_mode(aaadaw_core::PanMode::LegacyMonoStereo),
+    );
+    bounded_project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Resampled bounded loop".to_owned(),
+        })
+        .expect("bounded track should be created");
+    bounded_project
+        .apply(DawAction::InsertLoopedAudioItem {
+            track_id: bounded_project.tracks()[0].id(),
+            media_ref: "asset://resampled-transport-loop".to_owned(),
+            start_sample: loop_range.start_sample(),
+            source_offset_samples: 0,
+            phase_inverted: false,
+            source_section_start_samples: 8,
+            length_samples: loop_range.length_samples(),
+            muted: false,
+            source_section_length_samples: 8,
+        })
+        .expect("rate-converted bounded item should be inserted");
+    let prepared = prepare_audio_playback_at_with_loop_range(
+        &bounded_project,
+        &store,
+        20,
+        Some(loop_range),
+        64,
+        64,
+        ResamplingQuality::Sinc64,
+    )
+    .expect("a bounded source section with an exact converted duration should resample");
+    let (mut graph, feeders) = prepared.into_parts();
+    std::thread::sleep(std::time::Duration::from_millis(20));
+    graph.transport_mut().start();
+    let mut output = [[0.0_f32; 2]; 48];
+    let stats = graph
+        .render_into(&mut output)
+        .expect("bounded resampled source should repeat through three passes");
+    assert_eq!(stats.underrun_samples, 0);
+    assert!(output.iter().any(|frame| frame[0].abs() > 0.01));
+    for (first, repeated) in output[16..32].iter().zip(&output[32..48]) {
+        assert!((first[0] - repeated[0]).abs() < 1.0e-6);
+        assert!((first[1] - repeated[1]).abs() < 1.0e-6);
+    }
+    for feeder in feeders {
+        feeder
+            .cancel()
+            .expect("bounded resampled loop feeder should stop cleanly");
+    }
+    drop(graph);
+
+    let mut unaligned_project = Project::with_settings(
+        aaadaw_core::ProjectSettings::default()
+            .with_pan_mode(aaadaw_core::PanMode::LegacyMonoStereo),
+    );
+    unaligned_project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Unaligned loop".to_owned(),
+        })
+        .expect("unaligned track should be created");
+    let unaligned_loop = TransportLoopRange::new(16, 31).expect("loop should be nonempty");
+    unaligned_project
+        .apply(DawAction::InsertAudioItem {
+            track_id: unaligned_project.tracks()[0].id(),
+            media_ref: "asset://resampled-transport-loop".to_owned(),
+            start_sample: unaligned_loop.start_sample(),
+            source_offset_samples: 4,
+            length_samples: unaligned_loop.length_samples(),
+        })
+        .expect("unaligned item should be inserted");
+    let unaligned = prepare_audio_playback_at_with_loop_range(
+        &unaligned_project,
+        &store,
+        20,
+        Some(unaligned_loop),
+        64,
+        64,
+        ResamplingQuality::Sinc64,
+    );
+    let Err(PlaybackBuildError::Media(aaadaw_media::MediaError::WorkerStartupFailed {
+        message,
+        ..
+    })) = unaligned
+    else {
+        panic!("unaligned loop sample boundaries should fail feeder preparation");
+    };
+    assert!(message.contains("exact sample boundaries"));
+
+    store.close().expect("project should close");
+    remove_database(&database_path);
+}
+
+#[test]
 fn transport_loop_preparation_repeats_midi_notes_at_the_project_loop_boundary() {
     let database_path = unique_path("aaadaw");
     let store = ProjectStore::open(&database_path).expect("project should open");

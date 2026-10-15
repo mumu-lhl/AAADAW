@@ -1887,10 +1887,11 @@ pub fn prepare_audio_playback_at_with_resampling_quality(
 /// Prepares playback with an active transport repeat range.
 ///
 /// Audio items overlapping the loop repeat only the source segment corresponding to their
-/// intersection with the transport range and provide it at the project sample rate. Mono sources
-/// are centered in the stereo graph. Bounded source loops must exactly match the full range;
-/// normal trimmed items may partially overlap or span it, regardless of their Loop source setting.
-/// Incompatible items are rejected before the graph is started.
+/// intersection with the transport range. The feeder resamples that segment to the project rate
+/// when the source offset and segment duration map to exact source-frame boundaries; fractional
+/// mappings are rejected. Mono sources are centered in the stereo graph. Bounded source loops must
+/// exactly match the full range; normal trimmed items may partially overlap or span it, regardless
+/// of their Loop source setting. Incompatible items are rejected before the graph is started.
 pub fn prepare_audio_playback_at_with_loop_range(
     project: &Project,
     store: &ProjectStore,

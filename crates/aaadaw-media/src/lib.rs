@@ -249,7 +249,7 @@ impl fmt::Display for MediaError {
                 formatter.write_str("loop source section does not contain the item source offset")
             }
             Self::InvalidTimelineLoop => formatter.write_str(
-                "timeline loop feeder requires a matching bounded source loop at the output sample rate",
+                "transport loop and source segment do not share exact sample boundaries",
             ),
             Self::AudioTooLong => formatter.write_str("audio stream exceeds the supported length"),
             Self::WorkerCancelled => formatter.write_str("audio waveform decoding was cancelled"),

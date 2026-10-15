@@ -175,8 +175,9 @@ pub fn spawn_stereo_audio_item_stream_with_quality(
 /// intersection resolves to a nonnegative source frame, regardless of that item's Loop source
 /// setting. The item timeline repeats only the item's overlap with `timeline_loop_range`; a bounded
 /// source loop remains restricted to an item that exactly matches the full transport loop. The
-/// decoded sample rate must match the output rate. Mono sources are centered by the stereo stream
-/// producer.
+/// decoded sample rate may differ from the output rate when the overlap start and duration map to
+/// exact source-frame boundaries. The worker warms the resampler across loop cycles before
+/// publishing repeated PCM. Mono sources are centered by the stereo stream producer.
 pub fn spawn_stereo_audio_item_stream_for_transport_loop(
     item: &AudioItem,
     timeline_loop_range: TransportLoopRange,
@@ -301,32 +302,19 @@ fn validate_transport_loop_item(
                 return Err(MediaError::InvalidTimelineLoop);
             }
             source_loop_section(item)
-                .filter(|section| {
-                    section.looping
-                        && section.length_frames == Some(item_loop_range.length_samples())
-                })
+                .filter(|section| section.looping)
                 .ok_or(MediaError::InvalidTimelineLoop)?
         }
-        (None, None) => {
-            let loop_offset_from_item_start = i64::try_from(loop_offset_from_item_start)
-                .map_err(|_| MediaError::InvalidTimelineLoop)?;
-            let start_frame = item
-                .source_offset_samples()
-                .checked_add(loop_offset_from_item_start)
-                .and_then(|offset| u64::try_from(offset).ok())
-                .ok_or(MediaError::InvalidTimelineLoop)?;
-            if start_frame
-                .checked_add(item_loop_range.length_samples())
-                .is_none()
-            {
-                return Err(MediaError::InvalidTimelineLoop);
-            }
-            SourceLoopSection {
-                start_frame,
-                length_frames: Some(item_loop_range.length_samples()),
-                looping: true,
-            }
-        }
+        (None, None) => SourceLoopSection {
+            start_frame: 0,
+            length_frames: Some(item_loop_range.length_samples()),
+            looping: true,
+            project_mapping: Some(ProjectLoopSourceMapping {
+                source_offset_frames: item.source_offset_samples(),
+                timeline_offset_samples: loop_offset_from_item_start,
+                timeline_length_samples: item_loop_range.length_samples(),
+            }),
+        },
         _ => return Err(MediaError::InvalidTimelineLoop),
     };
     Ok((
@@ -959,10 +947,18 @@ struct WorkerConfig {
 }
 
 #[derive(Clone, Copy, Debug)]
+struct ProjectLoopSourceMapping {
+    source_offset_frames: i64,
+    timeline_offset_samples: u64,
+    timeline_length_samples: u64,
+}
+
+#[derive(Clone, Copy, Debug)]
 struct SourceLoopSection {
     start_frame: u64,
     length_frames: Option<u64>,
     looping: bool,
+    project_mapping: Option<ProjectLoopSourceMapping>,
 }
 
 fn source_loop_section(item: &AudioItem) -> Option<SourceLoopSection> {
@@ -974,11 +970,13 @@ fn source_loop_section(item: &AudioItem) -> Option<SourceLoopSection> {
             start_frame,
             length_frames: Some(length_frames),
             looping: item.is_loop_source(),
+            project_mapping: None,
         }),
         (None, None) if item.is_loop_source() => Some(SourceLoopSection {
             start_frame: 0,
             length_frames: None,
             looping: true,
+            project_mapping: None,
         }),
         (None, None) => None,
         _ => None,
@@ -1076,6 +1074,31 @@ fn run_worker<P: FeedProducer>(
                     .expect("nonnegative signed source offset fits u64"),
             )
         };
+    let decoder_result = WorkerDecoder::open(input);
+    let (mut decoder, initial_channels, initial_sample_rate) = match decoder_result {
+        Ok((decoder, channels, sample_rate)) => {
+            producer.set_source_channels(channels);
+            (decoder, channels, sample_rate)
+        }
+        Err(error) => {
+            let _ = startup.send(Err(worker_startup_error(&error)));
+            return Err(error);
+        }
+    };
+    let source_loop_section = match source_loop_section {
+        Some(section) => match resolve_project_loop_source_section(
+            section,
+            initial_sample_rate,
+            output_sample_rate,
+        ) {
+            Ok(section) => Some(section),
+            Err(error) => {
+                let _ = startup.send(Err(worker_startup_error(&error)));
+                return Err(error);
+            }
+        },
+        None => None,
+    };
     let (loop_base_source_offset, loop_section_length, mut loop_source_frames_remaining, looping) =
         match source_loop_section {
             Some(section) => {
@@ -1147,32 +1170,24 @@ fn run_worker<P: FeedProducer>(
             }
             None => (None, None, None, false),
         };
-    let initial_loop_source_frames = loop_source_frames_remaining;
-    let mut source_frames_in_current_cycle = 0_u64;
-    let mut initial_loop_pass = true;
-    let mut output_timeline_sample = position.requested_sample();
-    let decoder_result = WorkerDecoder::open(input);
-    let (mut decoder, initial_sample_rate) = match decoder_result {
-        Ok((decoder, channels, sample_rate)) => {
-            producer.set_source_channels(channels);
-            (decoder, sample_rate)
-        }
-        Err(error) => {
-            let _ = startup.send(Err(worker_startup_error(&error)));
-            return Err(error);
-        }
-    };
     if let Some(timeline_loop_range) = timeline_loop_range
-        && (initial_sample_rate != Some(output_sample_rate)
-            || !source_loop_section.is_some_and(|section| {
+        && !initial_sample_rate.is_some_and(|source_rate| {
+            source_loop_section.is_some_and(|section| {
                 section.looping
-                    && section.length_frames == Some(timeline_loop_range.length_samples())
-            }))
+                    && section.length_frames.and_then(|length| {
+                        scale_frames_exact(length, source_rate, output_sample_rate)
+                    }) == Some(timeline_loop_range.length_samples())
+            })
+        })
     {
         let error = MediaError::InvalidTimelineLoop;
         let _ = startup.send(Err(worker_startup_error(&error)));
         return Err(error);
     }
+    let initial_loop_source_frames = loop_source_frames_remaining;
+    let mut source_frames_in_current_cycle = 0_u64;
+    let mut initial_loop_pass = true;
+    let mut output_timeline_sample = position.requested_sample();
     let mut resampler = match initial_sample_rate {
         Some(sample_rate) => match StreamingResampler::<P::Frame>::new_with_quality(
             sample_rate,
@@ -1225,6 +1240,39 @@ fn run_worker<P: FeedProducer>(
                 + (output_samples_to_skip - output_initial_frames) % output_loop_frames;
         }
     }
+    if timeline_loop_range.is_some()
+        && initial_sample_rate.is_some_and(|source_rate| source_rate != output_sample_rate)
+    {
+        let Some(source_rate) = initial_sample_rate else {
+            unreachable!("sample-rate inequality requires a decoded rate")
+        };
+        let Some(loop_source_frames) = loop_section_length.filter(|frames| *frames > 0) else {
+            let error = MediaError::InvalidTimelineLoop;
+            let _ = startup.send(Err(worker_startup_error(&error)));
+            return Err(error);
+        };
+        let left_taps = u64::try_from(quality.taps() / 2 - 1).unwrap_or(u64::MAX);
+        let preroll_cycles = left_taps.div_ceil(loop_source_frames).max(1);
+        let Some(preroll_source_frames) = loop_source_frames.checked_mul(preroll_cycles) else {
+            let error = MediaError::AudioTooLong;
+            let _ = startup.send(Err(worker_startup_error(&error)));
+            return Err(error);
+        };
+        let Some(preroll_output_frames) =
+            scale_frames_exact(preroll_source_frames, source_rate, output_sample_rate)
+        else {
+            let error = MediaError::InvalidTimelineLoop;
+            let _ = startup.send(Err(worker_startup_error(&error)));
+            return Err(error);
+        };
+        let Some(skip_with_preroll) = output_samples_to_skip.checked_add(preroll_output_frames)
+        else {
+            let error = MediaError::AudioTooLong;
+            let _ = startup.send(Err(worker_startup_error(&error)));
+            return Err(error);
+        };
+        output_samples_to_skip = skip_with_preroll;
+    }
     let _ = startup.send(Ok(()));
     push_silence_frames(
         &mut producer,
@@ -1239,7 +1287,7 @@ fn run_worker<P: FeedProducer>(
         return Ok(());
     }
     let mut decoded_frames = Vec::new();
-    let mut source_channels = None;
+    let mut source_channels = (initial_channels > 0).then_some(initial_channels);
     let mut loop_buffer = looping
         .then_some(loop_section_length)
         .flatten()
@@ -1513,12 +1561,71 @@ fn worker_startup_error(error: &MediaError) -> (Option<io::ErrorKind>, String) {
     (io_kind, error.to_string())
 }
 
+fn resolve_project_loop_source_section(
+    section: SourceLoopSection,
+    decoded_sample_rate: Option<u32>,
+    output_sample_rate: u32,
+) -> Result<SourceLoopSection, MediaError> {
+    let Some(mapping) = section.project_mapping else {
+        return Ok(section);
+    };
+    let source_sample_rate = decoded_sample_rate.ok_or(MediaError::InvalidDecodedAudioSpec)?;
+    let timeline_offset_source_frames = scale_frames_exact(
+        mapping.timeline_offset_samples,
+        output_sample_rate,
+        source_sample_rate,
+    )
+    .ok_or(MediaError::InvalidTimelineLoop)?;
+    let timeline_offset_source_frames = i64::try_from(timeline_offset_source_frames)
+        .map_err(|_| MediaError::InvalidTimelineLoop)?;
+    let source_start_frame = mapping
+        .source_offset_frames
+        .checked_add(timeline_offset_source_frames)
+        .and_then(|frame| u64::try_from(frame).ok())
+        .ok_or(MediaError::InvalidTimelineLoop)?;
+    let source_length_frames = scale_frames_exact(
+        mapping.timeline_length_samples,
+        output_sample_rate,
+        source_sample_rate,
+    )
+    .filter(|frames| *frames > 0)
+    .ok_or(MediaError::InvalidTimelineLoop)?;
+    let output_length_samples =
+        scale_frames_exact(source_length_frames, source_sample_rate, output_sample_rate)
+            .ok_or(MediaError::InvalidTimelineLoop)?;
+    if output_length_samples != mapping.timeline_length_samples
+        || source_start_frame
+            .checked_add(source_length_frames)
+            .is_none()
+    {
+        return Err(MediaError::InvalidTimelineLoop);
+    }
+    Ok(SourceLoopSection {
+        start_frame: source_start_frame,
+        length_frames: Some(source_length_frames),
+        looping: section.looping,
+        project_mapping: None,
+    })
+}
+
 fn scale_frames_rounded(frames: u64, input_rate: u32, output_rate: u32) -> Option<u64> {
     u64::try_from(
         (u128::from(frames) * u128::from(output_rate) + u128::from(input_rate) / 2)
             / u128::from(input_rate),
     )
     .ok()
+}
+
+fn scale_frames_exact(frames: u64, input_rate: u32, output_rate: u32) -> Option<u64> {
+    if input_rate == 0 || output_rate == 0 {
+        return None;
+    }
+    let numerator = u128::from(frames).checked_mul(u128::from(output_rate))?;
+    let input_rate = u128::from(input_rate);
+    if numerator % input_rate != 0 {
+        return None;
+    }
+    u64::try_from(numerator / input_rate).ok()
 }
 
 fn restart_loop_decoder<P: FeedProducer>(
