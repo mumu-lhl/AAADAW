@@ -3708,14 +3708,16 @@ impl App {
                             return self.close_item_nudge();
                         }
                     }
-                    if matches!(
-                        &event,
-                        iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
-                            key: iced::keyboard::Key::Named(iced::keyboard::key::Named::Escape),
-                            repeat: false,
-                            ..
-                        })
-                    ) {
+                    if status == iced::event::Status::Ignored
+                        && matches!(
+                            &event,
+                            iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
+                                key: iced::keyboard::Key::Named(iced::keyboard::key::Named::Escape),
+                                repeat: false,
+                                ..
+                            })
+                        )
+                    {
                         return self.close_item_nudge();
                     }
                     return Task::none();

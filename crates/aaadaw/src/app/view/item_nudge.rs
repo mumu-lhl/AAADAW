@@ -1,40 +1,9 @@
 use super::super::{App, Message, item_nudge};
-use iced::widget::{button, checkbox, column, container, pick_list, row, text, text_input};
+use iced::widget::{button, checkbox, column, combo_box, container, row, text, text_input};
 use iced::{Element, Length};
 
 pub(super) fn view(app: &App) -> Element<'_, Message> {
     let draft = &app.item_nudge_dialog;
-    let units: &[item_nudge::Unit] = match draft.mode {
-        item_nudge::Mode::Nudge => &[
-            item_nudge::Unit::Milliseconds,
-            item_nudge::Unit::Time,
-            item_nudge::Unit::Grid,
-            item_nudge::Unit::MeasuresBeats,
-            item_nudge::Unit::Samples,
-            item_nudge::Unit::Frames,
-            item_nudge::Unit::Pixels,
-            item_nudge::Unit::ItemLengths,
-            item_nudge::Unit::ItemSelections,
-            item_nudge::Unit::Notes,
-        ],
-        item_nudge::Mode::Set => &[
-            item_nudge::Unit::Time,
-            item_nudge::Unit::MeasuresBeats,
-            item_nudge::Unit::Samples,
-            item_nudge::Unit::Frames,
-            item_nudge::Unit::Pixels,
-        ],
-    };
-    let targets = [
-        item_nudge::Target::Position,
-        item_nudge::Target::LeftTrim,
-        item_nudge::Target::LeftEdge,
-        item_nudge::Target::EndPosition,
-        item_nudge::Target::RightTrim,
-        item_nudge::Target::Contents,
-        item_nudge::Target::Duplicate,
-        item_nudge::Target::EditCursor,
-    ];
     let value_label = if draft.mode == item_nudge::Mode::Nudge {
         "by:"
     } else {
@@ -122,18 +91,28 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
         .clone()
         .unwrap_or_else(|| item_position_summary(app));
     let mut controls = row![
-        pick_list(
-            [item_nudge::Mode::Nudge, item_nudge::Mode::Set],
-            Some(draft.mode),
+        combo_box(
+            &draft.mode_options,
+            "",
+            Some(&draft.mode),
             Message::ItemNudgeModeChanged
         )
         .width(Length::Fixed(75.0))
         .padding([2, 6])
-        .text_size(13),
-        pick_list(targets, Some(draft.target), Message::ItemNudgeTargetChanged)
-            .width(Length::Fixed(106.0))
-            .padding([2, 6])
-            .text_size(13),
+        .icon(dropdown_icon())
+        .size(13)
+        .menu_height(Length::Fixed(200.0)),
+        combo_box(
+            &draft.target_options,
+            "",
+            Some(&draft.target),
+            Message::ItemNudgeTargetChanged,
+        )
+        .width(Length::Fixed(106.0))
+        .padding([2, 6])
+        .icon(dropdown_icon())
+        .size(13)
+        .menu_height(Length::Fixed(240.0)),
         text(value_label).size(13).width(Length::Fixed(22.0)),
         input,
     ]
@@ -141,28 +120,41 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
     let has_note_value_picker =
         draft.mode == item_nudge::Mode::Nudge && draft.unit == item_nudge::Unit::Notes;
     let note_value_picker: Option<Element<'_, Message>> = has_note_value_picker.then(|| {
-        pick_list(
-            item_nudge::NoteValue::ALL,
-            Some(draft.note_value),
+        combo_box(
+            &draft.note_value_options,
+            "",
+            Some(&draft.note_value),
             Message::ItemNudgeNoteValueChanged,
         )
         .width(Length::Fixed(70.0))
         .padding([2, 6])
-        .text_size(13)
+        .icon(dropdown_icon())
+        .size(13)
+        .menu_height(Length::Fixed(300.0))
         .into()
     });
     if let Some(note_value_picker) = note_value_picker {
         controls = controls.push(note_value_picker);
     }
     controls = controls.push(
-        pick_list(units, Some(draft.unit), Message::ItemNudgeUnitChanged)
-            .width(Length::Fixed(if has_note_value_picker {
-                95.0
-            } else {
-                172.0
-            }))
-            .padding([2, 6])
-            .text_size(13),
+        combo_box(
+            match draft.mode {
+                item_nudge::Mode::Nudge => &draft.nudge_unit_options,
+                item_nudge::Mode::Set => &draft.set_unit_options,
+            },
+            "",
+            Some(&draft.unit),
+            Message::ItemNudgeUnitChanged,
+        )
+        .width(Length::Fixed(if has_note_value_picker {
+            95.0
+        } else {
+            172.0
+        }))
+        .padding([2, 6])
+        .icon(dropdown_icon())
+        .size(13)
+        .menu_height(Length::Fixed(300.0)),
     );
     let content = column![
         controls,
@@ -183,6 +175,16 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
         .width(Length::Fill)
         .height(Length::Fill)
         .into()
+}
+
+fn dropdown_icon() -> iced::widget::text_input::Icon<iced::Font> {
+    iced::widget::text_input::Icon {
+        font: iced::Font::DEFAULT,
+        code_point: '▾',
+        size: Some(iced::Pixels(12.0)),
+        spacing: 2.0,
+        side: iced::widget::text_input::Side::Right,
+    }
 }
 
 fn item_position_summary(app: &App) -> String {

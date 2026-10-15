@@ -3,6 +3,7 @@ use crate::project_time;
 use aaadaw_core::{AudioItem, DawAction, ItemId, MidiItem};
 use aaadaw_storage::ProjectStore;
 use iced::Task;
+use iced::widget::combo_box;
 use std::collections::HashMap;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -19,6 +20,10 @@ impl std::fmt::Display for Mode {
             Self::Set => "Set",
         })
     }
+}
+
+impl Mode {
+    pub(super) const ALL: [Self; 2] = [Self::Nudge, Self::Set];
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -51,6 +56,29 @@ impl std::fmt::Display for Unit {
             Self::Notes => "notes",
         })
     }
+}
+
+impl Unit {
+    pub(super) const NUDGE_OPTIONS: [Self; 10] = [
+        Self::Milliseconds,
+        Self::Time,
+        Self::Grid,
+        Self::MeasuresBeats,
+        Self::Samples,
+        Self::Frames,
+        Self::Pixels,
+        Self::ItemLengths,
+        Self::ItemSelections,
+        Self::Notes,
+    ];
+
+    pub(super) const SET_OPTIONS: [Self; 5] = [
+        Self::Time,
+        Self::MeasuresBeats,
+        Self::Samples,
+        Self::Frames,
+        Self::Pixels,
+    ];
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -131,6 +159,12 @@ impl std::fmt::Display for NoteValue {
     }
 }
 
+impl NoteValue {
+    pub(super) fn options() -> combo_box::State<Self> {
+        combo_box::State::new(Self::ALL.to_vec())
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub(crate) enum Target {
     #[default]
@@ -165,6 +199,19 @@ impl std::fmt::Display for Target {
     }
 }
 
+impl Target {
+    pub(super) const ALL: [Self; 8] = [
+        Self::Position,
+        Self::LeftTrim,
+        Self::LeftEdge,
+        Self::EndPosition,
+        Self::RightTrim,
+        Self::Contents,
+        Self::Duplicate,
+        Self::EditCursor,
+    ];
+}
+
 #[derive(Debug, Clone)]
 pub(super) struct Dialog {
     pub(super) mode: Mode,
@@ -175,6 +222,11 @@ pub(super) struct Dialog {
     pub(super) snap_to_unit: bool,
     pub(super) relative_set: bool,
     pub(super) error: Option<String>,
+    pub(super) mode_options: combo_box::State<Mode>,
+    pub(super) target_options: combo_box::State<Target>,
+    pub(super) nudge_unit_options: combo_box::State<Unit>,
+    pub(super) set_unit_options: combo_box::State<Unit>,
+    pub(super) note_value_options: combo_box::State<NoteValue>,
 }
 
 impl Default for Dialog {
@@ -188,6 +240,11 @@ impl Default for Dialog {
             snap_to_unit: false,
             relative_set: false,
             error: None,
+            mode_options: combo_box::State::new(Mode::ALL.to_vec()),
+            target_options: combo_box::State::new(Target::ALL.to_vec()),
+            nudge_unit_options: combo_box::State::new(Unit::NUDGE_OPTIONS.to_vec()),
+            set_unit_options: combo_box::State::new(Unit::SET_OPTIONS.to_vec()),
+            note_value_options: NoteValue::options(),
         }
     }
 }

@@ -269,6 +269,53 @@ fn item_nudge_moves_selected_audio_and_midi_together_and_undoes_as_one_edit() {
 }
 
 #[test]
+fn item_nudge_keyboard_selectors_expose_only_native_mode_options() {
+    use super::item_nudge::{Mode, NoteValue, Target, Unit};
+
+    let app = App::default();
+    let dialog = &app.item_nudge_dialog;
+
+    assert_eq!(dialog.mode_options.options(), &Mode::ALL);
+    assert_eq!(dialog.target_options.options(), &Target::ALL);
+    assert_eq!(dialog.nudge_unit_options.options(), &Unit::NUDGE_OPTIONS);
+    assert_eq!(dialog.set_unit_options.options(), &Unit::SET_OPTIONS);
+    assert_eq!(
+        dialog.note_value_options.options(),
+        &NoteValue::ALL,
+        "the keyboard list must retain every supported REAPER note value"
+    );
+}
+
+#[test]
+fn item_nudge_combo_consumes_escape_before_closing_the_dialog() {
+    let window_id = iced::window::Id::unique();
+    let mut app = App {
+        item_nudge_window_id: Some(window_id),
+        ..App::default()
+    };
+    let escape = || {
+        test_input_event(test_shortcut_input(
+            Key::Named(iced::keyboard::key::Named::Escape),
+            Modifiers::NONE,
+        ))
+    };
+
+    let _ = app.update(Message::RuntimeKeyboardEvent(
+        escape(),
+        iced::event::Status::Captured,
+        window_id,
+    ));
+    assert_eq!(app.item_nudge_window_id, Some(window_id));
+
+    let _ = app.update(Message::RuntimeKeyboardEvent(
+        escape(),
+        iced::event::Status::Ignored,
+        window_id,
+    ));
+    assert_eq!(app.item_nudge_window_id, None);
+}
+
+#[test]
 fn item_nudge_item_units_use_the_first_item_length_and_selected_item_envelope() {
     use super::item_nudge::Unit;
 
