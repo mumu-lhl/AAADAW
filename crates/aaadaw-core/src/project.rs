@@ -1448,6 +1448,92 @@ impl Project {
         self.state.tempo_map.tick_at_sample_position(sample)
     }
 
+    /// Converts a MIDI source PPQ phase into the project-sample offset used by a take.
+    /// The offset is measured backward from the item start through the project Tempo Map.
+    pub fn midi_source_offset_samples(
+        &self,
+        item_start_tick: u64,
+        source_phase_ticks: u64,
+    ) -> Result<f64, TimebaseError> {
+        const MAX_EXACT: f64 = (1_u64 << 53) as f64;
+        if item_start_tick > (1_u64 << 53) || source_phase_ticks > (1_u64 << 53) {
+            return Err(TimebaseError::PositionOutOfRange);
+        }
+        let item_start_tick = item_start_tick as f64;
+        let item_start_sample = self.sample_at_tick_position(item_start_tick)?;
+        let source_tick = item_start_tick - source_phase_ticks as f64;
+        let source_sample = self.sample_at_signed_tick_position(source_tick)?;
+        let offset_samples = item_start_sample - source_sample;
+        if !offset_samples.is_finite() || !(0.0..=MAX_EXACT).contains(&offset_samples) {
+            return Err(TimebaseError::PositionOutOfRange);
+        }
+        Ok(offset_samples)
+    }
+
+    /// Converts a take's source-time offset back to its wrapped MIDI source PPQ phase.
+    pub fn midi_source_phase_at_offset_samples(
+        &self,
+        item_start_tick: u64,
+        source_loop_length_ticks: u64,
+        source_offset_samples: f64,
+    ) -> Result<u64, TimebaseError> {
+        const MAX_EXACT: f64 = (1_u64 << 53) as f64;
+        if item_start_tick > (1_u64 << 53)
+            || source_loop_length_ticks == 0
+            || source_loop_length_ticks > (1_u64 << 53)
+            || !source_offset_samples.is_finite()
+            || !(0.0..=MAX_EXACT).contains(&source_offset_samples)
+        {
+            return Err(TimebaseError::PositionOutOfRange);
+        }
+        let item_start_tick = item_start_tick as f64;
+        let item_start_sample = self.sample_at_tick_position(item_start_tick)?;
+        let source_sample = item_start_sample - source_offset_samples;
+        let source_tick = self.tick_at_signed_sample_position(source_sample)?;
+        let phase = (item_start_tick - source_tick).round();
+        if !phase.is_finite() || !(0.0..=MAX_EXACT).contains(&phase) {
+            return Err(TimebaseError::PositionOutOfRange);
+        }
+        Ok((phase as u64) % source_loop_length_ticks)
+    }
+
+    fn sample_at_signed_tick_position(&self, tick: f64) -> Result<f64, TimebaseError> {
+        const MAX_EXACT: f64 = (1_u64 << 53) as f64;
+        if !tick.is_finite() || tick.abs() > MAX_EXACT {
+            return Err(TimebaseError::PositionOutOfRange);
+        }
+        if tick >= 0.0 {
+            return self.sample_at_tick_position(tick);
+        }
+        let settings = self.settings();
+        let sample = tick * f64::from(settings.sample_rate()) * 60.0
+            / (f64::from(settings.ppq())
+                * self.tempo_at_tick(0)
+                * settings.bpm_basis().quarter_notes_per_beat());
+        (sample.is_finite() && sample.abs() <= MAX_EXACT)
+            .then_some(sample)
+            .ok_or(TimebaseError::PositionOutOfRange)
+    }
+
+    fn tick_at_signed_sample_position(&self, sample: f64) -> Result<f64, TimebaseError> {
+        const MAX_EXACT: f64 = (1_u64 << 53) as f64;
+        if !sample.is_finite() || sample.abs() > MAX_EXACT {
+            return Err(TimebaseError::PositionOutOfRange);
+        }
+        if sample >= 0.0 {
+            return self.tick_at_sample_position(sample);
+        }
+        let settings = self.settings();
+        let tick = sample
+            * f64::from(settings.ppq())
+            * self.tempo_at_tick(0)
+            * settings.bpm_basis().quarter_notes_per_beat()
+            / (60.0 * f64::from(settings.sample_rate()));
+        (tick.is_finite() && tick.abs() <= MAX_EXACT)
+            .then_some(tick)
+            .ok_or(TimebaseError::PositionOutOfRange)
+    }
+
     /// Returns the displayed BPM active at a PPQ tick position in the project's selected basis.
     pub fn tempo_at_tick(&self, tick: u64) -> f64 {
         self.state.tempo_map.tempo_at_tick(tick)

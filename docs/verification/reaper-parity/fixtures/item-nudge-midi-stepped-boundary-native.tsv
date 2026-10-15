@@ -1,0 +1,14 @@
+version	7.82/linux-x86_64
+theme	Default_7.0.ReaperThemeZip
+tempo_map	120 BPM at project start; step to 60 BPM at 2.000000 seconds
+tempo_marker	0	time_s	0.000000000	measure	0	beat	0.000000	bpm	120.000000	meter	4/4	linear	0
+tempo_marker	1	time_s	2.000000000	measure	1	beat	0.000000	bpm	60.000000	meter	4/4	linear	0
+probe	MIDI loop item starts exactly at the 60 BPM tempo point; length 5 seconds
+nudge	Target contents; 250 milliseconds; Snap off
+actions	41249 right; 41250 left
+before	position_s	2.000000000	length_s	5.000000000	loop_source	1	source_offset_s	0.000000000	ppq_at_item_start	0.000	ppq_at_item_end	4800.000	notes	0,0,0,960.000,1920.000,0,60,96;1,0,0,2880.000,3840.000,0,64,108	selected	1	state_change_delta	0	undo_label	<empty>
+after_right_1	position_s	2.000000000	length_s	5.000000000	loop_source	1	source_offset_s	2.250000000	ppq_at_item_start	4320.000	ppq_at_item_end	9120.000	notes	0,0,0,960.000,1920.000,0,60,96;1,0,0,2880.000,3840.000,0,64,108	selected	1	state_change_delta	0	undo_label	<empty>
+after_left_1	position_s	2.000000000	length_s	5.000000000	loop_source	1	source_offset_s	2.500000000	ppq_at_item_start	4800.000	ppq_at_item_end	9600.000	notes	0,0,0,960.000,1920.000,0,60,96;1,0,0,2880.000,3840.000,0,64,108	selected	1	state_change_delta	0	undo_label	Nudge items
+native_dialog_screenshot	item-nudge-midi-stepped-boundary-native-before.png; actual REAPER 7.82 1280x900 capture; Target contents, 250 milliseconds, Snap off; sha256 3f2df4661dcb2d532d25283cede88d9f1bca83efa9227cc39a8c7dc2bc6ed4ee
+native_after_right_screenshot	item-nudge-midi-stepped-boundary-native-after-right.png; actual REAPER 7.82 1280x900 desktop capture; sha256 77ea9e0e778bfd208d7d1be19c31c439fe13438331c01621195a7b2ad6785b60
+native_after_left_screenshot	item-nudge-midi-stepped-boundary-native-after-left.png; actual REAPER 7.82 1280x900 desktop capture; sha256 8b5f52ab52002ecbc9463e2c9a96ba0ec1fabde766c9df3a5e18ac66dd33f36e

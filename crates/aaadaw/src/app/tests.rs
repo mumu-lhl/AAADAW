@@ -773,13 +773,13 @@ fn item_nudge_midi_contents_matches_reaper_when_snap_to_unit_is_enabled() {
 }
 
 #[test]
-fn item_nudge_midi_contents_converts_time_using_the_item_tempo_map_position() {
+fn item_nudge_midi_contents_matches_native_stepped_tempo_boundary() {
     use super::item_nudge::Target;
 
     let mut app = App::default();
     app.project
         .apply(DawAction::SetTempo {
-            start_tick: 960,
+            start_tick: 3_840,
             bpm: 60.0,
         })
         .unwrap();
@@ -788,7 +788,7 @@ fn item_nudge_midi_contents_converts_time_using_the_item_tempo_map_position() {
     app.project
         .apply(DawAction::InsertMidiItem {
             track_id: midi_track,
-            start_tick: 960,
+            start_tick: 3_840,
             length_ticks: 4_800,
         })
         .unwrap();
@@ -800,7 +800,14 @@ fn item_nudge_midi_contents_converts_time_using_the_item_tempo_map_position() {
 
     let _ = app.update(Message::NudgeSelectedItems(1));
 
-    assert_eq!(app.project.midi_items()[0].source_offset_ticks(), 4_560);
+    assert_eq!(app.project.midi_items()[0].start_tick(), 3_840);
+    assert_eq!(app.project.midi_items()[0].length_ticks(), 4_800);
+    assert_eq!(app.project.midi_items()[0].source_offset_ticks(), 4_320);
+    assert!(app.item_nudge_dialog.error.is_none());
+
+    let _ = app.update(Message::NudgeSelectedItems(-1));
+
+    assert_eq!(app.project.midi_items()[0].source_offset_ticks(), 0);
     assert!(app.item_nudge_dialog.error.is_none());
 }
 
@@ -835,6 +842,61 @@ fn item_nudge_midi_contents_uses_tempo_at_item_start_across_tempo_change() {
     assert_eq!(app.project.midi_items()[0].start_tick(), 7_488);
     assert_eq!(app.project.midi_items()[0].length_ticks(), 4_896);
     assert_eq!(app.project.midi_items()[0].source_offset_ticks(), 4_416);
+    assert!(app.item_nudge_dialog.error.is_none());
+}
+
+#[test]
+fn item_nudge_midi_contents_matches_native_linear_tempo_phase() {
+    use super::item_nudge::Target;
+
+    let mut app = App::default();
+    app.project
+        .apply(DawAction::SetTempo {
+            start_tick: 7_680,
+            bpm: 60.0,
+        })
+        .unwrap();
+    app.project
+        .apply(DawAction::SetTempoCurve {
+            start_tick: 0,
+            curve: aaadaw_core::TempoCurve::Linear,
+        })
+        .unwrap();
+    let sample_rate = app.project.settings().sample_rate();
+    let sample_at = |seconds: f64| (seconds * f64::from(sample_rate)).round() as u64;
+    let start_tick = app.project.tick_at_sample(sample_at(3.9)).unwrap();
+    let end_tick = app.project.tick_at_sample(sample_at(8.9)).unwrap();
+    let length_ticks = end_tick - start_tick;
+    let _ = app.update(Message::AddTrack);
+    let midi_track = app.project.tracks()[0].id();
+    app.project
+        .apply(DawAction::InsertMidiItem {
+            track_id: midi_track,
+            start_tick,
+            length_ticks,
+        })
+        .unwrap();
+    let midi_id = app.project.midi_items()[0].id();
+    let source_loop_length = app.project.midi_items()[0].source_loop_length_ticks();
+    app.timeline.rebuild(&app.project);
+    app.timeline.select_items(vec![(midi_id, midi_track)]);
+    let _ = app.update(Message::ItemNudgeTargetChanged(Target::Contents));
+    let _ = app.update(Message::ItemNudgeValueChanged("250".to_owned()));
+
+    let _ = app.update(Message::NudgeSelectedItems(1));
+
+    assert_eq!(app.project.midi_items()[0].start_tick(), start_tick);
+    assert_eq!(app.project.midi_items()[0].length_ticks(), length_ticks);
+    assert_eq!(source_loop_length, 4_974);
+    // REAPER reports 4537.985 PPQ; this project stores an integer 4974-tick loop.
+    let source_phase = app.project.midi_items()[0].source_offset_ticks();
+    assert_eq!(source_phase, 4_531);
+    assert!((source_phase as f64 - 4_537.985).abs() < 8.0);
+    assert!(app.item_nudge_dialog.error.is_none());
+
+    let _ = app.update(Message::NudgeSelectedItems(-1));
+
+    assert_eq!(app.project.midi_items()[0].source_offset_ticks(), 0);
     assert!(app.item_nudge_dialog.error.is_none());
 }
 

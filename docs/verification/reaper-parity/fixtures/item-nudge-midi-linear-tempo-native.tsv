@@ -1,0 +1,14 @@
+version	7.82/linux-x86_64
+theme	Default_7.0.ReaperThemeZip
+tempo_map	120 BPM at project start; linear to 60 BPM at measure 3 (5.333333 seconds)
+tempo_marker	0	time_s	0.000000000	measure	0	beat	0.000000	bpm	120.000000	meter	4/4	linear	1
+tempo_marker	1	time_s	5.333333333	measure	2	beat	0.000000	bpm	60.000000	meter	4/4	linear	0
+probe	MIDI loop item from 3.900 to 8.900 seconds starts inside the 0.000-to-5.333333-second linear tempo ramp; 250 ms Nudge remains inside that ramp
+nudge	Target contents; 250 milliseconds; Snap off; set in the actual Nudge/Set dialog
+actions	41249 right; 41250 left
+before	position_s	3.900000000	length_s	5.000000000	loop_source	1	source_offset_s	0.000000000	ppq_at_item_start	0.000	ppq_at_item_plus_250ms	298.875	ppq_at_item_end	4984.900	notes	0,0,0,960.000,1920.000,0,60,96;1,0,0,2880.000,3840.000,0,64,108	selected	1	state_change_delta	0	undo_label	<empty>
+after_right	position_s	3.900000000	length_s	5.000000000	loop_source	1	source_offset_s	3.041994609	ppq_at_item_start	4537.985	ppq_at_item_plus_250ms	4836.860	ppq_at_item_end	9522.885	notes	0,0,0,960.000,1920.000,0,60,96;1,0,0,2880.000,3840.000,0,64,108	selected	1	state_change_delta	0	undo_label	Change media item selection
+after_left	position_s	3.900000000	length_s	5.000000000	loop_source	1	source_offset_s	3.291994609	ppq_at_item_start	4985.000	ppq_at_item_plus_250ms	5283.875	ppq_at_item_end	9969.900	notes	0,0,0,960.000,1920.000,0,60,96;1,0,0,2880.000,3840.000,0,64,108	selected	1	state_change_delta	0	undo_label	Nudge items
+scope	One 250 ms MIDI Contents Nudge inside one 120-to-60 BPM linear ramp, Snap off; other units, curves and Set behavior remain untested
+native_dialog_screenshot	item-nudge-midi-linear-tempo-native-before.png; actual REAPER 7.82 1280x900 desktop capture; sha256 505e71bcade2ca9f9aed77c5872b8c5ea0f6c7f564d7f5f3eaf0ac88914a4b07
+native_after_right_screenshot	item-nudge-midi-linear-tempo-native-after-right.png; actual REAPER 7.82 1280x900 desktop capture; sha256 185a0aee70f79971b39a93c38160c19342830fb1db2e9f6d3c36ad87559b7417

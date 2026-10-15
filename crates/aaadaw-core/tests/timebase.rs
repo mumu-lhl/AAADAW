@@ -304,6 +304,60 @@ fn linear_tempo_ramps_integrate_and_invert_positions() {
 }
 
 #[test]
+fn midi_source_phase_nudge_round_trips_through_a_linear_tempo_map() {
+    let mut project = Project::new();
+    project
+        .apply(DawAction::SetTempo {
+            start_tick: 7_680,
+            bpm: 60.0,
+        })
+        .unwrap();
+    project
+        .apply(DawAction::SetTempoCurve {
+            start_tick: 0,
+            curve: TempoCurve::Linear,
+        })
+        .unwrap();
+
+    let sample_rate = project.settings().sample_rate();
+    let sample_at = |seconds: f64| (seconds * f64::from(sample_rate)).round() as u64;
+    let start_tick = project.tick_at_sample(sample_at(3.9)).unwrap();
+    let end_tick = project.tick_at_sample(sample_at(8.9)).unwrap();
+    let source_loop_length = end_tick - start_tick;
+    let loop_duration_samples = project
+        .midi_source_offset_samples(start_tick, source_loop_length)
+        .unwrap();
+    let right_nudge_offset = loop_duration_samples - f64::from(sample_rate) * 0.25;
+    let source_phase = project
+        .midi_source_phase_at_offset_samples(start_tick, source_loop_length, right_nudge_offset)
+        .unwrap();
+
+    assert_eq!(start_tick, 5_927);
+    assert_eq!(source_loop_length, 4_974);
+    assert!((source_phase as f64 - 4_537.985).abs() < 10.0);
+
+    let left_nudge_phase = project
+        .midi_source_phase_at_offset_samples(start_tick, source_loop_length, loop_duration_samples)
+        .unwrap();
+    assert_eq!(left_nudge_phase, 0);
+}
+
+#[test]
+fn midi_source_phase_mapping_round_trips_before_project_start() {
+    let project = Project::new();
+    let sample_rate = f64::from(project.settings().sample_rate());
+    let source_offset = project.midi_source_offset_samples(960, 4_560).unwrap();
+
+    assert!((source_offset / sample_rate - 2.375).abs() < 1.0e-9);
+    assert_eq!(
+        project
+            .midi_source_phase_at_offset_samples(960, 4_800, source_offset)
+            .unwrap(),
+        4_560
+    );
+}
+
+#[test]
 fn curved_tempo_ramps_keep_bpm_and_tick_sample_conversion_consistent() {
     for curve in [TempoCurve::Logarithmic, TempoCurve::Bézier] {
         for end_bpm in [60.0, 120.0, 180.0] {

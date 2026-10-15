@@ -844,45 +844,47 @@ impl App {
         else {
             return Err("Contents nudge is outside the supported range".to_owned());
         };
-        let settings = self.project.settings();
+        if sample_delta > (1_u64 << 53) {
+            return Err("Contents nudge is outside the supported range".to_owned());
+        }
         let mut actions = Vec::with_capacity(items.len());
         for item in items {
             let source_loop_length = item.source_loop_length_ticks();
             if !item.is_loop_source() || source_loop_length == 0 {
                 return Err("MIDI Contents nudge requires a valid loop source".to_owned());
             }
-            let start_sample = self
-                .project
-                .sample_at_tick(item.start_tick())
-                .map_err(|error| error.to_string())?;
-            let Some(target_sample) = start_sample.checked_add(sample_delta) else {
-                return Err("Contents nudge is outside the supported range".to_owned());
-            };
-            if target_sample > (1_u64 << 53) {
-                return Err("Contents nudge is outside the supported range".to_owned());
-            }
-            let ticks_per_sample = self.project.tempo_at_tick(item.start_tick())
-                * settings.bpm_basis().quarter_notes_per_beat()
-                * f64::from(settings.ppq())
-                / (60.0 * f64::from(settings.sample_rate()));
-            let tick_delta = (sample_delta as f64 * ticks_per_sample).round();
-            if !tick_delta.is_finite() || tick_delta > u64::MAX as f64 {
-                return Err("Contents nudge is outside the supported range".to_owned());
-            }
-            let tick_delta = tick_delta as u64;
-            let source_delta = if delta_samples > 0 {
-                -i128::from(tick_delta)
+            let current_phase = item.source_offset_ticks() % source_loop_length;
+            let signed_delta_samples = if delta_samples > 0 {
+                -(sample_delta as f64)
+            } else if delta_samples < 0 {
+                sample_delta as f64
             } else {
-                i128::from(tick_delta)
+                0.0
             };
-            let Some(source_offset_ticks) = wrapped_source_sample(
-                item.source_offset_ticks() % source_loop_length,
-                0,
-                source_loop_length,
-                source_delta,
-            ) else {
-                return Err("MIDI Contents nudge is outside the supported range".to_owned());
-            };
+            let current_offset_samples = self
+                .project
+                .midi_source_offset_samples(item.start_tick(), current_phase)
+                .map_err(|error| error.to_string())?;
+            let source_loop_samples = self
+                .project
+                .midi_source_offset_samples(item.start_tick(), source_loop_length)
+                .map_err(|error| error.to_string())?;
+            if !source_loop_samples.is_finite()
+                || source_loop_samples <= 0.0
+                || source_loop_samples > (1_u64 << 53) as f64
+            {
+                return Err("Contents nudge is outside the supported range".to_owned());
+            }
+            let source_offset_samples =
+                (current_offset_samples + signed_delta_samples).rem_euclid(source_loop_samples);
+            let source_offset_ticks = self
+                .project
+                .midi_source_phase_at_offset_samples(
+                    item.start_tick(),
+                    source_loop_length,
+                    source_offset_samples,
+                )
+                .map_err(|error| error.to_string())?;
             if source_offset_ticks != item.source_offset_ticks() {
                 actions.push(DawAction::EditMidiItemPlacement {
                     item_id: item.id(),
