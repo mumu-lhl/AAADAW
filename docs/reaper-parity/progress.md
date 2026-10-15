@@ -566,9 +566,9 @@ Action List Run 回归验证 Audio/MIDI item selection 清空、时间范围/轨
 
 ### 2026-10-13 Main action 41115：Invert selection
 
-动作目录确认 Main 41115 `Item: Invert selection` 无默认快捷键。AAADAW 注册 `item.invert-selection`，Action List Run 反转整个工程的 Audio/MIDI item 选择集合，按轨道及 item 顺序更新活动项，不改变工程修订或 Undo/Redo。没有 items 时禁用。
+动作目录确认 Main 41115 `Item: Invert selection` 无默认快捷键。AAADAW 注册 `item.invert-selection`，Action List Run 反转整个工程的 Audio/MIDI item 选择集合。隔离 REAPER 7.82 / Default 7 探针确认空选择选中全部、部分选择取补集、全选清空，光标和轨道选择不变；每次选择改变均增加工程状态计数并建立 `Invert item selection` Undo 条目。AAADAW 在应用级 Undo/Redo 中保存选择状态，内容修订与 Project 内容 Undo 栈不变。
 
-新增 `invert_item_selection_action_selects_the_complement_of_audio_and_midi_items` 覆盖 Action List 搜索/Run、跨轨 Audio/MIDI 混合集合、重复执行恢复原选择和工程历史不变；Stable `aaadaw` 全套及 nightly+Cranelift nextest 均为 513/513 通过，strict Clippy `-D warnings`、fmt、diff 和 parity CSV 81 项/15 列唯一 ID/证据路径检查均通过。Cranelift 保留既有 iced/wgpu `TimelinePipeline: MaybeSync` recursion-depth warning，Stable Clippy 无警告。`ITEM-SELECT-009` 保持 `in_progress`：原厂空/部分选择启用边界、活动 item 细节和实窗焦点尚未探测。
+`invert_item_selection_action_selects_the_complement_of_audio_and_midi_items` 现在覆盖空/全/部分选择、Action List Run、撤销和重做。原厂 Action List 可用状态、活动 item 规则及实窗焦点仍待测，`ITEM-SELECT-009` 保持 `in_progress`；原厂逐项数据与探针见 `docs/verification/reaper-parity/fixtures/item-invert-selection-native.tsv` 和 `scripts/reaper_parity/probe-item-invert-selection.lua`。
 
 ### 2026-10-13 Main actions 41127/41128：相邻非重叠 item 选择
 

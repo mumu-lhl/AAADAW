@@ -14167,8 +14167,6 @@ fn invert_item_selection_action_selects_the_complement_of_audio_and_midi_items()
         .map(|item| item.id())
         .collect::<Vec<_>>();
     app.timeline.rebuild(&app.project);
-    app.timeline.selected_item = Some(audio_id);
-    app.timeline.selected_items.insert(audio_id);
 
     let command = CommandId::InvertItemSelection;
     assert!(commands::is_enabled(&app, command));
@@ -14191,6 +14189,27 @@ fn invert_item_selection_action_selects_the_complement_of_audio_and_midi_items()
     let can_redo_before = app.project.can_redo();
 
     let _ = app.update(Message::ExecuteCommand(command));
+    let all_items = std::iter::once(audio_id)
+        .chain(midi_ids.iter().copied())
+        .collect::<HashSet<_>>();
+    assert_eq!(app.timeline.selected_items, all_items);
+    assert_eq!(app.timeline.selected_item, midi_ids.last().copied());
+    assert_eq!(app.revision, revision_before);
+    assert_eq!(app.project.can_undo(), can_undo_before);
+    assert_eq!(app.project.can_redo(), can_redo_before);
+
+    let _ = app.update(Message::Undo);
+    assert!(app.timeline.selected_items.is_empty());
+    assert_eq!(app.timeline.selected_item, None);
+    let _ = app.update(Message::Redo);
+    assert_eq!(app.timeline.selected_items, all_items);
+    assert_eq!(app.timeline.selected_item, midi_ids.last().copied());
+
+    app.timeline.selected_items.clear();
+    app.timeline.selected_items.insert(audio_id);
+    app.timeline.selected_item = Some(audio_id);
+    app.action_list.select("item.invert-selection".to_owned());
+    let _ = app.update(Message::ActionListRun(false));
 
     assert_eq!(
         app.timeline.selected_items,
@@ -14201,19 +14220,16 @@ fn invert_item_selection_action_selects_the_complement_of_audio_and_midi_items()
     assert_eq!(app.project.can_undo(), can_undo_before);
     assert_eq!(app.project.can_redo(), can_redo_before);
 
-    app.timeline.selected_items.clear();
-    app.timeline.selected_items.insert(audio_id);
-    app.timeline.selected_item = Some(audio_id);
-    app.action_list.select("item.invert-selection".to_owned());
-    let _ = app.update(Message::ActionListRun(false));
+    let _ = app.update(Message::Undo);
+    assert_eq!(app.timeline.selected_items, HashSet::from([audio_id]));
+    assert_eq!(app.timeline.selected_item, Some(audio_id));
+    let _ = app.update(Message::Redo);
     assert_eq!(
         app.timeline.selected_items,
         midi_ids.iter().copied().collect::<HashSet<_>>()
     );
-    assert_eq!(
-        app.timeline.selected_item,
-        Some(midi_ids.last().copied().unwrap())
-    );
+    assert_eq!(app.timeline.selected_item, midi_ids.last().copied());
+
     let _ = app.update(Message::ExecuteCommand(command));
     assert_eq!(app.timeline.selected_items, HashSet::from([audio_id]));
     assert_eq!(app.timeline.selected_item, Some(audio_id));
