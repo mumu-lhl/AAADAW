@@ -505,7 +505,6 @@ struct App {
     offline_job_history: VecDeque<String>,
     offline_jobs_panel_open: bool,
     transport_details_open: bool,
-    #[cfg(feature = "audio-device")]
     repeat_enabled: bool,
     #[cfg(feature = "audio-device")]
     repeat_reconfiguration_previous: Option<(bool, bool)>,
@@ -1354,7 +1353,10 @@ impl App {
             }
         }
         match loop_time_preferences::load() {
-            Ok(preferences) => app.timeline.loop_points_linked = preferences.linked,
+            Ok(preferences) => {
+                app.timeline.loop_points_linked = preferences.linked;
+                app.repeat_enabled = preferences.repeat_enabled;
+            }
             Err(error) => {
                 app.status = format!("Loop/time selection preferences unavailable: {error}");
             }
@@ -6845,6 +6847,7 @@ impl App {
         }
         let previous = self.repeat_enabled;
         self.repeat_enabled = !previous;
+        self.schedule_loop_time_preferences_save();
         if self.playback.is_some() {
             self.repeat_reconfiguration_previous = Some((previous, false));
             let task = self.prepare_playback(self.playhead_sample, self.playback_playing);
@@ -6873,6 +6876,7 @@ impl App {
             self.pause_playback();
         }
         self.repeat_enabled = previous_enabled;
+        self.schedule_loop_time_preferences_save();
         self.playback_graph_dirty = loop_points_changed;
         self.status = format!("Repeat change was not applied; playback paused: {reason}");
     }

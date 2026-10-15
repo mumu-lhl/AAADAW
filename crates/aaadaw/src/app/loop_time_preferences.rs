@@ -8,6 +8,7 @@ use std::time::{Duration, Instant};
 pub(super) struct LoopTimePreferences {
     version: u32,
     pub(super) linked: bool,
+    pub(super) repeat_enabled: bool,
 }
 
 impl Default for LoopTimePreferences {
@@ -15,6 +16,7 @@ impl Default for LoopTimePreferences {
         Self {
             version: 1,
             linked: true,
+            repeat_enabled: false,
         }
     }
 }
@@ -67,6 +69,7 @@ impl App {
         }
         let preferences = LoopTimePreferences {
             linked: self.timeline.loop_points_linked,
+            repeat_enabled: self.repeat_enabled,
             ..Default::default()
         };
         let result = config_paths::config_file_path("loop-time-preferences.json")
@@ -90,10 +93,20 @@ mod tests {
 
         let preferences = LoopTimePreferences {
             linked: false,
+            repeat_enabled: true,
             ..Default::default()
         };
         save_path(&path, preferences).unwrap();
         assert_eq!(load_path(&path).unwrap(), preferences);
+
+        std::fs::write(&path, r#"{"version":1,"linked":false}"#).unwrap();
+        assert_eq!(
+            load_path(&path).unwrap(),
+            LoopTimePreferences {
+                linked: false,
+                ..Default::default()
+            }
+        );
 
         std::fs::write(&path, r#"{"version":2,"linked":true}"#).unwrap();
         assert!(load_path(&path).is_err());

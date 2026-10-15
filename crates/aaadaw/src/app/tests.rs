@@ -5067,9 +5067,11 @@ fn repeat_action_uses_reaper_default_key_and_toggles_transport_state() {
     let revision = app.revision;
     let _ = app.update(Message::ExecuteCommand(command));
     assert!(app.repeat_enabled);
+    assert!(app.loop_time_preferences_save_at.is_some());
     assert_eq!(commands::toggle_state(&app, command), Some(true));
     let _ = app.update(Message::ExecuteCommand(command));
     assert!(!app.repeat_enabled);
+    assert!(app.loop_time_preferences_save_at.is_some());
     assert_eq!(commands::toggle_state(&app, command), Some(false));
     assert_eq!(app.revision, revision);
 }
