@@ -992,36 +992,47 @@ fn item_nudge_set_boundary_snap_rounds_the_absolute_edge_target() {
 }
 
 #[test]
-fn item_nudge_set_right_edge_targets_anchor_the_last_selected_item() {
+fn item_nudge_set_edge_targets_apply_absolute_edges_to_staggered_selection() {
     use super::item_nudge::Target;
 
     let cases = [
         (
+            Target::LeftTrim,
+            "0:04.000",
+            false,
+            (192_000, 384_000, 88_200),
+            (192_000, 576_000, 88_200),
+        ),
+        (
             Target::LeftEdge,
             "0:04.000",
-            192_000,
-            384_000,
-            384_000,
-            384_000,
+            false,
+            (192_000, 384_000, 0),
+            (192_000, 576_000, 0),
         ),
         (
             Target::EndPosition,
             "0:14.000",
-            0,
-            480_000,
-            192_000,
-            480_000,
+            false,
+            (192_000, 480_000, 0),
+            (192_000, 480_000, 0),
         ),
         (
             Target::RightTrim,
-            "0:18.000",
-            96_000,
-            576_000,
-            288_000,
-            576_000,
+            "0:14.000",
+            false,
+            (96_000, 576_000, 0),
+            (288_000, 384_000, 0),
+        ),
+        (
+            Target::EndPosition,
+            "0:14.000",
+            true,
+            (0, 480_000, 0),
+            (192_000, 480_000, 0),
         ),
     ];
-    for (target, value, first_start, first_length, last_start, last_length) in cases {
+    for (target, value, relative_set, first, last) in cases {
         let (mut app, project_path) = item_nudge_set_edge_test_app();
         let track_id = app.project.tracks()[0].id();
         let media_ref = app.project.audio_items()[0].media_ref().to_owned();
@@ -1042,15 +1053,31 @@ fn item_nudge_set_right_edge_targets_anchor_the_last_selected_item() {
             .select_items(vec![(first_id, track_id), (last_id, track_id)]);
         let _ = app.update(Message::ItemNudgeModeChanged(super::item_nudge::Mode::Set));
         let _ = app.update(Message::ItemNudgeTargetChanged(target));
+        if relative_set {
+            let _ = app.update(Message::ItemNudgeRelativeSetChanged(true));
+        }
         let _ = app.update(Message::ItemNudgeValueChanged(value.to_owned()));
 
         let _ = app.update(Message::ApplyItemNudgeSet);
 
         assert!(app.item_nudge_dialog.error.is_none(), "target: {target}");
-        assert_eq!(app.project.audio_items()[0].start_sample(), first_start);
-        assert_eq!(app.project.audio_items()[0].length_samples(), first_length);
-        assert_eq!(app.project.audio_items()[1].start_sample(), last_start);
-        assert_eq!(app.project.audio_items()[1].length_samples(), last_length);
+        assert_eq!(
+            (
+                app.project.audio_items()[0].start_sample(),
+                app.project.audio_items()[0].length_samples(),
+                app.project.audio_items()[0].source_offset_samples(),
+            ),
+            first
+        );
+        assert_eq!(
+            (
+                app.project.audio_items()[1].start_sample(),
+                app.project.audio_items()[1].length_samples(),
+                app.project.audio_items()[1].source_offset_samples(),
+            ),
+            last
+        );
+        assert_eq!(app.item_nudge_dialog.relative_set, relative_set);
         let edited = app.project.audio_items().to_vec();
         let _ = app.update(Message::Undo);
         assert_eq!(app.project.audio_items(), original, "target: {target}");
@@ -1070,7 +1097,7 @@ fn item_nudge_set_end_position_relative_set_applies_a_delta_from_the_last_edge()
     let _ = app.update(Message::ItemNudgeTargetChanged(Target::EndPosition));
     assert!(!app.item_nudge_dialog.relative_set);
     let _ = app.update(Message::ItemNudgeRelativeSetChanged(true));
-    let _ = app.update(Message::ItemNudgeValueChanged("0:02.000".to_owned()));
+    let _ = app.update(Message::ItemNudgeValueChanged("0:14.000".to_owned()));
 
     let _ = app.update(Message::ApplyItemNudgeSet);
 

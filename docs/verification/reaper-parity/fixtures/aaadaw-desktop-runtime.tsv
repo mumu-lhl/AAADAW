@@ -67,3 +67,5 @@ set_edge_cranelift_binary_smoke	2026-10-15; nightly Cranelift; Build ID c74dcb7c
 set_edge_cranelift_startup_screenshot	aaadaw-desktop-runtime-startup.png; SHA-256 ae7790daa7323931332582152cd05219af623ac5530147835ee56910ba2ebd9b; byte-identical to startup fixture
 set_edge_end_position_live_ui	2026-10-15; Build ID c74dcb7cac16f9824f5ceba6bc586d221e49ff99; Xvfb :102; Item > Nudge/set items...; Set / End Position; Relative Set enabled; xwininfo 528x121; no item selected
 set_edge_end_position_screenshot	aaadaw-set-edge-end-position-relative.png; 1280x800; SHA-256 dc27959111465d888a077fe26ceab2d0e3b8c5077152ae23ec9e53c1f223db26
+set_edge_multiselect_cranelift_binary_smoke	2026-10-15; nightly Cranelift; Build ID 027235a78569b58fbf6072409f0a74d65336d0c3; binary SHA-256 b6f8ce725ab437fab8f212d0d79e5709a4ff0176a8923243fd0e2414a7e319fa; bundled Xvfb :90; WGPU_BACKEND=gl; isolated XDG profile; actual 1280x800 main window visible
+set_edge_multiselect_cranelift_screenshot	aaadaw-set-edge-multiselect-desktop-smoke.png; 1280x800; SHA-256 ae7790daa7323931332582152cd05219af623ac5530147835ee56910ba2ebd9b; pixel-identical to standard startup fixture
