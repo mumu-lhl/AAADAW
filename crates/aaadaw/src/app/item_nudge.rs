@@ -54,6 +54,12 @@ pub(crate) enum Target {
     EditCursor,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MidiEdgeEditMode {
+    Nudge,
+    Set,
+}
+
 impl std::fmt::Display for Target {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter.write_str(match self {
@@ -557,11 +563,12 @@ impl App {
                 &source_rates,
             )
             .and_then(|mut actions| {
-                actions.extend(self.midi_set_edge_actions(
+                actions.extend(self.midi_edge_actions(
                     &midi_items,
                     target,
                     target_sample,
                     relative_delta,
+                    MidiEdgeEditMode::Set,
                 )?);
                 Ok(actions)
             });
@@ -701,12 +708,13 @@ impl App {
         Ok(actions)
     }
 
-    fn midi_set_edge_actions(
+    fn midi_edge_actions(
         &self,
         items: &[&MidiItem],
         target: Target,
         target_sample: u64,
         relative_delta: Option<i128>,
+        mode: MidiEdgeEditMode,
     ) -> Result<Vec<DawAction>, String> {
         const MAX_EXACT: i128 = 1 << 53;
         let mut actions = Vec::with_capacity(items.len());
@@ -751,79 +759,46 @@ impl App {
                         return Err("Left edge would remove the entire MIDI item".to_owned());
                     }
                     let source_offset_ticks = if target == Target::LeftTrim {
-                        let old_offset_samples = self
-                            .project
-                            .midi_source_offset_samples(
-                                item.start_tick(),
-                                item.source_offset_ticks(),
-                            )
-                            .map_err(|error| error.to_string())?;
-                        let mut next_offset_samples = old_offset_samples + edge_delta as f64;
-                        if !next_offset_samples.is_finite() {
-                            return Err(
-                                "MIDI left trim is outside the supported source range".to_owned()
-                            );
-                        }
-                        if item.is_loop_source() {
-                            if next_offset_samples < 0.0 {
-                                // REAPER wraps a MIDI loop's source phase when Set →
-                                // Left Trim extends the left edge before its old start.
-                                let loop_length_samples = self
-                                    .project
-                                    .midi_source_offset_samples(
-                                        next_start_tick,
-                                        item.source_loop_length_ticks(),
-                                    )
-                                    .map_err(|error| error.to_string())?;
-                                if !loop_length_samples.is_finite() || loop_length_samples <= 0.0 {
-                                    return Err("MIDI source loop is outside the supported range"
-                                        .to_owned());
-                                }
-                                next_offset_samples =
-                                    next_offset_samples.rem_euclid(loop_length_samples);
-                            }
-                            self.project
-                                .midi_source_phase_at_offset_samples(
-                                    next_start_tick,
-                                    item.source_loop_length_ticks(),
-                                    next_offset_samples,
-                                )
-                                .map_err(|error| error.to_string())?
-                        } else {
+                        if mode == MidiEdgeEditMode::Nudge && !item.is_loop_source() {
                             let edge_delta_ticks =
                                 i128::from(next_start_tick) - i128::from(item.start_tick());
-                            let desired_source_offset = i128::from(item.source_offset_ticks())
+                            let old_source_offset = i128::from(item.source_offset_ticks());
+                            let desired_source_offset = old_source_offset
                                 .checked_add(edge_delta_ticks)
                                 .ok_or_else(|| {
                                     "MIDI left trim is outside the supported source range"
                                         .to_owned()
                                 })?;
-                            let earliest_event_tick = item
-                                .notes()
-                                .iter()
-                                .map(|note| note.tick())
-                                .chain(item.controllers().iter().map(|controller| controller.tick))
-                                .chain(item.pitch_bends().iter().map(|bend| bend.tick))
-                                .min()
-                                .unwrap_or(0);
-                            // Keep the take phase aligned with the item's edge while keeping
-                            // the non-loop source PPQ nonnegative. REAPER rebases content at
-                            // source zero when the requested phase crosses either boundary.
-                            let content_shift_ticks = if desired_source_offset < 0 {
-                                -desired_source_offset
-                            } else if desired_source_offset > i128::from(earliest_event_tick) {
-                                -i128::from(earliest_event_tick)
+                            let (next_source_offset, content_shift_ticks) = if desired_source_offset
+                                < 0
+                            {
+                                if old_source_offset == 0 {
+                                    (0, -desired_source_offset)
+                                } else {
+                                    // REAPER retains one MIDI tick when Nudge crosses
+                                    // a non-loop source's beginning from a positive offset.
+                                    (1, 1 - desired_source_offset)
+                                }
+                            } else if old_source_offset == 0 && edge_delta_ticks > 0 {
+                                // At source offset zero, REAPER removes only the prefix
+                                // before the earliest event. Any remaining trim advances
+                                // the take offset so events at source zero stay nonnegative.
+                                let earliest_event_tick = item
+                                    .notes()
+                                    .iter()
+                                    .map(|note| note.tick())
+                                    .chain(
+                                        item.controllers().iter().map(|controller| controller.tick),
+                                    )
+                                    .chain(item.pitch_bends().iter().map(|bend| bend.tick))
+                                    .min()
+                                    .unwrap_or(0);
+                                let physical_trim =
+                                    edge_delta_ticks.min(i128::from(earliest_event_tick));
+                                (desired_source_offset - physical_trim, -physical_trim)
                             } else {
-                                0
+                                (desired_source_offset, 0)
                             };
-                            let next_source_offset_ticks = desired_source_offset
-                                .checked_add(content_shift_ticks)
-                                .filter(|offset| (0..=MAX_EXACT).contains(offset))
-                                .and_then(|offset| u64::try_from(offset).ok())
-                                .ok_or_else(|| {
-                                    "MIDI left trim is outside the supported source range"
-                                        .to_owned()
-                                })?;
                             let next_source_length_ticks =
                                 i128::from(item.source_loop_length_ticks())
                                     .checked_add(content_shift_ticks)
@@ -833,6 +808,13 @@ impl App {
                                         "MIDI left trim is outside the supported source range"
                                             .to_owned()
                                     })?;
+                            let next_source_offset = u64::try_from(next_source_offset)
+                                .ok()
+                                .filter(|offset| *offset <= MAX_EXACT as u64)
+                                .ok_or_else(|| {
+                                    "MIDI left trim is outside the supported source range"
+                                        .to_owned()
+                                })?;
                             let content_shift_ticks =
                                 i64::try_from(content_shift_ticks).map_err(|_| {
                                     "MIDI left trim is outside the supported source range"
@@ -840,12 +822,114 @@ impl App {
                                 })?;
                             if content_shift_ticks != 0 {
                                 midi_contents_edit = Some((
-                                    next_source_offset_ticks,
+                                    next_source_offset,
                                     next_source_length_ticks,
                                     content_shift_ticks,
                                 ));
                             }
-                            next_source_offset_ticks
+                            next_source_offset
+                        } else {
+                            let old_offset_samples = self
+                                .project
+                                .midi_source_offset_samples(
+                                    item.start_tick(),
+                                    item.source_offset_ticks(),
+                                )
+                                .map_err(|error| error.to_string())?;
+                            let mut next_offset_samples = old_offset_samples + edge_delta as f64;
+                            if !next_offset_samples.is_finite() {
+                                return Err("MIDI left trim is outside the supported source range"
+                                    .to_owned());
+                            }
+                            if item.is_loop_source() {
+                                if next_offset_samples < 0.0 {
+                                    // REAPER wraps a MIDI loop's source phase when Set →
+                                    // Left Trim extends the left edge before its old start.
+                                    let loop_length_samples = self
+                                        .project
+                                        .midi_source_offset_samples(
+                                            next_start_tick,
+                                            item.source_loop_length_ticks(),
+                                        )
+                                        .map_err(|error| error.to_string())?;
+                                    if !loop_length_samples.is_finite()
+                                        || loop_length_samples <= 0.0
+                                    {
+                                        return Err(
+                                            "MIDI source loop is outside the supported range"
+                                                .to_owned(),
+                                        );
+                                    }
+                                    next_offset_samples =
+                                        next_offset_samples.rem_euclid(loop_length_samples);
+                                }
+                                self.project
+                                    .midi_source_phase_at_offset_samples(
+                                        next_start_tick,
+                                        item.source_loop_length_ticks(),
+                                        next_offset_samples,
+                                    )
+                                    .map_err(|error| error.to_string())?
+                            } else {
+                                let edge_delta_ticks =
+                                    i128::from(next_start_tick) - i128::from(item.start_tick());
+                                let desired_source_offset = i128::from(item.source_offset_ticks())
+                                    .checked_add(edge_delta_ticks)
+                                    .ok_or_else(|| {
+                                        "MIDI left trim is outside the supported source range"
+                                            .to_owned()
+                                    })?;
+                                let earliest_event_tick = item
+                                    .notes()
+                                    .iter()
+                                    .map(|note| note.tick())
+                                    .chain(
+                                        item.controllers().iter().map(|controller| controller.tick),
+                                    )
+                                    .chain(item.pitch_bends().iter().map(|bend| bend.tick))
+                                    .min()
+                                    .unwrap_or(0);
+                                // Keep the take phase aligned with the item's edge while keeping
+                                // the non-loop source PPQ nonnegative. REAPER rebases content at
+                                // source zero when the requested phase crosses either boundary.
+                                let content_shift_ticks = if desired_source_offset < 0 {
+                                    -desired_source_offset
+                                } else if desired_source_offset > i128::from(earliest_event_tick) {
+                                    -i128::from(earliest_event_tick)
+                                } else {
+                                    0
+                                };
+                                let next_source_offset_ticks = desired_source_offset
+                                    .checked_add(content_shift_ticks)
+                                    .filter(|offset| (0..=MAX_EXACT).contains(offset))
+                                    .and_then(|offset| u64::try_from(offset).ok())
+                                    .ok_or_else(|| {
+                                        "MIDI left trim is outside the supported source range"
+                                            .to_owned()
+                                    })?;
+                                let next_source_length_ticks =
+                                    i128::from(item.source_loop_length_ticks())
+                                        .checked_add(content_shift_ticks)
+                                        .filter(|length| (1..=MAX_EXACT).contains(length))
+                                        .and_then(|length| u64::try_from(length).ok())
+                                        .ok_or_else(|| {
+                                            "MIDI left trim is outside the supported source range"
+                                                .to_owned()
+                                        })?;
+                                let content_shift_ticks = i64::try_from(content_shift_ticks)
+                                    .map_err(|_| {
+                                        "MIDI left trim is outside the supported source range"
+                                            .to_owned()
+                                    })?;
+                                if content_shift_ticks != 0 {
+                                    midi_contents_edit = Some((
+                                        next_source_offset_ticks,
+                                        next_source_length_ticks,
+                                        content_shift_ticks,
+                                    ));
+                                }
+                                next_source_offset_ticks
+                            }
                         }
                     } else {
                         item.source_offset_ticks()
@@ -1454,11 +1538,12 @@ impl App {
                 }
                 _ => unreachable!("only edge targets reach this method"),
             };
-            let item_actions = match self.midi_set_edge_actions(
+            let item_actions = match self.midi_edge_actions(
                 &[item],
                 self.item_nudge_dialog.target,
                 target_sample,
                 relative_delta,
+                MidiEdgeEditMode::Nudge,
             ) {
                 Ok(actions) => actions,
                 Err(error) => {

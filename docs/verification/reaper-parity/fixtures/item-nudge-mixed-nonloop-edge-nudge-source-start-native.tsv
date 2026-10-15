@@ -1,0 +1,10 @@
+version	7.82/linux-x86_64
+theme	Default_7.0.ReaperThemeZip
+dialog_action	41226
+fixture	non-loop Audio at 2s and non-loop MIDI at 6s; each 10s; MIDI source offset 0.0s; source-start events enabled; source-length API units are seconds for Audio and QN for MIDI; note, CC, and pitch bend
+baseline	state_change_count	2	state_change_delta	0	item_count	2	undo_label	Mixed non-loop Nudge edge probe setup
+baseline_item	0	type	audio	position_s	2.000000000	length_s	10.000000000	loop_source	0	source_offset_s	0.000000000	source_length_native_units	4.000000000	selected	1	notes		controllers		midi_counts	none
+baseline_item	1	type	midi	position_s	6.000000000	length_s	10.000000000	loop_source	0	source_offset_s	0.000000000	source_length_native_units	20.000000000	selected	1	notes	0,0,0,0.000,960.000,0,60,96	controllers	0,0,0,0.000,176,0,1,80;1,0,0,240.000,224,0,0,80	midi_counts	1	2	0
+left_trim_right_250ms_source_start	state_change_count	3	state_change_delta	1	item_count	2	undo_label	Nudge items
+left_trim_right_250ms_source_start_item	0	type	audio	position_s	2.250000000	length_s	9.750000000	loop_source	0	source_offset_s	0.250000000	source_length_native_units	4.000000000	selected	1	notes		controllers		midi_counts	none
+left_trim_right_250ms_source_start_item	1	type	midi	position_s	6.250000000	length_s	9.750000000	loop_source	0	source_offset_s	0.250000000	source_length_native_units	20.000000000	selected	1	notes	0,0,0,0.000,960.000,0,60,96	controllers	0,0,0,0.000,176,0,1,80;1,0,0,240.000,224,0,0,80	midi_counts	1	2	0

@@ -1,0 +1,37 @@
+version	7.82/linux-x86_64
+theme	Default_7.0.ReaperThemeZip
+dialog_action	41226
+fixture	non-loop Audio at 2s and non-loop MIDI at 6s; each 10s; source-length API units are seconds for Audio and QN for MIDI; note, CC, and pitch bend
+baseline	state_change_count	2	state_change_delta	0	item_count	2	undo_label	Mixed Set edge probe setup
+baseline_item	0	type	audio	position_s	2.000000000	length_s	10.000000000	loop_source	0	source_offset_s	0.000000000	source_length_native_units	4.000000000	selected	1	notes		controllers		midi_counts	none
+baseline_item	1	type	midi	position_s	6.000000000	length_s	10.000000000	loop_source	0	source_offset_s	0.000000000	source_length_native_units	20.000000000	selected	1	notes	0,0,0,960.000,1920.000,0,60,96	controllers	0,0,0,2880.000,176,0,1,80;1,0,0,3840.000,224,0,0,80	midi_counts	1	2	0
+left_trim_right_250ms_after	state_change_count	2	state_change_delta	0	item_count	2	undo_label	Mixed Set edge probe setup
+left_trim_right_250ms_after_item	0	type	audio	position_s	2.000000000	length_s	10.000000000	loop_source	0	source_offset_s	0.000000000	source_length_native_units	4.000000000	selected	1	notes		controllers		midi_counts	none
+left_trim_right_250ms_after_item	1	type	midi	position_s	6.000000000	length_s	10.000000000	loop_source	0	source_offset_s	0.000000000	source_length_native_units	20.000000000	selected	1	notes	0,0,0,960.000,1920.000,0,60,96	controllers	0,0,0,2880.000,176,0,1,80;1,0,0,3840.000,224,0,0,80	midi_counts	1	2	0
+left_trim_right_250ms_after	state_change_count	2	state_change_delta	0	item_count	2	undo_label	Mixed Set edge probe setup
+left_trim_right_250ms_after_item	0	type	audio	position_s	2.250000000	length_s	9.750000000	loop_source	0	source_offset_s	0.250000000	source_length_native_units	4.000000000	selected	1	notes		controllers		midi_counts	none
+left_trim_right_250ms_after_item	1	type	midi	position_s	6.250000000	length_s	9.750000000	loop_source	0	source_offset_s	0.000000000	source_length_native_units	19.500000000	selected	1	notes	0,0,0,480.000,1440.000,0,60,96	controllers	0,0,0,2400.000,176,0,1,80;1,0,0,3360.000,224,0,0,80	midi_counts	1	2	0
+left_trim_left_250ms_restore	state_change_count	3	state_change_delta	1	item_count	2	undo_label	Nudge items
+left_trim_left_250ms_restore_item	0	type	audio	position_s	2.000000000	length_s	10.000000000	loop_source	0	source_offset_s	0.000000000	source_length_native_units	4.000000000	selected	1	notes		controllers		midi_counts	none
+left_trim_left_250ms_restore_item	1	type	midi	position_s	6.000000000	length_s	10.000000000	loop_source	0	source_offset_s	0.000000000	source_length_native_units	20.000000000	selected	1	notes	0,0,0,960.000,1920.000,0,60,96	controllers	0,0,0,2880.000,176,0,1,80;1,0,0,3840.000,224,0,0,80	midi_counts	1	2	0
+left_edge_right_250ms_after	state_change_count	4	state_change_delta	2	item_count	2	undo_label	Nudge items
+left_edge_right_250ms_after_item	0	type	audio	position_s	2.250000000	length_s	9.750000000	loop_source	0	source_offset_s	0.000000000	source_length_native_units	4.000000000	selected	1	notes		controllers		midi_counts	none
+left_edge_right_250ms_after_item	1	type	midi	position_s	6.250000000	length_s	9.750000000	loop_source	0	source_offset_s	0.000000000	source_length_native_units	20.000000000	selected	1	notes	0,0,0,960.000,1920.000,0,60,96	controllers	0,0,0,2880.000,176,0,1,80;1,0,0,3840.000,224,0,0,80	midi_counts	1	2	0
+left_edge_left_250ms_restore	state_change_count	5	state_change_delta	3	item_count	2	undo_label	Nudge items
+left_edge_left_250ms_restore_item	0	type	audio	position_s	2.000000000	length_s	10.000000000	loop_source	0	source_offset_s	0.000000000	source_length_native_units	4.000000000	selected	1	notes		controllers		midi_counts	none
+left_edge_left_250ms_restore_item	1	type	midi	position_s	6.000000000	length_s	10.000000000	loop_source	0	source_offset_s	0.000000000	source_length_native_units	20.000000000	selected	1	notes	0,0,0,960.000,1920.000,0,60,96	controllers	0,0,0,2880.000,176,0,1,80;1,0,0,3840.000,224,0,0,80	midi_counts	1	2	0
+end_position_right_250ms_after	state_change_count	6	state_change_delta	4	item_count	2	undo_label	Nudge items
+end_position_right_250ms_after_item	0	type	audio	position_s	2.250000000	length_s	10.000000000	loop_source	0	source_offset_s	0.000000000	source_length_native_units	4.000000000	selected	1	notes		controllers		midi_counts	none
+end_position_right_250ms_after_item	1	type	midi	position_s	6.250000000	length_s	10.000000000	loop_source	0	source_offset_s	0.000000000	source_length_native_units	20.000000000	selected	1	notes	0,0,0,960.000,1920.000,0,60,96	controllers	0,0,0,2880.000,176,0,1,80;1,0,0,3840.000,224,0,0,80	midi_counts	1	2	0
+end_position_left_250ms_restore	state_change_count	7	state_change_delta	5	item_count	2	undo_label	Nudge items
+end_position_left_250ms_restore_item	0	type	audio	position_s	2.000000000	length_s	10.000000000	loop_source	0	source_offset_s	0.000000000	source_length_native_units	4.000000000	selected	1	notes		controllers		midi_counts	none
+end_position_left_250ms_restore_item	1	type	midi	position_s	6.000000000	length_s	10.000000000	loop_source	0	source_offset_s	0.000000000	source_length_native_units	20.000000000	selected	1	notes	0,0,0,960.000,1920.000,0,60,96	controllers	0,0,0,2880.000,176,0,1,80;1,0,0,3840.000,224,0,0,80	midi_counts	1	2	0
+right_trim_right_250ms_after	state_change_count	8	state_change_delta	6	item_count	2	undo_label	Nudge items
+right_trim_right_250ms_after_item	0	type	audio	position_s	2.000000000	length_s	10.250000000	loop_source	0	source_offset_s	0.000000000	source_length_native_units	4.000000000	selected	1	notes		controllers		midi_counts	none
+right_trim_right_250ms_after_item	1	type	midi	position_s	6.000000000	length_s	10.250000000	loop_source	0	source_offset_s	0.000000000	source_length_native_units	20.500000000	selected	1	notes	0,0,0,960.000,1920.000,0,60,96	controllers	0,0,0,2880.000,176,0,1,80;1,0,0,3840.000,224,0,0,80	midi_counts	1	2	0
+right_trim_left_250ms_restore	state_change_count	9	state_change_delta	7	item_count	2	undo_label	Nudge items
+right_trim_left_250ms_restore_item	0	type	audio	position_s	2.000000000	length_s	10.000000000	loop_source	0	source_offset_s	0.000000000	source_length_native_units	4.000000000	selected	1	notes		controllers		midi_counts	none
+right_trim_left_250ms_restore_item	1	type	midi	position_s	6.000000000	length_s	10.000000000	loop_source	0	source_offset_s	0.000000000	source_length_native_units	20.000000000	selected	1	notes	0,0,0,960.000,1920.000,0,60,96	controllers	0,0,0,2880.000,176,0,1,80;1,0,0,3840.000,224,0,0,80	midi_counts	1	2	0
+left_trim_left_250ms_after	state_change_count	10	state_change_delta	8	item_count	2	undo_label	Nudge items
+left_trim_left_250ms_after_item	0	type	audio	position_s	1.750000000	length_s	10.250000000	loop_source	0	source_offset_s	-0.250000000	source_length_native_units	4.000000000	selected	1	notes		controllers		midi_counts	none
+left_trim_left_250ms_after_item	1	type	midi	position_s	5.750000000	length_s	10.250000000	loop_source	0	source_offset_s	0.000000000	source_length_native_units	20.500000000	selected	1	notes	0,0,0,1440.000,2400.000,0,60,96	controllers	0,0,0,3360.000,176,0,1,80;1,0,0,4320.000,224,0,0,80	midi_counts	1	2	0
