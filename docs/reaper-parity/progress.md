@@ -1078,3 +1078,11 @@ Linux REAPER 7.82 / Default 7 原厂探针确认：5 秒 MIDI source、10 秒 it
 Core 全包测试 130/130（39 suites），AAADAW 桌面测试 579/579；其中 source-loop/controller/pitch-bend/quantize 回归 11 项、wrapped-offset MIDI Editor 测试 1/1、lane 回归 16/16。Core/AAADAW all-target Clippy `-D warnings`、cargo check、fmt/diff 通过。最终桌面构建 Build ID `108001ad22857fcc7f5ce81960203f5ec333c693`、SHA-256 `929def7e6e1d7835a25c89a726af78969f3f328a7d9f9f118a2fd80b69247401` 在 Xvfb :90 启动，实际 MIDI Editor 截图来自同一构建，完整哈希见验证文档。
 
 循环实例显示/源事件基本编辑切片完成；截图采用零 source offset，非零偏移由 REAPER 实窗和 AAADAW 定向回归覆盖。用户可见的 loop/source-length 控件、MIDI Editor 全部手势/菜单的原厂对照、Contents Nudge 变速换算和 Undo 对齐仍未完成。`ITEM-NUDGE-SET-001`、P4、P7 与唯一 PR #282 继续 `in_progress`。
+
+### 2026-10-15 Arrangement MIDI 长循环预览与桌面运行恢复
+
+Arrangement 原先在 TimelineCache 中按 source note 顺序展开循环，并只保留前 512 个实例；长 MIDI item 后半段因此没有预览，较后的源音符也可能被前一条长循环音符挤掉。缓存现在保留源 note、trim offset 与 source-loop length，绘制时从当前屏幕可视 tick 区间直接计算相交实例，不从循环起点逐个遍历。每个 item 最多生成 512 个 note 矩形，并将预算分布到不同源音符及当前可见时间范围。
+
+回归覆盖非零 source offset 下第 1,000 圈末端的实例、512 矩形上限的横向覆盖、trimmed 源事件保留与常规几何映射。AAADAW 桌面测试 581/581、Timeline 测试 79/79；App all-target Clippy `-D warnings`、fmt 与 diff 检查通过。验证细节见[Arrangement MIDI 循环预览](../verification/reaper-parity/arrangement-midi-loop-preview.md)。该功能状态截图及 Linux REAPER 7.82 原厂视图对照仍待采集，Arrangement parity 和 P4 不关闭。
+
+本轮也解决了新桌面版无法启动的问题：当前会话 `DISPLAY` 未设置且 PATH 没有系统 Xvfb，直接依赖旧显示会话无法创建窗口。重建/烟测脚本从隔离 REAPER 运行包找到 `/tmp/aaadaw-reaper-782/root/usr/bin/Xvfb`，在新建 :90 显示实际启动 Build ID `b8b2910869dbd19460c75f02f1d4a93f59b6f218` 的 1280×800 主窗口；SHA 与启动截图哈希见[桌面运行验证](../verification/reaper-parity/desktop-runtime.md)。不需要安装系统包，也不依赖已有 `DISPLAY`。

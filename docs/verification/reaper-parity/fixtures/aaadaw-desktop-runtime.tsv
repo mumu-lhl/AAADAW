@@ -24,3 +24,5 @@ looped_midi_binary_smoke	2026-10-15; Xvfb :90; Build ID 108001ad22857fcc7f5ce819
 looped_midi_binary_smoke_screenshot	aaadaw-desktop-runtime-startup.png; pixel-identical to startup fixture; SHA-256 ae7790daa7323931332582152cd05219af623ac5530147835ee56910ba2ebd9b
 looped_midi_editor_window	2026-10-15; Xvfb :94; isolated XDG profile; UI-driven MIDI item create/add C4/extend to 11520 ticks/open Piano roll; xwininfo 1000x620
 looped_midi_editor_window_screenshot	midi-editor-loop-source-aaadaw.png; three occurrences of one loop-source note; SHA-256 e9e28b4f7ea6309ffe983b2b43486dc0870888291c3ea91f75bd389ac2ab2c7a
+arrangement_loop_preview_binary_smoke	2026-10-15; Xvfb :90 via /tmp/aaadaw-reaper-782/root/usr/bin/Xvfb; DISPLAY unset and no system Xvfb; Build ID b8b2910869dbd19460c75f02f1d4a93f59b6f218; binary SHA-256 2354af3d07adc7334d8f07b80e481119ea1f3e00146bcec30d17ba1204d5099a; actual 1280x800 main window visible
+arrangement_loop_preview_binary_smoke_screenshot	aaadaw-desktop-runtime-startup.png; screenshot SHA-256 ae7790daa7323931332582152cd05219af623ac5530147835ee56910ba2ebd9b; pixel-identical to existing startup fixture

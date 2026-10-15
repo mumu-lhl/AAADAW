@@ -391,6 +391,8 @@ struct TimelineItem {
     label: String,
     media_ref: Option<String>,
     midi_notes: Vec<MidiNotePreview>,
+    midi_source_offset_ticks: u64,
+    midi_source_loop_length_ticks: Option<u64>,
     start_sample: u64,
     length_samples: u64,
     source_offset_samples: i64,
@@ -403,6 +405,21 @@ struct MidiNotePreview {
     tick: u64,
     duration: u64,
     pitch: u8,
+}
+
+#[derive(Clone, Copy)]
+struct MidiPreviewSource {
+    offset_ticks: u64,
+    loop_length_ticks: Option<u64>,
+}
+
+#[derive(Clone, Copy)]
+struct MidiPreviewBounds {
+    item_left: f32,
+    item_width: f32,
+    viewport_width: f32,
+    top: f32,
+    height: f32,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -490,6 +507,8 @@ impl TimelineCache {
                 label: media_label(item.media_ref()),
                 media_ref: Some(item.media_ref().to_owned()),
                 midi_notes: Vec::new(),
+                midi_source_offset_ticks: 0,
+                midi_source_loop_length_ticks: None,
                 start_sample: item.start_sample(),
                 length_samples: item.length_samples(),
                 source_offset_samples: item.source_offset_samples(),
@@ -502,7 +521,6 @@ impl TimelineCache {
             let Some(&track_index) = track_indices.get(&item.track_id()) else {
                 continue;
             };
-            let item_end_tick = item.start_tick().saturating_add(item.length_ticks());
             items.push(TimelineItem {
                 id: item.id(),
                 track_id: item.track_id(),
@@ -515,22 +533,17 @@ impl TimelineCache {
                 midi_notes: item
                     .notes()
                     .iter()
-                    .flat_map(|note| {
-                        item.project_ticks_at_content_tick(note.tick()).filter_map(
-                            move |start_tick| {
-                                let end_tick = start_tick
-                                    .saturating_add(note.duration())
-                                    .min(item_end_tick);
-                                (end_tick > start_tick).then_some(MidiNotePreview {
-                                    tick: start_tick - item.start_tick(),
-                                    duration: end_tick - start_tick,
-                                    pitch: note.pitch(),
-                                })
-                            },
-                        )
+                    .map(|note| MidiNotePreview {
+                        tick: note.tick(),
+                        duration: note.duration(),
+                        pitch: note.pitch(),
                     })
-                    .take(MAX_MIDI_ITEM_PREVIEW_NOTES)
                     .collect(),
+                midi_source_offset_ticks: item.source_offset_ticks(),
+                midi_source_loop_length_ticks: item
+                    .is_loop_source()
+                    .then_some(item.source_loop_length_ticks())
+                    .filter(|length| *length > 0),
                 start_sample: 0,
                 length_samples: 0,
                 source_offset_samples: 0,
@@ -5377,15 +5390,112 @@ struct ItemLabelsProgram<'a> {
     state: &'a TimelineState,
 }
 
-fn midi_note_preview_geometry<'a>(
-    notes: &'a [MidiNotePreview],
+fn midi_note_preview_geometry(
+    notes: &[MidiNotePreview],
+    source: MidiPreviewSource,
     item_length: u64,
-    item_left: f32,
-    item_width: f32,
-    top: f32,
-    height: f32,
-) -> impl Iterator<Item = Rectangle> + 'a {
-    let valid_geometry = item_length > 0 && item_width > 0.0 && height > 0.0;
+    bounds: MidiPreviewBounds,
+) -> Vec<Rectangle> {
+    if item_length == 0
+        || !bounds.item_width.is_finite()
+        || bounds.item_width <= 0.0
+        || !bounds.viewport_width.is_finite()
+        || bounds.viewport_width <= 0.0
+        || !bounds.height.is_finite()
+        || bounds.height <= 0.0
+    {
+        return Vec::new();
+    }
+
+    #[derive(Clone, Copy)]
+    struct Candidate {
+        note_index: usize,
+        first_tick: u64,
+        interval: u64,
+        count: u64,
+    }
+
+    let item_left = f64::from(bounds.item_left);
+    let item_width = f64::from(bounds.item_width);
+    let visible_left = item_left.max(0.0);
+    let visible_right = (item_left + item_width).min(f64::from(bounds.viewport_width));
+    if visible_right <= visible_left {
+        return Vec::new();
+    }
+    let visible_start_tick = (((visible_left - item_left) / item_width) * item_length as f64)
+        .floor()
+        .clamp(0.0, item_length as f64) as u64;
+    let visible_end_tick = (((visible_right - item_left) / item_width) * item_length as f64)
+        .ceil()
+        .clamp(0.0, item_length as f64) as u64;
+    if visible_end_tick <= visible_start_tick {
+        return Vec::new();
+    }
+
+    let candidate_for = |note_index, note: &MidiNotePreview| {
+        let duration = note.duration.min(item_length);
+        if duration == 0 {
+            return None;
+        }
+
+        if let Some(loop_length) = source.loop_length_ticks.filter(|length| *length > 0) {
+            let source_tick = note.tick % loop_length;
+            let source_offset = source.offset_ticks % loop_length;
+            let phase = if source_tick >= source_offset {
+                source_tick - source_offset
+            } else {
+                loop_length - (source_offset - source_tick)
+            };
+            let earliest_visible_start =
+                visible_start_tick.saturating_sub(duration.saturating_sub(1));
+            let first_index = if earliest_visible_start <= phase {
+                0
+            } else {
+                let distance = earliest_visible_start - phase;
+                distance.div_ceil(loop_length)
+            };
+            let latest_visible_start = visible_end_tick.checked_sub(1)?;
+            if latest_visible_start < phase {
+                return None;
+            }
+            let last_index = (latest_visible_start - phase) / loop_length;
+            if last_index < first_index {
+                return None;
+            }
+            let first_tick = phase.checked_add(first_index.saturating_mul(loop_length))?;
+            Some(Candidate {
+                note_index,
+                first_tick,
+                interval: loop_length,
+                count: last_index - first_index + 1,
+            })
+        } else {
+            let first_tick = note.tick.checked_sub(source.offset_ticks)?;
+            if first_tick >= visible_end_tick
+                || first_tick.saturating_add(duration) <= visible_start_tick
+            {
+                return None;
+            }
+            Some(Candidate {
+                note_index,
+                first_tick,
+                interval: 0,
+                count: 1,
+            })
+        }
+    };
+
+    let candidate_count = notes
+        .iter()
+        .enumerate()
+        .filter_map(|(index, note)| candidate_for(index, note))
+        .count();
+    if candidate_count == 0 {
+        return Vec::new();
+    }
+
+    let selected_count = candidate_count.min(MAX_MIDI_ITEM_PREVIEW_NOTES);
+    let occurrences_per_note = MAX_MIDI_ITEM_PREVIEW_NOTES / selected_count;
     let lowest = notes.iter().map(|note| note.pitch).min().unwrap_or(0);
     let highest = notes.iter().map(|note| note.pitch).max().unwrap_or(127);
     let range = u16::from(highest - lowest);
@@ -5395,26 +5505,66 @@ fn midi_note_preview_geometry<'a>(
     let high_pitch = (low_pitch + padded_range).min(127);
     low_pitch = high_pitch.saturating_sub(padded_range);
     let pitch_range = f32::from((high_pitch - low_pitch).max(1));
-    let note_height = (height / f32::from((padded_range + 1).max(12))).clamp(2.0, 6.0);
+    let note_height = (bounds.height / f32::from((padded_range + 1).max(12))).clamp(2.0, 6.0);
 
-    notes.iter().filter_map(move |note| {
-        if !valid_geometry {
-            return None;
+    let mut rectangles = Vec::with_capacity(selected_count * occurrences_per_note);
+    let mut candidate_index = 0;
+    let mut selected_index = 0;
+    for (note_index, note) in notes.iter().enumerate() {
+        let Some(candidate) = candidate_for(note_index, note) else {
+            continue;
+        };
+        let target_candidate_index = if selected_count == 1 {
+            0
+        } else {
+            ((selected_index as u128 * (candidate_count - 1) as u128)
+                / (selected_count - 1) as u128) as usize
+        };
+        if candidate_index != target_candidate_index {
+            candidate_index += 1;
+            continue;
         }
-        let note_end = note.tick.saturating_add(note.duration).min(item_length);
-        if note.tick >= item_length || note_end <= note.tick {
-            return None;
+        let note = notes[candidate.note_index];
+        let occurrence_count = usize::try_from(candidate.count)
+            .unwrap_or(occurrences_per_note)
+            .min(occurrences_per_note);
+        for occurrence_sample in 0..occurrence_count {
+            let occurrence_index = if occurrence_count == 1 {
+                if selected_count == 1 {
+                    candidate.count - 1
+                } else {
+                    (selected_index as u128 * (candidate.count - 1) as u128
+                        / (selected_count - 1) as u128) as u64
+                }
+            } else {
+                (occurrence_sample as u128 * (candidate.count - 1) as u128
+                    / (occurrence_count - 1) as u128) as u64
+            };
+            let tick = candidate
+                .first_tick
+                .saturating_add(occurrence_index.saturating_mul(candidate.interval));
+            let note_end = tick.saturating_add(note.duration).min(item_length);
+            if tick >= item_length || note_end <= tick {
+                continue;
+            }
+            let x = item_left + (tick as f64 / item_length as f64) * item_width;
+            let right = item_left + (note_end as f64 / item_length as f64) * item_width;
+            let width = (right - x).max(1.25).min(item_width);
+            let pitch_offset = f32::from(high_pitch.saturating_sub(u16::from(note.pitch)));
+            let y =
+                bounds.top + (pitch_offset / pitch_range) * (bounds.height - note_height).max(0.0);
+            rectangles.push(Rectangle::new(
+                Point::new(x as f32, y),
+                Size::new(width as f32, note_height),
+            ));
         }
-        let x = item_left + (note.tick as f32 / item_length as f32) * item_width;
-        let right = item_left + (note_end as f32 / item_length as f32) * item_width;
-        let width = (right - x).max(1.25);
-        let pitch_offset = f32::from(high_pitch.saturating_sub(u16::from(note.pitch)));
-        let y = top + (pitch_offset / pitch_range) * (height - note_height).max(0.0);
-        Some(Rectangle::new(
-            Point::new(x, y),
-            Size::new(width.min(item_width), note_height),
-        ))
-    })
+        candidate_index += 1;
+        selected_index += 1;
+        if selected_index == selected_count {
+            break;
+        }
+    }
+    rectangles
 }
 
 impl canvas::Program<crate::app::Message> for ItemLabelsProgram<'_> {
@@ -5537,11 +5687,18 @@ impl canvas::Program<crate::app::Message> for ItemLabelsProgram<'_> {
                 let preview_height = 50.0_f32.min(row.base_height - 42.0);
                 for note_rect in midi_note_preview_geometry(
                     &item.midi_notes,
+                    MidiPreviewSource {
+                        offset_ticks: item.midi_source_offset_ticks,
+                        loop_length_ticks: item.midi_source_loop_length_ticks,
+                    },
                     item.end_tick.saturating_sub(item.start_tick),
-                    left as f32,
-                    width as f32,
-                    preview_top,
-                    preview_height,
+                    MidiPreviewBounds {
+                        item_left: left as f32,
+                        item_width: width as f32,
+                        viewport_width: bounds.width,
+                        top: preview_top,
+                        height: preview_height,
+                    },
                 ) {
                     frame.fill_rectangle(
                         note_rect.position(),
@@ -5743,7 +5900,8 @@ mod tests {
     use super::{
         AutomationPointContext, FX_AUTOMATION_LANE_HEIGHT, ItemKind, ItemTrimEdge,
         LOOP_POINT_HANDLE_ROW_HEIGHT, LoopPointDragTarget, LoopPoints,
-        MAX_FX_AUTOMATION_LANE_HEIGHT, MiddleDragState, MidiNotePreview, PendingAutomationPoint,
+        MAX_FX_AUTOMATION_LANE_HEIGHT, MAX_MIDI_ITEM_PREVIEW_NOTES, MiddleDragState,
+        MidiNotePreview, MidiPreviewBounds, MidiPreviewSource, PendingAutomationPoint,
         PendingTimeSelectionDrag, ProjectMarkerInteraction, RulerProgram, SnapGrid,
         TIMELINE_ROW_HEIGHT, TimeSelection, TimeSelectionDragMode, TimelineCache, TimelineEvent,
         TimelineInteractionState, TimelineState, automation_sample_between,
@@ -7072,7 +7230,7 @@ mod tests {
     }
 
     #[test]
-    fn midi_item_preview_uses_the_trimmed_source_offset() {
+    fn midi_item_preview_caches_trimmed_source_content_and_offset() {
         let mut project = Project::new();
         project
             .apply(DawAction::CreateTrack {
@@ -7120,8 +7278,10 @@ mod tests {
         let mut cache = TimelineCache::default();
         cache.rebuild(&project, SnapGrid::Sixteenth);
         let item = cache.items.iter().find(|item| item.id == item_id).unwrap();
-        assert_eq!(item.midi_notes.len(), 1);
-        assert_eq!(item.midi_notes[0].tick, 240);
+        assert_eq!(item.midi_notes.len(), 2);
+        assert_eq!(item.midi_notes[0].tick, 120);
+        assert_eq!(item.midi_notes[1].tick, 720);
+        assert_eq!(item.midi_source_offset_ticks, 480);
     }
 
     #[test]
@@ -8233,6 +8393,8 @@ mod tests {
             .find(|item| item.id == item_id)
             .unwrap();
         assert_eq!(cached.label, "Opening theme");
+        assert_eq!(cached.midi_source_offset_ticks, 0);
+        assert_eq!(cached.midi_source_loop_length_ticks, Some(960));
         assert_eq!(
             cached.midi_notes,
             vec![
@@ -8264,14 +8426,84 @@ mod tests {
                 pitch: 72,
             },
         ];
-        let rects =
-            midi_note_preview_geometry(&notes, 960, 100.0, 200.0, 20.0, 48.0).collect::<Vec<_>>();
+        let rects = midi_note_preview_geometry(
+            &notes,
+            MidiPreviewSource {
+                offset_ticks: 0,
+                loop_length_ticks: None,
+            },
+            960,
+            MidiPreviewBounds {
+                item_left: 100.0,
+                item_width: 200.0,
+                viewport_width: 500.0,
+                top: 20.0,
+                height: 48.0,
+            },
+        );
         assert_eq!(rects.len(), 2);
         assert_eq!(rects[0].x, 100.0);
         assert_eq!(rects[0].width, 50.0);
         assert_eq!(rects[1].x, 200.0);
         assert!(rects[0].y > rects[1].y);
         assert!(rects.iter().all(|rect| (20.0..68.0).contains(&rect.y)));
+    }
+
+    #[test]
+    fn midi_loop_preview_keeps_far_right_visible_occurrences() {
+        let notes = [MidiNotePreview {
+            tick: 120,
+            duration: 120,
+            pitch: 60,
+        }];
+        let rects = midi_note_preview_geometry(
+            &notes,
+            MidiPreviewSource {
+                offset_ticks: 300,
+                loop_length_ticks: Some(960),
+            },
+            960_000,
+            MidiPreviewBounds {
+                item_left: -999_000.0,
+                item_width: 1_000_000.0,
+                viewport_width: 1_000.0,
+                top: 20.0,
+                height: 48.0,
+            },
+        );
+
+        assert_eq!(rects.len(), 1);
+        assert!((rects[0].x - 812.5).abs() < 0.01);
+    }
+
+    #[test]
+    fn midi_preview_budget_covers_visible_source_notes_and_time_range() {
+        let notes = (0..MAX_MIDI_ITEM_PREVIEW_NOTES + 88)
+            .map(|index| MidiNotePreview {
+                tick: index as u64,
+                duration: 1,
+                pitch: 48 + (index % 36) as u8,
+            })
+            .collect::<Vec<_>>();
+        let rects = midi_note_preview_geometry(
+            &notes,
+            MidiPreviewSource {
+                offset_ticks: 0,
+                loop_length_ticks: Some(960),
+            },
+            960_000,
+            MidiPreviewBounds {
+                item_left: -900.0,
+                item_width: 10_000.0,
+                viewport_width: 1_000.0,
+                top: 20.0,
+                height: 48.0,
+            },
+        );
+
+        assert_eq!(rects.len(), MAX_MIDI_ITEM_PREVIEW_NOTES);
+        assert!(rects.first().is_some_and(|rect| rect.x < 2.0));
+        assert!(rects.last().is_some_and(|rect| rect.x > 990.0));
     }
 
     #[test]
