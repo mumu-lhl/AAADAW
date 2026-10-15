@@ -45,3 +45,7 @@ set_contents_snap_binary_smoke_screenshot	aaadaw-set-contents-startup.png; SHA-2
 set_contents_live_ui	2026-10-15; Build ID dc0b012c46ad970d9c1c934e068833f18ff7a9a3; Xvfb :197; recovered selected MIDI item; Item > Nudge/Set Items via N shortcut; xwininfo 528x121; Set/Contents target 3.500s Snap on; applied and verified source offset in recovered project snapshot
 set_contents_live_ui_configured_screenshot	item-nudge-midi-set-contents-aaadaw-dialog.png; 1280x800; SHA-256 365d4829a354ea263f5a59dc9e5def758c5835e3ecf09817c7ed5ac22092b2cd
 set_contents_live_ui_applied_screenshot	item-nudge-midi-set-contents-aaadaw-applied.png; 1280x800; SHA-256 33b01fc294f8c4c6330677acd9c777465bed162f84cfa041b798ca16d93b6a53
+nonloop_set_contents_binary_smoke	2026-10-15; bundled REAPER Xvfb :90; Build ID c1e3833d58fbf8c1c257f9db9c8b2f25111dc592; binary SHA-256 69cfa5bc5e08ab5eb613c1602675caae5fedc64f59d7599607ccf05ed2dffc36; actual 1280x800 main window visible
+nonloop_set_contents_binary_smoke_screenshot	aaadaw-desktop-runtime-startup.png; SHA-256 ae7790daa7323931332582152cd05219af623ac5530147835ee56910ba2ebd9b; byte-identical to startup fixture
+nonloop_set_contents_live_ui	2026-10-15; Build ID c1e3833d58fbf8c1c257f9db9c8b2f25111dc592; Xvfb :208; isolated XDG profile; opened Item > Nudge/set items...; xwininfo 528x121; Set/Contents target 3 seconds; no selected item
+nonloop_set_contents_live_ui_screenshot	item-nudge-midi-nonloop-set-contents-aaadaw-dialog.png; 528x121; SHA-256 280754aa46de1ce83f755622da458b8fd395351dbf1b36e057fd2b29082248da

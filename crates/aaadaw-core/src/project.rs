@@ -3730,6 +3730,85 @@ impl Project {
                 };
                 ProjectEvent::MidiItemChanged { before, after }
             }
+            DawAction::SetMidiItemContents {
+                item_id,
+                source_offset_ticks,
+                source_loop_length_ticks,
+                content_shift_ticks,
+            } => {
+                if source_loop_length_ticks == 0 {
+                    return Err(ActionError::InvalidMidiItemLength);
+                }
+                let item = state
+                    .midi_items
+                    .iter()
+                    .find(|item| item.id == item_id)
+                    .ok_or(ActionError::MidiItemNotFound { item_id })?;
+                if !valid_midi_controllers(&item.controllers) {
+                    return Err(ActionError::InvalidMidiController);
+                }
+                if !valid_midi_pitch_bends(&item.pitch_bends) {
+                    return Err(ActionError::InvalidMidiPitchBend);
+                }
+                if source_offset_ticks.checked_add(item.length_ticks).is_none() {
+                    return Err(ActionError::InvalidMidiItemPosition);
+                }
+
+                let before = item.clone();
+                let notes = before
+                    .notes
+                    .iter()
+                    .map(|note| {
+                        let tick = note
+                            .data
+                            .tick
+                            .checked_add(content_shift_ticks)
+                            .ok_or(ActionError::InvalidMidiItemPosition)?;
+                        if tick.checked_add(note.data.duration).is_none() {
+                            return Err(ActionError::InvalidMidiItemPosition);
+                        }
+                        Ok(MidiNote {
+                            id: note.id,
+                            data: crate::MidiNoteData { tick, ..note.data },
+                        })
+                    })
+                    .collect::<Result<Vec<_>, ActionError>>()?;
+                let controllers = before
+                    .controllers
+                    .iter()
+                    .map(|controller| {
+                        Ok(MidiControllerData {
+                            tick: controller
+                                .tick
+                                .checked_add(content_shift_ticks)
+                                .ok_or(ActionError::InvalidMidiItemPosition)?,
+                            ..*controller
+                        })
+                    })
+                    .collect::<Result<Vec<_>, ActionError>>()?;
+                let pitch_bends = before
+                    .pitch_bends
+                    .iter()
+                    .map(|bend| {
+                        Ok(MidiPitchBendData {
+                            tick: bend
+                                .tick
+                                .checked_add(content_shift_ticks)
+                                .ok_or(ActionError::InvalidMidiItemPosition)?,
+                            ..*bend
+                        })
+                    })
+                    .collect::<Result<Vec<_>, ActionError>>()?;
+                let after = MidiItem {
+                    source_offset_ticks,
+                    source_loop_length_ticks,
+                    notes: Arc::new(notes),
+                    controllers: Arc::new(controllers),
+                    pitch_bends: Arc::new(pitch_bends),
+                    ..before.clone()
+                };
+                ProjectEvent::MidiItemChanged { before, after }
+            }
             DawAction::SetMidiItemMute { item_id, muted } => {
                 let before = state
                     .midi_items
@@ -5165,6 +5244,7 @@ fn source_track_for_action(state: &ProjectState, action: &DawAction) -> Option<T
         | DawAction::InsertMidiItem { track_id, .. } => Some(*track_id),
         DawAction::EditMidiItem { item_id, .. }
         | DawAction::EditMidiItemPlacement { item_id, .. }
+        | DawAction::SetMidiItemContents { item_id, .. }
         | DawAction::TrimMidiItemStart { item_id, .. }
         | DawAction::DuplicateMidiItem { item_id }
         | DawAction::DuplicateMidiItemAt { item_id, .. }

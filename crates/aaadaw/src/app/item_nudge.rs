@@ -588,8 +588,39 @@ impl App {
         let mut actions = Vec::with_capacity(items.len());
         for item in items {
             let source_loop_length = item.source_loop_length_ticks();
-            if !item.is_loop_source() || source_loop_length == 0 {
-                return Err("Set Contents requires a valid MIDI loop source".to_owned());
+            if source_loop_length == 0 {
+                return Err("Selected MIDI item has an invalid source length".to_owned());
+            }
+            if !item.is_loop_source() {
+                let target_tick = self
+                    .project
+                    .tick_at_sample(target_sample)
+                    .map_err(|error| error.to_string())?;
+                let (source_offset_ticks, content_shift_ticks, new_source_length) = if target_tick
+                    <= item.start_tick()
+                {
+                    (item.start_tick() - target_tick, 0, source_loop_length)
+                } else {
+                    let content_shift_ticks = target_tick - item.start_tick();
+                    let source_length = source_loop_length
+                        .checked_add(content_shift_ticks)
+                        .ok_or_else(|| {
+                            "Contents target is outside the supported MIDI source range".to_owned()
+                        })?;
+                    (0, content_shift_ticks, source_length)
+                };
+                if source_offset_ticks != item.source_offset_ticks()
+                    || content_shift_ticks != 0
+                    || new_source_length != source_loop_length
+                {
+                    actions.push(DawAction::SetMidiItemContents {
+                        item_id: item.id(),
+                        source_offset_ticks,
+                        source_loop_length_ticks: new_source_length,
+                        content_shift_ticks,
+                    });
+                }
+                continue;
             }
             let item_start_sample = self
                 .project
