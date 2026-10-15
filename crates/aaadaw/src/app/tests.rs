@@ -805,21 +805,118 @@ fn item_nudge_midi_contents_converts_time_using_the_item_tempo_map_position() {
 }
 
 #[test]
-fn item_nudge_contents_target_fails_closed_without_editing_items() {
+fn item_nudge_mixed_contents_fails_atomically_when_audio_metadata_is_missing() {
     let mut app = item_snap_test_app(0, 0);
+    let revision = app.revision;
     let _ = app.update(Message::ItemNudgeTargetChanged(
         super::item_nudge::Target::Contents,
     ));
     let _ = app.update(Message::NudgeSelectedItems(1));
 
     assert_eq!(app.project.audio_items()[0].start_sample(), 0);
+    assert_eq!(app.project.audio_items()[0].source_offset_samples(), 120);
     assert_eq!(app.project.midi_items()[0].start_tick(), 0);
     assert!(
         app.item_nudge_dialog
             .error
             .as_deref()
-            .is_some_and(|error| error.contains("contents"))
+            .is_some_and(|error| error.contains("audio media store"))
     );
+    assert_eq!(app.revision, revision);
+}
+
+#[test]
+fn item_nudge_mixed_contents_moves_audio_and_midi_in_one_undoable_edit() {
+    use super::item_nudge::Target;
+
+    let file_id = NEXT_TEST_FILE.fetch_add(1, Ordering::Relaxed);
+    let project_path = std::env::temp_dir().join(format!(
+        "aaadaw-ui-item-nudge-mixed-contents-{}-{file_id}.aaadaw",
+        std::process::id()
+    ));
+    let audio_ref = "asset://item-nudge-mixed-contents-test";
+    let mut store = ProjectStore::open(&project_path).expect("project store should open");
+    store
+        .import_audio_asset(
+            audio_ref,
+            "mixed-contents.wav",
+            std::io::Cursor::new([0_u8; 4]),
+        )
+        .expect("test asset should import");
+    store
+        .set_audio_asset_metadata(
+            audio_ref,
+            &aaadaw_storage::AudioAssetMetadata {
+                container: "wav".to_owned(),
+                codec: "pcm".to_owned(),
+                sample_rate: Some(48_000),
+                channel_count: Some(1),
+                bits_per_sample: Some(16),
+                frame_count: Some(480_000),
+                duration_nanos: None,
+                byte_len: Some(4),
+            },
+        )
+        .expect("test metadata should store");
+    store.close().expect("project store should close");
+
+    let mut app = App {
+        project_path: Some(project_path.clone()),
+        ..App::default()
+    };
+    let _ = app.update(Message::AddTrack);
+    let _ = app.update(Message::AddTrack);
+    let audio_track = app.project.tracks()[0].id();
+    let midi_track = app.project.tracks()[1].id();
+    app.project
+        .apply(DawAction::InsertAudioItem {
+            track_id: audio_track,
+            media_ref: audio_ref.to_owned(),
+            start_sample: 0,
+            source_offset_samples: 120,
+            length_samples: 24_000,
+        })
+        .unwrap();
+    app.project
+        .apply(DawAction::InsertMidiItem {
+            track_id: midi_track,
+            start_tick: 0,
+            length_ticks: 9_600,
+        })
+        .unwrap();
+    let audio_id = app.project.audio_items()[0].id();
+    let midi_id = app.project.midi_items()[0].id();
+    app.timeline.rebuild(&app.project);
+    app.timeline
+        .select_items(vec![(audio_id, audio_track), (midi_id, midi_track)]);
+    let revision = app.revision;
+    let _ = app.update(Message::ItemNudgeTargetChanged(Target::Contents));
+    let _ = app.update(Message::ItemNudgeValueChanged("250".to_owned()));
+
+    let _ = app.update(Message::NudgeSelectedItems(1));
+
+    assert_eq!(app.revision, revision + 1);
+    assert_eq!(
+        app.project.audio_items()[0].source_offset_samples(),
+        468_120
+    );
+    assert_eq!(app.project.midi_items()[0].source_offset_ticks(), 9_120);
+    assert_eq!(app.project.audio_items()[0].start_sample(), 0);
+    assert_eq!(app.project.midi_items()[0].start_tick(), 0);
+    assert!(app.item_nudge_dialog.error.is_none());
+
+    let _ = app.update(Message::Undo);
+    assert_eq!(app.project.audio_items()[0].source_offset_samples(), 120);
+    assert_eq!(app.project.midi_items()[0].source_offset_ticks(), 0);
+    let _ = app.update(Message::Redo);
+    assert_eq!(
+        app.project.audio_items()[0].source_offset_samples(),
+        468_120
+    );
+    assert_eq!(app.project.midi_items()[0].source_offset_ticks(), 9_120);
+
+    drop(app);
+    let _ = std::fs::remove_file(project_path);
 }
 
 #[test]

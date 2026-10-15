@@ -1,6 +1,6 @@
 use super::{App, Message, commands};
 use crate::project_time;
-use aaadaw_core::{DawAction, ItemId};
+use aaadaw_core::{AudioItem, DawAction, ItemId, MidiItem};
 use aaadaw_storage::ProjectStore;
 use iced::Task;
 use std::collections::HashMap;
@@ -770,80 +770,99 @@ impl App {
 
     fn nudge_selected_contents(&mut self, delta_samples: i128) {
         let selected_ids = &self.timeline.selected_items;
-        let selected_audio = self
+        let audio_items = self
             .project
             .audio_items()
             .iter()
-            .any(|item| selected_ids.contains(&item.id()));
-        let selected_midi = self
-            .project
-            .midi_items()
-            .iter()
-            .any(|item| selected_ids.contains(&item.id()));
-        if selected_audio && selected_midi {
-            self.item_nudge_dialog.error = Some(
-                "The contents target does not yet support a mixed audio/MIDI selection".to_owned(),
-            );
-            return;
-        }
-        if selected_midi {
-            self.nudge_selected_midi_contents(delta_samples);
-        } else {
-            self.nudge_selected_audio_contents(delta_samples);
-        }
-    }
-
-    fn nudge_selected_midi_contents(&mut self, delta_samples: i128) {
-        let selected_ids = &self.timeline.selected_items;
-        let items = self
+            .filter(|item| selected_ids.contains(&item.id()))
+            .collect::<Vec<_>>();
+        let midi_items = self
             .project
             .midi_items()
             .iter()
             .filter(|item| selected_ids.contains(&item.id()))
             .collect::<Vec<_>>();
-        if items.is_empty() {
-            self.item_nudge_dialog.error = Some("No selected MIDI items".to_owned());
+        let selected_audio = !audio_items.is_empty();
+        let selected_midi = !midi_items.is_empty();
+        if !selected_audio && !selected_midi {
+            self.item_nudge_dialog.error = Some("No selected items to nudge".to_owned());
             return;
+        }
+
+        let mut actions = Vec::with_capacity(audio_items.len() + midi_items.len());
+        if selected_audio {
+            match self.audio_contents_nudge_actions(&audio_items, delta_samples) {
+                Ok(audio_actions) => actions.extend(audio_actions),
+                Err(error) => {
+                    self.item_nudge_dialog.error = Some(error);
+                    return;
+                }
+            }
+        }
+        if selected_midi {
+            match self.midi_contents_nudge_actions(&midi_items, delta_samples) {
+                Ok(midi_actions) => actions.extend(midi_actions),
+                Err(error) => {
+                    self.item_nudge_dialog.error = Some(error);
+                    return;
+                }
+            }
+        }
+        if actions.is_empty() {
+            self.item_nudge_dialog.error =
+                Some("Nudge did not change the selected item contents".to_owned());
+            return;
+        }
+
+        let label = match (selected_audio, selected_midi) {
+            (true, true) => "Selected audio and MIDI item contents moved",
+            (true, false) => "Selected audio item contents moved",
+            (false, true) => "Selected MIDI item contents moved",
+            (false, false) => unreachable!("selected item kinds were checked above"),
+        };
+        self.apply_action(
+            DawAction::BatchTransaction {
+                tx_id: self.revision,
+                actions,
+            },
+            label,
+        );
+        self.item_nudge_dialog.error = None;
+    }
+
+    fn midi_contents_nudge_actions(
+        &self,
+        items: &[&MidiItem],
+        delta_samples: i128,
+    ) -> Result<Vec<DawAction>, String> {
+        if items.is_empty() {
+            return Ok(Vec::new());
         }
         let Some(sample_delta) = delta_samples
             .checked_abs()
             .and_then(|samples| u64::try_from(samples).ok())
         else {
-            self.item_nudge_dialog.error =
-                Some("Contents nudge is outside the supported range".to_owned());
-            return;
+            return Err("Contents nudge is outside the supported range".to_owned());
         };
         let mut actions = Vec::with_capacity(items.len());
         for item in items {
             let source_loop_length = item.source_loop_length_ticks();
             if !item.is_loop_source() || source_loop_length == 0 {
-                self.item_nudge_dialog.error =
-                    Some("MIDI Contents nudge requires a valid loop source".to_owned());
-                return;
+                return Err("MIDI Contents nudge requires a valid loop source".to_owned());
             }
-            let start_sample = match self.project.sample_at_tick(item.start_tick()) {
-                Ok(sample) => sample,
-                Err(error) => {
-                    self.item_nudge_dialog.error = Some(error.to_string());
-                    return;
-                }
-            };
+            let start_sample = self
+                .project
+                .sample_at_tick(item.start_tick())
+                .map_err(|error| error.to_string())?;
             let Some(target_sample) = start_sample.checked_add(sample_delta) else {
-                self.item_nudge_dialog.error =
-                    Some("Contents nudge is outside the supported range".to_owned());
-                return;
+                return Err("Contents nudge is outside the supported range".to_owned());
             };
-            let target_tick = match self.project.tick_at_sample(target_sample) {
-                Ok(tick) => tick,
-                Err(error) => {
-                    self.item_nudge_dialog.error = Some(error.to_string());
-                    return;
-                }
-            };
+            let target_tick = self
+                .project
+                .tick_at_sample(target_sample)
+                .map_err(|error| error.to_string())?;
             let Some(tick_delta) = target_tick.checked_sub(item.start_tick()) else {
-                self.item_nudge_dialog.error =
-                    Some("Contents nudge is outside the supported range".to_owned());
-                return;
+                return Err("Contents nudge is outside the supported range".to_owned());
             };
             let source_delta = if delta_samples > 0 {
                 -i128::from(tick_delta)
@@ -856,9 +875,7 @@ impl App {
                 source_loop_length,
                 source_delta,
             ) else {
-                self.item_nudge_dialog.error =
-                    Some("MIDI Contents nudge is outside the supported range".to_owned());
-                return;
+                return Err("MIDI Contents nudge is outside the supported range".to_owned());
             };
             if source_offset_ticks != item.source_offset_ticks() {
                 actions.push(DawAction::EditMidiItemPlacement {
@@ -869,63 +886,38 @@ impl App {
                 });
             }
         }
-        if actions.is_empty() {
-            self.item_nudge_dialog.error =
-                Some("MIDI Contents nudge did not change the selected item contents".to_owned());
-            return;
-        }
-        self.apply_action(
-            DawAction::BatchTransaction {
-                tx_id: self.revision,
-                actions,
-            },
-            "Selected MIDI item contents moved",
-        );
-        self.item_nudge_dialog.error = None;
+        Ok(actions)
     }
 
-    fn nudge_selected_audio_contents(&mut self, delta_samples: i128) {
-        let selected_ids = &self.timeline.selected_items;
-        let items = self
-            .project
-            .audio_items()
-            .iter()
-            .filter(|item| selected_ids.contains(&item.id()))
-            .collect::<Vec<_>>();
+    fn audio_contents_nudge_actions(
+        &self,
+        items: &[&AudioItem],
+        delta_samples: i128,
+    ) -> Result<Vec<DawAction>, String> {
         if items.is_empty() {
-            self.item_nudge_dialog.error = Some("No selected audio items".to_owned());
-            return;
+            return Ok(Vec::new());
         }
         let media_refs = items
             .iter()
             .map(|item| item.media_ref().to_owned())
             .collect::<Vec<_>>();
-        let source_limits = match self.audio_source_limits(media_refs) {
-            Ok(limits) => limits,
-            Err(error) => {
-                self.item_nudge_dialog.error = Some(error);
-                return;
-            }
-        };
+        let source_limits = self.audio_source_limits(media_refs)?;
 
         let project_rate = self.project.settings().sample_rate();
         let mut actions = Vec::with_capacity(items.len());
         for item in items {
             let Some((source_rate, frame_count)) = source_limits.get(item.media_ref()).copied()
             else {
-                self.item_nudge_dialog.error = Some(format!(
+                return Err(format!(
                     "Source length is unavailable for {}",
                     item.media_ref()
                 ));
-                return;
             };
             let Some(source_delta) = delta_samples
                 .checked_neg()
                 .and_then(|delta| scale_sample_delta(delta, source_rate, project_rate))
             else {
-                self.item_nudge_dialog.error =
-                    Some("Contents nudge is outside the supported range".to_owned());
-                return;
+                return Err("Contents nudge is outside the supported range".to_owned());
             };
             let source_offset_samples = if item.is_loop_source() {
                 let (section_start, section_length) = match (
@@ -935,51 +927,39 @@ impl App {
                     (Some(start), Some(length)) => (start, length),
                     (None, None) => (0, frame_count),
                     _ => {
-                        self.item_nudge_dialog.error = Some(
-                            "Selected audio item has an invalid loop source section".to_owned(),
+                        return Err(
+                            "Selected audio item has an invalid loop source section".to_owned()
                         );
-                        return;
                     }
                 };
                 let Some(section_end) = section_start.checked_add(section_length) else {
-                    self.item_nudge_dialog.error =
-                        Some("Selected audio item has an invalid loop source section".to_owned());
-                    return;
+                    return Err("Selected audio item has an invalid loop source section".to_owned());
                 };
                 let Some(current_offset) = u64::try_from(item.source_offset_samples()).ok() else {
-                    self.item_nudge_dialog.error =
-                        Some("Selected audio item has an invalid loop source section".to_owned());
-                    return;
+                    return Err("Selected audio item has an invalid loop source section".to_owned());
                 };
                 if section_length == 0
                     || section_end > frame_count
                     || current_offset >= section_length
                 {
-                    self.item_nudge_dialog.error =
-                        Some("Selected audio item has an invalid loop source section".to_owned());
-                    return;
+                    return Err("Selected audio item has an invalid loop source section".to_owned());
                 }
                 let Some(offset) =
                     wrapped_source_sample(current_offset, 0, section_length, source_delta)
                 else {
-                    self.item_nudge_dialog.error =
-                        Some("Contents nudge is outside the supported source range".to_owned());
-                    return;
+                    return Err("Contents nudge is outside the supported source range".to_owned());
                 };
                 let Ok(offset) = i64::try_from(offset) else {
-                    self.item_nudge_dialog.error =
-                        Some("Contents nudge is outside the supported source range".to_owned());
-                    return;
+                    return Err("Contents nudge is outside the supported source range".to_owned());
                 };
                 offset
             } else {
                 let Some(offset) =
                     shifted_source_offset(item.source_offset_samples(), source_delta)
                 else {
-                    self.item_nudge_dialog.error = Some(
+                    return Err(
                         "Contents nudge is outside the supported signed source range".to_owned(),
                     );
-                    return;
                 };
                 offset
             };
@@ -993,19 +973,7 @@ impl App {
                 });
             }
         }
-        if actions.is_empty() {
-            self.item_nudge_dialog.error =
-                Some("Nudge did not change the selected item contents".to_owned());
-            return;
-        }
-        self.apply_action(
-            DawAction::BatchTransaction {
-                tx_id: self.revision,
-                actions,
-            },
-            "Selected audio item contents moved",
-        );
-        self.item_nudge_dialog.error = None;
+        Ok(actions)
     }
 
     pub(super) fn audio_source_limits(
