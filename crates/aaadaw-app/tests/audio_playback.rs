@@ -533,6 +533,83 @@ fn transport_loop_preparation_repeats_a_trimmed_stereo_item_with_loop_source_dis
 }
 
 #[test]
+fn transport_loop_preparation_repeats_a_mono_source_as_centered_stereo() {
+    let database_path = unique_path("aaadaw");
+    let source_samples: Vec<_> = (0_i16..32).map(|index| (index - 16) * 1_024).collect();
+    let wav = pcm_wav(&source_samples, 48_000);
+    let mut store = ProjectStore::open(&database_path).expect("project should open");
+    store
+        .import_audio_asset(
+            "asset://mono-transport-loop",
+            "mono-loop.wav",
+            Cursor::new(&wav),
+        )
+        .expect("mono source should embed");
+    let mut project = Project::with_settings(
+        aaadaw_core::ProjectSettings::default()
+            .with_pan_mode(aaadaw_core::PanMode::LegacyMonoStereo),
+    );
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Mono loop".to_owned(),
+        })
+        .expect("track should be created");
+    let loop_range = TransportLoopRange::new(16, 32).expect("loop should be nonempty");
+    project
+        .apply(DawAction::InsertAudioItem {
+            track_id: project.tracks()[0].id(),
+            media_ref: "asset://mono-transport-loop".to_owned(),
+            start_sample: loop_range.start_sample(),
+            source_offset_samples: 0,
+            length_samples: loop_range.length_samples(),
+        })
+        .expect("mono audio item should be inserted");
+    project
+        .apply(DawAction::SetAudioItemLoopSource {
+            item_id: project.audio_items()[0].id(),
+            enabled: false,
+        })
+        .expect("item source loop should be disabled");
+
+    let prepared = prepare_audio_playback_at_with_loop_range(
+        &project,
+        &store,
+        20,
+        Some(loop_range),
+        64,
+        32,
+        ResamplingQuality::Sinc64,
+    )
+    .expect("mono PCM should repeat through the stereo playback graph");
+    let (mut graph, feeders) = prepared.into_parts();
+    assert_eq!(feeders.len(), 1);
+    std::thread::sleep(std::time::Duration::from_millis(20));
+    graph.transport_mut().start();
+    let mut output = [[0.0_f32; 2]; 32];
+    let stats = graph
+        .render_into(&mut output)
+        .expect("mono source should render through two transport wraps");
+    assert_eq!(stats.underrun_samples, 0);
+    let center_gain = std::f32::consts::FRAC_1_SQRT_2;
+    for (index, frame) in output.iter().enumerate() {
+        let source_index = (index + 4) % 16;
+        let expected = source_samples[source_index] as f32 / 32_768.0 * center_gain;
+        assert!((frame[0] - expected).abs() < 1.0e-6);
+        assert!((frame[1] - expected).abs() < 1.0e-6);
+    }
+    for feeder in feeders {
+        feeder
+            .cancel()
+            .expect("mono loop feeder should stop cleanly");
+    }
+    drop(graph);
+
+    store.close().expect("project should close");
+    remove_database(&database_path);
+}
+
+#[test]
 fn transport_loop_preparation_repeats_the_source_segment_of_a_containing_item() {
     let database_path = unique_path("aaadaw");
     let source_frames: Vec<_> = (0_i16..48)

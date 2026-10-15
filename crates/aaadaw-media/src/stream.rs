@@ -167,13 +167,14 @@ pub fn spawn_stereo_audio_item_stream_with_quality(
     )
 }
 
-/// Feeds a stereo item that exactly covers one project transport loop range.
+/// Feeds a mono or stereo item into a stereo stream over one project transport loop range.
 ///
 /// This feeder runs until cancelled or dropped. It accepts a bounded loop-source section or a
 /// normal trimmed item whose source offset plus its timeline distance to Loop start resolves to a
 /// nonnegative source frame, regardless of that item's Loop source setting. The item timeline
 /// must contain `timeline_loop_range`, the repeated source segment must have the same frame count,
-/// and the decoded sample rate must match the output rate.
+/// and the decoded sample rate must match the output rate. Mono sources are centered by the
+/// stereo stream producer.
 pub fn spawn_stereo_audio_item_stream_for_transport_loop(
     item: &AudioItem,
     timeline_loop_range: TransportLoopRange,
