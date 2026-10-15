@@ -167,14 +167,16 @@ pub fn spawn_stereo_audio_item_stream_with_quality(
     )
 }
 
-/// Feeds a mono or stereo item into a stereo stream over one project transport loop range.
+/// Feeds the mono or stereo source segment intersecting one project transport loop into a stereo
+/// stream.
 ///
 /// This feeder runs until cancelled or dropped. It accepts a bounded loop-source section or a
-/// normal trimmed item whose source offset plus its timeline distance to Loop start resolves to a
-/// nonnegative source frame, regardless of that item's Loop source setting. The item timeline
-/// must contain `timeline_loop_range`, the repeated source segment must have the same frame count,
-/// and the decoded sample rate must match the output rate. Mono sources are centered by the
-/// stereo stream producer.
+/// normal trimmed item whose source offset plus its timeline distance to the item/Loop
+/// intersection resolves to a nonnegative source frame, regardless of that item's Loop source
+/// setting. The item timeline repeats only the item's overlap with `timeline_loop_range`; a bounded
+/// source loop remains restricted to an item that exactly matches the full transport loop. The
+/// decoded sample rate must match the output rate. Mono sources are centered by the stereo stream
+/// producer.
 pub fn spawn_stereo_audio_item_stream_for_transport_loop(
     item: &AudioItem,
     timeline_loop_range: TransportLoopRange,
@@ -192,7 +194,8 @@ pub fn spawn_stereo_audio_item_stream_for_transport_loop(
     )
 }
 
-/// Feeds an exact-range stereo transport-loop item beginning at a sample inside the loop.
+/// Feeds an item's repeated transport-loop intersection, beginning at a sample inside that
+/// intersection or at its start when the requested transport position lies outside it.
 pub fn spawn_stereo_audio_item_stream_for_transport_loop_at(
     item: &AudioItem,
     timeline_loop_range: TransportLoopRange,
@@ -201,7 +204,7 @@ pub fn spawn_stereo_audio_item_stream_for_transport_loop_at(
     output_sample_rate: u32,
     producer: StereoPcmStreamProducer,
 ) -> Result<AudioFeedWorker, MediaError> {
-    let (samples_to_skip, source_section) =
+    let (samples_to_skip, source_section, feeder_sample, item_loop_range) =
         validate_transport_loop_item(item, timeline_loop_range, timeline_sample)?;
     spawn_stereo_stream(
         DecoderInput::Path(resolved_path.as_ref().to_owned()),
@@ -209,15 +212,15 @@ pub fn spawn_stereo_audio_item_stream_for_transport_loop_at(
         0,
         None,
         samples_to_skip,
-        AudioStreamPosition::new(timeline_sample),
+        AudioStreamPosition::new(feeder_sample),
         producer,
         ResamplingQuality::Sinc64,
         Some(source_section),
-        Some(timeline_loop_range),
+        Some(item_loop_range),
     )
 }
 
-/// Feeds a seekable embedded source for an exact stereo transport-loop item.
+/// Feeds a seekable embedded source for a stereo transport-loop intersection.
 #[allow(clippy::too_many_arguments)]
 pub fn spawn_stereo_audio_item_stream_from_reader_for_transport_loop<R>(
     item: &AudioItem,
@@ -232,7 +235,7 @@ pub fn spawn_stereo_audio_item_stream_from_reader_for_transport_loop<R>(
 where
     R: Read + Seek + Send + Sync + 'static,
 {
-    let (samples_to_skip, source_section) =
+    let (samples_to_skip, source_section, feeder_sample, item_loop_range) =
         validate_transport_loop_item(item, timeline_loop_range, timeline_sample)?;
     spawn_stereo_stream(
         DecoderInput::Reader {
@@ -244,11 +247,11 @@ where
         0,
         None,
         samples_to_skip,
-        AudioStreamPosition::new(timeline_sample),
+        AudioStreamPosition::new(feeder_sample),
         producer,
         ResamplingQuality::Sinc64,
         Some(source_section),
-        Some(timeline_loop_range),
+        Some(item_loop_range),
     )
 }
 
@@ -256,22 +259,34 @@ fn validate_transport_loop_item(
     item: &AudioItem,
     timeline_loop_range: TransportLoopRange,
     timeline_sample: u64,
-) -> Result<(u64, SourceLoopSection), MediaError> {
+) -> Result<(u64, SourceLoopSection, u64, TransportLoopRange), MediaError> {
     let Some(item_end) = item.start_sample().checked_add(item.length_samples()) else {
         return Err(MediaError::InvalidTimelineLoop);
     };
     if item.length_samples() == 0
-        || item.start_sample() > timeline_loop_range.start_sample()
-        || item_end < timeline_loop_range.end_sample()
+        || item.start_sample() >= timeline_loop_range.end_sample()
+        || item_end <= timeline_loop_range.start_sample()
         || timeline_sample < timeline_loop_range.start_sample()
         || timeline_sample >= timeline_loop_range.end_sample()
     {
         return Err(MediaError::InvalidTimelineLoop);
     }
-    let loop_offset_from_item_start = timeline_loop_range
+    let item_loop_range = TransportLoopRange::new(
+        item.start_sample().max(timeline_loop_range.start_sample()),
+        item_end.min(timeline_loop_range.end_sample()),
+    )
+    .ok_or(MediaError::InvalidTimelineLoop)?;
+    let loop_offset_from_item_start = item_loop_range
         .start_sample()
         .checked_sub(item.start_sample())
         .ok_or(MediaError::InvalidTimelineLoop)?;
+    let feeder_sample = if (item_loop_range.start_sample()..item_loop_range.end_sample())
+        .contains(&timeline_sample)
+    {
+        timeline_sample
+    } else {
+        item_loop_range.start_sample()
+    };
     let source_section = match (
         item.source_section_start_samples(),
         item.source_section_length_samples(),
@@ -281,13 +296,14 @@ fn validate_transport_loop_item(
                 || item.source_offset_samples() != 0
                 || loop_offset_from_item_start != 0
                 || item_end != timeline_loop_range.end_sample()
+                || item_loop_range != timeline_loop_range
             {
                 return Err(MediaError::InvalidTimelineLoop);
             }
             source_loop_section(item)
                 .filter(|section| {
                     section.looping
-                        && section.length_frames == Some(timeline_loop_range.length_samples())
+                        && section.length_frames == Some(item_loop_range.length_samples())
                 })
                 .ok_or(MediaError::InvalidTimelineLoop)?
         }
@@ -300,22 +316,24 @@ fn validate_transport_loop_item(
                 .and_then(|offset| u64::try_from(offset).ok())
                 .ok_or(MediaError::InvalidTimelineLoop)?;
             if start_frame
-                .checked_add(timeline_loop_range.length_samples())
+                .checked_add(item_loop_range.length_samples())
                 .is_none()
             {
                 return Err(MediaError::InvalidTimelineLoop);
             }
             SourceLoopSection {
                 start_frame,
-                length_frames: Some(timeline_loop_range.length_samples()),
+                length_frames: Some(item_loop_range.length_samples()),
                 looping: true,
             }
         }
         _ => return Err(MediaError::InvalidTimelineLoop),
     };
     Ok((
-        timeline_sample - timeline_loop_range.start_sample(),
+        feeder_sample - item_loop_range.start_sample(),
         source_section,
+        feeder_sample,
+        item_loop_range,
     ))
 }
 

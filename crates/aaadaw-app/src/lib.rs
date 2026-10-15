@@ -1886,11 +1886,11 @@ pub fn prepare_audio_playback_at_with_resampling_quality(
 
 /// Prepares playback with an active transport repeat range.
 ///
-/// Audio items overlapping the loop must contain the complete loop range and provide a mono or
-/// stereo source segment for its duration at the project sample rate. Mono sources are centered in
-/// the stereo graph. Bounded source loops must exactly match that range; normal trimmed items may
-/// span it and repeat with transport regardless of their Loop source setting. Incompatible items
-/// are rejected before the graph is started.
+/// Audio items overlapping the loop repeat only the source segment corresponding to their
+/// intersection with the transport range and provide it at the project sample rate. Mono sources
+/// are centered in the stereo graph. Bounded source loops must exactly match the full range;
+/// normal trimmed items may partially overlap or span it, regardless of their Loop source setting.
+/// Incompatible items are rejected before the graph is started.
 pub fn prepare_audio_playback_at_with_loop_range(
     project: &Project,
     store: &ProjectStore,
@@ -1906,7 +1906,8 @@ pub fn prepare_audio_playback_at_with_loop_range(
         .filter(|item| {
             timeline_sample < item.end_sample()
                 || (transport_loop_range.is_some_and(|range| {
-                    timeline_sample == range.end_sample()
+                    timeline_sample >= range.start_sample()
+                        && timeline_sample <= range.end_sample()
                         && item.start_sample() < range.end_sample()
                         && item.end_sample() > range.start_sample()
                 }))
@@ -1917,7 +1918,8 @@ pub fn prepare_audio_playback_at_with_loop_range(
     for item in project.audio_items().iter().filter(|item| {
         timeline_sample < item.end_sample()
             || (transport_loop_range.is_some_and(|range| {
-                timeline_sample == range.end_sample()
+                timeline_sample >= range.start_sample()
+                    && timeline_sample <= range.end_sample()
                     && item.start_sample() < range.end_sample()
                     && item.end_sample() > range.start_sample()
             }))
@@ -1957,9 +1959,7 @@ pub fn prepare_audio_playback_at_with_loop_range(
                 && item.end_sample() > range.start_sample()
         });
         let item_queue_capacity = if timeline_sample >= item.end_sample() {
-            if transport_loop_range.is_some_and(|range| {
-                timeline_sample == range.end_sample() && overlaps_transport_loop
-            }) {
+            if overlaps_transport_loop {
                 queue_plan.active_item_capacity_frames
             } else {
                 queue_plan.past_item_capacity_frames
@@ -1969,11 +1969,7 @@ pub fn prepare_audio_playback_at_with_loop_range(
         };
         let (producer, consumer) =
             stereo_pcm_stream(item_queue_capacity).map_err(PlaybackBuildError::PcmStream)?;
-        if timeline_sample >= item.end_sample()
-            && !transport_loop_range.is_some_and(|range| {
-                timeline_sample == range.end_sample() && overlaps_transport_loop
-            })
-        {
+        if timeline_sample >= item.end_sample() && !overlaps_transport_loop {
             drop(producer);
             item_streams.push(AudioItemStream::new_stereo_at_sample(
                 item.id(),
@@ -1988,12 +1984,18 @@ pub fn prepare_audio_playback_at_with_loop_range(
             {
                 return Err(PlaybackBuildError::Media(MediaError::InvalidTimelineLoop));
             }
-            let feeder_sample =
-                if (range.start_sample()..range.end_sample()).contains(&timeline_sample) {
-                    timeline_sample
-                } else {
-                    range.start_sample()
-                };
+            let item_loop_range = TransportLoopRange::new(
+                item.start_sample().max(range.start_sample()),
+                item.end_sample().min(range.end_sample()),
+            )
+            .expect("overlapping item and transport ranges have a nonempty intersection");
+            let feeder_sample = if (item_loop_range.start_sample()..item_loop_range.end_sample())
+                .contains(&timeline_sample)
+            {
+                timeline_sample
+            } else {
+                item_loop_range.start_sample()
+            };
             let resolved = store
                 .resolve_audio_asset(item.media_ref())
                 .map_err(PlaybackBuildError::Storage)?;
@@ -2033,7 +2035,7 @@ pub fn prepare_audio_playback_at_with_loop_range(
             item_streams.push(AudioItemStream::new_stereo_looping_at_sample_with_position(
                 item.id(),
                 feeder_sample,
-                range,
+                item_loop_range,
                 consumer,
                 position,
             ));
