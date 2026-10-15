@@ -1,0 +1,28 @@
+version	7.82/linux-x86_64
+theme	Default_7.0.ReaperThemeZip
+project_sample_rate	44100
+dialog_action	41226
+nudge_right_action	41249
+fixture	selected non-loop Audio item at 1.270s; length 0.500s; source offset 0.200s; Arrangement view set to 0-6s
+baseline	state_change_count	3	state_change_delta	0	position_s	1.270000000	length_s	0.500000000	source_offset_s	0.200000000	selected	1	view_start_s	0.000000000	view_end_s	6.000000000	undo_label	Nudge pixels probe setup
+after_right_zoom6_snapoff	state_change_count	3	state_change_delta	0	position_s	1.278915305	length_s	0.500000000	source_offset_s	0.200000000	selected	1	view_start_s	0.000000000	view_end_s	6.000000000	undo_label	Nudge pixels probe setup
+baseline_snap_on_zoom6	state_change_count	4	state_change_delta	0	position_s	1.270000000	length_s	0.500000000	source_offset_s	0.200000000	selected	1	view_start_s	0.000000000	view_end_s	6.000000000	undo_label	Nudge items
+after_right_zoom6_snapon	state_change_count	4	state_change_delta	0	position_s	1.274888559	length_s	0.500000000	source_offset_s	0.200000000	selected	1	view_start_s	0.000000000	view_end_s	6.000000000	undo_label	Nudge items
+view_zoom12	state_change_count	5	state_change_delta	1	position_s	1.274888559	length_s	0.500000000	source_offset_s	0.200000000	selected	1	view_start_s	0.000000000	view_end_s	12.000000000	undo_label	Nudge items
+baseline_zoom12	state_change_count	5	state_change_delta	0	position_s	1.270000000	length_s	0.500000000	source_offset_s	0.200000000	selected	1	view_start_s	0.000000000	view_end_s	12.000000000	undo_label	Nudge items
+after_right_zoom12_snapoff	state_change_count	5	state_change_delta	0	position_s	1.287830609	length_s	0.500000000	source_offset_s	0.200000000	selected	1	view_start_s	0.000000000	view_end_s	12.000000000	undo_label	Nudge items
+baseline_zoom12_snapon	state_change_count	6	state_change_delta	0	position_s	1.270000000	length_s	0.500000000	source_offset_s	0.200000000	selected	1	view_start_s	0.000000000	view_end_s	12.000000000	undo_label	Nudge items
+after_right_zoom12_snapon	state_change_count	6	state_change_delta	0	position_s	1.283803863	length_s	0.500000000	source_offset_s	0.200000000	selected	1	view_start_s	0.000000000	view_end_s	12.000000000	undo_label	Nudge items
+baseline_zoom12_snapleft	state_change_count	7	state_change_delta	0	position_s	1.270000000	length_s	0.500000000	source_offset_s	0.200000000	selected	1	view_start_s	0.000000000	view_end_s	12.000000000	undo_label	Nudge items
+after_left_zoom12_snapon	state_change_count	7	state_change_delta	0	position_s	1.248142645	length_s	0.500000000	source_offset_s	0.200000000	selected	1	view_start_s	0.000000000	view_end_s	12.000000000	undo_label	Nudge items
+view_zoom6half	state_change_count	8	state_change_delta	1	position_s	1.248142645	length_s	0.500000000	source_offset_s	0.200000000	selected	1	view_start_s	0.000000000	view_end_s	6.000000000	undo_label	Nudge items
+baseline_half_zoom6	state_change_count	8	state_change_delta	0	position_s	1.270000000	length_s	0.500000000	source_offset_s	0.200000000	selected	1	view_start_s	0.000000000	view_end_s	6.000000000	undo_label	Nudge items
+after_right_half_zoom6_snapoff	state_change_count	8	state_change_delta	0	position_s	1.274457652	length_s	0.500000000	source_offset_s	0.200000000	selected	1	view_start_s	0.000000000	view_end_s	6.000000000	undo_label	Nudge items
+baseline_half_zoom6_snapon	state_change_count	9	state_change_delta	0	position_s	1.270000000	length_s	0.500000000	source_offset_s	0.200000000	selected	1	view_start_s	0.000000000	view_end_s	6.000000000	undo_label	Nudge items
+after_right_half_zoom6_snapon	state_change_count	9	state_change_delta	0	position_s	1.274888559	length_s	0.500000000	source_offset_s	0.200000000	selected	1	view_start_s	0.000000000	view_end_s	6.000000000	undo_label	Nudge items
+set_pixels_200_5	state_change_count	11	state_change_delta	2	position_s	1.791976226	length_s	0.500000000	source_offset_s	0.200000000	selected	1	view_start_s	0.000000000	view_end_s	6.000000000	undo_label	Nudge items
+set_pixels_200_5_snapoff	state_change_count	12	state_change_delta	3	position_s	1.787518574	length_s	0.500000000	source_offset_s	0.200000000	selected	1	view_start_s	0.000000000	view_end_s	6.000000000	undo_label	Nudge items
+set_frames_60_snapoff	state_change_count	13	state_change_delta	4	position_s	2.000000000	length_s	0.500000000	source_offset_s	0.200000000	selected	1	view_start_s	0.000000000	view_end_s	6.000000000	undo_label	Nudge items
+set_measures_beats_3_1_25	state_change_count	14	state_change_delta	5	position_s	4.125000000	length_s	0.500000000	source_offset_s	0.200000000	selected	1	view_start_s	0.000000000	view_end_s	6.000000000	undo_label	Nudge items
+set_measures_beats_3_1_75_snapgrid	state_change_count	15	state_change_delta	6	position_s	4.500000000	length_s	0.500000000	source_offset_s	0.200000000	selected	1	view_start_s	0.000000000	view_end_s	6.000000000	undo_label	Nudge items
+set_frames_60_5_snapon	state_change_count	16	state_change_delta	7	position_s	2.033333333	length_s	0.500000000	source_offset_s	0.200000000	selected	1	view_start_s	0.000000000	view_end_s	6.000000000	undo_label	Nudge items

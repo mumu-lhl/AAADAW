@@ -506,9 +506,156 @@ fn item_nudge_frames_matches_native_fractional_moves_snap_and_undo() {
     assert!(fractional.item_nudge_dialog.error.is_none());
 
     let _ = fractional.update(Message::ItemNudgeModeChanged(super::item_nudge::Mode::Set));
-    let previous_unit = fractional.item_nudge_dialog.unit;
+    assert_eq!(fractional.item_nudge_dialog.unit, Unit::Frames);
     let _ = fractional.update(Message::ItemNudgeUnitChanged(Unit::Frames));
-    assert_eq!(fractional.item_nudge_dialog.unit, previous_unit);
+    assert_eq!(fractional.item_nudge_dialog.unit, Unit::Frames);
+}
+
+#[test]
+fn item_nudge_pixels_follow_arrangement_zoom_and_native_snap_rounding() {
+    use super::item_nudge::Unit;
+
+    let cases = [
+        (0.25, "1.25", false, 1_i8),
+        (0.5, "1.25", true, 1_i8),
+        (0.5, "0.5", true, -1_i8),
+    ];
+    for (pixels_per_tick, value, snap, direction) in cases {
+        let mut app = item_snap_test_app(60_960, 5_242);
+        app.timeline.origin_tick = 0;
+        app.timeline.pixels_per_tick = pixels_per_tick;
+        let item = &app.project.audio_items()[0];
+        let track_id = item.track_id();
+        let first_sample = item.start_sample();
+        let original_length = item.length_samples();
+        let original_offset = item.source_offset_samples();
+        let original_selection = app.timeline.selected_items.clone();
+        let first_tick = app.project.tick_at_sample(first_sample).unwrap();
+        let first_pixel = first_tick as f64 * f64::from(pixels_per_tick);
+        let target_pixel = first_pixel + f64::from(direction) * value.parse::<f64>().unwrap();
+        let revision_before = app.revision;
+
+        let _ = app.update(Message::ItemNudgeUnitChanged(Unit::Pixels));
+        assert_eq!(app.item_nudge_dialog.value, "0.5");
+        let _ = app.update(Message::ItemNudgeValueChanged(value.to_owned()));
+        let _ = app.update(Message::ItemNudgeSnapToUnitChanged(snap));
+        let _ = app.update(Message::NudgeSelectedItems(direction));
+
+        let moved = &app.project.audio_items()[0];
+        let moved_tick = app.project.tick_at_sample(moved.start_sample()).unwrap();
+        let moved_pixel = moved_tick as f64 * f64::from(pixels_per_tick);
+        let expected_pixel = if snap {
+            target_pixel.floor()
+        } else {
+            target_pixel
+        };
+        assert!(
+            (moved_pixel - expected_pixel).abs() <= f64::from(pixels_per_tick) * 0.51,
+            "{pixels_per_tick}px/tick, {value}px, snap={snap}, moved={moved_pixel}, expected={expected_pixel}"
+        );
+        assert_ne!(moved.start_sample(), first_sample);
+        assert_eq!(moved.length_samples(), original_length);
+        assert_eq!(moved.source_offset_samples(), original_offset);
+        assert_eq!(moved.track_id(), track_id);
+        assert_eq!(app.timeline.selected_items, original_selection);
+        assert_eq!(app.revision, revision_before + 1);
+        assert!(app.item_nudge_dialog.error.is_none());
+        let moved_sample = moved.start_sample();
+
+        let _ = app.update(Message::Undo);
+        assert_eq!(app.project.audio_items()[0].start_sample(), first_sample);
+        assert_eq!(app.timeline.selected_items, original_selection);
+        let _ = app.update(Message::Redo);
+        assert_eq!(app.project.audio_items()[0].start_sample(), moved_sample);
+        assert_eq!(app.project.audio_items()[0].track_id(), track_id);
+        assert_eq!(app.timeline.selected_items, original_selection);
+    }
+}
+
+#[test]
+fn item_nudge_set_pixels_use_absolute_screen_positions_and_snap_to_pixel() {
+    use super::item_nudge::{Mode, Unit};
+
+    for (snap, expected_pixel) in [(false, 200.5), (true, 201.0)] {
+        let mut app = item_snap_test_app(60_960, 5_242);
+        app.timeline.origin_tick = 0;
+        app.timeline.pixels_per_tick = 0.5;
+        let item = &app.project.audio_items()[0];
+        let track_id = item.track_id();
+        let original_sample = item.start_sample();
+        let original_length = item.length_samples();
+        let original_offset = item.source_offset_samples();
+        let selection = app.timeline.selected_items.clone();
+        let revision_before = app.revision;
+
+        let _ = app.update(Message::ItemNudgeModeChanged(Mode::Set));
+        let _ = app.update(Message::ItemNudgeUnitChanged(Unit::Pixels));
+        let _ = app.update(Message::ItemNudgeValueChanged("200.5".to_owned()));
+        let _ = app.update(Message::ItemNudgeSnapToUnitChanged(snap));
+        let _ = app.update(Message::ApplyItemNudgeSet);
+
+        let moved = &app.project.audio_items()[0];
+        let moved_tick = app.project.tick_at_sample(moved.start_sample()).unwrap();
+        let moved_pixel = moved_tick as f64 * f64::from(app.timeline.pixels_per_tick);
+        assert!((moved_pixel - expected_pixel).abs() <= 0.26);
+        assert_ne!(moved.start_sample(), original_sample);
+        assert_eq!(moved.length_samples(), original_length);
+        assert_eq!(moved.source_offset_samples(), original_offset);
+        assert_eq!(app.timeline.selected_items, selection);
+        assert_eq!(app.revision, revision_before + 1);
+        assert!(app.item_nudge_dialog.error.is_none());
+
+        let moved_sample = moved.start_sample();
+        let _ = app.update(Message::Undo);
+        assert_eq!(app.project.audio_items()[0].start_sample(), original_sample);
+        assert_eq!(app.timeline.selected_items, selection);
+        let _ = app.update(Message::Redo);
+        assert_eq!(app.project.audio_items()[0].start_sample(), moved_sample);
+        assert_eq!(app.timeline.selected_items, selection);
+        assert_eq!(app.project.audio_items()[0].track_id(), track_id);
+    }
+}
+
+#[test]
+fn item_nudge_set_frames_and_measures_beats_match_native_positions_and_snap() {
+    use super::item_nudge::{Mode, Unit};
+
+    let cases = [
+        (Unit::Frames, "60", false, 96_000),
+        (Unit::Frames, "60.5", true, 97_600),
+        (Unit::MeasuresBeats, "3.1.25", false, 198_000),
+        (Unit::MeasuresBeats, "3.1.75", true, 216_000),
+    ];
+    for (unit, value, snap, expected_sample) in cases {
+        let mut app = item_snap_test_app(44_100, 5_242);
+        app.timeline.snap_grid = crate::timeline::SnapGrid::Quarter;
+        let item = &app.project.audio_items()[0];
+        let track_id = item.track_id();
+        let original_length = item.length_samples();
+        let original_offset = item.source_offset_samples();
+        let selection = app.timeline.selected_items.clone();
+
+        let _ = app.update(Message::ItemNudgeModeChanged(Mode::Set));
+        let _ = app.update(Message::ItemNudgeUnitChanged(unit));
+        let _ = app.update(Message::ItemNudgeValueChanged(value.to_owned()));
+        let _ = app.update(Message::ItemNudgeSnapToUnitChanged(snap));
+        let _ = app.update(Message::ApplyItemNudgeSet);
+
+        let moved = &app.project.audio_items()[0];
+        assert_eq!(moved.start_sample(), expected_sample, "{unit}, {value}");
+        assert_eq!(moved.length_samples(), original_length);
+        assert_eq!(moved.source_offset_samples(), original_offset);
+        assert_eq!(app.timeline.selected_items, selection);
+        assert!(app.item_nudge_dialog.error.is_none(), "{unit}, {value}");
+
+        let _ = app.update(Message::Undo);
+        assert_eq!(app.project.audio_items()[0].start_sample(), 44_100);
+        assert_eq!(app.timeline.selected_items, selection);
+        let _ = app.update(Message::Redo);
+        assert_eq!(app.project.audio_items()[0].start_sample(), expected_sample);
+        assert_eq!(app.timeline.selected_items, selection);
+        assert_eq!(app.project.audio_items()[0].track_id(), track_id);
+    }
 }
 
 #[test]

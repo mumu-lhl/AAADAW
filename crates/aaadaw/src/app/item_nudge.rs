@@ -30,6 +30,7 @@ pub(crate) enum Unit {
     Grid,
     MeasuresBeats,
     Frames,
+    Pixels,
 }
 
 impl std::fmt::Display for Unit {
@@ -41,6 +42,7 @@ impl std::fmt::Display for Unit {
             Self::Grid => "grid units",
             Self::MeasuresBeats => "measures.beats",
             Self::Frames => "frames",
+            Self::Pixels => "pixels",
         })
     }
 }
@@ -113,31 +115,51 @@ impl Dialog {
         self.error = None;
         self.snap_to_unit = false;
         self.relative_set = false;
-        match mode {
-            Mode::Nudge => {
-                self.unit = Unit::Milliseconds;
-                self.value = "1".to_owned();
-            }
-            Mode::Set => {
-                self.unit = Unit::Time;
-                self.value = "0:00.000".to_owned();
-            }
-        }
+        self.unit = match mode {
+            Mode::Nudge if unit_is_valid_for_nudge(self.unit) => self.unit,
+            Mode::Nudge => Unit::Milliseconds,
+            Mode::Set if unit_is_valid_for_set(self.unit) => self.unit,
+            Mode::Set => Unit::Time,
+        };
+        self.value = default_value(mode, self.unit).to_owned();
     }
 
     fn set_unit(&mut self, unit: Unit) {
         self.unit = unit;
         self.error = None;
-        self.value = match (self.mode, unit) {
-            (
-                Mode::Nudge,
-                Unit::Milliseconds | Unit::Samples | Unit::Time | Unit::Grid | Unit::Frames,
-            ) => "1".to_owned(),
-            (Mode::Nudge, Unit::MeasuresBeats) => "1.0".to_owned(),
-            (Mode::Set, Unit::Time) => "0:00.000".to_owned(),
-            (Mode::Set, Unit::Samples) => "0".to_owned(),
-            _ => self.value.clone(),
-        };
+        self.value = default_value(self.mode, unit).to_owned();
+    }
+}
+
+fn unit_is_valid_for_nudge(unit: Unit) -> bool {
+    matches!(
+        unit,
+        Unit::Milliseconds
+            | Unit::Time
+            | Unit::Grid
+            | Unit::MeasuresBeats
+            | Unit::Samples
+            | Unit::Frames
+            | Unit::Pixels
+    )
+}
+
+fn unit_is_valid_for_set(unit: Unit) -> bool {
+    matches!(
+        unit,
+        Unit::Time | Unit::MeasuresBeats | Unit::Samples | Unit::Frames | Unit::Pixels
+    )
+}
+
+fn default_value(mode: Mode, unit: Unit) -> &'static str {
+    match (mode, unit) {
+        (Mode::Nudge, Unit::MeasuresBeats) => "1.0",
+        (Mode::Nudge, Unit::Pixels) => "0.5",
+        (Mode::Nudge, _) => "1",
+        (Mode::Set, Unit::Time) => "0:00.000",
+        (Mode::Set, Unit::MeasuresBeats) => "1.1.00",
+        (Mode::Set, Unit::Pixels) => "0.0",
+        (Mode::Set, _) => "0",
     }
 }
 
@@ -163,23 +185,78 @@ impl App {
 
     pub(super) fn change_item_nudge_mode(&mut self, mode: Mode) {
         self.item_nudge_dialog.set_mode(mode);
+        if mode == Mode::Set {
+            self.refresh_item_nudge_set_value();
+        }
+    }
+
+    fn refresh_item_nudge_set_value(&mut self) {
+        let sample = if self.item_nudge_dialog.target == Target::EditCursor {
+            self.project
+                .sample_at_tick(self.timeline.edit_cursor_tick)
+                .ok()
+        } else {
+            self.selected_item_start_samples()
+                .ok()
+                .and_then(|selected| selected.first().map(|(_, sample)| *sample))
+        };
+        if let Some(sample) = sample
+            && let Some(value) = self.set_value_for_sample(self.item_nudge_dialog.unit, sample)
+        {
+            self.item_nudge_dialog.value = value;
+        }
+    }
+
+    fn set_value_for_sample(&self, unit: Unit, sample: u64) -> Option<String> {
+        let sample_rate = f64::from(self.project.settings().sample_rate());
+        match unit {
+            Unit::Time => Some(project_time::format_project_time(
+                sample as f64 / sample_rate,
+            )),
+            Unit::Samples => Some(sample.to_string()),
+            Unit::Frames => Some(format!(
+                "{:.3}",
+                sample as f64 * self.project.settings().frame_rate().frames_per_second()
+                    / sample_rate
+            )),
+            Unit::Pixels => {
+                let tick = self.project.tick_at_sample(sample).ok()?;
+                let pixel = (tick as f64 - self.timeline.origin_tick as f64)
+                    * f64::from(self.timeline.pixels_per_tick);
+                Some(format!("{pixel:.1}"))
+            }
+            Unit::MeasuresBeats => {
+                let tick = self.project.tick_at_sample(sample).ok()?;
+                let position = self.project.musical_position_at_tick(tick).ok()?;
+                let meter = self.project.time_signature_at_tick(tick);
+                let ticks_per_beat =
+                    u64::from(self.project.settings().ppq()) * 4 / u64::from(meter.denominator());
+                if ticks_per_beat == 0 {
+                    return None;
+                }
+                let fraction = (position.tick_in_beat() as f64 * 100.0 / ticks_per_beat as f64)
+                    .round()
+                    .clamp(0.0, 99.0) as u32;
+                Some(format!(
+                    "{}.{}.{fraction:02}",
+                    position.measure(),
+                    position.beat()
+                ))
+            }
+            Unit::Milliseconds | Unit::Grid => None,
+        }
     }
 
     pub(super) fn change_item_nudge_unit(&mut self, unit: Unit) {
         let valid = match self.item_nudge_dialog.mode {
-            Mode::Nudge => matches!(
-                unit,
-                Unit::Milliseconds
-                    | Unit::Time
-                    | Unit::Grid
-                    | Unit::MeasuresBeats
-                    | Unit::Samples
-                    | Unit::Frames
-            ),
-            Mode::Set => matches!(unit, Unit::Time | Unit::Samples),
+            Mode::Nudge => unit_is_valid_for_nudge(unit),
+            Mode::Set => unit_is_valid_for_set(unit),
         };
         if valid {
             self.item_nudge_dialog.set_unit(unit);
+            if self.item_nudge_dialog.mode == Mode::Set {
+                self.refresh_item_nudge_set_value();
+            }
         }
     }
 
@@ -189,6 +266,9 @@ impl App {
             self.item_nudge_dialog.relative_set = false;
         }
         self.item_nudge_dialog.error = None;
+        if self.item_nudge_dialog.mode == Mode::Set {
+            self.refresh_item_nudge_set_value();
+        }
     }
 
     pub(super) fn change_item_nudge_value(&mut self, value: String) {
@@ -215,13 +295,15 @@ impl App {
             .map_err(|error| error.to_string());
         match result {
             Ok(sample) => {
-                self.item_nudge_dialog.value = match self.item_nudge_dialog.unit {
-                    Unit::Samples => sample.to_string(),
-                    _ => project_time::format_project_time(
-                        sample as f64 / f64::from(self.project.settings().sample_rate()),
-                    ),
-                };
-                self.item_nudge_dialog.error = None;
+                if let Some(value) = self.set_value_for_sample(self.item_nudge_dialog.unit, sample)
+                {
+                    self.item_nudge_dialog.value = value;
+                    self.item_nudge_dialog.error = None;
+                } else {
+                    self.item_nudge_dialog.error = Some(
+                        "The selected unit cannot represent the edit cursor position".to_owned(),
+                    );
+                }
             }
             Err(error) => self.item_nudge_dialog.error = Some(error),
         }
@@ -382,21 +464,12 @@ impl App {
             }
         };
         if self.item_nudge_dialog.snap_to_unit {
-            match self.item_nudge_dialog.unit {
-                Unit::Frames => match self.nearest_frame_sample(sample) {
-                    Ok(snapped) => sample = snapped,
-                    Err(error) => {
-                        self.item_nudge_dialog.error = Some(error);
-                        return;
-                    }
-                },
-                _ => match self.snap_resolution_samples() {
-                    Ok(unit) => sample = round_sample(sample, unit),
-                    Err(error) => {
-                        self.item_nudge_dialog.error = Some(error);
-                        return;
-                    }
-                },
+            match self.snap_set_target_sample(sample) {
+                Ok(snapped) => sample = snapped,
+                Err(error) => {
+                    self.item_nudge_dialog.error = Some(error);
+                    return;
+                }
             }
         }
         match self.project.tick_at_sample(sample) {
@@ -445,28 +518,26 @@ impl App {
             }
         };
         if self.item_nudge_dialog.snap_to_unit {
-            match self.snap_resolution_samples() {
-                Ok(unit) => {
-                    let target = match i128::from(first_sample).checked_add(delta) {
-                        Some(target) => target,
-                        None => {
-                            self.item_nudge_dialog.error =
-                                Some("Item position is outside the supported range".to_owned());
-                            return;
-                        }
-                    };
-                    let target = match u64::try_from(target) {
-                        Ok(target) => target,
-                        Err(_) => {
-                            self.item_nudge_dialog.error = Some(
-                                "Item position cannot be before sample zero or beyond the timeline"
-                                    .to_owned(),
-                            );
-                            return;
-                        }
-                    };
-                    delta = i128::from(round_sample(target, unit)) - i128::from(first_sample);
+            let target = match i128::from(first_sample).checked_add(delta) {
+                Some(target) => target,
+                None => {
+                    self.item_nudge_dialog.error =
+                        Some("Item position is outside the supported range".to_owned());
+                    return;
                 }
+            };
+            let target = match u64::try_from(target) {
+                Ok(target) => target,
+                Err(_) => {
+                    self.item_nudge_dialog.error = Some(
+                        "Item position cannot be before sample zero or beyond the timeline"
+                            .to_owned(),
+                    );
+                    return;
+                }
+            };
+            match self.snap_set_target_sample(target) {
+                Ok(target) => delta = i128::from(target) - i128::from(first_sample),
                 Err(error) => {
                     self.item_nudge_dialog.error = Some(error);
                     return;
@@ -502,8 +573,8 @@ impl App {
             }
         };
         if self.item_nudge_dialog.snap_to_unit {
-            match self.snap_resolution_samples() {
-                Ok(unit) => target_sample = round_sample(target_sample, unit),
+            match self.snap_set_target_sample(target_sample) {
+                Ok(target) => target_sample = target,
                 Err(error) => {
                     self.item_nudge_dialog.error = Some(error);
                     return;
@@ -562,8 +633,8 @@ impl App {
             }
         };
         if self.item_nudge_dialog.snap_to_unit {
-            match self.snap_resolution_samples() {
-                Ok(unit) => target_sample = round_sample(target_sample, unit),
+            match self.snap_set_target_sample(target_sample) {
+                Ok(target) => target_sample = target,
                 Err(error) => {
                     self.item_nudge_dialog.error = Some(error);
                     return;
@@ -1115,8 +1186,8 @@ impl App {
             }
         };
         let target_sample = if self.item_nudge_dialog.snap_to_unit {
-            match self.snap_resolution_samples() {
-                Ok(unit) => round_sample(target_sample, unit),
+            match self.snap_set_target_sample(target_sample) {
+                Ok(target) => target,
                 Err(error) => {
                     self.item_nudge_dialog.error = Some(error);
                     return;
@@ -2117,8 +2188,8 @@ impl App {
             return;
         };
         if self.item_nudge_dialog.snap_to_unit {
-            match self.snap_resolution_samples() {
-                Ok(unit) => sample = round_sample(sample, unit),
+            match self.snap_nudge_target_sample(sample) {
+                Ok(snapped) => sample = snapped,
                 Err(error) => {
                     self.item_nudge_dialog.error = Some(error);
                     return;
@@ -2161,13 +2232,20 @@ impl App {
                 project_time::parse_project_time(value).map_err(str::to_owned)? * sample_rate
             }
             Unit::Frames => {
-                if self.item_nudge_dialog.mode != Mode::Nudge {
-                    return Err("Frames are only available for Nudge".to_owned());
-                }
                 let frames = value
                     .parse::<f64>()
                     .map_err(|_| "Enter a valid frame amount".to_owned())?;
                 frames * sample_rate / self.project.settings().frame_rate().frames_per_second()
+            }
+            Unit::Pixels if signed_time => {
+                let pixels = value
+                    .parse::<f64>()
+                    .map_err(|_| "Enter a valid pixel amount".to_owned())?;
+                let anchor = self.pixel_relative_set_anchor_sample()?;
+                return self.pixel_delta_samples(anchor, pixels);
+            }
+            Unit::Pixels => {
+                return Err("Pixel nudge requires an arrangement position".to_owned());
             }
             Unit::Grid | Unit::MeasuresBeats => {
                 return Err("Musical units are only available for Nudge".to_owned());
@@ -2207,9 +2285,181 @@ impl App {
                 }
                 samples.round() as u64
             }
+            Unit::Frames => {
+                let frames = self
+                    .item_nudge_dialog
+                    .value
+                    .trim()
+                    .parse::<f64>()
+                    .map_err(|_| "Enter a valid frame position".to_owned())?;
+                let samples =
+                    frames * sample_rate / self.project.settings().frame_rate().frames_per_second();
+                checked_sample_position(samples, "Frame position")?
+            }
+            Unit::MeasuresBeats => self.measures_beats_target_sample()?,
+            Unit::Pixels => {
+                let pixels = self
+                    .item_nudge_dialog
+                    .value
+                    .trim()
+                    .parse::<f64>()
+                    .map_err(|_| "Enter a valid pixel position".to_owned())?;
+                let pixels = if self.item_nudge_dialog.snap_to_unit {
+                    pixels.round()
+                } else {
+                    pixels
+                };
+                self.sample_at_timeline_pixel(pixels)?
+            }
             _ => return Err("Select a set-position unit".to_owned()),
         };
         Ok(samples)
+    }
+
+    fn pixel_delta_samples(&self, anchor_sample: u64, pixel_delta: f64) -> Result<i128, String> {
+        if !pixel_delta.is_finite() {
+            return Err("Pixel nudge is outside the supported range".to_owned());
+        }
+        let anchor_pixel = self.timeline_pixel_for_sample(anchor_sample)?;
+        let target_sample = self.sample_at_timeline_pixel(anchor_pixel + pixel_delta)?;
+        Ok(i128::from(target_sample) - i128::from(anchor_sample))
+    }
+
+    fn timeline_pixel_for_sample(&self, sample: u64) -> Result<f64, String> {
+        let tick = self
+            .project
+            .tick_at_sample(sample)
+            .map_err(|error| error.to_string())?;
+        let pixels_per_tick = f64::from(self.timeline.pixels_per_tick);
+        if !pixels_per_tick.is_finite() || pixels_per_tick <= 0.0 {
+            return Err("Arrangement pixel scale is unavailable".to_owned());
+        }
+        Ok((tick as f64 - self.timeline.origin_tick as f64) * pixels_per_tick)
+    }
+
+    fn sample_at_timeline_pixel(&self, pixel: f64) -> Result<u64, String> {
+        let pixels_per_tick = f64::from(self.timeline.pixels_per_tick);
+        if !pixel.is_finite() || pixel < 0.0 {
+            return Err("Pixel position cannot be before the visible timeline origin".to_owned());
+        }
+        if !pixels_per_tick.is_finite() || pixels_per_tick <= 0.0 {
+            return Err("Arrangement pixel scale is unavailable".to_owned());
+        }
+        let tick = self.timeline.origin_tick as f64 + pixel / pixels_per_tick;
+        if !tick.is_finite() || tick < 0.0 || tick >= u64::MAX as f64 {
+            return Err("Pixel position is outside the supported timeline".to_owned());
+        }
+        self.project
+            .sample_at_tick(tick.round() as u64)
+            .map_err(|error| error.to_string())
+    }
+
+    fn snap_nudge_target_sample(&self, sample: u64) -> Result<u64, String> {
+        match self.item_nudge_dialog.unit {
+            Unit::Pixels => {
+                self.sample_at_timeline_pixel(self.timeline_pixel_for_sample(sample)?.floor())
+            }
+            Unit::Frames => self.nearest_frame_sample(sample),
+            Unit::Grid | Unit::MeasuresBeats => {
+                let delta = self.snap_musical_delta_to_sample(0, i128::from(sample))?;
+                u64::try_from(delta)
+                    .map_err(|_| "Snapped position is outside the supported range".to_owned())
+            }
+            _ => {
+                let unit = self.snap_resolution_samples()?;
+                Ok(round_sample(sample, unit))
+            }
+        }
+    }
+
+    fn snap_set_target_sample(&self, sample: u64) -> Result<u64, String> {
+        match self.item_nudge_dialog.unit {
+            Unit::Pixels => {
+                self.sample_at_timeline_pixel(self.timeline_pixel_for_sample(sample)?.round())
+            }
+            Unit::Frames => self.nearest_frame_sample(sample),
+            Unit::MeasuresBeats => {
+                let target_tick = self
+                    .project
+                    .tick_at_sample_position(sample as f64)
+                    .map_err(|error| error.to_string())?;
+                let grid = self
+                    .timeline
+                    .snap_grid
+                    .tick_interval(self.project.settings().ppq())
+                    .ok_or_else(|| {
+                        "Current Snap Grid cannot be represented in project ticks".to_owned()
+                    })?;
+                let snapped_tick = (target_tick / grid as f64).round() * grid as f64;
+                let snapped_sample = self
+                    .project
+                    .sample_at_tick_position(snapped_tick)
+                    .map_err(|error| error.to_string())?;
+                checked_sample_position(snapped_sample, "Snapped musical position")
+            }
+            Unit::Grid => Err("Grid units are not available for Set".to_owned()),
+            _ => {
+                let unit = self.snap_resolution_samples()?;
+                Ok(round_sample(sample, unit))
+            }
+        }
+    }
+
+    fn measures_beats_target_sample(&self) -> Result<u64, String> {
+        let value = self.item_nudge_dialog.value.trim();
+        let fields = value.split('.').collect::<Vec<_>>();
+        if !(2..=3).contains(&fields.len()) {
+            return Err("Enter a measure.beat.hundredths position".to_owned());
+        }
+        let measure = fields[0]
+            .parse::<i64>()
+            .map_err(|_| "Enter a valid measure.beat.hundredths position".to_owned())?;
+        let beat = fields[1]
+            .parse::<u32>()
+            .map_err(|_| "Enter a valid measure.beat.hundredths position".to_owned())?;
+        let fraction = if fields.len() == 3 {
+            fields[2]
+                .parse::<u32>()
+                .map_err(|_| "Enter a valid measure.beat.hundredths position".to_owned())?
+        } else {
+            0
+        };
+        if !(0..=99).contains(&fraction) {
+            return Err("Beat fraction must be between .00 and .99".to_owned());
+        }
+        let beat_tick = self
+            .project
+            .tick_at_musical_position(measure, beat, 0.0)
+            .map_err(|error| error.to_string())?;
+        let meter = self
+            .project
+            .time_signature_at_tick(beat_tick.max(0.0).floor() as u64);
+        let ticks_per_beat =
+            u64::from(self.project.settings().ppq()) * 4 / u64::from(meter.denominator());
+        let tick_in_beat = fraction as f64 * ticks_per_beat as f64 / 100.0;
+        let target_tick = self
+            .project
+            .tick_at_musical_position(measure, beat, tick_in_beat)
+            .map_err(|error| error.to_string())?;
+        let target_sample = self
+            .project
+            .sample_at_tick_position(target_tick)
+            .map_err(|error| error.to_string())?;
+        checked_sample_position(target_sample, "Musical position")
+    }
+
+    fn pixel_relative_set_anchor_sample(&self) -> Result<u64, String> {
+        if self.item_nudge_dialog.target == Target::EditCursor {
+            return self
+                .project
+                .sample_at_tick(self.timeline.edit_cursor_tick)
+                .map_err(|error| error.to_string());
+        }
+        let selected = self.selected_item_start_samples()?;
+        selected
+            .first()
+            .map(|(_, sample)| *sample)
+            .ok_or_else(|| "No selected items to set".to_owned())
     }
 
     fn snap_resolution_samples(&self) -> Result<u64, String> {
@@ -2220,6 +2470,9 @@ impl App {
             Unit::Time => sample_rate,
             Unit::Frames => {
                 return Err("Frame snapping requires a frame-grid position".to_owned());
+            }
+            Unit::Pixels => {
+                return Err("Pixel snapping requires an arrangement position".to_owned());
             }
             Unit::Grid | Unit::MeasuresBeats => {
                 return Err("Musical snapping requires a selected item".to_owned());
@@ -2245,18 +2498,36 @@ impl App {
         }
         let target = shifted_sample(*first_sample, delta_samples)
             .ok_or_else(|| "Selected items cannot move beyond the sample timeline".to_owned())?;
-        if self.item_nudge_dialog.unit == Unit::Frames {
-            let snapped = self.nearest_frame_sample(target)?;
-            return Ok(i128::from(snapped) - i128::from(*first_sample));
-        }
-        let unit = self.snap_resolution_samples()?;
-        Ok(i128::from(round_sample(target, unit)) - i128::from(*first_sample))
+        let snapped = self.snap_nudge_target_sample(target)?;
+        Ok(i128::from(snapped) - i128::from(*first_sample))
     }
 
     fn nudge_delta_samples(&self, direction: i8) -> Result<i128, String> {
         match self.item_nudge_dialog.unit {
             Unit::Grid => return self.grid_delta_samples(direction),
             Unit::MeasuresBeats => return self.measures_beats_delta_samples(direction),
+            Unit::Pixels => {
+                let anchor = if self.item_nudge_dialog.target == Target::EditCursor {
+                    self.project
+                        .sample_at_tick(self.timeline.edit_cursor_tick)
+                        .map_err(|error| error.to_string())?
+                } else {
+                    self.selected_item_start_samples()?
+                        .first()
+                        .map(|(_, sample)| *sample)
+                        .ok_or_else(|| "No selected items to move".to_owned())?
+                };
+                let amount = self
+                    .item_nudge_dialog
+                    .value
+                    .trim()
+                    .parse::<f64>()
+                    .map_err(|_| "Enter a valid pixel amount".to_owned())?;
+                if amount <= 0.0 || !amount.is_finite() {
+                    return Err("Pixel nudge must be greater than zero".to_owned());
+                }
+                return self.pixel_delta_samples(anchor, amount * f64::from(direction));
+            }
             _ => {}
         }
         self.dialog_delta_samples(false)
@@ -2484,6 +2755,13 @@ fn wrapped_source_sample(current: u64, start: u64, length: u64, delta: i128) -> 
 fn shifted_sample(sample: u64, delta: i128) -> Option<u64> {
     let shifted = i128::from(sample).checked_add(delta)?;
     u64::try_from(shifted).ok()
+}
+
+fn checked_sample_position(sample: f64, label: &str) -> Result<u64, String> {
+    if !sample.is_finite() || sample < 0.0 || sample >= u64::MAX as f64 {
+        return Err(format!("{label} is outside the supported sample timeline"));
+    }
+    Ok(sample.round() as u64)
 }
 
 fn shifted_source_offset(sample: i64, delta: i128) -> Option<i64> {

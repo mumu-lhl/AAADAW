@@ -12,8 +12,15 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
             item_nudge::Unit::MeasuresBeats,
             item_nudge::Unit::Samples,
             item_nudge::Unit::Frames,
+            item_nudge::Unit::Pixels,
         ],
-        item_nudge::Mode::Set => &[item_nudge::Unit::Time, item_nudge::Unit::Samples],
+        item_nudge::Mode::Set => &[
+            item_nudge::Unit::Time,
+            item_nudge::Unit::MeasuresBeats,
+            item_nudge::Unit::Samples,
+            item_nudge::Unit::Frames,
+            item_nudge::Unit::Pixels,
+        ],
     };
     let targets = [
         item_nudge::Target::Position,
