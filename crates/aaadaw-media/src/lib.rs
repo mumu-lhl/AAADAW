@@ -192,6 +192,7 @@ pub enum MediaError {
     AudioLoopSectionExceedsSource,
     InvalidAudioLoopSection,
     InvalidTimelineLoop,
+    /// Reserved for compatibility; current workers stream large converted prefixes.
     UnsupportedLoopResamplingPrefix,
     AudioTooLong,
     WorkerCancelled,
@@ -252,10 +253,10 @@ impl fmt::Display for MediaError {
             Self::InvalidTimelineLoop => formatter.write_str(
                 "transport loop and source segment do not share exact sample boundaries",
             ),
-            Self::UnsupportedLoopResamplingPrefix => formatter.write_str(
-                "rate-converted pre-loop source exceeds the bounded cyclic-history cache",
-            ),
             Self::AudioTooLong => formatter.write_str("audio stream exceeds the supported length"),
+            Self::UnsupportedLoopResamplingPrefix => {
+                formatter.write_str("rate-converted pre-loop source could not be prepared")
+            }
             Self::WorkerCancelled => formatter.write_str("audio waveform decoding was cancelled"),
             Self::ThreadSpawn(error) => write!(formatter, "failed to start audio worker: {error}"),
             Self::WorkerPanicked => formatter.write_str("audio decoding worker panicked"),
