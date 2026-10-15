@@ -1,8 +1,8 @@
 use aaadaw_core::{DawAction, MidiNoteData, Project};
 use aaadaw_engine::{
     AudioItemStream, AudioRenderGraph, AudioStreamPosition, ClapInstrumentHelperProcess,
-    ClapIpcConfig, ClapIpcMapping, MasterOutputCeiling, TrackIsolatedInstrument,
-    audio_monitor_stream, stereo_pcm_stream,
+    ClapIpcConfig, ClapIpcMapping, MasterOutputCeiling, TrackIsolatedInstrument, Transport,
+    TransportBlockSegment, TransportLoopRange, audio_monitor_stream, stereo_pcm_stream,
 };
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::Cell;
@@ -228,6 +228,17 @@ fn render_callback_does_not_allocate_on_the_rendering_thread() {
     let mut output = [[0.0; 2]; 128];
     let mut midi_output = [None; 128];
     graph.transport_mut().start();
+    let mut loop_transport = Transport::new();
+    loop_transport.seek_sample(17);
+    loop_transport.set_loop_range(TransportLoopRange::new(17, 61));
+    loop_transport.start();
+    let empty_segment = TransportBlockSegment {
+        output_offset: 0,
+        start_sample: 0,
+        frame_count: 0,
+        chase_generation: 0,
+    };
+    let mut loop_segments = [empty_segment; 128];
 
     let ipc_config = ClapIpcConfig::new(48_000, 16, 8).expect("IPC config should be valid");
     let ipc_mapping = ClapIpcMapping::create(ipc_config).expect("IPC mapping should be created");
@@ -244,6 +255,11 @@ fn render_callback_does_not_allocate_on_the_rendering_thread() {
     let mut last_stats = None;
     let mut midi_events_seen = 0;
     for index in 0..128 {
+        assert!(
+            loop_transport
+                .advance_repeating_block(128, &mut loop_segments)
+                .is_ok()
+        );
         assert!(
             fades.set_fades(
                 audio_item_id,

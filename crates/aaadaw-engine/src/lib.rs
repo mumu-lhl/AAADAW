@@ -137,7 +137,10 @@ pub use stream::{
     STEREO_PCM_QUEUE_FRAME_BYTES, StereoPcmStreamConsumer, StereoPcmStreamProducer, pcm_stream,
     stereo_pcm_stream,
 };
-pub use transport::{AudioBlock, Transport, TransportClockAnchor, TransportPositionOverflow};
+pub use transport::{
+    AudioBlock, Transport, TransportBlockError, TransportBlockSegment, TransportClockAnchor,
+    TransportLoopRange, TransportPositionOverflow,
+};
 
 use aaadaw_core::{AudioSendTap, ItemId, PanMode, Track, TrackId, VolumeAutomationPoint};
 use std::cell::Cell;
