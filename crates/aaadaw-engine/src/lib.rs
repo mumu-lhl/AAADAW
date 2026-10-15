@@ -1289,6 +1289,7 @@ pub struct AudioItemStream {
     consumer: AudioItemPcmConsumer,
     source_start_sample: Option<u64>,
     position: Option<AudioStreamPosition>,
+    timeline_loop_range: Option<TransportLoopRange>,
 }
 
 enum AudioItemPcmConsumer {
@@ -1680,6 +1681,7 @@ struct RenderGraphSources {
     track_indices: Vec<usize>,
     ranges: Vec<Option<(u64, u64)>>,
     cursors: Vec<Option<u64>>,
+    loop_ranges: Vec<Option<TransportLoopRange>>,
     item_ids: Vec<Option<ItemId>>,
     fades: Vec<aaadaw_core::AudioItemFades>,
     volumes: Vec<f32>,
@@ -1794,6 +1796,7 @@ impl AudioItemStream {
             consumer: AudioItemPcmConsumer::Mono(consumer),
             source_start_sample: None,
             position: None,
+            timeline_loop_range: None,
         }
     }
 
@@ -1804,6 +1807,7 @@ impl AudioItemStream {
             consumer: AudioItemPcmConsumer::Stereo(consumer),
             source_start_sample: None,
             position: None,
+            timeline_loop_range: None,
         }
     }
 
@@ -1819,6 +1823,7 @@ impl AudioItemStream {
             consumer: AudioItemPcmConsumer::Mono(consumer),
             source_start_sample: Some(source_start_sample),
             position: None,
+            timeline_loop_range: None,
         }
     }
 
@@ -1833,6 +1838,7 @@ impl AudioItemStream {
             consumer: AudioItemPcmConsumer::Stereo(consumer),
             source_start_sample: Some(source_start_sample),
             position: None,
+            timeline_loop_range: None,
         }
     }
 
@@ -1847,6 +1853,7 @@ impl AudioItemStream {
             consumer: AudioItemPcmConsumer::Stereo(consumer),
             source_start_sample: None,
             position: Some(position),
+            timeline_loop_range: None,
         }
     }
 
@@ -1862,6 +1869,44 @@ impl AudioItemStream {
             consumer: AudioItemPcmConsumer::Stereo(consumer),
             source_start_sample: Some(source_start_sample),
             position: Some(position),
+            timeline_loop_range: None,
+        }
+    }
+
+    /// Associates a worker-fed PCM queue that repeats one tagged project-time range.
+    ///
+    /// The producer must enqueue PCM with those same project-sample tags again after the first
+    /// pass. The render graph only accepts the backward cursor reset when the range exactly
+    /// matches the overlap between this item and the active transport loop.
+    pub fn new_stereo_looping_at_sample(
+        item_id: ItemId,
+        source_start_sample: u64,
+        timeline_loop_range: TransportLoopRange,
+        consumer: StereoPcmStreamConsumer,
+    ) -> Self {
+        Self {
+            item_id,
+            consumer: AudioItemPcmConsumer::Stereo(consumer),
+            source_start_sample: Some(source_start_sample),
+            position: None,
+            timeline_loop_range: Some(timeline_loop_range),
+        }
+    }
+
+    /// Associates a loop-tagged PCM queue with the feeder's shared sample position.
+    pub fn new_stereo_looping_at_sample_with_position(
+        item_id: ItemId,
+        source_start_sample: u64,
+        timeline_loop_range: TransportLoopRange,
+        consumer: StereoPcmStreamConsumer,
+        position: AudioStreamPosition,
+    ) -> Self {
+        Self {
+            item_id,
+            consumer: AudioItemPcmConsumer::Stereo(consumer),
+            source_start_sample: Some(source_start_sample),
+            position: Some(position),
+            timeline_loop_range: Some(timeline_loop_range),
         }
     }
 }
@@ -1902,6 +1947,7 @@ pub struct AudioRenderGraph {
     stream_track_indices: Vec<usize>,
     source_ranges: Vec<Option<(u64, u64)>>,
     source_cursors: Vec<Option<u64>>,
+    source_loop_ranges: Vec<Option<TransportLoopRange>>,
     source_item_ids: Vec<Option<ItemId>>,
     source_fades: Vec<item_fades::ItemFadeReader>,
     item_fade_controller: ItemFadeController,
@@ -1937,6 +1983,7 @@ impl AudioRenderGraph {
             positions: vec![None; streams.len()],
             ranges: vec![None; streams.len()],
             cursors: vec![None; streams.len()],
+            loop_ranges: vec![None; streams.len()],
             item_ids: vec![None; streams.len()],
             fades: vec![aaadaw_core::AudioItemFades::default(); streams.len()],
             volumes: vec![1.0; streams.len()],
@@ -2019,6 +2066,7 @@ impl AudioRenderGraph {
             track_indices: Vec::with_capacity(item_streams.len()),
             ranges: Vec::with_capacity(item_streams.len()),
             cursors: Vec::with_capacity(item_streams.len()),
+            loop_ranges: Vec::with_capacity(item_streams.len()),
             item_ids: Vec::with_capacity(item_streams.len()),
             fades: Vec::with_capacity(item_streams.len()),
             volumes: Vec::with_capacity(item_streams.len()),
@@ -2054,6 +2102,7 @@ impl AudioRenderGraph {
                 .ranges
                 .push(Some((item.start_sample(), item.end_sample())));
             sources.cursors.push(Some(source_start_sample));
+            sources.loop_ranges.push(stream.timeline_loop_range);
             sources.item_ids.push(Some(item.id()));
             sources.fades.push(item.fades());
             sources.volumes.push(item.volume());
@@ -2228,6 +2277,7 @@ impl AudioRenderGraph {
             stream_track_indices: sources.track_indices,
             source_ranges: sources.ranges,
             source_cursors: sources.cursors,
+            source_loop_ranges: sources.loop_ranges,
             source_item_ids: sources.item_ids,
             source_fades,
             item_fade_controller,
@@ -2871,6 +2921,36 @@ impl AudioRenderGraph {
         Ok((schedule.event_count, schedule.cursor))
     }
 
+    fn item_loop_overlap(
+        &self,
+        index: usize,
+        transport_loop: TransportLoopRange,
+    ) -> Option<TransportLoopRange> {
+        let (item_start, item_end) = self.source_ranges.get(index).copied().flatten()?;
+        TransportLoopRange::new(
+            item_start.max(transport_loop.start_sample()),
+            item_end.min(transport_loop.end_sample()),
+        )
+    }
+
+    fn source_cursor_can_wrap(
+        &self,
+        index: usize,
+        cursor: Option<u64>,
+        overlap_start: u64,
+        transport_loop: Option<TransportLoopRange>,
+    ) -> bool {
+        let Some(transport_loop) = transport_loop else {
+            return false;
+        };
+        let Some(item_loop) = self.item_loop_overlap(index, transport_loop) else {
+            return false;
+        };
+        self.source_loop_ranges.get(index).copied().flatten() == Some(item_loop)
+            && cursor == Some(item_loop.end_sample())
+            && overlap_start == item_loop.start_sample()
+    }
+
     fn preflight_repeating_sources(
         &self,
         segments: &[TransportBlockSegment],
@@ -2890,7 +2970,14 @@ impl AudioRenderGraph {
                 let overlap_start = segment.start_sample.max(*item_start);
                 let overlap_end = segment_end.min(*item_end);
                 if overlap_start < overlap_end {
-                    if cursor != Some(overlap_start) {
+                    if cursor != Some(overlap_start)
+                        && !self.source_cursor_can_wrap(
+                            index,
+                            cursor,
+                            overlap_start,
+                            self.transport.loop_range(),
+                        )
+                    {
                         return Err(AudioGraphError::AudioItemSeekRequiresRefill {
                             item_id: self.source_item_ids[index]
                                 .expect("timeline ranges belong to audio items"),
@@ -3144,7 +3231,14 @@ impl AudioRenderGraph {
                 };
                 let overlap_start = block_start_sample.max(*item_start);
                 let overlap_end = block_end_sample.min(*item_end);
-                if overlap_start < overlap_end && self.source_cursors[index] != Some(overlap_start)
+                if overlap_start < overlap_end
+                    && self.source_cursors[index] != Some(overlap_start)
+                    && !self.source_cursor_can_wrap(
+                        index,
+                        self.source_cursors[index],
+                        overlap_start,
+                        self.transport.loop_range(),
+                    )
                 {
                     return Err(AudioGraphError::AudioItemSeekRequiresRefill {
                         item_id: self.source_item_ids[index]
@@ -3359,6 +3453,28 @@ impl AudioRenderGraph {
         } else {
             0
         } {
+            let should_reset_loop_position =
+                self.source_ranges[stream_index].is_some_and(|(item_start, item_end)| {
+                    let overlap_start = block.start_sample.max(item_start);
+                    let overlap_end = block_end_sample.min(item_end);
+                    overlap_start < overlap_end
+                        && self.source_cursors[stream_index] != Some(overlap_start)
+                        && self.source_cursor_can_wrap(
+                            stream_index,
+                            self.source_cursors[stream_index],
+                            overlap_start,
+                            self.transport.loop_range(),
+                        )
+                });
+            if should_reset_loop_position
+                && let Some(position) = &self.stream_positions[stream_index]
+            {
+                let item_start = self.source_ranges[stream_index]
+                    .expect("loop position reset belongs to an audio item")
+                    .0;
+                let overlap_start = block.start_sample.max(item_start);
+                position.reset_for_loop(overlap_start);
+            }
             let input = &mut self.scratch[stream_index][..output.len()];
             input.fill([0.0, 0.0]);
             if let Some((item_start, item_end)) = self.source_ranges[stream_index] {

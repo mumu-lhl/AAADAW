@@ -1,9 +1,9 @@
 use aaadaw_core::{DawAction, Project};
-use aaadaw_engine::{AudioItemStream, AudioRenderGraph, pcm_stream};
+use aaadaw_engine::{AudioItemStream, AudioRenderGraph, TransportLoopRange, pcm_stream};
 use aaadaw_media::{
     AudioStreamDecoder, AudioWaveform, spawn_audio_item_stream, spawn_audio_item_stream_at,
     spawn_audio_item_stream_from_reader, spawn_audio_item_stream_from_reader_at, spawn_mono_stream,
-    spawn_stereo_audio_item_stream_from_reader,
+    spawn_stereo_audio_item_stream_for_transport_loop, spawn_stereo_audio_item_stream_from_reader,
 };
 use aaadaw_storage::ProjectStore;
 use std::io::{Cursor, Read, Seek, SeekFrom};
@@ -1016,6 +1016,87 @@ fn looped_stereo_audio_item_repeats_through_the_realtime_stereo_stream() {
         assert!((frame[0] - expected[0]).abs() < 1.0e-4);
         assert!((frame[1] - expected[1]).abs() < 1.0e-4);
     }
+}
+
+#[test]
+fn file_backed_transport_loop_feeder_repeats_project_sample_tags() {
+    let path = wav_path();
+    let source_frames: Vec<_> = (0_i16..16)
+        .map(|index| {
+            let sample = (index - 8) * 2_048;
+            [sample, -sample]
+        })
+        .collect();
+    std::fs::write(&path, stereo_pcm_wav(&source_frames, 48_000))
+        .expect("test WAV should be written");
+
+    let mut project = Project::new();
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Transport loop feeder".to_owned(),
+        })
+        .expect("track should be created");
+    let loop_range = TransportLoopRange::new(16, 32).expect("loop should be nonempty");
+    project
+        .apply(DawAction::InsertLoopedAudioItem {
+            track_id: project.tracks()[0].id(),
+            media_ref: "asset://transport-loop-feeder".to_owned(),
+            start_sample: loop_range.start_sample(),
+            source_offset_samples: 0,
+            phase_inverted: false,
+            source_section_start_samples: 0,
+            length_samples: loop_range.length_samples(),
+            muted: false,
+            source_section_length_samples: loop_range.length_samples(),
+        })
+        .expect("looped audio item should be inserted");
+    let item = project.audio_items()[0].clone();
+    let (producer, consumer) =
+        aaadaw_engine::stereo_pcm_stream(64).expect("queue should have capacity");
+    let mut worker = spawn_stereo_audio_item_stream_for_transport_loop(
+        &item, loop_range, &path, 48_000, producer,
+    )
+    .expect("matching bounded source loop should start");
+    worker.wait_ready().expect("media source should open");
+
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while consumer.available_frames() < 48 && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    assert!(consumer.available_frames() >= 48, "loop PCM should prefill");
+
+    let position = worker.timeline_position();
+    let stream = AudioItemStream::new_stereo_looping_at_sample_with_position(
+        item.id(),
+        item.start_sample(),
+        loop_range,
+        consumer,
+        position.clone(),
+    );
+    let mut graph = AudioRenderGraph::new_for_audio_items(&project, vec![stream], 48)
+        .expect("loop feeder should match its audio item");
+    graph.transport_mut().set_loop_range(Some(loop_range));
+    graph.transport_mut().seek_sample(loop_range.start_sample());
+    graph.transport_mut().start();
+
+    let mut output = [[0.0_f32; 2]; 48];
+    let stats = graph
+        .render_into(&mut output)
+        .expect("queued loop PCM should render through two wraps");
+    assert_eq!(stats.underrun_samples, 0);
+    for (frame_index, frame) in output.iter().enumerate() {
+        let source_index = frame_index % source_frames.len();
+        let expected = [
+            source_frames[source_index][0] as f32 / 32_768.0,
+            source_frames[source_index][1] as f32 / 32_768.0,
+        ];
+        assert!((frame[0] - expected[0]).abs() < 1.0e-6);
+        assert!((frame[1] - expected[1]).abs() < 1.0e-6);
+    }
+    assert_eq!(position.requested_sample(), loop_range.start_sample());
+    worker.cancel().expect("loop feeder should stop cleanly");
+    std::fs::remove_file(path).expect("test file should be removed");
 }
 
 #[test]

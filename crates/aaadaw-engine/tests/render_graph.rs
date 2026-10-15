@@ -1515,6 +1515,51 @@ fn repeating_audio_item_refill_is_preflighted_before_transport_or_pcm_changes() 
 }
 
 #[test]
+fn loop_tagged_audio_item_pcm_repeats_across_the_transport_wrap() {
+    let mut project = Project::with_settings(
+        aaadaw_core::ProjectSettings::default()
+            .with_pan_mode(aaadaw_core::PanMode::LegacyMonoStereo),
+    );
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Looped audio".to_owned(),
+        })
+        .expect("track should be created");
+    project
+        .apply(DawAction::InsertAudioItem {
+            track_id: project.tracks()[0].id(),
+            media_ref: "asset://loop-tagged-pcm".to_owned(),
+            start_sample: 0,
+            source_offset_samples: 0,
+            length_samples: 64,
+        })
+        .expect("audio item should be inserted");
+    let item_id = project.audio_items()[0].id();
+    let loop_range = TransportLoopRange::new(16, 32).expect("loop range should be nonempty");
+    let (mut producer, consumer) = stereo_pcm_stream(32).expect("positive queue is valid");
+    producer.set_stereo_content(true);
+    assert_eq!(producer.push_frames_at(16, &[[0.1, -0.1]; 16]), 16);
+    assert_eq!(producer.push_frames_at(16, &[[0.2, -0.2]; 16]), 16);
+    let stream = AudioItemStream::new_stereo_looping_at_sample(item_id, 16, loop_range, consumer);
+    let mut graph = AudioRenderGraph::new_for_audio_items(&project, vec![stream], 32)
+        .expect("loop-tagged stream should match the audio item");
+    graph.transport_mut().set_loop_range(Some(loop_range));
+    graph.transport_mut().seek_sample(16);
+    graph.transport_mut().start();
+
+    let mut output = [[0.0_f32; 2]; 24];
+    let stats = graph
+        .render_into(&mut output)
+        .expect("loop-tagged PCM should fill wrapped project samples");
+
+    assert_eq!(stats.underrun_samples, 0);
+    assert_eq!(&output[..16], &[[0.1, -0.1]; 16]);
+    assert_eq!(&output[16..], &[[0.2, -0.2]; 8]);
+    assert_eq!(graph.transport_mut().position_samples(), 24);
+}
+
+#[test]
 fn seek_chases_sustain_state_before_resuming_sustained_notes() {
     let mut project = Project::with_settings(
         aaadaw_core::ProjectSettings::default()

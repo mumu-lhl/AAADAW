@@ -1,6 +1,8 @@
 use crate::{AudioStreamDecoder, DecodedAudioChunk, DecodedAudioSource, MediaError};
 use aaadaw_core::AudioItem;
-use aaadaw_engine::{AudioStreamPosition, PcmStreamProducer, StereoPcmStreamProducer};
+use aaadaw_engine::{
+    AudioStreamPosition, PcmStreamProducer, StereoPcmStreamProducer, TransportLoopRange,
+};
 use std::collections::HashMap;
 use std::io::{self, Read, Seek};
 use std::path::{Path, PathBuf};
@@ -161,6 +163,46 @@ pub fn spawn_stereo_audio_item_stream_with_quality(
         producer,
         quality,
         source_loop_section(item),
+        None,
+    )
+}
+
+/// Feeds a stereo source loop tagged with one exact project transport loop range.
+///
+/// This feeder runs until cancelled or dropped. It currently accepts items whose timeline range
+/// exactly matches `timeline_loop_range`, whose bounded source section is the same length, whose
+/// source loop is enabled with zero offset, and whose decoded sample rate matches the output rate.
+/// The restriction preserves an exact one-to-one mapping between source and project samples.
+pub fn spawn_stereo_audio_item_stream_for_transport_loop(
+    item: &AudioItem,
+    timeline_loop_range: TransportLoopRange,
+    resolved_path: impl AsRef<Path>,
+    output_sample_rate: u32,
+    producer: StereoPcmStreamProducer,
+) -> Result<AudioFeedWorker, MediaError> {
+    let Some(item_end) = item.start_sample().checked_add(item.length_samples()) else {
+        return Err(MediaError::InvalidTimelineLoop);
+    };
+    if item.length_samples() == 0
+        || item.start_sample() != timeline_loop_range.start_sample()
+        || item_end != timeline_loop_range.end_sample()
+        || item.source_offset_samples() != 0
+        || !item.is_loop_source()
+        || item.source_section_length_samples() != Some(timeline_loop_range.length_samples())
+    {
+        return Err(MediaError::InvalidTimelineLoop);
+    }
+    spawn_stereo_stream(
+        DecoderInput::Path(resolved_path.as_ref().to_owned()),
+        output_sample_rate,
+        item.source_offset_samples(),
+        None,
+        0,
+        AudioStreamPosition::new(timeline_loop_range.start_sample()),
+        producer,
+        ResamplingQuality::Sinc64,
+        source_loop_section(item),
+        Some(timeline_loop_range),
     )
 }
 
@@ -223,6 +265,7 @@ pub fn spawn_stereo_audio_item_stream_at_with_quality(
         producer,
         quality,
         source_loop_section(item),
+        None,
     )
 }
 
@@ -271,6 +314,7 @@ pub fn spawn_cached_stereo_audio_item_stream_with_quality(
         producer,
         quality,
         source_loop_section(item),
+        None,
     )
 }
 
@@ -361,6 +405,7 @@ where
         producer,
         quality,
         source_loop_section(item),
+        None,
     )
 }
 
@@ -450,6 +495,7 @@ where
         producer,
         quality,
         source_loop_section(item),
+        None,
     )
 }
 
@@ -477,6 +523,7 @@ fn spawn_stream(
         output_samples_to_skip,
         quality: ResamplingQuality::Sinc64,
         source_loop_section,
+        timeline_loop_range: None,
     };
     let worker_position = position.clone();
     let thread = thread::Builder::new()
@@ -512,6 +559,7 @@ fn spawn_stereo_stream(
     producer: StereoPcmStreamProducer,
     quality: ResamplingQuality,
     source_loop_section: Option<SourceLoopSection>,
+    timeline_loop_range: Option<TransportLoopRange>,
 ) -> Result<AudioFeedWorker, MediaError> {
     if output_sample_rate == 0 {
         return Err(MediaError::InvalidOutputSampleRate);
@@ -526,6 +574,7 @@ fn spawn_stereo_stream(
         output_samples_to_skip,
         quality,
         source_loop_section,
+        timeline_loop_range,
     };
     let worker_position = position.clone();
     let thread = thread::Builder::new()
@@ -775,6 +824,7 @@ struct WorkerConfig {
     output_samples_to_skip: u64,
     quality: ResamplingQuality,
     source_loop_section: Option<SourceLoopSection>,
+    timeline_loop_range: Option<TransportLoopRange>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -883,6 +933,7 @@ fn run_worker<P: FeedProducer>(
         mut output_samples_to_skip,
         quality,
         source_loop_section,
+        timeline_loop_range,
     } = config;
     let (negative_source_offset_frames, mut source_offset_remaining) =
         if source_offset_remaining < 0 {
@@ -980,6 +1031,17 @@ fn run_worker<P: FeedProducer>(
             return Err(error);
         }
     };
+    if let Some(timeline_loop_range) = timeline_loop_range
+        && (initial_sample_rate != Some(output_sample_rate)
+            || !source_loop_section.is_some_and(|section| {
+                section.looping
+                    && section.length_frames == Some(timeline_loop_range.length_samples())
+            }))
+    {
+        let error = MediaError::InvalidTimelineLoop;
+        let _ = startup.send(Err(worker_startup_error(&error)));
+        return Err(error);
+    }
     let mut resampler = match initial_sample_rate {
         Some(sample_rate) => match StreamingResampler::<P::Frame>::new_with_quality(
             sample_rate,
@@ -1040,6 +1102,7 @@ fn run_worker<P: FeedProducer>(
         &cancelled,
         &position,
         &mut output_timeline_sample,
+        timeline_loop_range,
     );
     if output_samples_remaining == Some(0) {
         return Ok(());
@@ -1075,12 +1138,13 @@ fn run_worker<P: FeedProducer>(
             loop_buffer_cursor = if end == buffer.len() { 0 } else { end };
             skip_output(&mut output, &mut output_samples_to_skip);
             limit_output(&mut output, &mut output_samples_remaining);
-            push_with_backpressure(
+            push_worker_output(
                 &mut producer,
                 &output,
                 &cancelled,
                 &position,
                 &mut output_timeline_sample,
+                timeline_loop_range,
             );
             if output_samples_remaining == Some(0) {
                 return Ok(());
@@ -1131,12 +1195,13 @@ fn run_worker<P: FeedProducer>(
                 };
                 skip_output(&mut output, &mut output_samples_to_skip);
                 limit_output(&mut output, &mut output_samples_remaining);
-                push_with_backpressure(
+                push_worker_output(
                     &mut producer,
                     &output,
                     &cancelled,
                     &position,
                     &mut output_timeline_sample,
+                    timeline_loop_range,
                 );
                 if output_samples_remaining == Some(0) {
                     return Ok(());
@@ -1153,12 +1218,13 @@ fn run_worker<P: FeedProducer>(
                             let mut output = resampler.finish();
                             skip_output(&mut output, &mut output_samples_to_skip);
                             limit_output(&mut output, &mut output_samples_remaining);
-                            push_with_backpressure(
+                            push_worker_output(
                                 &mut producer,
                                 &output,
                                 &cancelled,
                                 &position,
                                 &mut output_timeline_sample,
+                                timeline_loop_range,
                             );
                         }
                         push_remaining_item_silence(
@@ -1167,6 +1233,7 @@ fn run_worker<P: FeedProducer>(
                             &cancelled,
                             &position,
                             &mut output_timeline_sample,
+                            timeline_loop_range,
                         );
                         return Ok(());
                     }
@@ -1224,12 +1291,13 @@ fn run_worker<P: FeedProducer>(
                     let mut output = resampler.finish();
                     skip_output(&mut output, &mut output_samples_to_skip);
                     limit_output(&mut output, &mut output_samples_remaining);
-                    push_with_backpressure(
+                    push_worker_output(
                         &mut producer,
                         &output,
                         &cancelled,
                         &position,
                         &mut output_timeline_sample,
+                        timeline_loop_range,
                     );
                 }
                 push_remaining_item_silence(
@@ -1238,6 +1306,7 @@ fn run_worker<P: FeedProducer>(
                     &cancelled,
                     &position,
                     &mut output_timeline_sample,
+                    timeline_loop_range,
                 );
                 return Ok(());
             }
@@ -1253,6 +1322,7 @@ fn push_remaining_item_silence<P: FeedProducer>(
     cancelled: &AtomicBool,
     position: &AudioStreamPosition,
     timeline_sample: &mut u64,
+    timeline_loop_range: Option<TransportLoopRange>,
 ) {
     let Some(remaining_frames) = *remaining else {
         return;
@@ -1264,6 +1334,7 @@ fn push_remaining_item_silence<P: FeedProducer>(
         cancelled,
         position,
         timeline_sample,
+        timeline_loop_range,
     );
 }
 
@@ -1274,6 +1345,7 @@ fn push_silence_frames<P: FeedProducer>(
     cancelled: &AtomicBool,
     position: &AudioStreamPosition,
     timeline_sample: &mut u64,
+    timeline_loop_range: Option<TransportLoopRange>,
 ) {
     const SILENCE_CHUNK_FRAMES: usize = 1_024;
     let silence = [P::Frame::zero(); SILENCE_CHUNK_FRAMES];
@@ -1290,12 +1362,13 @@ fn push_silence_frames<P: FeedProducer>(
         }
         let frame_count = usize::try_from(frames_left.min(SILENCE_CHUNK_FRAMES as u64))
             .expect("silence chunk length fits usize");
-        push_with_backpressure(
+        push_worker_output(
             producer,
             &silence[..frame_count],
             cancelled,
             position,
             timeline_sample,
+            timeline_loop_range,
         );
         frames_left -= frame_count as u64;
     }
@@ -1390,6 +1463,41 @@ fn push_with_backpressure<P: FeedProducer>(
         offset += pushed;
         *timeline_sample = timeline_sample.saturating_add(pushed as u64);
         if offset < samples.len() {
+            thread::sleep(Duration::from_millis(1));
+        }
+    }
+}
+
+fn push_worker_output<P: FeedProducer>(
+    producer: &mut P,
+    samples: &[P::Frame],
+    cancelled: &AtomicBool,
+    position: &AudioStreamPosition,
+    timeline_sample: &mut u64,
+    timeline_loop_range: Option<TransportLoopRange>,
+) {
+    let Some(loop_range) = timeline_loop_range else {
+        push_with_backpressure(producer, samples, cancelled, position, timeline_sample);
+        return;
+    };
+
+    let loop_start = loop_range.start_sample();
+    let loop_end = loop_range.end_sample();
+    let mut offset = 0;
+    while offset < samples.len() && !cancelled.load(Ordering::Acquire) {
+        if *timeline_sample < loop_start || *timeline_sample >= loop_end {
+            *timeline_sample = loop_start;
+        }
+        let frames_to_boundary = usize::try_from(loop_end - *timeline_sample)
+            .unwrap_or(usize::MAX)
+            .min(samples.len() - offset);
+        let pushed = producer.push_frames_at(
+            *timeline_sample,
+            &samples[offset..offset + frames_to_boundary],
+        );
+        offset += pushed;
+        *timeline_sample = timeline_sample.saturating_add(pushed as u64);
+        if pushed < frames_to_boundary {
             thread::sleep(Duration::from_millis(1));
         }
     }

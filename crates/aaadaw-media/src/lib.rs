@@ -24,7 +24,8 @@ pub use stream::{
     spawn_audio_item_stream_from_reader_at, spawn_cached_stereo_audio_item_stream,
     spawn_cached_stereo_audio_item_stream_with_quality, spawn_mono_stream,
     spawn_stereo_audio_item_stream, spawn_stereo_audio_item_stream_at,
-    spawn_stereo_audio_item_stream_at_with_quality, spawn_stereo_audio_item_stream_from_reader,
+    spawn_stereo_audio_item_stream_at_with_quality,
+    spawn_stereo_audio_item_stream_for_transport_loop, spawn_stereo_audio_item_stream_from_reader,
     spawn_stereo_audio_item_stream_from_reader_at,
     spawn_stereo_audio_item_stream_from_reader_at_with_quality,
     spawn_stereo_audio_item_stream_from_reader_with_quality,
@@ -188,6 +189,7 @@ pub enum MediaError {
     },
     AudioLoopSectionExceedsSource,
     InvalidAudioLoopSection,
+    InvalidTimelineLoop,
     AudioTooLong,
     WorkerCancelled,
     ThreadSpawn(std::io::Error),
@@ -244,6 +246,9 @@ impl fmt::Display for MediaError {
             Self::InvalidAudioLoopSection => {
                 formatter.write_str("loop source section does not contain the item source offset")
             }
+            Self::InvalidTimelineLoop => formatter.write_str(
+                "timeline loop feeder requires a matching bounded source loop at the output sample rate",
+            ),
             Self::AudioTooLong => formatter.write_str("audio stream exceeds the supported length"),
             Self::WorkerCancelled => formatter.write_str("audio waveform decoding was cancelled"),
             Self::ThreadSpawn(error) => write!(formatter, "failed to start audio worker: {error}"),
