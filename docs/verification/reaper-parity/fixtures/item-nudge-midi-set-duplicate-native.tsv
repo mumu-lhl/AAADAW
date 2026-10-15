@@ -1,0 +1,22 @@
+version	7.82/linux-x86_64
+theme	Default_7.0.ReaperThemeZip
+probe	Fresh unsaved project; one selected loop-source MIDI item from 3.900 to 8.900 seconds; two source notes
+dialog_window	Nudge/Set Items; xwininfo 528x121
+absolute_set	Mode Set; Target duplicate; target 4.150 seconds; minutes:seconds; Snap off; Relative Set off
+before	item_count	1	state_change_count	3	undo_label	Probe setup
+before_item	0	position_s	3.900000000	length_s	5.000000000	loop_source	1	source_offset_s	0.000000000	selected	1	notes	0,0,0,960.000,1920.000,0,60,96;1,0,0,2880.000,3840.000,0,64,108
+after_absolute_set	item_count	2	state_change_count	3	undo_label	Probe setup
+after_absolute_set_item	0	position_s	3.900000000	length_s	5.000000000	loop_source	1	source_offset_s	0.000000000	selected	0	notes	0,0,0,960.000,1920.000,0,60,96;1,0,0,2880.000,3840.000,0,64,108
+after_absolute_set_item	1	position_s	4.150000000	length_s	5.000000000	loop_source	1	source_offset_s	0.000000000	selected	1	notes	0,0,0,960.000,1920.000,0,60,96;1,0,0,2880.000,3840.000,0,64,108
+undo	item_count	1	state_change_count	5	undo_label	Probe setup
+undo_item	0	position_s	3.900000000	length_s	5.000000000	loop_source	1	source_offset_s	0.000000000	selected	1	notes	0,0,0,960.000,1920.000,0,60,96;1,0,0,2880.000,3840.000,0,64,108
+redo	item_count	2	state_change_count	6	undo_label	Duplicate items
+redo_item	0	position_s	3.900000000	length_s	5.000000000	loop_source	1	source_offset_s	0.000000000	selected	0	notes	0,0,0,960.000,1920.000,0,60,96;1,0,0,2880.000,3840.000,0,64,108
+redo_item	1	position_s	4.150000000	length_s	5.000000000	loop_source	1	source_offset_s	0.000000000	selected	1	notes	0,0,0,960.000,1920.000,0,60,96;1,0,0,2880.000,3840.000,0,64,108
+relative_set_probe	Relative Set checked; value 0.250 seconds; Snap off; new copy is at the absolute target 0.250 seconds; only that copy is selected
+snap_probe	Relative Set off; target 4.150 seconds; Snap on with minutes:seconds; new copy is at 4.000 seconds; only that copy is selected
+before_screenshot	item-nudge-midi-set-duplicate-native-before.png; 1280x1024; SHA-256 1470b2d587245c6362849ce64db1e40cb21707030b5163cd7170d872d3fa38c2
+after_screenshot	item-nudge-midi-set-duplicate-native-after.png; 1280x1024; SHA-256 b6b1baab72d845db24f6de2c3305226171ca7225f814482dcb69a8b254191b85
+undo_screenshot	item-nudge-midi-set-duplicate-native-undo.png; 1280x1024; SHA-256 14e58506f5c918096056572efe7e2551994045630831b77d31d4289b11ae446c
+redo_screenshot	item-nudge-midi-set-duplicate-native-redo.png; 1280x1024; SHA-256 b6b1baab72d845db24f6de2c3305226171ca7225f814482dcb69a8b254191b85
+reproduction_script	../../../../scripts/reaper_parity/probe-item-nudge-midi-set-duplicate.lua

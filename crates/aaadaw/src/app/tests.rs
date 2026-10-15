@@ -652,6 +652,114 @@ fn item_nudge_duplicate_offsets_copies_mixed_selection_and_selects_the_copies() 
 }
 
 #[test]
+fn item_nudge_set_duplicate_uses_absolute_target_and_copies_mixed_selection() {
+    use super::item_nudge::Target;
+
+    let mut app = item_snap_test_app(0, 0);
+    let source_audio = app.project.audio_items()[0].clone();
+    let source_midi = app.project.midi_items()[0].clone();
+    app.project
+        .apply(DawAction::AddMidiNotes {
+            item_id: source_midi.id(),
+            notes: vec![MidiNoteData {
+                pitch: 60,
+                tick: 120,
+                duration: 240,
+                velocity: 96,
+            }],
+        })
+        .unwrap();
+    let original_midi = app.project.midi_items()[0].clone();
+    let revision = app.revision;
+    let _ = app.update(Message::ItemNudgeModeChanged(super::item_nudge::Mode::Set));
+    let _ = app.update(Message::ItemNudgeTargetChanged(Target::Duplicate));
+    let _ = app.update(Message::ItemNudgeSnapToUnitChanged(true));
+    let _ = app.update(Message::ItemNudgeValueChanged("0:01.200".to_owned()));
+
+    let _ = app.update(Message::ApplyItemNudgeSet);
+
+    let duplicate_audio = &app.project.audio_items()[1];
+    let duplicate_midi = &app.project.midi_items()[1];
+    assert_eq!(app.revision, revision + 1);
+    assert_eq!(app.project.audio_items().len(), 2);
+    assert_eq!(app.project.midi_items().len(), 2);
+    assert_eq!(app.project.audio_items()[0], source_audio);
+    assert_eq!(app.project.midi_items()[0], original_midi);
+    assert_eq!(duplicate_audio.start_sample(), 48_000);
+    assert_eq!(
+        duplicate_audio.length_samples(),
+        source_audio.length_samples()
+    );
+    assert_eq!(
+        duplicate_audio.source_offset_samples(),
+        source_audio.source_offset_samples()
+    );
+    assert_eq!(duplicate_midi.start_tick(), 1_920);
+    assert_eq!(duplicate_midi.length_ticks(), source_midi.length_ticks());
+    assert_eq!(duplicate_midi.notes().len(), 1);
+    assert_eq!(duplicate_midi.notes()[0].tick(), 120);
+    assert_eq!(duplicate_midi.notes()[0].duration(), 240);
+    assert_eq!(duplicate_midi.notes()[0].pitch(), 60);
+    assert_eq!(duplicate_midi.notes()[0].velocity(), 96);
+    assert_eq!(app.timeline.selected_items.len(), 2);
+    assert!(app.timeline.selected_items.contains(&duplicate_audio.id()));
+    assert!(app.timeline.selected_items.contains(&duplicate_midi.id()));
+    assert!(!app.timeline.selected_items.contains(&source_audio.id()));
+    assert!(!app.timeline.selected_items.contains(&source_midi.id()));
+    assert!(app.item_nudge_dialog.error.is_none());
+
+    let _ = app.update(Message::Undo);
+    assert_eq!(app.project.audio_items(), &[source_audio]);
+    assert_eq!(app.project.midi_items(), &[original_midi]);
+    let _ = app.update(Message::Redo);
+    assert_eq!(app.project.audio_items().len(), 2);
+    assert_eq!(app.project.midi_items().len(), 2);
+    assert_eq!(app.project.audio_items()[1].start_sample(), 48_000);
+    assert_eq!(app.project.midi_items()[1].start_tick(), 1_920);
+}
+
+#[test]
+fn item_nudge_set_duplicate_keeps_absolute_target_when_relative_set_is_checked() {
+    use super::item_nudge::Target;
+
+    let mut app = item_snap_test_app(48_000, 1_920);
+    let source_audio = app.project.audio_items()[0].clone();
+    let source_midi = app.project.midi_items()[0].clone();
+    let revision = app.revision;
+    let _ = app.update(Message::ItemNudgeModeChanged(super::item_nudge::Mode::Set));
+    let _ = app.update(Message::ItemNudgeTargetChanged(Target::Duplicate));
+    let _ = app.update(Message::ItemNudgeRelativeSetChanged(true));
+    let _ = app.update(Message::ItemNudgeValueChanged("0:00.250".to_owned()));
+
+    let _ = app.update(Message::ApplyItemNudgeSet);
+
+    assert_eq!(app.revision, revision + 1);
+    assert_eq!(app.project.audio_items()[0], source_audio);
+    assert_eq!(app.project.midi_items()[0], source_midi);
+    assert_eq!(app.project.audio_items()[1].start_sample(), 12_000);
+    assert_eq!(app.project.midi_items()[1].start_tick(), 480);
+    assert_eq!(app.timeline.selected_items.len(), 2);
+    assert!(
+        app.timeline
+            .selected_items
+            .contains(&app.project.audio_items()[1].id())
+    );
+    assert!(
+        app.timeline
+            .selected_items
+            .contains(&app.project.midi_items()[1].id())
+    );
+    assert!(app.item_nudge_dialog.error.is_none());
+
+    let _ = app.update(Message::Undo);
+    assert_eq!(app.project.audio_items(), &[source_audio]);
+    assert_eq!(app.project.midi_items(), &[source_midi]);
+    let _ = app.update(Message::Redo);
+    assert_eq!(app.project.audio_items()[1].start_sample(), 12_000);
+    assert_eq!(app.project.midi_items()[1].start_tick(), 480);
+}
+
+#[test]
 fn item_nudge_without_selection_or_with_invalid_amount_does_not_edit_project() {
     let mut app = item_snap_test_app(0, 0);
     let original_revision = app.revision;

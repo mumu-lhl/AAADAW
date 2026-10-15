@@ -288,6 +288,9 @@ impl App {
             Mode::Set if self.item_nudge_dialog.target == Target::Position => {
                 self.apply_set_position()
             }
+            Mode::Set if self.item_nudge_dialog.target == Target::Duplicate => {
+                self.apply_set_duplicate()
+            }
             Mode::Set if self.item_nudge_dialog.target == Target::Contents => {
                 self.apply_set_contents();
             }
@@ -306,6 +309,7 @@ impl App {
         }
         match self.item_nudge_dialog.target {
             Target::Position => self.apply_set_position(),
+            Target::Duplicate => self.apply_set_duplicate(),
             Target::Contents => self.apply_set_contents(),
             Target::EditCursor => self.apply_edit_cursor_set(),
             target => {
@@ -432,6 +436,47 @@ impl App {
             }
         }
         self.shift_selected_items(delta);
+    }
+
+    fn apply_set_duplicate(&mut self) {
+        if commands::project_edit_busy(self) {
+            self.item_nudge_dialog.error = Some(
+                "Stop playback or finish the current operation before duplicating items".to_owned(),
+            );
+            return;
+        }
+        let selected = match self.selected_item_start_samples() {
+            Ok(selected) => selected,
+            Err(error) => {
+                self.item_nudge_dialog.error = Some(error);
+                return;
+            }
+        };
+        let Some((_, first_sample)) = selected.first() else {
+            self.item_nudge_dialog.error = Some("No selected items to duplicate".to_owned());
+            return;
+        };
+        let mut target_sample = match self.dialog_target_sample() {
+            Ok(sample) => sample,
+            Err(error) => {
+                self.item_nudge_dialog.error = Some(error);
+                return;
+            }
+        };
+        if self.item_nudge_dialog.snap_to_unit {
+            match self.snap_resolution_samples() {
+                Ok(unit) => target_sample = round_sample(target_sample, unit),
+                Err(error) => {
+                    self.item_nudge_dialog.error = Some(error);
+                    return;
+                }
+            }
+        }
+
+        // REAPER exposes Relative Set for Duplicate but still treats the value
+        // as the absolute destination for the first selected item copy.
+        let delta = i128::from(target_sample) - i128::from(*first_sample);
+        self.duplicate_selected_items_at_delta(delta);
     }
 
     fn apply_set_contents(&mut self) {
@@ -916,6 +961,10 @@ impl App {
                 Some("Snap to unit is not supported for the duplicate target yet".to_owned());
             return;
         }
+        self.duplicate_selected_items_at_delta(delta_samples);
+    }
+
+    fn duplicate_selected_items_at_delta(&mut self, delta_samples: i128) {
         let selected_ids = &self.timeline.selected_items;
         let mut actions = Vec::new();
         for item in self
