@@ -2,6 +2,8 @@ version	7.82/linux-x86_64
 theme	Default_7.0.ReaperThemeZip
 dialog_action	41226	Item edit: Nudge/Set...
 dialog	Nudge	contents	250	milliseconds	Snap off
-columns	label	position_s	length_s	loop_source	source_offset_s	source_length_qn	length_is_qn	phase_ppq	endpoint_ppq	notes	selection	state_change	undo_label
-before_zero_offset_first_note_100ppq	2.000000000	5.000000000	0.0	0.000000000	10.000000000	true	0.000	9600.000	0,0,0,100.000,400.000,0,60,96;1,0,0,6720.000,8640.000,0,64,108	selected	4	Fixture setup
-left_250ms_clamped_to_source_zero	2.000000000	5.000000000	0.0	0.197916667	9.895833333	true	380.000	9980.000	0,0,0,0.000,300.000,0,60,96;1,0,0,6620.000,8540.000,0,64,108	selected	6	Nudge items
+columns	label	position_s	length_s	loop_source	source_offset_s	source_length_qn	length_is_qn	phase_ppq	endpoint_ppq	notes	cc_events	selection	state_change	undo_label
+before_zero_offset_first_note_100ppq	2.000000000	5.000000000	0.0	0.000000000	10.000000000	true	0.000	9600.000	0,0,0,100.000,400.000,0,60,96;1,0,0,6720.000,8640.000,0,64,108	-	selected	4	Fixture setup
+left_250ms_clamped_to_source_zero	2.000000000	5.000000000	0.0	0.197916667	9.895833333	true	380.000	9980.000	0,0,0,0.000,300.000,0,60,96;1,0,0,6620.000,8540.000,0,64,108	-	selected	6	Nudge items
+before_zero_offset_controller_at_50ppq	2.000000000	5.000000000	0.0	0.000000000	10.000000000	true	0.000	9600.000	0,0,0,100.000,400.000,0,60,96;1,0,0,6720.000,8640.000,0,64,108	0,0,0,50.000,176,0,1,80;1,0,0,300.000,224,0,64,64	selected	6	Fixture setup
+left_250ms_clamped_to_controller_zero	2.000000000	5.000000000	0.0	0.223958333	9.947916667	true	430.000	10030.000	0,0,0,50.000,350.000,0,60,96;1,0,0,6670.000,8590.000,0,64,108	0,0,0,0.000,176,0,1,80;1,0,0,250.000,224,0,64,64	selected	9	Nudge items

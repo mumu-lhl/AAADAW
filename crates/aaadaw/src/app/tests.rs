@@ -1329,7 +1329,7 @@ fn item_nudge_non_looped_midi_contents_clamps_events_at_source_zero_and_offsets_
             item_id,
             controllers: vec![MidiControllerData {
                 controller: 1,
-                tick: 250,
+                tick: 50,
                 value: 80,
             }],
         })
@@ -1338,7 +1338,7 @@ fn item_nudge_non_looped_midi_contents_clamps_events_at_source_zero_and_offsets_
         .apply(DawAction::SetMidiPitchBends {
             item_id,
             pitch_bends: vec![MidiPitchBendData {
-                tick: 360,
+                tick: 300,
                 value: 9_000,
             }],
         })
@@ -1352,18 +1352,18 @@ fn item_nudge_non_looped_midi_contents_clamps_events_at_source_zero_and_offsets_
     let _ = app.update(Message::NudgeSelectedItems(-1));
 
     let moved_left = app.project.midi_items()[0].clone();
-    assert_eq!(moved_left.source_offset_ticks(), 380);
-    assert_eq!(moved_left.source_loop_length_ticks(), 9_500);
+    assert_eq!(moved_left.source_offset_ticks(), 430);
+    assert_eq!(moved_left.source_loop_length_ticks(), 9_550);
     assert_eq!(
         moved_left
             .notes()
             .iter()
             .map(|note| (note.tick(), note.duration()))
             .collect::<Vec<_>>(),
-        vec![(0, 300), (6_620, 1_920)]
+        vec![(50, 300), (6_670, 1_920)]
     );
-    assert_eq!(moved_left.controllers()[0].tick, 150);
-    assert_eq!(moved_left.pitch_bends()[0].tick, 260);
+    assert_eq!(moved_left.controllers()[0].tick, 0);
+    assert_eq!(moved_left.pitch_bends()[0].tick, 250);
     assert_eq!(app.timeline.selected_items.len(), 1);
     assert!(app.timeline.selected_items.contains(&item_id));
     assert!(app.item_nudge_dialog.error.is_none());

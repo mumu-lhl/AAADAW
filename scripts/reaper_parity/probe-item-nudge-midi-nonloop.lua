@@ -11,6 +11,12 @@ local source_offset = tonumber(os.getenv("AAADAW_REAPER_PROBE_SOURCE_OFFSET_SECO
 assert(source_offset and source_offset >= 0, "source offset must be nonnegative")
 local first_note_start = tonumber(os.getenv("AAADAW_REAPER_PROBE_FIRST_NOTE_START_PPQ") or "2880")
 assert(first_note_start and first_note_start >= 0, "first note start must be nonnegative")
+local first_note_duration = tonumber(os.getenv("AAADAW_REAPER_PROBE_FIRST_NOTE_DURATION_PPQ") or "1920")
+assert(first_note_duration and first_note_duration > 0, "first note duration must be positive")
+local controller_tick = tonumber(os.getenv("AAADAW_REAPER_PROBE_CONTROLLER_PPQ"))
+assert(not controller_tick or controller_tick >= 0, "controller position must be nonnegative")
+local pitch_bend_tick = tonumber(os.getenv("AAADAW_REAPER_PROBE_PITCH_BEND_PPQ"))
+assert(not pitch_bend_tick or pitch_bend_tick >= 0, "pitch-bend position must be nonnegative")
 local output = assert(io.open(root .. "item-nudge-midi-nonloop.tsv", "w"))
 reaper.InsertTrackAtIndex(0, true)
 local track = assert(reaper.GetTrack(0, 0))
@@ -19,8 +25,14 @@ local item = assert(reaper.CreateNewMIDIItemInProj(track, 2, 7, false))
 local take = assert(reaper.GetActiveTake(item))
 assert(reaper.SetMediaItemInfo_Value(item, "B_LOOPSRC", 0))
 assert(reaper.SetMediaItemTakeInfo_Value(take, "D_STARTOFFS", source_offset))
-assert(reaper.MIDI_InsertNote(take, false, false, first_note_start, first_note_start + 1920, 0, 60, 96, false))
+assert(reaper.MIDI_InsertNote(take, false, false, first_note_start, first_note_start + first_note_duration, 0, 60, 96, false))
 assert(reaper.MIDI_InsertNote(take, false, false, 6720, 8640, 0, 64, 108, false))
+if controller_tick then
+  assert(reaper.MIDI_InsertCC(take, false, false, controller_tick, 0xB0, 0, 1, 80))
+end
+if pitch_bend_tick then
+  assert(reaper.MIDI_InsertCC(take, false, false, pitch_bend_tick, 0xE0, 0, 64, 64))
+end
 reaper.MIDI_Sort(take)
 reaper.SetMediaItemSelected(item, true)
 reaper.SetEditCurPos(4, false, false)
@@ -46,6 +58,18 @@ local function note_state()
   return table.concat(notes, ";")
 end
 
+local function cc_state()
+  local events = {}
+  local _, _, cc_count = reaper.MIDI_CountEvts(take)
+  for index = 0, cc_count - 1 do
+    local ok, selected, muted, ppq, status, channel, msg2, msg3 = reaper.MIDI_GetCC(take, index)
+    assert(ok, "could not read MIDI controller/pitch bend " .. tostring(index))
+    events[#events + 1] = table.concat({index, selected and 1 or 0, muted and 1 or 0,
+      string.format("%.3f", ppq), status, channel, msg2, msg3}, ",")
+  end
+  return table.concat(events, ";")
+end
+
 local function write_state(label)
   refresh()
   local position = reaper.GetMediaItemInfo_Value(item, "D_POSITION")
@@ -59,7 +83,7 @@ local function write_state(label)
     tostring(reaper.GetMediaItemInfo_Value(item, "B_LOOPSRC")),
     string.format("%.9f", reaper.GetMediaItemTakeInfo_Value(take, "D_STARTOFFS")),
     string.format("%.9f", source_length), tostring(source_length_is_qn),
-    string.format("%.3f", phase), string.format("%.3f", endpoint), note_state(),
+    string.format("%.3f", phase), string.format("%.3f", endpoint), note_state(), cc_state(),
     reaper.IsMediaItemSelected(item) and "selected" or "unselected",
     tostring(reaper.GetProjectStateChangeCount(0)), tostring(reaper.Undo_CanUndo2(0) or "")}, "\t"), "\n")
   output:flush()
@@ -68,7 +92,7 @@ end
 output:write("version\t", reaper.GetAppVersion(), "\n")
 output:write("theme\tDefault_7.0.ReaperThemeZip\n")
 output:write("dialog_action\t41226\tItem edit: Nudge/Set...\n")
-output:write("columns\tlabel\tposition_s\tlength_s\tloop_source\tsource_offset_s\tsource_length\tsource_length_is_qn\tphase_ppq\tendpoint_ppq\tnotes\tselection\tstate_change\tundo_label\n")
+output:write("columns\tlabel\tposition_s\tlength_s\tloop_source\tsource_offset_s\tsource_length\tsource_length_is_qn\tphase_ppq\tendpoint_ppq\tnotes\tcc_events\tselection\tstate_change\tundo_label\n")
 write_state("before")
 reaper.Main_OnCommand(41226, 0)
 
