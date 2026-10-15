@@ -437,6 +437,81 @@ fn item_nudge_measures_beats_matches_native_bar_beat_and_snap_rounding() {
 }
 
 #[test]
+fn item_nudge_frames_matches_native_fractional_moves_snap_and_undo() {
+    use super::item_nudge::{Target, Unit};
+
+    let cases = [
+        ("1", false, 1, 62_560),
+        ("1", true, 1, 62_400),
+        ("1", true, -1, 59_200),
+        ("0.5", false, 1, 61_760),
+        ("0.5", true, 1, 62_400),
+    ];
+    for (value, snap, direction, expected_sample) in cases {
+        let mut app = item_snap_test_app(60_960, 5_242);
+        let item = &app.project.audio_items()[0];
+        let item_id = item.id();
+        let track_id = item.track_id();
+        let original_offset = item.source_offset_samples();
+        let original_length = item.length_samples();
+        app.timeline.select_items(vec![(item_id, track_id)]);
+        let selection = app.timeline.selected_items.clone();
+        let revision_before = app.revision;
+
+        let _ = app.update(Message::ItemNudgeUnitChanged(Unit::Frames));
+        assert_eq!(app.item_nudge_dialog.value, "1");
+        let _ = app.update(Message::ItemNudgeTargetChanged(Target::Position));
+        let _ = app.update(Message::ItemNudgeValueChanged(value.to_owned()));
+        let _ = app.update(Message::ItemNudgeSnapToUnitChanged(snap));
+        let _ = app.update(Message::NudgeSelectedItems(direction));
+
+        let moved = &app.project.audio_items()[0];
+        assert_eq!(
+            moved.start_sample(),
+            expected_sample,
+            "{value}, snap={snap}"
+        );
+        assert_eq!(moved.source_offset_samples(), original_offset);
+        assert_eq!(moved.length_samples(), original_length);
+        assert_eq!(app.timeline.selected_items, selection);
+        assert_eq!(app.revision, revision_before + 1);
+        assert!(
+            app.item_nudge_dialog.error.is_none(),
+            "{value}, snap={snap}"
+        );
+
+        let _ = app.update(Message::Undo);
+        assert_eq!(app.project.audio_items()[0].start_sample(), 60_960);
+        assert_eq!(app.timeline.selected_items, selection);
+        let _ = app.update(Message::Redo);
+        assert_eq!(app.project.audio_items()[0].start_sample(), expected_sample);
+    }
+
+    let mut fractional = item_snap_test_app(48_000, 4_133);
+    fractional
+        .project
+        .apply(DawAction::SetFrameRate {
+            rate: aaadaw_core::FrameRate::Fps2997,
+        })
+        .unwrap();
+    let item = &fractional.project.audio_items()[0];
+    fractional
+        .timeline
+        .select_items(vec![(item.id(), item.track_id())]);
+    let _ = fractional.update(Message::ItemNudgeUnitChanged(Unit::Frames));
+    let _ = fractional.update(Message::ItemNudgeValueChanged("1".to_owned()));
+    let _ = fractional.update(Message::ItemNudgeSnapToUnitChanged(true));
+    let _ = fractional.update(Message::NudgeSelectedItems(1));
+    assert_eq!(fractional.project.audio_items()[0].start_sample(), 49_650);
+    assert!(fractional.item_nudge_dialog.error.is_none());
+
+    let _ = fractional.update(Message::ItemNudgeModeChanged(super::item_nudge::Mode::Set));
+    let previous_unit = fractional.item_nudge_dialog.unit;
+    let _ = fractional.update(Message::ItemNudgeUnitChanged(Unit::Frames));
+    assert_eq!(fractional.item_nudge_dialog.unit, previous_unit);
+}
+
+#[test]
 fn item_nudge_set_applies_absolute_and_relative_positions_to_mixed_selection() {
     let mut app = item_snap_test_app(0, 0);
     let _ = app.update(Message::ItemNudgeModeChanged(super::item_nudge::Mode::Set));

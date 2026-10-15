@@ -11,6 +11,7 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
             item_nudge::Unit::Grid,
             item_nudge::Unit::MeasuresBeats,
             item_nudge::Unit::Samples,
+            item_nudge::Unit::Frames,
         ],
         item_nudge::Mode::Set => &[item_nudge::Unit::Time, item_nudge::Unit::Samples],
     };

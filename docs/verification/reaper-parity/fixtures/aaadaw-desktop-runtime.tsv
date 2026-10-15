@@ -99,3 +99,7 @@ measures_beats_live_selected_screenshot	aaadaw-measures-beats-live-selected.png;
 measures_beats_unit_menu_initial_screenshot	aaadaw-measures-beats-live-unit-menu.png; actual 1280x800 screen; SHA-256 a620079cae217975bea3efcc24bc36ecb3a09bb6b45e5ef8c7e2a7f1c13708a8; first four options visible, list is scrollable
 measures_beats_unit_menu_scrolled_screenshot	aaadaw-measures-beats-live-unit-menu-scrolled.png; actual 1280x800 screen after mouse-wheel; samples option visible and selectable; SHA-256 4ad467ae2bc0bf00b5905cd651aa99418aa4264ca823189aafcbe7259abfc22a
 measures_beats_live_initial_dialog_screenshot	aaadaw-measures-beats-live-nudge.png; actual 1280x800 screen after opening Nudge/Set; SHA-256 bc10e4f08dc3f21bfc5b9d3ec6233c3eb7180c5c5ff62c783438dcb516f5da7a
+frames_nudge_binary_smoke	ELF Build ID d6004a0e999ea345f302e2bc780614ba0deb6719; SHA-256 e15c4af3705c28e390716ed3de02efc563fda5c8425ee142eb9931b544198d3b; bundled Xvfb :233; actual 1280x800 startup frame byte-identical to baseline
+frames_nudge_live_ui	2026-10-15; Xvfb :233; isolated XDG profile; visible Item menu opened Nudge/set items...; xwininfo 1280x800 main and 528x121 Nudge/Set; frames selected; default 1; Snap to unit
+frames_nudge_live_selected_screenshot	aaadaw-frames-live-selected.png; actual 528x121 dialog; SHA-256 85a6a73598a79f05eeeba3afd2b19058a6c5afd605b980ce1506ce779fb8b684
+frames_nudge_unit_menu_screenshot	aaadaw-frames-live-unit-menu-scrolled.png; actual 1280x800 screen; samples and frames visible; SHA-256 da3bfa12bbdacecb371802ed20d9ad765c04f736ea5890156919fe9e4f40c505

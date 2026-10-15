@@ -10,7 +10,7 @@
 
 原厂 MIDI Contents Nudge 探针另用一个五秒循环 MIDI item 和两条 MIDI note 验证 250 ms 操作。Target 为 `contents` 时，action 41249 将 `D_STARTOFFS` 从 0 绕至 4.75 秒；action 41250 从 4.75 秒移至 0，再从 0 移至 0.25 秒。item 仍在 2 秒、长度仍为 5 秒，note 的原始 PPQ 范围不变，state-change 计数增量为 0。Snap 开/关在这些 250 ms 案例中的结果相同。详见 [MIDI Contents Nudge 验证记录](item-nudge-midi-contents.md)。
 
-原厂 Nudge 单位下拉包含 `milliseconds`、`minutes:seconds`、`grid units`、`measures.beats`、`samples`、`frames`、`pixels`、`item lengths`、`item selections` 和 `notes`。Position / `minutes:seconds` 的 250 ms Nudge 从 1.270 秒移到 1.520 秒；Snap 开启时舍入到 2.000 秒。Position / `samples` 的 1-sample Nudge 在 44.1 kHz 下移动 1/44,100 秒，Snap 开启结果相同。长度、源偏移和选择均保持不变。完整单位菜单、数值和截图见 [Nudge 单位验证记录](item-nudge-units.md)。
+原厂 Nudge 单位下拉包含 `milliseconds`、`minutes:seconds`、`grid units`、`measures.beats`、`samples`、`frames`、`pixels`、`item lengths`、`item selections` 和 `notes`。Position / `minutes:seconds` 的 250 ms Nudge 从 1.270 秒移到 1.520 秒；Snap 开启时舍入到 2.000 秒。Position / `samples` 的 1-sample Nudge 在 44.1 kHz 下移动 1/44,100 秒，Snap 开启结果相同。Position / `frames` 在默认 30 fps 下支持整帧和半帧步进；Snap 会将目标舍入到最近帧边界。原厂操作和 AAADAW 回归都检查项目位置、长度、源偏移与选择。完整单位菜单、数值和截图见 [Nudge 单位验证记录](item-nudge-units.md)。
 
 ## AAADAW 当前覆盖
 
@@ -18,7 +18,7 @@ AAADAW 的 Action List 入口 `Item edit: Nudge/Set...` 与菜单短标签 `Nudg
 
 已实现的编辑路径：
 
-- Position / Nudge：支持 `milliseconds`、`minutes:seconds`、`grid units`、`measures.beats` 和 `samples`。Grid Units 使用当前 Arrangement PPQ 网格；Measures.Beats 按首个选中项处的当前拍号换算，经项目 Tempo Map 定位，并由 Snap to bar 对齐最近小节线。两者都以共享 delta 移动选择。`measures.beats` 已与 REAPER 7.82 对照 4/4 与静态 3/4；变拍跨越和其它 Target 尚未验收。原厂值、截图和回归见 [Nudge 单位验证记录](item-nudge-units.md)。`frames`、`pixels`、`item lengths`、`item selections` 与 `notes` 仍待实现；单位菜单的方向键选择也尚未对齐。
+- Position / Nudge：支持 `milliseconds`、`minutes:seconds`、`grid units`、`measures.beats`、`samples` 和 `frames`。Grid Units 使用当前 Arrangement PPQ 网格；Measures.Beats 按首个选中项处的当前拍号换算，经项目 Tempo Map 定位，并由 Snap to bar 对齐最近小节线。Frames 按项目的精确帧率换算，Snap 对齐最近帧边界。各单位都以共享 delta 移动选择。`measures.beats` 已与 REAPER 7.82 对照 4/4 与静态 3/4；Frames 已对照默认 30 fps 的 Position Nudge，包括半帧、左右 Snap 和 Undo/Redo，另有 29.97 fps 换算回归。变拍跨越、这些单位在其它 Target 的原厂行为以及单位菜单的方向键选择尚未验收。原厂值、截图和回归见 [Nudge 单位验证记录](item-nudge-units.md)。`pixels`、`item lengths`、`item selections` 与 `notes` 仍待实现。
 - Position / Set：支持绝对位置和相对位移；多选时以最早的所选项为锚点，对其它项应用同一位移。
 - Edit cursor：支持 Nudge 和绝对/相对 Set，不创建工程素材事务。
 - Audio / MIDI / Left Trim、Left Edge、End Position、Right Trim：Nudge 按步进量调整对应边界；启用 Snap to unit 时，以首个选中项的起点舍入一次，再对整个混合选择应用共同位移。四种目标的混合 Audio/MIDI Nudge、毫秒吸附和媒体相位见[边缘 Nudge/Snap 对照](item-nudge-edge-snap.md)。普通 Set 将每个所选项对应边界放到同一绝对目标，End Position 的 Relative Set 则以最后一个所选项的右边界计算共同位移。Left Trim 对 Audio 按边界距离及素材采样率推进源偏移；loop-source MIDI 按有符号位移更新 PPQ source phase，负向 trim 绕回源循环；non-loop MIDI 在边界穿过源事件时重基准事件和源长度。Left Edge 保留非循环 MIDI 的 source length；End Position 只移动 item；Right Trim 将 non-loop MIDI source length 更新为 source offset 加新的可见长度。所有所选项通过一个事务提交，错误 trim 整批拒绝。Linux REAPER 7.82 的 Audio、loop-source MIDI 与 non-loop MIDI 四种 Set target 错开多选结果、混合 Audio/MIDI 边缘结果、控件显示和撤销已记录，见[Set 边界目标对照](item-nudge-set-edge-targets.md)；其它 Unit/Snap 组合和变速 MIDI 仍未全部对照。
@@ -36,7 +36,7 @@ AAADAW 的 Action List 入口 `Item edit: Nudge/Set...` 与菜单短标签 `Nudg
 
 原厂参考：[默认对话框](fixtures/item-nudge-native-dialog.png)、[Target 下拉](fixtures/item-nudge-native-targets.png)、[Item 菜单](fixtures/menu-item-select-all-native.png)。AAADAW：[选中 MIDI 项时的对话框](fixtures/item-nudge-aaadaw-dialog.png)、[菜单项](fixtures/item-nudge-aaadaw-menu.png)、[Target 前四项](fixtures/item-nudge-aaadaw-targets-top.png)、[Target 后四项](fixtures/item-nudge-aaadaw-targets-bottom.png)。显示环境、操作记录和各文件 SHA-256 见 [fixture 元数据](fixtures/item-nudge.tsv)。
 
-当前明显差异是主题颜色和控件绘制、原厂完整 Target 列表与 AAADAW 的滚动列表、原厂 `grid units`、`measures.beats`、`frames`、`pixels`、`item lengths`、`item selections`、`notes` 单位、Set 模式布局/字段、错误反馈、变速 MIDI 和更广的撤销行为仍需检查。窗口尺寸和基础控件排列相符并不代表视觉或交互已完全复刻。
+当前明显差异是主题颜色和控件绘制、原厂完整 Target 列表与 AAADAW 的滚动列表、`pixels`、`item lengths`、`item selections`、`notes` 单位、Set 模式布局/字段、错误反馈、变速 MIDI 和更广的撤销行为仍需检查。窗口尺寸和基础控件排列相符并不代表视觉或交互已完全复刻。
 
 ## 后续验收
 

@@ -29,6 +29,7 @@ pub(crate) enum Unit {
     Time,
     Grid,
     MeasuresBeats,
+    Frames,
 }
 
 impl std::fmt::Display for Unit {
@@ -39,6 +40,7 @@ impl std::fmt::Display for Unit {
             Self::Time => "minutes:seconds",
             Self::Grid => "grid units",
             Self::MeasuresBeats => "measures.beats",
+            Self::Frames => "frames",
         })
     }
 }
@@ -127,9 +129,10 @@ impl Dialog {
         self.unit = unit;
         self.error = None;
         self.value = match (self.mode, unit) {
-            (Mode::Nudge, Unit::Milliseconds | Unit::Samples | Unit::Time | Unit::Grid) => {
-                "1".to_owned()
-            }
+            (
+                Mode::Nudge,
+                Unit::Milliseconds | Unit::Samples | Unit::Time | Unit::Grid | Unit::Frames,
+            ) => "1".to_owned(),
             (Mode::Nudge, Unit::MeasuresBeats) => "1.0".to_owned(),
             (Mode::Set, Unit::Time) => "0:00.000".to_owned(),
             (Mode::Set, Unit::Samples) => "0".to_owned(),
@@ -166,7 +169,12 @@ impl App {
         let valid = match self.item_nudge_dialog.mode {
             Mode::Nudge => matches!(
                 unit,
-                Unit::Milliseconds | Unit::Time | Unit::Grid | Unit::MeasuresBeats | Unit::Samples
+                Unit::Milliseconds
+                    | Unit::Time
+                    | Unit::Grid
+                    | Unit::MeasuresBeats
+                    | Unit::Samples
+                    | Unit::Frames
             ),
             Mode::Set => matches!(unit, Unit::Time | Unit::Samples),
         };
@@ -374,12 +382,21 @@ impl App {
             }
         };
         if self.item_nudge_dialog.snap_to_unit {
-            match self.snap_resolution_samples() {
-                Ok(unit) => sample = round_sample(sample, unit),
-                Err(error) => {
-                    self.item_nudge_dialog.error = Some(error);
-                    return;
-                }
+            match self.item_nudge_dialog.unit {
+                Unit::Frames => match self.nearest_frame_sample(sample) {
+                    Ok(snapped) => sample = snapped,
+                    Err(error) => {
+                        self.item_nudge_dialog.error = Some(error);
+                        return;
+                    }
+                },
+                _ => match self.snap_resolution_samples() {
+                    Ok(unit) => sample = round_sample(sample, unit),
+                    Err(error) => {
+                        self.item_nudge_dialog.error = Some(error);
+                        return;
+                    }
+                },
             }
         }
         match self.project.tick_at_sample(sample) {
@@ -2143,6 +2160,15 @@ impl App {
             Unit::Time => {
                 project_time::parse_project_time(value).map_err(str::to_owned)? * sample_rate
             }
+            Unit::Frames => {
+                if self.item_nudge_dialog.mode != Mode::Nudge {
+                    return Err("Frames are only available for Nudge".to_owned());
+                }
+                let frames = value
+                    .parse::<f64>()
+                    .map_err(|_| "Enter a valid frame amount".to_owned())?;
+                frames * sample_rate / self.project.settings().frame_rate().frames_per_second()
+            }
             Unit::Grid | Unit::MeasuresBeats => {
                 return Err("Musical units are only available for Nudge".to_owned());
             }
@@ -2192,6 +2218,9 @@ impl App {
             Unit::Milliseconds => (sample_rate + 500) / 1_000,
             Unit::Samples => 1,
             Unit::Time => sample_rate,
+            Unit::Frames => {
+                return Err("Frame snapping requires a frame-grid position".to_owned());
+            }
             Unit::Grid | Unit::MeasuresBeats => {
                 return Err("Musical snapping requires a selected item".to_owned());
             }
@@ -2216,6 +2245,10 @@ impl App {
         }
         let target = shifted_sample(*first_sample, delta_samples)
             .ok_or_else(|| "Selected items cannot move beyond the sample timeline".to_owned())?;
+        if self.item_nudge_dialog.unit == Unit::Frames {
+            let snapped = self.nearest_frame_sample(target)?;
+            return Ok(i128::from(snapped) - i128::from(*first_sample));
+        }
         let unit = self.snap_resolution_samples()?;
         Ok(i128::from(round_sample(target, unit)) - i128::from(*first_sample))
     }
@@ -2228,6 +2261,18 @@ impl App {
         }
         self.dialog_delta_samples(false)
             .map(|delta| delta * i128::from(direction))
+    }
+
+    fn nearest_frame_sample(&self, sample: u64) -> Result<u64, String> {
+        let samples_per_frame = f64::from(self.project.settings().sample_rate())
+            / self.project.settings().frame_rate().frames_per_second();
+        let frame_index = (sample as f64 / samples_per_frame).round();
+        let snapped_sample = frame_index * samples_per_frame;
+        if !snapped_sample.is_finite() || snapped_sample < 0.0 || snapped_sample >= u64::MAX as f64
+        {
+            return Err("Snapped frame position is outside the supported range".to_owned());
+        }
+        Ok(snapped_sample.round() as u64)
     }
 
     fn grid_delta_samples(&self, direction: i8) -> Result<i128, String> {
