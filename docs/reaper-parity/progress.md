@@ -1144,4 +1144,10 @@ AAADAW 现在按 item start 与绝对 target 的项目采样差换算到素材�
 
 Stable `cargo xtest --no-fail-fast` 在隔离 Xvfb 完整通过 1,142/1,142，`aaadaw` 与 `aaadaw-app` all-target Clippy `-D warnings`、fmt 检查通过。最新桌面二进制 SHA-256 `9011a9c4ab75512ee931b176bc80c77516d0a6745d17644715016aacdee722b3` 由仓库启动脚本在 Xvfb :90 显示真实 1280×800 主窗；Set/Contents/Snap-on 对话框截图来自同一二进制，截图 SHA-256 `0905f30e8a42f432135d487da0b3d290b8e9fdbdddb43d16d478aec9ccb60fe4`。该 AAADAW 功能截图没有选中 item，仅用于核对真实弹窗状态，不作为音频偏移结果证据。
 
-Native bounded-section Set、混合媒体 Set、MIDI 非 loop source、多种 Snap unit、其它 target 与更广的 Undo 语义仍需补齐；本切片不关闭 `ITEM-NUDGE-SET-001` 或 P4，唯一 PR #282 保持 `in_progress`。
+Native bounded-section Set、MIDI 非 loop source、多种 Snap unit、其它 target 与更广的 Undo 语义仍需补齐；本切片不关闭 `ITEM-NUDGE-SET-001` 或 P4，唯一 PR #282 保持 `in_progress`。
+
+### 2026-10-15 混合 Audio/MIDI 绝对 Set → Contents 原厂对照
+
+Linux REAPER 7.82 / Default 7 在同一个选中 Audio/MIDI selection 上执行 Mode `Set`、Target `contents`、绝对目标 3 秒、Snap off：两个 item 均位于 2 秒且长度 5 秒，loop source 开启。4 秒 Audio 源由 offset 0.1 秒变为 3 秒；10-quarter-note MIDI source 由 `D_STARTOFFS=0` 变为4秒、相位7,680/9,600 PPQ。两个 item bounds、MIDI 两条 note 与 selection 不变。一个 Undo 同时恢复 Audio/MIDI offsets，再一次 Redo 同时重做；TSV 和四张原厂实窗截图见[混合 Set → Contents 验证](../verification/reaper-parity/item-nudge-mixed-set-contents.md)。
+
+AAADAW 现有 Audio 与 loop-source MIDI Set action list 在同一次 `BatchTransaction` 提交；混合成功、单步 Undo/Redo 和 Audio metadata 缺失时整批拒绝均有 App 回归。原厂 probe 补齐了之前未测的混合 Set 边界；`ITEM-NUDGE-SET-001` 仍为 `in_progress`，因为 bounded Audio Set、MIDI non-loop source、其它 Snap unit/targets 与更广 Undo history 仍未完成。
