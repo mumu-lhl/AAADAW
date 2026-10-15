@@ -851,6 +851,92 @@ fn item_nudge_set_looped_midi_contents_matches_native_across_tempo_change() {
 }
 
 #[test]
+fn item_nudge_set_looped_midi_contents_matches_native_linear_tempo_phase() {
+    use super::item_nudge::Target;
+
+    let mut app = App::default();
+    app.project
+        .apply(DawAction::SetTempo {
+            start_tick: 7_680,
+            bpm: 60.0,
+        })
+        .unwrap();
+    app.project
+        .apply(DawAction::SetTempoCurve {
+            start_tick: 0,
+            curve: aaadaw_core::TempoCurve::Linear,
+        })
+        .unwrap();
+    let sample_rate = f64::from(app.project.settings().sample_rate());
+    let sample_at = |seconds: f64| (seconds * sample_rate).round() as u64;
+    let start_sample = sample_at(3.9);
+    let end_sample = sample_at(8.9);
+    let start_tick = app.project.tick_at_sample(start_sample).unwrap();
+    let end_tick = app.project.tick_at_sample(end_sample).unwrap();
+    let length_ticks = end_tick - start_tick;
+
+    let _ = app.update(Message::AddTrack);
+    let track_id = app.project.tracks()[0].id();
+    app.project
+        .apply(DawAction::InsertMidiItem {
+            track_id,
+            start_tick,
+            length_ticks,
+        })
+        .unwrap();
+    let item_id = app.project.midi_items()[0].id();
+    app.project
+        .apply(DawAction::AddMidiNotes {
+            item_id,
+            notes: vec![
+                MidiNoteData {
+                    pitch: 60,
+                    tick: 960,
+                    duration: 960,
+                    velocity: 96,
+                },
+                MidiNoteData {
+                    pitch: 64,
+                    tick: 2_880,
+                    duration: 960,
+                    velocity: 108,
+                },
+            ],
+        })
+        .unwrap();
+    let original = app.project.midi_items()[0].clone();
+    app.timeline.rebuild(&app.project);
+    app.timeline.select_items(vec![(item_id, track_id)]);
+    let _ = app.update(Message::ItemNudgeModeChanged(super::item_nudge::Mode::Set));
+    let _ = app.update(Message::ItemNudgeTargetChanged(Target::Contents));
+    let _ = app.update(Message::ItemNudgeValueChanged("0:04.150".to_owned()));
+
+    let revision = app.revision;
+    let _ = app.update(Message::ApplyItemNudgeSet);
+
+    let set_after = app.project.midi_items()[0].clone();
+    assert_eq!(app.revision, revision + 1);
+    assert_eq!(set_after.start_tick(), original.start_tick());
+    assert_eq!(set_after.length_ticks(), original.length_ticks());
+    assert_eq!(
+        set_after.source_loop_length_ticks(),
+        original.source_loop_length_ticks()
+    );
+    assert_eq!(set_after.source_loop_length_ticks(), 4_974);
+    assert_eq!(set_after.source_offset_ticks(), 4_531);
+    assert!((set_after.source_offset_ticks() as f64 - 4_537.985).abs() < 8.0);
+    assert_eq!(set_after.notes(), original.notes());
+    assert_eq!(app.timeline.selected_items.len(), 1);
+    assert!(app.timeline.selected_items.contains(&item_id));
+    assert!(app.item_nudge_dialog.error.is_none());
+
+    let _ = app.update(Message::Undo);
+    assert_eq!(app.project.midi_items()[0], original);
+    let _ = app.update(Message::Redo);
+    assert_eq!(app.project.midi_items()[0], set_after);
+}
+
+#[test]
 fn item_nudge_set_contents_rebases_non_loop_midi_and_preserves_undoable_source_data() {
     use super::item_nudge::Target;
     use aaadaw_core::{MidiPitchBendData, NoteId};
