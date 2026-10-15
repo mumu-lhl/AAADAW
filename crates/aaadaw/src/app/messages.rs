@@ -257,6 +257,7 @@ pub(crate) enum Message {
     BatchItemPropertyMuteChanged(bool),
     ItemPropertyPhaseChanged(bool),
     MidiItemPropertyNameChanged(String),
+    MidiItemPropertySourceLoopLengthChanged(String),
     ToggleSelectedItemsMute,
     ApplyItemProperties(bool),
     CloseItemProperties,

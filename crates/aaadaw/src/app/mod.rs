@@ -752,6 +752,7 @@ fn action_rebuilds_playback_graph(action: &DawAction) -> bool {
         | DawAction::SetTempoCurve { .. }
         | DawAction::SetTrackFxParameterAutomation { .. }
         | DawAction::EditMidiItemPlacement { .. }
+        | DawAction::SetMidiItemContents { .. }
         | DawAction::SetMidiItemLoopSource { .. }
         | DawAction::SetMidiItemMute { .. }
         | DawAction::FreezeTrack { .. }
@@ -1922,6 +1923,7 @@ impl App {
                     | Message::BatchItemPropertyMuteChanged(_)
                     | Message::ItemPropertyPhaseChanged(_)
                     | Message::MidiItemPropertyNameChanged(_)
+                    | Message::MidiItemPropertySourceLoopLengthChanged(_)
                     | Message::CloseItemProperties
                     | Message::MarkerNameChanged(_)
                     | Message::MarkerNumberChanged(_)
@@ -2598,6 +2600,11 @@ impl App {
             Message::MidiItemPropertyNameChanged(name) => {
                 if let Some(draft) = &mut self.midi_item_properties {
                     draft.set_name(name);
+                }
+            }
+            Message::MidiItemPropertySourceLoopLengthChanged(value) => {
+                if let Some(draft) = &mut self.midi_item_properties {
+                    draft.set_source_loop_length(value);
                 }
             }
             Message::ToggleSelectedItemsMute => self.toggle_selected_items_mute(),

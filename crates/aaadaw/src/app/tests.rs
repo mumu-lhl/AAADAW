@@ -15408,6 +15408,78 @@ fn midi_item_properties_toggle_loop_source_preserves_source_length_and_undoes() 
 }
 
 #[test]
+fn midi_item_properties_edit_loop_source_length_preserves_events_and_undoes() {
+    let mut app = App::default();
+    app.project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "MIDI loop source".into(),
+        })
+        .unwrap();
+    let track_id = app.project.tracks()[0].id();
+    app.project
+        .apply(DawAction::InsertMidiItem {
+            track_id,
+            start_tick: 0,
+            length_ticks: 960,
+        })
+        .unwrap();
+    let item_id = app.project.midi_items()[0].id();
+    app.project
+        .apply(DawAction::AddMidiNotes {
+            item_id,
+            notes: vec![MidiNoteData {
+                pitch: 60,
+                tick: 120,
+                duration: 240,
+                velocity: 96,
+            }],
+        })
+        .unwrap();
+    let original = app.project.midi_items()[0].clone();
+    app.timeline.rebuild(&app.project);
+    app.timeline.select_items(vec![(item_id, track_id)]);
+
+    let _ = app.update(Message::ToggleItemProperties);
+    assert_eq!(
+        app.midi_item_properties
+            .as_ref()
+            .unwrap()
+            .source_loop_length,
+        "960"
+    );
+    let _ = app.update(Message::MidiItemPropertySourceLoopLengthChanged(
+        "1920".into(),
+    ));
+    let _ = app.update(Message::ApplyItemProperties(false));
+
+    let extended = app.project.midi_items()[0].clone();
+    assert_eq!(extended.source_loop_length_ticks(), 1_920);
+    assert_eq!(extended.length_ticks(), original.length_ticks());
+    assert_eq!(extended.notes(), original.notes());
+    assert_eq!(app.timeline.selected_items, [item_id].into());
+    assert!(app.midi_item_properties.as_ref().unwrap().error.is_none());
+
+    let _ = app.update(Message::Undo);
+    assert_eq!(app.project.midi_items()[0], original);
+    let _ = app.update(Message::Redo);
+    assert_eq!(app.project.midi_items()[0], extended);
+
+    let _ = app.update(Message::MidiItemPropertySourceLoopLengthChanged(
+        "200".into(),
+    ));
+    let _ = app.update(Message::ApplyItemProperties(false));
+    assert_eq!(
+        app.project.midi_items()[0].source_loop_length_ticks(),
+        1_920
+    );
+    assert_eq!(
+        app.midi_item_properties.as_ref().unwrap().error.as_deref(),
+        Some("Source length cannot end before stored MIDI events")
+    );
+}
+
+#[test]
 fn item_toggle_mute_action_matches_action_list_and_is_undoable() {
     let mut app = App::default();
     app.project

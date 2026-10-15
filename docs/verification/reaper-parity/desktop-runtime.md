@@ -57,3 +57,5 @@ After the MIDI source-zero event clamp, Build ID `2f0140b07bd07138d8e4ebfc02d963
 
 
 I also opened Item → Nudge/set items... from Build ID `2f0140b07bd07138d8e4ebfc02d963883ce2fff6` in an isolated Xvfb :244 session. `xwininfo` reported the actual 528×121 Nudge/Set dialog and 1280×800 main window. The [current-build live capture](fixtures/aaadaw-desktop-runtime-live-nonloop-nudge-underflow.png) shows Target Contents, 1 millisecond, Snap off, and no selected item; its SHA-256 is `9d61e2c8bf1ac2c62efd51b5167a815e31127326603b6461838921ad243d1bd7`. The dialog was opened from the visible Item menu.
+
+After adding MIDI source-loop length editing to Item Properties, Build ID `cefd0b9deef9f55f3d07f233dca911297cb761d2` (binary SHA-256 `81f1b343d1d26e796819219b43d085880f7fda6060518f0270c8f7e9ead66e28`) passed the same bundled-Xvfb build and launch smoke. The actual main window was visible at 1280×800, and the screenshot hash again matched the startup fixture. This verifies that the rebuilt application starts; the source-length field itself still needs a fresh feature-window screenshot and native REAPER comparison.

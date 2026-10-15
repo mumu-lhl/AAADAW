@@ -197,6 +197,14 @@ fn midi_item_view<'a>(draft: &'a MidiItemProperties) -> Element<'a, Message> {
         ]
         .spacing(6),
         row![
+            text("Source length (PPQ):").width(120),
+            text_input("", &draft.source_loop_length)
+                .on_input(Message::MidiItemPropertySourceLoopLengthChanged)
+                .on_submit(Message::ApplyItemProperties(true))
+                .width(130)
+        ]
+        .spacing(6),
+        row![
             text("Position:").width(120),
             field(ItemPropertyField::Position, 130)
         ]

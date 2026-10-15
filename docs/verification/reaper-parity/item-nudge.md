@@ -38,4 +38,4 @@ AAADAW 的 Action List 入口 `Item edit: Nudge/Set...` 与菜单短标签 `Nudg
 
 ## 后续验收
 
-MIDI Item Properties 的 Loop source 开关已可应用并撤销；下一步为 looped MIDI source 增加可见/可编辑 source loop length，并验证旧 trimmed source 长度恢复策略。MIDI Contents Nudge 已完成 stepped Tempo Point 与 mixed Audio/MIDI selection 原厂对照，linear tempo ramp 与更广的 Undo 边界仍开放。继续比较其它 Target 的 Set/Snap 组合、所有 Unit、Get cursor、按钮与键盘焦点、多选锚点、跨轨顺序及播放/录制状态。负 offset 属性窗同尺寸实窗截图对照，以及 bounded-section pre-roll 逐采样比较也仍需完成。完成这些行为和画面对照前，`ITEM-NUDGE-SET-001` 与 Item 菜单/UI 总体验收继续为 `in_progress`。
+MIDI Item Properties 的 Loop source 开关已可应用并撤销；AAADAW 现在增加 source loop length 的 PPQ 编辑字段，事务、播放保护、Undo/Redo 与“长度不得切断已有事件”回归已接入。该字段尚未与 REAPER 的原厂控件和缩短/空 trimmed source 恢复语义对照，不能视为完成原厂等价。MIDI Contents Nudge 已完成 stepped Tempo Point 与 mixed Audio/MIDI selection 原厂对照，linear tempo ramp 与更广的 Undo 边界仍开放。继续比较其它 Target 的 Set/Snap 组合、所有 Unit、Get cursor、按钮与键盘焦点、多选锚点、跨轨顺序及播放/录制状态。负 offset 属性窗同尺寸实窗截图对照，以及 bounded-section pre-roll 逐采样比较也仍需完成。完成这些行为和画面对照前，`ITEM-NUDGE-SET-001` 与 Item 菜单/UI 总体验收继续为 `in_progress`。
