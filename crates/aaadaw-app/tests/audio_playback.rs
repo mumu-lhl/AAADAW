@@ -528,6 +528,47 @@ fn transport_loop_preparation_repeats_a_trimmed_stereo_item_with_loop_source_dis
     }
     drop(graph);
 
+    let prepared = prepare_audio_playback_at_with_loop_range(
+        &project,
+        &store,
+        4,
+        Some(loop_range),
+        64,
+        32,
+        ResamplingQuality::Sinc64,
+    )
+    .expect("playback before the item should stay silent until its loop-start boundary");
+    let (mut graph, feeders) = prepared.into_parts();
+    std::thread::sleep(std::time::Duration::from_millis(20));
+    graph.transport_mut().start();
+    let mut output = [[0.0_f32; 2]; 32];
+    let stats = graph
+        .render_into(&mut output)
+        .expect("pre-item silence and Loop playback should render together");
+    assert_eq!(stats.underrun_samples, 0);
+    for (index, frame) in output.iter().enumerate() {
+        let expected_source_index = if index < 12 {
+            None
+        } else {
+            Some(16 + (index - 12) % 16)
+        };
+        let expected = expected_source_index.map_or([0.0; 2], |source_index| {
+            [
+                source_frames[source_index][0] as f32 / 32_768.0,
+                source_frames[source_index][1] as f32 / 32_768.0,
+            ]
+        });
+        assert!((frame[0] - expected[0]).abs() < 1.0e-6);
+        assert!((frame[1] - expected[1]).abs() < 1.0e-6);
+    }
+    assert_eq!(graph.transport_mut().position_samples(), 20);
+    for feeder in feeders {
+        feeder
+            .cancel()
+            .expect("pre-item feeder should stop cleanly");
+    }
+    drop(graph);
+
     store.close().expect("project should close");
     remove_database(&database_path);
 }
@@ -719,6 +760,49 @@ fn transport_loop_preparation_repeats_the_source_segment_of_a_containing_item() 
         feeder
             .cancel()
             .expect("pre-loop feeder should stop cleanly");
+    }
+    drop(graph);
+
+    let prepared = prepare_audio_playback_at_with_loop_range(
+        &project,
+        &store,
+        4,
+        Some(loop_range),
+        64,
+        32,
+        ResamplingQuality::Sinc64,
+    )
+    .expect("playback before the item should reach its prefix and Loop overlap");
+    let (mut graph, feeders) = prepared.into_parts();
+    std::thread::sleep(std::time::Duration::from_millis(20));
+    graph.transport_mut().start();
+    let mut output = [[0.0_f32; 2]; 32];
+    let stats = graph
+        .render_into(&mut output)
+        .expect("pre-item silence, linear prefix, and Repeat should render together");
+    assert_eq!(stats.underrun_samples, 0);
+    for (index, frame) in output.iter().enumerate() {
+        let expected_source_index = if index < 4 {
+            None
+        } else if index < 12 {
+            Some(4 + index - 4)
+        } else {
+            Some(12 + (index - 12) % 16)
+        };
+        let expected = expected_source_index.map_or([0.0; 2], |source_index| {
+            [
+                source_frames[source_index][0] as f32 / 32_768.0,
+                source_frames[source_index][1] as f32 / 32_768.0,
+            ]
+        });
+        assert!((frame[0] - expected[0]).abs() < 1.0e-6);
+        assert!((frame[1] - expected[1]).abs() < 1.0e-6);
+    }
+    assert_eq!(graph.transport_mut().position_samples(), 20);
+    for feeder in feeders {
+        feeder
+            .cancel()
+            .expect("playback-before-item feeder should stop cleanly");
     }
     drop(graph);
 
