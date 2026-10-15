@@ -709,6 +709,62 @@ fn item_nudge_set_can_set_the_edit_cursor_to_a_project_time() {
 }
 
 #[test]
+fn item_nudge_set_contents_matches_native_midi_source_alignment_snap_and_undoes() {
+    use super::item_nudge::Target;
+
+    let mut app = App::default();
+    let _ = app.update(Message::AddTrack);
+    let midi_track = app.project.tracks()[0].id();
+    app.project
+        .apply(DawAction::InsertMidiItem {
+            track_id: midi_track,
+            start_tick: 3_840,
+            length_ticks: 9_600,
+        })
+        .unwrap();
+    let midi_id = app.project.midi_items()[0].id();
+    app.timeline.rebuild(&app.project);
+    app.timeline.select_items(vec![(midi_id, midi_track)]);
+    let _ = app.update(Message::ItemNudgeModeChanged(super::item_nudge::Mode::Set));
+    let _ = app.update(Message::ItemNudgeRelativeSetChanged(true));
+    let _ = app.update(Message::ItemNudgeTargetChanged(Target::Contents));
+    let _ = app.update(Message::ItemNudgeValueChanged("0:03.000".to_owned()));
+
+    let _ = app.update(Message::ApplyItemNudgeSet);
+
+    let item = &app.project.midi_items()[0];
+    assert_eq!(item.start_tick(), 3_840);
+    assert_eq!(item.length_ticks(), 9_600);
+    assert_eq!(item.source_loop_length_ticks(), 9_600);
+    assert_eq!(item.source_offset_ticks(), 7_680);
+    assert!(!app.item_nudge_dialog.relative_set);
+    assert_eq!(app.timeline.selected_items.len(), 1);
+    assert!(app.timeline.selected_items.contains(&midi_id));
+    assert!(app.item_nudge_dialog.error.is_none());
+
+    let _ = app.update(Message::Undo);
+    assert_eq!(app.project.midi_items()[0].source_offset_ticks(), 0);
+    let _ = app.update(Message::Redo);
+    assert_eq!(app.project.midi_items()[0].source_offset_ticks(), 7_680);
+
+    let _ = app.update(Message::ItemNudgeSnapToUnitChanged(true));
+    let _ = app.update(Message::ItemNudgeValueChanged("0:03.500".to_owned()));
+    let _ = app.update(Message::ApplyItemNudgeSet);
+
+    let item = &app.project.midi_items()[0];
+    assert_eq!(item.start_tick(), 3_840);
+    assert_eq!(item.length_ticks(), 9_600);
+    assert_eq!(item.source_offset_ticks(), 5_760);
+    assert!(app.item_nudge_dialog.snap_to_unit);
+    assert!(app.item_nudge_dialog.error.is_none());
+
+    let _ = app.update(Message::Undo);
+    assert_eq!(app.project.midi_items()[0].source_offset_ticks(), 7_680);
+    let _ = app.update(Message::Redo);
+    assert_eq!(app.project.midi_items()[0].source_offset_ticks(), 5_760);
+}
+
+#[test]
 fn item_nudge_contents_wraps_looped_midi_offsets_and_undoes_atomically() {
     use super::item_nudge::Target;
 

@@ -164,6 +164,9 @@ impl App {
 
     pub(super) fn change_item_nudge_target(&mut self, target: Target) {
         self.item_nudge_dialog.target = target;
+        if target == Target::Contents {
+            self.item_nudge_dialog.relative_set = false;
+        }
         self.item_nudge_dialog.error = None;
     }
 
@@ -177,7 +180,8 @@ impl App {
     }
 
     pub(super) fn change_item_nudge_relative_set(&mut self, enabled: bool) {
-        self.item_nudge_dialog.relative_set = enabled;
+        self.item_nudge_dialog.relative_set =
+            enabled && self.item_nudge_dialog.target != Target::Contents;
     }
 
     pub(super) fn item_nudge_get_cursor(&mut self) {
@@ -282,7 +286,10 @@ impl App {
                 }
             }
             Mode::Set if self.item_nudge_dialog.target == Target::Position => {
-                self.apply_set_position();
+                self.apply_set_position()
+            }
+            Mode::Set if self.item_nudge_dialog.target == Target::Contents => {
+                self.apply_set_contents();
             }
             Mode::Set => {
                 self.item_nudge_dialog.error = Some(format!(
@@ -299,6 +306,7 @@ impl App {
         }
         match self.item_nudge_dialog.target {
             Target::Position => self.apply_set_position(),
+            Target::Contents => self.apply_set_contents(),
             Target::EditCursor => self.apply_edit_cursor_set(),
             target => {
                 self.item_nudge_dialog.error = Some(format!(
@@ -424,6 +432,130 @@ impl App {
             }
         }
         self.shift_selected_items(delta);
+    }
+
+    fn apply_set_contents(&mut self) {
+        if commands::project_edit_busy(self) {
+            self.item_nudge_dialog.error = Some(
+                "Stop playback or finish the current operation before moving item contents"
+                    .to_owned(),
+            );
+            return;
+        }
+        if self.item_nudge_dialog.relative_set {
+            self.item_nudge_dialog.error =
+                Some("Relative Set is unavailable for Contents".to_owned());
+            return;
+        }
+        let target_sample = match self.dialog_target_sample() {
+            Ok(sample) => sample,
+            Err(error) => {
+                self.item_nudge_dialog.error = Some(error);
+                return;
+            }
+        };
+        let target_sample = if self.item_nudge_dialog.snap_to_unit {
+            match self.snap_resolution_samples() {
+                Ok(unit) => round_sample(target_sample, unit),
+                Err(error) => {
+                    self.item_nudge_dialog.error = Some(error);
+                    return;
+                }
+            }
+        } else {
+            target_sample
+        };
+        let selected_ids = &self.timeline.selected_items;
+        let audio_selected = self
+            .project
+            .audio_items()
+            .iter()
+            .any(|item| selected_ids.contains(&item.id()));
+        let midi_items = self
+            .project
+            .midi_items()
+            .iter()
+            .filter(|item| selected_ids.contains(&item.id()))
+            .collect::<Vec<_>>();
+        if audio_selected || midi_items.is_empty() {
+            self.item_nudge_dialog.error = Some(if audio_selected {
+                "Set Contents currently requires selected loop-source MIDI items".to_owned()
+            } else {
+                "No selected MIDI items to set".to_owned()
+            });
+            return;
+        }
+        let actions = match self.midi_contents_set_actions(&midi_items, target_sample) {
+            Ok(actions) => actions,
+            Err(error) => {
+                self.item_nudge_dialog.error = Some(error);
+                return;
+            }
+        };
+        if !actions.is_empty() {
+            self.apply_action(
+                DawAction::BatchTransaction {
+                    tx_id: self.revision,
+                    actions,
+                },
+                "Selected MIDI item contents set",
+            );
+        }
+        self.item_nudge_dialog.error = None;
+    }
+
+    fn midi_contents_set_actions(
+        &self,
+        items: &[&MidiItem],
+        target_sample: u64,
+    ) -> Result<Vec<DawAction>, String> {
+        const MAX_EXACT: u64 = 1 << 53;
+        if target_sample > MAX_EXACT {
+            return Err("Contents target is outside the supported range".to_owned());
+        }
+        let mut actions = Vec::with_capacity(items.len());
+        for item in items {
+            let source_loop_length = item.source_loop_length_ticks();
+            if !item.is_loop_source() || source_loop_length == 0 {
+                return Err("Set Contents requires a valid MIDI loop source".to_owned());
+            }
+            let item_start_sample = self
+                .project
+                .sample_at_tick(item.start_tick())
+                .map_err(|error| error.to_string())?;
+            if item_start_sample > MAX_EXACT {
+                return Err("Contents target is outside the supported range".to_owned());
+            }
+            let source_loop_samples = self
+                .project
+                .midi_source_offset_samples(item.start_tick(), source_loop_length)
+                .map_err(|error| error.to_string())?;
+            if !source_loop_samples.is_finite()
+                || source_loop_samples <= 0.0
+                || source_loop_samples > MAX_EXACT as f64
+            {
+                return Err("MIDI source loop is outside the supported range".to_owned());
+            }
+            let source_offset_samples =
+                (item_start_sample as f64 - target_sample as f64).rem_euclid(source_loop_samples);
+            let source_offset_ticks = self
+                .project
+                .midi_source_phase_at_offset_samples(
+                    item.start_tick(),
+                    source_loop_length,
+                    source_offset_samples,
+                )
+                .map_err(|error| error.to_string())?;
+            if source_offset_ticks != item.source_offset_ticks() {
+                actions.push(DawAction::EditMidiItemPlacement {
+                    item_id: item.id(),
+                    start_tick: item.start_tick(),
+                    length_ticks: item.length_ticks(),
+                    source_offset_ticks,
+                });
+            }
+        }
+        Ok(actions)
     }
 
     fn shift_selected_items(&mut self, delta_samples: i128) {
@@ -1144,7 +1276,7 @@ impl App {
             Unit::Milliseconds => (sample_rate + 500) / 1_000,
             Unit::Seconds => sample_rate,
             Unit::Samples => 1,
-            Unit::Time => (sample_rate + 500) / 1_000,
+            Unit::Time => sample_rate,
         };
         if unit == 0 {
             Err("Project sample rate is unavailable".to_owned())

@@ -47,7 +47,7 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
     )
     .padding(iced::Padding::ZERO.top(6.0));
     let mut footer = row![snap_checkbox].spacing(9);
-    if draft.mode == item_nudge::Mode::Set {
+    if draft.mode == item_nudge::Mode::Set && draft.target != item_nudge::Target::Contents {
         footer = footer.push(
             container(
                 checkbox(draft.relative_set)
