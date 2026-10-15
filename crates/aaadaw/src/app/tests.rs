@@ -450,6 +450,39 @@ fn item_nudge_note_values_use_the_tempo_at_the_selected_item_position() {
 }
 
 #[test]
+fn item_nudge_note_snap_uses_the_selected_note_value_grid() {
+    use super::item_nudge::{NoteValue, Unit};
+
+    let mut app = item_snap_test_app(60_960, 3_840);
+    let audio_id = app.project.audio_items()[0].id();
+    let audio_track = app.project.tracks()[0].id();
+    app.timeline.select_items(vec![(audio_id, audio_track)]);
+    let audio_start = app.project.audio_items()[0].start_sample();
+    let audio_length = app.project.audio_items()[0].length_samples();
+    let selection = app.timeline.selected_items.clone();
+
+    let _ = app.update(Message::ItemNudgeUnitChanged(Unit::Notes));
+    let _ = app.update(Message::ItemNudgeNoteValueChanged(
+        NoteValue::QuarterTriplet,
+    ));
+    let _ = app.update(Message::ItemNudgeSnapToUnitChanged(true));
+    let _ = app.update(Message::NudgeSelectedItems(1));
+
+    let snapped_sample = app.project.sample_at_tick(3_200).unwrap();
+    assert_eq!(snapped_sample, 80_000);
+    assert_eq!(app.project.audio_items()[0].start_sample(), snapped_sample);
+    assert_eq!(app.project.audio_items()[0].length_samples(), audio_length);
+    assert_eq!(app.timeline.selected_items, selection);
+    assert!(app.item_nudge_dialog.error.is_none());
+    let moved_sample = app.project.audio_items()[0].start_sample();
+
+    let _ = app.update(Message::Undo);
+    assert_eq!(app.project.audio_items()[0].start_sample(), audio_start);
+    let _ = app.update(Message::Redo);
+    assert_eq!(app.project.audio_items()[0].start_sample(), moved_sample);
+}
+
+#[test]
 fn item_nudge_minutes_seconds_and_samples_units_match_native_snap_grids() {
     use super::item_nudge::{Target, Unit};
 
