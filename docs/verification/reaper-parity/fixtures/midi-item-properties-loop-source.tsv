@@ -21,4 +21,4 @@ aaadaw_source_length_binary_sha256	81f1b343d1d26e796819219b43d085880f7fda6060518
 aaadaw_source_length_live_ui	Xvfb :270; isolated XDG profile; created and selected MIDI item through visible controls; F2 opened Item Properties; changed source length from 3840 to 7680 PPQ and clicked Apply
 aaadaw_source_length_window	Media Item Properties; xwininfo 526x390; visible item length remained 2 seconds
 aaadaw_source_length_screenshot	midi-item-properties-source-length-aaadaw.png; 1280x800; SHA-256 4be933b643d448ef2c65378826c8613adef488098fee9b8c5a34ae923858cbef
-remaining_scope	Native source-length control and shortening behavior; empty trimmed source-length recovery; other MIDI Item Properties controls and full native window geometry
+remaining_scope	Native source length is read-only in its Properties dialog; no shortening behavior is exposed there; empty trimmed source-length recovery; other MIDI Item Properties controls and full native window geometry

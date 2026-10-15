@@ -1185,3 +1185,7 @@ The App regression now matches the CC-led reference, including the note and pitc
 AAADAW 的 MIDI Item Properties 增加 `Source length (PPQ)` 字段，使用已持久化的 MIDI source loop length；合法编辑作为 `SetMidiItemContents` project event 应用，并保留 notes、visible item length 与 selection，支持 Undo/Redo。Loop source 开启时，缩短到 note/CC/pitch-bend 事件范围内会拒绝，以免事件静默绕回。该属性与 loop flag 一样在 playback active 时拒绝编辑，并请求 playback graph refresh。应用回归覆盖加长、缩短越界拒绝、事件保留和 Undo/Redo。
 
 AAADAW App 全量测试 593/593、all-target Clippy `-D warnings`、fmt 与 diff 检查通过。最新二进制 Build ID `cefd0b9deef9f55f3d07f233dca911297cb761d2`、SHA-256 `81f1b343d1d26e796819219b43d085880f7fda6060518f0270c8f7e9ead66e28` 经 bundled-Xvfb 启动烟测，真实主窗 1280×800；之后在实窗中把 source length 从 3840 改为 7680 PPQ 并 Apply，526×390 MIDI Item Properties 截图见[验证记录](../verification/reaper-parity/midi-item-properties-loop-source.md)。尚无 REAPER 7.82 原厂 source-length 控件/缩短规则的匹配 probe；上面的拒绝规则是当前内容保护约束，不作为原厂行为结论。旧 trimmed empty MIDI source 长度恢复也未解决。`ITEM-PROPERTIES-001`、`ITEM-NUDGE-SET-001`、P4 与唯一 PR #282 均保持 `in_progress`。
+
+### 2026-10-15 Native MIDI source properties follow-up
+
+REAPER 7.82 / Default 7 中，从 F2 `Media Item Properties` 的 `Take media source > Properties...` 打开的 `MIDI item properties` 对话框为 421×507；源长度显示为只读的 quarter-note 文本，没有编辑控件。Main action 40011 打开相同对话框。新 ReaScript、截图与实测状态保存在[原生 source properties 记录](../verification/reaper-parity/midi-item-properties-loop-source.md)及其 fixture；因此 AAADAW `Source length (PPQ)` 是额外编辑能力，不能作为原厂控件完全对齐的证据。`ITEM-PROPERTIES-001` 继续 `in_progress`。
