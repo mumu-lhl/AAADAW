@@ -1,0 +1,15 @@
+case	repeat	time_start	time_end	loop_start	loop_end	project_path	state_change_count
+default-before-repeat	off	0.000000000	0.000000000	0.000000000	0.000000000	unsaved	1
+repeat-on-before-save	on	0.000000000	0.000000000	0.000000000	0.000000000	unsaved	1
+repeat-off-before-save	off	0.000000000	0.000000000	0.000000000	0.000000000	unsaved	1
+before-restart-enabled	on	1.250000000	2.500000000	3.500000000	5.750000000	repeat-enabled.rpp	1
+after-repeat-toggle-off	off	1.250000000	2.500000000	3.500000000	5.750000000	unsaved	1
+before-restart-disabled	off	6.250000000	7.500000000	8.500000000	10.750000000	repeat-disabled.rpp	1
+after-restart-enabled-project	on	1.250000000	2.500000000	3.500000000	5.750000000	repeat-enabled.rpp	2
+after-restart-disabled-project	off	6.250000000	7.500000000	8.500000000	10.750000000	repeat-disabled.rpp	3
+startup-before-project-open	off	0.000000000	0.000000000	0.000000000	0.000000000	unsaved	1
+before-unsaved-repeat-toggle	off	6.250000000	7.500000000	8.500000000	10.750000000	repeat-disabled.rpp	2
+after-unsaved-repeat-toggle	on	6.250000000	7.500000000	8.500000000	10.750000000	repeat-disabled.rpp	2
+startup-before-project-open	off	0.000000000	0.000000000	0.000000000	0.000000000	unsaved	1
+after-restart-disabled-project	off	6.250000000	7.500000000	8.500000000	10.750000000	repeat-disabled.rpp	2
+after-new-project-tab	off	0.000000000	0.000000000	0.000000000	0.000000000	unsaved	1

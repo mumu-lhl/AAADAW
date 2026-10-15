@@ -76,7 +76,7 @@ pub(super) fn save_project(app: &mut App, save_as: Option<PathBuf>) -> Task<Mess
     let plugin_state_warning = None;
     let revision = app.revision;
     let snapshot = app.project.snapshot();
-    let arrangement_view_state = app.timeline.arrangement_view_state(&app.project);
+    let arrangement_view_state = app.project_arrangement_view_state();
     let source_media_path = app.media_store_path();
     let reuse_session_lock =
         app.project_path.as_deref() == Some(path.as_path()) && app.project_lock.is_some();

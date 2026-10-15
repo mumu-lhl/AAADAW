@@ -1,4 +1,4 @@
-/// Arrangement automation-lane visibility and geometry saved with a project.
+/// Arrangement, range, and transport state saved with a project.
 ///
 /// Track and parameter identities are project-local. The application must only
 /// restore entries whose track and FX instance still exist in the loaded project.
@@ -11,6 +11,8 @@ pub struct ArrangementViewState {
     pub time_selection: Option<ArrangementTimeRangeState>,
     /// Loop points are independent of the time selection and may have zero length.
     pub loop_points: Option<ArrangementTimeRangeState>,
+    /// Whether transport Repeat is enabled for this project.
+    pub repeat_enabled: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]

@@ -5067,11 +5067,13 @@ fn repeat_action_uses_reaper_default_key_and_toggles_transport_state() {
     let revision = app.revision;
     let _ = app.update(Message::ExecuteCommand(command));
     assert!(app.repeat_enabled);
-    assert!(app.loop_time_preferences_save_at.is_some());
+    assert!(app.project_arrangement_view_state().repeat_enabled);
+    assert!(app.loop_time_preferences_save_at.is_none());
     assert_eq!(commands::toggle_state(&app, command), Some(true));
     let _ = app.update(Message::ExecuteCommand(command));
     assert!(!app.repeat_enabled);
-    assert!(app.loop_time_preferences_save_at.is_some());
+    assert!(!app.project_arrangement_view_state().repeat_enabled);
+    assert!(app.loop_time_preferences_save_at.is_none());
     assert_eq!(commands::toggle_state(&app, command), Some(false));
     assert_eq!(app.revision, revision);
 }
@@ -10652,6 +10654,7 @@ fn project_session_round_trip_restores_arrangement_view_state() {
             start_seconds: 1.5,
             end_seconds: 2.0,
         }),
+        repeat_enabled: true,
     };
     let mut session_lock = ProjectSessionLock::acquire(&path).unwrap();
     save_project_session_file_with_media(
@@ -10668,6 +10671,10 @@ fn project_session_round_trip_restores_arrangement_view_state() {
     let (loaded_project, loaded_view_state, _session_lock) = load_project_session(path).unwrap();
     assert_eq!(loaded_project.tracks()[0].id(), track_id);
     assert_eq!(loaded_view_state, Some(view_state));
+
+    let mut app = App::default();
+    app.restore_repeat_from_view_state(loaded_view_state.as_ref());
+    assert!(app.repeat_enabled);
 
     let mut timeline = crate::timeline::TimelineState::default();
     timeline.replace_project(&loaded_project, loaded_view_state.as_ref());

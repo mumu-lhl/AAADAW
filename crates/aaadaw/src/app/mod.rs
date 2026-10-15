@@ -1355,7 +1355,6 @@ impl App {
         match loop_time_preferences::load() {
             Ok(preferences) => {
                 app.timeline.loop_points_linked = preferences.linked;
-                app.repeat_enabled = preferences.repeat_enabled;
             }
             Err(error) => {
                 app.status = format!("Loop/time selection preferences unavailable: {error}");
@@ -5151,6 +5150,7 @@ impl App {
                         self.midi_note_clipboard.last_paste = None;
                         self.timeline
                             .replace_project(&self.project, arrangement_view_state.as_ref());
+                        self.restore_repeat_from_view_state(arrangement_view_state.as_ref());
                         self.timeline.selected_item = None;
                         self.timeline.selected_track = None;
                         self.timeline.selected_tracks.clear();
@@ -5360,6 +5360,7 @@ impl App {
                             .retain(|candidate| candidate != &path);
                         self.timeline
                             .replace_project(&self.project, arrangement_view_state.as_ref());
+                        self.restore_repeat_from_view_state(arrangement_view_state.as_ref());
                         self.clear_track_draft_state();
                         self.start_audio_waveform_scan(true);
                         self.status = "Unsaved project session recovered".to_owned();
@@ -5653,7 +5654,7 @@ impl App {
         let generation = self.project_generation;
         let revision = self.revision;
         let snapshot = self.project.snapshot();
-        let view_state = self.timeline.arrangement_view_state(&self.project);
+        let view_state = self.project_arrangement_view_state();
         self.unsaved_session_snapshot_at = None;
         self.unsaved_session_snapshot_busy = true;
         Task::perform(
@@ -5671,6 +5672,16 @@ impl App {
         {
             self.retired_unsaved_sessions.push(session);
         }
+    }
+
+    pub(super) fn project_arrangement_view_state(&self) -> ArrangementViewState {
+        let mut view_state = self.timeline.arrangement_view_state(&self.project);
+        view_state.repeat_enabled = self.repeat_enabled;
+        view_state
+    }
+
+    fn restore_repeat_from_view_state(&mut self, view_state: Option<&ArrangementViewState>) {
+        self.repeat_enabled = view_state.is_some_and(|view_state| view_state.repeat_enabled);
     }
 
     fn is_dirty(&self) -> bool {
@@ -5837,7 +5848,7 @@ impl App {
                 | timeline::TimelineEvent::ToggleFxAutomation { .. }
                 | timeline::TimelineEvent::ResizeFxAutomationLane { .. }
         )
-        .then(|| self.timeline.arrangement_view_state(&self.project));
+        .then(|| self.project_arrangement_view_state());
         let previous_time_ranges = (self.timeline.time_selection, self.timeline.loop_points);
         let previous_loop_points_linked = self.timeline.loop_points_linked;
         let item_trim_preview_changed = matches!(
@@ -5866,7 +5877,7 @@ impl App {
             self.playback_position_dirty = self.playback.is_some();
         }
         if previous_view_state
-            .is_some_and(|previous| previous != self.timeline.arrangement_view_state(&self.project))
+            .is_some_and(|previous| previous != self.project_arrangement_view_state())
             || previous_time_ranges != (self.timeline.time_selection, self.timeline.loop_points)
         {
             self.revision = self.revision.wrapping_add(1);
@@ -5901,6 +5912,7 @@ impl App {
             };
         self.clear_app_history();
         self.project = new_project;
+        self.restore_repeat_from_view_state(None);
         self.refresh_tempo_map_edits();
         self.refresh_meter_map_edits();
         self.tempo_map_feedback.clear();
@@ -6847,7 +6859,6 @@ impl App {
         }
         let previous = self.repeat_enabled;
         self.repeat_enabled = !previous;
-        self.schedule_loop_time_preferences_save();
         if self.playback.is_some() {
             self.repeat_reconfiguration_previous = Some((previous, false));
             let task = self.prepare_playback(self.playhead_sample, self.playback_playing);
@@ -6876,7 +6887,6 @@ impl App {
             self.pause_playback();
         }
         self.repeat_enabled = previous_enabled;
-        self.schedule_loop_time_preferences_save();
         self.playback_graph_dirty = loop_points_changed;
         self.status = format!("Repeat change was not applied; playback paused: {reason}");
     }

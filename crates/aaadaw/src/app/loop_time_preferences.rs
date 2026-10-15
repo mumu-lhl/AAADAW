@@ -8,7 +8,6 @@ use std::time::{Duration, Instant};
 pub(super) struct LoopTimePreferences {
     version: u32,
     pub(super) linked: bool,
-    pub(super) repeat_enabled: bool,
 }
 
 impl Default for LoopTimePreferences {
@@ -16,7 +15,6 @@ impl Default for LoopTimePreferences {
         Self {
             version: 1,
             linked: true,
-            repeat_enabled: false,
         }
     }
 }
@@ -69,7 +67,6 @@ impl App {
         }
         let preferences = LoopTimePreferences {
             linked: self.timeline.loop_points_linked,
-            repeat_enabled: self.repeat_enabled,
             ..Default::default()
         };
         let result = config_paths::config_file_path("loop-time-preferences.json")
@@ -86,20 +83,23 @@ mod tests {
     use super::*;
 
     #[test]
-    fn loop_time_preferences_default_round_trip_and_reject_unknown_versions() {
+    fn loop_time_preferences_round_trip_and_ignore_legacy_repeat_field() {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("loop-time-preferences.json");
         assert_eq!(load_path(&path).unwrap(), LoopTimePreferences::default());
 
         let preferences = LoopTimePreferences {
             linked: false,
-            repeat_enabled: true,
             ..Default::default()
         };
         save_path(&path, preferences).unwrap();
         assert_eq!(load_path(&path).unwrap(), preferences);
 
-        std::fs::write(&path, r#"{"version":1,"linked":false}"#).unwrap();
+        std::fs::write(
+            &path,
+            r#"{"version":1,"linked":false,"repeat_enabled":true}"#,
+        )
+        .unwrap();
         assert_eq!(
             load_path(&path).unwrap(),
             LoopTimePreferences {

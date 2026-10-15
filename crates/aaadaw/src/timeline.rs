@@ -1343,6 +1343,7 @@ impl TimelineState {
             loop_points: self.loop_points.and_then(|range| {
                 time_range_at_project_seconds(project, range.start_tick, range.end_tick)
             }),
+            repeat_enabled: false,
         }
     }
 

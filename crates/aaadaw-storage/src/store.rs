@@ -23,7 +23,7 @@ use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 /// Latest database schema version understood by this release.
-pub const CURRENT_SCHEMA_VERSION: u32 = 51;
+pub const CURRENT_SCHEMA_VERSION: u32 = 52;
 
 const MIGRATION_29: &str = "ALTER TABLE project_meta ADD COLUMN start_measure INTEGER NOT NULL DEFAULT 1 CHECK(start_measure BETWEEN -2147483648 AND 2147483647);";
 const MIGRATION_30: &str = "ALTER TABLE project_meta ADD COLUMN bpm_basis INTEGER NOT NULL DEFAULT 1 CHECK(bpm_basis BETWEEN 0 AND 5);";
@@ -445,6 +445,11 @@ SET source_loop_length_ticks = MAX(
 );
 "#;
 
+const MIGRATION_52: &str = r#"
+ALTER TABLE arrangement_view_meta ADD COLUMN repeat_enabled INTEGER NOT NULL DEFAULT 0
+    CHECK(repeat_enabled IN (0, 1));
+"#;
+
 /// SQLite persistence failures, including incompatible project files.
 #[derive(Debug)]
 pub enum StorageError {
@@ -617,6 +622,7 @@ mod arrangement_view_state_tests {
                 start_seconds: 3.5,
                 end_seconds: 3.5,
             }),
+            repeat_enabled: true,
         };
 
         let directory = tempfile::tempdir().unwrap();
@@ -645,6 +651,47 @@ mod arrangement_view_state_tests {
         let path = directory.path().join("old-project.aaadaw");
         let store = ProjectStore::open(&path).unwrap();
         assert_eq!(store.load_arrangement_view_state().unwrap(), None);
+        store.close().unwrap();
+    }
+
+    #[test]
+    fn schema_51_projects_default_repeat_off_and_persist_it_per_project() {
+        use rusqlite::Connection;
+
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("repeat-schema-51.aaadaw");
+        let mut store = ProjectStore::open(&path).unwrap();
+        let saved_state = ArrangementViewState {
+            repeat_enabled: true,
+            ..ArrangementViewState::default()
+        };
+        store
+            .save_with_arrangement_view_state(&Project::new(), &saved_state)
+            .unwrap();
+        drop(store);
+
+        let connection = Connection::open(&path).unwrap();
+        connection
+            .execute_batch(
+                "ALTER TABLE arrangement_view_meta DROP COLUMN repeat_enabled; \
+                 PRAGMA user_version = 51;",
+            )
+            .unwrap();
+        drop(connection);
+
+        let mut store = ProjectStore::open(&path).unwrap();
+        assert_eq!(store.schema_version().unwrap(), 52);
+        assert_eq!(
+            store.load_arrangement_view_state().unwrap(),
+            Some(ArrangementViewState::default())
+        );
+        store
+            .save_with_arrangement_view_state(&Project::new(), &saved_state)
+            .unwrap();
+        assert_eq!(
+            store.load_arrangement_view_state().unwrap(),
+            Some(saved_state)
+        );
         store.close().unwrap();
     }
 
@@ -740,6 +787,7 @@ mod arrangement_view_state_tests {
             }],
             time_selection: None,
             loop_points: None,
+            repeat_enabled: false,
         };
         assert!(matches!(
             store.save_with_arrangement_view_state(&Project::new(), &invalid_view_state),
@@ -2511,12 +2559,12 @@ impl ProjectStore {
         let state_version = self
             .connection
             .query_row(
-                "SELECT state_version FROM arrangement_view_meta WHERE singleton = 1",
+                "SELECT state_version, repeat_enabled FROM arrangement_view_meta WHERE singleton = 1",
                 [],
-                |row| row.get::<_, i64>(0),
+                |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
             )
             .optional()?;
-        let Some(state_version) = state_version else {
+        let Some((state_version, repeat_enabled)) = state_version else {
             return Ok(None);
         };
         if state_version != 1 {
@@ -2525,7 +2573,14 @@ impl ProjectStore {
             ));
         }
 
-        let mut view_state = ArrangementViewState::default();
+        let mut view_state = ArrangementViewState {
+            repeat_enabled: match repeat_enabled {
+                0 => false,
+                1 => true,
+                _ => return Err(StorageError::InvalidStoredData("invalid Repeat state")),
+            },
+            ..ArrangementViewState::default()
+        };
         let mut volume_statement = self
             .connection
             .prepare("SELECT track_id, visible FROM arrangement_volume_lanes ORDER BY track_id")?;
@@ -3210,6 +3265,13 @@ fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
                     transaction.execute_batch(MIGRATION_51)?;
                 }
             }
+            52 => {
+                if table_exists(&transaction, "arrangement_view_meta")?
+                    && !table_has_column(&transaction, "arrangement_view_meta", "repeat_enabled")?
+                {
+                    transaction.execute_batch(MIGRATION_52)?;
+                }
+            }
             missing => return Err(StorageError::MissingMigration(missing - 1)),
         }
         transaction.pragma_update(None, "user_version", next_version)?;
@@ -3566,9 +3628,10 @@ fn write_arrangement_view_state(
     transaction.execute("DELETE FROM arrangement_volume_lanes", [])?;
     transaction.execute("DELETE FROM arrangement_fx_lanes", [])?;
     transaction.execute(
-        "INSERT INTO arrangement_view_meta(singleton, state_version) VALUES(1, 1) \
-         ON CONFLICT(singleton) DO UPDATE SET state_version = excluded.state_version",
-        [],
+        "INSERT INTO arrangement_view_meta(singleton, state_version, repeat_enabled) VALUES(1, 1, ?1) \
+         ON CONFLICT(singleton) DO UPDATE SET state_version = excluded.state_version, \
+         repeat_enabled = excluded.repeat_enabled",
+        [if view_state.repeat_enabled { 1_i64 } else { 0_i64 }],
     )?;
     transaction.execute(
         "INSERT INTO arrangement_time_ranges(\
