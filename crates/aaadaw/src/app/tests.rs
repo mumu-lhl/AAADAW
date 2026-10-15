@@ -359,6 +359,84 @@ fn item_nudge_grid_units_follow_arrangement_grid_and_native_snap_rounding() {
 }
 
 #[test]
+fn item_nudge_measures_beats_matches_native_bar_beat_and_snap_rounding() {
+    use super::item_nudge::{Target, Unit};
+
+    let cases = [
+        ("1.0", false, 156_960),
+        ("1.0", true, 192_000),
+        ("0.1", false, 84_960),
+    ];
+    for (value, snap, expected_sample) in cases {
+        let mut app = item_snap_test_app(60_960, 5_242);
+        let item = &app.project.audio_items()[0];
+        let item_id = item.id();
+        let track_id = item.track_id();
+        let original_offset = item.source_offset_samples();
+        let original_length = item.length_samples();
+        app.timeline.select_items(vec![(item_id, track_id)]);
+        let selection = app.timeline.selected_items.clone();
+        let revision_before = app.revision;
+
+        let _ = app.update(Message::ItemNudgeUnitChanged(Unit::MeasuresBeats));
+        assert_eq!(app.item_nudge_dialog.value, "1.0");
+        let _ = app.update(Message::ItemNudgeTargetChanged(Target::Position));
+        let _ = app.update(Message::ItemNudgeValueChanged(value.to_owned()));
+        let _ = app.update(Message::ItemNudgeSnapToUnitChanged(snap));
+        let _ = app.update(Message::NudgeSelectedItems(1));
+
+        let moved = &app.project.audio_items()[0];
+        assert_eq!(
+            moved.start_sample(),
+            expected_sample,
+            "{value}, snap={snap}"
+        );
+        assert_eq!(moved.source_offset_samples(), original_offset);
+        assert_eq!(moved.length_samples(), original_length);
+        assert_eq!(app.timeline.selected_items, selection);
+        assert_eq!(app.revision, revision_before + 1);
+        assert!(
+            app.item_nudge_dialog.error.is_none(),
+            "{value}, snap={snap}"
+        );
+
+        let _ = app.update(Message::Undo);
+        assert_eq!(app.project.audio_items()[0].start_sample(), 60_960);
+        assert_eq!(app.timeline.selected_items, selection);
+        let _ = app.update(Message::Redo);
+        assert_eq!(app.project.audio_items()[0].start_sample(), expected_sample);
+    }
+
+    for (snap, expected_sample) in [(false, 132_960), (true, 144_000)] {
+        let mut app = item_snap_test_app(60_960, 5_242);
+        app.project
+            .apply(DawAction::SetTimeSignatureMap {
+                points: vec![aaadaw_core::MeterPointSnapshot {
+                    start_tick: 0,
+                    numerator: 3,
+                    denominator: 4,
+                }],
+            })
+            .unwrap();
+        let item = &app.project.audio_items()[0];
+        let item_id = item.id();
+        let track_id = item.track_id();
+        app.timeline.select_items(vec![(item_id, track_id)]);
+
+        let _ = app.update(Message::ItemNudgeUnitChanged(Unit::MeasuresBeats));
+        let _ = app.update(Message::ItemNudgeSnapToUnitChanged(snap));
+        let _ = app.update(Message::NudgeSelectedItems(1));
+
+        assert_eq!(
+            app.project.audio_items()[0].start_sample(),
+            expected_sample,
+            "3/4 meter, snap={snap}"
+        );
+        assert!(app.item_nudge_dialog.error.is_none());
+    }
+}
+
+#[test]
 fn item_nudge_set_applies_absolute_and_relative_positions_to_mixed_selection() {
     let mut app = item_snap_test_app(0, 0);
     let _ = app.update(Message::ItemNudgeModeChanged(super::item_nudge::Mode::Set));

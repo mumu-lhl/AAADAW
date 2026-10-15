@@ -28,6 +28,7 @@ pub(crate) enum Unit {
     Samples,
     Time,
     Grid,
+    MeasuresBeats,
 }
 
 impl std::fmt::Display for Unit {
@@ -37,6 +38,7 @@ impl std::fmt::Display for Unit {
             Self::Samples => "samples",
             Self::Time => "minutes:seconds",
             Self::Grid => "grid units",
+            Self::MeasuresBeats => "measures.beats",
         })
     }
 }
@@ -128,6 +130,7 @@ impl Dialog {
             (Mode::Nudge, Unit::Milliseconds | Unit::Samples | Unit::Time | Unit::Grid) => {
                 "1".to_owned()
             }
+            (Mode::Nudge, Unit::MeasuresBeats) => "1.0".to_owned(),
             (Mode::Set, Unit::Time) => "0:00.000".to_owned(),
             (Mode::Set, Unit::Samples) => "0".to_owned(),
             _ => self.value.clone(),
@@ -163,7 +166,7 @@ impl App {
         let valid = match self.item_nudge_dialog.mode {
             Mode::Nudge => matches!(
                 unit,
-                Unit::Milliseconds | Unit::Time | Unit::Grid | Unit::Samples
+                Unit::Milliseconds | Unit::Time | Unit::Grid | Unit::MeasuresBeats | Unit::Samples
             ),
             Mode::Set => matches!(unit, Unit::Time | Unit::Samples),
         };
@@ -241,8 +244,10 @@ impl App {
                     }
                 };
                 let delta = if self.item_nudge_dialog.snap_to_unit
-                    && self.item_nudge_dialog.unit == Unit::Grid
-                {
+                    && matches!(
+                        self.item_nudge_dialog.unit,
+                        Unit::Grid | Unit::MeasuresBeats
+                    ) {
                     let sample = match self.project.sample_at_tick(self.timeline.edit_cursor_tick) {
                         Ok(sample) => sample,
                         Err(error) => {
@@ -250,7 +255,7 @@ impl App {
                             return;
                         }
                     };
-                    match self.snap_grid_delta_to_sample(sample, delta) {
+                    match self.snap_musical_delta_to_sample(sample, delta) {
                         Ok(delta) => delta,
                         Err(error) => {
                             self.item_nudge_dialog.error = Some(error);
@@ -2138,7 +2143,9 @@ impl App {
             Unit::Time => {
                 project_time::parse_project_time(value).map_err(str::to_owned)? * sample_rate
             }
-            Unit::Grid => return Err("Grid units are only available for Nudge".to_owned()),
+            Unit::Grid | Unit::MeasuresBeats => {
+                return Err("Musical units are only available for Nudge".to_owned());
+            }
         };
         if !samples.is_finite() || samples.abs() >= i128::MAX as f64 {
             return Err("Nudge amount is outside the supported range".to_owned());
@@ -2185,7 +2192,9 @@ impl App {
             Unit::Milliseconds => (sample_rate + 500) / 1_000,
             Unit::Samples => 1,
             Unit::Time => sample_rate,
-            Unit::Grid => return Err("Grid snapping requires a selected item".to_owned()),
+            Unit::Grid | Unit::MeasuresBeats => {
+                return Err("Musical snapping requires a selected item".to_owned());
+            }
         };
         if unit == 0 {
             Err("Project sample rate is unavailable".to_owned())
@@ -2199,8 +2208,11 @@ impl App {
         let Some((_, first_sample)) = selected.first() else {
             return Err("No selected items to move".to_owned());
         };
-        if self.item_nudge_dialog.unit == Unit::Grid {
-            return self.snap_grid_delta_to_sample(*first_sample, delta_samples);
+        if matches!(
+            self.item_nudge_dialog.unit,
+            Unit::Grid | Unit::MeasuresBeats
+        ) {
+            return self.snap_musical_delta_to_sample(*first_sample, delta_samples);
         }
         let target = shifted_sample(*first_sample, delta_samples)
             .ok_or_else(|| "Selected items cannot move beyond the sample timeline".to_owned())?;
@@ -2209,8 +2221,10 @@ impl App {
     }
 
     fn nudge_delta_samples(&self, direction: i8) -> Result<i128, String> {
-        if self.item_nudge_dialog.unit == Unit::Grid {
-            return self.grid_delta_samples(direction);
+        match self.item_nudge_dialog.unit {
+            Unit::Grid => return self.grid_delta_samples(direction),
+            Unit::MeasuresBeats => return self.measures_beats_delta_samples(direction),
+            _ => {}
         }
         self.dialog_delta_samples(false)
             .map(|delta| delta * i128::from(direction))
@@ -2226,16 +2240,7 @@ impl App {
         if !grid_count.is_finite() || grid_count <= 0.0 {
             return Err("Grid-unit amount must be greater than zero".to_owned());
         }
-        let anchor_sample = if self.item_nudge_dialog.target == Target::EditCursor {
-            self.project
-                .sample_at_tick(self.timeline.edit_cursor_tick)
-                .map_err(|error| error.to_string())?
-        } else {
-            self.selected_item_start_samples()?
-                .first()
-                .map(|(_, sample)| *sample)
-                .ok_or_else(|| "No selected items to move".to_owned())?
-        };
+        let anchor_sample = self.musical_nudge_anchor_sample()?;
         let start_tick = self
             .project
             .tick_at_sample_position(anchor_sample as f64)
@@ -2260,7 +2265,67 @@ impl App {
         Ok(delta as i128)
     }
 
-    fn snap_grid_delta_to_sample(
+    fn measures_beats_delta_samples(&self, direction: i8) -> Result<i128, String> {
+        let value = self.item_nudge_dialog.value.trim();
+        let (measures, beats) = value.split_once('.').unwrap_or((value, "0"));
+        let measures = measures
+            .parse::<u64>()
+            .map_err(|_| "Enter a valid measure.beat amount".to_owned())?;
+        let beats = beats
+            .parse::<u64>()
+            .map_err(|_| "Enter a valid measure.beat amount".to_owned())?;
+        if measures == 0 && beats == 0 {
+            return Err("Measure.beat amount must be greater than zero".to_owned());
+        }
+        let anchor_sample = self.musical_nudge_anchor_sample()?;
+        let start_tick = self
+            .project
+            .tick_at_sample_position(anchor_sample as f64)
+            .map_err(|error| error.to_string())?;
+        let meter = self
+            .project
+            .time_signature_at_tick(start_tick.floor() as u64);
+        let ppq = u64::from(self.project.settings().ppq());
+        let ticks_per_beat = ppq
+            .checked_mul(4)
+            .and_then(|ticks| ticks.checked_div(u64::from(meter.denominator())))
+            .ok_or_else(|| "Current meter cannot be represented in project ticks".to_owned())?;
+        let ticks_per_measure = ticks_per_beat
+            .checked_mul(u64::from(meter.numerator()))
+            .ok_or_else(|| "Measure.beat amount is outside the supported range".to_owned())?;
+        let amount_ticks = measures
+            .checked_mul(ticks_per_measure)
+            .and_then(|ticks| ticks.checked_add(beats.checked_mul(ticks_per_beat)?))
+            .ok_or_else(|| "Measure.beat amount is outside the supported range".to_owned())?;
+        let target_tick = start_tick + f64::from(direction) * amount_ticks as f64;
+        if !target_tick.is_finite() || target_tick < 0.0 {
+            return Err("Nudge would move the selected item before sample zero".to_owned());
+        }
+        let target_sample = self
+            .project
+            .sample_at_tick_position(target_tick)
+            .map_err(|error| error.to_string())?;
+        let delta = target_sample.round() - anchor_sample as f64;
+        if !delta.is_finite() || delta.abs() >= i128::MAX as f64 {
+            return Err("Measure.beat nudge is outside the supported range".to_owned());
+        }
+        Ok(delta as i128)
+    }
+
+    fn musical_nudge_anchor_sample(&self) -> Result<u64, String> {
+        if self.item_nudge_dialog.target == Target::EditCursor {
+            return self
+                .project
+                .sample_at_tick(self.timeline.edit_cursor_tick)
+                .map_err(|error| error.to_string());
+        }
+        self.selected_item_start_samples()?
+            .first()
+            .map(|(_, sample)| *sample)
+            .ok_or_else(|| "No selected items to move".to_owned())
+    }
+
+    fn snap_musical_delta_to_sample(
         &self,
         anchor_sample: u64,
         delta_samples: i128,
@@ -2271,12 +2336,49 @@ impl App {
             .project
             .tick_at_sample_position(target_sample as f64)
             .map_err(|error| error.to_string())?;
-        let interval = self
-            .timeline
-            .snap_grid
-            .tick_interval(self.project.settings().ppq())
-            .ok_or_else(|| "Current Snap Grid cannot be represented in project ticks".to_owned())?;
-        let snapped_tick = (target_tick / interval as f64).round() * interval as f64;
+        let snapped_tick = match self.item_nudge_dialog.unit {
+            Unit::Grid => {
+                let interval = self
+                    .timeline
+                    .snap_grid
+                    .tick_interval(self.project.settings().ppq())
+                    .ok_or_else(|| {
+                        "Current Snap Grid cannot be represented in project ticks".to_owned()
+                    })?;
+                (target_tick / interval as f64).round() * interval as f64
+            }
+            Unit::MeasuresBeats => {
+                let target_tick_floor = target_tick.floor();
+                if target_tick_floor < 0.0 || target_tick_floor >= u64::MAX as f64 {
+                    return Err("Snapped item position is outside the supported range".to_owned());
+                }
+                let measure = self
+                    .project
+                    .musical_position_at_tick(target_tick_floor as u64)
+                    .map_err(|error| error.to_string())?
+                    .measure();
+                let measure_start = self
+                    .project
+                    .tick_at_musical_position(measure, 1, 0.0)
+                    .map_err(|error| error.to_string())?;
+                let next_measure_start = self
+                    .project
+                    .tick_at_musical_position(
+                        measure.checked_add(1).ok_or_else(|| {
+                            "Snapped measure is outside the supported range".to_owned()
+                        })?,
+                        1,
+                        0.0,
+                    )
+                    .map_err(|error| error.to_string())?;
+                if target_tick - measure_start <= next_measure_start - target_tick {
+                    measure_start
+                } else {
+                    next_measure_start
+                }
+            }
+            _ => return Err("Select a musical Nudge unit before snapping".to_owned()),
+        };
         let snapped_sample = self
             .project
             .sample_at_tick_position(snapped_tick)
