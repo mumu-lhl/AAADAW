@@ -253,7 +253,7 @@ impl fmt::Display for MediaError {
                 "transport loop and source segment do not share exact sample boundaries",
             ),
             Self::UnsupportedLoopResamplingPrefix => formatter.write_str(
-                "rate-converted pre-loop playback cannot preserve cyclic source history",
+                "rate-converted pre-loop source exceeds the bounded cyclic-history cache",
             ),
             Self::AudioTooLong => formatter.write_str("audio stream exceeds the supported length"),
             Self::WorkerCancelled => formatter.write_str("audio waveform decoding was cancelled"),

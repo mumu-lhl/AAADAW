@@ -176,8 +176,10 @@ pub fn spawn_stereo_audio_item_stream_with_quality(
 /// setting. The item timeline repeats only the item's overlap with `timeline_loop_range`; a bounded
 /// source loop remains restricted to an item that exactly matches the full transport loop. The
 /// decoded sample rate may differ from the output rate when the overlap start and duration map to
-/// exact source-frame boundaries. The worker warms the resampler across loop cycles before
-/// publishing repeated PCM. Mono sources are centered by the stereo stream producer.
+/// exact source-frame boundaries. Starts inside Loop warm the resampler across loop cycles;
+/// rate-converted prefixes use Loop-start right context and seed cyclic left history from the
+/// cached loop tail. That prefix path bounds decoded loop buffering to one MiB. Mono sources are
+/// centered by the stereo stream producer.
 pub fn spawn_stereo_audio_item_stream_for_transport_loop(
     item: &AudioItem,
     timeline_loop_range: TransportLoopRange,
@@ -958,6 +960,19 @@ struct WorkerConfig {
     timeline_loop_range: Option<TransportLoopRange>,
 }
 
+#[derive(Clone, Copy)]
+struct ResampledLoopPrefixConfig {
+    output_sample_rate: u32,
+    source_sample_rate: u32,
+    source_channels: usize,
+    quality: ResamplingQuality,
+    loop_source_frames: u64,
+    prefix: SourceLoopPrefix,
+    output_samples_remaining: Option<u64>,
+    output_samples_to_skip: u64,
+    timeline_loop_range: TransportLoopRange,
+}
+
 #[derive(Clone, Copy, Debug)]
 struct ProjectLoopSourceMapping {
     source_offset_frames: i64,
@@ -1225,13 +1240,55 @@ fn run_worker<P: FeedProducer>(
         let _ = startup.send(Err(worker_startup_error(&error)));
         return Err(error);
     }
-    if timeline_loop_range.is_some()
-        && source_loop_section.is_some_and(|section| section.prefix.is_some())
-        && initial_sample_rate.is_some_and(|source_rate| source_rate != output_sample_rate)
+    if let (Some(range), Some(section), Some(source_rate)) = (
+        timeline_loop_range,
+        source_loop_section,
+        initial_sample_rate,
+    ) && source_rate != output_sample_rate
+        && let Some(prefix) = section.prefix
     {
-        let error = MediaError::UnsupportedLoopResamplingPrefix;
-        let _ = startup.send(Err(worker_startup_error(&error)));
-        return Err(error);
+        let Some(loop_source_start) = loop_base_source_offset else {
+            let error = MediaError::InvalidTimelineLoop;
+            let _ = startup.send(Err(worker_startup_error(&error)));
+            return Err(error);
+        };
+        if prefix.start_frame.checked_add(prefix.length_frames) != Some(loop_source_start) {
+            let error = MediaError::InvalidTimelineLoop;
+            let _ = startup.send(Err(worker_startup_error(&error)));
+            return Err(error);
+        }
+        let Some(loop_source_frames) = loop_section_length.filter(|frames| *frames > 0) else {
+            let error = MediaError::InvalidTimelineLoop;
+            let _ = startup.send(Err(worker_startup_error(&error)));
+            return Err(error);
+        };
+        if usize::try_from(loop_source_frames)
+            .ok()
+            .and_then(|frames| frames.checked_mul(std::mem::size_of::<P::Frame>()))
+            .is_none_or(|bytes| bytes > MAX_CACHED_LOOP_SECTION_BYTES)
+        {
+            let error = MediaError::UnsupportedLoopResamplingPrefix;
+            let _ = startup.send(Err(worker_startup_error(&error)));
+            return Err(error);
+        }
+        return run_worker_with_resampled_loop_prefix(
+            decoder,
+            producer,
+            cancelled,
+            startup,
+            position,
+            ResampledLoopPrefixConfig {
+                output_sample_rate,
+                source_sample_rate: source_rate,
+                source_channels: initial_channels,
+                quality,
+                loop_source_frames,
+                prefix,
+                output_samples_remaining,
+                output_samples_to_skip,
+                timeline_loop_range: range,
+            },
+        );
     }
     let initial_loop_source_frames = loop_source_frames_remaining;
     let mut source_frames_in_current_cycle = 0_u64;
@@ -1541,6 +1598,210 @@ fn run_worker<P: FeedProducer>(
             }
         }
     }
+}
+
+fn run_worker_with_resampled_loop_prefix<P: FeedProducer>(
+    mut decoder: WorkerDecoder,
+    mut producer: P,
+    cancelled: Arc<AtomicBool>,
+    startup: SyncSender<WorkerStartupResult>,
+    position: AudioStreamPosition,
+    config: ResampledLoopPrefixConfig,
+) -> Result<(), MediaError> {
+    let ResampledLoopPrefixConfig {
+        output_sample_rate,
+        source_sample_rate,
+        source_channels,
+        quality,
+        loop_source_frames,
+        prefix,
+        output_samples_remaining,
+        output_samples_to_skip,
+        timeline_loop_range,
+    } = config;
+    let loop_frame_capacity = usize::try_from(loop_source_frames)
+        .map_err(|_| MediaError::UnsupportedLoopResamplingPrefix)?;
+    let mut prefix_resampler = match StreamingResampler::<P::Frame>::new_with_quality(
+        source_sample_rate,
+        output_sample_rate,
+        quality,
+    ) {
+        Ok(resampler) => resampler,
+        Err(error) => {
+            let _ = startup.send(Err(worker_startup_error(&error)));
+            return Err(error);
+        }
+    };
+    let loop_resampler = match StreamingResampler::<P::Frame>::new_with_quality(
+        source_sample_rate,
+        output_sample_rate,
+        quality,
+    ) {
+        Ok(resampler) => resampler,
+        Err(error) => {
+            let _ = startup.send(Err(worker_startup_error(&error)));
+            return Err(error);
+        }
+    };
+    // Startup waits for filter-table setup, while source scanning remains on the worker thread.
+    let _ = startup.send(Ok(()));
+    let mut decoded_frames = Vec::new();
+    // Decode the source once in order. Prefix samples are sent to the resampler as they arrive,
+    // while the bounded loop section is retained for cyclic filter history and repeat playback.
+    let mut loop_frames = Vec::with_capacity(loop_frame_capacity);
+    let prefix_output_length =
+        scale_frames_exact(prefix.length_frames, source_sample_rate, output_sample_rate)
+            .filter(|frames| *frames > 0)
+            .ok_or(MediaError::InvalidTimelineLoop)?;
+    let mut prefix_output_remaining = prefix_output_length;
+    let mut publisher = LoopPrefixOutputState {
+        producer: &mut producer,
+        cancelled: &cancelled,
+        position: &position,
+        timeline_sample: position.requested_sample(),
+        samples_remaining: output_samples_remaining,
+        samples_to_skip: output_samples_to_skip,
+        timeline_loop_range,
+    };
+    let right_taps = usize::try_from(prefix_resampler.right_taps)
+        .map_err(|_| MediaError::InvalidTimelineLoop)?;
+    let mut source_frames_to_skip = prefix.start_frame;
+    let mut prefix_frames_remaining = prefix.length_frames;
+    let mut prefix_finalized = false;
+    while prefix_frames_remaining > 0 || loop_frames.len() < loop_frame_capacity {
+        if cancelled.load(Ordering::Acquire) {
+            return Ok(());
+        }
+        let Some(chunk) = decoder.next_chunk()? else {
+            return Err(MediaError::AudioLoopSectionExceedsSource);
+        };
+        if chunk.channels() != source_channels || chunk.sample_rate() != source_sample_rate {
+            return Err(MediaError::InvalidDecodedAudioSpec);
+        }
+        decoded_frames.clear();
+        P::Frame::copy_from_chunk(&chunk, &mut decoded_frames);
+        let skipped = source_frames_to_skip.min(decoded_frames.len() as u64) as usize;
+        source_frames_to_skip -= skipped as u64;
+        let available = decoded_frames.len().saturating_sub(skipped);
+        let prefix_count = prefix_frames_remaining.min(available as u64) as usize;
+        if prefix_count > 0 {
+            let samples =
+                prefix_resampler.push(&decoded_frames[skipped..skipped + prefix_count])?;
+            publisher.push_prefix(samples, &mut prefix_output_remaining);
+            prefix_frames_remaining -= prefix_count as u64;
+        }
+        let after_prefix = skipped + prefix_count;
+        let remaining_capacity = loop_frame_capacity.saturating_sub(loop_frames.len());
+        let loop_count = remaining_capacity.min(decoded_frames.len().saturating_sub(after_prefix));
+        if loop_count > 0 {
+            loop_frames.extend_from_slice(&decoded_frames[after_prefix..after_prefix + loop_count]);
+        }
+        // Once the right support is available, complete and publish the prefix before the whole
+        // loop has been decoded. Short loops use repeated cyclic samples after collection.
+        if !prefix_finalized && loop_frames.len() >= right_taps && loop_frame_capacity >= right_taps
+        {
+            let samples = prefix_resampler.push(&loop_frames[..right_taps])?;
+            publisher.push_prefix(samples, &mut prefix_output_remaining);
+            prefix_finalized = true;
+        }
+        if publisher.samples_remaining == Some(0) {
+            return Ok(());
+        }
+    }
+    if source_frames_to_skip > 0 || prefix_frames_remaining > 0 {
+        return Err(MediaError::AudioLoopSectionExceedsSource);
+    }
+    if loop_frames.len() != loop_frame_capacity {
+        return Err(MediaError::AudioLoopSectionExceedsSource);
+    }
+    if !prefix_finalized && right_taps > 0 {
+        let lookahead: Vec<_> = loop_frames
+            .iter()
+            .cycle()
+            .take(right_taps)
+            .copied()
+            .collect();
+        let samples = prefix_resampler.push(&lookahead)?;
+        publisher.push_prefix(samples, &mut prefix_output_remaining);
+    }
+    if prefix_output_remaining > 0 {
+        return Err(MediaError::InvalidTimelineLoop);
+    }
+    if publisher.samples_remaining == Some(0) || cancelled.load(Ordering::Acquire) {
+        return Ok(());
+    }
+
+    let history = cyclic_loop_history(
+        &loop_frames,
+        usize::try_from(loop_resampler.left_taps).map_err(|_| MediaError::InvalidTimelineLoop)?,
+    );
+    let mut loop_resampler = StreamingResampler::new_with_loop_history(
+        source_sample_rate,
+        output_sample_rate,
+        quality,
+        &history,
+    )?;
+
+    let mut loop_buffer_cursor = 0_usize;
+    loop {
+        if cancelled.load(Ordering::Acquire) {
+            return Ok(());
+        }
+        let end = loop_buffer_cursor
+            .saturating_add(4_096)
+            .min(loop_frames.len());
+        let samples = loop_resampler.push(&loop_frames[loop_buffer_cursor..end])?;
+        loop_buffer_cursor = if end == loop_frames.len() { 0 } else { end };
+        publisher.push_loop(samples);
+        if publisher.samples_remaining == Some(0) {
+            return Ok(());
+        }
+    }
+}
+
+struct LoopPrefixOutputState<'a, P: FeedProducer> {
+    producer: &'a mut P,
+    cancelled: &'a AtomicBool,
+    position: &'a AudioStreamPosition,
+    timeline_sample: u64,
+    samples_remaining: Option<u64>,
+    samples_to_skip: u64,
+    timeline_loop_range: TransportLoopRange,
+}
+
+impl<P: FeedProducer> LoopPrefixOutputState<'_, P> {
+    fn push_prefix(&mut self, mut samples: Vec<P::Frame>, prefix_remaining: &mut u64) {
+        let count = usize::try_from(*prefix_remaining)
+            .unwrap_or(usize::MAX)
+            .min(samples.len());
+        samples.truncate(count);
+        *prefix_remaining -= count as u64;
+        self.push(samples);
+    }
+
+    fn push_loop(&mut self, samples: Vec<P::Frame>) {
+        self.push(samples);
+    }
+
+    fn push(&mut self, mut samples: Vec<P::Frame>) {
+        skip_output(&mut samples, &mut self.samples_to_skip);
+        limit_output(&mut samples, &mut self.samples_remaining);
+        push_worker_output(
+            self.producer,
+            &samples,
+            self.cancelled,
+            self.position,
+            &mut self.timeline_sample,
+            Some(self.timeline_loop_range),
+        );
+    }
+}
+
+fn cyclic_loop_history<F: Copy>(loop_frames: &[F], history_len: usize) -> Vec<F> {
+    let start = (loop_frames.len() - history_len % loop_frames.len()) % loop_frames.len();
+    (0..history_len)
+        .map(|offset| loop_frames[(start + offset) % loop_frames.len()])
+        .collect()
 }
 
 /// Fills the remainder of a finite timeline item with silence after its source ends.
@@ -1889,6 +2150,26 @@ impl<F: FeedFrame> StreamingResampler<F> {
         })
     }
 
+    fn new_with_loop_history(
+        input_sample_rate: u32,
+        output_sample_rate: u32,
+        quality: ResamplingQuality,
+        loop_history: &[F],
+    ) -> Result<Self, MediaError> {
+        let mut resampler = Self::new_with_quality(input_sample_rate, output_sample_rate, quality)?;
+        if loop_history.len() != resampler.left_taps as usize {
+            return Err(MediaError::InvalidTimelineLoop);
+        }
+        let history_frames =
+            u64::try_from(loop_history.len()).map_err(|_| MediaError::AudioTooLong)?;
+        resampler.input_frames = history_frames;
+        resampler.pending_start_frame = 0;
+        resampler.pending_frames.extend_from_slice(loop_history);
+        resampler.next_position_numerator =
+            u128::from(history_frames) * u128::from(output_sample_rate);
+        Ok(resampler)
+    }
+
     fn input_sample_rate(&self) -> u32 {
         self.input_sample_rate
     }
@@ -2079,7 +2360,7 @@ impl DecodedAudioChunk {
 
 #[cfg(test)]
 mod tests {
-    use super::{ResamplingQuality, StreamingResampler};
+    use super::{ResamplingQuality, StreamingResampler, cyclic_loop_history};
 
     #[test]
     fn streaming_resampler_preserves_constant_level_and_output_duration() {
@@ -2092,6 +2373,41 @@ mod tests {
 
             assert_eq!(output.len(), 400);
             assert!(output.iter().all(|sample| (*sample - 0.25).abs() < 1e-5));
+        }
+    }
+
+    #[test]
+    fn seeded_short_loop_history_produces_identical_first_and_later_cycles() {
+        let source_cycle = [0.0_f32, 0.1, 0.3, -0.2, 0.4, 0.05, -0.3, -0.15];
+        let template =
+            StreamingResampler::<f32>::new_with_quality(24_000, 48_000, ResamplingQuality::Sinc64)
+                .expect("valid sample rates should create a resampler");
+        let history = cyclic_loop_history(&source_cycle, template.left_taps as usize);
+        let mut resampler = StreamingResampler::new_with_loop_history(
+            24_000,
+            48_000,
+            ResamplingQuality::Sinc64,
+            &history,
+        )
+        .expect("cyclic left history should seed the resampler");
+        let mut output = Vec::new();
+        for _ in 0..12 {
+            output.extend(
+                resampler
+                    .push(&source_cycle)
+                    .expect("complete loop cycles should process"),
+            );
+        }
+
+        let output_cycle_frames = 16;
+        assert!(output.len() >= output_cycle_frames * 4);
+        for cycle in 1..4 {
+            let start = cycle * output_cycle_frames;
+            assert_eq!(
+                &output[..output_cycle_frames],
+                &output[start..start + output_cycle_frames],
+                "cycle {cycle} should match the first published pass"
+            );
         }
     }
 

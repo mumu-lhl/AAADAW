@@ -941,6 +941,33 @@ fn transport_loop_preparation_resamples_rate_aligned_source_segments() {
             [sample, -sample]
         })
         .collect();
+    let normalized_source_frame = |index: usize| {
+        [
+            source_frames[index][0] as f32 / 32_768.0,
+            source_frames[index][1] as f32 / 32_768.0,
+        ]
+    };
+    let expected_converted_prefix = |start: usize, length: usize| {
+        let mut resampler =
+            aaadaw_media::StereoPcmResampler::new(24_000, 48_000, ResamplingQuality::Sinc64)
+                .expect("valid sample rates should create a prefix reference");
+        let prefix = (start..start + length)
+            .map(normalized_source_frame)
+            .collect::<Vec<_>>();
+        let mut output = resampler
+            .push_frames(&prefix)
+            .expect("prefix frames should convert");
+        let lookahead = (0..32)
+            .map(|offset| normalized_source_frame(8 + offset % 8))
+            .collect::<Vec<_>>();
+        output.extend(
+            resampler
+                .push_frames(&lookahead)
+                .expect("Loop-start context should finish the prefix conversion"),
+        );
+        output.truncate(length * 2);
+        output
+    };
     let wav = stereo_pcm_wav(&source_frames, 24_000);
     let mut store = ProjectStore::open(&database_path).expect("project should open");
     store
@@ -1023,15 +1050,102 @@ fn transport_loop_preparation_resamples_rate_aligned_source_segments() {
         64,
         64,
         ResamplingQuality::Sinc64,
+    )
+    .expect("bounded rate-converted pre-loop audio should use cyclic sinc history");
+    let (mut graph, feeders) = pre_loop_resampling.into_parts();
+    std::thread::sleep(std::time::Duration::from_millis(20));
+    graph.transport_mut().start();
+    let mut output = [[0.0_f32; 2]; 36];
+    let stats = graph
+        .render_into(&mut output)
+        .expect("resampled prefix should hand off to two stable Loop passes");
+    assert_eq!(stats.underrun_samples, 0);
+    let expected_prefix = expected_converted_prefix(6, 2);
+    for (index, (actual, expected)) in output[..4].iter().zip(&expected_prefix).enumerate() {
+        assert!(
+            (actual[0] - expected[0]).abs() < 1.0e-6,
+            "prefix frame {index}"
+        );
+        assert!(
+            (actual[1] - expected[1]).abs() < 1.0e-6,
+            "prefix frame {index}"
+        );
+    }
+    for (index, (first, repeated)) in output[4..20].iter().zip(&output[20..36]).enumerate() {
+        assert!(
+            (first[0] - repeated[0]).abs() < 1.0e-6,
+            "first left Loop pass differs at {index}: {first:?} vs {repeated:?}"
+        );
+        assert!(
+            (first[1] - repeated[1]).abs() < 1.0e-6,
+            "first right Loop pass differs at {index}: {first:?} vs {repeated:?}"
+        );
+    }
+    assert_eq!(
+        graph.transport_mut().position_samples(),
+        loop_range.start_sample()
     );
-    let Err(PlaybackBuildError::Media(aaadaw_media::MediaError::WorkerStartupFailed {
-        message,
-        ..
-    })) = pre_loop_resampling
-    else {
-        panic!("rate-converted pre-loop handoff must reject unsupported cyclic history");
-    };
-    assert!(message.contains("cannot preserve cyclic source history"));
+    for feeder in feeders {
+        feeder
+            .cancel()
+            .expect("resampled pre-loop feeder should stop cleanly");
+    }
+    drop(graph);
+
+    let pre_item_resampling = prepare_audio_playback_at_with_loop_range(
+        &project,
+        &store,
+        4,
+        Some(loop_range),
+        64,
+        64,
+        ResamplingQuality::Sinc64,
+    )
+    .expect("rate-converted pre-item silence and prefix should reach cyclic Loop playback");
+    let (mut graph, feeders) = pre_item_resampling.into_parts();
+    std::thread::sleep(std::time::Duration::from_millis(20));
+    graph.transport_mut().start();
+    let mut output = [[0.0_f32; 2]; 44];
+    let stats = graph
+        .render_into(&mut output)
+        .expect("pre-item silence, converted prefix, and Loop should render together");
+    assert_eq!(stats.underrun_samples, 0);
+    assert!(
+        output[..4]
+            .iter()
+            .all(|frame| frame[0] == 0.0 && frame[1] == 0.0)
+    );
+    let expected_prefix = expected_converted_prefix(4, 4);
+    for (index, (actual, expected)) in output[4..12].iter().zip(&expected_prefix).enumerate() {
+        assert!(
+            (actual[0] - expected[0]).abs() < 1.0e-6,
+            "prefix frame {index}"
+        );
+        assert!(
+            (actual[1] - expected[1]).abs() < 1.0e-6,
+            "prefix frame {index}"
+        );
+    }
+    for (index, (first, repeated)) in output[12..28].iter().zip(&output[28..44]).enumerate() {
+        assert!(
+            (first[0] - repeated[0]).abs() < 1.0e-6,
+            "pre-item left Loop pass differs at {index}: {first:?} vs {repeated:?}"
+        );
+        assert!(
+            (first[1] - repeated[1]).abs() < 1.0e-6,
+            "pre-item right Loop pass differs at {index}: {first:?} vs {repeated:?}"
+        );
+    }
+    assert_eq!(
+        graph.transport_mut().position_samples(),
+        loop_range.start_sample()
+    );
+    for feeder in feeders {
+        feeder
+            .cancel()
+            .expect("pre-item resampled feeder should stop cleanly");
+    }
+    drop(graph);
 
     let mut bounded_project = Project::with_settings(
         aaadaw_core::ProjectSettings::default()
