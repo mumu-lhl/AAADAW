@@ -546,6 +546,80 @@ fn transport_loop_preparation_repeats_midi_notes_at_the_project_loop_boundary() 
 }
 
 #[test]
+fn transport_loop_playback_started_after_the_range_keeps_advancing_linearly() {
+    let database_path = unique_path("aaadaw");
+    let store = ProjectStore::open(&database_path).expect("project should open");
+    let mut project = Project::with_settings(aaadaw_core::ProjectSettings::default());
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "MIDI loop".to_owned(),
+        })
+        .expect("MIDI track should be created");
+    project
+        .apply(DawAction::InsertMidiItem {
+            track_id: project.tracks()[0].id(),
+            start_tick: 0,
+            length_ticks: 960,
+        })
+        .expect("MIDI item should be created");
+    project
+        .apply(DawAction::AddMidiNotes {
+            item_id: project.midi_items()[0].id(),
+            notes: vec![aaadaw_core::MidiNoteData {
+                pitch: 64,
+                tick: 0,
+                duration: 480,
+                velocity: 100,
+            }],
+        })
+        .expect("MIDI note should be added");
+
+    let loop_start = project
+        .sample_at_tick(0)
+        .expect("loop start should convert");
+    let loop_end = project
+        .sample_at_tick(960)
+        .expect("loop end should convert");
+    let start_after_loop = project
+        .sample_at_tick(1_440)
+        .expect("position after loop should convert");
+    assert!(start_after_loop > loop_end);
+    let loop_range = TransportLoopRange::new(loop_start, loop_end)
+        .expect("project loop should cover a positive sample range");
+    let mut prepared = prepare_audio_playback_at_with_loop_range(
+        &project,
+        &store,
+        start_after_loop,
+        Some(loop_range),
+        64,
+        4,
+        ResamplingQuality::Sinc64,
+    )
+    .expect("playback after the loop should still prepare");
+    assert_eq!(prepared.feeder_count(), 0);
+    store.close().expect("project should close");
+
+    let graph = prepared.graph_mut();
+    graph.transport_mut().start();
+    let mut output = [[0.0_f32; 2]; 4];
+    let mut midi_output = [None; 8];
+    let stats = graph
+        .render_with_midi(&mut midi_output, &mut output)
+        .expect("the transport should advance from its position beyond Loop");
+
+    assert_eq!(stats.midi_event_count, 0);
+    assert!(midi_output.iter().all(Option::is_none));
+    assert_eq!(
+        graph.transport_mut().position_samples(),
+        start_after_loop + 4
+    );
+
+    drop(prepared);
+    remove_database(&database_path);
+}
+
+#[test]
 fn repeated_embedded_source_reuses_cached_pcm_and_preserves_each_trim() {
     let database_path = unique_path("aaadaw");
     let frames = [
