@@ -61,3 +61,5 @@ midi_source_length_binary_smoke	2026-10-15; bundled REAPER Xvfb :90; Build ID ce
 midi_source_length_binary_smoke_screenshot	aaadaw-desktop-runtime-startup.png; SHA-256 ae7790daa7323931332582152cd05219af623ac5530147835ee56910ba2ebd9b; byte-identical to startup fixture; source-length control not shown
 midi_source_length_live_ui	2026-10-15; Build ID cefd0b9deef9f55f3d07f233dca911297cb761d2; Xvfb :270; created and selected MIDI item; opened Item Properties; applied 3840→7680 PPQ source length; xwininfo 526x390
 midi_source_length_live_ui_screenshot	midi-item-properties-source-length-aaadaw.png; 1280x800; SHA-256 4be933b643d448ef2c65378826c8613adef488098fee9b8c5a34ae923858cbef
+cranelift_binary_smoke	2026-10-15; nightly Cranelift; bundled REAPER Xvfb :90; binary SHA-256 dcd9f1a0920e91581eda4a7d1aae661b89d29552b44dde8f7e422921d1046386; actual 1280x800 main window visible
+cranelift_binary_smoke_screenshot	aaadaw-desktop-runtime-startup.png; SHA-256 ae7790daa7323931332582152cd05219af623ac5530147835ee56910ba2ebd9b; byte-identical to startup fixture
