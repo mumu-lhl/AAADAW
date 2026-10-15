@@ -70,3 +70,6 @@ After implementing non-loop MIDI Left Trim source rebasing, the stable desktop b
 
 
 After implementing non-loop MIDI Set → Right Trim source-length updates, binary Build ID `fe205612074f843fc93c028843ede638dcf45283` (SHA-256 `5f3c68aa984b9d47a7cfa08fca911a283b17fcfdda8b5b135307cbe712074636`) launched through the bundled-Xvfb helper. The actual 1280×800 AAADAW main window appeared on :90. The [smoke capture](fixtures/aaadaw-nonloop-midi-edge-targets-desktop-smoke.png), SHA-256 `ae7790daa7323931332582152cd05219af623ac5530147835ee56910ba2ebd9b`, is byte-identical to the standard startup fixture.
+
+
+The default-feature desktop executable produced after the non-loop MIDI edge work was also launched with the smoke helper: Build ID `2112663f480d734f50aca9cd6c1da2a37a985e96`, SHA-256 `7354fe8daf387d1aa65c6e6a8a39399a600fafd8ec6bdf6345cf864e01abb42b`. Its real 1280×800 main window appeared on bundled Xvfb :90. The [capture](fixtures/aaadaw-nonloop-midi-edge-targets-default-smoke.png), SHA-256 `ae7790daa7323931332582152cd05219af623ac5530147835ee56910ba2ebd9b`, matches the startup baseline byte-for-byte.

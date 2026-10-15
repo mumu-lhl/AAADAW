@@ -34,7 +34,7 @@ AAADAW 的 Action List 入口 `Item edit: Nudge/Set...` 与菜单短标签 `Nudg
 
 原厂参考：[默认对话框](fixtures/item-nudge-native-dialog.png)、[Target 下拉](fixtures/item-nudge-native-targets.png)、[Item 菜单](fixtures/menu-item-select-all-native.png)。AAADAW：[选中 MIDI 项时的对话框](fixtures/item-nudge-aaadaw-dialog.png)、[菜单项](fixtures/item-nudge-aaadaw-menu.png)、[Target 前四项](fixtures/item-nudge-aaadaw-targets-top.png)、[Target 后四项](fixtures/item-nudge-aaadaw-targets-bottom.png)。显示环境、操作记录和各文件 SHA-256 见 [fixture 元数据](fixtures/item-nudge.tsv)。
 
-当前明显差异是主题颜色和控件绘制、原厂完整 Target 列表与 AAADAW 的滚动列表、Set 模式布局/字段、错误反馈，以及其他 Unit、Snap、变速 MIDI 和 mixed-media 错开选择的覆盖。窗口尺寸和基础控件排列相符并不代表视觉或交互已完全复刻。
+当前明显差异是主题颜色和控件绘制、原厂完整 Target 列表与 AAADAW 的滚动列表、Set 模式布局/字段、错误反馈，以及其他 Unit、Snap、变速 MIDI 和 mixed-media 错开选择的数值已覆盖，跨媒体 UI 和更广的撤销行为仍需检查。窗口尺寸和基础控件排列相符并不代表视觉或交互已完全复刻。
 
 ## 后续验收
 

@@ -1239,3 +1239,14 @@ AAADAW Set → Right Trim now updates a non-loop MIDI source length to source of
 The rebuilt desktop binary (ELF Build ID `fe205612074f843fc93c028843ede638dcf45283`, SHA-256 `5f3c68aa984b9d47a7cfa08fca911a283b17fcfdda8b5b135307cbe712074636`) launched through the repository helper on bundled Xvfb :90 and rendered the actual 1280×800 main window. Its screenshot SHA-256 `ae7790daa7323931332582152cd05219af623ac5530147835ee56910ba2ebd9b` is byte-identical to the startup baseline.
 
 `ITEM-NUDGE-SET-001`, P4 and the single PR #282 remain `in_progress`. Staggered mixed-media edge selection, other Unit/Snap combinations, variable-tempo MIDI edge precision, broader Undo parity, and complete REAPER UI parity remain open.
+
+
+### 2026-10-15 Staggered mixed-media Set edge parity
+
+Linux REAPER 7.82 / Default 7 native probes now cover a staggered selection with loop-source Audio at 2s and loop-source MIDI at 6s. Set → Left Trim to 4s moves both left edges to 4s; Audio source offset advances to 2s and the later MIDI item wraps backward to 8s in its 10s loop. Left Edge to 4s preserves both source offsets; End Position to 14s moves both ends to 14s; Right Trim to 14s keeps starts at 2s/6s and changes lengths to 12s/8s. Notes, CC, and pitch bend stay unchanged. Every Apply is one `Nudge items` undo step, and Undo/Redo restore both items and selection. The actual REAPER captures and full state log are linked from the [edge target comparison](../verification/reaper-parity/item-nudge-set-edge-targets.md).
+
+The new mixed-media regression compares both item geometries and source phases for all four targets, preserves MIDI expression events, and verifies one-batch revision plus Undo/Redo. AAADAW App package nextest passed 606/606; Clippy with `-D warnings`, rustfmt, and diff checks passed. A full workspace `cargo xtest` attempt stopped before test execution while linking `aaadaw-engine`'s `audio_sends` target because the environment filesystem filled; the App package nextest completed after reclaiming generated test artifacts.
+
+The current default-feature desktop binary (Build ID `2112663f480d734f50aca9cd6c1da2a37a985e96`, SHA-256 `7354fe8daf387d1aa65c6e6a8a39399a600fafd8ec6bdf6345cf864e01abb42b`) launched on bundled Xvfb :90 with a real 1280×800 main window. Its screenshot SHA-256 `ae7790daa7323931332582152cd05219af623ac5530147835ee56910ba2ebd9b` matches the startup baseline byte-for-byte.
+
+`ITEM-NUDGE-SET-001`, P4 and the single PR #282 remain `in_progress`. Non-default Units and Snap combinations, mixed Relative Set, variable-tempo MIDI edge precision, playback state, wider Undo parity, and complete UI parity remain open.

@@ -958,6 +958,11 @@ fn item_nudge_set_boundary_targets_match_native_mixed_audio_and_midi_semantics()
             original_midi,
             "target: {target}"
         );
+        assert_eq!(
+            app.timeline.selected_items.len(),
+            2,
+            "target: {target} Undo"
+        );
         let _ = app.update(Message::Redo);
         assert_eq!(
             app.project.audio_items()[0],
@@ -965,6 +970,154 @@ fn item_nudge_set_boundary_targets_match_native_mixed_audio_and_midi_semantics()
             "target: {target}"
         );
         assert_eq!(app.project.midi_items()[0], after_midi, "target: {target}");
+        drop(app);
+        let _ = std::fs::remove_file(project_path);
+    }
+}
+
+#[test]
+fn item_nudge_set_edge_targets_match_native_staggered_mixed_audio_midi_selection() {
+    use super::item_nudge::Target;
+
+    let cases = [
+        (
+            Target::LeftTrim,
+            "0:04.000",
+            (192_000, 384_000, 88_200),
+            (7_680, 23_040, 15_360),
+        ),
+        (
+            Target::LeftEdge,
+            "0:04.000",
+            (192_000, 384_000, 0),
+            (7_680, 23_040, 0),
+        ),
+        (
+            Target::EndPosition,
+            "0:14.000",
+            (192_000, 480_000, 0),
+            (7_680, 19_200, 0),
+        ),
+        (
+            Target::RightTrim,
+            "0:14.000",
+            (96_000, 576_000, 0),
+            (11_520, 15_360, 0),
+        ),
+    ];
+
+    for (target, value, expected_audio, expected_midi) in cases {
+        let (mut app, project_path) = item_nudge_set_edge_test_app();
+        let audio_id = app.project.audio_items()[0].id();
+        let midi_id = app.project.midi_items()[0].id();
+        let audio_track_id = app.project.tracks()[0].id();
+        let midi_track_id = app.project.tracks()[1].id();
+        app.project
+            .apply(DawAction::EditMidiItemPlacement {
+                item_id: midi_id,
+                start_tick: 11_520,
+                length_ticks: 19_200,
+                source_offset_ticks: 0,
+            })
+            .unwrap();
+        app.project
+            .apply(DawAction::SetMidiControllers {
+                item_id: midi_id,
+                controllers: vec![aaadaw_core::MidiControllerData {
+                    controller: 1,
+                    tick: 2_880,
+                    value: 80,
+                }],
+            })
+            .unwrap();
+        app.project
+            .apply(DawAction::SetMidiPitchBends {
+                item_id: midi_id,
+                pitch_bends: vec![aaadaw_core::MidiPitchBendData {
+                    tick: 3_840,
+                    value: 9_000,
+                }],
+            })
+            .unwrap();
+        let original_audio = app.project.audio_items()[0].clone();
+        let original_midi = app.project.midi_items()[0].clone();
+        app.timeline.rebuild(&app.project);
+        app.timeline
+            .select_items(vec![(audio_id, audio_track_id), (midi_id, midi_track_id)]);
+        let revision = app.revision;
+        let _ = app.update(Message::ItemNudgeModeChanged(super::item_nudge::Mode::Set));
+        let _ = app.update(Message::ItemNudgeTargetChanged(target));
+        let _ = app.update(Message::ItemNudgeValueChanged(value.to_owned()));
+
+        let _ = app.update(Message::ApplyItemNudgeSet);
+
+        let edited_audio = app.project.audio_items()[0].clone();
+        let edited_midi = app.project.midi_items()[0].clone();
+        assert_eq!(app.revision, revision + 1, "target: {target}");
+        assert_eq!(
+            (
+                edited_audio.start_sample(),
+                edited_audio.length_samples(),
+                edited_audio.source_offset_samples(),
+            ),
+            expected_audio,
+            "target: {target} Audio"
+        );
+        assert_eq!(
+            (
+                edited_midi.start_tick(),
+                edited_midi.length_ticks(),
+                edited_midi.source_offset_ticks(),
+            ),
+            expected_midi,
+            "target: {target} MIDI"
+        );
+        assert_eq!(
+            edited_midi.source_loop_length_ticks(),
+            original_midi.source_loop_length_ticks(),
+            "target: {target} MIDI source length"
+        );
+        assert_eq!(
+            edited_midi.notes(),
+            original_midi.notes(),
+            "target: {target}"
+        );
+        assert_eq!(
+            edited_midi.controllers(),
+            original_midi.controllers(),
+            "target: {target}"
+        );
+        assert_eq!(
+            edited_midi.pitch_bends(),
+            original_midi.pitch_bends(),
+            "target: {target}"
+        );
+        assert_eq!(app.timeline.selected_items.len(), 2);
+        assert!(app.item_nudge_dialog.error.is_none(), "target: {target}");
+
+        let _ = app.update(Message::Undo);
+        assert_eq!(
+            app.project.audio_items()[0],
+            original_audio,
+            "target: {target}"
+        );
+        assert_eq!(
+            app.project.midi_items()[0],
+            original_midi,
+            "target: {target}"
+        );
+        let _ = app.update(Message::Redo);
+        assert_eq!(
+            app.project.audio_items()[0],
+            edited_audio,
+            "target: {target}"
+        );
+        assert_eq!(app.project.midi_items()[0], edited_midi, "target: {target}");
+        assert_eq!(
+            app.timeline.selected_items.len(),
+            2,
+            "target: {target} Redo"
+        );
         drop(app);
         let _ = std::fs::remove_file(project_path);
     }
