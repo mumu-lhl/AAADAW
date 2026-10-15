@@ -1,8 +1,8 @@
 use aaadaw_core::{DawAction, Project};
 use aaadaw_engine::{
     AudioBlock, AudioGraphError, AudioItemStream, AudioRenderGraph, AudioRenderStats,
-    AudioStreamPosition, MasterOutputCeiling, PcmStreamError, audio_monitor_stream, pcm_stream,
-    stereo_pcm_stream,
+    AudioStreamPosition, MasterOutputCeiling, PcmStreamError, TransportLoopRange,
+    audio_monitor_stream, pcm_stream, stereo_pcm_stream,
 };
 
 #[test]
@@ -1381,6 +1381,137 @@ fn playback_start_and_restart_chase_sustained_midi_notes() {
             .kind,
         aaadaw_engine::MidiEventKind::NoteOn
     );
+}
+
+#[test]
+fn render_graph_repeats_midi_across_loop_boundaries_in_one_callback() {
+    let mut project = Project::with_settings(
+        aaadaw_core::ProjectSettings::default()
+            .with_pan_mode(aaadaw_core::PanMode::LegacyMonoStereo),
+    );
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Instrument".to_owned(),
+        })
+        .expect("track should be created");
+    let track_id = project.tracks()[0].id();
+    project
+        .apply(DawAction::InsertMidiItem {
+            track_id,
+            start_tick: 0,
+            length_ticks: 960,
+        })
+        .expect("MIDI item should be inserted");
+    let midi_item_id = project.midi_items()[0].id();
+    project
+        .apply(DawAction::AddMidiNotes {
+            item_id: midi_item_id,
+            notes: vec![aaadaw_core::MidiNoteData {
+                pitch: 64,
+                tick: 0,
+                duration: 480,
+                velocity: 100,
+            }],
+        })
+        .expect("sustained note should be added");
+
+    let (_, consumer) = pcm_stream(64).expect("positive queue size is valid");
+    let mut graph = AudioRenderGraph::new(&project, vec![consumer], 64)
+        .expect("stream count should match the project");
+    graph
+        .transport_mut()
+        .set_loop_range(TransportLoopRange::new(25, 30));
+    graph.transport_mut().seek_sample(25);
+    graph.transport_mut().start();
+
+    let mut output = [[9.0_f32, 9.0_f32]; 12];
+    let mut short_midi_output = [None; 2];
+    let short = graph.render_with_midi(&mut short_midi_output, &mut output);
+    assert_eq!(
+        short,
+        Err(AudioGraphError::MidiSchedule(
+            aaadaw_engine::MidiScheduleError::OutputBufferTooSmall {
+                required: 5,
+                available: 2,
+            }
+        ))
+    );
+    assert_eq!(graph.transport_mut().position_samples(), 25);
+    assert_eq!(output, [[9.0, 9.0]; 12]);
+    assert_eq!(short_midi_output, [None; 2]);
+
+    let mut output = [[0.0_f32; 2]; 12];
+    let mut midi_output = [None; 8];
+    let stats = graph
+        .render_with_midi(&mut midi_output, &mut output)
+        .expect("looped MIDI callback should render across its loop edge");
+
+    assert_eq!(stats.block.start_sample, 25);
+    assert_eq!(stats.block.frame_count, 12);
+    assert!(stats.block.is_playing);
+    assert_eq!(stats.midi_event_count, 5);
+    assert_eq!(
+        midi_output[..stats.midi_event_count]
+            .iter()
+            .flatten()
+            .map(|event| (event.sample_offset, event.kind))
+            .collect::<Vec<_>>(),
+        vec![
+            (0, aaadaw_engine::MidiEventKind::NoteOn),
+            (5, aaadaw_engine::MidiEventKind::NoteOff),
+            (5, aaadaw_engine::MidiEventKind::NoteOn),
+            (10, aaadaw_engine::MidiEventKind::NoteOff),
+            (10, aaadaw_engine::MidiEventKind::NoteOn),
+        ]
+    );
+    assert_eq!(graph.transport_mut().position_samples(), 27);
+}
+
+#[test]
+fn repeating_audio_item_refill_is_preflighted_before_transport_or_pcm_changes() {
+    let mut project = Project::with_settings(
+        aaadaw_core::ProjectSettings::default()
+            .with_pan_mode(aaadaw_core::PanMode::LegacyMonoStereo),
+    );
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Audio".to_owned(),
+        })
+        .expect("track should be created");
+    project
+        .apply(DawAction::InsertAudioItem {
+            track_id: project.tracks()[0].id(),
+            media_ref: "asset://repeat-preflight".to_owned(),
+            start_sample: 0,
+            source_offset_samples: 0,
+            length_samples: 64,
+        })
+        .expect("audio item should be inserted");
+    let item_id = project.audio_items()[0].id();
+    let (mut producer, consumer) = stereo_pcm_stream(64).expect("positive queue size is valid");
+    producer.set_stereo_content(true);
+    assert_eq!(producer.push_frames_at(16, &[[0.25, -0.5]; 48]), 48);
+    let stream = AudioItemStream::new_stereo_at_sample(item_id, 16, consumer);
+    let mut graph = AudioRenderGraph::new_for_audio_items(&project, vec![stream], 32)
+        .expect("item stream should match the project");
+    graph
+        .transport_mut()
+        .set_loop_range(TransportLoopRange::new(16, 32));
+    graph.transport_mut().seek_sample(16);
+    graph.transport_mut().start();
+
+    let mut output = [[9.0_f32, 9.0_f32]; 24];
+    let result = graph.render_into(&mut output);
+
+    assert_eq!(
+        result,
+        Err(AudioGraphError::AudioItemSeekRequiresRefill { item_id })
+    );
+    assert_eq!(graph.transport_mut().position_samples(), 16);
+    assert_eq!(output, [[9.0, 9.0]; 24]);
+    assert_eq!(producer.available_capacity(), 16);
 }
 
 #[test]

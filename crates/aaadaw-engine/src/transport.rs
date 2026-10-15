@@ -146,6 +146,12 @@ impl Transport {
         self.position_samples = position_samples;
     }
 
+    /// Positions the renderer at one already-planned segment without generating another seek.
+    pub(crate) fn set_render_segment(&mut self, position_samples: u64, chase_generation: u64) {
+        self.position_samples = position_samples;
+        self.chase_generation = chase_generation;
+    }
+
     /// Seeks to a musical tick using the project's current tempo map.
     pub fn seek_tick(&mut self, project: &Project, tick: u64) -> Result<(), TimebaseError> {
         self.seek_sample(project.sample_at_tick(tick)?);

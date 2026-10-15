@@ -2,7 +2,7 @@ use aaadaw_core::{DawAction, MidiNoteData, Project};
 use aaadaw_engine::{
     AudioItemStream, AudioRenderGraph, AudioStreamPosition, ClapInstrumentHelperProcess,
     ClapIpcConfig, ClapIpcMapping, MasterOutputCeiling, TrackIsolatedInstrument, Transport,
-    TransportBlockSegment, TransportLoopRange, audio_monitor_stream, stereo_pcm_stream,
+    TransportBlockSegment, TransportLoopRange, audio_monitor_stream, pcm_stream, stereo_pcm_stream,
 };
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::Cell;
@@ -251,6 +251,23 @@ fn render_callback_does_not_allocate_on_the_rendering_thread() {
     let mut ipc_start_sample = 0;
     let mut ipc_output = [[0.0; 2]; 64];
 
+    let mut loop_project = Project::default();
+    loop_project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Loop callback".to_owned(),
+        })
+        .expect("loop callback track should be created");
+    let (_, loop_consumer) = pcm_stream(256).expect("loop queue should be valid");
+    let mut loop_graph = AudioRenderGraph::new(&loop_project, vec![loop_consumer], 128)
+        .expect("loop stream should match the project");
+    loop_graph
+        .transport_mut()
+        .set_loop_range(TransportLoopRange::new(17, 61));
+    loop_graph.transport_mut().seek_sample(17);
+    loop_graph.transport_mut().start();
+    let mut loop_output = [[0.0; 2]; 128];
+
     let tracking = AllocationTracking::start();
     let mut last_stats = None;
     let mut midi_events_seen = 0;
@@ -288,6 +305,9 @@ fn render_callback_does_not_allocate_on_the_rendering_thread() {
         let stats = graph
             .render_with_midi(&mut midi_output, &mut output)
             .expect("preallocated MIDI and audio callback block should render");
+        loop_graph
+            .render_into(&mut loop_output)
+            .expect("repeating callback should render from preallocated storage");
         midi_events_seen += stats.midi_event_count;
         last_stats = Some(stats);
     }

@@ -1198,6 +1198,10 @@ pub enum AudioGraphError {
     AudioItemSeekRequiresRefill {
         item_id: ItemId,
     },
+    LoopedIsolatedInstrumentUnsupported {
+        track_id: TrackId,
+    },
+    TransportLoop(TransportBlockError),
     TransportPositionOverflow,
 }
 
@@ -1239,6 +1243,14 @@ impl fmt::Display for AudioGraphError {
                 "seeking into audio item {} requires refilling its PCM stream",
                 item_id.value()
             ),
+            Self::LoopedIsolatedInstrumentUnsupported { track_id } => write!(
+                formatter,
+                "repeating playback cannot yet schedule isolated instrument track {}",
+                track_id.value()
+            ),
+            Self::TransportLoop(error) => {
+                write!(formatter, "looped transport planning failed: {error:?}")
+            }
             Self::TransportPositionOverflow => {
                 formatter.write_str("transport position exceeds the supported sample range")
             }
@@ -1865,6 +1877,7 @@ pub struct AudioRenderGraph {
     master_output_safety: master_output::MasterOutputSafety,
     midi_plan: MidiEventPlan,
     midi_scratch: Vec<Option<ScheduledMidiEvent>>,
+    midi_input_segment_scratch: Vec<Option<ScheduledMidiEvent>>,
     instruments: Vec<InstrumentRoute>,
     effects: Vec<FxRoute>,
     track_effect_buffers: TrackEffectBuffers,
@@ -1876,6 +1889,7 @@ pub struct AudioRenderGraph {
     solo_bus_subtrees: Vec<bool>,
     sample_rate: u32,
     transport: Transport,
+    transport_segments: Vec<TransportBlockSegment>,
     last_midi_sample_end: Option<u64>,
     last_midi_chase_generation: Option<u64>,
     midi_preview_state: Arc<AtomicU64>,
@@ -2181,6 +2195,7 @@ impl AudioRenderGraph {
             master_output_safety: master_output::MasterOutputSafety::default(),
             midi_plan,
             midi_scratch,
+            midi_input_segment_scratch: vec![None; MIDI_INPUT_EVENTS_PER_BLOCK],
             instruments: instrument_routes,
             effects: effect_routes,
             track_effect_buffers,
@@ -2192,6 +2207,15 @@ impl AudioRenderGraph {
             solo_bus_subtrees,
             sample_rate: project.settings().sample_rate(),
             transport: Transport::new(),
+            transport_segments: vec![
+                TransportBlockSegment {
+                    output_offset: 0,
+                    start_sample: 0,
+                    frame_count: 0,
+                    chase_generation: 0,
+                };
+                max_block_frames.saturating_add(1)
+            ],
             last_midi_sample_end: None,
             last_midi_chase_generation: None,
             midi_preview_state: Arc::new(AtomicU64::new(0)),
@@ -2753,7 +2777,7 @@ impl AudioRenderGraph {
         &mut self,
         output: &mut [[f32; 2]],
     ) -> Result<AudioRenderStats, AudioGraphError> {
-        self.render_block(false, &[], &mut [], output)
+        self.render_callback(false, &[], &mut [], output)
     }
 
     /// Renders audio and writes note events for the same half-open callback
@@ -2763,7 +2787,7 @@ impl AudioRenderGraph {
         midi_output: &mut [Option<ScheduledMidiEvent>],
         output: &mut [[f32; 2]],
     ) -> Result<AudioRenderStats, AudioGraphError> {
-        self.render_block(true, &[], midi_output, output)
+        self.render_callback(true, &[], midi_output, output)
     }
 
     /// Renders scheduled MIDI output and injects bounded live input into matching instruments.
@@ -2776,7 +2800,7 @@ impl AudioRenderGraph {
         midi_input: &[Option<ScheduledMidiEvent>],
         output: &mut [[f32; 2]],
     ) -> Result<AudioRenderStats, AudioGraphError> {
-        self.render_block(true, midi_input, midi_output, output)
+        self.render_callback(true, midi_input, midi_output, output)
     }
 
     fn midi_output_event_allowed(&self, event: &ScheduledMidiEvent) -> bool {
@@ -2820,6 +2844,280 @@ impl AudioRenderGraph {
         Ok(required)
     }
 
+    fn schedule_segment_midi_events(
+        &mut self,
+        start_sample: u64,
+        frame_count: usize,
+        chase_generation: u64,
+        previous: MidiSegmentCursor,
+        should_process: bool,
+    ) -> Result<(usize, MidiSegmentCursor), AudioGraphError> {
+        if !should_process || frame_count == 0 {
+            return Ok((0, previous));
+        }
+        let schedule = self
+            .midi_plan
+            .events_for_segment(
+                TransportBlockSegment {
+                    output_offset: 0,
+                    start_sample,
+                    frame_count,
+                    chase_generation,
+                },
+                previous,
+                &mut self.midi_scratch,
+            )
+            .map_err(AudioGraphError::MidiSchedule)?;
+        Ok((schedule.event_count, schedule.cursor))
+    }
+
+    fn preflight_repeating_sources(
+        &self,
+        segments: &[TransportBlockSegment],
+    ) -> Result<(), AudioGraphError> {
+        for (index, source_range) in self.source_ranges.iter().enumerate() {
+            let Some((item_start, item_end)) = source_range else {
+                continue;
+            };
+            let mut cursor = self.source_cursors[index];
+            for segment in segments {
+                let frame_count = u64::try_from(segment.frame_count)
+                    .map_err(|_| AudioGraphError::TransportPositionOverflow)?;
+                let segment_end = segment
+                    .start_sample
+                    .checked_add(frame_count)
+                    .ok_or(AudioGraphError::TransportPositionOverflow)?;
+                let overlap_start = segment.start_sample.max(*item_start);
+                let overlap_end = segment_end.min(*item_end);
+                if overlap_start < overlap_end {
+                    if cursor != Some(overlap_start) {
+                        return Err(AudioGraphError::AudioItemSeekRequiresRefill {
+                            item_id: self.source_item_ids[index]
+                                .expect("timeline ranges belong to audio items"),
+                        });
+                    }
+                    cursor = Some(overlap_end);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn collect_segment_midi_input(
+        input: &[Option<ScheduledMidiEvent>],
+        segment: TransportBlockSegment,
+        scratch: &mut [Option<ScheduledMidiEvent>],
+    ) -> Result<usize, AudioGraphError> {
+        let segment_end = segment
+            .output_offset
+            .checked_add(segment.frame_count)
+            .ok_or(AudioGraphError::TransportPositionOverflow)?;
+        let mut count = 0;
+        for event in input.iter().flatten() {
+            if (segment.output_offset..segment_end).contains(&event.sample_offset) {
+                if count == scratch.len() {
+                    return Err(AudioGraphError::MidiInputEventBufferFull {
+                        requested: count.saturating_add(1),
+                        maximum: scratch.len(),
+                    });
+                }
+                scratch[count] = Some(ScheduledMidiEvent {
+                    sample_offset: event.sample_offset - segment.output_offset,
+                    ..*event
+                });
+                count += 1;
+            }
+        }
+        Ok(count)
+    }
+
+    fn render_callback(
+        &mut self,
+        include_midi: bool,
+        midi_input: &[Option<ScheduledMidiEvent>],
+        midi_output: &mut [Option<ScheduledMidiEvent>],
+        output: &mut [[f32; 2]],
+    ) -> Result<AudioRenderStats, AudioGraphError> {
+        if output.len() > self.mixer.max_block_frames {
+            return Err(AudioGraphError::BlockTooLarge {
+                requested: output.len(),
+                maximum: self.mixer.max_block_frames,
+            });
+        }
+        if output.is_empty()
+            || !self.transport.is_playing()
+            || self.transport.loop_range().is_none()
+        {
+            return self.render_block(include_midi, midi_input, midi_output, output);
+        }
+        if midi_input.len() > MIDI_INPUT_EVENTS_PER_BLOCK {
+            return Err(AudioGraphError::MidiInputEventBufferFull {
+                requested: midi_input.len(),
+                maximum: MIDI_INPUT_EVENTS_PER_BLOCK,
+            });
+        }
+
+        let original_transport = self.transport;
+        let mut planned_transport = original_transport;
+        let segment_count = planned_transport
+            .advance_repeating_block(output.len(), &mut self.transport_segments)
+            .map_err(AudioGraphError::TransportLoop)?;
+        if planned_transport.chase_generation() != original_transport.chase_generation()
+            && let Some(route) = self
+                .instruments
+                .iter()
+                .find(|route| route.isolated_reader.is_some())
+        {
+            return Err(AudioGraphError::LoopedIsolatedInstrumentUnsupported {
+                track_id: route.track_id,
+            });
+        }
+        self.preflight_repeating_sources(&self.transport_segments[..segment_count])?;
+        self.mixer
+            .compile_solo_audibility(&mut self.solo_audible_tracks, &mut self.solo_bus_subtrees);
+
+        let midi_is_processed =
+            !self.instruments.is_empty() || include_midi || !midi_input.is_empty();
+        let mut cursor = MidiSegmentCursor {
+            sample_end: self.last_midi_sample_end,
+            chase_generation: self.last_midi_chase_generation,
+        };
+        let mut required_midi_output = 0_usize;
+        for segment_index in 0..segment_count {
+            let segment = self.transport_segments[segment_index];
+            let (event_count, next_cursor) = self.schedule_segment_midi_events(
+                segment.start_sample,
+                segment.frame_count,
+                segment.chase_generation,
+                cursor,
+                midi_is_processed,
+            )?;
+            let input_count = Self::collect_segment_midi_input(
+                midi_input,
+                segment,
+                &mut self.midi_input_segment_scratch,
+            )?;
+            let preview_release = segment_index == 0 && self.preview_track_index.is_some();
+            let scratch_required = event_count
+                .checked_add(input_count)
+                .and_then(|count| count.checked_add(usize::from(preview_release)))
+                .ok_or(AudioGraphError::TransportPositionOverflow)?;
+            if scratch_required > self.midi_scratch.len() {
+                return Err(AudioGraphError::MidiInputEventBufferFull {
+                    requested: input_count,
+                    maximum: self
+                        .midi_scratch
+                        .len()
+                        .saturating_sub(event_count + usize::from(preview_release)),
+                });
+            }
+
+            if include_midi {
+                let allowed = self.midi_scratch[..event_count]
+                    .iter()
+                    .flatten()
+                    .filter(|event| self.midi_output_event_allowed(event))
+                    .count();
+                required_midi_output = required_midi_output
+                    .checked_add(allowed + usize::from(preview_release))
+                    .ok_or(AudioGraphError::TransportPositionOverflow)?;
+            }
+
+            for route in &self.instruments {
+                let scheduled_for_route = self.midi_scratch[..event_count]
+                    .iter()
+                    .flatten()
+                    .filter(|event| event.track_id == route.track_id)
+                    .count();
+                let input_for_route = self.midi_input_segment_scratch[..input_count]
+                    .iter()
+                    .flatten()
+                    .filter(|event| event.track_id == route.track_id)
+                    .count();
+                let preview_for_route = usize::from(
+                    preview_release && self.preview_track_index == Some(route.track_index),
+                );
+                let required = scheduled_for_route + input_for_route + preview_for_route;
+                if required > route.midi_events.capacity() {
+                    return Err(AudioGraphError::InstrumentEventBufferFull {
+                        track_id: route.track_id,
+                    });
+                }
+            }
+            cursor = next_cursor;
+        }
+        if include_midi && midi_output.len() < required_midi_output {
+            return Err(AudioGraphError::MidiSchedule(
+                MidiScheduleError::OutputBufferTooSmall {
+                    required: required_midi_output,
+                    available: midi_output.len(),
+                },
+            ));
+        }
+
+        let mut input_scratch = std::mem::take(&mut self.midi_input_segment_scratch);
+        let mut callback_underrun_samples = 0_usize;
+        let mut callback_midi_event_count = 0_usize;
+        let mut callback_master_guarded_samples = 0_usize;
+        let mut callback_master_non_finite_samples = 0_usize;
+        let mut midi_output_written = 0_usize;
+        let render_result = (|| {
+            for segment_index in 0..segment_count {
+                let segment = self.transport_segments[segment_index];
+                let input_count =
+                    Self::collect_segment_midi_input(midi_input, segment, &mut input_scratch)?;
+                let output_start = segment.output_offset;
+                let output_end = output_start + segment.frame_count;
+                self.transport
+                    .set_render_segment(segment.start_sample, segment.chase_generation);
+                let midi_output_segment = if include_midi {
+                    &mut midi_output[midi_output_written..]
+                } else {
+                    &mut []
+                };
+                let stats = self.render_block(
+                    include_midi,
+                    &input_scratch[..input_count],
+                    midi_output_segment,
+                    &mut output[output_start..output_end],
+                )?;
+                if include_midi {
+                    let next_written = midi_output_written + stats.midi_event_count;
+                    for event in midi_output[midi_output_written..next_written]
+                        .iter_mut()
+                        .flatten()
+                    {
+                        event.sample_offset += segment.output_offset;
+                    }
+                    midi_output_written = next_written;
+                }
+                callback_underrun_samples =
+                    callback_underrun_samples.saturating_add(stats.underrun_samples);
+                callback_midi_event_count =
+                    callback_midi_event_count.saturating_add(stats.midi_event_count);
+                callback_master_guarded_samples =
+                    callback_master_guarded_samples.saturating_add(stats.master_guarded_samples);
+                callback_master_non_finite_samples = callback_master_non_finite_samples
+                    .saturating_add(stats.master_non_finite_samples);
+            }
+            Ok(())
+        })();
+        self.midi_input_segment_scratch = input_scratch;
+        render_result?;
+        self.transport = planned_transport;
+        Ok(AudioRenderStats {
+            block: AudioBlock {
+                start_sample: original_transport.position_samples(),
+                frame_count: output.len(),
+                is_playing: true,
+            },
+            underrun_samples: callback_underrun_samples,
+            midi_event_count: callback_midi_event_count,
+            master_guarded_samples: callback_master_guarded_samples,
+            master_non_finite_samples: callback_master_non_finite_samples,
+        })
+    }
+
     fn render_block(
         &mut self,
         include_midi: bool,
@@ -2858,67 +3156,26 @@ impl AudioRenderGraph {
 
         self.mixer
             .compile_solo_audibility(&mut self.solo_audible_tracks, &mut self.solo_bus_subtrees);
-        let mut midi_output_count = 0;
         let was_playing = self.transport.is_playing();
         let chase_generation = self.transport.chase_generation();
         let midi_is_processed =
             !self.instruments.is_empty() || include_midi || !midi_input.is_empty();
-        let mut midi_event_count = if was_playing && !output.is_empty() && midi_is_processed {
-            let (chase_state_count, chase_note_count) = if self.last_midi_sample_end
-                != Some(block_start_sample)
-                || self.last_midi_chase_generation != Some(chase_generation)
-            {
-                let controller_count = self
-                    .midi_plan
-                    .active_controllers_at(block_start_sample, &mut self.midi_scratch)
-                    .map_err(AudioGraphError::MidiSchedule)?;
-                let pitch_bend_count = self
-                    .midi_plan
-                    .active_pitch_bends_at(
-                        block_start_sample,
-                        &mut self.midi_scratch[controller_count..],
-                    )
-                    .map_err(AudioGraphError::MidiSchedule)?;
-                let note_count = self
-                    .midi_plan
-                    .active_notes_at(
-                        block_start_sample,
-                        &mut self.midi_scratch[controller_count + pitch_bend_count..],
-                    )
-                    .map_err(AudioGraphError::MidiSchedule)?;
-                (controller_count + pitch_bend_count, note_count)
-            } else {
-                (0, 0)
-            };
-            let chase_count = chase_state_count + chase_note_count;
-            let scheduled_count = self
-                .midi_plan
-                .events_for_block(
-                    block_start_sample,
-                    output.len(),
-                    &mut self.midi_scratch[chase_count..],
-                )
-                .map_err(AudioGraphError::MidiSchedule)?;
-            let count = chase_count + scheduled_count;
-            if chase_count > 0 {
-                self.midi_scratch[..count].sort_unstable_by_key(|event| {
-                    let event = event.expect("rendered MIDI event slots are initialized");
-                    (
-                        event.sample_offset,
-                        event.sort_priority(),
-                        event.track_id.value(),
-                        event.controller.unwrap_or(event.pitch),
-                        event.note_id.map_or(0, aaadaw_core::NoteId::value),
-                    )
-                });
-            }
-            if include_midi {
-                midi_output_count = self.copy_midi_output(count, midi_output)?;
-            }
-            count
-        } else {
-            0
+        let previous_midi_cursor = MidiSegmentCursor {
+            sample_end: self.last_midi_sample_end,
+            chase_generation: self.last_midi_chase_generation,
         };
+        let should_schedule_midi = was_playing && !output.is_empty() && midi_is_processed;
+        let (mut midi_event_count, next_midi_cursor) = self.schedule_segment_midi_events(
+            block_start_sample,
+            output.len(),
+            chase_generation,
+            previous_midi_cursor,
+            should_schedule_midi,
+        )?;
+        let mut midi_output_count = 0;
+        if include_midi && midi_event_count > 0 {
+            midi_output_count = self.copy_midi_output(midi_event_count, midi_output)?;
+        }
         let block = self
             .transport
             .advance_block(output.len())
@@ -3471,16 +3728,8 @@ impl AudioRenderGraph {
         self.master_mix.process(output);
         let master_guard = self.master_output_safety.process(output);
         if was_playing && midi_is_processed && block.frame_count > 0 {
-            self.last_midi_sample_end = Some(
-                block
-                    .start_sample
-                    .checked_add(
-                        u64::try_from(block.frame_count)
-                            .map_err(|_| AudioGraphError::TransportPositionOverflow)?,
-                    )
-                    .ok_or(AudioGraphError::TransportPositionOverflow)?,
-            );
-            self.last_midi_chase_generation = Some(chase_generation);
+            self.last_midi_sample_end = next_midi_cursor.sample_end;
+            self.last_midi_chase_generation = next_midi_cursor.chase_generation;
         }
         Ok(AudioRenderStats {
             block,

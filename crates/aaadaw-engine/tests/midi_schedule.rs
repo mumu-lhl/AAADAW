@@ -142,11 +142,18 @@ fn segmented_event_plan_chases_controller_and_pitch_bend_after_a_loop_wrap() {
     project
         .apply(DawAction::SetMidiControllers {
             item_id,
-            controllers: vec![MidiControllerData {
-                controller: 1,
-                tick: 0,
-                value: 64,
-            }],
+            controllers: vec![
+                MidiControllerData {
+                    controller: 1,
+                    tick: 0,
+                    value: 64,
+                },
+                MidiControllerData {
+                    controller: 64,
+                    tick: 0,
+                    value: 127,
+                },
+            ],
         })
         .expect("controller should be accepted");
     project
@@ -192,13 +199,28 @@ fn segmented_event_plan_chases_controller_and_pitch_bend_after_a_loop_wrap() {
         .copied()
         .collect::<Vec<_>>();
 
-    assert_eq!(schedule.event_count, 7);
+    assert_eq!(schedule.event_count, 10);
+    let boundary_events = events
+        .iter()
+        .filter(|event| event.sample_offset == 5)
+        .collect::<Vec<_>>();
+    assert_eq!(boundary_events.len(), 6);
+    assert_eq!(boundary_events[0].controller, Some(64));
+    assert_eq!(boundary_events[0].velocity, 0);
+    assert_eq!(boundary_events[1].kind, MidiEventKind::NoteOff);
     assert!(events.iter().any(|event| {
         event.sample_offset == 5
             && event.track_id == track_id
             && event.kind == MidiEventKind::ControllerChange
             && event.controller == Some(1)
             && event.velocity == 64
+    }));
+    assert!(events.iter().any(|event| {
+        event.sample_offset == 5
+            && event.track_id == track_id
+            && event.kind == MidiEventKind::ControllerChange
+            && event.controller == Some(64)
+            && event.velocity == 127
     }));
     assert!(events.iter().any(|event| {
         event.sample_offset == 5

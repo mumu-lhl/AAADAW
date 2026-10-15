@@ -1,7 +1,7 @@
 use aaadaw_core::{DawAction, MidiNoteData, Project};
 use aaadaw_engine::{
     AudioRenderGraph, CLAP_IPC_MAX_BLOCK_FRAMES, CLAP_IPC_MAX_EVENTS, ClapInstrumentHelperProcess,
-    ClapIpcConfig, TrackIsolatedInstrument, pcm_stream,
+    ClapIpcConfig, TrackIsolatedInstrument, TransportLoopRange, pcm_stream,
 };
 use std::path::Path;
 use std::thread;
@@ -44,6 +44,56 @@ fn add_track_with_note(project: &mut Project, name: &str) -> aaadaw_core::TrackI
         })
         .expect("MIDI note should be created");
     track_id
+}
+
+#[test]
+fn repeating_callback_rejects_isolated_instrument_before_advancing_or_writing_audio() {
+    let mut project = Project::with_settings(
+        aaadaw_core::ProjectSettings::default()
+            .with_pan_mode(aaadaw_core::PanMode::LegacyMonoStereo),
+    );
+    let track_id = add_track_with_note(&mut project, "Isolated instrument");
+    let config = ClapIpcConfig::new(
+        project.settings().sample_rate(),
+        CLAP_IPC_MAX_BLOCK_FRAMES,
+        CLAP_IPC_MAX_EVENTS,
+    )
+    .unwrap();
+    let mut helper = ClapInstrumentHelperProcess::spawn(
+        helper_path(),
+        Path::new("unused-test-plugin.clap"),
+        "test.synth",
+        config,
+        None,
+    )
+    .expect("synthetic helper should complete its handshake");
+    let (_, consumer) = pcm_stream(256).unwrap();
+    let mut graph =
+        AudioRenderGraph::new(&project, vec![consumer], 64).expect("render graph should compile");
+    let mut instruments = vec![TrackIsolatedInstrument::new(
+        track_id,
+        helper.instance_id(),
+        helper.audio_port(),
+        config,
+    )];
+    graph
+        .install_isolated_instrument_ports(&project, &mut instruments)
+        .expect("isolated instrument route should install");
+    graph
+        .transport_mut()
+        .set_loop_range(TransportLoopRange::new(0, 32));
+    graph.transport_mut().start();
+
+    let mut output = [[9.0_f32, 9.0_f32]; 64];
+    assert_eq!(
+        graph.render_into(&mut output),
+        Err(aaadaw_engine::AudioGraphError::LoopedIsolatedInstrumentUnsupported { track_id })
+    );
+    assert_eq!(graph.transport_mut().position_samples(), 0);
+    assert_eq!(output, [[9.0, 9.0]; 64]);
+
+    drop(graph);
+    helper.shutdown().unwrap();
 }
 
 #[test]
