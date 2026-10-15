@@ -1,0 +1,16 @@
+version	7.82/linux-x86_64
+theme	Default_7.0.ReaperThemeZip
+dialog_action	41226
+fixture	selected loop-source Audio item at 2.000s; length 10.000s; source offset 0.000s
+baseline	state_change_count	3	state_change_delta	0	item_count	1	position_s	2.000000000	length_s	10.000000000	loop_source	1	source_offset_s	0.000000000	selected	1	undo_label	Set edge targets probe setup
+left_trim	state_change_count	4	state_change_delta	1	item_count	1	position_s	4.000000000	length_s	8.000000000	loop_source	1	source_offset_s	2.000000000	selected	1	undo_label	Nudge items
+undo_left_trim	state_change_count	5	state_change_delta	2	item_count	1	position_s	2.000000000	length_s	10.000000000	loop_source	1	source_offset_s	0.000000000	selected	1	undo_label	Set edge targets probe setup
+redo_left_trim	state_change_count	6	state_change_delta	3	item_count	1	position_s	4.000000000	length_s	8.000000000	loop_source	1	source_offset_s	2.000000000	selected	1	undo_label	Nudge items
+baseline_left_edge	state_change_count	6	state_change_delta	0	item_count	1	position_s	2.000000000	length_s	10.000000000	loop_source	1	source_offset_s	0.000000000	selected	1	undo_label	Nudge items
+left_edge	state_change_count	7	state_change_delta	1	item_count	1	position_s	4.000000000	length_s	8.000000000	loop_source	1	source_offset_s	0.000000000	selected	1	undo_label	Nudge items
+baseline_end_position	state_change_count	7	state_change_delta	0	item_count	1	position_s	2.000000000	length_s	10.000000000	loop_source	1	source_offset_s	0.000000000	selected	1	undo_label	Nudge items
+end_position	state_change_count	8	state_change_delta	1	item_count	1	position_s	4.000000000	length_s	10.000000000	loop_source	1	source_offset_s	0.000000000	selected	1	undo_label	Nudge items
+baseline_right_trim	state_change_count	8	state_change_delta	0	item_count	1	position_s	2.000000000	length_s	10.000000000	loop_source	1	source_offset_s	0.000000000	selected	1	undo_label	Nudge items
+right_trim	state_change_count	9	state_change_delta	1	item_count	1	position_s	2.000000000	length_s	12.000000000	loop_source	1	source_offset_s	0.000000000	selected	1	undo_label	Nudge items
+relative_set_ui	left_trim=hidden; left_edge=hidden; end_position=visible; right_trim=hidden; Snap to unit=visible for all four targets
+dialog_anchor_labels	left trim and left edge identify the first selected item; end position and right trim identify the last selected item

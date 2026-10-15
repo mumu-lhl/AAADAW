@@ -164,7 +164,7 @@ impl App {
 
     pub(super) fn change_item_nudge_target(&mut self, target: Target) {
         self.item_nudge_dialog.target = target;
-        if target == Target::Contents {
+        if !target_supports_relative_set(target) {
             self.item_nudge_dialog.relative_set = false;
         }
         self.item_nudge_dialog.error = None;
@@ -181,7 +181,7 @@ impl App {
 
     pub(super) fn change_item_nudge_relative_set(&mut self, enabled: bool) {
         self.item_nudge_dialog.relative_set =
-            enabled && self.item_nudge_dialog.target != Target::Contents;
+            enabled && target_supports_relative_set(self.item_nudge_dialog.target);
     }
 
     pub(super) fn item_nudge_get_cursor(&mut self) {
@@ -285,21 +285,7 @@ impl App {
                     Target::EditCursor => unreachable!("edit cursor target handled above"),
                 }
             }
-            Mode::Set if self.item_nudge_dialog.target == Target::Position => {
-                self.apply_set_position()
-            }
-            Mode::Set if self.item_nudge_dialog.target == Target::Duplicate => {
-                self.apply_set_duplicate()
-            }
-            Mode::Set if self.item_nudge_dialog.target == Target::Contents => {
-                self.apply_set_contents();
-            }
-            Mode::Set => {
-                self.item_nudge_dialog.error = Some(format!(
-                    "The '{}' set target is not implemented yet",
-                    self.item_nudge_dialog.target
-                ));
-            }
+            Mode::Set => self.apply_item_nudge_set(),
         }
     }
 
@@ -310,14 +296,11 @@ impl App {
         match self.item_nudge_dialog.target {
             Target::Position => self.apply_set_position(),
             Target::Duplicate => self.apply_set_duplicate(),
+            Target::LeftTrim | Target::LeftEdge | Target::EndPosition | Target::RightTrim => {
+                self.apply_set_edge_target()
+            }
             Target::Contents => self.apply_set_contents(),
             Target::EditCursor => self.apply_edit_cursor_set(),
-            target => {
-                self.item_nudge_dialog.error = Some(format!(
-                    "The '{}' set target is not implemented yet",
-                    target
-                ));
-            }
         }
     }
 
@@ -477,6 +460,371 @@ impl App {
         // as the absolute destination for the first selected item copy.
         let delta = i128::from(target_sample) - i128::from(*first_sample);
         self.duplicate_selected_items_at_delta(delta);
+    }
+
+    fn apply_set_edge_target(&mut self) {
+        if commands::project_edit_busy(self) {
+            self.item_nudge_dialog.error = Some(
+                "Stop playback or finish the current operation before changing item edges"
+                    .to_owned(),
+            );
+            return;
+        }
+        let target = self.item_nudge_dialog.target;
+        let selected = match self.selected_item_start_samples() {
+            Ok(selected) => selected,
+            Err(error) => {
+                self.item_nudge_dialog.error = Some(error);
+                return;
+            }
+        };
+        let Some((_, first_start_sample)) = selected.first().copied() else {
+            self.item_nudge_dialog.error = Some("No selected items to set".to_owned());
+            return;
+        };
+        let anchor_sample = if matches!(target, Target::EndPosition | Target::RightTrim) {
+            let Some((last_id, _)) = selected.last().copied() else {
+                self.item_nudge_dialog.error = Some("No selected items to set".to_owned());
+                return;
+            };
+            match self.selected_item_end_sample(last_id) {
+                Ok(sample) => sample,
+                Err(error) => {
+                    self.item_nudge_dialog.error = Some(error);
+                    return;
+                }
+            }
+        } else {
+            first_start_sample
+        };
+        let relative_end_position =
+            target == Target::EndPosition && self.item_nudge_dialog.relative_set;
+        let mut delta_samples = if relative_end_position {
+            match self.dialog_delta_samples(true) {
+                Ok(delta) => delta,
+                Err(error) => {
+                    self.item_nudge_dialog.error = Some(error);
+                    return;
+                }
+            }
+        } else {
+            let target_sample = match self.dialog_target_sample() {
+                Ok(sample) => sample,
+                Err(error) => {
+                    self.item_nudge_dialog.error = Some(error);
+                    return;
+                }
+            };
+            i128::from(target_sample) - i128::from(anchor_sample)
+        };
+        if self.item_nudge_dialog.snap_to_unit {
+            match self.snap_resolution_samples() {
+                Ok(unit) => {
+                    let target_sample = match i128::from(anchor_sample).checked_add(delta_samples) {
+                        Some(sample) => match u64::try_from(sample) {
+                            Ok(sample) => sample,
+                            Err(_) => {
+                                self.item_nudge_dialog.error =
+                                    Some("Item edge is outside the supported timeline".to_owned());
+                                return;
+                            }
+                        },
+                        None => {
+                            self.item_nudge_dialog.error =
+                                Some("Item edge is outside the supported timeline".to_owned());
+                            return;
+                        }
+                    };
+                    delta_samples =
+                        i128::from(round_sample(target_sample, unit)) - i128::from(anchor_sample);
+                }
+                Err(error) => {
+                    self.item_nudge_dialog.error = Some(error);
+                    return;
+                }
+            }
+        }
+        let selected_ids = &self.timeline.selected_items;
+        let audio_items = self
+            .project
+            .audio_items()
+            .iter()
+            .filter(|item| selected_ids.contains(&item.id()))
+            .collect::<Vec<_>>();
+        let midi_items = self
+            .project
+            .midi_items()
+            .iter()
+            .filter(|item| selected_ids.contains(&item.id()))
+            .collect::<Vec<_>>();
+        let source_rates = if target == Target::LeftTrim && !audio_items.is_empty() {
+            let media_refs = audio_items
+                .iter()
+                .map(|item| item.media_ref().to_owned())
+                .collect::<Vec<_>>();
+            match self.audio_source_sample_rates(media_refs) {
+                Ok(rates) => rates,
+                Err(error) => {
+                    self.item_nudge_dialog.error = Some(error);
+                    return;
+                }
+            }
+        } else {
+            Default::default()
+        };
+        let actions = self
+            .audio_set_edge_actions(&audio_items, target, delta_samples, &source_rates)
+            .and_then(|mut actions| {
+                actions.extend(self.midi_set_edge_actions(&midi_items, target, delta_samples)?);
+                Ok(actions)
+            });
+        match actions {
+            Ok(actions) => {
+                if !actions.is_empty() {
+                    self.apply_action(
+                        DawAction::BatchTransaction {
+                            tx_id: self.revision,
+                            actions,
+                        },
+                        "Nudge items",
+                    );
+                }
+                self.item_nudge_dialog.error = None;
+            }
+            Err(error) => self.item_nudge_dialog.error = Some(error),
+        }
+    }
+
+    fn audio_set_edge_actions(
+        &self,
+        items: &[&AudioItem],
+        target: Target,
+        delta_samples: i128,
+        source_rates: &HashMap<String, u32>,
+    ) -> Result<Vec<DawAction>, String> {
+        let project_rate = self.project.settings().sample_rate();
+        let mut actions = Vec::with_capacity(items.len());
+        for item in items {
+            let (start_sample, source_offset_samples, length_samples) = match target {
+                Target::LeftTrim | Target::LeftEdge => {
+                    let start_sample = shifted_sample(item.start_sample(), delta_samples)
+                        .ok_or_else(|| {
+                            "Selected items cannot move beyond the sample timeline".to_owned()
+                        })?;
+                    let length_samples = shifted_unsigned(item.length_samples(), -delta_samples)
+                        .ok_or_else(|| {
+                            "Left edge would remove the entire item or exceed its supported length"
+                                .to_owned()
+                        })?;
+                    let source_offset_samples = if target == Target::LeftTrim {
+                        let source_rate =
+                            source_rates.get(item.media_ref()).copied().ok_or_else(|| {
+                                format!(
+                                    "Source sample rate is unavailable for {}",
+                                    item.media_ref()
+                                )
+                            })?;
+                        let source_delta =
+                            scale_sample_delta(delta_samples, source_rate, project_rate)
+                                .ok_or_else(|| {
+                                    "Source trim is outside the supported range".to_owned()
+                                })?;
+                        shifted_source_offset(item.source_offset_samples(), source_delta)
+                            .ok_or_else(|| {
+                                "Left trim is outside the supported source range".to_owned()
+                            })?
+                    } else {
+                        item.source_offset_samples()
+                    };
+                    (start_sample, source_offset_samples, length_samples)
+                }
+                Target::EndPosition => (
+                    shifted_sample(item.start_sample(), delta_samples).ok_or_else(|| {
+                        "Selected items cannot move beyond the sample timeline".to_owned()
+                    })?,
+                    item.source_offset_samples(),
+                    item.length_samples(),
+                ),
+                Target::RightTrim => (
+                    item.start_sample(),
+                    item.source_offset_samples(),
+                    shifted_unsigned(item.length_samples(), delta_samples).ok_or_else(|| {
+                        "Right trim would remove the entire item or exceed its supported length"
+                            .to_owned()
+                    })?,
+                ),
+                _ => return Err("Selected target is not an item edge".to_owned()),
+            };
+            if start_sample != item.start_sample()
+                || source_offset_samples != item.source_offset_samples()
+                || length_samples != item.length_samples()
+            {
+                actions.push(DawAction::EditAudioItem {
+                    item_id: item.id(),
+                    media_ref: item.media_ref().to_owned(),
+                    start_sample,
+                    source_offset_samples,
+                    length_samples,
+                });
+            }
+        }
+        Ok(actions)
+    }
+
+    fn midi_set_edge_actions(
+        &self,
+        items: &[&MidiItem],
+        target: Target,
+        delta_samples: i128,
+    ) -> Result<Vec<DawAction>, String> {
+        const MAX_EXACT: i128 = 1 << 53;
+        if delta_samples.unsigned_abs() > MAX_EXACT as u128 {
+            return Err("MIDI item edge is outside the supported range".to_owned());
+        }
+        let delta_samples_f64 = delta_samples as f64;
+        let mut actions = Vec::with_capacity(items.len());
+        for item in items {
+            let end_tick = item
+                .start_tick()
+                .checked_add(item.length_ticks())
+                .ok_or_else(|| "MIDI item edge is outside the supported range".to_owned())?;
+            let start_sample = self
+                .project
+                .sample_at_tick(item.start_tick())
+                .map_err(|error| error.to_string())?;
+            let end_sample = self
+                .project
+                .sample_at_tick(end_tick)
+                .map_err(|error| error.to_string())?;
+            let (next_start_tick, next_length_ticks, next_source_offset_ticks) = match target {
+                Target::LeftTrim | Target::LeftEdge => {
+                    let next_start_sample = shifted_sample(start_sample, delta_samples)
+                        .ok_or_else(|| {
+                            "Selected items cannot move beyond the sample timeline".to_owned()
+                        })?;
+                    let next_start_tick = self
+                        .project
+                        .tick_at_sample(next_start_sample)
+                        .map_err(|error| error.to_string())?;
+                    let next_length_ticks = end_tick
+                        .checked_sub(next_start_tick)
+                        .ok_or_else(|| "Left edge would remove the entire MIDI item".to_owned())?;
+                    if next_length_ticks == 0 {
+                        return Err("Left edge would remove the entire MIDI item".to_owned());
+                    }
+                    let source_offset_ticks = if target == Target::LeftTrim {
+                        let old_offset_samples = self
+                            .project
+                            .midi_source_offset_samples(
+                                item.start_tick(),
+                                item.source_offset_ticks(),
+                            )
+                            .map_err(|error| error.to_string())?;
+                        let next_offset_samples = old_offset_samples + delta_samples_f64;
+                        if !next_offset_samples.is_finite() || next_offset_samples < 0.0 {
+                            return Err(
+                                "MIDI left trim is outside the supported source range".to_owned()
+                            );
+                        }
+                        if item.is_loop_source() {
+                            self.project
+                                .midi_source_phase_at_offset_samples(
+                                    next_start_tick,
+                                    item.source_loop_length_ticks(),
+                                    next_offset_samples,
+                                )
+                                .map_err(|error| error.to_string())?
+                        } else {
+                            self.project
+                                .midi_source_offset_ticks_at_samples(
+                                    next_start_tick,
+                                    next_offset_samples,
+                                )
+                                .map_err(|error| error.to_string())?
+                        }
+                    } else {
+                        item.source_offset_ticks()
+                    };
+                    (next_start_tick, next_length_ticks, source_offset_ticks)
+                }
+                Target::EndPosition => {
+                    let next_start_sample = shifted_sample(start_sample, delta_samples)
+                        .ok_or_else(|| {
+                            "Selected items cannot move beyond the sample timeline".to_owned()
+                        })?;
+                    let next_start_tick = self
+                        .project
+                        .tick_at_sample(next_start_sample)
+                        .map_err(|error| error.to_string())?;
+                    (
+                        next_start_tick,
+                        item.length_ticks(),
+                        item.source_offset_ticks(),
+                    )
+                }
+                Target::RightTrim => {
+                    let next_end_sample =
+                        shifted_sample(end_sample, delta_samples).ok_or_else(|| {
+                            "MIDI right trim is outside the supported timeline".to_owned()
+                        })?;
+                    let next_end_tick = self
+                        .project
+                        .tick_at_sample(next_end_sample)
+                        .map_err(|error| error.to_string())?;
+                    let next_length_ticks = next_end_tick
+                        .checked_sub(item.start_tick())
+                        .filter(|length| *length > 0)
+                        .ok_or_else(|| "Right trim would remove the entire MIDI item".to_owned())?;
+                    (
+                        item.start_tick(),
+                        next_length_ticks,
+                        item.source_offset_ticks(),
+                    )
+                }
+                _ => return Err("Selected target is not a MIDI item edge".to_owned()),
+            };
+            if next_start_tick != item.start_tick()
+                || next_length_ticks != item.length_ticks()
+                || next_source_offset_ticks != item.source_offset_ticks()
+            {
+                actions.push(DawAction::EditMidiItemPlacement {
+                    item_id: item.id(),
+                    start_tick: next_start_tick,
+                    length_ticks: next_length_ticks,
+                    source_offset_ticks: next_source_offset_ticks,
+                });
+            }
+        }
+        Ok(actions)
+    }
+
+    fn selected_item_end_sample(&self, item_id: ItemId) -> Result<u64, String> {
+        if let Some(item) = self
+            .project
+            .audio_items()
+            .iter()
+            .find(|item| item.id() == item_id)
+        {
+            return item
+                .start_sample()
+                .checked_add(item.length_samples())
+                .ok_or_else(|| "Selected item edge is outside the supported timeline".to_owned());
+        }
+        let item = self
+            .project
+            .midi_items()
+            .iter()
+            .find(|item| item.id() == item_id)
+            .ok_or_else(|| "Selected item is unavailable".to_owned())?;
+        let end_tick = item
+            .start_tick()
+            .checked_add(item.length_ticks())
+            .ok_or_else(|| {
+                "Selected MIDI item edge is outside the supported timeline".to_owned()
+            })?;
+        self.project
+            .sample_at_tick(end_tick)
+            .map_err(|error| error.to_string())
     }
 
     fn apply_set_contents(&mut self) {
@@ -1588,6 +1936,13 @@ impl App {
         selected.sort_by_key(|(_, sample)| *sample);
         Ok(selected)
     }
+}
+
+fn target_supports_relative_set(target: Target) -> bool {
+    matches!(
+        target,
+        Target::Position | Target::EndPosition | Target::Duplicate | Target::EditCursor
+    )
 }
 
 fn wrapped_source_sample(current: u64, start: u64, length: u64, delta: i128) -> Option<u64> {

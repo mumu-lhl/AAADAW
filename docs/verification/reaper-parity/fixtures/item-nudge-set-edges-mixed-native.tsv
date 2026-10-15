@@ -1,0 +1,15 @@
+version	7.82/linux-x86_64
+theme	Default_7.0.ReaperThemeZip
+fixture	selected loop-source Audio and MIDI items at 2.000s; both 10.000s; MIDI note 960-1920 PPQ
+before	state_change_count	3	item_count	2	undo_label	Set mixed edge targets probe setup
+before_item	0	type	audio	position_s	2.000000000	length_s	10.000000000	loop_source	1	source_offset_s	0.000000000	selected	1	notes	none
+before_item	1	type	midi	position_s	2.000000000	length_s	10.000000000	loop_source	1	source_offset_s	0.000000000	selected	1	notes	0,0,0,960.000,1920.000,0,60,96
+left_trim	state_change_count	4	item_count	2	undo_label	Nudge items
+left_trim_item	0	type	audio	position_s	4.000000000	length_s	8.000000000	loop_source	1	source_offset_s	2.000000000	selected	1	notes	none
+left_trim_item	1	type	midi	position_s	4.000000000	length_s	8.000000000	loop_source	1	source_offset_s	2.000000000	selected	1	notes	0,0,0,960.000,1920.000,0,60,96
+undo	state_change_count	5	item_count	2	undo_label	Set mixed edge targets probe setup
+undo_item	0	type	audio	position_s	2.000000000	length_s	10.000000000	loop_source	1	source_offset_s	0.000000000	selected	1	notes	none
+undo_item	1	type	midi	position_s	2.000000000	length_s	10.000000000	loop_source	1	source_offset_s	0.000000000	selected	1	notes	0,0,0,960.000,1920.000,0,60,96
+redo	state_change_count	6	item_count	2	undo_label	Nudge items
+redo_item	0	type	audio	position_s	4.000000000	length_s	8.000000000	loop_source	1	source_offset_s	2.000000000	selected	1	notes	none
+redo_item	1	type	midi	position_s	4.000000000	length_s	8.000000000	loop_source	1	source_offset_s	2.000000000	selected	1	notes	0,0,0,960.000,1920.000,0,60,96
