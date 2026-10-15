@@ -746,6 +746,33 @@ fn item_nudge_contents_wraps_looped_midi_offsets_and_undoes_atomically() {
 }
 
 #[test]
+fn item_nudge_midi_contents_matches_reaper_when_snap_to_unit_is_enabled() {
+    use super::item_nudge::Target;
+
+    let mut app = App::default();
+    let _ = app.update(Message::AddTrack);
+    let midi_track = app.project.tracks()[0].id();
+    app.project
+        .apply(DawAction::InsertMidiItem {
+            track_id: midi_track,
+            start_tick: 0,
+            length_ticks: 9_600,
+        })
+        .unwrap();
+    let midi_id = app.project.midi_items()[0].id();
+    app.timeline.rebuild(&app.project);
+    app.timeline.select_items(vec![(midi_id, midi_track)]);
+    let _ = app.update(Message::ItemNudgeTargetChanged(Target::Contents));
+    let _ = app.update(Message::ItemNudgeSnapToUnitChanged(true));
+    let _ = app.update(Message::ItemNudgeValueChanged("250".to_owned()));
+
+    let _ = app.update(Message::NudgeSelectedItems(1));
+
+    assert_eq!(app.project.midi_items()[0].source_offset_ticks(), 9_120);
+    assert!(app.item_nudge_dialog.error.is_none());
+}
+
+#[test]
 fn item_nudge_midi_contents_converts_time_using_the_item_tempo_map_position() {
     use super::item_nudge::Target;
 

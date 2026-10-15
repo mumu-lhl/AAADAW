@@ -276,14 +276,7 @@ impl App {
                         }
                     }
                     Target::Contents => {
-                        if self.item_nudge_dialog.snap_to_unit {
-                            self.item_nudge_dialog.error = Some(
-                                "Snap to unit is not supported for the contents target yet"
-                                    .to_owned(),
-                            );
-                        } else {
-                            self.nudge_selected_contents(signed_delta);
-                        }
+                        self.nudge_selected_contents(signed_delta);
                     }
                     Target::EditCursor => unreachable!("edit cursor target handled above"),
                 }

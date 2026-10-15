@@ -8,7 +8,7 @@
 | 调研提交 | `8cff888a44b67590f0969a3ece82d4ad9e9e0dba` |
 | 唯一开发分支 | `feat/reaper-parity` |
 | 唯一 PR | [#282](https://github.com/mumu-lhl/AAADAW/pull/282)，Draft；后续阶段只更新此 PR |
-| 当前交付 | 唯一开发分支与 Draft PR #282 持续推进；P4 已提交 Contents Nudge 的原厂边界与 EOF 静音证据，并已接入 schema 49 有符号 source offset、负偏移 pre-roll/seek、持久化、属性编辑与波形显示；已有 P10 纵向切片覆盖 Project Settings Notes、General BPM/拍号/采样率、有符号 Start measure、BPM basis、标尺间隔锚点、Project start time 显示偏移、受支持字段的默认工程设置保存、64-tap sinc 播放、192-tap sinc 离线渲染、Entire project/Time selection/Custom time range/All project regions/All project markers 范围、默认关闭的毫秒尾音控制、Project/常用预设输出采样率转换、Mono/Stereo WAV、PCM8/16/24/32、Float32/64、4-bit IMA ADPCM、2-bit cADPCM 与 8-bit u-Law、可选 sample-peak 归一化（−60 至 0 dBFS）、Selected tracks (stems)、pre-fader stems、Selected tracks via master 与 Master mix and stems；另有 Project Marker 稳定身份/可见编号、schema36 保存/迁移、插入/导航/删除/快捷动作/拖动/属性编辑；Loop Ruler 已补充 Shift 整段移动/Snap、底栏建点、项目级 Loop/Time Selection 保存恢复、全局 link 偏好持久化、Action List link on/off 状态与 40632/40633 范围导航；cADPCM 编码、Repeat 播放、其他 P4/P6 和完整原厂验收仍未完成 |
+| 当前交付 | 唯一开发分支与 Draft PR #282 持续推进；P4 已提交 Contents Nudge 的原厂边界与 EOF 静音证据，并已接入 schema 49 有符号 source offset、负偏移 pre-roll/seek、持久化、属性编辑与波形显示；looped MIDI Contents Nudge 已贯穿 source-loop 模型，Snap 开/关一致性已按原厂 probe 修正；已有 P10 纵向切片覆盖 Project Settings Notes、General BPM/拍号/采样率、有符号 Start measure、BPM basis、标尺间隔锚点、Project start time 显示偏移、受支持字段的默认工程设置保存、64-tap sinc 播放、192-tap sinc 离线渲染、Entire project/Time selection/Custom time range/All project regions/All project markers 范围、默认关闭的毫秒尾音控制、Project/常用预设输出采样率转换、Mono/Stereo WAV、PCM8/16/24/32、Float32/64、4-bit IMA ADPCM、2-bit cADPCM 与 8-bit u-Law、可选 sample-peak 归一化（−60 至 0 dBFS）、Selected tracks (stems)、pre-fader stems、Selected tracks via master 与 Master mix and stems；另有 Project Marker 稳定身份/可见编号、schema36 保存/迁移、插入/导航/删除/快捷动作/拖动/属性编辑；Loop Ruler 已补充 Shift 整段移动/Snap、底栏建点、项目级 Loop/Time Selection 保存恢复、全局 link 偏好持久化、Action List link on/off 状态与 40632/40633 范围导航；cADPCM 编码、Repeat 播放、其他 P4/P6 和完整原厂验收仍未完成 |
 | 产品覆盖率 | 尚不可计算：P0 原子清单未封闭 |
 
 ## 阶段
@@ -20,7 +20,7 @@
 | P1 | 进行中 | [快捷键基础能力](../verification/reaper-parity/keyboard-foundation.md)；Action List Filter 与轨道名焦点的首批原厂键盘行为已核验并纳入回归；Section、完整 Action List、数字键盘/物理键和事务仍待推进 |
 | P2 | 进行中 | Desktop/Touch profile 已分离；Arrange/Mixer/Media Browser 同时显示、独立分割比例及布局持久化；浮动 Docker 等仍待开发 |
 | P3 | 进行中 | 普通轨道输出目标、接收路径 Solo、默认 0 dB 声像与旧工程策略迁移；并行 Post-fader Send/Receive 基础已实现；三种 Tap、嵌套文件夹/Parent Send 与压缩基础已实现；通道/MIDI 等仍待开发 |
-| P4 | 进行中 | Item 手动淡化曲线及工程/DSP 基础；Item Nudge/Set 已覆盖多目标、Duplicate 与 Audio/MIDI Contents；schema 50 signed section-relative audio source offset 已跨 Core/Storage/Media/UI 接入，schema 51 MIDI source loop length 与重复事件已接入 Core/Storage/playback/timeline preview/export；MIDI Editor 钢琴卷帘/CC/Pitch Bend 循环实例显示、命中与源事件编辑已有回归和原厂/AAADAW实窗截图；source-loop 控件、tempo-map 原厂转换、混合媒体和 Snap/Set/完整 Undo 仍待补；Project Marker 插入/导航/删除/编号动作/可见性/标尺选择拖动/属性窗/基础 Manager，以及 Project Region 数据、可见性、时间选择插入、Manager 属性和基础时间尺显示已接入；LoopPoints 独立状态/链接动作、Action List on/off 状态、40632/40633 Loop 边界导航、Ruler 手势、项目级范围与全局 link 偏好保存恢复已接入；播放中 play cursor、Repeat、Region 原厂交互、tempo/timebase、GUI 边界与自动 Crossfade 待推进 |
+| P4 | 进行中 | Item 手动淡化曲线及工程/DSP 基础；Item Nudge/Set 已覆盖多目标、Duplicate 与 Audio/MIDI Contents；schema 50 signed section-relative audio source offset 已跨 Core/Storage/Media/UI 接入，schema 51 MIDI source loop length 与重复事件已接入 Core/Storage/playback/timeline preview/export；looped MIDI Contents Nudge 与 Snap 开/关对齐原厂 probe；MIDI Editor 钢琴卷帘/CC/Pitch Bend 循环实例显示、命中与源事件编辑已有回归和原厂/AAADAW实窗截图；source-loop 控件、tempo-map 原厂转换、混合媒体、其他 Target 的 Snap/Set 与完整 Undo 仍待补；Project Marker 插入/导航/删除/编号动作/可见性/标尺选择拖动/属性窗/基础 Manager，以及 Project Region 数据、可见性、时间选择插入、Manager 属性和基础时间尺显示已接入；LoopPoints 独立状态/链接动作、Action List on/off 状态、40632/40633 Loop 边界导航、Ruler 手势、项目级范围与全局 link 偏好保存恢复已接入；播放中 play cursor、Repeat、Region 原厂交互、tempo/timebase、GUI 边界与自动 Crossfade 待推进 |
 | P5 | 未开始 | 高级编辑与 Take/Comp |
 | P6 | 进行中 | 工厂 Play/Stop 与 Play/Pause 已分离；Repeat、完整状态与录音/设备行为待实现/实测 |
 | P7 | 未开始 | MIDI |
@@ -1086,3 +1086,9 @@ Arrangement 原先在 TimelineCache 中按 source note 顺序展开循环，并�
 回归覆盖非零 source offset 下第 1,000 圈末端的实例、512 矩形上限的横向覆盖、trimmed 源事件保留与常规几何映射。AAADAW 桌面测试 581/581、Timeline 测试 79/79；App all-target Clippy `-D warnings`、fmt 与 diff 检查通过。验证细节见[Arrangement MIDI 循环预览](../verification/reaper-parity/arrangement-midi-loop-preview.md)。该功能状态截图及 Linux REAPER 7.82 原厂视图对照仍待采集，Arrangement parity 和 P4 不关闭。
 
 本轮也解决了新桌面版无法启动的问题：当前会话 `DISPLAY` 未设置且 PATH 没有系统 Xvfb，直接依赖旧显示会话无法创建窗口。重建/烟测脚本从隔离 REAPER 运行包找到 `/tmp/aaadaw-reaper-782/root/usr/bin/Xvfb`，在新建 :90 显示实际启动 Build ID `b8b2910869dbd19460c75f02f1d4a93f59b6f218` 的 1280×800 主窗口；SHA 与启动截图哈希见[桌面运行验证](../verification/reaper-parity/desktop-runtime.md)。不需要安装系统包，也不依赖已有 `DISPLAY`。
+
+### 2026-10-15 MIDI Contents Nudge 的 Snap 复选框对齐
+
+REAPER 7.82 的 MIDI Contents Nudge 原厂探针已在 Snap 开/关两种状态下得到相同偏移值。AAADAW 原先在 Snap 开启时直接拒绝 Contents 目标；现在会执行已实现的 looped MIDI source-offset 换算，复选框不改变该目标的 250 ms 结果。新增 app 回归覆盖 Snap 开启时从 0 PPQ 偏移绕到 9120 PPQ，Tempo Map 转换及 Undo 原有测试仍通过。混合 Audio/MIDI 选择、非循环 MIDI source、Tempo Map 原厂变速对照、source-loop 控件和 Undo 原厂语义仍未完成。
+
+最终 AAADAW 桌面套件 582/582、app all-target Clippy `-D warnings`、fmt/diff 检查通过。更新后的二进制 Build ID `5329ead90fcafe5b0426866078764d5ddcd17391`、SHA-256 `45c905a61634564c1cd66621abf9752207970e43e6d97acf78bc8c7e2e933e5e` 在隔离 Xvfb :90 显示真实 1280×800 主窗口，启动截图哈希与 fixture 相同；本次没有截取 Nudge 对话框功能状态图。原厂数值、功能范围和界限见[MIDI Contents Nudge 验证](../verification/reaper-parity/item-nudge-midi-contents.md)及[桌面运行记录](../verification/reaper-parity/desktop-runtime.md)。`ITEM-NUDGE-SET-001`、P4 与唯一 PR #282 继续 `in_progress`。
