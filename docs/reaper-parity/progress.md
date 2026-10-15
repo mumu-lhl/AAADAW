@@ -20,7 +20,7 @@
 | P1 | 进行中 | [快捷键基础能力](../verification/reaper-parity/keyboard-foundation.md)；Action List Filter 与轨道名焦点的首批原厂键盘行为已核验并纳入回归；Section、完整 Action List、数字键盘/物理键和事务仍待推进 |
 | P2 | 进行中 | Desktop/Touch profile 已分离；Arrange/Mixer/Media Browser 同时显示、独立分割比例及布局持久化；浮动 Docker 等仍待开发 |
 | P3 | 进行中 | 普通轨道输出目标、接收路径 Solo、默认 0 dB 声像与旧工程策略迁移；并行 Post-fader Send/Receive 基础已实现；三种 Tap、嵌套文件夹/Parent Send 与压缩基础已实现；通道/MIDI 等仍待开发 |
-| P4 | 进行中 | Item 手动淡化曲线及工程/DSP 基础；Item Nudge/Set 已覆盖多目标、Duplicate 与 Audio/MIDI Contents；schema 50 signed section-relative audio source offset 已跨 Core/Storage/Media/UI 接入，schema 51 MIDI source loop length 与重复事件已接入 Core/Storage/playback/timeline preview/export；MIDI Editor 循环事件显示编辑、source-loop 控件、tempo-map 原厂转换、混合媒体和 Snap/Set/完整 Undo 仍待补；Project Marker 插入/导航/删除/编号动作/可见性/标尺选择拖动/属性窗/基础 Manager，以及 Project Region 数据、可见性、时间选择插入、Manager 属性和基础时间尺显示已接入；LoopPoints 独立状态/链接动作、Action List on/off 状态、40632/40633 Loop 边界导航、Ruler 手势、项目级范围与全局 link 偏好保存恢复已接入；播放中 play cursor、Repeat、Region 原厂交互、tempo/timebase、GUI 边界与自动 Crossfade 待推进 |
+| P4 | 进行中 | Item 手动淡化曲线及工程/DSP 基础；Item Nudge/Set 已覆盖多目标、Duplicate 与 Audio/MIDI Contents；schema 50 signed section-relative audio source offset 已跨 Core/Storage/Media/UI 接入，schema 51 MIDI source loop length 与重复事件已接入 Core/Storage/playback/timeline preview/export；MIDI Editor 钢琴卷帘/CC/Pitch Bend 循环实例显示、命中与源事件编辑已有回归和原厂/AAADAW实窗截图；source-loop 控件、tempo-map 原厂转换、混合媒体和 Snap/Set/完整 Undo 仍待补；Project Marker 插入/导航/删除/编号动作/可见性/标尺选择拖动/属性窗/基础 Manager，以及 Project Region 数据、可见性、时间选择插入、Manager 属性和基础时间尺显示已接入；LoopPoints 独立状态/链接动作、Action List on/off 状态、40632/40633 Loop 边界导航、Ruler 手势、项目级范围与全局 link 偏好保存恢复已接入；播放中 play cursor、Repeat、Region 原厂交互、tempo/timebase、GUI 边界与自动 Crossfade 待推进 |
 | P5 | 未开始 | 高级编辑与 Take/Comp |
 | P6 | 进行中 | 工厂 Play/Stop 与 Play/Pause 已分离；Repeat、完整状态与录音/设备行为待实现/实测 |
 | P7 | 未开始 | MIDI |
@@ -1065,3 +1065,16 @@ Core 现在提供无分配的 source-event loop occurrence iterator；离线/实
 定向回归：Core loop mapping 与 MIDI export 9/9、Storage loop/migration 10/10、Engine MIDI schedule 15/15、新的 Tempo Map app 回归 1/1；严格 all-target Clippy `-D warnings`、fmt、diff 检查通过。Linux desktop 使用新建的 [`build-and-smoke-aaadaw-desktop.sh`](../../scripts/reaper_parity/build-and-smoke-aaadaw-desktop.sh) 重建并在 Xvfb 运行，实际主窗口 1280×800；SHA 与启动 fixture 相同。为避免窄磁盘工作区在 GUI 二进制重链接时失败，该脚本对最终桌面可执行文件剥离 DWARF，并仅在可用空间低于 1 GiB 时清理 AAADAW 自身增量缓存与失败链接临时对象；Rust 依赖 debug 信息和运行代码生成保持不变。新二进制和截图哈希见[桌面运行验证](../verification/reaper-parity/desktop-runtime.md)。该启动截图不覆盖 Nudge 功能控件。
 
 `ITEM-NUDGE-SET-001` 继续 `in_progress`：MIDI Editor 仍按未循环源坐标渲染/编辑；REAPER 变速工程换算对照、Undo 语义、mixed-media、Snap/Set、循环源 UI、bounded MIDI source 和全部目标截图仍待完成；不能把此纵向数据/播放/导出切片视为 Nudge 或 P7 完成。
+
+
+### 2026-10-15 MIDI Editor loop-source 实例显示与源事件编辑
+
+提交：`d3781a44b2c4c21f77ae1b3255ac7dc90e0b30e2`（`feat(midi-editor): edit looped source occurrences`）。
+
+Linux REAPER 7.82 / Default 7 原厂探针确认：5 秒 MIDI source、10 秒 item、4.75 秒 source offset 下，MIDI Editor 显示 source note 在 clip-relative 0.75、2.75、5.75、7.75 秒的实例；脚本、TSV 和原厂截图见 [loop-source 验证](../verification/reaper-parity/midi-editor-loop-source.md)。AAADAW 实窗创建 4 拍 MIDI item、加入 C4、延长到 12 拍并打开 Piano roll，实际 1000×620 窗口截图显示同一音符在连续三个循环中出现。
+
+钢琴卷帘绘制、选择、命中和拖动预览按可见 source loop occurrence 处理，操作仍指向共享源事件；新音符写入折回 loop-relative PPQ 并在循环接缝限长。CC 与 Pitch Bend lane 同样显示/命中重复实例，并将写入归一化为源刻度。Core note/controller/pitch-bend/quantize 校验改用 loop-source bounds，量化按 item position 映射回 source clock。
+
+Core 全包测试 130/130（39 suites），AAADAW 桌面测试 579/579；其中 source-loop/controller/pitch-bend/quantize 回归 11 项、wrapped-offset MIDI Editor 测试 1/1、lane 回归 16/16。Core/AAADAW all-target Clippy `-D warnings`、cargo check、fmt/diff 通过。最终桌面构建 Build ID `108001ad22857fcc7f5ce81960203f5ec333c693`、SHA-256 `929def7e6e1d7835a25c89a726af78969f3f328a7d9f9f118a2fd80b69247401` 在 Xvfb :90 启动，实际 MIDI Editor 截图来自同一构建，完整哈希见验证文档。
+
+循环实例显示/源事件基本编辑切片完成；截图采用零 source offset，非零偏移由 REAPER 实窗和 AAADAW 定向回归覆盖。用户可见的 loop/source-length 控件、MIDI Editor 全部手势/菜单的原厂对照、Contents Nudge 变速换算和 Undo 对齐仍未完成。`ITEM-NUDGE-SET-001`、P4、P7 与唯一 PR #282 继续 `in_progress`。
