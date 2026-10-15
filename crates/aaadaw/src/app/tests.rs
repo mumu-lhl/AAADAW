@@ -3,8 +3,6 @@ use super::StereoPeakHold;
 use super::commands::{self, CommandId, TrackCommand};
 use super::fader;
 use super::messages::SharedProjectSessionLock;
-#[cfg(feature = "audio-device")]
-use super::prepare_project_playback_file;
 use super::project_io::{
     load_project_file, load_project_session, save_project_file,
     save_project_session_file_with_media,
@@ -18,6 +16,8 @@ use super::{
     midi_editor_shortcut_event, midi_expression_context_menu_event, mobile_back_event,
     shortcut_message,
 };
+#[cfg(feature = "audio-device")]
+use super::{prepare_project_playback_file, prepare_project_playback_file_with_loop_points};
 use crate::timeline::{SnapGrid, TimelineEvent};
 #[cfg(all(feature = "jack-backend", feature = "pipewire-backend"))]
 use aaadaw_app::PlaybackBackend;
@@ -72,8 +72,10 @@ fn mobile_midi_editor_uses_main_window_and_back_returns_to_arrangement() {
 #[test]
 #[cfg(feature = "audio-device")]
 fn transport_details_can_open_while_playback_is_preparing() {
-    let mut app = App::default();
-    app.playback_busy = true;
+    let mut app = App {
+        playback_busy: true,
+        ..App::default()
+    };
 
     let _ = app.update(Message::ToggleTransportDetails);
 
@@ -5042,6 +5044,34 @@ fn toggling_loop_time_link_schedules_global_save_without_dirtying_project() {
     assert_eq!(app.revision, revision);
     assert_eq!(app.timeline.time_selection, None);
     assert_eq!(app.timeline.loop_points, None);
+}
+
+#[cfg(feature = "audio-device")]
+#[test]
+fn repeat_action_uses_reaper_default_key_and_toggles_transport_state() {
+    let mut app = App::default();
+    let command = commands::find(&app, "toggle repeat").expect("repeat action should exist");
+    assert_eq!(
+        commands::stable_id(command).as_deref(),
+        Some("transport.toggle-repeat")
+    );
+    assert_eq!(commands::toggle_state(&app, command), Some(false));
+    app.action_list.set_query("toggle repeat".to_owned());
+    let entry = app
+        .action_list_entries()
+        .into_iter()
+        .find(|entry| entry.id == command)
+        .expect("repeat action should appear in Action List");
+    assert_eq!(entry.shortcut.as_deref(), Some("R"));
+
+    let revision = app.revision;
+    let _ = app.update(Message::ExecuteCommand(command));
+    assert!(app.repeat_enabled);
+    assert_eq!(commands::toggle_state(&app, command), Some(true));
+    let _ = app.update(Message::ExecuteCommand(command));
+    assert!(!app.repeat_enabled);
+    assert_eq!(commands::toggle_state(&app, command), Some(false));
+    assert_eq!(app.revision, revision);
 }
 
 #[test]
@@ -10672,6 +10702,40 @@ fn jack_feature_prepares_offline_graph_without_opening_device() {
     let prepared = prepare_project_playback_file(path.clone(), Project::new().snapshot(), 0)
         .expect("empty project should prepare without a JACK device");
     assert_eq!(prepared.feeder_count(), 0);
+    drop(prepared);
+
+    let _ = std::fs::remove_file(&path);
+    for suffix in ["-wal", "-shm"] {
+        let sidecar = format!("{}{suffix}", path.display());
+        let _ = std::fs::remove_file(sidecar);
+    }
+}
+
+#[cfg(feature = "audio-device")]
+#[test]
+fn repeat_loop_ticks_are_converted_through_the_project_tempo_map() {
+    let file_id = NEXT_TEST_FILE.fetch_add(1, Ordering::Relaxed);
+    let path = std::env::temp_dir().join(format!(
+        "aaadaw-ui-loop-playback-{}-{file_id}.aaadaw",
+        std::process::id()
+    ));
+    let store = ProjectStore::open(&path).expect("empty project store should open");
+    store.close().expect("empty project store should close");
+
+    let project = Project::new();
+    let start_sample = project.sample_at_tick(960).unwrap();
+    let end_sample = project.sample_at_tick(1_920).unwrap();
+    let mut prepared = prepare_project_playback_file_with_loop_points(
+        path.clone(),
+        project.snapshot(),
+        start_sample,
+        Some((960, 1_920)),
+    )
+    .expect("loop points should prepare with the project tempo map");
+    assert_eq!(
+        prepared.graph_mut().transport_mut().loop_range(),
+        aaadaw_engine::TransportLoopRange::new(start_sample, end_sample)
+    );
     drop(prepared);
 
     let _ = std::fs::remove_file(&path);

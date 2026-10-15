@@ -11,7 +11,7 @@ use aaadaw_app::{AudioCaptureControl, AudioRecordingWorker, RunningAudioInput};
 #[cfg(feature = "audio-device")]
 use aaadaw_app::{
     PlaybackBackend, PlaybackBuildError, PreparedAudioPlayback, RunningAudioPlayback,
-    prepare_audio_playback_at,
+    prepare_audio_playback_at_with_loop_range,
 };
 #[cfg(feature = "audio-device")]
 use aaadaw_core::ProjectSnapshot;
@@ -22,7 +22,7 @@ use aaadaw_core::{
 #[cfg(feature = "audio-device")]
 use aaadaw_engine::{
     ClapEffectOwner, ClapInstrumentHelperProcess, ClapInstrumentOwner,
-    ClapParameterAutomationReceiver, ClapParameterSender,
+    ClapParameterAutomationReceiver, ClapParameterSender, TransportLoopRange,
 };
 use aaadaw_engine::{ClapParameterInfo, ClapPluginGuiOwner};
 use aaadaw_media::AudioWaveform;
@@ -505,6 +505,10 @@ struct App {
     offline_job_history: VecDeque<String>,
     offline_jobs_panel_open: bool,
     transport_details_open: bool,
+    #[cfg(feature = "audio-device")]
+    repeat_enabled: bool,
+    #[cfg(feature = "audio-device")]
+    repeat_reconfiguration_previous: Option<(bool, bool)>,
     wav_export_options: WavExportOptions,
     render_dialog: audio_export::RenderDialogState,
     offline_render_cancel: Option<Arc<AtomicBool>>,
@@ -910,7 +914,7 @@ struct PendingRecordingCleanup {
 #[derive(Clone)]
 pub(super) struct SharedRecordingStart(Arc<Mutex<Option<Result<ActiveRecording, String>>>>);
 
-#[cfg(feature = "audio-device")]
+#[cfg(all(feature = "audio-device", target_os = "android"))]
 #[derive(Clone)]
 pub(super) struct SharedRecordingInputRecovery(
     Arc<Mutex<Option<Result<RunningAudioInput, String>>>>,
@@ -936,7 +940,7 @@ impl std::fmt::Debug for SharedRecordingStart {
     }
 }
 
-#[cfg(feature = "audio-device")]
+#[cfg(all(feature = "audio-device", target_os = "android"))]
 impl std::fmt::Debug for SharedRecordingInputRecovery {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter.write_str("SharedRecordingInputRecovery(..)")
@@ -4257,7 +4261,26 @@ impl App {
                     app.handle_timeline_view_event(timeline::TimelineEvent::SelectHoveredItem(mode))
                 });
             }
-            Message::Timeline(event) => self.handle_timeline_view_event(event),
+            Message::Timeline(event) => {
+                #[cfg(feature = "audio-device")]
+                let previous_loop_points = self.timeline.loop_points;
+                self.handle_timeline_view_event(event);
+                #[cfg(feature = "audio-device")]
+                if previous_loop_points != self.timeline.loop_points
+                    && self.repeat_enabled
+                    && self.playback.is_some()
+                    && !self.playback_busy
+                {
+                    self.repeat_reconfiguration_previous = Some((self.repeat_enabled, true));
+                    self.playback_graph_dirty = true;
+                    task = self.prepare_playback(self.playhead_sample, self.playback_playing);
+                    if !self.playback_busy {
+                        self.restore_repeat_after_failed_reconfiguration(
+                            "updated loop points could not be prepared",
+                        );
+                    }
+                }
+            }
             Message::BeginTrackNameEdit(track_id) => task = self.begin_track_name_edit(track_id),
             Message::TcpScrolled { offset, height } => {
                 let offset_changed = (offset - self.timeline.vertical_scroll).abs() > 0.5;
@@ -4293,6 +4316,8 @@ impl App {
                     task = self.start_playback();
                 }
             }
+            #[cfg(feature = "audio-device")]
+            Message::ToggleRepeat => task = self.toggle_repeat(),
             Message::AddTrack => {
                 self.active_menu = None;
                 self.add_track();
@@ -5048,7 +5073,7 @@ impl App {
                     } else {
                         Task::none()
                     };
-                    let mut background_tasks = if recording_failed {
+                    let background_tasks = if recording_failed {
                         Task::batch([
                             self.stop_recording(),
                             self.update_audio_import(),
@@ -5061,12 +5086,11 @@ impl App {
                         ])
                     };
                     #[cfg(target_os = "android")]
-                    if !recording_failed {
-                        background_tasks = Task::batch([
-                            background_tasks,
-                            self.recover_recording_input_if_needed(),
-                        ]);
-                    }
+                    let background_tasks = if !recording_failed {
+                        Task::batch([background_tasks, self.recover_recording_input_if_needed()])
+                    } else {
+                        background_tasks
+                    };
                     task = Task::batch([cleanup_output, background_tasks]);
                 }
                 #[cfg(not(feature = "audio-device"))]
@@ -6814,6 +6838,46 @@ impl App {
     }
 
     #[cfg(feature = "audio-device")]
+    fn toggle_repeat(&mut self) -> Task<Message> {
+        if self.playback_busy || self.io_busy {
+            self.status = "Wait for current operation to finish before changing Repeat".to_owned();
+            return Task::none();
+        }
+        let previous = self.repeat_enabled;
+        self.repeat_enabled = !previous;
+        if self.playback.is_some() {
+            self.repeat_reconfiguration_previous = Some((previous, false));
+            let task = self.prepare_playback(self.playhead_sample, self.playback_playing);
+            if !self.playback_busy {
+                self.restore_repeat_after_failed_reconfiguration("playback could not be prepared");
+            }
+            task
+        } else {
+            self.status = if self.repeat_enabled {
+                "Repeat enabled".to_owned()
+            } else {
+                "Repeat disabled".to_owned()
+            };
+            Task::none()
+        }
+    }
+
+    #[cfg(feature = "audio-device")]
+    fn restore_repeat_after_failed_reconfiguration(&mut self, reason: &str) {
+        let Some((previous_enabled, loop_points_changed)) =
+            self.repeat_reconfiguration_previous.take()
+        else {
+            return;
+        };
+        if self.playback_playing {
+            self.pause_playback();
+        }
+        self.repeat_enabled = previous_enabled;
+        self.playback_graph_dirty = loop_points_changed;
+        self.status = format!("Repeat change was not applied; playback paused: {reason}");
+    }
+
+    #[cfg(feature = "audio-device")]
     fn start_playback(&mut self) -> Task<Message> {
         self.release_midi_preview();
         self.recording_cancelled_transport_start = false;
@@ -7046,13 +7110,24 @@ impl App {
             ));
         }
         let snapshot = self.project.snapshot();
+        let loop_points_ticks = self
+            .repeat_enabled
+            .then_some(self.timeline.loop_points)
+            .flatten()
+            .filter(|range| range.start_tick < range.end_tick)
+            .map(|range| (range.start_tick, range.end_tick));
         self.playback_busy = true;
         self.status = format!("Preparing playback at sample {target_sample}…");
         let result = Arc::new(Mutex::new(None));
         let message_result = Arc::clone(&result);
         Task::perform(
             run_blocking("aaadaw-playback-prepare", move || {
-                prepare_project_playback_file(path, snapshot, target_sample)
+                prepare_project_playback_file_with_loop_points(
+                    path,
+                    snapshot,
+                    target_sample,
+                    loop_points_ticks,
+                )
             }),
             move |prepared| {
                 *message_result
@@ -7081,6 +7156,7 @@ impl App {
         let mut prepared = match result {
             Some(Ok(prepared)) => prepared,
             Some(Err(error)) => {
+                self.restore_repeat_after_failed_reconfiguration(&error.to_string());
                 tracing::error!(error = %error, "playback preparation failed");
                 self.status = format!("Playback preparation failed: {error}");
                 return;
@@ -7095,6 +7171,7 @@ impl App {
         let instrument_owner_ids = match self.install_track_instrument_processors(&mut prepared) {
             Ok(ids) => ids,
             Err(error) => {
+                self.restore_repeat_after_failed_reconfiguration(&error.to_string());
                 tracing::error!(error = %error, "playback instrument preparation failed");
                 self.status = format!("Playback preparation failed: {error}");
                 return;
@@ -7104,6 +7181,7 @@ impl App {
         let fx_owner_ids = match self.install_track_fx_processors(&mut prepared) {
             Ok(ids) => ids,
             Err(error) => {
+                self.restore_repeat_after_failed_reconfiguration(&error.to_string());
                 tracing::error!(error = %error, "playback effect preparation failed");
                 drop(prepared);
                 let cleanup_error = self.discard_unused_instrument_owners(&instrument_owner_ids);
@@ -7137,6 +7215,7 @@ impl App {
             self.deactivate_stopped_effects(retired_effects);
             match result {
                 Ok(()) => {
+                    self.repeat_reconfiguration_previous = None;
                     self.playhead_sample = target_sample;
                     self.seek_sample_query = target_sample.to_string();
                     self.playback_graph_dirty = false;
@@ -7171,6 +7250,7 @@ impl App {
                     self.status = format!("Queued seek to sample {target_sample}");
                 }
                 Err(error) => {
+                    self.restore_repeat_after_failed_reconfiguration(&error.to_string());
                     let mut cleanup_error = self.discard_unused_effect_owners(&fx_owner_ids);
                     if let Some(instrument_error) =
                         self.discard_unused_instrument_owners(&instrument_owner_ids)
@@ -12064,18 +12144,49 @@ fn finish_cpal_device_enumeration<T>(
 }
 
 #[cfg(feature = "audio-device")]
+#[cfg(test)]
 fn prepare_project_playback_file(
     path: PathBuf,
     snapshot: ProjectSnapshot,
     target_sample: u64,
+) -> Result<PreparedAudioPlayback, String> {
+    prepare_project_playback_file_with_loop_points(path, snapshot, target_sample, None)
+}
+
+#[cfg(feature = "audio-device")]
+fn prepare_project_playback_file_with_loop_points(
+    path: PathBuf,
+    snapshot: ProjectSnapshot,
+    target_sample: u64,
+    loop_points_ticks: Option<(u64, u64)>,
 ) -> Result<PreparedAudioPlayback, String> {
     if !path.is_file() {
         return Err(format!("project file {} does not exist", path.display()));
     }
     let project = Project::from_snapshot(snapshot).map_err(|error| error.to_string())?;
     let store = ProjectStore::open(path).map_err(|error| error.to_string())?;
-    let prepared = prepare_audio_playback_at(&project, &store, target_sample, 16_384, 8_192)
-        .map_err(|error: PlaybackBuildError| error.to_string());
+    let transport_loop_range = loop_points_ticks
+        .map(|(start_tick, end_tick)| {
+            let start_sample = project
+                .sample_at_tick(start_tick)
+                .map_err(|error| error.to_string())?;
+            let end_sample = project
+                .sample_at_tick(end_tick)
+                .map_err(|error| error.to_string())?;
+            Ok::<_, String>(TransportLoopRange::new(start_sample, end_sample))
+        })
+        .transpose()?
+        .flatten();
+    let prepared = prepare_audio_playback_at_with_loop_range(
+        &project,
+        &store,
+        target_sample,
+        transport_loop_range,
+        16_384,
+        8_192,
+        aaadaw_media::ResamplingQuality::Sinc64,
+    )
+    .map_err(|error: PlaybackBuildError| error.to_string());
     let close = store.close().map_err(|error| error.to_string());
     let prepared = prepared?;
     close?;

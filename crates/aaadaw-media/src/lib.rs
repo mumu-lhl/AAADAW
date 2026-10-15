@@ -25,9 +25,11 @@ pub use stream::{
     spawn_cached_stereo_audio_item_stream_with_quality, spawn_mono_stream,
     spawn_stereo_audio_item_stream, spawn_stereo_audio_item_stream_at,
     spawn_stereo_audio_item_stream_at_with_quality,
-    spawn_stereo_audio_item_stream_for_transport_loop, spawn_stereo_audio_item_stream_from_reader,
-    spawn_stereo_audio_item_stream_from_reader_at,
+    spawn_stereo_audio_item_stream_for_transport_loop,
+    spawn_stereo_audio_item_stream_for_transport_loop_at,
+    spawn_stereo_audio_item_stream_from_reader, spawn_stereo_audio_item_stream_from_reader_at,
     spawn_stereo_audio_item_stream_from_reader_at_with_quality,
+    spawn_stereo_audio_item_stream_from_reader_for_transport_loop,
     spawn_stereo_audio_item_stream_from_reader_with_quality,
     spawn_stereo_audio_item_stream_with_quality,
 };

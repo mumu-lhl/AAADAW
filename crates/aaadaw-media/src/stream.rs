@@ -180,6 +180,79 @@ pub fn spawn_stereo_audio_item_stream_for_transport_loop(
     output_sample_rate: u32,
     producer: StereoPcmStreamProducer,
 ) -> Result<AudioFeedWorker, MediaError> {
+    spawn_stereo_audio_item_stream_for_transport_loop_at(
+        item,
+        timeline_loop_range,
+        timeline_loop_range.start_sample(),
+        resolved_path,
+        output_sample_rate,
+        producer,
+    )
+}
+
+/// Feeds a matching stereo transport-loop item beginning at a sample inside the loop.
+pub fn spawn_stereo_audio_item_stream_for_transport_loop_at(
+    item: &AudioItem,
+    timeline_loop_range: TransportLoopRange,
+    timeline_sample: u64,
+    resolved_path: impl AsRef<Path>,
+    output_sample_rate: u32,
+    producer: StereoPcmStreamProducer,
+) -> Result<AudioFeedWorker, MediaError> {
+    let samples_to_skip = validate_transport_loop_item(item, timeline_loop_range, timeline_sample)?;
+    spawn_stereo_stream(
+        DecoderInput::Path(resolved_path.as_ref().to_owned()),
+        output_sample_rate,
+        item.source_offset_samples(),
+        None,
+        samples_to_skip,
+        AudioStreamPosition::new(timeline_sample),
+        producer,
+        ResamplingQuality::Sinc64,
+        source_loop_section(item),
+        Some(timeline_loop_range),
+    )
+}
+
+/// Feeds a seekable embedded source for an exact stereo transport-loop item.
+#[allow(clippy::too_many_arguments)]
+pub fn spawn_stereo_audio_item_stream_from_reader_for_transport_loop<R>(
+    item: &AudioItem,
+    timeline_loop_range: TransportLoopRange,
+    timeline_sample: u64,
+    reader: R,
+    byte_len: Option<u64>,
+    extension_hint: Option<&str>,
+    output_sample_rate: u32,
+    producer: StereoPcmStreamProducer,
+) -> Result<AudioFeedWorker, MediaError>
+where
+    R: Read + Seek + Send + Sync + 'static,
+{
+    let samples_to_skip = validate_transport_loop_item(item, timeline_loop_range, timeline_sample)?;
+    spawn_stereo_stream(
+        DecoderInput::Reader {
+            reader: SharedReadSeek::new(Box::new(reader)),
+            byte_len,
+            extension: extension_hint.map(str::to_owned),
+        },
+        output_sample_rate,
+        item.source_offset_samples(),
+        None,
+        samples_to_skip,
+        AudioStreamPosition::new(timeline_sample),
+        producer,
+        ResamplingQuality::Sinc64,
+        source_loop_section(item),
+        Some(timeline_loop_range),
+    )
+}
+
+fn validate_transport_loop_item(
+    item: &AudioItem,
+    timeline_loop_range: TransportLoopRange,
+    timeline_sample: u64,
+) -> Result<u64, MediaError> {
     let Some(item_end) = item.start_sample().checked_add(item.length_samples()) else {
         return Err(MediaError::InvalidTimelineLoop);
     };
@@ -189,21 +262,12 @@ pub fn spawn_stereo_audio_item_stream_for_transport_loop(
         || item.source_offset_samples() != 0
         || !item.is_loop_source()
         || item.source_section_length_samples() != Some(timeline_loop_range.length_samples())
+        || timeline_sample < timeline_loop_range.start_sample()
+        || timeline_sample >= timeline_loop_range.end_sample()
     {
         return Err(MediaError::InvalidTimelineLoop);
     }
-    spawn_stereo_stream(
-        DecoderInput::Path(resolved_path.as_ref().to_owned()),
-        output_sample_rate,
-        item.source_offset_samples(),
-        None,
-        0,
-        AudioStreamPosition::new(timeline_loop_range.start_sample()),
-        producer,
-        ResamplingQuality::Sinc64,
-        source_loop_section(item),
-        Some(timeline_loop_range),
-    )
+    Ok(timeline_sample - timeline_loop_range.start_sample())
 }
 
 /// Re-decodes a file-backed item and discards output before the requested timeline sample.

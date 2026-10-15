@@ -103,6 +103,8 @@ pub(crate) enum CommandId {
     #[cfg(feature = "audio-device")]
     TogglePlayback,
     #[cfg(feature = "audio-device")]
+    ToggleRepeat,
+    #[cfg(feature = "audio-device")]
     TogglePlayStop,
     #[cfg(feature = "audio-device")]
     StopPlayback,
@@ -229,6 +231,8 @@ enum CommandKind {
     Track(TrackCommand),
     #[cfg(feature = "audio-device")]
     TogglePlayback,
+    #[cfg(feature = "audio-device")]
+    ToggleRepeat,
     #[cfg(feature = "audio-device")]
     TogglePlayStop,
     #[cfg(feature = "audio-device")]
@@ -1548,6 +1552,17 @@ const COMMANDS: &[CommandDefinition] = &[
     },
     #[cfg(feature = "audio-device")]
     CommandDefinition {
+        kind: CommandKind::ToggleRepeat,
+        menu: None,
+        category: "Transport",
+        label: "Toggle repeat",
+        aliases: &["repeat", "toggle repeat on/off"],
+        shortcuts: &[Shortcut::character('r', Modifiers::empty())],
+        destructive: false,
+        separator_before: false,
+    },
+    #[cfg(feature = "audio-device")]
+    CommandDefinition {
         kind: CommandKind::TogglePlayStop,
         menu: None,
         category: "Transport",
@@ -1955,7 +1970,7 @@ fn default_may_yield(kind: CommandKind) -> bool {
     #[cfg(feature = "audio-device")]
     if matches!(
         kind,
-        CommandKind::TogglePlayback | CommandKind::TogglePlayStop
+        CommandKind::TogglePlayback | CommandKind::ToggleRepeat | CommandKind::TogglePlayStop
     ) {
         return true;
     }
@@ -2428,6 +2443,8 @@ fn command_kind_id(kind: CommandKind) -> &'static str {
         #[cfg(feature = "audio-device")]
         CommandKind::TogglePlayback => "transport.toggle-playback",
         #[cfg(feature = "audio-device")]
+        CommandKind::ToggleRepeat => "transport.toggle-repeat",
+        #[cfg(feature = "audio-device")]
         CommandKind::TogglePlayStop => "transport.play-stop",
         #[cfg(feature = "audio-device")]
         CommandKind::StopPlayback => "transport.stop-playback",
@@ -2673,6 +2690,8 @@ pub(super) fn dispatch(app: &mut App, command: CommandId) -> Task<Message> {
         }
         #[cfg(feature = "audio-device")]
         CommandId::TogglePlayback => Message::TogglePlayback,
+        #[cfg(feature = "audio-device")]
+        CommandId::ToggleRepeat => Message::ToggleRepeat,
         #[cfg(feature = "audio-device")]
         CommandId::TogglePlayStop => Message::TogglePlayStop,
         #[cfg(feature = "audio-device")]
@@ -3081,6 +3100,8 @@ fn command_enabled(app: &App, kind: CommandKind, track: Option<TrackState>) -> b
         #[cfg(feature = "audio-device")]
         CommandKind::TogglePlayback => true,
         #[cfg(feature = "audio-device")]
+        CommandKind::ToggleRepeat => true,
+        #[cfg(feature = "audio-device")]
         CommandKind::TogglePlayStop => true,
         #[cfg(feature = "audio-device")]
         CommandKind::StopPlayback => true,
@@ -3223,6 +3244,8 @@ fn command_id(kind: CommandKind) -> CommandId {
         CommandKind::Track(command) => CommandId::SelectedTrack(command),
         #[cfg(feature = "audio-device")]
         CommandKind::TogglePlayback => CommandId::TogglePlayback,
+        #[cfg(feature = "audio-device")]
+        CommandKind::ToggleRepeat => CommandId::ToggleRepeat,
         #[cfg(feature = "audio-device")]
         CommandKind::TogglePlayStop => CommandId::TogglePlayStop,
         #[cfg(feature = "audio-device")]
@@ -3519,6 +3542,8 @@ pub(super) fn stable_id(command: CommandId) -> Option<String> {
 
 pub(super) fn toggle_state(app: &App, command: CommandId) -> Option<bool> {
     match command {
+        #[cfg(feature = "audio-device")]
+        CommandId::ToggleRepeat => Some(app.repeat_enabled),
         CommandId::ToggleMediaBrowserPanel => Some(app.media_panel_dock.open),
         CommandId::ToggleOfflineJobsPanel => Some(app.offline_jobs_panel_open),
         CommandId::ToggleMixerPanel => Some(if app.is_mobile_main_window() {

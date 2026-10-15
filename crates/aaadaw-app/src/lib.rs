@@ -77,7 +77,7 @@ use aaadaw_engine::TrackMixController;
 use aaadaw_engine::TransportClockAnchor;
 use aaadaw_engine::{
     AudioGraphBuildError, AudioItemStream, AudioRenderGraph, PcmStreamError,
-    STEREO_PCM_QUEUE_FRAME_BYTES, audio_monitor_stream, stereo_pcm_stream,
+    STEREO_PCM_QUEUE_FRAME_BYTES, TransportLoopRange, audio_monitor_stream, stereo_pcm_stream,
 };
 #[cfg(all(
     feature = "cpal-backend",
@@ -93,7 +93,9 @@ use aaadaw_media::{
     MediaError, ResamplingQuality, decode_audio_source_for_cache,
     spawn_cached_stereo_audio_item_stream_with_quality,
     spawn_stereo_audio_item_stream_at_with_quality,
+    spawn_stereo_audio_item_stream_for_transport_loop_at,
     spawn_stereo_audio_item_stream_from_reader_at_with_quality,
+    spawn_stereo_audio_item_stream_from_reader_for_transport_loop,
     spawn_stereo_audio_item_stream_from_reader_with_quality,
     spawn_stereo_audio_item_stream_with_quality,
 };
@@ -1871,18 +1873,52 @@ pub fn prepare_audio_playback_at_with_resampling_quality(
     max_block_frames: usize,
     quality: ResamplingQuality,
 ) -> Result<PreparedAudioPlayback, PlaybackBuildError> {
+    prepare_audio_playback_at_with_loop_range(
+        project,
+        store,
+        timeline_sample,
+        None,
+        queue_capacity_frames,
+        max_block_frames,
+        quality,
+    )
+}
+
+/// Prepares playback with an active transport repeat range.
+///
+/// Audio items overlapping the loop must be exact matching bounded stereo source loops that can
+/// be fed at the project sample rate. Incompatible items are rejected before the graph is started.
+pub fn prepare_audio_playback_at_with_loop_range(
+    project: &Project,
+    store: &ProjectStore,
+    timeline_sample: u64,
+    transport_loop_range: Option<TransportLoopRange>,
+    queue_capacity_frames: usize,
+    max_block_frames: usize,
+    quality: ResamplingQuality,
+) -> Result<PreparedAudioPlayback, PlaybackBuildError> {
     let active_items = project
         .audio_items()
         .iter()
-        .filter(|item| timeline_sample < item.end_sample())
+        .filter(|item| {
+            timeline_sample < item.end_sample()
+                || (transport_loop_range.is_some_and(|range| {
+                    timeline_sample == range.end_sample()
+                        && item.start_sample() < range.end_sample()
+                        && item.end_sample() > range.start_sample()
+                }))
+        })
         .count();
     let mut source_hashes_by_media_ref = HashMap::new();
     let mut source_use_counts = HashMap::new();
-    for item in project
-        .audio_items()
-        .iter()
-        .filter(|item| timeline_sample < item.end_sample())
-    {
+    for item in project.audio_items().iter().filter(|item| {
+        timeline_sample < item.end_sample()
+            || (transport_loop_range.is_some_and(|range| {
+                timeline_sample == range.end_sample()
+                    && item.start_sample() < range.end_sample()
+                    && item.end_sample() > range.start_sample()
+            }))
+    }) {
         if !source_hashes_by_media_ref.contains_key(item.media_ref()) {
             let source_hash = store
                 .audio_asset_content_hash(item.media_ref())
@@ -1912,19 +1948,85 @@ pub fn prepare_audio_playback_at_with_resampling_quality(
     let mut uncacheable_sources = HashSet::new();
 
     for item in project.audio_items() {
+        let overlaps_transport_loop = transport_loop_range.is_some_and(|range| {
+            item.start_sample() < range.end_sample() && item.end_sample() > range.start_sample()
+        });
         let item_queue_capacity = if timeline_sample >= item.end_sample() {
-            queue_plan.past_item_capacity_frames
+            if transport_loop_range.is_some_and(|range| {
+                timeline_sample == range.end_sample() && overlaps_transport_loop
+            }) {
+                queue_plan.active_item_capacity_frames
+            } else {
+                queue_plan.past_item_capacity_frames
+            }
         } else {
             queue_plan.active_item_capacity_frames
         };
         let (producer, consumer) =
             stereo_pcm_stream(item_queue_capacity).map_err(PlaybackBuildError::PcmStream)?;
-        if timeline_sample >= item.end_sample() {
+        if timeline_sample >= item.end_sample()
+            && !transport_loop_range.is_some_and(|range| {
+                timeline_sample == range.end_sample() && overlaps_transport_loop
+            })
+        {
             drop(producer);
             item_streams.push(AudioItemStream::new_stereo_at_sample(
                 item.id(),
                 item.end_sample(),
                 consumer,
+            ));
+            continue;
+        }
+        if overlaps_transport_loop {
+            let range = transport_loop_range.expect("overlap requires a transport loop range");
+            let feeder_sample =
+                if (range.start_sample()..range.end_sample()).contains(&timeline_sample) {
+                    timeline_sample
+                } else {
+                    range.start_sample()
+                };
+            let resolved = store
+                .resolve_audio_asset(item.media_ref())
+                .map_err(PlaybackBuildError::Storage)?;
+            let mut feeder = match resolved {
+                ResolvedAudioAsset::Embedded(reader) => {
+                    let byte_len = reader.byte_len();
+                    let extension = Path::new(reader.original_name())
+                        .extension()
+                        .and_then(|value| value.to_str())
+                        .map(str::to_owned);
+                    spawn_stereo_audio_item_stream_from_reader_for_transport_loop(
+                        item,
+                        range,
+                        feeder_sample,
+                        reader,
+                        Some(byte_len),
+                        extension.as_deref(),
+                        output_sample_rate,
+                        producer,
+                    )
+                }
+                ResolvedAudioAsset::LinkedFile { path, .. } => {
+                    spawn_stereo_audio_item_stream_for_transport_loop_at(
+                        item,
+                        range,
+                        feeder_sample,
+                        path,
+                        output_sample_rate,
+                        producer,
+                    )
+                }
+            }
+            .map_err(PlaybackBuildError::Media)?;
+            feeder.wait_ready().map_err(PlaybackBuildError::Media)?;
+            let position = feeder.timeline_position();
+            feeders.push(feeder);
+            item_streams.push(AudioItemStream::new_stereo_looping_at_sample_with_position(
+                item.id(),
+                feeder_sample,
+                range,
+                consumer,
+                position,
             ));
             continue;
         }
@@ -2069,6 +2171,7 @@ pub fn prepare_audio_playback_at_with_resampling_quality(
     let mut graph = AudioRenderGraph::new_for_audio_items(project, item_streams, max_block_frames)
         .map_err(PlaybackBuildError::AudioGraph)?;
     graph.install_input_monitor(monitor_consumer.clone(), monitor_gate.clone());
+    graph.transport_mut().set_loop_range(transport_loop_range);
     graph.transport_mut().seek_sample(timeline_sample);
     Ok(PreparedAudioPlayback {
         graph,

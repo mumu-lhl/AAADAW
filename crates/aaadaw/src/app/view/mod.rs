@@ -862,9 +862,13 @@ fn playback_controls(app: &App) -> Element<'_, Message> {
         } else {
             None
         }),
-        button("Loop unavailable")
-            .style(button::secondary)
-            .on_press_maybe(None::<Message>),
+        button("Repeat")
+            .style(if app.repeat_enabled {
+                button::primary
+            } else {
+                button::secondary
+            })
+            .on_press(Message::ToggleRepeat),
     ]
     .spacing(tokens::SPACING_XS)
     .align_y(Alignment::Center)
@@ -1050,8 +1054,10 @@ mod tests {
     #[cfg(feature = "audio-device")]
     #[test]
     fn playback_preparation_has_a_clear_status_label() {
-        let mut app = super::App::default();
-        app.playback_busy = true;
+        let app = super::App {
+            playback_busy: true,
+            ..super::App::default()
+        };
 
         assert!(super::playback_status_label(&app).starts_with("Preparing "));
     }

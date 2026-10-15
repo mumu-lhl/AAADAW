@@ -1,10 +1,12 @@
 use aaadaw_app::{
     PlaybackBuildError, ProjectWavRenderSettings, ProjectWavRenderSource, WavExportOptions,
     WavSampleFormat, prepare_audio_playback, prepare_audio_playback_at,
-    prepare_audio_playback_with_resampling_quality, render_prepared_audio_to_pcm24_wav,
-    render_prepared_audio_to_wav, render_project_file_to_wav_with_settings,
+    prepare_audio_playback_at_with_loop_range, prepare_audio_playback_with_resampling_quality,
+    render_prepared_audio_to_pcm24_wav, render_prepared_audio_to_wav,
+    render_project_file_to_wav_with_settings,
 };
 use aaadaw_core::{DawAction, Project};
+use aaadaw_engine::TransportLoopRange;
 use aaadaw_media::ResamplingQuality;
 use aaadaw_storage::ProjectStore;
 use std::io::Cursor;
@@ -347,6 +349,105 @@ fn copied_loop_sources_repeat_in_realtime_and_offline_project_rendering() {
     store.close().expect("project should close");
     remove_database(&database_path);
     let _ = std::fs::remove_file(render_path);
+}
+
+#[test]
+fn transport_loop_preparation_repeats_an_embedded_bounded_stereo_item() {
+    let database_path = unique_path("aaadaw");
+    let source_frames: Vec<_> = (0_i16..16)
+        .map(|index| {
+            let sample = (index - 8) * 2_048;
+            [sample, -sample]
+        })
+        .collect();
+    let wav = stereo_pcm_wav(&source_frames, 48_000);
+    let mut store = ProjectStore::open(&database_path).expect("project should open");
+    store
+        .import_audio_asset("asset://transport-loop", "loop.wav", Cursor::new(&wav))
+        .expect("loop source should embed");
+
+    let mut project = Project::with_settings(
+        aaadaw_core::ProjectSettings::default()
+            .with_pan_mode(aaadaw_core::PanMode::LegacyMonoStereo),
+    );
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Transport loop".to_owned(),
+        })
+        .expect("track should be created");
+    let loop_range = TransportLoopRange::new(16, 32).expect("loop should be nonempty");
+    project
+        .apply(DawAction::InsertLoopedAudioItem {
+            track_id: project.tracks()[0].id(),
+            media_ref: "asset://transport-loop".to_owned(),
+            start_sample: loop_range.start_sample(),
+            source_offset_samples: 0,
+            phase_inverted: false,
+            source_section_start_samples: 0,
+            length_samples: loop_range.length_samples(),
+            muted: false,
+            source_section_length_samples: loop_range.length_samples(),
+        })
+        .expect("looped item should be inserted");
+
+    let prepared = prepare_audio_playback_at_with_loop_range(
+        &project,
+        &store,
+        20,
+        Some(loop_range),
+        64,
+        32,
+        ResamplingQuality::Sinc64,
+    )
+    .expect("matching embedded loop item should prepare");
+    assert_eq!(prepared.feeder_count(), 1);
+    let (mut graph, feeders) = prepared.into_parts();
+    std::thread::sleep(std::time::Duration::from_millis(20));
+    graph.transport_mut().start();
+    let mut output = [[0.0_f32; 2]; 32];
+    let stats = graph
+        .render_into(&mut output)
+        .expect("prepared loop graph should render through two wraps");
+    assert_eq!(stats.underrun_samples, 0);
+    for (frame_index, frame) in output.iter().enumerate() {
+        let source_index = (frame_index + 4) % source_frames.len();
+        let expected = [
+            source_frames[source_index][0] as f32 / 32_768.0,
+            source_frames[source_index][1] as f32 / 32_768.0,
+        ];
+        assert!((frame[0] - expected[0]).abs() < 1.0e-6);
+        assert!((frame[1] - expected[1]).abs() < 1.0e-6);
+    }
+    assert_eq!(graph.transport_mut().position_samples(), 20);
+    for feeder in feeders {
+        feeder.cancel().expect("loop feeder should stop cleanly");
+    }
+    drop(graph);
+
+    project
+        .apply(DawAction::SetAudioItemLoopSource {
+            item_id: project.audio_items()[0].id(),
+            enabled: false,
+        })
+        .expect("loop-source mode should be editable while stopped");
+    assert!(matches!(
+        prepare_audio_playback_at_with_loop_range(
+            &project,
+            &store,
+            20,
+            Some(loop_range),
+            64,
+            32,
+            ResamplingQuality::Sinc64,
+        ),
+        Err(PlaybackBuildError::Media(
+            aaadaw_media::MediaError::InvalidTimelineLoop
+        ))
+    ));
+
+    store.close().expect("project should close");
+    remove_database(&database_path);
 }
 
 #[test]
