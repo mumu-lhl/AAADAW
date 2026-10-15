@@ -696,6 +696,77 @@ fn transport_loop_playback_started_after_the_range_keeps_advancing_linearly() {
 }
 
 #[test]
+fn transport_loop_playback_started_after_the_range_plays_audio_linearly() {
+    let database_path = unique_path("aaadaw");
+    let source_frames: Vec<_> = (0_i16..48)
+        .map(|index| {
+            let sample = (index - 24) * 512;
+            [sample, -sample]
+        })
+        .collect();
+    let wav = stereo_pcm_wav(&source_frames, 48_000);
+    let mut store = ProjectStore::open(&database_path).expect("project should open");
+    store
+        .import_audio_asset(
+            "asset://after-loop-audio",
+            "after-loop.wav",
+            Cursor::new(&wav),
+        )
+        .expect("audio source should embed");
+    let mut project = Project::with_settings(
+        aaadaw_core::ProjectSettings::default()
+            .with_pan_mode(aaadaw_core::PanMode::LegacyMonoStereo),
+    );
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Audio after loop".to_owned(),
+        })
+        .expect("track should be created");
+    let loop_range = TransportLoopRange::new(16, 32).expect("loop should be nonempty");
+    project
+        .apply(DawAction::InsertAudioItem {
+            track_id: project.tracks()[0].id(),
+            media_ref: "asset://after-loop-audio".to_owned(),
+            start_sample: 24,
+            source_offset_samples: 8,
+            length_samples: 16,
+        })
+        .expect("audio item should extend past Loop");
+
+    let prepared = prepare_audio_playback_at_with_loop_range(
+        &project,
+        &store,
+        35,
+        Some(loop_range),
+        64,
+        8,
+        ResamplingQuality::Sinc64,
+    )
+    .expect("audio playback after Loop should use a linear feeder");
+    let (mut graph, feeders) = prepared.into_parts();
+    assert_eq!(feeders.len(), 1);
+    for feeder in feeders {
+        feeder.join().expect("linear audio feeder should finish");
+    }
+    graph.transport_mut().start();
+    let mut output = [[0.0_f32; 2]; 5];
+    let stats = graph
+        .render_into(&mut output)
+        .expect("transport should render linearly after Loop");
+    assert_eq!(stats.underrun_samples, 0);
+    for (index, frame) in output.iter().enumerate() {
+        let expected_source = source_frames[19 + index];
+        assert!((frame[0] - expected_source[0] as f32 / 32_768.0).abs() < 1.0e-6);
+        assert!((frame[1] - expected_source[1] as f32 / 32_768.0).abs() < 1.0e-6);
+    }
+    assert_eq!(graph.transport_mut().position_samples(), 40);
+
+    store.close().expect("project should close");
+    remove_database(&database_path);
+}
+
+#[test]
 fn repeated_embedded_source_reuses_cached_pcm_and_preserves_each_trim() {
     let database_path = unique_path("aaadaw");
     let frames = [

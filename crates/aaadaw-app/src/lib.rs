@@ -1950,7 +1950,9 @@ pub fn prepare_audio_playback_at_with_loop_range(
 
     for item in project.audio_items() {
         let overlaps_transport_loop = transport_loop_range.is_some_and(|range| {
-            item.start_sample() < range.end_sample() && item.end_sample() > range.start_sample()
+            timeline_sample <= range.end_sample()
+                && item.start_sample() < range.end_sample()
+                && item.end_sample() > range.start_sample()
         });
         let item_queue_capacity = if timeline_sample >= item.end_sample() {
             if transport_loop_range.is_some_and(|range| {
