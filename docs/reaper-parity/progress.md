@@ -1098,3 +1098,7 @@ REAPER 7.82 的 MIDI Contents Nudge 原厂探针已在 Snap 开/关两种状态�
 Contents Nudge 现在会先分别校验并计算所有已选 Audio 与 MIDI item 的新 source offset，再把变更放进同一个 `BatchTransaction`。如果音频素材元数据、audio section 或 MIDI loop source 任一项无效，就整批拒绝，避免部分 item 已移动而另一些未执行。新回归覆盖 250 ms 下 Audio 源偏移 120→468120 帧、MIDI 源 PPQ 偏移 0→9120、时间线位置/长度不变，以及一次 Undo/Redo 同时恢复/重做两种 item；故意缺失 Audio 元数据的混选用例确认 MIDI 内容不会被单独修改。
 
 最终桌面套件 583/583，混合选择与回滚专项 2/2；app all-target Clippy `-D warnings`、fmt/diff 检查通过。最新桌面 Build ID `9a2512681c66b00fdf688bae8136eeba7c03fd0b`、SHA-256 `3820f7490792e9e619d827b0d1d417b063ba80998c27d444f988425b253337ee` 在隔离 Xvfb :90 启动实际 1280×800 主窗口，启动截图与 fixture 一致。REAPER 7.82 对混合 Audio/MIDI Contents selection 的原厂结果仍需单独 probe；本地实现和测试不代替原厂验收，`ITEM-NUDGE-SET-001`、P4 与唯一 PR #282 继续 `in_progress`。
+
+### 2026-10-15 REAPER 原厂混合 Contents Nudge 对照
+
+在 Linux REAPER `7.82/linux-x86_64` / Default 7 的空白未保存工程中，同时选择一个 10 秒循环 Audio 源 item（item 2–7 秒、source offset 0.1 秒）和一个循环 MIDI item（同样 2–7 秒，notes 位于 PPQ 960–2880 和 4800–6720），通过原厂 Nudge/Set 窗设 Target `contents`、250 ms、Snap off。Main action 41249 将 Audio offset 环绕到 9.85 秒、MIDI offset 变为 4.75 秒；41250 将两者都还原到起始值。两次操作均保持选择、item 位置/长度与 MIDI note PPQ 不变。对 Left 操作执行一次 Undo 会同时恢复两种 item 的前一组 offsets，Redo 同时重做；该 probe 只验证这一个 Undo/Redo 周期，不据此推断更深历史的行为。原厂数值、state-change counter、截图哈希和脚本见[混合 Contents Nudge fixture](../verification/reaper-parity/fixtures/item-nudge-mixed-contents-native.tsv)及[验证说明](../verification/reaper-parity/item-nudge-midi-contents.md)。
