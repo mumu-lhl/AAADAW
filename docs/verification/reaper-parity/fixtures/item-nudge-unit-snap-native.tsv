@@ -1,0 +1,10 @@
+version	Linux REAPER 7.82/linux-x86_64
+theme	Default_7.0.ReaperThemeZip
+project_sample_rate	44100 Hz
+probe	scripts/reaper_parity/probe-item-nudge-unit-snap.lua; Main action 41226 opens dialog; 41249 nudges right
+fixture	selected non-loop Audio item at 1.270000s; length 0.500000s; source offset 0.200000s
+case	unit	amount	snap	before_position_s	after_position_s	after_length_s	after_source_offset_s	selected	state_change_delta
+time_snap_on	minutes:seconds	0:00.250	yes	1.270000000	2.000000000	0.500000000	0.200000000	1	0
+time_snap_off	minutes:seconds	0:00.250	no	1.270000000	1.520000000	0.500000000	0.200000000	1	0
+samples_snap_off	samples	1	no	1.270000000	1.270022676	0.500000000	0.200000000	1	0
+samples_snap_on	samples	1	yes	1.270000000	1.270022676	0.500000000	0.200000000	1	0

@@ -25,7 +25,6 @@ impl std::fmt::Display for Mode {
 pub(crate) enum Unit {
     #[default]
     Milliseconds,
-    Seconds,
     Samples,
     Time,
 }
@@ -34,7 +33,6 @@ impl std::fmt::Display for Unit {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter.write_str(match self {
             Self::Milliseconds => "milliseconds",
-            Self::Seconds => "seconds",
             Self::Samples => "samples",
             Self::Time => "minutes:seconds",
         })
@@ -125,8 +123,7 @@ impl Dialog {
         self.unit = unit;
         self.error = None;
         self.value = match (self.mode, unit) {
-            (Mode::Nudge, Unit::Milliseconds | Unit::Seconds) => "1".to_owned(),
-            (Mode::Nudge, Unit::Samples) => "1".to_owned(),
+            (Mode::Nudge, Unit::Milliseconds | Unit::Samples | Unit::Time) => "1".to_owned(),
             (Mode::Set, Unit::Time) => "0:00.000".to_owned(),
             (Mode::Set, Unit::Samples) => "0".to_owned(),
             _ => self.value.clone(),
@@ -160,7 +157,7 @@ impl App {
 
     pub(super) fn change_item_nudge_unit(&mut self, unit: Unit) {
         let valid = match self.item_nudge_dialog.mode {
-            Mode::Nudge => matches!(unit, Unit::Milliseconds | Unit::Seconds | Unit::Samples),
+            Mode::Nudge => matches!(unit, Unit::Milliseconds | Unit::Time | Unit::Samples),
             Mode::Set => matches!(unit, Unit::Time | Unit::Samples),
         };
         if valid {
@@ -2099,12 +2096,6 @@ impl App {
                     * sample_rate
                     / 1_000.0
             }
-            Unit::Seconds => {
-                value
-                    .parse::<f64>()
-                    .map_err(|_| "Enter a valid seconds amount".to_owned())?
-                    * sample_rate
-            }
             Unit::Samples => {
                 if signed_time {
                     return value
@@ -2117,10 +2108,9 @@ impl App {
                     .map(i128::from)
                     .map_err(|_| "Enter a whole sample amount".to_owned());
             }
-            Unit::Time if signed_time => {
+            Unit::Time => {
                 project_time::parse_project_time(value).map_err(str::to_owned)? * sample_rate
             }
-            Unit::Time => return Err("Select a time unit for Nudge mode".to_owned()),
         };
         if !samples.is_finite() || samples.abs() >= i128::MAX as f64 {
             return Err("Nudge amount is outside the supported range".to_owned());
@@ -2165,7 +2155,6 @@ impl App {
         let sample_rate = u64::from(self.project.settings().sample_rate());
         let unit = match self.item_nudge_dialog.unit {
             Unit::Milliseconds => (sample_rate + 500) / 1_000,
-            Unit::Seconds => sample_rate,
             Unit::Samples => 1,
             Unit::Time => sample_rate,
         };
