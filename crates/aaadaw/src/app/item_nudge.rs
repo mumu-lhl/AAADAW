@@ -466,26 +466,28 @@ impl App {
             target_sample
         };
         let selected_ids = &self.timeline.selected_items;
-        let audio_selected = self
-            .project
-            .audio_items()
-            .iter()
-            .any(|item| selected_ids.contains(&item.id()));
         let midi_items = self
             .project
             .midi_items()
             .iter()
             .filter(|item| selected_ids.contains(&item.id()))
             .collect::<Vec<_>>();
-        if audio_selected || midi_items.is_empty() {
-            self.item_nudge_dialog.error = Some(if audio_selected {
-                "Set Contents currently requires selected loop-source MIDI items".to_owned()
-            } else {
-                "No selected MIDI items to set".to_owned()
-            });
+        let audio_items = self
+            .project
+            .audio_items()
+            .iter()
+            .filter(|item| selected_ids.contains(&item.id()))
+            .collect::<Vec<_>>();
+        if audio_items.is_empty() && midi_items.is_empty() {
+            self.item_nudge_dialog.error = Some("No selected items to set".to_owned());
             return;
         }
-        let actions = match self.midi_contents_set_actions(&midi_items, target_sample) {
+        let actions = match self
+            .audio_contents_set_actions(&audio_items, target_sample)
+            .and_then(|mut actions| {
+                actions.extend(self.midi_contents_set_actions(&midi_items, target_sample)?);
+                Ok(actions)
+            }) {
             Ok(actions) => actions,
             Err(error) => {
                 self.item_nudge_dialog.error = Some(error);
@@ -498,10 +500,80 @@ impl App {
                     tx_id: self.revision,
                     actions,
                 },
-                "Selected MIDI item contents set",
+                "Selected item contents set",
             );
         }
         self.item_nudge_dialog.error = None;
+    }
+
+    fn audio_contents_set_actions(
+        &self,
+        items: &[&AudioItem],
+        target_sample: u64,
+    ) -> Result<Vec<DawAction>, String> {
+        if items.is_empty() {
+            return Ok(Vec::new());
+        }
+        let media_refs = items
+            .iter()
+            .map(|item| item.media_ref().to_owned())
+            .collect::<Vec<_>>();
+        let source_limits = self.audio_source_limits(media_refs)?;
+        let project_rate = self.project.settings().sample_rate();
+        let mut actions = Vec::with_capacity(items.len());
+        for item in items {
+            let Some((source_rate, frame_count)) = source_limits.get(item.media_ref()).copied()
+            else {
+                return Err(format!(
+                    "Source length is unavailable for {}",
+                    item.media_ref()
+                ));
+            };
+            let project_delta = i128::from(item.start_sample()) - i128::from(target_sample);
+            let Some(source_delta) = scale_sample_delta(project_delta, source_rate, project_rate)
+            else {
+                return Err("Contents target is outside the supported source range".to_owned());
+            };
+            let source_offset_samples = if item.is_loop_source() {
+                let (section_start, section_length) = match (
+                    item.source_section_start_samples(),
+                    item.source_section_length_samples(),
+                ) {
+                    (Some(start), Some(length)) => (start, length),
+                    (None, None) => (0, frame_count),
+                    _ => {
+                        return Err(
+                            "Selected audio item has an invalid loop source section".to_owned()
+                        );
+                    }
+                };
+                let Some(section_end) = section_start.checked_add(section_length) else {
+                    return Err("Selected audio item has an invalid loop source section".to_owned());
+                };
+                if section_length == 0 || section_end > frame_count {
+                    return Err("Selected audio item has an invalid loop source section".to_owned());
+                }
+                let Some(offset) = wrapped_source_sample(0, 0, section_length, source_delta) else {
+                    return Err("Contents target is outside the supported source range".to_owned());
+                };
+                i64::try_from(offset).map_err(|_| {
+                    "Contents target is outside the supported source range".to_owned()
+                })?
+            } else {
+                i64::try_from(source_delta)
+                    .map_err(|_| "Contents target is outside the signed source range".to_owned())?
+            };
+            if source_offset_samples != item.source_offset_samples() {
+                actions.push(DawAction::EditAudioItem {
+                    item_id: item.id(),
+                    media_ref: item.media_ref().to_owned(),
+                    start_sample: item.start_sample(),
+                    source_offset_samples,
+                    length_samples: item.length_samples(),
+                });
+            }
+        }
+        Ok(actions)
     }
 
     fn midi_contents_set_actions(

@@ -1,0 +1,17 @@
+# Absolute Set → Contents for audio items
+
+Linux REAPER `7.82/linux-x86_64` with `Default_7.0.ReaperThemeZip` was opened in a fresh, unsaved project with transport stopped. The native fixture used the bundled 48 kHz, four-second `melody.wav` source on one selected audio item at project time 2 seconds with a five-second item length and an initial source offset of 0.1 seconds.
+
+| Native action | Loop source | Absolute target | Snap | Resulting source offset |
+| --- | --- | ---: | --- | ---: |
+| Set → Contents | on | 3.000 s | off | 3.000 s |
+| Set → Contents | on | 3.500 s | on | 2.000 s (target snaps to 4.000 s) |
+| Set → Contents | off | 3.000 s | off | −1.000 s |
+
+The item stayed at 2–7 seconds and selected for each operation. The looped values wrap within the four-second source; the non-looped result is signed and places the first second of the item before source time zero. These samples match `(item start − snapped absolute target)` converted to source frames, wrapped for looped items and left signed for non-looped items. Raw item bounds, loop flags, offsets, undo labels, and project state counts are in the [native TSV](fixtures/item-nudge-audio-set-contents-native.tsv); the [probe script](../../../scripts/reaper_parity/probe-item-nudge-audio-set-contents.lua) creates the source and item and records the state samples.
+
+AAADAW now computes absolute audio source offsets from the item start and target. It scales the project-sample delta to the source sample rate, wraps valid looped sections, and retains signed offsets for non-looped items. Audio and loop-source MIDI edits are prevalidated and submitted in one `BatchTransaction`; a failure in any selected source leaves the whole selection untouched. The app regression uses a 96 kHz source in a 48 kHz project to cover rate conversion as well as the looped 3-second result, Snap-on 3.500 → 4.000-second result, non-looped −1-second result, selection and item-bound preservation, and Undo/Redo.
+
+The native probe covers a full-file four-second source at the project rate. Native Set behavior for bounded audio sections, mixed Audio/MIDI selections, other snap units, and deeper undo history remains unverified; `ITEM-NUDGE-SET-001` stays `in_progress`.
+
+The [looped Set capture](fixtures/item-nudge-audio-set-contents-native-looped.png), [Snap-on capture](fixtures/item-nudge-audio-set-contents-native-snap-on.png), and [non-looped result](fixtures/item-nudge-audio-set-contents-native-nonlooped.png) are actual REAPER window screenshots. The latest AAADAW build (binary SHA-256 `9011a9c4ab75512ee931b176bc80c77516d0a6745d17644715016aacdee722b3`) also opened its real 1280×800 main window and Nudge/Set dialog on isolated Xvfb; the [dialog capture](fixtures/item-nudge-audio-set-contents-aaadaw-dialog.png) shows Set → Contents, Snap enabled, and the absolute target field. That desktop screenshot has no selected item, so it validates the rendered interaction state and startup only; the source-offset results are verified by the app regressions and REAPER fixture. Screenshot SHA-256 is `0905f30e8a42f432135d487da0b3d290b8e9fdbdddb43d16d478aec9ccb60fe4`.

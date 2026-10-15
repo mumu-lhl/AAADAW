@@ -281,7 +281,7 @@ fn copied_loop_sources_repeat_in_realtime_and_offline_project_rendering() {
                 track_id: project.tracks()[index].id(),
                 media_ref: "asset://looped-playback".to_owned(),
                 start_sample: 0,
-                source_offset_samples: 1,
+                source_offset_samples: 0,
                 phase_inverted: false,
                 source_section_start_samples: 1,
                 length_samples: 5,

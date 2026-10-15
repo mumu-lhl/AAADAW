@@ -765,6 +765,132 @@ fn item_nudge_set_contents_matches_native_midi_source_alignment_snap_and_undoes(
 }
 
 #[test]
+fn item_nudge_set_contents_aligns_audio_loop_and_signed_source_offsets() {
+    use super::item_nudge::Target;
+
+    let file_id = NEXT_TEST_FILE.fetch_add(1, Ordering::Relaxed);
+    let project_path = std::env::temp_dir().join(format!(
+        "aaadaw-ui-item-nudge-audio-set-contents-{}-{file_id}.aaadaw",
+        std::process::id()
+    ));
+    let media_ref = "asset://item-nudge-audio-set-contents-test";
+    let mut store = ProjectStore::open(&project_path).expect("project store should open");
+    store
+        .import_audio_asset(
+            media_ref,
+            "audio-set-contents.wav",
+            std::io::Cursor::new([0_u8; 4]),
+        )
+        .expect("test asset should import");
+    store
+        .set_audio_asset_metadata(
+            media_ref,
+            &aaadaw_storage::AudioAssetMetadata {
+                container: "wav".to_owned(),
+                codec: "pcm".to_owned(),
+                sample_rate: Some(96_000),
+                channel_count: Some(1),
+                bits_per_sample: Some(16),
+                frame_count: Some(384_000),
+                duration_nanos: None,
+                byte_len: Some(4),
+            },
+        )
+        .expect("test metadata should store");
+    store.close().expect("project store should close");
+
+    let mut app = App {
+        project_path: Some(project_path.clone()),
+        ..App::default()
+    };
+    let _ = app.update(Message::AddTrack);
+    let track_id = app.project.tracks()[0].id();
+    let project_rate = u64::from(app.project.settings().sample_rate());
+    app.project
+        .apply(DawAction::InsertLoopedAudioItem {
+            track_id,
+            media_ref: media_ref.to_owned(),
+            start_sample: project_rate * 2,
+            source_offset_samples: 9_600,
+            length_samples: project_rate * 5,
+            muted: false,
+            phase_inverted: false,
+            source_section_start_samples: 0,
+            source_section_length_samples: 384_000,
+        })
+        .unwrap();
+    let item_id = app.project.audio_items()[0].id();
+    app.timeline.rebuild(&app.project);
+    app.timeline.select_items(vec![(item_id, track_id)]);
+    let _ = app.update(Message::ItemNudgeModeChanged(super::item_nudge::Mode::Set));
+    let _ = app.update(Message::ItemNudgeTargetChanged(Target::Contents));
+    let _ = app.update(Message::ItemNudgeValueChanged("0:03.000".to_owned()));
+
+    let _ = app.update(Message::ApplyItemNudgeSet);
+
+    let item = &app.project.audio_items()[0];
+    assert_eq!(item.source_offset_samples(), 288_000);
+    assert_eq!(item.start_sample(), project_rate * 2);
+    assert_eq!(item.length_samples(), project_rate * 5);
+    assert!(item.is_loop_source());
+    assert_eq!(app.timeline.selected_items.len(), 1);
+    assert!(app.timeline.selected_items.contains(&item_id));
+    assert!(app.item_nudge_dialog.error.is_none());
+    let _ = app.update(Message::Undo);
+    assert_eq!(app.project.audio_items()[0].source_offset_samples(), 9_600);
+    let _ = app.update(Message::Redo);
+    assert_eq!(
+        app.project.audio_items()[0].source_offset_samples(),
+        288_000
+    );
+
+    let _ = app.update(Message::ItemNudgeSnapToUnitChanged(true));
+    let _ = app.update(Message::ItemNudgeValueChanged("0:03.500".to_owned()));
+    let _ = app.update(Message::ApplyItemNudgeSet);
+    assert_eq!(
+        app.project.audio_items()[0].source_offset_samples(),
+        192_000
+    );
+    assert!(app.item_nudge_dialog.error.is_none());
+
+    app.project
+        .apply(DawAction::SetAudioItemLoopSource {
+            item_id,
+            enabled: false,
+        })
+        .unwrap();
+    app.project
+        .apply(DawAction::EditAudioItem {
+            item_id,
+            media_ref: media_ref.to_owned(),
+            start_sample: project_rate * 2,
+            source_offset_samples: 9_600,
+            length_samples: project_rate * 5,
+        })
+        .unwrap();
+    let _ = app.update(Message::ItemNudgeSnapToUnitChanged(false));
+    let _ = app.update(Message::ItemNudgeValueChanged("0:03.000".to_owned()));
+    let _ = app.update(Message::ApplyItemNudgeSet);
+    assert_eq!(
+        app.project.audio_items()[0].source_offset_samples(),
+        -96_000
+    );
+    assert!(!app.project.audio_items()[0].is_loop_source());
+    assert_eq!(
+        app.project.audio_items()[0].start_sample(),
+        project_rate * 2
+    );
+    assert_eq!(
+        app.project.audio_items()[0].length_samples(),
+        project_rate * 5
+    );
+    assert!(app.item_nudge_dialog.error.is_none());
+
+    drop(app);
+    let _ = std::fs::remove_file(project_path);
+}
+
+#[test]
 fn item_nudge_contents_wraps_looped_midi_offsets_and_undoes_atomically() {
     use super::item_nudge::Target;
 
@@ -975,6 +1101,19 @@ fn item_nudge_mixed_contents_fails_atomically_when_audio_metadata_is_missing() {
             .is_some_and(|error| error.contains("audio media store"))
     );
     assert_eq!(app.revision, revision);
+
+    let _ = app.update(Message::ItemNudgeModeChanged(super::item_nudge::Mode::Set));
+    let _ = app.update(Message::ItemNudgeValueChanged("0:03.000".to_owned()));
+    let _ = app.update(Message::ApplyItemNudgeSet);
+    assert_eq!(app.project.audio_items()[0].source_offset_samples(), 120);
+    assert_eq!(app.project.midi_items()[0].source_offset_ticks(), 0);
+    assert_eq!(app.revision, revision);
+    assert!(
+        app.item_nudge_dialog
+            .error
+            .as_deref()
+            .is_some_and(|error| error.contains("audio media store"))
+    );
 }
 
 #[test]
@@ -1066,6 +1205,32 @@ fn item_nudge_mixed_contents_moves_audio_and_midi_in_one_undoable_edit() {
         468_120
     );
     assert_eq!(app.project.midi_items()[0].source_offset_ticks(), 9_120);
+
+    let before_set_revision = app.revision;
+    let _ = app.update(Message::ItemNudgeModeChanged(super::item_nudge::Mode::Set));
+    let _ = app.update(Message::ItemNudgeValueChanged("0:03.000".to_owned()));
+    let _ = app.update(Message::ApplyItemNudgeSet);
+    assert_eq!(app.revision, before_set_revision + 1);
+    assert_eq!(
+        app.project.audio_items()[0].source_offset_samples(),
+        336_000
+    );
+    assert_eq!(app.project.midi_items()[0].source_offset_ticks(), 3_840);
+    assert_eq!(app.project.audio_items()[0].start_sample(), 0);
+    assert_eq!(app.project.midi_items()[0].start_tick(), 0);
+    assert!(app.item_nudge_dialog.error.is_none());
+    let _ = app.update(Message::Undo);
+    assert_eq!(
+        app.project.audio_items()[0].source_offset_samples(),
+        468_120
+    );
+    assert_eq!(app.project.midi_items()[0].source_offset_ticks(), 9_120);
+    let _ = app.update(Message::Redo);
+    assert_eq!(
+        app.project.audio_items()[0].source_offset_samples(),
+        336_000
+    );
+    assert_eq!(app.project.midi_items()[0].source_offset_ticks(), 3_840);
 
     drop(app);
     let _ = std::fs::remove_file(project_path);

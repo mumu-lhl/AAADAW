@@ -1135,3 +1135,13 @@ AAADAW 现在只对 selected loop-source MIDI 支持绝对 Set Contents；Relati
 新桌面构建 Build ID `dc0b012c46ad970d9c1c934e068833f18ff7a9a3`、SHA-256 `872f833897e4333b8dd039002ae6867fa188d35dce37cc061cbc24c0f616893a` 已由构建烟测脚本在捆绑 Xvfb :90 启动，实际主窗 1280×800；截图与标准 startup fixture 字节一致。该会话没有系统 Xvfb 或 DISPLAY，`scripts/reaper_parity/build-and-smoke-aaadaw-desktop.sh` 自动发现 REAPER runtime 的 Xvfb 并设 `WGPU_BACKEND=gl`，完整解决了新二进制的桌面启动验证路径。Set/Contents 实际窗口截图见对应验证记录。
 
 该切片不等于完成 Nudge/Set 验收。Audio/mixed-media Set Contents、MIDI 非 loop source、变速 Tempo Map、多种 Snap unit、其他 target 和更广的 Undo 仍未对齐；`ITEM-NUDGE-SET-001`、P4 与唯一 PR #282 继续 `in_progress`。
+
+### 2026-10-15 Audio absolute Set → Contents
+
+Linux REAPER 7.82 / Default 7 原厂 probe 在 48 kHz、4 秒 WAV、item 位置 2 秒/长度 5 秒上记录了三个 Audio Set 结果：Loop source 开、Snap off、目标 3 秒得到 source offset 3 秒；Snap on、目标 3.5 秒吸附为 4 秒后得到 2 秒；Loop source 关、目标 3 秒得到 −1 秒。item bounds 和 selection 均保持不变。TSV、ReaScript 与三张原厂窗口截图见[Audio Set → Contents 验证](../verification/reaper-parity/item-nudge-audio-set-contents.md)。
+
+AAADAW 现在按 item start 与绝对 target 的项目采样差换算到素材采样率；Loop source 对完整素材或有效 source section 环绕，非循环源保留 signed offset。选中的 Audio 与 loop-source MIDI 先整批校验，再作为一个 `BatchTransaction` 提交，未提供素材元数据时不会部分改动 MIDI。定向回归覆盖 96 kHz source/48 kHz project 换算、原厂 loop/snap/non-loop 数值、bounds、selection、Undo/Redo，混合 Audio/MIDI 同事务及缺元数据整批失败。另修正一个已有 bounded-section 播放测试夹具：schema 50 后 source offset 相对 section 起点，fixture 从旧绝对 offset 改为 section 内 0 帧。
+
+Stable `cargo xtest --no-fail-fast` 在隔离 Xvfb 完整通过 1,142/1,142，`aaadaw` 与 `aaadaw-app` all-target Clippy `-D warnings`、fmt 检查通过。最新桌面二进制 SHA-256 `9011a9c4ab75512ee931b176bc80c77516d0a6745d17644715016aacdee722b3` 由仓库启动脚本在 Xvfb :90 显示真实 1280×800 主窗；Set/Contents/Snap-on 对话框截图来自同一二进制，截图 SHA-256 `0905f30e8a42f432135d487da0b3d290b8e9fdbdddb43d16d478aec9ccb60fe4`。该 AAADAW 功能截图没有选中 item，仅用于核对真实弹窗状态，不作为音频偏移结果证据。
+
+Native bounded-section Set、混合媒体 Set、MIDI 非 loop source、多种 Snap unit、其它 target 与更广的 Undo 语义仍需补齐；本切片不关闭 `ITEM-NUDGE-SET-001` 或 P4，唯一 PR #282 保持 `in_progress`。
