@@ -1477,10 +1477,25 @@ impl Project {
         source_loop_length_ticks: u64,
         source_offset_samples: f64,
     ) -> Result<u64, TimebaseError> {
+        if source_loop_length_ticks == 0 || source_loop_length_ticks > (1_u64 << 53) {
+            return Err(TimebaseError::PositionOutOfRange);
+        }
+        Ok(
+            self.midi_source_offset_ticks_at_samples(item_start_tick, source_offset_samples)?
+                % source_loop_length_ticks,
+        )
+    }
+
+    /// Converts a take's source-time offset to its unwrapped MIDI source PPQ offset.
+    /// Unlike [`Self::midi_source_phase_at_offset_samples`], this preserves offsets beyond a
+    /// loop boundary for non-looping MIDI sources.
+    pub fn midi_source_offset_ticks_at_samples(
+        &self,
+        item_start_tick: u64,
+        source_offset_samples: f64,
+    ) -> Result<u64, TimebaseError> {
         const MAX_EXACT: f64 = (1_u64 << 53) as f64;
         if item_start_tick > (1_u64 << 53)
-            || source_loop_length_ticks == 0
-            || source_loop_length_ticks > (1_u64 << 53)
             || !source_offset_samples.is_finite()
             || !(0.0..=MAX_EXACT).contains(&source_offset_samples)
         {
@@ -1490,11 +1505,11 @@ impl Project {
         let item_start_sample = self.sample_at_tick_position(item_start_tick)?;
         let source_sample = item_start_sample - source_offset_samples;
         let source_tick = self.tick_at_signed_sample_position(source_sample)?;
-        let phase = (item_start_tick - source_tick).round();
-        if !phase.is_finite() || !(0.0..=MAX_EXACT).contains(&phase) {
+        let offset_ticks = (item_start_tick - source_tick).round();
+        if !offset_ticks.is_finite() || !(0.0..=MAX_EXACT).contains(&offset_ticks) {
             return Err(TimebaseError::PositionOutOfRange);
         }
-        Ok((phase as u64) % source_loop_length_ticks)
+        Ok(offset_ticks as u64)
     }
 
     fn sample_at_signed_tick_position(&self, tick: f64) -> Result<f64, TimebaseError> {
@@ -3762,7 +3777,7 @@ impl Project {
                         let tick = note
                             .data
                             .tick
-                            .checked_add(content_shift_ticks)
+                            .checked_add_signed(content_shift_ticks)
                             .ok_or(ActionError::InvalidMidiItemPosition)?;
                         if tick.checked_add(note.data.duration).is_none() {
                             return Err(ActionError::InvalidMidiItemPosition);
@@ -3780,7 +3795,7 @@ impl Project {
                         Ok(MidiControllerData {
                             tick: controller
                                 .tick
-                                .checked_add(content_shift_ticks)
+                                .checked_add_signed(content_shift_ticks)
                                 .ok_or(ActionError::InvalidMidiItemPosition)?,
                             ..*controller
                         })
@@ -3793,7 +3808,7 @@ impl Project {
                         Ok(MidiPitchBendData {
                             tick: bend
                                 .tick
-                                .checked_add(content_shift_ticks)
+                                .checked_add_signed(content_shift_ticks)
                                 .ok_or(ActionError::InvalidMidiItemPosition)?,
                             ..*bend
                         })

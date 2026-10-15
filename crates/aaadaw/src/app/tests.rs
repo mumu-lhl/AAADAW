@@ -1060,6 +1060,230 @@ fn item_nudge_contents_wraps_looped_midi_offsets_and_undoes_atomically() {
 }
 
 #[test]
+fn item_nudge_non_looped_midi_contents_matches_native_source_boundary_and_undoes() {
+    use super::item_nudge::Target;
+    use aaadaw_core::MidiPitchBendData;
+
+    let mut app = App::default();
+    let _ = app.update(Message::AddTrack);
+    let track_id = app.project.tracks()[0].id();
+    app.project
+        .apply(DawAction::InsertMidiItem {
+            track_id,
+            start_tick: 3_840,
+            length_ticks: 9_600,
+        })
+        .unwrap();
+    let item_id = app.project.midi_items()[0].id();
+    app.project
+        .apply(DawAction::SetMidiItemLoopSource {
+            item_id,
+            enabled: false,
+        })
+        .unwrap();
+    app.project
+        .apply(DawAction::EditMidiItemPlacement {
+            item_id,
+            start_tick: 3_840,
+            length_ticks: 9_600,
+            source_offset_ticks: 192,
+        })
+        .unwrap();
+    app.project
+        .apply(DawAction::AddMidiNotes {
+            item_id,
+            notes: vec![
+                MidiNoteData {
+                    pitch: 60,
+                    tick: 2_880,
+                    duration: 1_920,
+                    velocity: 96,
+                },
+                MidiNoteData {
+                    pitch: 64,
+                    tick: 6_720,
+                    duration: 1_920,
+                    velocity: 108,
+                },
+            ],
+        })
+        .unwrap();
+    app.project
+        .apply(DawAction::SetMidiControllers {
+            item_id,
+            controllers: vec![MidiControllerData {
+                controller: 1,
+                tick: 2_400,
+                value: 80,
+            }],
+        })
+        .unwrap();
+    app.project
+        .apply(DawAction::SetMidiPitchBends {
+            item_id,
+            pitch_bends: vec![MidiPitchBendData {
+                tick: 3_600,
+                value: 9_000,
+            }],
+        })
+        .unwrap();
+    let original = app.project.midi_items()[0].clone();
+    app.timeline.rebuild(&app.project);
+    app.timeline.select_items(vec![(item_id, track_id)]);
+    let _ = app.update(Message::ItemNudgeTargetChanged(Target::Contents));
+    let _ = app.update(Message::ItemNudgeValueChanged("250".to_owned()));
+
+    let _ = app.update(Message::NudgeSelectedItems(-1));
+    let moved_left = app.project.midi_items()[0].clone();
+    assert_eq!(moved_left.source_offset_ticks(), 672);
+    assert_eq!(moved_left.source_loop_length_ticks(), 9_600);
+    assert_eq!(moved_left.notes(), original.notes());
+    assert_eq!(moved_left.controllers(), original.controllers());
+    assert_eq!(moved_left.pitch_bends(), original.pitch_bends());
+    assert!(app.item_nudge_dialog.error.is_none());
+
+    let _ = app.update(Message::Undo);
+    assert_eq!(app.project.midi_items()[0], original);
+    let _ = app.update(Message::Redo);
+    assert_eq!(app.project.midi_items()[0].source_offset_ticks(), 672);
+    let _ = app.update(Message::Undo);
+    assert_eq!(app.project.midi_items()[0], original);
+
+    let _ = app.update(Message::NudgeSelectedItems(1));
+    let moved_right = app.project.midi_items()[0].clone();
+    assert_eq!(moved_right.source_offset_ticks(), 0);
+    assert_eq!(moved_right.source_loop_length_ticks(), 9_888);
+    assert_eq!(
+        moved_right
+            .notes()
+            .iter()
+            .map(|note| (note.tick(), note.duration()))
+            .collect::<Vec<_>>(),
+        vec![(3_168, 1_920), (7_008, 1_920)]
+    );
+    assert_eq!(moved_right.controllers()[0].tick, 2_688);
+    assert_eq!(moved_right.pitch_bends()[0].tick, 3_888);
+    assert_eq!(app.timeline.selected_items.len(), 1);
+    assert!(app.timeline.selected_items.contains(&item_id));
+    assert!(app.item_nudge_dialog.error.is_none());
+
+    let _ = app.update(Message::Undo);
+    assert_eq!(app.project.midi_items()[0], original);
+    let _ = app.update(Message::Redo);
+    assert_eq!(app.project.midi_items()[0], moved_right);
+
+    let _ = app.update(Message::NudgeSelectedItems(-1));
+    let moved_left_again = app.project.midi_items()[0].clone();
+    assert_eq!(moved_left_again.source_offset_ticks(), 0);
+    assert_eq!(moved_left_again.source_loop_length_ticks(), 9_408);
+    assert_eq!(
+        moved_left_again
+            .notes()
+            .iter()
+            .map(|note| (note.tick(), note.duration()))
+            .collect::<Vec<_>>(),
+        vec![(2_688, 1_920), (6_528, 1_920)]
+    );
+    assert_eq!(moved_left_again.controllers()[0].tick, 2_208);
+    assert_eq!(moved_left_again.pitch_bends()[0].tick, 3_408);
+    assert!(app.item_nudge_dialog.error.is_none());
+
+    let _ = app.update(Message::Undo);
+    assert_eq!(app.project.midi_items()[0], moved_right);
+    let _ = app.update(Message::Redo);
+    assert_eq!(app.project.midi_items()[0], moved_left_again);
+}
+
+#[test]
+fn item_nudge_non_looped_midi_contents_rebases_left_from_zero_offset() {
+    use super::item_nudge::Target;
+    use aaadaw_core::MidiPitchBendData;
+
+    let mut app = App::default();
+    let _ = app.update(Message::AddTrack);
+    let track_id = app.project.tracks()[0].id();
+    app.project
+        .apply(DawAction::InsertMidiItem {
+            track_id,
+            start_tick: 3_840,
+            length_ticks: 9_600,
+        })
+        .unwrap();
+    let item_id = app.project.midi_items()[0].id();
+    app.project
+        .apply(DawAction::SetMidiItemLoopSource {
+            item_id,
+            enabled: false,
+        })
+        .unwrap();
+    app.project
+        .apply(DawAction::AddMidiNotes {
+            item_id,
+            notes: vec![
+                MidiNoteData {
+                    pitch: 60,
+                    tick: 2_880,
+                    duration: 1_920,
+                    velocity: 96,
+                },
+                MidiNoteData {
+                    pitch: 64,
+                    tick: 6_720,
+                    duration: 1_920,
+                    velocity: 108,
+                },
+            ],
+        })
+        .unwrap();
+    app.project
+        .apply(DawAction::SetMidiControllers {
+            item_id,
+            controllers: vec![MidiControllerData {
+                controller: 1,
+                tick: 2_400,
+                value: 80,
+            }],
+        })
+        .unwrap();
+    app.project
+        .apply(DawAction::SetMidiPitchBends {
+            item_id,
+            pitch_bends: vec![MidiPitchBendData {
+                tick: 3_600,
+                value: 9_000,
+            }],
+        })
+        .unwrap();
+    let original = app.project.midi_items()[0].clone();
+    app.timeline.rebuild(&app.project);
+    app.timeline.select_items(vec![(item_id, track_id)]);
+    let _ = app.update(Message::ItemNudgeTargetChanged(Target::Contents));
+    let _ = app.update(Message::ItemNudgeValueChanged("250".to_owned()));
+
+    let _ = app.update(Message::NudgeSelectedItems(-1));
+
+    let moved_left = app.project.midi_items()[0].clone();
+    assert_eq!(moved_left.source_offset_ticks(), 0);
+    assert_eq!(moved_left.source_loop_length_ticks(), 9_120);
+    assert_eq!(
+        moved_left
+            .notes()
+            .iter()
+            .map(|note| (note.tick(), note.duration()))
+            .collect::<Vec<_>>(),
+        vec![(2_400, 1_920), (6_240, 1_920)]
+    );
+    assert_eq!(moved_left.controllers()[0].tick, 1_920);
+    assert_eq!(moved_left.pitch_bends()[0].tick, 3_120);
+    assert!(app.item_nudge_dialog.error.is_none());
+
+    let _ = app.update(Message::Undo);
+    assert_eq!(app.project.midi_items()[0], original);
+    let _ = app.update(Message::Redo);
+    assert_eq!(app.project.midi_items()[0], moved_left);
+}
+
+#[test]
 fn item_nudge_midi_contents_matches_reaper_when_snap_to_unit_is_enabled() {
     use super::item_nudge::Target;
 

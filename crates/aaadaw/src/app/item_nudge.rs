@@ -613,6 +613,9 @@ impl App {
                     || content_shift_ticks != 0
                     || new_source_length != source_loop_length
                 {
+                    let content_shift_ticks = i64::try_from(content_shift_ticks).map_err(|_| {
+                        "Contents target is outside the supported MIDI source range".to_owned()
+                    })?;
                     actions.push(DawAction::SetMidiItemContents {
                         item_id: item.id(),
                         source_offset_ticks,
@@ -1085,8 +1088,78 @@ impl App {
         let mut actions = Vec::with_capacity(items.len());
         for item in items {
             let source_loop_length = item.source_loop_length_ticks();
-            if !item.is_loop_source() || source_loop_length == 0 {
-                return Err("MIDI Contents nudge requires a valid loop source".to_owned());
+            if source_loop_length == 0 {
+                return Err("Selected MIDI item has an invalid source length".to_owned());
+            }
+            if !item.is_loop_source() {
+                if delta_samples == 0 {
+                    continue;
+                }
+                if source_loop_length > (1_u64 << 53) {
+                    return Err("Contents nudge is outside the supported source range".to_owned());
+                }
+                let current_offset_samples = self
+                    .project
+                    .midi_source_offset_samples(item.start_tick(), item.source_offset_ticks())
+                    .map_err(|error| error.to_string())?;
+                let (source_offset_samples, content_shift_samples) = if delta_samples > 0 {
+                    let nudge_samples = sample_delta as f64;
+                    if current_offset_samples >= nudge_samples {
+                        (current_offset_samples - nudge_samples, 0.0)
+                    } else {
+                        (0.0, nudge_samples - current_offset_samples)
+                    }
+                } else if item.source_offset_ticks() > 0 {
+                    (current_offset_samples + sample_delta as f64, 0.0)
+                } else {
+                    (0.0, -(sample_delta as f64))
+                };
+                let source_offset_ticks = self
+                    .project
+                    .midi_source_offset_ticks_at_samples(item.start_tick(), source_offset_samples)
+                    .map_err(|error| error.to_string())?;
+                let content_shift_ticks = if content_shift_samples == 0.0 {
+                    0
+                } else {
+                    self.midi_source_content_shift_ticks(item.start_tick(), content_shift_samples)?
+                };
+                let source_loop_length_ticks = if content_shift_ticks > 0 {
+                    let content_shift_ticks = u64::try_from(content_shift_ticks).map_err(|_| {
+                        "Contents nudge is outside the supported source range".to_owned()
+                    })?;
+                    source_loop_length
+                        .checked_add(content_shift_ticks)
+                        .filter(|length| *length <= (1_u64 << 53))
+                        .ok_or_else(|| {
+                            "Contents nudge is outside the supported source range".to_owned()
+                        })?
+                } else if content_shift_ticks < 0 {
+                    source_loop_length
+                        .checked_sub(content_shift_ticks.unsigned_abs())
+                        .filter(|length| *length > 0 && *length <= (1_u64 << 53))
+                        .ok_or_else(|| {
+                            "Contents nudge is outside the supported source range".to_owned()
+                        })?
+                } else {
+                    source_loop_length
+                };
+                let source_offset_ticks = if content_shift_ticks < 0 {
+                    0
+                } else {
+                    source_offset_ticks
+                };
+                if source_offset_ticks != item.source_offset_ticks()
+                    || content_shift_ticks != 0
+                    || source_loop_length_ticks != source_loop_length
+                {
+                    actions.push(DawAction::SetMidiItemContents {
+                        item_id: item.id(),
+                        source_offset_ticks,
+                        source_loop_length_ticks,
+                        content_shift_ticks,
+                    });
+                }
+                continue;
             }
             let current_phase = item.source_offset_ticks() % source_loop_length;
             let signed_delta_samples = if delta_samples > 0 {
@@ -1130,6 +1203,34 @@ impl App {
             }
         }
         Ok(actions)
+    }
+
+    fn midi_source_content_shift_ticks(
+        &self,
+        item_start_tick: u64,
+        shift_samples: f64,
+    ) -> Result<i64, String> {
+        const MAX_EXACT: f64 = (1_u64 << 53) as f64;
+        if !shift_samples.is_finite() || shift_samples.abs() > MAX_EXACT {
+            return Err("Contents nudge is outside the supported source range".to_owned());
+        }
+        let start_sample = self
+            .project
+            .sample_at_tick_position(item_start_tick as f64)
+            .map_err(|error| error.to_string())?;
+        let target_sample = start_sample + shift_samples;
+        if !target_sample.is_finite() || target_sample.abs() > MAX_EXACT {
+            return Err("Contents nudge is outside the supported source range".to_owned());
+        }
+        let target_tick = self
+            .project
+            .tick_at_sample_position(target_sample)
+            .map_err(|error| error.to_string())?;
+        let shift_ticks = (target_tick - item_start_tick as f64).round();
+        if !shift_ticks.is_finite() || shift_ticks.abs() > MAX_EXACT {
+            return Err("Contents nudge is outside the supported source range".to_owned());
+        }
+        Ok(shift_ticks as i64)
     }
 
     fn audio_contents_nudge_actions(

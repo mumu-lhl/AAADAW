@@ -368,11 +368,12 @@ pub enum DawAction {
     /// Align a non-loop MIDI source to an absolute time while preserving its events.
     /// When the requested source start falls before the item, store it as a source offset;
     /// when it falls after the item, rebase the events and source length forward.
+    /// The event shift is signed so source-boundary nudge operations can rebase either way.
     SetMidiItemContents {
         item_id: ItemId,
         source_offset_ticks: u64,
         source_loop_length_ticks: u64,
-        content_shift_ticks: u64,
+        content_shift_ticks: i64,
     },
     /// Mute or unmute a MIDI item without changing its notes or timing.
     SetMidiItemMute {
