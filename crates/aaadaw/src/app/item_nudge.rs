@@ -31,6 +31,9 @@ pub(crate) enum Unit {
     MeasuresBeats,
     Frames,
     Pixels,
+    ItemLengths,
+    ItemSelections,
+    Notes,
 }
 
 impl std::fmt::Display for Unit {
@@ -43,6 +46,87 @@ impl std::fmt::Display for Unit {
             Self::MeasuresBeats => "measures.beats",
             Self::Frames => "frames",
             Self::Pixels => "pixels",
+            Self::ItemLengths => "item lengths",
+            Self::ItemSelections => "item selections",
+            Self::Notes => "notes",
+        })
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) enum NoteValue {
+    TwoFiftySixth,
+    OneTwentyEighth,
+    SixtyFourth,
+    ThirtySecondTriplet,
+    ThirtySecond,
+    SixteenthTriplet,
+    Sixteenth,
+    EighthTriplet,
+    Eighth,
+    #[default]
+    Quarter,
+    QuarterTriplet,
+    Half,
+    Whole,
+}
+
+impl NoteValue {
+    pub(crate) const ALL: [Self; 13] = [
+        Self::TwoFiftySixth,
+        Self::OneTwentyEighth,
+        Self::SixtyFourth,
+        Self::ThirtySecondTriplet,
+        Self::ThirtySecond,
+        Self::SixteenthTriplet,
+        Self::Sixteenth,
+        Self::EighthTriplet,
+        Self::Eighth,
+        Self::QuarterTriplet,
+        Self::Quarter,
+        Self::Half,
+        Self::Whole,
+    ];
+
+    fn quarter_notes(self) -> f64 {
+        match self {
+            Self::TwoFiftySixth => 1.0 / 64.0,
+            Self::OneTwentyEighth => 1.0 / 32.0,
+            Self::SixtyFourth => 1.0 / 16.0,
+            Self::ThirtySecondTriplet => 1.0 / 12.0,
+            Self::ThirtySecond => 1.0 / 8.0,
+            Self::SixteenthTriplet => 1.0 / 6.0,
+            Self::Sixteenth => 1.0 / 4.0,
+            Self::EighthTriplet => 1.0 / 3.0,
+            Self::Eighth => 1.0 / 2.0,
+            Self::QuarterTriplet => 2.0 / 3.0,
+            Self::Quarter => 1.0,
+            Self::Half => 2.0,
+            Self::Whole => 4.0,
+        }
+    }
+
+    fn ticks(self, ppq: u32) -> f64 {
+        f64::from(ppq) * self.quarter_notes()
+    }
+}
+
+impl std::fmt::Display for NoteValue {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(match self {
+            Self::TwoFiftySixth => "1/256",
+            Self::OneTwentyEighth => "1/128",
+            Self::SixtyFourth => "1/64",
+            Self::ThirtySecondTriplet => "1/32T",
+            Self::ThirtySecond => "1/32",
+            Self::SixteenthTriplet => "1/16T",
+            Self::Sixteenth => "1/16",
+            Self::EighthTriplet => "1/8T",
+            Self::Eighth => "1/8",
+            Self::QuarterTriplet => "1/4T",
+            Self::Quarter => "1/4",
+            Self::Half => "1/2",
+            Self::Whole => "whole",
         })
     }
 }
@@ -86,6 +170,7 @@ pub(super) struct Dialog {
     pub(super) mode: Mode,
     pub(super) target: Target,
     pub(super) unit: Unit,
+    pub(super) note_value: NoteValue,
     pub(super) value: String,
     pub(super) snap_to_unit: bool,
     pub(super) relative_set: bool,
@@ -98,6 +183,7 @@ impl Default for Dialog {
             mode: Mode::Nudge,
             target: Target::Position,
             unit: Unit::Milliseconds,
+            note_value: NoteValue::Quarter,
             value: "1".to_owned(),
             snap_to_unit: false,
             relative_set: false,
@@ -141,6 +227,9 @@ fn unit_is_valid_for_nudge(unit: Unit) -> bool {
             | Unit::Samples
             | Unit::Frames
             | Unit::Pixels
+            | Unit::ItemLengths
+            | Unit::ItemSelections
+            | Unit::Notes
     )
 }
 
@@ -243,7 +332,11 @@ impl App {
                     position.beat()
                 ))
             }
-            Unit::Milliseconds | Unit::Grid => None,
+            Unit::Milliseconds
+            | Unit::Grid
+            | Unit::ItemLengths
+            | Unit::ItemSelections
+            | Unit::Notes => None,
         }
     }
 
@@ -258,6 +351,11 @@ impl App {
                 self.refresh_item_nudge_set_value();
             }
         }
+    }
+
+    pub(super) fn change_item_nudge_note_value(&mut self, note_value: NoteValue) {
+        self.item_nudge_dialog.note_value = note_value;
+        self.item_nudge_dialog.error = None;
     }
 
     pub(super) fn change_item_nudge_target(&mut self, target: Target) {
@@ -336,7 +434,11 @@ impl App {
                 let delta = if self.item_nudge_dialog.snap_to_unit
                     && matches!(
                         self.item_nudge_dialog.unit,
-                        Unit::Grid | Unit::MeasuresBeats
+                        Unit::Grid
+                            | Unit::MeasuresBeats
+                            | Unit::ItemLengths
+                            | Unit::ItemSelections
+                            | Unit::Notes
                     ) {
                     let sample = match self.project.sample_at_tick(self.timeline.edit_cursor_tick) {
                         Ok(sample) => sample,
@@ -2250,6 +2352,9 @@ impl App {
             Unit::Grid | Unit::MeasuresBeats => {
                 return Err("Musical units are only available for Nudge".to_owned());
             }
+            Unit::ItemLengths | Unit::ItemSelections | Unit::Notes => {
+                return Err("This unit is only available for Nudge".to_owned());
+            }
         };
         if !samples.is_finite() || samples.abs() >= i128::MAX as f64 {
             return Err("Nudge amount is outside the supported range".to_owned());
@@ -2477,6 +2582,9 @@ impl App {
             Unit::Grid | Unit::MeasuresBeats => {
                 return Err("Musical snapping requires a selected item".to_owned());
             }
+            Unit::ItemLengths | Unit::ItemSelections | Unit::Notes => {
+                return Err("This unit requires an item or musical grid anchor".to_owned());
+            }
         };
         if unit == 0 {
             Err("Project sample rate is unavailable".to_owned())
@@ -2492,7 +2600,11 @@ impl App {
         };
         if matches!(
             self.item_nudge_dialog.unit,
-            Unit::Grid | Unit::MeasuresBeats
+            Unit::Grid
+                | Unit::MeasuresBeats
+                | Unit::ItemLengths
+                | Unit::ItemSelections
+                | Unit::Notes
         ) {
             return self.snap_musical_delta_to_sample(*first_sample, delta_samples);
         }
@@ -2506,6 +2618,35 @@ impl App {
         match self.item_nudge_dialog.unit {
             Unit::Grid => return self.grid_delta_samples(direction),
             Unit::MeasuresBeats => return self.measures_beats_delta_samples(direction),
+            Unit::ItemLengths | Unit::ItemSelections => {
+                let selected = self.selected_item_start_samples()?;
+                let Some((first_id, first_start)) = selected.first().copied() else {
+                    return Err("No selected items to move".to_owned());
+                };
+                let unit_samples = match self.item_nudge_dialog.unit {
+                    Unit::ItemLengths => self
+                        .selected_item_end_sample(first_id)?
+                        .checked_sub(first_start)
+                        .ok_or_else(|| "Selected item has an invalid length".to_owned())?,
+                    Unit::ItemSelections => {
+                        let selection_end =
+                            selected.iter().try_fold(first_start, |end, (id, _)| {
+                                self.selected_item_end_sample(*id)
+                                    .map(|item_end| end.max(item_end))
+                            })?;
+                        selection_end
+                            .checked_sub(first_start)
+                            .ok_or_else(|| "Selected item range is invalid".to_owned())?
+                    }
+                    _ => unreachable!("item-unit branch is exhaustive"),
+                };
+                if unit_samples == 0 {
+                    return Err("Selected item has no duration".to_owned());
+                }
+                let samples = unit_samples as f64 * self.positive_nudge_count()?;
+                return Ok(checked_signed_delta(samples, "Nudge amount")? * i128::from(direction));
+            }
+            Unit::Notes => return self.note_value_delta_samples(direction),
             Unit::Pixels => {
                 let anchor = if self.item_nudge_dialog.target == Target::EditCursor {
                     self.project
@@ -2641,6 +2782,46 @@ impl App {
             .ok_or_else(|| "No selected items to move".to_owned())
     }
 
+    fn positive_nudge_count(&self) -> Result<f64, String> {
+        let count = self
+            .item_nudge_dialog
+            .value
+            .trim()
+            .parse::<f64>()
+            .map_err(|_| "Enter a valid positive unit count".to_owned())?;
+        if !count.is_finite() || count <= 0.0 {
+            return Err("Nudge amount must be greater than zero".to_owned());
+        }
+        Ok(count)
+    }
+
+    fn note_value_delta_samples(&self, direction: i8) -> Result<i128, String> {
+        let count = self.positive_nudge_count()?;
+        let anchor = self.musical_nudge_anchor_sample()?;
+        let anchor_tick = self
+            .project
+            .tick_at_sample_position(anchor as f64)
+            .map_err(|error| error.to_string())?;
+        let delta_ticks = self
+            .item_nudge_dialog
+            .note_value
+            .ticks(self.project.settings().ppq())
+            * count
+            * f64::from(direction);
+        let target_tick = anchor_tick + delta_ticks;
+        if !target_tick.is_finite() || target_tick < 0.0 || target_tick >= u64::MAX as f64 {
+            return Err("Nudge amount is outside the supported range".to_owned());
+        }
+        let target_sample = self
+            .project
+            .sample_at_tick_position(target_tick)
+            .map_err(|error| error.to_string())?;
+        if !target_sample.is_finite() || target_sample < 0.0 || target_sample >= u64::MAX as f64 {
+            return Err("Nudge amount is outside the supported range".to_owned());
+        }
+        checked_signed_delta(target_sample - anchor as f64, "Nudge amount")
+    }
+
     fn snap_musical_delta_to_sample(
         &self,
         anchor_sample: u64,
@@ -2653,7 +2834,7 @@ impl App {
             .tick_at_sample_position(target_sample as f64)
             .map_err(|error| error.to_string())?;
         let snapped_tick = match self.item_nudge_dialog.unit {
-            Unit::Grid => {
+            Unit::Grid | Unit::ItemLengths | Unit::ItemSelections => {
                 let interval = self
                     .timeline
                     .snap_grid
@@ -2662,6 +2843,13 @@ impl App {
                         "Current Snap Grid cannot be represented in project ticks".to_owned()
                     })?;
                 (target_tick / interval as f64).round() * interval as f64
+            }
+            Unit::Notes => {
+                let interval = self
+                    .item_nudge_dialog
+                    .note_value
+                    .ticks(self.project.settings().ppq());
+                (target_tick / interval).round() * interval
             }
             Unit::MeasuresBeats => {
                 let target_tick_floor = target_tick.floor();
@@ -2762,6 +2950,17 @@ fn checked_sample_position(sample: f64, label: &str) -> Result<u64, String> {
         return Err(format!("{label} is outside the supported sample timeline"));
     }
     Ok(sample.round() as u64)
+}
+
+fn checked_signed_delta(samples: f64, label: &str) -> Result<i128, String> {
+    if !samples.is_finite() || samples.abs() >= i128::MAX as f64 {
+        return Err(format!("{label} is outside the supported range"));
+    }
+    let samples = samples.round();
+    if samples < i128::MIN as f64 || samples > i128::MAX as f64 {
+        return Err(format!("{label} is outside the supported range"));
+    }
+    Ok(samples as i128)
 }
 
 fn shifted_source_offset(sample: i64, delta: i128) -> Option<i64> {

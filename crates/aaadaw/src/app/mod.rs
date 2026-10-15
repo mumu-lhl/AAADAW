@@ -1910,6 +1910,7 @@ impl App {
                     | Message::ItemNudgeModeChanged(_)
                     | Message::ItemNudgeTargetChanged(_)
                     | Message::ItemNudgeUnitChanged(_)
+                    | Message::ItemNudgeNoteValueChanged(_)
                     | Message::ItemNudgeValueChanged(_)
                     | Message::ItemNudgeSnapToUnitChanged(_)
                     | Message::ItemNudgeRelativeSetChanged(_)
@@ -2549,6 +2550,9 @@ impl App {
             Message::ItemNudgeModeChanged(mode) => self.change_item_nudge_mode(mode),
             Message::ItemNudgeTargetChanged(target) => self.change_item_nudge_target(target),
             Message::ItemNudgeUnitChanged(unit) => self.change_item_nudge_unit(unit),
+            Message::ItemNudgeNoteValueChanged(note_value) => {
+                self.change_item_nudge_note_value(note_value)
+            }
             Message::ItemNudgeValueChanged(value) => self.change_item_nudge_value(value),
             Message::ItemNudgeSnapToUnitChanged(enabled) => self.change_item_nudge_snap(enabled),
             Message::ItemNudgeRelativeSetChanged(enabled) => {

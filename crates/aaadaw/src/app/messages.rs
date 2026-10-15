@@ -244,6 +244,7 @@ pub(crate) enum Message {
     ItemNudgeModeChanged(super::item_nudge::Mode),
     ItemNudgeTargetChanged(super::item_nudge::Target),
     ItemNudgeUnitChanged(super::item_nudge::Unit),
+    ItemNudgeNoteValueChanged(super::item_nudge::NoteValue),
     ItemNudgeValueChanged(String),
     ItemNudgeSnapToUnitChanged(bool),
     ItemNudgeRelativeSetChanged(bool),

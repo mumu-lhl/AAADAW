@@ -13,6 +13,9 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
             item_nudge::Unit::Samples,
             item_nudge::Unit::Frames,
             item_nudge::Unit::Pixels,
+            item_nudge::Unit::ItemLengths,
+            item_nudge::Unit::ItemSelections,
+            item_nudge::Unit::Notes,
         ],
         item_nudge::Mode::Set => &[
             item_nudge::Unit::Time,
@@ -50,6 +53,7 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
     let snap_label = match draft.unit {
         item_nudge::Unit::Grid => "Snap to grid",
         item_nudge::Unit::MeasuresBeats => "Snap to bar",
+        item_nudge::Unit::ItemLengths | item_nudge::Unit::ItemSelections => "Snap to grid",
         _ => "Snap to unit",
     };
     let snap_checkbox = container(
@@ -117,28 +121,51 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
         .error
         .clone()
         .unwrap_or_else(|| item_position_summary(app));
-    let content = column![
-        row![
-            pick_list(
-                [item_nudge::Mode::Nudge, item_nudge::Mode::Set],
-                Some(draft.mode),
-                Message::ItemNudgeModeChanged
-            )
-            .width(Length::Fixed(75.0))
+    let mut controls = row![
+        pick_list(
+            [item_nudge::Mode::Nudge, item_nudge::Mode::Set],
+            Some(draft.mode),
+            Message::ItemNudgeModeChanged
+        )
+        .width(Length::Fixed(75.0))
+        .padding([2, 6])
+        .text_size(13),
+        pick_list(targets, Some(draft.target), Message::ItemNudgeTargetChanged)
+            .width(Length::Fixed(106.0))
             .padding([2, 6])
             .text_size(13),
-            pick_list(targets, Some(draft.target), Message::ItemNudgeTargetChanged)
-                .width(Length::Fixed(106.0))
-                .padding([2, 6])
-                .text_size(13),
-            text(value_label).size(13).width(Length::Fixed(22.0)),
-            input,
-            pick_list(units, Some(draft.unit), Message::ItemNudgeUnitChanged)
-                .width(Length::Fixed(172.0))
-                .padding([2, 6])
-                .text_size(13),
-        ]
-        .spacing(7),
+        text(value_label).size(13).width(Length::Fixed(22.0)),
+        input,
+    ]
+    .spacing(7);
+    let has_note_value_picker =
+        draft.mode == item_nudge::Mode::Nudge && draft.unit == item_nudge::Unit::Notes;
+    let note_value_picker: Option<Element<'_, Message>> = has_note_value_picker.then(|| {
+        pick_list(
+            item_nudge::NoteValue::ALL,
+            Some(draft.note_value),
+            Message::ItemNudgeNoteValueChanged,
+        )
+        .width(Length::Fixed(70.0))
+        .padding([2, 6])
+        .text_size(13)
+        .into()
+    });
+    if let Some(note_value_picker) = note_value_picker {
+        controls = controls.push(note_value_picker);
+    }
+    controls = controls.push(
+        pick_list(units, Some(draft.unit), Message::ItemNudgeUnitChanged)
+            .width(Length::Fixed(if has_note_value_picker {
+                95.0
+            } else {
+                172.0
+            }))
+            .padding([2, 6])
+            .text_size(13),
+    );
+    let content = column![
+        controls,
         iced::widget::Space::new().height(Length::Fixed(12.0)),
         text(summary).size(13),
         iced::widget::Space::new().height(Length::Fixed(20.0)),
