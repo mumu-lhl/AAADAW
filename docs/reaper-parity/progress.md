@@ -1217,3 +1217,14 @@ AAADAW now carries the signed displacement through the MIDI tempo map and wraps 
 The latest nightly Cranelift desktop binary (Build ID `e284d4328a874c8155f86697481144d8bf124b34`, SHA-256 `11483a8e032fb40d03167a70b7fb19c69c76390f499c0a7a7392ec6239abe03e`) launched through the smoke helper on the bundled Xvfb :90 and rendered the real 1280×800 main window. Its screenshot is pixel-identical to the baseline fixture. The smoke path still works without `DISPLAY` or system Xvfb, using `WGPU_BACKEND=gl` and a fresh XDG profile.
 
 `ITEM-NUDGE-SET-001`, P4 and the single PR #282 remain `in_progress`. Native staggered mixed-media/non-loop MIDI edges, other Unit/Snap combinations, variable-tempo MIDI edge precision, broader Undo parity, and full REAPER UI parity remain open.
+
+
+### 2026-10-15 Staggered non-loop MIDI Set → Left Trim parity
+
+Linux REAPER 7.82 / Default 7 with two selected non-loop MIDI items at 2s and 6s, each 10s long with 20 QN sources, confirms Set → Left Trim at 4s rebases source data as well as item geometry. The first item ends at 4–12s with `D_STARTOFFS=1.5s`, source length 19 QN, and notes at 0/1,920 PPQ; the later item ends at 4–16s with zero source offset, a 24 QN source, and notes at 4,800/6,720 PPQ. One Undo restores both source states and Redo reapplies them. The [native TSV and after screenshot](../verification/reaper-parity/item-nudge-midi-set-edge-nonloop.md) record the actual window and state.
+
+AAADAW now combines placement edits with `SetMidiItemContents` in one transaction. It adjusts take phase with the moved edge and rebases non-loop notes, CC, pitch bends, and source length at PPQ zero when required. The App regression covers both staggered directions, selection, and one-step Undo/Redo. The focused native-match test passed; the full AAADAW App suite passed 604/604. Stable App all-target Clippy `-D warnings`, rustfmt, diff checks, and parity-matrix validation passed.
+
+The current stable desktop binary (ELF Build ID `ae5d78c679f41119b767d24ca48b015c01b0fe5b`, SHA-256 `22257c1a633ac6b3518cf68702b535733cbd0048d8db0856b91c796c62fab463`) ran through the repository desktop helper on bundled Xvfb :90. Its real 1280×800 main window was visible, and the [startup screenshot](../verification/reaper-parity/fixtures/aaadaw-nonloop-midi-set-edge-desktop-smoke.png) matches the baseline fixture byte-for-byte. The helper isolates XDG state and uses OpenGL, so it works in this session without `DISPLAY` or system Xvfb. Native fixture hashes are recorded in `fixtures/item-nudge.tsv`.
+
+`ITEM-NUDGE-SET-001`, P4 and the single PR #282 remain `in_progress`. Native non-loop MIDI Left Trim is now covered; non-loop MIDI Left Edge/End Position/Right Trim, staggered mixed-media selection, other Unit/Snap cases, variable-tempo edge precision, broader Undo parity, and complete REAPER UI parity remain open.

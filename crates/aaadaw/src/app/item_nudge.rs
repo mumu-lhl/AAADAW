@@ -734,6 +734,7 @@ impl App {
             if edge_delta.unsigned_abs() > MAX_EXACT as u128 {
                 return Err("MIDI item edge is outside the supported range".to_owned());
             }
+            let mut midi_contents_edit = None;
             let (next_start_tick, next_length_ticks, next_source_offset_ticks) = match target {
                 Target::LeftTrim | Target::LeftEdge => {
                     let next_start_tick = self
@@ -786,16 +787,62 @@ impl App {
                                 )
                                 .map_err(|error| error.to_string())?
                         } else {
-                            if next_offset_samples < 0.0 {
-                                return Err("MIDI left trim is outside the supported source range"
-                                    .to_owned());
+                            let edge_delta_ticks =
+                                i128::from(next_start_tick) - i128::from(item.start_tick());
+                            let desired_source_offset = i128::from(item.source_offset_ticks())
+                                .checked_add(edge_delta_ticks)
+                                .ok_or_else(|| {
+                                    "MIDI left trim is outside the supported source range"
+                                        .to_owned()
+                                })?;
+                            let earliest_event_tick = item
+                                .notes()
+                                .iter()
+                                .map(|note| note.tick())
+                                .chain(item.controllers().iter().map(|controller| controller.tick))
+                                .chain(item.pitch_bends().iter().map(|bend| bend.tick))
+                                .min()
+                                .unwrap_or(0);
+                            // Keep the take phase aligned with the item's edge while keeping
+                            // the non-loop source PPQ nonnegative. REAPER rebases content at
+                            // source zero when the requested phase crosses either boundary.
+                            let content_shift_ticks = if desired_source_offset < 0 {
+                                -desired_source_offset
+                            } else if desired_source_offset > i128::from(earliest_event_tick) {
+                                -i128::from(earliest_event_tick)
+                            } else {
+                                0
+                            };
+                            let next_source_offset_ticks = desired_source_offset
+                                .checked_add(content_shift_ticks)
+                                .filter(|offset| (0..=MAX_EXACT).contains(offset))
+                                .and_then(|offset| u64::try_from(offset).ok())
+                                .ok_or_else(|| {
+                                    "MIDI left trim is outside the supported source range"
+                                        .to_owned()
+                                })?;
+                            let next_source_length_ticks =
+                                i128::from(item.source_loop_length_ticks())
+                                    .checked_add(content_shift_ticks)
+                                    .filter(|length| (1..=MAX_EXACT).contains(length))
+                                    .and_then(|length| u64::try_from(length).ok())
+                                    .ok_or_else(|| {
+                                        "MIDI left trim is outside the supported source range"
+                                            .to_owned()
+                                    })?;
+                            let content_shift_ticks =
+                                i64::try_from(content_shift_ticks).map_err(|_| {
+                                    "MIDI left trim is outside the supported source range"
+                                        .to_owned()
+                                })?;
+                            if content_shift_ticks != 0 {
+                                midi_contents_edit = Some((
+                                    next_source_offset_ticks,
+                                    next_source_length_ticks,
+                                    content_shift_ticks,
+                                ));
                             }
-                            self.project
-                                .midi_source_offset_ticks_at_samples(
-                                    next_start_tick,
-                                    next_offset_samples,
-                                )
-                                .map_err(|error| error.to_string())?
+                            next_source_offset_ticks
                         }
                     } else {
                         item.source_offset_ticks()
@@ -843,6 +890,16 @@ impl App {
                     start_tick: next_start_tick,
                     length_ticks: next_length_ticks,
                     source_offset_ticks: next_source_offset_ticks,
+                });
+            }
+            if let Some((source_offset_ticks, source_loop_length_ticks, content_shift_ticks)) =
+                midi_contents_edit
+            {
+                actions.push(DawAction::SetMidiItemContents {
+                    item_id: item.id(),
+                    source_offset_ticks,
+                    source_loop_length_ticks,
+                    content_shift_ticks,
                 });
             }
         }

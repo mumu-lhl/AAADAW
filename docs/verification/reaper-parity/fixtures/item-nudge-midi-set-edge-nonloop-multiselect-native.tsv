@@ -1,0 +1,15 @@
+version	7.82/linux-x86_64
+theme	Default_7.0.ReaperThemeZip
+fixture	two selected MIDI items at 2s and 6s; each 10s long; loop_source=0; notes at 0.5s and 1.5s PPQ offsets
+baseline	state_change_count	4	state_change_delta	0	item_count	2	undo_label	Set edge MIDI multi-select probe setup
+baseline_item_1	position_s	2.000000000	length_s	10.000000000	loop_source	0	source_offset_s	0.000000000	source_length	20.000000000	length_is_qn	true	selected	1	notes	0,0,0,960.000,1920.000,0,60,96;1,0,0,2880.000,3840.000,0,64,108
+baseline_item_2	position_s	6.000000000	length_s	10.000000000	loop_source	0	source_offset_s	0.000000000	source_length	20.000000000	length_is_qn	true	selected	1	notes	0,0,0,960.000,1920.000,0,60,96;1,0,0,2880.000,3840.000,0,64,108
+nonloop_left_trim4	state_change_count	5	state_change_delta	1	item_count	2	undo_label	Nudge items
+nonloop_left_trim4_item_1	position_s	4.000000000	length_s	8.000000000	loop_source	0	source_offset_s	1.500000000	source_length	19.000000000	length_is_qn	true	selected	1	notes	0,0,0,0.000,960.000,0,60,96;1,0,0,1920.000,2880.000,0,64,108
+nonloop_left_trim4_item_2	position_s	4.000000000	length_s	12.000000000	loop_source	0	source_offset_s	0.000000000	source_length	24.000000000	length_is_qn	true	selected	1	notes	0,0,0,4800.000,5760.000,0,60,96;1,0,0,6720.000,7680.000,0,64,108
+undo_nonloop_left_trim4	state_change_count	6	state_change_delta	2	item_count	2	undo_label	Set edge MIDI multi-select probe setup
+undo_nonloop_left_trim4_item_1	position_s	2.000000000	length_s	10.000000000	loop_source	0	source_offset_s	0.000000000	source_length	20.000000000	length_is_qn	true	selected	1	notes	0,0,0,960.000,1920.000,0,60,96;1,0,0,2880.000,3840.000,0,64,108
+undo_nonloop_left_trim4_item_2	position_s	6.000000000	length_s	10.000000000	loop_source	0	source_offset_s	0.000000000	source_length	20.000000000	length_is_qn	true	selected	1	notes	0,0,0,960.000,1920.000,0,60,96;1,0,0,2880.000,3840.000,0,64,108
+redo_nonloop_left_trim4	state_change_count	7	state_change_delta	3	item_count	2	undo_label	Nudge items
+redo_nonloop_left_trim4_item_1	position_s	4.000000000	length_s	8.000000000	loop_source	0	source_offset_s	1.500000000	source_length	19.000000000	length_is_qn	true	selected	1	notes	0,0,0,0.000,960.000,0,60,96;1,0,0,1920.000,2880.000,0,64,108
+redo_nonloop_left_trim4_item_2	position_s	4.000000000	length_s	12.000000000	loop_source	0	source_offset_s	0.000000000	source_length	24.000000000	length_is_qn	true	selected	1	notes	0,0,0,4800.000,5760.000,0,60,96;1,0,0,6720.000,7680.000,0,64,108

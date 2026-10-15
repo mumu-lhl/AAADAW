@@ -12,6 +12,8 @@ assert(reaper.CountTracks(0) == 0, "probe requires an empty project")
 local root = assert(os.getenv("AAADAW_REAPER_PROBE_DIR")) .. "/"
 local output = assert(io.open(root .. "item-nudge-midi-set-edge-multiselect-native.tsv", "w"))
 local command_path = root .. "item-nudge-midi-set-edge-multiselect-command.txt"
+local loop_source_enabled = os.getenv("AAADAW_MIDI_PROBE_LOOP") ~= "0"
+local loop_source_value = loop_source_enabled and 1 or 0
 local positions = { 2, 6 }
 local items = {}
 local takes = {}
@@ -23,7 +25,7 @@ reaper.GetSetMediaTrackInfo_String(track, "P_NAME", "Set edge multi-select MIDI"
 reaper.SetOnlyTrackSelected(track)
 for index, position in ipairs(positions) do
   local item = assert(reaper.CreateNewMIDIItemInProj(track, position, position + 10, false))
-  assert(reaper.SetMediaItemInfo_Value(item, "B_LOOPSRC", 1))
+  assert(reaper.SetMediaItemInfo_Value(item, "B_LOOPSRC", loop_source_value))
   local take = assert(reaper.GetActiveTake(item))
   assert(reaper.MIDI_InsertNote(take, false, false, 960, 1920, 0, 60, 96, false))
   assert(reaper.MIDI_InsertNote(take, false, false, 2880, 3840, 0, 64, 108, false))
@@ -79,7 +81,8 @@ end
 
 output:write("version\t", reaper.GetAppVersion(), "\n")
 output:write("theme\tDefault_7.0.ReaperThemeZip\n")
-output:write("fixture\ttwo selected loop-source MIDI items at 2s and 6s; each 10s long; notes at 0.5s and 1.5s PPQ offsets\n")
+output:write("fixture\ttwo selected MIDI items at 2s and 6s; each 10s long; loop_source=", loop_source_value,
+  "; notes at 0.5s and 1.5s PPQ offsets\n")
 write_state("baseline")
 reaper.Main_OnCommand(41226, 0)
 reaper.UpdateArrange()
@@ -97,7 +100,7 @@ local function poll_command()
       for index, item in ipairs(items) do
         reaper.SetMediaItemInfo_Value(item, "D_POSITION", positions[index])
         reaper.SetMediaItemInfo_Value(item, "D_LENGTH", 10)
-        reaper.SetMediaItemInfo_Value(item, "B_LOOPSRC", 1)
+        reaper.SetMediaItemInfo_Value(item, "B_LOOPSRC", loop_source_value)
         reaper.SetMediaItemTakeInfo_Value(takes[index], "D_STARTOFFS", 0)
         reaper.SetMediaItemSelected(item, true)
         reaper.UpdateItemInProject(item)

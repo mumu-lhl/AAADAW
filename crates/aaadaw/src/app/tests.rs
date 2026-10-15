@@ -1213,6 +1213,148 @@ fn item_nudge_set_edge_targets_match_native_staggered_looped_midi_selection() {
 }
 
 #[test]
+fn item_nudge_set_left_trim_matches_native_staggered_non_loop_midi_selection() {
+    use super::item_nudge::Target;
+
+    let (mut app, project_path) = item_nudge_set_edge_test_app();
+    let track_id = app.project.tracks()[1].id();
+    let first_id = app.project.midi_items()[0].id();
+    app.project
+        .apply(DawAction::SetMidiItemLoopSource {
+            item_id: first_id,
+            enabled: false,
+        })
+        .unwrap();
+    app.project
+        .apply(DawAction::InsertMidiItem {
+            track_id,
+            start_tick: 11_520,
+            length_ticks: 19_200,
+        })
+        .unwrap();
+    let second_id = app.project.midi_items()[1].id();
+    app.project
+        .apply(DawAction::SetMidiItemLoopSource {
+            item_id: second_id,
+            enabled: false,
+        })
+        .unwrap();
+    for item_id in [first_id, second_id] {
+        if item_id == first_id {
+            app.project
+                .apply(DawAction::AddMidiNotes {
+                    item_id,
+                    notes: vec![MidiNoteData {
+                        pitch: 64,
+                        tick: 2_880,
+                        duration: 960,
+                        velocity: 108,
+                    }],
+                })
+                .unwrap();
+        } else {
+            app.project
+                .apply(DawAction::AddMidiNotes {
+                    item_id,
+                    notes: vec![
+                        MidiNoteData {
+                            pitch: 60,
+                            tick: 960,
+                            duration: 960,
+                            velocity: 96,
+                        },
+                        MidiNoteData {
+                            pitch: 64,
+                            tick: 2_880,
+                            duration: 960,
+                            velocity: 108,
+                        },
+                    ],
+                })
+                .unwrap();
+        }
+        app.project
+            .apply(DawAction::SetMidiControllers {
+                item_id,
+                controllers: vec![MidiControllerData {
+                    controller: 1,
+                    tick: 1_920,
+                    value: 80,
+                }],
+            })
+            .unwrap();
+        app.project
+            .apply(DawAction::SetMidiPitchBends {
+                item_id,
+                pitch_bends: vec![aaadaw_core::MidiPitchBendData {
+                    tick: 3_840,
+                    value: 9_000,
+                }],
+            })
+            .unwrap();
+    }
+    let original = app.project.midi_items().to_vec();
+    app.timeline.rebuild(&app.project);
+    app.timeline
+        .select_items(vec![(first_id, track_id), (second_id, track_id)]);
+    let _ = app.update(Message::ItemNudgeModeChanged(super::item_nudge::Mode::Set));
+    let _ = app.update(Message::ItemNudgeTargetChanged(Target::LeftTrim));
+    let _ = app.update(Message::ItemNudgeValueChanged("0:04.000".to_owned()));
+
+    let revision = app.revision;
+    let _ = app.update(Message::ApplyItemNudgeSet);
+
+    let edited = app.project.midi_items().to_vec();
+    assert_eq!(app.revision, revision + 1);
+    assert!(app.item_nudge_dialog.error.is_none());
+    assert_eq!(
+        edited
+            .iter()
+            .map(|item| (
+                item.start_tick(),
+                item.length_ticks(),
+                item.source_offset_ticks(),
+                item.source_loop_length_ticks(),
+            ))
+            .collect::<Vec<_>>(),
+        vec![(7_680, 15_360, 2_880, 18_240), (7_680, 23_040, 0, 23_040)]
+    );
+    assert_eq!(
+        edited
+            .iter()
+            .map(|item| {
+                item.notes()
+                    .iter()
+                    .map(|note| (note.id(), note.tick()))
+                    .collect::<Vec<_>>()
+            })
+            .collect::<Vec<_>>(),
+        vec![
+            vec![
+                (original[0].notes()[0].id(), 0),
+                (original[0].notes()[1].id(), 1_920)
+            ],
+            vec![
+                (original[1].notes()[0].id(), 4_800),
+                (original[1].notes()[1].id(), 6_720)
+            ],
+        ]
+    );
+    assert_eq!(edited[0].controllers()[0].tick, 960);
+    assert_eq!(edited[1].controllers()[0].tick, 5_760);
+    assert_eq!(edited[0].pitch_bends()[0].tick, 2_880);
+    assert_eq!(edited[1].pitch_bends()[0].tick, 7_680);
+    assert_eq!(app.timeline.selected_items.len(), 2);
+
+    let _ = app.update(Message::Undo);
+    assert_eq!(app.project.midi_items(), original);
+    let _ = app.update(Message::Redo);
+    assert_eq!(app.project.midi_items(), edited);
+    drop(app);
+    let _ = std::fs::remove_file(project_path);
+}
+
+#[test]
 fn item_nudge_set_end_position_relative_set_applies_a_delta_from_the_last_edge() {
     use super::item_nudge::Target;
 
