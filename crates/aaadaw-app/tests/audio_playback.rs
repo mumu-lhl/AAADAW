@@ -451,6 +451,101 @@ fn transport_loop_preparation_repeats_an_embedded_bounded_stereo_item() {
 }
 
 #[test]
+fn transport_loop_preparation_repeats_midi_notes_at_the_project_loop_boundary() {
+    let database_path = unique_path("aaadaw");
+    let store = ProjectStore::open(&database_path).expect("project should open");
+    let mut project = Project::with_settings(aaadaw_core::ProjectSettings::default());
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "MIDI loop".to_owned(),
+        })
+        .expect("MIDI track should be created");
+    project
+        .apply(DawAction::InsertMidiItem {
+            track_id: project.tracks()[0].id(),
+            start_tick: 0,
+            length_ticks: 960,
+        })
+        .expect("MIDI item should be created");
+    project
+        .apply(DawAction::AddMidiNotes {
+            item_id: project.midi_items()[0].id(),
+            notes: vec![aaadaw_core::MidiNoteData {
+                pitch: 64,
+                tick: 0,
+                duration: 480,
+                velocity: 100,
+            }],
+        })
+        .expect("MIDI note should be added");
+
+    let loop_start = project
+        .sample_at_tick(0)
+        .expect("loop start should convert");
+    let loop_end = project
+        .sample_at_tick(960)
+        .expect("loop end should convert");
+    let note_end = project
+        .sample_at_tick(480)
+        .expect("note end should convert");
+    let loop_range = TransportLoopRange::new(loop_start, loop_end)
+        .expect("project loop should cover a positive sample range");
+    let loop_frames = usize::try_from(loop_range.length_samples())
+        .expect("loop length should fit a render block");
+    let mut prepared = prepare_audio_playback_at_with_loop_range(
+        &project,
+        &store,
+        loop_start,
+        Some(loop_range),
+        64,
+        loop_frames,
+        ResamplingQuality::Sinc64,
+    )
+    .expect("MIDI-only loop playback should prepare");
+    assert_eq!(prepared.feeder_count(), 0);
+    store.close().expect("project should close");
+
+    let graph = prepared.graph_mut();
+    graph.transport_mut().start();
+    let mut first_output = vec![[0.0_f32; 2]; loop_frames];
+    let mut midi_output = [None; 8];
+    let first = graph
+        .render_with_midi(&mut midi_output, &mut first_output)
+        .expect("first pass should emit the MIDI note");
+    assert_eq!(first.midi_event_count, 2);
+    assert_eq!(
+        midi_output[..first.midi_event_count]
+            .iter()
+            .flatten()
+            .map(|event| (event.sample_offset, event.kind))
+            .collect::<Vec<_>>(),
+        vec![
+            (0, aaadaw_engine::MidiEventKind::NoteOn),
+            (
+                usize::try_from(note_end - loop_start).expect("note offset should fit"),
+                aaadaw_engine::MidiEventKind::NoteOff,
+            ),
+        ]
+    );
+    assert_eq!(graph.transport_mut().position_samples(), loop_start);
+
+    midi_output.fill(None);
+    let mut wrapped_output = [[0.0_f32; 2]; 4];
+    let wrapped = graph
+        .render_with_midi(&mut midi_output, &mut wrapped_output)
+        .expect("next pass should chase the note at Loop start");
+    assert_eq!(wrapped.midi_event_count, 1);
+    let repeated_note = midi_output[0].expect("loop start should emit a note-on");
+    assert_eq!(repeated_note.sample_offset, 0);
+    assert_eq!(repeated_note.kind, aaadaw_engine::MidiEventKind::NoteOn);
+    assert_eq!(graph.transport_mut().position_samples(), loop_start + 4);
+
+    drop(prepared);
+    remove_database(&database_path);
+}
+
+#[test]
 fn repeated_embedded_source_reuses_cached_pcm_and_preserves_each_trim() {
     let database_path = unique_path("aaadaw");
     let frames = [
