@@ -1,3 +1,4 @@
+use crate::transport::TransportBlockSegment;
 use aaadaw_core::{NoteId, Project, TimebaseError, Track, TrackId};
 use std::collections::HashMap;
 use std::fmt;
@@ -250,6 +251,24 @@ pub struct MidiEventPlan {
     notes: Vec<CompiledMidiNote>,
     note_interval_nodes: Vec<MidiNoteIntervalNode>,
     note_interval_root: Option<usize>,
+}
+
+/// Cursor state to carry between callback-level MIDI schedules that may wrap.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct MidiSegmentCursor {
+    /// Exclusive project sample at the end of the last scheduled segment.
+    pub sample_end: Option<u64>,
+    /// MIDI chase generation at the start of the last scheduled segment.
+    pub chase_generation: Option<u64>,
+}
+
+/// Summary returned after scheduling MIDI across transport callback segments.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct MidiSegmentSchedule {
+    /// Number of callback-relative MIDI events written to the output slice.
+    pub event_count: usize,
+    /// State to pass to the next callback's segmented schedule.
+    pub cursor: MidiSegmentCursor,
 }
 
 /// The project could not be compiled into a MIDI event schedule.
@@ -826,6 +845,130 @@ impl MidiEventPlan {
         }
         Ok(required)
     }
+
+    /// Plans scheduled MIDI across contiguous transport segments, including loop wraps.
+    ///
+    /// The caller supplies all three buffers on the control thread. `aggregate` holds the
+    /// callback-wide event list while `temporary` is reused for each query; `output` is only
+    /// modified after every segment fits. When a segment jumps away from the prior sample end,
+    /// sounding notes are released at the new callback offset before controller, pitch-bend,
+    /// and note state are chased at the destination.
+    pub fn events_for_segments(
+        &self,
+        segments: &[TransportBlockSegment],
+        previous: MidiSegmentCursor,
+        output: &mut [Option<ScheduledMidiEvent>],
+        aggregate: &mut [Option<ScheduledMidiEvent>],
+        temporary: &mut [Option<ScheduledMidiEvent>],
+    ) -> Result<MidiSegmentSchedule, MidiScheduleError> {
+        let mut written = 0;
+        let mut cursor = previous;
+
+        for segment in segments {
+            let segment_end = segment
+                .start_sample
+                .checked_add(
+                    u64::try_from(segment.frame_count)
+                        .map_err(|_| MidiScheduleError::PositionOutOfRange)?,
+                )
+                .ok_or(MidiScheduleError::PositionOutOfRange)?;
+            let discontinuity = cursor.sample_end.is_some_and(|sample_end| {
+                sample_end != segment.start_sample
+                    || cursor.chase_generation != Some(segment.chase_generation)
+            });
+
+            if discontinuity
+                && let Some(previous_end) = cursor.sample_end
+                && let Some(sample_before_end) = previous_end.checked_sub(1)
+            {
+                let count = self.active_notes_at(sample_before_end, temporary)?;
+                for event in temporary[..count].iter_mut().flatten() {
+                    event.kind = MidiEventKind::NoteOff;
+                    event.velocity = 0;
+                    event.sample_offset = segment.output_offset;
+                }
+                append_segment_events(aggregate, &mut written, temporary, count)?;
+            }
+
+            let should_chase = cursor.sample_end != Some(segment.start_sample)
+                || cursor.chase_generation != Some(segment.chase_generation);
+            if should_chase {
+                let count = self.active_controllers_at(segment.start_sample, temporary)?;
+                for event in temporary[..count].iter_mut().flatten() {
+                    event.sample_offset = segment.output_offset;
+                }
+                append_segment_events(aggregate, &mut written, temporary, count)?;
+
+                let count = self.active_pitch_bends_at(segment.start_sample, temporary)?;
+                for event in temporary[..count].iter_mut().flatten() {
+                    event.sample_offset = segment.output_offset;
+                }
+                append_segment_events(aggregate, &mut written, temporary, count)?;
+
+                let count = self.active_notes_at(segment.start_sample, temporary)?;
+                for event in temporary[..count].iter_mut().flatten() {
+                    event.sample_offset = segment.output_offset;
+                }
+                append_segment_events(aggregate, &mut written, temporary, count)?;
+            }
+
+            let count =
+                self.events_for_block(segment.start_sample, segment.frame_count, temporary)?;
+            for event in temporary[..count].iter_mut().flatten() {
+                event.sample_offset = event
+                    .sample_offset
+                    .checked_add(segment.output_offset)
+                    .ok_or(MidiScheduleError::PositionOutOfRange)?;
+            }
+            append_segment_events(aggregate, &mut written, temporary, count)?;
+            cursor = MidiSegmentCursor {
+                sample_end: Some(segment_end),
+                chase_generation: Some(segment.chase_generation),
+            };
+        }
+
+        aggregate[..written].sort_unstable_by_key(|event| {
+            let event = event.expect("segmented MIDI output slots are initialized");
+            (
+                event.sample_offset,
+                midi_event_priority(event.kind, event.controller, event.velocity),
+                event.track_id.value(),
+                event.controller.unwrap_or(event.pitch),
+                event.note_id.map_or(0, NoteId::value),
+            )
+        });
+        if output.len() < written {
+            return Err(MidiScheduleError::OutputBufferTooSmall {
+                required: written,
+                available: output.len(),
+            });
+        }
+        output[..written].copy_from_slice(&aggregate[..written]);
+        Ok(MidiSegmentSchedule {
+            event_count: written,
+            cursor,
+        })
+    }
+}
+
+fn append_segment_events(
+    aggregate: &mut [Option<ScheduledMidiEvent>],
+    written: &mut usize,
+    temporary: &[Option<ScheduledMidiEvent>],
+    count: usize,
+) -> Result<(), MidiScheduleError> {
+    let required = written
+        .checked_add(count)
+        .ok_or(MidiScheduleError::PositionOutOfRange)?;
+    if aggregate.len() < required {
+        return Err(MidiScheduleError::OutputBufferTooSmall {
+            required,
+            available: aggregate.len(),
+        });
+    }
+    aggregate[*written..required].copy_from_slice(&temporary[..count]);
+    *written = required;
+    Ok(())
 }
 
 fn compile_note_interval_tree(

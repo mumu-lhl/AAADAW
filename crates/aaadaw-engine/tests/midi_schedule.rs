@@ -1,7 +1,10 @@
 use aaadaw_core::{
     DawAction, MidiControllerData, MidiNoteData, MidiPitchBendData, Project, TempoCurve,
 };
-use aaadaw_engine::{MidiEventKind, MidiEventPlan, MidiScheduleError, ScheduledMidiEvent};
+use aaadaw_engine::{
+    MidiEventKind, MidiEventPlan, MidiScheduleError, MidiSegmentCursor, ScheduledMidiEvent,
+    TransportBlockSegment,
+};
 
 fn project_with_note(pitch: u8, tick: u64, duration: u64) -> (Project, aaadaw_core::TrackId) {
     let mut project = Project::with_settings(
@@ -77,6 +80,192 @@ fn event_plan_uses_tempo_map_and_queries_half_open_sample_blocks() {
     let event = output[0].expect("the event should be initialized");
     assert_eq!(event.kind, MidiEventKind::NoteOff);
     assert_eq!(event.velocity, 0);
+}
+
+#[test]
+fn segmented_event_plan_releases_and_chases_notes_at_a_loop_wrap() {
+    let (project, track_id) = project_with_note(69, 0, 100);
+    let plan = MidiEventPlan::compile(&project).expect("valid project should compile");
+    let segments = [
+        TransportBlockSegment {
+            output_offset: 0,
+            start_sample: 25,
+            frame_count: 5,
+            chase_generation: 4,
+        },
+        TransportBlockSegment {
+            output_offset: 5,
+            start_sample: 25,
+            frame_count: 5,
+            chase_generation: 5,
+        },
+    ];
+    let mut output = [None; 8];
+    let mut aggregate = [None; 8];
+    let mut temporary = [None; 8];
+
+    let schedule = plan
+        .events_for_segments(
+            &segments,
+            MidiSegmentCursor::default(),
+            &mut output,
+            &mut aggregate,
+            &mut temporary,
+        )
+        .expect("two short loop segments should fit the preallocated buffers");
+
+    assert_eq!(schedule.event_count, 3);
+    assert_eq!(schedule.cursor.sample_end, Some(30));
+    assert_eq!(schedule.cursor.chase_generation, Some(5));
+    let events: Vec<_> = output[..schedule.event_count]
+        .iter()
+        .flatten()
+        .copied()
+        .collect();
+    assert_eq!(
+        events
+            .iter()
+            .map(|event| (event.sample_offset, event.kind, event.track_id))
+            .collect::<Vec<_>>(),
+        vec![
+            (0, MidiEventKind::NoteOn, track_id),
+            (5, MidiEventKind::NoteOff, track_id),
+            (5, MidiEventKind::NoteOn, track_id),
+        ]
+    );
+}
+
+#[test]
+fn segmented_event_plan_chases_controller_and_pitch_bend_after_a_loop_wrap() {
+    let (mut project, track_id) = project_with_note(69, 0, 100);
+    let item_id = project.midi_items()[0].id();
+    project
+        .apply(DawAction::SetMidiControllers {
+            item_id,
+            controllers: vec![MidiControllerData {
+                controller: 1,
+                tick: 0,
+                value: 64,
+            }],
+        })
+        .expect("controller should be accepted");
+    project
+        .apply(DawAction::SetMidiPitchBends {
+            item_id,
+            pitch_bends: vec![MidiPitchBendData {
+                tick: 0,
+                value: 10_000,
+            }],
+        })
+        .expect("pitch bend should be accepted");
+    let plan = MidiEventPlan::compile(&project).expect("valid project should compile");
+    let segments = [
+        TransportBlockSegment {
+            output_offset: 0,
+            start_sample: 25,
+            frame_count: 5,
+            chase_generation: 4,
+        },
+        TransportBlockSegment {
+            output_offset: 5,
+            start_sample: 25,
+            frame_count: 5,
+            chase_generation: 5,
+        },
+    ];
+    let mut output = [None; 12];
+    let mut aggregate = [None; 12];
+    let mut temporary = [None; 12];
+
+    let schedule = plan
+        .events_for_segments(
+            &segments,
+            MidiSegmentCursor::default(),
+            &mut output,
+            &mut aggregate,
+            &mut temporary,
+        )
+        .expect("controller, pitch-bend, and note chase should fit");
+    let events = output[..schedule.event_count]
+        .iter()
+        .flatten()
+        .copied()
+        .collect::<Vec<_>>();
+
+    assert_eq!(schedule.event_count, 7);
+    assert!(events.iter().any(|event| {
+        event.sample_offset == 5
+            && event.track_id == track_id
+            && event.kind == MidiEventKind::ControllerChange
+            && event.controller == Some(1)
+            && event.velocity == 64
+    }));
+    assert!(events.iter().any(|event| {
+        event.sample_offset == 5
+            && event.track_id == track_id
+            && event.kind == MidiEventKind::PitchBend
+            && event.pitch_bend == Some(10_000)
+    }));
+    assert!(events.iter().any(|event| {
+        event.sample_offset == 5
+            && event.track_id == track_id
+            && event.kind == MidiEventKind::NoteOff
+            && event.velocity == 0
+    }));
+    assert!(events.iter().any(|event| {
+        event.sample_offset == 5
+            && event.track_id == track_id
+            && event.kind == MidiEventKind::NoteOn
+            && event.velocity == 100
+    }));
+}
+
+#[test]
+fn segmented_event_plan_keeps_output_unchanged_when_callback_buffer_is_too_small() {
+    let (project, _) = project_with_note(69, 0, 100);
+    let plan = MidiEventPlan::compile(&project).expect("valid project should compile");
+    let segments = [
+        TransportBlockSegment {
+            output_offset: 0,
+            start_sample: 25,
+            frame_count: 5,
+            chase_generation: 4,
+        },
+        TransportBlockSegment {
+            output_offset: 5,
+            start_sample: 25,
+            frame_count: 5,
+            chase_generation: 5,
+        },
+    ];
+    let sentinel = ScheduledMidiEvent {
+        sample_offset: 99,
+        track_id: project.tracks()[0].id(),
+        note_id: None,
+        pitch: 1,
+        velocity: 2,
+        controller: None,
+        pitch_bend: None,
+        kind: MidiEventKind::NoteOn,
+    };
+    let mut output = [Some(sentinel); 2];
+    let mut aggregate = [None; 8];
+    let mut temporary = [None; 8];
+
+    assert_eq!(
+        plan.events_for_segments(
+            &segments,
+            MidiSegmentCursor::default(),
+            &mut output,
+            &mut aggregate,
+            &mut temporary,
+        ),
+        Err(MidiScheduleError::OutputBufferTooSmall {
+            required: 3,
+            available: 2,
+        })
+    );
+    assert_eq!(output, [Some(sentinel); 2]);
 }
 
 #[test]

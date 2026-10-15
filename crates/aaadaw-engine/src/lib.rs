@@ -94,7 +94,7 @@ pub use master_output::{
 };
 pub use midi::{
     MidiEventKind, MidiEventPlan, MidiInputDecoder, MidiInputMessage, MidiScheduleError,
-    ScheduledMidiEvent,
+    MidiSegmentCursor, MidiSegmentSchedule, ScheduledMidiEvent,
 };
 
 /// Lock-free control for auditioning one note through a prepared track instrument.
