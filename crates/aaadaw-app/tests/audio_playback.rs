@@ -451,6 +451,82 @@ fn transport_loop_preparation_repeats_an_embedded_bounded_stereo_item() {
 }
 
 #[test]
+fn transport_loop_preparation_repeats_a_normal_trimmed_stereo_item() {
+    let database_path = unique_path("aaadaw");
+    let source_frames: Vec<_> = (0_i16..32)
+        .map(|index| {
+            let sample = (index - 16) * 1_024;
+            [sample, -sample]
+        })
+        .collect();
+    let wav = stereo_pcm_wav(&source_frames, 48_000);
+    let mut store = ProjectStore::open(&database_path).expect("project should open");
+    store
+        .import_audio_asset("asset://transport-trim-loop", "trim.wav", Cursor::new(&wav))
+        .expect("trimmed source should embed");
+
+    let mut project = Project::with_settings(
+        aaadaw_core::ProjectSettings::default()
+            .with_pan_mode(aaadaw_core::PanMode::LegacyMonoStereo),
+    );
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Trimmed loop".to_owned(),
+        })
+        .expect("track should be created");
+    let loop_range = TransportLoopRange::new(16, 32).expect("loop should be nonempty");
+    project
+        .apply(DawAction::InsertAudioItem {
+            track_id: project.tracks()[0].id(),
+            media_ref: "asset://transport-trim-loop".to_owned(),
+            start_sample: loop_range.start_sample(),
+            source_offset_samples: 16,
+            length_samples: loop_range.length_samples(),
+        })
+        .expect("normal trimmed audio item should be inserted");
+
+    let prepared = prepare_audio_playback_at_with_loop_range(
+        &project,
+        &store,
+        20,
+        Some(loop_range),
+        64,
+        32,
+        ResamplingQuality::Sinc64,
+    )
+    .expect("exact-range normal trimmed item should prepare for Repeat");
+    assert_eq!(prepared.feeder_count(), 1);
+    let (mut graph, feeders) = prepared.into_parts();
+    std::thread::sleep(std::time::Duration::from_millis(20));
+    graph.transport_mut().start();
+    let mut output = [[0.0_f32; 2]; 32];
+    let stats = graph
+        .render_into(&mut output)
+        .expect("trimmed source should repeat across two wraps");
+    assert_eq!(stats.underrun_samples, 0);
+    for (frame_index, frame) in output.iter().enumerate() {
+        let source_index = 16 + (frame_index + 4) % 16;
+        let expected = [
+            source_frames[source_index][0] as f32 / 32_768.0,
+            source_frames[source_index][1] as f32 / 32_768.0,
+        ];
+        assert!((frame[0] - expected[0]).abs() < 1.0e-6);
+        assert!((frame[1] - expected[1]).abs() < 1.0e-6);
+    }
+    assert_eq!(graph.transport_mut().position_samples(), 20);
+    for feeder in feeders {
+        feeder
+            .cancel()
+            .expect("trimmed loop feeder should stop cleanly");
+    }
+    drop(graph);
+
+    store.close().expect("project should close");
+    remove_database(&database_path);
+}
+
+#[test]
 fn transport_loop_preparation_repeats_midi_notes_at_the_project_loop_boundary() {
     let database_path = unique_path("aaadaw");
     let store = ProjectStore::open(&database_path).expect("project should open");
