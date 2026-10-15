@@ -2879,6 +2879,33 @@ fn item_nudge_edit_cursor_target_moves_cursor_without_changing_items() {
 }
 
 #[test]
+fn item_nudge_edit_cursor_notes_snap_uses_note_grid_without_moving_items() {
+    use super::item_nudge::{NoteValue, Target, Unit};
+
+    for (snap, expected_tick) in [(false, 3_080), (true, 3_200)] {
+        let mut app = item_snap_test_app(0, 0);
+        app.timeline.edit_cursor_tick = 2_440;
+        let audio_start = app.project.audio_items()[0].start_sample();
+        let midi_start = app.project.midi_items()[0].start_tick();
+        let selection = app.timeline.selected_items.clone();
+
+        let _ = app.update(Message::ItemNudgeTargetChanged(Target::EditCursor));
+        let _ = app.update(Message::ItemNudgeUnitChanged(Unit::Notes));
+        let _ = app.update(Message::ItemNudgeNoteValueChanged(
+            NoteValue::QuarterTriplet,
+        ));
+        let _ = app.update(Message::ItemNudgeSnapToUnitChanged(snap));
+        let _ = app.update(Message::NudgeSelectedItems(1));
+
+        assert_eq!(app.timeline.edit_cursor_tick, expected_tick, "snap={snap}");
+        assert_eq!(app.project.audio_items()[0].start_sample(), audio_start);
+        assert_eq!(app.project.midi_items()[0].start_tick(), midi_start);
+        assert_eq!(app.timeline.selected_items, selection);
+        assert!(app.item_nudge_dialog.error.is_none());
+    }
+}
+
+#[test]
 fn item_nudge_set_can_set_the_edit_cursor_to_a_project_time() {
     let mut app = item_snap_test_app(0, 0);
     let _ = app.update(Message::ItemNudgeModeChanged(super::item_nudge::Mode::Set));

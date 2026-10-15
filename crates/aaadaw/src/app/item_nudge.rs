@@ -431,32 +431,6 @@ impl App {
                         return;
                     }
                 };
-                let delta = if self.item_nudge_dialog.snap_to_unit
-                    && matches!(
-                        self.item_nudge_dialog.unit,
-                        Unit::Grid
-                            | Unit::MeasuresBeats
-                            | Unit::ItemLengths
-                            | Unit::ItemSelections
-                            | Unit::Notes
-                    ) {
-                    let sample = match self.project.sample_at_tick(self.timeline.edit_cursor_tick) {
-                        Ok(sample) => sample,
-                        Err(error) => {
-                            self.item_nudge_dialog.error = Some(error.to_string());
-                            return;
-                        }
-                    };
-                    match self.snap_musical_delta_to_sample(sample, delta) {
-                        Ok(delta) => delta,
-                        Err(error) => {
-                            self.item_nudge_dialog.error = Some(error);
-                            return;
-                        }
-                    }
-                } else {
-                    delta
-                };
                 self.move_edit_cursor_by_samples(delta);
             } else {
                 self.item_nudge_dialog.error = Some(
@@ -2465,7 +2439,11 @@ impl App {
                 self.sample_at_timeline_pixel(self.timeline_pixel_for_sample(sample)?.floor())
             }
             Unit::Frames => self.nearest_frame_sample(sample),
-            Unit::Grid | Unit::MeasuresBeats => {
+            Unit::Grid
+            | Unit::MeasuresBeats
+            | Unit::ItemLengths
+            | Unit::ItemSelections
+            | Unit::Notes => {
                 let delta = self.snap_musical_delta_to_sample(0, i128::from(sample))?;
                 u64::try_from(delta)
                     .map_err(|_| "Snapped position is outside the supported range".to_owned())
