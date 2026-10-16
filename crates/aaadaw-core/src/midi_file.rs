@@ -85,9 +85,10 @@ pub fn encode_standard_midi(
 
 /// Encodes a project using the conductor track name derived from the output file name.
 ///
-/// REAPER labels the format-1 conductor track and the format-0 merged track with the
-/// destination MIDI file's stem. Callers that do not have an output path can use
-/// [`encode_standard_midi`], which retains the generic `Tempo map` label.
+/// REAPER labels the format-1 conductor track with the destination MIDI file's stem.
+/// Format 0 has no track-name meta-event when the optional metadata controls are off.
+/// Callers that do not have an output path can use [`encode_standard_midi`], which
+/// retains the generic `Tempo map` label for format 1.
 pub fn encode_standard_midi_with_conductor_track_name(
     project: &Project,
     options: MidiExportOptions,
@@ -265,12 +266,7 @@ pub fn encode_standard_midi_with_conductor_track_name(
     let mut tracks = Vec::new();
     let smf_type = match options.file_type {
         MidiFileType::Type0 => {
-            let mut events = conductor_events(
-                project,
-                options,
-                project_ppq,
-                conductor_track_name.as_bytes(),
-            )?;
+            let mut events = conductor_events(project, options, project_ppq, None, false)?;
             for track_events in &mut events_by_track {
                 events.append(track_events);
             }
@@ -282,7 +278,8 @@ pub fn encode_standard_midi_with_conductor_track_name(
                 project,
                 options,
                 project_ppq,
-                conductor_track_name.as_bytes(),
+                Some(conductor_track_name.as_bytes()),
+                true,
             )?;
             tracks.push(encode_track(conductor, 0)?);
             for (index, track) in project.tracks().iter().enumerate() {
@@ -358,15 +355,19 @@ fn conductor_events(
     project: &Project,
     options: MidiExportOptions,
     project_ppq: u32,
-    track_name: &[u8],
+    track_name: Option<&[u8]>,
+    include_base_tempo_and_time_signature: bool,
 ) -> Result<Vec<Event>, String> {
-    let mut events = vec![Event {
-        tick: 0,
-        order: 0,
-        bytes: meta_event(0x03, track_name)?,
-    }];
+    let mut events = Vec::new();
+    if let Some(track_name) = track_name {
+        events.push(Event {
+            tick: 0,
+            order: 0,
+            bytes: meta_event(0x03, track_name)?,
+        });
+    }
     let mut tempo_events = Vec::new();
-    {
+    if options.embed_tempo_and_time_signature || include_base_tempo_and_time_signature {
         let tempo_points = project.tempo_points().collect::<Vec<_>>();
         let basis = project.settings().bpm_basis().quarter_notes_per_beat();
         let ppq = u64::from(project_ppq);
@@ -430,7 +431,9 @@ fn conductor_events(
     }
 
     for (index, (tick, signature)) in project.time_signature_points().enumerate() {
-        if index > 0 && !options.embed_tempo_and_time_signature {
+        if !options.embed_tempo_and_time_signature
+            && (index > 0 || !include_base_tempo_and_time_signature)
+        {
             continue;
         }
         let numerator = u8::try_from(signature.numerator())

@@ -1,0 +1,19 @@
+version	7.82/linux-x86_64
+theme	Default_7.0.ReaperThemeZip
+fixture	track Piano; item 0.25-1.25 seconds; C4 note, CC1, pitch bend
+project_ppq_at_note_start	480
+project_ppq_at_cc	720
+project_ppq_at_pitch_bend	840
+project_ppq_at_note_end	1440
+export_action	40849
+export_mode	Merge to single MIDI track (type 0 MIDI file)
+export_ppqn	960
+export_metadata_options	tempo/meter/SMPTE/markers unchecked
+native_export_path	/tmp/aaadaw-midi-type0-native-20261016-run2/midi-type0-native-20261016.mid
+native_export_bytes	45
+native_export_sha256	ec44e8935ad4d752d123a9f6030f2481e692cf3033eca2d6940b794e0fda72ef
+native_track	one merged track; no track-name, tempo, or time-signature meta-events
+native_events	note-on tick 480; CC1 tick 720; pitch bend tick 840; note-off and End-of-Track tick 1440
+native_dialog_screenshot	fixtures/menu-export-midi-native-type0-dialog.png
+native_dialog_screenshot_sha256	942dba2315d90fe301f94a8285dc07e00b11eee224a91079c9d4515ef41a2acf
+native_binary_fixture	fixtures/menu-export-midi-native-type0.mid

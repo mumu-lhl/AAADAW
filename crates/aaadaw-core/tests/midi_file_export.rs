@@ -262,6 +262,45 @@ fn default_export_always_includes_the_native_start_tempo_and_time_signature() {
 
 #[test]
 fn reaper_782_type_one_export_matches_native_track_and_event_bytes() {
+    let project = native_midi_fixture_project();
+    let actual = encode_standard_midi_with_conductor_track_name(
+        &project,
+        MidiExportOptions::for_project(&project),
+        "aaadaw-midi-export-native-20261015",
+    )
+    .unwrap();
+    let native = include_bytes!(
+        "../../../docs/verification/reaper-parity/fixtures/menu-export-midi-native-content.mid"
+    );
+
+    assert_eq!(
+        actual, native,
+        "type-1 tracks and all event ticks/bytes match REAPER 7.82"
+    );
+}
+
+#[test]
+fn reaper_782_type_zero_export_matches_native_event_bytes() {
+    let project = native_midi_fixture_project();
+    let mut options = MidiExportOptions::for_project(&project);
+    options.file_type = MidiFileType::Type0;
+    let actual = encode_standard_midi_with_conductor_track_name(
+        &project,
+        options,
+        "midi-type0-native-20261016",
+    )
+    .unwrap();
+    let native = include_bytes!(
+        "../../../docs/verification/reaper-parity/fixtures/menu-export-midi-native-type0.mid"
+    );
+
+    assert_eq!(
+        actual, native,
+        "type-0 event ticks and bytes match REAPER 7.82 with metadata options off"
+    );
+}
+
+fn native_midi_fixture_project() -> Project {
     let mut project = Project::new();
     project
         .apply(DawAction::CreateTrack {
@@ -308,21 +347,7 @@ fn reaper_782_type_one_export_matches_native_track_and_event_bytes() {
             }],
         })
         .unwrap();
-
-    let actual = encode_standard_midi_with_conductor_track_name(
-        &project,
-        MidiExportOptions::for_project(&project),
-        "aaadaw-midi-export-native-20261015",
-    )
-    .unwrap();
-    let native = include_bytes!(
-        "../../../docs/verification/reaper-parity/fixtures/menu-export-midi-native-content.mid"
-    );
-
-    assert_eq!(
-        actual, native,
-        "type-1 tracks and all event ticks/bytes match REAPER 7.82"
-    );
+    project
 }
 
 #[test]
