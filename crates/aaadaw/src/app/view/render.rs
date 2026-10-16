@@ -14,6 +14,7 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
     let options = app.wav_export_options;
     let bounds = app.render_dialog.bounds;
     let selected_media_items = app.render_dialog.source == RenderSource::SelectedMediaItems;
+    let region_render_matrix = app.render_dialog.source == RenderSource::RegionRenderMatrix;
     let multiple_files = app.render_requires_multiple_files();
     let output_description = match (selected_media_items, multiple_files) {
         (true, true) => "Choose an audio format and filename prefix for the selected media items.",
@@ -61,6 +62,15 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
         && app.project.markers().is_empty()
     {
         Some("Add at least one project marker in Arrange to render markers.")
+    } else if region_render_matrix
+        && !matches!(
+            bounds,
+            RenderBounds::AllProjectRegions | RenderBounds::SelectedProjectRegions
+        )
+    {
+        Some("Region Render Matrix source requires project region bounds.")
+    } else if region_render_matrix && !app.has_valid_render_source() {
+        Some("Assign the Master mix or at least one track to a region in Region Render Matrix.")
     } else if selected_media_items && !app.has_valid_render_source() {
         app.selected_media_item_source_error()
     } else if !app.has_valid_render_source() {
@@ -104,17 +114,18 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
         .align_y(Alignment::Center)
         .into()
     } else {
+        let available_bounds = if region_render_matrix {
+            &RenderBounds::REGION_MATRIX[..]
+        } else {
+            &RenderBounds::ALL[..]
+        };
         row![
             text("Bounds").size(13),
             iced::widget::Space::new().width(Length::Fill),
-            pick_list(
-                &RenderBounds::ALL[..],
-                Some(bounds),
-                Message::SetRenderBounds,
-            )
-            .text_size(13)
-            .padding([4, 8])
-            .width(Length::Fixed(180.0)),
+            pick_list(available_bounds, Some(bounds), Message::SetRenderBounds,)
+                .text_size(13)
+                .padding([4, 8])
+                .width(Length::Fixed(180.0)),
         ]
         .spacing(tokens::SPACING_SM)
         .align_y(Alignment::Center)

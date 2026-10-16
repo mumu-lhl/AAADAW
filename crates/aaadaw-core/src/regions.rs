@@ -1,4 +1,4 @@
-use crate::timebase::MAX_EXACT_FLOAT_POSITION;
+use crate::{TrackId, timebase::MAX_EXACT_FLOAT_POSITION};
 
 /// Largest positive project region number supported by the current storage model.
 pub const MAX_PROJECT_REGION_NUMBER: u32 = i32::MAX as u32;
@@ -30,6 +30,8 @@ pub struct ProjectRegion {
     pub(crate) end_ticks: u64,
     pub(crate) name: String,
     pub(crate) visible: bool,
+    pub(crate) render_master_mix: bool,
+    pub(crate) render_track_ids: Vec<TrackId>,
 }
 
 impl ProjectRegion {
@@ -52,6 +54,8 @@ impl ProjectRegion {
             end_ticks,
             name,
             visible: true,
+            render_master_mix: false,
+            render_track_ids: Vec::new(),
         })
     }
 
@@ -83,5 +87,15 @@ impl ProjectRegion {
     /// Whether this region is shown in the project ruler.
     pub fn is_visible(&self) -> bool {
         self.visible
+    }
+
+    /// Whether the Master mix is assigned to this region in the render matrix.
+    pub fn renders_master_mix(&self) -> bool {
+        self.render_master_mix
+    }
+
+    /// Returns the tracks assigned to this region in project track order.
+    pub fn render_track_ids(&self) -> &[TrackId] {
+        &self.render_track_ids
     }
 }

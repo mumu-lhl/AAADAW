@@ -38,15 +38,17 @@ pub(crate) enum RenderSource {
     SelectedTracksViaMaster,
     MasterMixAndSelectedTracks,
     SelectedMediaItems,
+    RegionRenderMatrix,
 }
 
 impl RenderSource {
-    pub(crate) const ALL: [Self; 5] = [
+    pub(crate) const ALL: [Self; 6] = [
         Self::MasterMix,
         Self::SelectedTracksStems,
         Self::MasterMixAndSelectedTracks,
         Self::SelectedTracksViaMaster,
         Self::SelectedMediaItems,
+        Self::RegionRenderMatrix,
     ];
 }
 
@@ -58,6 +60,7 @@ impl std::fmt::Display for RenderSource {
             Self::SelectedTracksViaMaster => "Selected tracks via master",
             Self::MasterMixAndSelectedTracks => "Master mix and stems",
             Self::SelectedMediaItems => "Selected media items",
+            Self::RegionRenderMatrix => "Region Render Matrix",
         })
     }
 }
@@ -318,6 +321,7 @@ fn project_region_render_jobs(
         RenderSource::SelectedMediaItems => {
             unreachable!("selected media items are not a track stem mode")
         }
+        RenderSource::RegionRenderMatrix => SelectedTrackStemMode::ViaMaster,
     };
     let mut used_region_names = HashSet::with_capacity(regions.len());
     let mut jobs = Vec::new();
@@ -368,6 +372,29 @@ fn project_region_render_jobs(
             RenderSource::SelectedMediaItems => {
                 unreachable!("selected media items are not a region source mode")
             }
+            RenderSource::RegionRenderMatrix => {
+                let mut destinations = Vec::new();
+                if region.renders_master_mix() {
+                    destinations.push((
+                        aaadaw_app::ProjectWavRenderSource::MasterMix,
+                        region_base.clone(),
+                    ));
+                }
+                for track in project
+                    .tracks()
+                    .iter()
+                    .filter(|track| region.render_track_ids().contains(&track.id()))
+                {
+                    destinations.extend(selected_track_stem_destinations(
+                        &region_base,
+                        project,
+                        &[track.id()],
+                        false,
+                        SelectedTrackStemMode::ViaMaster,
+                    )?);
+                }
+                destinations
+            }
         };
         for (render_source, destination) in destinations {
             let mut region_settings = settings;
@@ -376,6 +403,9 @@ fn project_region_render_jobs(
             region_settings.end_sample = end_sample;
             jobs.push((region_settings, destination));
         }
+    }
+    if source == RenderSource::RegionRenderMatrix && jobs.is_empty() {
+        return Err("Assign a Master mix or track to a project region before rendering".to_owned());
     }
     Ok(jobs)
 }
@@ -433,6 +463,7 @@ fn project_marker_render_jobs(
         RenderSource::SelectedMediaItems => {
             unreachable!("selected media items are not a track stem mode")
         }
+        RenderSource::RegionRenderMatrix => SelectedTrackStemMode::ViaMaster,
     };
     let mut used_marker_names = HashSet::with_capacity(markers.len());
     let mut jobs = Vec::new();
@@ -497,6 +528,9 @@ fn project_marker_render_jobs(
             )?,
             RenderSource::SelectedMediaItems => {
                 unreachable!("selected media items are not a marker source mode")
+            }
+            RenderSource::RegionRenderMatrix => {
+                unreachable!("region render matrix requires project region bounds")
             }
         };
         for (render_source, destination) in destinations {
@@ -569,6 +603,8 @@ impl RenderBounds {
         Self::AllProjectMarkers,
         Self::SelectedProjectMarkers,
     ];
+    pub(crate) const REGION_MATRIX: [Self; 2] =
+        [Self::AllProjectRegions, Self::SelectedProjectRegions];
 }
 
 impl std::fmt::Display for RenderBounds {
@@ -923,13 +959,29 @@ impl App {
             let outputs_per_range = match self.render_dialog.source {
                 RenderSource::MasterMix => 1,
                 RenderSource::SelectedMediaItems => 1,
+                RenderSource::RegionRenderMatrix => 1,
                 RenderSource::SelectedTracksStems | RenderSource::SelectedTracksViaMaster => {
                     selected_tracks.len()
                 }
                 RenderSource::MasterMixAndSelectedTracks => selected_tracks.len().saturating_add(1),
             }
             .max(1);
-            let range_count = outputs.len() / outputs_per_range;
+            let range_count = if self.render_dialog.source == RenderSource::RegionRenderMatrix {
+                self.project
+                    .regions()
+                    .iter()
+                    .filter(|region| {
+                        selected_regions
+                            .as_ref()
+                            .is_none_or(|selected| selected.contains(&region.id()))
+                    })
+                    .filter(|region| {
+                        region.renders_master_mix() || !region.render_track_ids().is_empty()
+                    })
+                    .count()
+            } else {
+                outputs.len() / outputs_per_range
+            };
             if let Some((_, existing)) =
                 outputs
                     .iter()
@@ -1006,6 +1058,9 @@ impl App {
                     RenderSource::SelectedMediaItems => {
                         unreachable!("selected media item jobs are enqueued above")
                     }
+                    RenderSource::RegionRenderMatrix => {
+                        unreachable!("region render matrix is submitted as a region batch")
+                    }
                 },
             ) {
                 Ok(outputs) => outputs,
@@ -1079,6 +1134,14 @@ impl App {
         if cfg!(target_os = "android") && self.render_requires_multiple_files() {
             return false;
         }
+        if self.render_dialog.source == RenderSource::RegionRenderMatrix
+            && !matches!(
+                self.render_dialog.bounds,
+                RenderBounds::AllProjectRegions | RenderBounds::SelectedProjectRegions
+            )
+        {
+            return false;
+        }
         if self.render_dialog.source != RenderSource::SelectedMediaItems
             && cfg!(target_os = "android")
             && matches!(
@@ -1098,6 +1161,23 @@ impl App {
         match self.render_dialog.source {
             RenderSource::MasterMix => true,
             RenderSource::SelectedMediaItems => self.selected_media_item_source_error().is_none(),
+            RenderSource::RegionRenderMatrix => {
+                if !matches!(
+                    self.render_dialog.bounds,
+                    RenderBounds::AllProjectRegions | RenderBounds::SelectedProjectRegions
+                ) {
+                    return false;
+                }
+                let selected = (self.render_dialog.bounds == RenderBounds::SelectedProjectRegions)
+                    .then(|| self.effective_selected_region_ids())
+                    .flatten();
+                self.project.regions().iter().any(|region| {
+                    selected
+                        .as_ref()
+                        .is_none_or(|selected| selected.contains(&region.id()))
+                        && (region.renders_master_mix() || !region.render_track_ids().is_empty())
+                })
+            }
             RenderSource::SelectedTracksStems
             | RenderSource::SelectedTracksViaMaster
             | RenderSource::MasterMixAndSelectedTracks => {
@@ -1122,6 +1202,7 @@ impl App {
         let outputs_per_range = match self.render_dialog.source {
             RenderSource::MasterMix => 1,
             RenderSource::SelectedMediaItems => 1,
+            RenderSource::RegionRenderMatrix => 1,
             RenderSource::SelectedTracksStems | RenderSource::SelectedTracksViaMaster => {
                 self.selected_render_track_count()
             }
@@ -1150,6 +1231,9 @@ impl App {
             }
             RenderSource::MasterMixAndSelectedTracks => {
                 "Renders one Master mix WAV plus one stem for each selected track."
+            }
+            RenderSource::RegionRenderMatrix => {
+                "Renders the Master mix and tracks assigned to each project region."
             }
         }
     }
@@ -1292,6 +1376,14 @@ impl App {
     }
 
     fn selected_render_settings(&self) -> Result<ResolvedRenderSettings, String> {
+        if self.render_dialog.source == RenderSource::RegionRenderMatrix
+            && !matches!(
+                self.render_dialog.bounds,
+                RenderBounds::AllProjectRegions | RenderBounds::SelectedProjectRegions
+            )
+        {
+            return Err("Region Render Matrix source requires project region bounds".to_owned());
+        }
         let tail_milliseconds = if self.render_dialog.source == RenderSource::SelectedMediaItems {
             0
         } else if self.render_dialog.tail_enabled {
@@ -1314,7 +1406,9 @@ impl App {
         )
         .map_err(|error| format!("Render range is empty or too large: {error}"))?;
         let selected_tracks = match self.render_dialog.source {
-            RenderSource::MasterMix | RenderSource::SelectedMediaItems => Vec::new(),
+            RenderSource::MasterMix
+            | RenderSource::SelectedMediaItems
+            | RenderSource::RegionRenderMatrix => Vec::new(),
             RenderSource::SelectedTracksStems
             | RenderSource::SelectedTracksViaMaster
             | RenderSource::MasterMixAndSelectedTracks => {
@@ -2045,6 +2139,7 @@ mod tests {
                 RenderSource::MasterMixAndSelectedTracks,
                 RenderSource::SelectedTracksViaMaster,
                 RenderSource::SelectedMediaItems,
+                RenderSource::RegionRenderMatrix,
             ]
         );
         assert_eq!(
@@ -2063,6 +2158,15 @@ mod tests {
             RenderSource::SelectedMediaItems.to_string(),
             "Selected media items"
         );
+        assert_eq!(
+            RenderSource::RegionRenderMatrix.to_string(),
+            "Region Render Matrix"
+        );
+        let mut app = App::default();
+        let _task = app.update(Message::SetRenderSource(RenderSource::RegionRenderMatrix));
+        assert_eq!(app.render_dialog.bounds, RenderBounds::AllProjectRegions);
+        assert!(!app.has_valid_render_source());
+        assert!(!app.can_submit_render());
     }
 
     #[test]
@@ -2602,6 +2706,104 @@ mod tests {
                 .contains("Add at least one project region")
         );
         assert!(!app.can_submit_render());
+    }
+
+    #[test]
+    fn region_render_matrix_uses_each_regions_master_and_track_assignments() {
+        let mut project = Project::default();
+        for (index, name) in [(0, "Lead"), (1, "Guitar")] {
+            project
+                .apply(DawAction::CreateTrack {
+                    index,
+                    name: name.to_owned(),
+                })
+                .expect("render track should be created");
+        }
+        for (start_ticks, end_ticks) in [(0, 1_920), (1_920, 3_840)] {
+            project
+                .apply(DawAction::InsertProjectRegion {
+                    start_ticks,
+                    end_ticks,
+                    name: "Verse".to_owned(),
+                })
+                .expect("region should be inserted");
+        }
+        let regions = project.regions().to_vec();
+        let lead = project.tracks()[0].id();
+        let guitar = project.tracks()[1].id();
+        project
+            .apply(DawAction::SetProjectRegionRenderMatrix {
+                region_id: regions[0].id(),
+                render_master_mix: true,
+                render_track_ids: vec![lead],
+            })
+            .expect("first region matrix assignments should be stored");
+        project
+            .apply(DawAction::SetProjectRegionRenderMatrix {
+                region_id: regions[1].id(),
+                render_master_mix: false,
+                render_track_ids: vec![guitar],
+            })
+            .expect("second region matrix assignments should be stored");
+        let settings = aaadaw_app::ProjectWavRenderSettings {
+            master_ceiling: aaadaw_engine::MasterOutputCeiling::default(),
+            export_options: aaadaw_app::WavExportOptions::default(),
+            output_sample_rate: project.settings().sample_rate(),
+            output_channels: WavChannelCount::Stereo,
+            source: aaadaw_app::ProjectWavRenderSource::MasterMix,
+            start_sample: 0,
+            end_sample: 120_000,
+            tail_milliseconds: 0,
+            normalize_peak: false,
+            normalize_peak_target_centi_dbfs: 0,
+        };
+        let outputs = project_region_render_jobs(
+            Path::new("matrix-prefix.wav"),
+            &project,
+            RenderSource::RegionRenderMatrix,
+            &[],
+            false,
+            settings,
+            None,
+        )
+        .expect("assigned matrix targets should produce a grouped render");
+
+        assert_eq!(outputs.len(), 3);
+        assert_eq!(
+            outputs[0],
+            (
+                aaadaw_app::ProjectWavRenderSettings {
+                    start_sample: 0,
+                    end_sample: 48_000,
+                    ..settings
+                },
+                PathBuf::from("./matrix-prefix-Verse.wav")
+            )
+        );
+        assert_eq!(
+            outputs[1],
+            (
+                aaadaw_app::ProjectWavRenderSettings {
+                    source: aaadaw_app::ProjectWavRenderSource::SelectedTrackViaMaster(lead),
+                    start_sample: 0,
+                    end_sample: 48_000,
+                    ..settings
+                },
+                PathBuf::from("./matrix-prefix-Verse-Lead.wav")
+            )
+        );
+        assert_eq!(
+            outputs[2],
+            (
+                aaadaw_app::ProjectWavRenderSettings {
+                    source: aaadaw_app::ProjectWavRenderSource::SelectedTrackViaMaster(guitar),
+                    start_sample: 48_000,
+                    end_sample: 96_000,
+                    ..settings
+                },
+                PathBuf::from("./matrix-prefix-Verse-2-Guitar.wav")
+            )
+        );
     }
 
     #[test]

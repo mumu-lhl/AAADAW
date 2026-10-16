@@ -85,6 +85,12 @@ pub enum DawAction {
         region_id: RegionId,
         visible: bool,
     },
+    /// Replace the Master mix and track assignments for one region render matrix row.
+    SetProjectRegionRenderMatrix {
+        region_id: RegionId,
+        render_master_mix: bool,
+        render_track_ids: Vec<TrackId>,
+    },
     /// Change visibility of the project region lane in the ruler.
     SetProjectRegionsVisibleOnRuler {
         visible: bool,

@@ -42,6 +42,7 @@ pub(crate) enum CommandId {
     ShowArrangement,
     ShowMixer,
     OpenMarkerManager,
+    OpenRegionRenderMatrix,
     ToggleProjectMarkersOnRuler,
     ToggleProjectRegionsOnRuler,
     ToggleProjectRegionsAndMarkersOnRuler,
@@ -178,6 +179,7 @@ enum CommandKind {
     ShowArrangement,
     ShowMixer,
     OpenMarkerManager,
+    OpenRegionRenderMatrix,
     ToggleProjectMarkersOnRuler,
     ToggleProjectRegionsOnRuler,
     ToggleProjectRegionsAndMarkersOnRuler,
@@ -654,6 +656,16 @@ const COMMANDS: &[CommandDefinition] = &[
         shortcuts: MARKER_MANAGER_SHORTCUT,
         destructive: false,
         separator_before: true,
+    },
+    CommandDefinition {
+        kind: CommandKind::OpenRegionRenderMatrix,
+        menu: Some(MainMenu::View),
+        category: "View",
+        label: "Region Render Matrix",
+        aliases: &["region render matrix", "render matrix"],
+        shortcuts: &[],
+        destructive: false,
+        separator_before: false,
     },
     CommandDefinition {
         kind: CommandKind::ToggleProjectMarkersOnRuler,
@@ -2477,6 +2489,7 @@ fn command_kind_id(kind: CommandKind) -> &'static str {
         CommandKind::ShowArrangement => "view.arrangement-workspace",
         CommandKind::ShowMixer => "view.mixer-workspace",
         CommandKind::OpenMarkerManager => "view.marker-manager",
+        CommandKind::OpenRegionRenderMatrix => "view.region-render-matrix",
         CommandKind::ToggleProjectMarkersOnRuler => "ruler.toggle-project-markers",
         CommandKind::ToggleProjectRegionsOnRuler => "ruler.toggle-project-regions",
         CommandKind::ToggleProjectRegionsAndMarkersOnRuler => {
@@ -2667,6 +2680,7 @@ pub(super) fn dispatch(app: &mut App, command: CommandId) -> Task<Message> {
         CommandId::ShowArrangement => Message::ShowMainWorkspace(MainWorkspace::Arrangement),
         CommandId::ShowMixer => Message::ShowMainWorkspace(MainWorkspace::Mixer),
         CommandId::OpenMarkerManager => Message::OpenMarkerManager,
+        CommandId::OpenRegionRenderMatrix => Message::OpenRegionRenderMatrix,
         CommandId::ToggleProjectMarkersOnRuler => Message::ToggleProjectMarkersOnRuler,
         CommandId::ToggleProjectRegionsOnRuler => Message::ToggleProjectRegionsOnRuler,
         CommandId::ToggleProjectRegionsAndMarkersOnRuler => {
@@ -2987,6 +3001,7 @@ fn command_enabled(app: &App, kind: CommandKind, track: Option<TrackState>) -> b
         | CommandKind::OpenProjectSettings
         | CommandKind::OpenActionList
         | CommandKind::OpenMarkerManager => true,
+        CommandKind::OpenRegionRenderMatrix => true,
         CommandKind::ToggleProjectMarkersOnRuler
         | CommandKind::ToggleProjectRegionsOnRuler
         | CommandKind::ToggleProjectRegionsAndMarkersOnRuler => !project_edit_busy(app),
@@ -3330,6 +3345,7 @@ fn command_id(kind: CommandKind) -> CommandId {
         CommandKind::ShowArrangement => CommandId::ShowArrangement,
         CommandKind::ShowMixer => CommandId::ShowMixer,
         CommandKind::OpenMarkerManager => CommandId::OpenMarkerManager,
+        CommandKind::OpenRegionRenderMatrix => CommandId::OpenRegionRenderMatrix,
         CommandKind::ToggleProjectMarkersOnRuler => CommandId::ToggleProjectMarkersOnRuler,
         CommandKind::ToggleProjectRegionsOnRuler => CommandId::ToggleProjectRegionsOnRuler,
         CommandKind::ToggleProjectRegionsAndMarkersOnRuler => {
@@ -3577,6 +3593,11 @@ mod project_marker_command_tests {
             Some("view.marker-manager")
         );
         assert!(find(&App::default(), "region/marker manager").is_some());
+        assert_eq!(
+            stable_id(CommandId::OpenRegionRenderMatrix).as_deref(),
+            Some("view.region-render-matrix")
+        );
+        assert!(find(&App::default(), "region render matrix").is_some());
     }
 
     #[test]

@@ -1,0 +1,6 @@
+version	7.82/linux-x86_64
+theme	/workspace/AAADAW/target/reaper782/region-render-matrix-native-final/ColorThemes/Default_7.0.ReaperThemeZip
+action_41888	View: Show region render matrix window
+region_index	region	assigned_tracks
+0	Intro	Master mix;Drums;Guitar
+1	Verse	Bass

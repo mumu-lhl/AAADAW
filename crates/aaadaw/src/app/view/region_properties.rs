@@ -43,6 +43,7 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
             .width(Length::Fill),
         row![
             button("Region Manager...").on_press(Message::OpenMarkerManager),
+            button("Render Matrix...").on_press(Message::OpenRegionRenderMatrix),
             iced::widget::Space::new().width(Length::Fill),
             button("OK").on_press(Message::ApplyRegionProperties),
             button("Cancel").on_press(Message::CloseRegionProperties),

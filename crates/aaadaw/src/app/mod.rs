@@ -27,7 +27,7 @@ use aaadaw_engine::{
 use aaadaw_engine::{ClapParameterInfo, ClapPluginGuiOwner};
 use aaadaw_media::AudioWaveform;
 use aaadaw_storage::{ArrangementViewState, ProjectSessionLock, ProjectStore};
-use audio_export::RenderBounds;
+use audio_export::{RenderBounds, RenderSource};
 use commands::CommandId;
 use iced::Task;
 use iced::widget::pane_grid::{self, Axis, Split};
@@ -78,6 +78,7 @@ mod recent_projects;
 mod recording;
 mod recording_recovery;
 mod region_properties;
+mod region_render_matrix;
 mod routing;
 mod shortcut;
 #[cfg(test)]
@@ -385,6 +386,7 @@ struct App {
     region_properties_window_id: Option<iced::window::Id>,
     marker_manager: Option<marker_manager::MarkerManager>,
     marker_manager_window_id: Option<iced::window::Id>,
+    region_render_matrix_window_id: Option<iced::window::Id>,
     selected_render_markers: HashSet<MarkerId>,
     selected_render_regions: HashSet<RegionId>,
     active_menu: Option<MainMenu>,
@@ -1546,6 +1548,8 @@ impl App {
             "Edit Region".to_owned()
         } else if self.marker_manager_window_id == Some(window_id) {
             "Region/Marker Manager".to_owned()
+        } else if self.region_render_matrix_window_id == Some(window_id) {
+            "Region Render Matrix".to_owned()
         } else if self.routing_window_id == Some(window_id) {
             self.routing_track_id
                 .and_then(|id| self.project.tracks().iter().find(|track| track.id() == id))
@@ -1856,6 +1860,7 @@ impl App {
                     || self.marker_properties_window_id == Some(*window_id)
                     || self.region_properties_window_id == Some(*window_id)
                     || self.marker_manager_window_id == Some(*window_id)
+                    || self.region_render_matrix_window_id == Some(*window_id)
                     || self.routing_window_id == Some(*window_id)
                     || self.action_input_window_id == Some(*window_id)
                     || self.action_list_window_id == Some(*window_id)
@@ -1971,6 +1976,10 @@ impl App {
                     | Message::CloseRegionProperties
                     | Message::OpenMarkerManager
                     | Message::CloseMarkerManager
+                    | Message::OpenRegionRenderMatrix
+                    | Message::CloseRegionRenderMatrix
+                    | Message::SetRegionRenderMatrixMaster(_, _)
+                    | Message::SetRegionRenderMatrixTrack(_, _, _)
                     | Message::MarkerManagerFilterChanged(_)
                     | Message::MarkerManagerShowRegionsChanged(_)
                     | Message::MarkerManagerShowMarkersChanged(_)
@@ -2013,6 +2022,7 @@ impl App {
                     | Message::ExecuteCommand(commands::CommandId::OpenProjectSettings)
                     | Message::ExecuteCommand(commands::CommandId::OpenActionList)
                     | Message::ExecuteCommand(commands::CommandId::OpenMarkerManager)
+                    | Message::ExecuteCommand(commands::CommandId::OpenRegionRenderMatrix)
                     | Message::ExecuteCommand(commands::CommandId::ExportWav)
                     | Message::ToggleMediaBrowserPanel
                     | Message::ExecuteCommand(commands::CommandId::ToggleMediaBrowserPanel)
@@ -2716,6 +2726,14 @@ impl App {
             Message::ApplyRegionProperties => task = self.apply_region_properties(),
             Message::CloseRegionProperties => task = self.close_region_properties(),
             Message::OpenMarkerManager => task = self.open_marker_manager(),
+            Message::OpenRegionRenderMatrix => task = self.open_region_render_matrix(),
+            Message::CloseRegionRenderMatrix => task = self.close_region_render_matrix(),
+            Message::SetRegionRenderMatrixMaster(region_id, enabled) => {
+                self.set_region_render_matrix_master(region_id, enabled)
+            }
+            Message::SetRegionRenderMatrixTrack(region_id, track_id, enabled) => {
+                self.set_region_render_matrix_track(region_id, track_id, enabled)
+            }
             Message::ToggleProjectMarkersOnRuler => task = self.toggle_project_markers_on_ruler(),
             Message::ToggleProjectRegionsOnRuler => task = self.toggle_project_regions_on_ruler(),
             Message::ToggleProjectRegionsAndMarkersOnRuler => {
@@ -2850,6 +2868,8 @@ impl App {
                 } else if self.marker_manager_window_id == Some(window_id) {
                     self.marker_manager_window_id = None;
                     self.marker_manager = None;
+                } else if self.region_render_matrix_window_id == Some(window_id) {
+                    self.region_render_matrix_window_id = None;
                 } else if self.routing_window_id == Some(window_id) {
                     self.routing_window_id = None;
                     self.routing_track_id = None;
@@ -3471,10 +3491,21 @@ impl App {
                     enabled && self.wav_export_options.sample_format.is_integer();
             }
             Message::SetRenderBounds(bounds) => {
-                if bounds == RenderBounds::CustomTimeRange {
-                    self.initialize_custom_render_range();
+                if self.render_dialog.source == RenderSource::RegionRenderMatrix
+                    && !matches!(
+                        bounds,
+                        RenderBounds::AllProjectRegions | RenderBounds::SelectedProjectRegions
+                    )
+                {
+                    self.render_dialog.bounds = RenderBounds::AllProjectRegions;
+                    self.status =
+                        "Region Render Matrix source uses project region bounds".to_owned();
+                } else {
+                    if bounds == RenderBounds::CustomTimeRange {
+                        self.initialize_custom_render_range();
+                    }
+                    self.render_dialog.bounds = bounds;
                 }
-                self.render_dialog.bounds = bounds;
             }
             Message::SetRenderCustomStart(value) => {
                 self.render_dialog.custom_start_text = value;
@@ -3487,6 +3518,9 @@ impl App {
             }
             Message::SetRenderSource(source) => {
                 self.render_dialog.source = source;
+                if source == RenderSource::RegionRenderMatrix {
+                    self.render_dialog.bounds = RenderBounds::AllProjectRegions;
+                }
             }
             Message::SetRenderStemsPreFader(enabled) => {
                 if self.can_render_stems_pre_fader() {
@@ -3892,6 +3926,21 @@ impl App {
                         None,
                     ) {
                         return self.update(message);
+                    }
+                    return Task::none();
+                }
+                if self.region_render_matrix_window_id == Some(window_id) {
+                    if status == iced::event::Status::Ignored
+                        && matches!(
+                            &event,
+                            iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
+                                key: iced::keyboard::Key::Named(iced::keyboard::key::Named::Escape),
+                                repeat: false,
+                                ..
+                            })
+                        )
+                    {
+                        return self.close_region_render_matrix();
                     }
                     return Task::none();
                 }

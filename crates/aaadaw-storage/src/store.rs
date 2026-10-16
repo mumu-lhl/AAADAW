@@ -23,7 +23,7 @@ use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 /// Latest database schema version understood by this release.
-pub const CURRENT_SCHEMA_VERSION: u32 = 52;
+pub const CURRENT_SCHEMA_VERSION: u32 = 53;
 
 const MIGRATION_29: &str = "ALTER TABLE project_meta ADD COLUMN start_measure INTEGER NOT NULL DEFAULT 1 CHECK(start_measure BETWEEN -2147483648 AND 2147483647);";
 const MIGRATION_30: &str = "ALTER TABLE project_meta ADD COLUMN bpm_basis INTEGER NOT NULL DEFAULT 1 CHECK(bpm_basis BETWEEN 0 AND 5);";
@@ -53,6 +53,15 @@ CREATE TABLE IF NOT EXISTS project_regions (
     name TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS project_regions_by_start ON project_regions(start_ticks, id);
+"#;
+const MIGRATION_53: &str = r#"
+CREATE TABLE IF NOT EXISTS project_region_render_tracks (
+    region_id INTEGER NOT NULL REFERENCES project_regions(id) ON DELETE CASCADE,
+    track_id INTEGER NOT NULL REFERENCES tracks(id) ON DELETE CASCADE,
+    position INTEGER NOT NULL CHECK(position >= 0),
+    PRIMARY KEY(region_id, track_id),
+    UNIQUE(region_id, position)
+);
 "#;
 
 const MIGRATION_38: &str = r#"
@@ -680,7 +689,7 @@ mod arrangement_view_state_tests {
         drop(connection);
 
         let mut store = ProjectStore::open(&path).unwrap();
-        assert_eq!(store.schema_version().unwrap(), 52);
+        assert_eq!(store.schema_version().unwrap(), CURRENT_SCHEMA_VERSION);
         assert_eq!(
             store.load_arrangement_view_state().unwrap(),
             Some(ArrangementViewState::default())
@@ -926,6 +935,13 @@ mod project_marker_storage_tests {
         let path = directory.path().join("regions.aaadaw");
         let mut project = Project::new();
         project
+            .apply(DawAction::CreateTrack {
+                index: 0,
+                name: "Drums".to_owned(),
+            })
+            .unwrap();
+        let drums = project.tracks()[0].id();
+        project
             .apply(DawAction::InsertProjectRegion {
                 start_ticks: 1_920,
                 end_ticks: 3_840,
@@ -940,6 +956,13 @@ mod project_marker_storage_tests {
             })
             .unwrap();
         let hidden_region_id = project.regions()[0].id();
+        project
+            .apply(DawAction::SetProjectRegionRenderMatrix {
+                region_id: hidden_region_id,
+                render_master_mix: true,
+                render_track_ids: vec![drums],
+            })
+            .unwrap();
         project
             .apply(DawAction::SetProjectRegionVisibility {
                 region_id: hidden_region_id,
@@ -960,7 +983,7 @@ mod project_marker_storage_tests {
         let connection = Connection::open(&path).unwrap();
         connection
             .execute_batch(
-                "DROP INDEX project_regions_by_start; DROP TABLE project_regions; PRAGMA user_version = 36;",
+                "DROP TABLE project_region_render_tracks; DROP INDEX project_regions_by_start; DROP TABLE project_regions; PRAGMA user_version = 36;",
             )
             .unwrap();
         drop(connection);
@@ -3272,6 +3295,14 @@ fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
                     transaction.execute_batch(MIGRATION_52)?;
                 }
             }
+            53 => {
+                if !table_has_column(&transaction, "project_regions", "render_master_mix")? {
+                    transaction.execute_batch(
+                        "ALTER TABLE project_regions ADD COLUMN render_master_mix INTEGER NOT NULL DEFAULT 0 CHECK(render_master_mix IN (0,1));",
+                    )?;
+                }
+                transaction.execute_batch(MIGRATION_53)?;
+            }
             missing => return Err(StorageError::MissingMigration(missing - 1)),
         }
         transaction.pragma_update(None, "user_version", next_version)?;
@@ -3294,6 +3325,7 @@ fn write_snapshot(
     transaction: &Transaction<'_>,
     snapshot: &ProjectSnapshot,
 ) -> Result<(), StorageError> {
+    transaction.execute("DELETE FROM project_region_render_tracks", [])?;
     transaction.execute("DELETE FROM track_sends", [])?;
     transaction.execute("DELETE FROM track_razor_edit_areas", [])?;
     transaction.execute("DELETE FROM midi_notes", [])?;
@@ -3593,16 +3625,27 @@ fn write_snapshot(
     }
     for region in &snapshot.regions {
         transaction.execute(
-            "INSERT INTO project_regions(id, region_number, start_ticks, end_ticks, name, visible) VALUES(?1, ?2, ?3, ?4, ?5, ?6)",
+            "INSERT INTO project_regions(id, region_number, start_ticks, end_ticks, name, visible, render_master_mix) VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7)",
             params![
                 to_sql_integer(region.id)?,
                 i64::from(region.number),
                 to_sql_integer(region.start_ticks)?,
                 to_sql_integer(region.end_ticks)?,
                 region.name,
-                region.visible
+                region.visible,
+                region.render_master_mix
             ],
         )?;
+        for (position, track_id) in region.render_track_ids.iter().copied().enumerate() {
+            transaction.execute(
+                "INSERT INTO project_region_render_tracks(region_id, track_id, position) VALUES(?1, ?2, ?3)",
+                params![
+                    to_sql_integer(region.id)?,
+                    to_sql_integer(track_id)?,
+                    usize_to_sql(position)?
+                ],
+            )?;
+        }
     }
     Ok(())
 }
@@ -4478,8 +4521,23 @@ fn read_project_markers(
 fn read_project_regions(
     connection: &Connection,
 ) -> Result<Vec<ProjectRegionSnapshot>, StorageError> {
+    let mut render_tracks_by_region = HashMap::<u64, Vec<u64>>::new();
+    {
+        let mut statement = connection.prepare(
+            "SELECT region_id, track_id FROM project_region_render_tracks ORDER BY region_id, position",
+        )?;
+        let rows =
+            statement.query_map([], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)))?;
+        for row in rows {
+            let (region_id, track_id) = row?;
+            render_tracks_by_region
+                .entry(from_sql_u64(region_id)?)
+                .or_default()
+                .push(from_sql_u64(track_id)?);
+        }
+    }
     let mut statement = connection.prepare(
-        "SELECT id, region_number, start_ticks, end_ticks, name, visible FROM project_regions ORDER BY start_ticks, id",
+        "SELECT id, region_number, start_ticks, end_ticks, name, visible, render_master_mix FROM project_regions ORDER BY start_ticks, id",
     )?;
     let rows = statement
         .query_map([], |row| {
@@ -4490,29 +4548,44 @@ fn read_project_regions(
                 row.get::<_, i64>(3)?,
                 row.get::<_, String>(4)?,
                 row.get::<_, i64>(5)?,
+                row.get::<_, i64>(6)?,
             ))
         })?
         .collect::<Result<Vec<_>, _>>()?;
     rows.into_iter()
-        .map(|(id, number, start_ticks, end_ticks, name, visible)| {
-            let visible = match visible {
-                0 => false,
-                1 => true,
-                _ => {
-                    return Err(StorageError::InvalidStoredData(
-                        "unsupported project region visibility",
-                    ));
-                }
-            };
-            Ok(ProjectRegionSnapshot {
-                id: from_sql_u64(id)?,
-                number: from_sql_u32(number)?,
-                start_ticks: from_sql_u64(start_ticks)?,
-                end_ticks: from_sql_u64(end_ticks)?,
-                name,
-                visible,
-            })
-        })
+        .map(
+            |(id, number, start_ticks, end_ticks, name, visible, render_master_mix)| {
+                let visible = match visible {
+                    0 => false,
+                    1 => true,
+                    _ => {
+                        return Err(StorageError::InvalidStoredData(
+                            "unsupported project region visibility",
+                        ));
+                    }
+                };
+                let render_master_mix = match render_master_mix {
+                    0 => false,
+                    1 => true,
+                    _ => {
+                        return Err(StorageError::InvalidStoredData(
+                            "unsupported project region Master render assignment",
+                        ));
+                    }
+                };
+                let id = from_sql_u64(id)?;
+                Ok(ProjectRegionSnapshot {
+                    id,
+                    number: from_sql_u32(number)?,
+                    start_ticks: from_sql_u64(start_ticks)?,
+                    end_ticks: from_sql_u64(end_ticks)?,
+                    name,
+                    visible,
+                    render_master_mix,
+                    render_track_ids: render_tracks_by_region.remove(&id).unwrap_or_default(),
+                })
+            },
+        )
         .collect()
 }
 

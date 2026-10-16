@@ -100,10 +100,15 @@ fn lowest_available_marker_number(markers: &[ProjectMarker]) -> Option<u32> {
 fn valid_project_regions(regions: &[ProjectRegion]) -> bool {
     let mut ids = HashSet::with_capacity(regions.len());
     regions.iter().all(|region| {
+        let mut render_track_ids = HashSet::with_capacity(region.render_track_ids.len());
         region.start_ticks < region.end_ticks
             && region.end_ticks <= crate::MAX_PROJECT_REGION_TICKS
             && (1..=crate::MAX_PROJECT_REGION_NUMBER).contains(&region.number)
             && crate::markers::valid_marker_name(&region.name)
+            && region
+                .render_track_ids
+                .iter()
+                .all(|track_id| render_track_ids.insert(*track_id))
             && ids.insert(region.id)
     }) && regions.windows(2).all(|pair| {
         (pair[0].start_ticks, pair[0].id.value()) <= (pair[1].start_ticks, pair[1].id.value())
@@ -580,12 +585,14 @@ enum ProjectEvent {
         track: Track,
         audio_items: Vec<(usize, AudioItem)>,
         midi_items: Vec<(usize, MidiItem)>,
+        region_render_assignments: Vec<(RegionId, Vec<TrackId>)>,
     },
     TrackRestored {
         index: usize,
         track: Track,
         audio_items: Vec<(usize, AudioItem)>,
         midi_items: Vec<(usize, MidiItem)>,
+        region_render_assignments: Vec<(RegionId, Vec<TrackId>)>,
     },
     TrackVolumeChanged {
         track_id: TrackId,
@@ -847,28 +854,33 @@ impl ProjectEvent {
                 track: track.clone(),
                 audio_items: Vec::new(),
                 midi_items: Vec::new(),
+                region_render_assignments: Vec::new(),
             },
             Self::TrackDeleted {
                 index,
                 track,
                 audio_items,
                 midi_items,
+                region_render_assignments,
             } => Self::TrackRestored {
                 index: *index,
                 track: track.clone(),
                 audio_items: audio_items.clone(),
                 midi_items: midi_items.clone(),
+                region_render_assignments: region_render_assignments.clone(),
             },
             Self::TrackRestored {
                 index,
                 track,
                 audio_items,
                 midi_items,
+                region_render_assignments,
             } => Self::TrackDeleted {
                 index: *index,
                 track: track.clone(),
                 audio_items: audio_items.clone(),
                 midi_items: midi_items.clone(),
+                region_render_assignments: region_render_assignments.clone(),
             },
             Self::TrackMainSendChanged {
                 track_id,
@@ -2035,7 +2047,17 @@ impl Project {
                 region.name,
             )
             .ok_or(SnapshotError::InvalidProjectData)?;
+            let mut render_track_ids = HashSet::with_capacity(region.render_track_ids.len());
+            for track_id in region.render_track_ids {
+                if !render_track_ids.insert(track_id) {
+                    return Err(SnapshotError::InvalidProjectData);
+                }
+                project_region
+                    .render_track_ids
+                    .push(TrackId::from_raw(track_id));
+            }
             project_region.visible = region.visible;
+            project_region.render_master_mix = region.render_master_mix;
             regions.push(project_region);
         }
         regions.sort_unstable_by_key(|region| (region.start_ticks, region.id.value()));
@@ -2138,6 +2160,14 @@ impl Project {
             });
         }
         if !valid_track_hierarchy(&tracks) || !valid_track_routing(&tracks) {
+            return Err(SnapshotError::InvalidProjectData);
+        }
+        if regions.iter().any(|region| {
+            region
+                .render_track_ids
+                .iter()
+                .any(|track_id| !track_ids.contains(&track_id.value()))
+        }) {
             return Err(SnapshotError::InvalidProjectData);
         }
 
@@ -2506,6 +2536,37 @@ impl Project {
                 region.visible = visible;
                 ProjectEvent::ProjectRegionsChanged { before, after }
             }
+            DawAction::SetProjectRegionRenderMatrix {
+                region_id,
+                render_master_mix,
+                render_track_ids,
+            } => {
+                let mut unique_track_ids = HashSet::with_capacity(render_track_ids.len());
+                for track_id in &render_track_ids {
+                    if !unique_track_ids.insert(*track_id) {
+                        return Err(ActionError::InvalidProjectRegionRenderMatrix);
+                    }
+                    if !state.tracks.iter().any(|track| track.id == *track_id) {
+                        return Err(ActionError::TrackNotFound {
+                            track_id: *track_id,
+                        });
+                    }
+                }
+                let before = state.regions.clone();
+                let mut after = before.clone();
+                let region = after
+                    .iter_mut()
+                    .find(|region| region.id == region_id)
+                    .ok_or(ActionError::ProjectRegionNotFound { region_id })?;
+                region.render_master_mix = render_master_mix;
+                region.render_track_ids = state
+                    .tracks
+                    .iter()
+                    .filter(|track| unique_track_ids.contains(&track.id))
+                    .map(|track| track.id)
+                    .collect();
+                ProjectEvent::ProjectRegionsChanged { before, after }
+            }
             DawAction::DeleteProjectMarker { marker_id } => {
                 let before = state.markers.clone();
                 if !before.iter().any(|marker| marker.id == marker_id) {
@@ -2558,9 +2619,13 @@ impl Project {
                     .find(|region| region.id == region_id)
                     .ok_or(ActionError::ProjectRegionNotFound { region_id })?;
                 let visible = region.visible;
+                let render_master_mix = region.render_master_mix;
+                let render_track_ids = region.render_track_ids.clone();
                 *region = ProjectRegion::new(region_id, number, start_ticks, end_ticks, name)
                     .ok_or(ActionError::InvalidProjectRegion)?;
                 region.visible = visible;
+                region.render_master_mix = render_master_mix;
+                region.render_track_ids = render_track_ids;
                 after.sort_unstable_by_key(|region| (region.start_ticks, region.id.value()));
                 ProjectEvent::ProjectRegionsChanged { before, after }
             }
@@ -4264,11 +4329,18 @@ impl Project {
                     .filter(|(_, item)| item.track_id == track_id)
                     .map(|(index, item)| (index, item.clone()))
                     .collect();
+                let region_render_assignments = state
+                    .regions
+                    .iter()
+                    .filter(|region| region.render_track_ids.contains(&track_id))
+                    .map(|region| (region.id, region.render_track_ids.clone()))
+                    .collect();
                 ProjectEvent::TrackDeleted {
                     index,
                     track: state.tracks[index].clone(),
                     audio_items,
                     midi_items,
+                    region_render_assignments,
                 }
             }
             DawAction::BatchTransaction { .. } => {
@@ -4452,9 +4524,25 @@ impl Project {
                 track,
                 audio_items,
                 midi_items,
+                region_render_assignments,
             } => {
                 if state.tracks.get(*index).map(|item| item.id) != Some(track.id) {
                     return Err(ActionError::HistoryInvariantViolation);
+                }
+                for (region_id, before_track_ids) in region_render_assignments {
+                    let region = state
+                        .regions
+                        .iter_mut()
+                        .find(|region| region.id == *region_id)
+                        .ok_or(ActionError::HistoryInvariantViolation)?;
+                    if region.render_track_ids != *before_track_ids
+                        || !before_track_ids.contains(&track.id)
+                    {
+                        return Err(ActionError::HistoryInvariantViolation);
+                    }
+                    region
+                        .render_track_ids
+                        .retain(|track_id| *track_id != track.id);
                 }
                 Self::remove_audio_items(state, audio_items)?;
                 Self::remove_midi_items(state, midi_items)?;
@@ -4465,6 +4553,7 @@ impl Project {
                 track,
                 audio_items,
                 midi_items,
+                region_render_assignments,
             } => {
                 if *index > state.tracks.len()
                     || state.tracks.iter().any(|item| item.id == track.id)
@@ -4472,6 +4561,23 @@ impl Project {
                     return Err(ActionError::HistoryInvariantViolation);
                 }
                 state.tracks.insert(*index, track.clone());
+                for (region_id, restore_track_ids) in region_render_assignments {
+                    let region = state
+                        .regions
+                        .iter_mut()
+                        .find(|region| region.id == *region_id)
+                        .ok_or(ActionError::HistoryInvariantViolation)?;
+                    let expected = restore_track_ids
+                        .iter()
+                        .copied()
+                        .filter(|track_id| *track_id != track.id)
+                        .collect::<Vec<_>>();
+                    if region.render_track_ids != expected || !restore_track_ids.contains(&track.id)
+                    {
+                        return Err(ActionError::HistoryInvariantViolation);
+                    }
+                    region.render_track_ids = restore_track_ids.clone();
+                }
                 for (item_index, item) in audio_items {
                     if item.track_id != track.id
                         || *item_index > state.audio_items.len()

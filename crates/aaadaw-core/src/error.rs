@@ -60,6 +60,8 @@ pub enum ActionError {
     ProjectMarkerNumberExhausted,
     /// A region is empty, out of range, or has an invalid name or number.
     InvalidProjectRegion,
+    /// A region render matrix has duplicate or missing track assignments.
+    InvalidProjectRegionRenderMatrix,
     /// The requested project region does not exist.
     ProjectRegionNotFound {
         region_id: crate::RegionId,
@@ -232,6 +234,9 @@ impl fmt::Display for ActionError {
             }
             Self::InvalidProjectRegion => {
                 formatter.write_str("project region boundaries, number, or name are invalid")
+            }
+            Self::InvalidProjectRegionRenderMatrix => {
+                formatter.write_str("project region render matrix assignments are invalid")
             }
             Self::ProjectRegionNotFound { region_id } => {
                 write!(formatter, "project region {} does not exist", region_id.value())
