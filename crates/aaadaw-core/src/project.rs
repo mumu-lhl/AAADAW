@@ -1757,6 +1757,14 @@ impl Project {
         &self.state.tracks
     }
 
+    /// Returns the next track identity when another track can still be allocated.
+    pub fn next_track_id(&self) -> Option<TrackId> {
+        self.ids
+            .next_track_id
+            .checked_add(1)
+            .and_then(|_| TrackId::from_value(self.ids.next_track_id))
+    }
+
     /// Returns all audio items in project insertion order.
     pub fn audio_items(&self) -> &[AudioItem] {
         &self.state.audio_items

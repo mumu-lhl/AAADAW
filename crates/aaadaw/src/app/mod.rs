@@ -11910,7 +11910,7 @@ impl App {
         }) else {
             return false;
         };
-        let Some(anchor_index) = self
+        let anchor_index = self
             .selected_track_id()
             .and_then(|track_id| {
                 self.project
@@ -11918,15 +11918,11 @@ impl App {
                     .iter()
                     .position(|track| track.id() == track_id)
             })
-            .or_else(|| (!self.project.tracks().is_empty()).then_some(0))
-        else {
-            return false;
-        };
-        clipboard.items.iter().all(|item| {
-            anchor_index
-                .checked_add(item.track_offset)
-                .is_some_and(|index| index < self.project.tracks().len())
-        })
+            .unwrap_or(0);
+        clipboard
+            .items
+            .iter()
+            .all(|item| anchor_index.checked_add(item.track_offset).is_some())
     }
 
     fn paste_audio_items(&mut self) {
@@ -11942,7 +11938,7 @@ impl App {
         let Some(clipboard) = self.audio_item_clipboard.clone() else {
             return;
         };
-        let Some(anchor_index) = self
+        let anchor_index = self
             .selected_track_id()
             .and_then(|track_id| {
                 self.project
@@ -11950,10 +11946,7 @@ impl App {
                     .iter()
                     .position(|track| track.id() == track_id)
             })
-            .or_else(|| (!self.project.tracks().is_empty()).then_some(0))
-        else {
-            return;
-        };
+            .unwrap_or(0);
         let Ok(start_sample) = self.project.sample_at_tick(self.timeline.edit_cursor_tick) else {
             self.status = "Could not paste items at the edit cursor".to_owned();
             return;
@@ -11966,29 +11959,80 @@ impl App {
             self.status = "Could not paste items: copied audio span is too large".to_owned();
             return;
         };
-        let actions = clipboard
+        let required_track_count = clipboard
             .items
             .iter()
-            .filter_map(|item| {
-                let track_index = anchor_index.checked_add(item.track_offset)?;
-                let track_id = self.project.tracks().get(track_index)?.id();
-                Some(DawAction::InsertLoopedAudioItemWithMix {
-                    track_id,
-                    media_ref: item.media_ref.clone(),
-                    name: item.name.clone(),
-                    start_sample,
-                    source_offset_samples: item.source_offset_samples,
-                    source_section_start_samples: item.source_section_start_samples,
-                    length_samples,
-                    muted: item.muted,
-                    phase_inverted: item.phase_inverted,
-                    source_section_length_samples: item.source_section_length_samples,
-                    volume: item.volume,
-                    take_volume: item.take_volume,
-                    take_pan: item.take_pan,
-                })
-            })
+            .filter_map(|item| anchor_index.checked_add(item.track_offset))
+            .max()
+            .and_then(|track_index| track_index.checked_add(1));
+        let Some(required_track_count) = required_track_count else {
+            return;
+        };
+        let mut destination_track_ids = self
+            .project
+            .tracks()
+            .iter()
+            .map(|track| track.id())
             .collect::<Vec<_>>();
+        let tracks_to_create = required_track_count.saturating_sub(destination_track_ids.len());
+        let first_new_track_id = if tracks_to_create == 0 {
+            None
+        } else {
+            let Some(first_id) = self
+                .project
+                .next_track_id()
+                .map(|track_id| track_id.value())
+            else {
+                self.status = "Could not paste items: track identifiers are exhausted".to_owned();
+                return;
+            };
+            let Ok(create_count) = u64::try_from(tracks_to_create) else {
+                self.status = "Could not paste items: too many destination tracks".to_owned();
+                return;
+            };
+            if first_id.checked_add(create_count).is_none() {
+                self.status = "Could not paste items: track identifiers are exhausted".to_owned();
+                return;
+            }
+            Some(first_id)
+        };
+        let mut actions = Vec::with_capacity(tracks_to_create + clipboard.items.len());
+        for offset in 0..tracks_to_create {
+            let Some(raw_track_id) =
+                first_new_track_id.and_then(|first| first.checked_add(u64::try_from(offset).ok()?))
+            else {
+                self.status = "Could not paste items: track identifiers are exhausted".to_owned();
+                return;
+            };
+            let Some(track_id) = TrackId::from_value(raw_track_id) else {
+                self.status = "Could not paste items: track identifiers are exhausted".to_owned();
+                return;
+            };
+            actions.push(DawAction::CreateTrack {
+                index: destination_track_ids.len(),
+                name: String::new(),
+            });
+            destination_track_ids.push(track_id);
+        }
+        actions.extend(clipboard.items.iter().filter_map(|item| {
+            let track_index = anchor_index.checked_add(item.track_offset)?;
+            let track_id = *destination_track_ids.get(track_index)?;
+            Some(DawAction::InsertLoopedAudioItemWithMix {
+                track_id,
+                media_ref: item.media_ref.clone(),
+                name: item.name.clone(),
+                start_sample,
+                source_offset_samples: item.source_offset_samples,
+                source_section_start_samples: item.source_section_start_samples,
+                length_samples,
+                muted: item.muted,
+                phase_inverted: item.phase_inverted,
+                source_section_length_samples: item.source_section_length_samples,
+                volume: item.volume,
+                take_volume: item.take_volume,
+                take_pan: item.take_pan,
+            })
+        }));
         if actions.is_empty() {
             return;
         }

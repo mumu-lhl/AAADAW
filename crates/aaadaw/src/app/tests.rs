@@ -12637,6 +12637,155 @@ fn copy_loop_of_selected_audio_area_pastes_source_sections_on_one_undo_step() {
 }
 
 #[test]
+fn copy_loop_paste_creates_missing_destination_tracks_with_undo_and_redo() {
+    let directory = tempfile::tempdir().unwrap();
+    let project_path = directory.path().join("copy-loop-track-growth.aaadaw");
+    let media_ref = "asset://copy-loop-track-growth";
+    let mut store = ProjectStore::open(&project_path).unwrap();
+    store
+        .import_audio_asset(media_ref, "copy-loop.wav", std::io::Cursor::new([0_u8; 4]))
+        .unwrap();
+    store
+        .set_audio_asset_metadata(
+            media_ref,
+            &aaadaw_storage::AudioAssetMetadata {
+                container: "wav".to_owned(),
+                codec: "pcm".to_owned(),
+                sample_rate: Some(48_000),
+                channel_count: Some(1),
+                bits_per_sample: Some(16),
+                frame_count: Some(600_000),
+                duration_nanos: Some(12_500_000_000),
+                byte_len: Some(4),
+            },
+        )
+        .unwrap();
+    store.close().unwrap();
+
+    let mut app = App {
+        project_path: Some(project_path),
+        ..App::default()
+    };
+    let _ = app.update(Message::AddTrack);
+    let _ = app.update(Message::AddTrack);
+    let source_tracks = app
+        .project
+        .tracks()
+        .iter()
+        .map(|track| track.id())
+        .collect::<Vec<_>>();
+    let source_length = app.project.sample_at_tick(19_200).unwrap();
+    for track_id in &source_tracks {
+        app.project
+            .apply(DawAction::InsertAudioItem {
+                track_id: *track_id,
+                media_ref: media_ref.to_owned(),
+                start_sample: 0,
+                source_offset_samples: 0,
+                length_samples: source_length,
+            })
+            .unwrap();
+    }
+    let source_item_ids = app
+        .project
+        .audio_items()
+        .iter()
+        .map(|item| (item.id(), item.track_id()))
+        .collect::<Vec<_>>();
+    app.timeline.select_items(source_item_ids);
+    app.timeline.time_selection = Some(crate::timeline::TimeSelection {
+        start_tick: 5_760,
+        end_tick: 13_440,
+    });
+    let _ = app.update(Message::ExecuteCommand(CommandId::CopyLoopOfSelectedArea));
+    let clipboard = app
+        .audio_item_clipboard
+        .clone()
+        .expect("copy should retain both source tracks");
+    assert_eq!(clipboard.items.len(), 2);
+    assert_eq!(clipboard.items[0].track_offset, 0);
+    assert_eq!(clipboard.items[1].track_offset, 1);
+
+    app.apply_action(
+        DawAction::DeleteTrack {
+            track_id: source_tracks[1],
+        },
+        "Source track deleted",
+    );
+    assert_eq!(app.project.tracks().len(), 1);
+    app.timeline.selected_track = Some(source_tracks[0]);
+    app.timeline.edit_cursor_tick = 57_600;
+    assert!(commands::is_enabled(&app, CommandId::PasteItems));
+    let first_paste_start = app.project.sample_at_tick(57_600).unwrap();
+    let revision_before_first_paste = app.revision;
+    let _ = app.update(Message::ExecuteCommand(CommandId::PasteItems));
+    assert_eq!(app.project.tracks().len(), 2);
+    assert_eq!(app.project.audio_items().len(), 3);
+    let first_paste = app
+        .project
+        .audio_items()
+        .iter()
+        .filter(|item| item.start_sample() == first_paste_start)
+        .collect::<Vec<_>>();
+    assert_eq!(first_paste.len(), 2);
+    assert_eq!(first_paste[0].track_id(), source_tracks[0]);
+    assert_eq!(first_paste[1].track_id(), app.project.tracks()[1].id());
+    assert_ne!(first_paste[1].track_id(), source_tracks[1]);
+    assert_eq!(app.revision, revision_before_first_paste + 1);
+    assert_eq!(app.timeline.selected_items.len(), 2);
+
+    let _ = app.update(Message::Undo);
+    assert_eq!(app.project.tracks().len(), 1);
+    assert_eq!(app.project.audio_items().len(), 1);
+    assert_eq!(app.audio_item_clipboard.as_ref(), Some(&clipboard));
+    let _ = app.update(Message::Redo);
+    assert_eq!(app.project.tracks().len(), 2);
+    assert_eq!(app.project.audio_items().len(), 3);
+
+    let tx_id = app.revision;
+    app.apply_action(
+        DawAction::BatchTransaction {
+            tx_id,
+            actions: app
+                .project
+                .tracks()
+                .iter()
+                .rev()
+                .map(|track| DawAction::DeleteTrack {
+                    track_id: track.id(),
+                })
+                .collect(),
+        },
+        "All tracks deleted",
+    );
+    assert!(app.project.tracks().is_empty());
+    assert!(app.project.audio_items().is_empty());
+    app.timeline.selected_track = None;
+    app.timeline.edit_cursor_tick = 144_000;
+    assert!(commands::is_enabled(&app, CommandId::PasteItems));
+    let empty_project_paste_start = app.project.sample_at_tick(144_000).unwrap();
+    let revision_before_empty_project_paste = app.revision;
+    let _ = app.update(Message::ExecuteCommand(CommandId::PasteItems));
+    assert_eq!(app.project.tracks().len(), 2);
+    assert_eq!(app.project.audio_items().len(), 2);
+    assert!(app.project.audio_items().iter().all(|item| {
+        item.start_sample() == empty_project_paste_start
+            && app
+                .project
+                .tracks()
+                .iter()
+                .any(|track| track.id() == item.track_id())
+    }));
+    assert_eq!(app.revision, revision_before_empty_project_paste + 1);
+    let _ = app.update(Message::Undo);
+    assert!(app.project.tracks().is_empty());
+    assert!(app.project.audio_items().is_empty());
+    let _ = app.update(Message::Redo);
+    assert_eq!(app.project.tracks().len(), 2);
+    assert_eq!(app.project.audio_items().len(), 2);
+}
+
+#[test]
 fn enclose_selected_audio_and_midi_in_razor_areas_and_support_undo() {
     let mut app = App::default();
     for _ in 0..3 {

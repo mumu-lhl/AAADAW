@@ -1743,3 +1743,10 @@ Linux REAPER 7.82 / Default 7 的属性探针确认，Copy loop/Paste 保留 Aud
 AAADAW 音频剪贴板现在记录 Take 名称、Item 音量与 active Take 音量/声像；粘贴命名 Take 时按原厂规则追加一次 ` loop` 后缀，同时保留空名和已经带后缀的名称。Core 插入动作将 looped item 创建、名称及混音值写入同一原子 Undo 事务。多轨复制回归检查不同名称和混音值跨复制、粘贴、Undo/Redo 和第二次粘贴仍一致；新项的 0 淡化与探针结果一致。模型尚无 Take 播放率字段，因此 1.25x 下源区段的速率映射仍未实现；跨工程媒体剪贴板、自动创建目标轨道、跨既有 source-loop 边界复制和完整窗口/焦点验收继续开放，`ITEM-AUDIO-COPYLOOP-001` 保持 `in_progress`。
 
 混音属性切片的完整 `cargo xtest -p aaadaw` 在本地 Xvfb `DISPLAY=:98` 下通过 1276/1276、0 skipped。随后加入 Take 名称后，AAADAW 主 binary tests 通过 671/671，`cargo test -p aaadaw-core` 的全部测试 binary 均通过，Copy loop 定向回归也再次通过 1/1；Stable `cargo clippy -p aaadaw-core -p aaadaw --all-targets -- -D warnings`、`cargo fmt --all -- --check`、`git diff --check` 通过。Parity matrix 仍将该条目标记为 `in_progress`，因为非 1x Take 速率映射和完整原厂/AAADAW 交互范围尚未覆盖。
+
+
+### 2026-10-16 Audio loop-copy destination tracks
+
+Linux REAPER 7.82 / Default 7 探针确认 Copy loop 后即使删除了来源轨道，Paste 仍按复制片段的相对偏移自动创建空白轨道；工程没有任何轨道时粘贴两项会创建两条空轨道，并选择新项目。实测结果与脚本 hash 记录在[destination-track fixture](../verification/reaper-parity/fixtures/item-copy-loop-track-growth-native.tsv)。本轮是 ReaScript 行为探针，没有新增截图。
+
+AAADAW Paste 现在计算缺少的目标轨道数，使用 Core 暴露的下一个单调 TrackId 构造 CreateTrack 操作，再与 looped-item 插入合并到同一 BatchTransaction；包括“只剩一轨”和“零轨”两种情况。一个回归覆盖删除来源轨道后的缺口补建、零轨道粘贴，以及 Undo/Redo 同时移除/恢复新轨道与素材。`ITEM-AUDIO-COPYLOOP-001` 仍为 `in_progress`：非 1x Take 速率映射、跨工程媒体剪贴板、跨既有 source-loop 边界复制和完整视觉/焦点对照待完成。
