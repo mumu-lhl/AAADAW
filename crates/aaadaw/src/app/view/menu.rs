@@ -124,6 +124,72 @@ pub(super) fn dropdown(app: &App, menu: MainMenu) -> Element<'_, Message> {
     dropdown_with_max_width(app, menu, f32::INFINITY, f32::INFINITY, false)
 }
 
+pub(super) fn popup_width(menu: MainMenu) -> f32 {
+    MENU_LAYOUT
+        .iter()
+        .find(|layout| layout.menu == menu)
+        .map_or(244.0, |layout| layout.popup_width)
+}
+
+pub(super) fn recent_projects_parent_offset(app: &App) -> f32 {
+    let entries = commands::for_menu(app, MainMenu::File);
+    let Some(parent_index) = entries
+        .iter()
+        .position(|entry| entry.id == super::super::commands::CommandId::OpenRecentProjects)
+    else {
+        return tokens::PANEL_PADDING;
+    };
+    let popup_width = popup_width(MainMenu::File);
+    let mut offset = tokens::PANEL_PADDING;
+    for entry in entries.iter().take(parent_index) {
+        if entry.separator_before {
+            offset += 1.0 + tokens::ROW_GAP;
+        }
+        let shortcut_width = entry
+            .shortcut
+            .as_ref()
+            .map_or(0.0, |shortcut| shortcut.chars().count() as f32 * 6.0);
+        let label_width = (popup_width
+            - tokens::PANEL_PADDING * 2.0
+            - 32.0
+            - 14.0
+            - 12.0
+            - tokens::SPACING_MD * 3.0
+            - shortcut_width)
+            .max(48.0);
+        let label_width_estimate = entry.label.chars().count() as f32 * 7.2;
+        let line_count = (label_width_estimate / label_width).ceil().max(1.0);
+        offset += line_count * 20.0 + tokens::SPACING_XS * 2.0;
+        offset += tokens::ROW_GAP;
+    }
+    offset
+}
+
+pub(super) fn recent_projects_dropdown(app: &App, max_width: f32) -> Element<'_, Message> {
+    let entries = commands::recent_project_entries(app);
+    let mut contents = column![].spacing(tokens::ROW_GAP);
+    if entries.is_empty() {
+        contents = contents.push(text("No recent projects").size(12));
+    } else {
+        for entry in entries {
+            let selected = app.menu_selected_command == Some(entry.id);
+            contents = contents.push(command(entry, selected, false));
+        }
+    }
+    container(contents)
+        .width(Length::Fixed(360.0_f32.min(max_width)))
+        .padding(tokens::PANEL_PADDING)
+        .style(|_| container::Style {
+            background: Some(Color::from_rgb8(37, 41, 44).into()),
+            border: Border::default()
+                .color(Color::from_rgb8(83, 91, 96))
+                .width(1.0)
+                .rounded(2.0),
+            ..container::Style::default()
+        })
+        .into()
+}
+
 pub(super) fn mobile_dropdown(
     app: &App,
     menu: MainMenu,
@@ -146,16 +212,16 @@ fn dropdown_with_max_width(
         menu_commands(
             app,
             menu,
-            commands::for_menu(app, menu),
+            if touch_targets {
+                commands::for_mobile_menu(app, menu)
+            } else {
+                commands::for_menu(app, menu)
+            },
             max_height,
             touch_targets,
         )
     };
-    let popup_width = MENU_LAYOUT
-        .iter()
-        .find(|layout| layout.menu == menu)
-        .map_or(244.0, |layout| layout.popup_width)
-        .min(max_width);
+    let popup_width = popup_width(menu).min(max_width);
     container(contents)
         .width(Length::Fixed(popup_width))
         .padding(tokens::PANEL_PADDING)
@@ -205,7 +271,8 @@ fn menu_commands(
         let selected = app.menu_selected_command == Some(entry.id);
         contents = contents.push(command(entry, selected, touch_targets));
     }
-    if menu == MainMenu::File
+    if touch_targets
+        && menu == MainMenu::File
         && app.recent_projects_menu_open
         && app.recent_project_paths.is_empty()
     {

@@ -9545,6 +9545,45 @@ impl App {
                 let Some(menu) = self.active_menu else {
                     return Task::none();
                 };
+                if menu == MainMenu::File && self.recent_projects_menu_open {
+                    let recent_commands = commands::recent_project_entries(self)
+                        .into_iter()
+                        .filter(|entry| entry.enabled)
+                        .map(|entry| entry.id)
+                        .collect::<Vec<_>>();
+                    if recent_commands.is_empty() {
+                        self.menu_selected_command = Some(CommandId::OpenRecentProjects);
+                        return Task::none();
+                    }
+                    let direction = if navigation == MenuNavigation::NextCommand {
+                        1_isize
+                    } else {
+                        -1_isize
+                    };
+                    let current = self.menu_selected_command.and_then(|selected| {
+                        recent_commands
+                            .iter()
+                            .position(|command| *command == selected)
+                    });
+                    let next = current.map_or_else(
+                        || {
+                            if direction > 0 {
+                                0
+                            } else {
+                                recent_commands.len() - 1
+                            }
+                        },
+                        |index| {
+                            if direction > 0 {
+                                (index + 1) % recent_commands.len()
+                            } else {
+                                (index + recent_commands.len() - 1) % recent_commands.len()
+                            }
+                        },
+                    );
+                    self.menu_selected_command = Some(recent_commands[next]);
+                    return Task::none();
+                }
                 let commands = self.menu_command_ids(menu);
                 if commands.is_empty() {
                     self.menu_selected_command = None;

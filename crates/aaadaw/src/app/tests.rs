@@ -6843,9 +6843,11 @@ fn save_all_projects_routes_through_the_active_project_save() {
 fn recent_projects_submenu_opens_the_selected_path_through_project_transition_guards() {
     let directory = tempfile::tempdir().expect("test directory should be created");
     let recent_path = directory.path().join("Mix.aaadaw");
+    let older_path = directory.path().join("Older mix.aaadaw");
     std::fs::write(&recent_path, b"project fixture").unwrap();
+    std::fs::write(&older_path, b"older project fixture").unwrap();
     let mut app = App {
-        recent_project_paths: vec![recent_path.clone()],
+        recent_project_paths: vec![recent_path.clone(), older_path],
         ..App::default()
     };
 
@@ -6868,11 +6870,26 @@ fn recent_projects_submenu_opens_the_selected_path_through_project_transition_gu
     let _ = app.update(Message::ToggleRecentProjectsMenu);
     assert!(app.recent_projects_menu_open);
     let recent_entries = commands::for_menu(&app, MainMenu::File);
-    let recent_entry = recent_entries
-        .iter()
+    assert!(
+        recent_entries
+            .iter()
+            .all(|entry| !matches!(entry.id, CommandId::OpenRecentProject(_)))
+    );
+    let recent_entry = commands::recent_project_entries(&app)
+        .into_iter()
         .find(|entry| entry.id == CommandId::OpenRecentProject(0))
-        .expect("expanded submenu should list the recent path");
+        .expect("cascading submenu should list the recent path");
     assert!(recent_entry.label.contains("Mix.aaadaw"));
+    assert!(
+        commands::recent_project_entries(&app)
+            .iter()
+            .any(|entry| entry.id == CommandId::OpenRecentProject(1))
+    );
+    assert!(
+        commands::for_mobile_menu(&app, MainMenu::File)
+            .iter()
+            .any(|entry| entry.id == CommandId::OpenRecentProject(0))
+    );
 
     app.menu_selected_command = Some(CommandId::OpenRecentProjects);
     let _ = app.update(Message::MenuKeyboard(MenuNavigation::NextMenu));
@@ -6881,6 +6898,16 @@ fn recent_projects_submenu_opens_the_selected_path_through_project_transition_gu
         "Right should enter the submenu"
     );
     let _ = app.update(Message::MenuKeyboard(MenuNavigation::NextCommand));
+    assert_eq!(
+        app.menu_selected_command,
+        Some(CommandId::OpenRecentProject(0))
+    );
+    let _ = app.update(Message::MenuKeyboard(MenuNavigation::NextCommand));
+    assert_eq!(
+        app.menu_selected_command,
+        Some(CommandId::OpenRecentProject(1))
+    );
+    let _ = app.update(Message::MenuKeyboard(MenuNavigation::PreviousCommand));
     assert_eq!(
         app.menu_selected_command,
         Some(CommandId::OpenRecentProject(0))
@@ -6895,7 +6922,9 @@ fn recent_projects_submenu_opens_the_selected_path_through_project_transition_gu
         Some(CommandId::OpenRecentProjects)
     );
 
-    let _ = app.update(Message::ExecuteCommand(CommandId::OpenRecentProject(0)));
+    let _ = app.update(Message::MenuKeyboard(MenuNavigation::NextMenu));
+    let _ = app.update(Message::MenuKeyboard(MenuNavigation::NextCommand));
+    let _ = app.update(Message::MenuKeyboard(MenuNavigation::Activate));
     assert!(app.io_busy);
     assert_eq!(app.project_path_query, recent_path.to_string_lossy());
     assert_eq!(app.status, format!("Opening {}…", recent_path.display()));

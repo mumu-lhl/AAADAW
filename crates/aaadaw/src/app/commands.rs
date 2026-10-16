@@ -1765,32 +1765,54 @@ fn macro_step_supported(kind: CommandKind) -> bool {
 }
 
 pub(super) fn for_menu(app: &App, menu: MainMenu) -> Vec<CommandEntry> {
+    for_menu_with_recent_entries(app, menu, false)
+}
+
+pub(super) fn for_mobile_menu(app: &App, menu: MainMenu) -> Vec<CommandEntry> {
+    for_menu_with_recent_entries(app, menu, true)
+}
+
+pub(super) fn recent_project_entries(app: &App) -> Vec<CommandEntry> {
+    app.recent_project_paths
+        .iter()
+        .enumerate()
+        .map(|(index, path)| CommandEntry {
+            id: CommandId::OpenRecentProject(index),
+            category: "File",
+            label: path.display().to_string(),
+            shortcut: None,
+            enabled: !project_file_busy(app),
+            checked: false,
+            destructive: false,
+            separator_before: false,
+            aliases: vec![path.to_string_lossy().into_owned()],
+        })
+        .collect()
+}
+
+fn for_menu_with_recent_entries(
+    app: &App,
+    menu: MainMenu,
+    inline_recent_entries: bool,
+) -> Vec<CommandEntry> {
     let all_entries = entries(app);
     let mut menu_entries = all_entries
         .iter()
         .filter(|entry| entry.section == Some(menu))
         .map(|entry| entry.command.clone())
         .collect::<Vec<_>>();
-    if menu == MainMenu::File
+    if inline_recent_entries
+        && menu == MainMenu::File
         && app.recent_projects_menu_open
         && let Some(parent) = menu_entries
             .iter()
             .position(|entry| entry.id == CommandId::OpenRecentProjects)
     {
-        let recent_entries = app
-            .recent_project_paths
-            .iter()
-            .enumerate()
-            .map(|(index, path)| CommandEntry {
-                id: CommandId::OpenRecentProject(index),
-                category: "File",
-                label: format!("  {}", path.display()),
-                shortcut: None,
-                enabled: !project_file_busy(app),
-                checked: false,
-                destructive: false,
-                separator_before: false,
-                aliases: vec![path.to_string_lossy().into_owned()],
+        let recent_entries = recent_project_entries(app)
+            .into_iter()
+            .map(|mut entry| {
+                entry.label = format!("  {}", entry.label);
+                entry
             })
             .collect::<Vec<_>>();
         menu_entries.splice(parent + 1..parent + 1, recent_entries);
