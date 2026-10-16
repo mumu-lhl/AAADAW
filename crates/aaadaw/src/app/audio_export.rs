@@ -46,6 +46,8 @@ pub(crate) enum RenderFilenameWildcard {
     Project,
     Title,
     Author,
+    ProjectDirectory,
+    ProjectDirectoryNumbered,
     ProjectNotes,
     ProjectNotesNamed,
     Tempo,
@@ -94,10 +96,12 @@ pub(crate) enum RenderFilenameWildcard {
 }
 
 impl RenderFilenameWildcard {
-    pub(crate) const ALL: [Self; 48] = [
+    pub(crate) const ALL: [Self; 50] = [
         Self::Project,
         Self::Title,
         Self::Author,
+        Self::ProjectDirectory,
+        Self::ProjectDirectoryNumbered,
         Self::ProjectNotes,
         Self::ProjectNotesNamed,
         Self::Bpm,
@@ -150,6 +154,8 @@ impl RenderFilenameWildcard {
             Self::Project => "$project",
             Self::Title => "$title",
             Self::Author => "$author",
+            Self::ProjectDirectory => "$projectdirectory",
+            Self::ProjectDirectoryNumbered => "$projectdirectoryN",
             Self::ProjectNotes => "$projectnotes",
             Self::ProjectNotesNamed => "$projectnotes(name)",
             Self::Tempo => "$tempo",
@@ -1059,6 +1065,15 @@ fn is_render_filename_wildcard_separator(character: char) -> bool {
     matches!(character, ' ' | '-' | '_' | '.')
 }
 
+fn render_filename_project_directory(project_path: &Path, level: usize) -> String {
+    project_path
+        .parent()
+        .and_then(|directory| directory.ancestors().nth(level.saturating_sub(1)))
+        .and_then(Path::file_name)
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_default()
+}
+
 fn render_filename_named_value(text: &str, name: &str, separator: Option<char>) -> String {
     text.split(|character| character == '\n' || character == '\r' || separator == Some(character))
         .find_map(|entry| {
@@ -1225,10 +1240,42 @@ fn expand_render_filename_pattern(
             index += 1;
             continue;
         }
+        let full_token = characters[token_start..token_end]
+            .iter()
+            .collect::<String>();
+        if full_token.eq_ignore_ascii_case("projectdirectoryn") && full_token.ends_with('N') {
+            token_end -= 1;
+        }
         let token_original = characters[token_start..token_end]
             .iter()
             .collect::<String>();
         let token = token_original.to_ascii_lowercase();
+        let mut project_directory_level = None;
+        let directory_expression_end = if token == "projectdirectory" {
+            let mut suffix_end = token_end;
+            while suffix_end < characters.len() && characters[suffix_end].is_ascii_digit() {
+                suffix_end += 1;
+            }
+            let level = if suffix_end == token_end {
+                1
+            } else {
+                let suffix = characters[token_end..suffix_end].iter().collect::<String>();
+                match suffix.parse::<usize>() {
+                    // REAPER treats zero as an ordinary suffix, so `$projectdirectory0`
+                    // expands the current directory and keeps the trailing `0` literal.
+                    Ok(0) => {
+                        suffix_end = token_end;
+                        1
+                    }
+                    Ok(level) => level,
+                    Err(_) => usize::MAX,
+                }
+            };
+            project_directory_level = Some(level);
+            suffix_end
+        } else {
+            token_end
+        };
         let known_token = token == "tracknameornumber"
             || RenderFilenameWildcard::ALL.iter().any(|wildcard| {
                 wildcard.token().trim_start_matches('$').split('(').next() == Some(token.as_str())
@@ -1263,7 +1310,7 @@ fn expand_render_filename_pattern(
                     })
                     .unwrap_or((token_end, None, None))
             } else {
-                (token_end, None, None)
+                (directory_expression_end, None, None)
             };
         let (wildcard_end, modifiers) = if known_token {
             parse_render_filename_wildcard_modifiers(&characters, expression_end, &token)
@@ -1275,6 +1322,10 @@ fn expand_render_filename_pattern(
             "project" => result.push_str(project_name),
             "title" => result.push_str(&project.project_notes().title),
             "author" => result.push_str(&project.project_notes().author),
+            "projectdirectory" => result.push_str(&render_filename_project_directory(
+                project_path,
+                project_directory_level.unwrap_or(1),
+            )),
             "projectnotes" => result.push_str(
                 &named_value_key
                     .as_deref()
@@ -3098,6 +3149,39 @@ mod tests {
     }
 
     #[test]
+    fn render_project_directory_wildcards_match_native_levels_and_suffixes() {
+        let project = Project::default();
+        let settings = aaadaw_app::ProjectWavRenderSettings {
+            master_ceiling: aaadaw_engine::MasterOutputCeiling::default(),
+            export_options: aaadaw_app::WavExportOptions::default(),
+            output_sample_rate: 48_000,
+            output_channels: WavChannelCount::Stereo,
+            source: aaadaw_app::ProjectWavRenderSource::MasterMix,
+            start_sample: 0,
+            end_sample: 48_000,
+            tail_milliseconds: 0,
+            normalize_peak: false,
+            normalize_peak_target_centi_dbfs: 0,
+        };
+        let project_path =
+            Path::new("/projects/ProjectRoot/Albums/Album01/Session/Directory.aaadaw");
+        let output = apply_render_filename_pattern(
+            vec![(settings, Path::new("/renders/base.wav").to_owned())],
+            "$projectdirectory-$projectdirectory0-$projectdirectory1-$projectdirectory2-$projectdirectory3-$projectdirectory4-$projectdirectory5-$projectdirectory6-$projectdirectoryN",
+            &project,
+            project_path,
+        )
+        .expect("project directory levels should resolve safely");
+
+        assert_eq!(
+            output[0].1,
+            Path::new(
+                "/renders/Session-Session0-Session-Album01-Albums-ProjectRoot-projects-SessionN.wav"
+            )
+        );
+    }
+
+    #[test]
     fn render_wildcard_picker_lists_and_inserts_supported_tokens() {
         assert_eq!(
             RenderFilenameWildcard::ALL.map(RenderFilenameWildcard::token),
@@ -3105,6 +3189,8 @@ mod tests {
                 "$project",
                 "$title",
                 "$author",
+                "$projectdirectory",
+                "$projectdirectoryN",
                 "$projectnotes",
                 "$projectnotes(name)",
                 "$bpm",

@@ -1,6 +1,6 @@
 # REAPER Render wildcard catalog
 
-This catalog comes from the actual Linux REAPER 7.82 Render dialog using the Default 7 theme and an isolated configuration. The [top-level Wildcards menu](fixtures/render-wildcards-menu-native.png) and its category menus were captured directly from the application. The [Wildcard help pages](fixtures/render-wildcards-help-1-native.png), [2](fixtures/render-wildcards-help-2-native.png), [3](fixtures/render-wildcards-help-3-native.png), [4](fixtures/render-wildcards-help-4-native.png), and [5](fixtures/render-wildcards-help-5-native.png) record expansion rules and value semantics.
+This catalog comes from the actual Linux REAPER 7.82 Render dialog using the Default 7 theme and an isolated configuration. The [top-level Wildcards menu](fixtures/render-wildcards-menu-native.png) and its category menus were captured directly from the application. The [Wildcard help pages](fixtures/render-wildcards-help-1-native.png), [2](fixtures/render-wildcards-help-2-native.png), [3](fixtures/render-wildcards-help-3-native.png), [4](fixtures/render-wildcards-help-4-native.png), and [5](fixtures/render-wildcards-help-5-native.png) record expansion rules and value semantics. The REAPER `$projectdirectory` ancestry, numeric levels, literal zero suffix, uppercase `N` template, and actual render are preserved in the [native directory-wildcard fixture](fixtures/render-wildcards-project-directory-native.tsv).
 
 ## Native menu entries
 
