@@ -1,6 +1,7 @@
 use super::{App, Message, PathPickerTarget, run_blocking};
 use aaadaw_core::{
-    MidiExportOptions, MidiFileType, MidiMarkerType, Project, ProjectSnapshot, encode_standard_midi,
+    MidiExportOptions, MidiFileType, MidiMarkerType, Project, ProjectSnapshot,
+    encode_standard_midi_with_conductor_track_name,
 };
 use iced::Task;
 use std::path::{Path, PathBuf};
@@ -129,7 +130,39 @@ fn write_project_midi(
     options: MidiExportOptions,
 ) -> Result<(), String> {
     let project = Project::from_snapshot(snapshot).map_err(|error| error.to_string())?;
-    let bytes = encode_standard_midi(&project, options)?;
+    let conductor_track_name = path
+        .file_stem()
+        .map(|stem| stem.to_string_lossy().into_owned())
+        .filter(|stem| !stem.is_empty())
+        .unwrap_or_else(|| "midi_export".to_owned());
+    let bytes =
+        encode_standard_midi_with_conductor_track_name(&project, options, &conductor_track_name)?;
     super::config_paths::write_atomic(path, &bytes)
         .map_err(|error| format!("could not write {}: {error}", path.display()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use aaadaw_core::{MidiExportOptions, Project};
+
+    #[test]
+    fn conductor_track_name_uses_the_export_destination_stem() {
+        let project = Project::new();
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("native-name.mid");
+
+        write_project_midi(
+            &path,
+            project.snapshot(),
+            MidiExportOptions::for_project(&project),
+        )
+        .unwrap();
+
+        let bytes = std::fs::read(path).unwrap();
+        let expected = b"native-name";
+        assert!(bytes.windows(expected.len() + 3).any(|event| {
+            event[..3] == [0xff, 0x03, expected.len() as u8] && &event[3..] == expected
+        }));
+    }
 }

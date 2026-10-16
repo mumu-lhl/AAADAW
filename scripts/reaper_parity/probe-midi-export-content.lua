@@ -1,0 +1,42 @@
+-- Run only in an isolated, unsaved Linux REAPER 7.82 / Default 7 project.
+-- Builds the export fixture and opens Main action 40849 for a manual Save-path entry.
+local root = assert(os.getenv("AAADAW_REAPER_PROBE_DIR"), "Set AAADAW_REAPER_PROBE_DIR") .. "/"
+assert(reaper.GetAppVersion() == "7.82/linux-x86_64")
+assert(reaper.GetLastColorThemeFile():match("Default_7%.0%.ReaperThemeZip$"))
+assert(reaper.GetPlayStateEx(0) == 0)
+local _, project_path = reaper.EnumProjects(-1, "")
+assert(project_path == "", "Run this probe in a fresh, unsaved project")
+assert(reaper.CountTracks(0) == 0, "Run this probe in an empty project")
+
+reaper.InsertTrackAtIndex(0, true)
+local track = reaper.GetTrack(0, 0)
+reaper.GetSetMediaTrackInfo_String(track, "P_NAME", "Piano", true)
+local item_start, item_end = 0.25, 1.25
+local item = assert(reaper.CreateNewMIDIItemInProj(track, item_start, item_end, false))
+local take = assert(reaper.GetActiveTake(item))
+local start_qn = reaper.TimeMap2_timeToQN(0, item_start)
+local start_ppq = reaper.MIDI_GetPPQPosFromProjQN(take, start_qn)
+local note_end_ppq = reaper.MIDI_GetPPQPosFromProjQN(take, start_qn + 1.0)
+local cc_ppq = reaper.MIDI_GetPPQPosFromProjQN(take, start_qn + 0.25)
+local bend_ppq = reaper.MIDI_GetPPQPosFromProjQN(take, start_qn + 0.375)
+assert(reaper.MIDI_InsertNote(take, false, false, start_ppq, note_end_ppq, 0, 60, 100, false))
+assert(reaper.MIDI_InsertCC(take, false, false, cc_ppq, 0xB0, 0, 1, 64))
+assert(reaper.MIDI_InsertCC(take, false, false, bend_ppq, 0xE0, 0, 0, 96))
+reaper.MIDI_Sort(take)
+
+local meta = assert(io.open(root .. "midi-export-content-native-meta.tsv", "w"))
+meta:write("version\t", reaper.GetAppVersion(), "\n")
+meta:write("theme\tDefault_7.0.ReaperThemeZip\n")
+meta:write("fixture\ttrack Piano; item 0.25-1.25 seconds; C4 note, CC1, pitch bend\n")
+meta:write("project_ppq_at_item_start\t", string.format("%.6f", start_ppq), "\n")
+meta:write("project_ppq_at_note_end\t", string.format("%.6f", note_end_ppq), "\n")
+meta:write("project_ppq_at_cc\t", string.format("%.6f", cc_ppq), "\n")
+meta:write("project_ppq_at_pitch_bend\t", string.format("%.6f", bend_ppq), "\n")
+meta:write("export_action\t40849\n")
+meta:write("export_defaults\tType 1; PPQN 960; tempo/meter/SMPTE/markers unchecked\n")
+meta:close()
+
+reaper.Main_OnCommand(40849, 0)
+local ready = assert(io.open(root .. "midi-export-content-ready", "w"))
+ready:write("Enter an unused .mid path in the REAPER export dialog and click OK\n")
+ready:close()

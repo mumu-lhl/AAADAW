@@ -30,7 +30,10 @@ pub use master::MasterMix;
 pub use midi::{
     ItemId, MidiControllerData, MidiItem, MidiNote, MidiNoteData, MidiPitchBendData, NoteId,
 };
-pub use midi_file::{MidiExportOptions, MidiFileType, MidiMarkerType, encode_standard_midi};
+pub use midi_file::{
+    MidiExportOptions, MidiFileType, MidiMarkerType, encode_standard_midi,
+    encode_standard_midi_with_conductor_track_name,
+};
 pub use project::{FxParameterChange, MAX_FX_PARAMETER_AUTOMATION_POINTS, Project};
 pub use project_notes::ProjectNotes;
 pub use regions::{MAX_PROJECT_REGION_NUMBER, MAX_PROJECT_REGION_TICKS, ProjectRegion, RegionId};

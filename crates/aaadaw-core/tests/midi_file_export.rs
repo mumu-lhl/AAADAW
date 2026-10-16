@@ -1,6 +1,7 @@
 use aaadaw_core::{
     DawAction, FrameRate, MidiControllerData, MidiExportOptions, MidiFileType, MidiMarkerType,
     MidiNoteData, MidiPitchBendData, Project, TempoCurve, encode_standard_midi,
+    encode_standard_midi_with_conductor_track_name,
 };
 
 #[test]
@@ -235,7 +236,7 @@ fn exports_tempo_ramps_as_bounded_step_events() {
 }
 
 #[test]
-fn defaults_to_native_multitrack_ppq_without_optional_metadata() {
+fn default_export_always_includes_the_native_start_tempo_and_time_signature() {
     let project = Project::new();
     let options = MidiExportOptions::for_project(&project);
     let bytes = encode_standard_midi(&project, options).expect("empty project should export");
@@ -247,8 +248,81 @@ fn defaults_to_native_multitrack_ppq_without_optional_metadata() {
         "empty project still has one conductor track"
     );
     assert_eq!(&bytes[12..14], &[0x03, 0xc0], "REAPER default PPQN is 960");
-    assert!(!bytes.windows(2).any(|window| window == [0xff, 0x51]));
-    assert!(!bytes.windows(2).any(|window| window == [0xff, 0x58]));
+    assert!(
+        bytes
+            .windows(6)
+            .any(|window| { window == [0xff, 0x51, 0x03, 0x07, 0xa1, 0x20] })
+    );
+    assert!(
+        bytes
+            .windows(7)
+            .any(|window| window == [0xff, 0x58, 0x04, 4, 2, 24, 8])
+    );
+}
+
+#[test]
+fn reaper_782_type_one_export_matches_native_track_and_event_bytes() {
+    let mut project = Project::new();
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Piano".to_owned(),
+        })
+        .unwrap();
+    let track_id = project.tracks()[0].id();
+    project
+        .apply(DawAction::InsertMidiItem {
+            track_id,
+            start_tick: 480,
+            length_ticks: 1920,
+        })
+        .unwrap();
+    let item_id = project.midi_items()[0].id();
+    project
+        .apply(DawAction::AddMidiNotes {
+            item_id,
+            notes: vec![MidiNoteData {
+                pitch: 60,
+                tick: 0,
+                duration: 960,
+                velocity: 100,
+            }],
+        })
+        .unwrap();
+    project
+        .apply(DawAction::SetMidiControllers {
+            item_id,
+            controllers: vec![MidiControllerData {
+                controller: 1,
+                tick: 240,
+                value: 64,
+            }],
+        })
+        .unwrap();
+    project
+        .apply(DawAction::SetMidiPitchBends {
+            item_id,
+            pitch_bends: vec![MidiPitchBendData {
+                tick: 360,
+                value: 12_288,
+            }],
+        })
+        .unwrap();
+
+    let actual = encode_standard_midi_with_conductor_track_name(
+        &project,
+        MidiExportOptions::for_project(&project),
+        "aaadaw-midi-export-native-20261015",
+    )
+    .unwrap();
+    let native = include_bytes!(
+        "../../../docs/verification/reaper-parity/fixtures/menu-export-midi-native-content.mid"
+    );
+
+    assert_eq!(
+        actual, native,
+        "type-1 tracks and all event ticks/bytes match REAPER 7.82"
+    );
 }
 
 #[test]

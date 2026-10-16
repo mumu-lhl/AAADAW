@@ -80,6 +80,19 @@ pub fn encode_standard_midi(
     project: &Project,
     options: MidiExportOptions,
 ) -> Result<Vec<u8>, String> {
+    encode_standard_midi_with_conductor_track_name(project, options, "Tempo map")
+}
+
+/// Encodes a project using the conductor track name derived from the output file name.
+///
+/// REAPER labels the format-1 conductor track and the format-0 merged track with the
+/// destination MIDI file's stem. Callers that do not have an output path can use
+/// [`encode_standard_midi`], which retains the generic `Tempo map` label.
+pub fn encode_standard_midi_with_conductor_track_name(
+    project: &Project,
+    options: MidiExportOptions,
+    conductor_track_name: &str,
+) -> Result<Vec<u8>, String> {
     let project_ppq = project.settings().ppq();
     if options.ppq == 0 || options.ppq > 0x7fff {
         return Err(format!(
@@ -98,7 +111,6 @@ pub fn encode_standard_midi(
     let mut events_by_track = (0..project.tracks().len())
         .map(|_| Vec::new())
         .collect::<Vec<Vec<Event>>>();
-    let mut track_end_ticks = vec![0; project.tracks().len()];
     let mut midi_event_count = 0_usize;
 
     for item in project.midi_items() {
@@ -112,9 +124,6 @@ pub fn encode_standard_midi(
             .start_tick()
             .checked_add(item.length_ticks())
             .ok_or_else(|| "MIDI item extends beyond the supported timeline".to_owned())?;
-        track_end_ticks[track_index] =
-            track_end_ticks[track_index].max(scale_tick(item_end, project_ppq, options.ppq)?);
-
         for note in item.notes() {
             let note_end_tick = note
                 .tick()
@@ -256,17 +265,25 @@ pub fn encode_standard_midi(
     let mut tracks = Vec::new();
     let smf_type = match options.file_type {
         MidiFileType::Type0 => {
-            let mut events = conductor_events(project, options, project_ppq, b"Project MIDI")?;
-            let mut end_tick = 0;
-            for (index, track_events) in events_by_track.iter_mut().enumerate() {
-                end_tick = end_tick.max(track_end_ticks[index]);
+            let mut events = conductor_events(
+                project,
+                options,
+                project_ppq,
+                conductor_track_name.as_bytes(),
+            )?;
+            for track_events in &mut events_by_track {
                 events.append(track_events);
             }
-            tracks.push(encode_track(events, end_tick)?);
+            tracks.push(encode_track(events, 0)?);
             0_u16
         }
         MidiFileType::Type1 => {
-            let conductor = conductor_events(project, options, project_ppq, b"Tempo map")?;
+            let conductor = conductor_events(
+                project,
+                options,
+                project_ppq,
+                conductor_track_name.as_bytes(),
+            )?;
             tracks.push(encode_track(conductor, 0)?);
             for (index, track) in project.tracks().iter().enumerate() {
                 let mut events = vec![Event {
@@ -275,7 +292,7 @@ pub fn encode_standard_midi(
                     bytes: meta_event(0x03, track.name().as_bytes())?,
                 }];
                 events.append(&mut events_by_track[index]);
-                tracks.push(encode_track(events, track_end_ticks[index])?);
+                tracks.push(encode_track(events, 0)?);
             }
             1_u16
         }
@@ -349,14 +366,20 @@ fn conductor_events(
         bytes: meta_event(0x03, track_name)?,
     }];
     let mut tempo_events = Vec::new();
-    if options.embed_tempo_and_time_signature {
+    {
         let tempo_points = project.tempo_points().collect::<Vec<_>>();
         let basis = project.settings().bpm_basis().quarter_notes_per_beat();
         let ppq = u64::from(project_ppq);
+        let point_count = if options.embed_tempo_and_time_signature {
+            tempo_points.len()
+        } else {
+            tempo_points.len().min(1)
+        };
 
-        for (index, &(start_tick, bpm, curve)) in tempo_points.iter().enumerate() {
+        for (index, &(start_tick, bpm, curve)) in tempo_points.iter().take(point_count).enumerate()
+        {
             push_tempo_event(&mut tempo_events, start_tick, bpm * basis)?;
-            if curve == TempoCurve::Step {
+            if !options.embed_tempo_and_time_signature || curve == TempoCurve::Step {
                 continue;
             }
             let Some(&(end_tick, end_bpm, _)) = tempo_points.get(index + 1) else {
@@ -394,7 +417,7 @@ fn conductor_events(
         let value = microseconds_per_quarter as u32;
         events.push(Event {
             tick: scale_tick(tick, project_ppq, options.ppq)?,
-            order: 1,
+            order: 2,
             bytes: vec![
                 0xff,
                 0x51,
@@ -406,30 +429,29 @@ fn conductor_events(
         });
     }
 
-    if options.embed_tempo_and_time_signature {
-        for (tick, signature) in project.time_signature_points() {
-            let numerator = u8::try_from(signature.numerator())
-                .map_err(|_| "time-signature numerator does not fit in a MIDI file".to_owned())?;
-            let denominator = signature.denominator();
-            if !denominator.is_power_of_two() {
-                return Err(
-                    "MIDI files require a power-of-two time-signature denominator".to_owned(),
-                );
-            }
-            events.push(Event {
-                tick: scale_tick(tick, project_ppq, options.ppq)?,
-                order: 2,
-                bytes: vec![
-                    0xff,
-                    0x58,
-                    0x04,
-                    numerator,
-                    denominator.trailing_zeros() as u8,
-                    24,
-                    8,
-                ],
-            });
+    for (index, (tick, signature)) in project.time_signature_points().enumerate() {
+        if index > 0 && !options.embed_tempo_and_time_signature {
+            continue;
         }
+        let numerator = u8::try_from(signature.numerator())
+            .map_err(|_| "time-signature numerator does not fit in a MIDI file".to_owned())?;
+        let denominator = signature.denominator();
+        if !denominator.is_power_of_two() {
+            return Err("MIDI files require a power-of-two time-signature denominator".to_owned());
+        }
+        events.push(Event {
+            tick: scale_tick(tick, project_ppq, options.ppq)?,
+            order: 1,
+            bytes: vec![
+                0xff,
+                0x58,
+                0x04,
+                numerator,
+                denominator.trailing_zeros() as u8,
+                24,
+                8,
+            ],
+        });
     }
 
     if options.embed_smpte_offset {
