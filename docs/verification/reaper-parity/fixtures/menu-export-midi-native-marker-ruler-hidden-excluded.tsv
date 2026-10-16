@@ -1,0 +1,24 @@
+version	7.82/linux-x86_64
+theme	Default_7.0.ReaperThemeZip
+fixture	track Piano; item 0.25-1.25 seconds; C4 note, CC1, pitch bend; #Intro at project tick 0; Verse at tick 960
+project_marker_ruler	hidden; action 43485; state change delta 1; saved RULERLANECFG 4
+native_project_fixture	fixtures/menu-export-midi-native-marker-ruler-hidden.rpp
+native_project_fixture_sha256	0a470375d18b1ff838b208f0f43f3cb1a10682fc1fee2aa47b1a8fabf0944d38
+export_action	40849
+export_mode	Multitrack MIDI file (type 1 MIDI file)
+export_ppqn	960
+export_tempo_meter_changes	unchecked
+export_smpte_offset	unchecked
+export_markers	checked
+export_marker_type	markers
+export_marker_filter	unchecked
+export_hidden_markers	unchecked
+native_conductor_events	destination-derived name; 4/4 and 120 BPM at tick 0; no marker events; End-of-Track tick 0
+native_midi_track_events	Piano C4 note tick 480-1440, CC1 tick 720, pitch bend tick 840, End-of-Track tick 1440
+native_export_path	/tmp/midi-marker-ruler-hidden-excluded-native-20261016.mid
+native_export_bytes	134
+native_export_sha256	e8e4819380a23352b13f88eeabca34f13e3fce8463486c1b9b93b64eeaf9ced9
+native_dialog_screenshot	fixtures/menu-export-midi-native-marker-ruler-hidden-excluded-dialog.png
+native_dialog_screenshot_sha256	50d7386b189c4c0d46d127efe1d394108353650e6847de57cc4703c9c247732f
+native_binary_fixture	fixtures/menu-export-midi-native-marker-ruler-hidden-excluded.mid
+native_probe	scripts/reaper_parity/probe-midi-export-marker-ruler-hidden.lua

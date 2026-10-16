@@ -379,6 +379,53 @@ fn reaper_782_type_one_hidden_hash_marker_export_matches_native_bytes() {
 }
 
 #[test]
+fn reaper_782_type_one_hidden_marker_ruler_is_excluded_by_default() {
+    let project = native_midi_marker_ruler_hidden_fixture_project();
+    let options = MidiExportOptions {
+        export_markers: true,
+        ..MidiExportOptions::for_project(&project)
+    };
+    let actual = encode_standard_midi_with_conductor_track_name(
+        &project,
+        options,
+        "midi-marker-ruler-hidden-excluded-native-20261016",
+    )
+    .unwrap();
+    let native = include_bytes!(
+        "../../../docs/verification/reaper-parity/fixtures/menu-export-midi-native-marker-ruler-hidden-excluded.mid"
+    );
+
+    assert_eq!(
+        actual, native,
+        "Type 1 export excludes markers hidden by the ruler by default"
+    );
+}
+
+#[test]
+fn reaper_782_type_one_hidden_marker_ruler_opt_in_matches_native_bytes() {
+    let project = native_midi_marker_ruler_hidden_fixture_project();
+    let options = MidiExportOptions {
+        export_markers: true,
+        export_hidden_markers: true,
+        ..MidiExportOptions::for_project(&project)
+    };
+    let actual = encode_standard_midi_with_conductor_track_name(
+        &project,
+        options,
+        "midi-marker-ruler-hidden-included-native-20261016",
+    )
+    .unwrap();
+    let native = include_bytes!(
+        "../../../docs/verification/reaper-parity/fixtures/menu-export-midi-native-marker-ruler-hidden-included.mid"
+    );
+
+    assert_eq!(
+        actual, native,
+        "Type 1 hidden-marker opt-in includes markers hidden by the ruler"
+    );
+}
+
+#[test]
 fn reaper_782_type_one_smpte_offset_matches_native_bytes() {
     let project = native_midi_fixture_project();
     let mut options = MidiExportOptions::for_project(&project);
@@ -575,6 +622,14 @@ fn native_midi_marker_filter_fixture_project() -> Project {
             marker_id: hidden_marker_id,
             visible: false,
         })
+        .unwrap();
+    project
+}
+
+fn native_midi_marker_ruler_hidden_fixture_project() -> Project {
+    let mut project = native_midi_marker_fixture_project();
+    project
+        .apply(DawAction::SetProjectMarkersVisibleOnRuler { visible: false })
         .unwrap();
     project
 }
