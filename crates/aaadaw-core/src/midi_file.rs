@@ -48,7 +48,8 @@ pub struct MidiExportOptions {
     pub export_markers: bool,
     pub marker_type: MidiMarkerType,
     pub only_markers_starting_with_hash: bool,
-    /// Include markers hidden individually or by the project marker ruler lane.
+    /// Include individually or ruler-hidden markers in Type 1 exports.
+    /// REAPER 7.82 ignores this option for Type 0 exports.
     pub export_hidden_markers: bool,
 }
 
@@ -599,9 +600,12 @@ fn conductor_events(
             MidiMarkerType::Markers => 0x06,
             MidiMarkerType::Cues => 0x07,
         };
+        // REAPER 7.82 shows this option for Type 0 but still omits hidden markers.
+        let include_hidden_markers =
+            options.export_hidden_markers && options.file_type == MidiFileType::Type1;
         for marker in project.markers() {
             let hidden = !project.show_project_markers() || !marker.is_visible();
-            if hidden && !options.export_hidden_markers {
+            if hidden && !include_hidden_markers {
                 continue;
             }
             if options.only_markers_starting_with_hash && !marker.name().starts_with('#') {
