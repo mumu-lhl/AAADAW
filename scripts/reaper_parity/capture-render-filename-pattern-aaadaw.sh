@@ -118,6 +118,9 @@ case "$insert_wildcard" in
   fx|fxdelimited)
     [[ "$scroll_wildcards" == 0 ]] && scroll_wildcards=3
     ;;
+  trackslashes|folders|foldersdelimited|parent)
+    [[ "$scroll_wildcards" == 0 ]] && scroll_wildcards=4
+    ;;
 esac
 if [[ "$scroll_wildcards" =~ ^[1-9][0-9]*$ ]]; then
   "$xdotool" mousemove --sync 550 680 click --repeat "$scroll_wildcards" --delay 50 5
@@ -177,6 +180,10 @@ if [[ -n "$insert_wildcard" ]]; then
     channels) wildcard_x=102; wildcard_y=945 ;;
     fx) wildcard_x=90; wildcard_y=978 ;;
     fxdelimited) wildcard_x=143; wildcard_y=978 ;;
+    trackslashes) wildcard_x=120; wildcard_y=1012 ;;
+    folders) wildcard_x=260; wildcard_y=1012 ;;
+    foldersdelimited) wildcard_x=350; wildcard_y=1012 ;;
+    parent) wildcard_x=470; wildcard_y=1012 ;;
     *) printf 'Unknown AAADAW_INSERT_WILDCARD token: %s\n' "$insert_wildcard" >&2; exit 2 ;;
   esac
   if [[ "$scroll_wildcards" =~ ^[1-9][0-9]*$ ]]; then

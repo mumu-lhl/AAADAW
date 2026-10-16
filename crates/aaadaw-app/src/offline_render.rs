@@ -772,6 +772,17 @@ pub fn render_project_file_to_wav_with_settings(
         ),
     };
     let render_project = isolated_project.as_ref().unwrap_or(project);
+    let mut created_directories = RenderOutputDirectories::default();
+    let destination_parent = destination
+        .as_ref()
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    created_directories
+        .ensure(destination_parent)
+        .map_err(|error| {
+            OfflineRenderError::Media(format!("could not create render output directory: {error}"))
+        })?;
     let export = WavExport::create_with_channels(
         destination.as_ref(),
         output_sample_rate,
@@ -957,7 +968,9 @@ pub fn render_project_file_to_wav_with_settings(
     let _stop_failures = graph.stop_processors_after_offline_render();
     deactivate_instruments(graph.take_stopped_instruments(), instrument_owners);
     deactivate_effects(graph.take_stopped_fx_processors(), effect_owners);
-    result
+    result?;
+    created_directories.commit();
+    Ok(())
 }
 
 fn selected_audio_item_render_project(
@@ -1070,9 +1083,9 @@ pub fn render_project_wav_sources_to_wavs(
 
 /// Renders a bounded set of WAV jobs and publishes the complete output set atomically.
 ///
-/// Each output may use different project-sample bounds or source while sharing a destination
-/// directory. Rendering uses private sibling staging files; no destination is replaced, and
-/// cancellation or failure rolls back every file already published by this batch.
+/// Each output may use different project-sample bounds, source, and subdirectory. Rendering uses
+/// private staging files; no destination is replaced, and cancellation or failure rolls back
+/// every file already published by this batch and removes newly created empty output directories.
 pub fn render_project_wav_jobs_to_wavs(
     project_path: impl AsRef<Path>,
     project: &Project,
@@ -1094,12 +1107,12 @@ pub fn render_project_wav_jobs_to_wavs(
         .parent()
         .filter(|parent| !parent.as_os_str().is_empty())
         .unwrap_or_else(|| Path::new("."));
-    if !destination_directory.is_dir() {
-        return Err(OfflineRenderError::Media(format!(
-            "stem output directory does not exist: {}",
-            destination_directory.display()
-        )));
-    }
+    let mut created_directories = RenderOutputDirectories::default();
+    created_directories
+        .ensure(destination_directory)
+        .map_err(|error| {
+            OfflineRenderError::Media(format!("could not create stem output directory: {error}"))
+        })?;
 
     let mut unique_destinations = HashSet::with_capacity(outputs.len());
     for (settings, destination) in outputs {
@@ -1128,11 +1141,9 @@ pub fn render_project_wav_jobs_to_wavs(
             .parent()
             .filter(|parent| !parent.as_os_str().is_empty())
             .unwrap_or_else(|| Path::new("."));
-        if parent != destination_directory {
-            return Err(OfflineRenderError::Media(
-                "all stem outputs must use the same directory".to_owned(),
-            ));
-        }
+        created_directories.ensure(parent).map_err(|error| {
+            OfflineRenderError::Media(format!("could not create stem output directory: {error}"))
+        })?;
         if !unique_destinations.insert(destination.clone()) {
             return Err(OfflineRenderError::Media(format!(
                 "stem outputs resolve to the same file: {}",
@@ -1221,7 +1232,75 @@ pub fn render_project_wav_jobs_to_wavs(
         published.push(destination.clone());
     }
     report_progress(total_work, total_work);
+    created_directories.commit();
     Ok(())
+}
+
+#[derive(Default)]
+struct RenderOutputDirectories {
+    created: Vec<PathBuf>,
+    committed: bool,
+}
+
+impl RenderOutputDirectories {
+    fn ensure(&mut self, directory: &Path) -> std::io::Result<()> {
+        let directory = if directory.as_os_str().is_empty() {
+            Path::new(".")
+        } else {
+            directory
+        };
+        let mut missing = Vec::new();
+        let mut current = directory.to_path_buf();
+        loop {
+            match fs::metadata(&current) {
+                Ok(metadata) if metadata.is_dir() => break,
+                Ok(_) => {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::NotADirectory,
+                        format!("{} is not a directory", current.display()),
+                    ));
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                    missing.push(current.clone());
+                    current = current
+                        .parent()
+                        .filter(|parent| !parent.as_os_str().is_empty())
+                        .unwrap_or_else(|| Path::new("."))
+                        .to_path_buf();
+                }
+                Err(error) => return Err(error),
+            }
+        }
+        for path in missing.iter().rev() {
+            match fs::create_dir(path) {
+                Ok(()) => self.created.push(path.clone()),
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                    if !fs::metadata(path)?.is_dir() {
+                        return Err(std::io::Error::new(
+                            std::io::ErrorKind::NotADirectory,
+                            format!("{} is not a directory", path.display()),
+                        ));
+                    }
+                }
+                Err(error) => return Err(error),
+            }
+        }
+        Ok(())
+    }
+
+    fn commit(&mut self) {
+        self.committed = true;
+    }
+}
+
+impl Drop for RenderOutputDirectories {
+    fn drop(&mut self) {
+        if !self.committed {
+            for directory in self.created.iter().rev() {
+                let _ = fs::remove_dir(directory);
+            }
+        }
+    }
 }
 
 struct StemStagingDirectory(PathBuf);
@@ -1852,7 +1931,18 @@ mod tests {
     fn selected_audio_item_source_applies_item_take_and_track_gain_but_bypasses_master_mix() {
         let project_path = destination().with_extension("aaadaw");
         let source_path = destination();
-        let output_path = destination();
+        let output_path_base = destination();
+        let output_directory = output_path_base
+            .parent()
+            .expect("test destination should have a parent")
+            .join(format!(
+                "{}-nested-output",
+                output_path_base
+                    .file_stem()
+                    .expect("test destination should have a name")
+                    .to_string_lossy()
+            ));
+        let output_path = output_directory.join("selected-item.wav");
         let mut source_export =
             WavExport::create(&source_path, 48_000, WavExportOptions::default())
                 .expect("source WAV should be created");
@@ -1966,6 +2056,7 @@ mod tests {
 
         fs::remove_file(source_path).expect("source WAV should be removed");
         fs::remove_file(output_path).expect("rendered WAV should be removed");
+        fs::remove_dir(output_directory).expect("created output directory should be removed");
         for suffix in ["", "-wal", "-shm"] {
             let mut path = project_path.as_os_str().to_owned();
             path.push(suffix);
@@ -2294,6 +2385,68 @@ mod tests {
         }
         fs::remove_file(&first).expect("first stem should be removed");
         fs::remove_file(&second).expect("second stem should be removed");
+
+        let cancelled_nested_root = base.with_file_name(format!("{unique}-cancelled-nested-stems"));
+        let cancelled_nested_outputs = vec![
+            (
+                project.tracks()[0].id(),
+                cancelled_nested_root.join("Drums/first.wav"),
+            ),
+            (
+                project.tracks()[1].id(),
+                cancelled_nested_root.join("Keys/second.wav"),
+            ),
+        ];
+        let cancel_nested = AtomicBool::new(false);
+        assert!(matches!(
+            render_selected_tracks_via_master_to_wavs(
+                &project_path,
+                &project,
+                &cancelled_nested_outputs,
+                settings,
+                &cancel_nested,
+                |done, _| {
+                    if done == 48_000 {
+                        cancel_nested.store(true, Ordering::Release);
+                    }
+                },
+            ),
+            Err(OfflineRenderError::Cancelled)
+        ));
+        assert!(
+            !cancelled_nested_root.exists(),
+            "cancelled renders should remove newly created empty output directories"
+        );
+
+        let nested_root = base.with_file_name(format!("{unique}-nested-stems"));
+        let nested_first = nested_root.join("Drums/first.wav");
+        let nested_second = nested_root.join("Keys/second.wav");
+        let nested_outputs = vec![
+            (project.tracks()[0].id(), nested_first.clone()),
+            (project.tracks()[1].id(), nested_second.clone()),
+        ];
+        render_selected_tracks_via_master_to_wavs(
+            &project_path,
+            &project,
+            &nested_outputs,
+            settings,
+            &cancelled,
+            |_, _| {},
+        )
+        .expect("stem rendering should create separate wildcard subdirectories");
+        for path in [&nested_first, &nested_second] {
+            assert!(
+                path.is_file(),
+                "nested stem should be published: {}",
+                path.display()
+            );
+            assert_eq!(
+                fs::metadata(path).unwrap().len(),
+                44 + 48_000 * 2 * 3,
+                "nested stem should contain the complete PCM24 render"
+            );
+        }
+        fs::remove_dir_all(nested_root).expect("nested output directories should be removed");
 
         let first_region = base.with_file_name(format!("{unique}-region-one.wav"));
         let second_region = base.with_file_name(format!("{unique}-region-two.wav"));

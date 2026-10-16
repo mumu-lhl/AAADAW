@@ -283,6 +283,10 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
                     "Track FX:",
                     RenderFilenameWildcard::ALL.into_iter().skip(50).take(2),
                 ),
+                wildcard_group_row(
+                    "Track folders:",
+                    RenderFilenameWildcard::ALL.into_iter().skip(52).take(4),
+                ),
             ]
             .spacing(tokens::SPACING_XS)
         } else {

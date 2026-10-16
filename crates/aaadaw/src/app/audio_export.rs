@@ -95,10 +95,14 @@ pub(crate) enum RenderFilenameWildcard {
     MarkerNamedValue,
     Fx,
     FxDelimited,
+    TrackSlashes,
+    Folders,
+    FoldersDelimited,
+    Parent,
 }
 
 impl RenderFilenameWildcard {
-    pub(crate) const ALL: [Self; 52] = [
+    pub(crate) const ALL: [Self; 56] = [
         Self::Project,
         Self::Title,
         Self::Author,
@@ -151,6 +155,10 @@ impl RenderFilenameWildcard {
         Self::MarkerNamedValue,
         Self::Fx,
         Self::FxDelimited,
+        Self::TrackSlashes,
+        Self::Folders,
+        Self::FoldersDelimited,
+        Self::Parent,
     ];
 
     pub(crate) const fn token(self) -> &'static str {
@@ -207,6 +215,10 @@ impl RenderFilenameWildcard {
             Self::MarkerNamedValue => "$marker(name)",
             Self::Fx => "$fx",
             Self::FxDelimited => "$fx[X]",
+            Self::TrackSlashes => "$trackslashes",
+            Self::Folders => "$folders",
+            Self::FoldersDelimited => "$folders[X]",
+            Self::Parent => "$parent",
         }
     }
 }
@@ -729,6 +741,32 @@ fn safe_stem_component(name: &str) -> String {
         .to_owned()
 }
 
+const FORCED_RENDER_PATH_SEPARATOR: char = '\u{e000}';
+
+fn mark_forced_render_path_separators(value: &str) -> String {
+    value
+        .chars()
+        .map(|character| {
+            if character == '/' {
+                FORCED_RENDER_PATH_SEPARATOR
+            } else {
+                character
+            }
+        })
+        .collect()
+}
+
+fn safe_render_pattern_relative_path(name: &str) -> Option<PathBuf> {
+    let mut path = PathBuf::new();
+    for component in name.split(FORCED_RENDER_PATH_SEPARATOR) {
+        let component = safe_stem_component(component);
+        if !component.is_empty() {
+            path.push(component);
+        }
+    }
+    (!path.as_os_str().is_empty()).then_some(path)
+}
+
 #[cfg(test)]
 fn apply_render_filename_pattern(
     outputs: Vec<(aaadaw_app::ProjectWavRenderSettings, PathBuf)>,
@@ -746,7 +784,7 @@ fn apply_render_filename_pattern_with_plugins(
     project_path: &Path,
     plugins: &[ClapPluginDescriptor],
 ) -> Result<Vec<(aaadaw_app::ProjectWavRenderSettings, PathBuf)>, String> {
-    let pattern = pattern.trim();
+    let pattern = pattern.trim().replace(FORCED_RENDER_PATH_SEPARATOR, "_");
     if pattern.is_empty() {
         return Ok(outputs);
     }
@@ -761,20 +799,20 @@ fn apply_render_filename_pattern_with_plugins(
                 .filter(|stem| !stem.is_empty())
                 .unwrap_or("render");
             let expanded = expand_render_filename_pattern(
-                pattern,
+                &pattern,
                 fallback,
                 project,
                 project_path,
                 settings,
                 plugins,
             );
-            let name = safe_stem_component(&expanded);
-            if name.is_empty() {
+            let Some(relative_path) = safe_render_pattern_relative_path(&expanded) else {
                 return Err("Filename pattern must produce a non-empty file name".to_owned());
-            }
-            if !used_names.insert(name.to_lowercase()) {
+            };
+            let relative_name = relative_path.to_string_lossy().into_owned();
+            if !used_names.insert(relative_name.to_lowercase()) {
                 return Err(format!(
-                    "Filename pattern creates duplicate output names ({name}); include a wildcard such as $region, $track, or $item"
+                    "Filename pattern creates duplicate output names ({relative_name}); include a wildcard such as $region, $track, or $item"
                 ));
             }
             let parent = path
@@ -786,7 +824,14 @@ fn apply_render_filename_pattern_with_plugins(
                 .and_then(|extension| extension.to_str())
                 .filter(|extension| !extension.is_empty())
                 .unwrap_or("wav");
-            Ok((settings, parent.join(format!("{name}.{extension}"))))
+            let mut output_path = parent.join(relative_path);
+            let file_name = output_path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .filter(|name| !name.is_empty())
+                .ok_or_else(|| "Filename pattern must produce a non-empty file name".to_owned())?;
+            output_path.set_file_name(format!("{file_name}.{extension}"));
+            Ok((settings, output_path))
         })
         .collect()
 }
@@ -1013,7 +1058,7 @@ fn parse_render_filename_wildcard_modifiers(
                         break;
                     };
                     modifiers.push(RenderFilenameWildcardModifier::Numbered { start, width });
-                } else if token == "fx" && suffix.len() == 1 {
+                } else if matches!(token, "fx" | "folders") && suffix.len() == 1 {
                     modifiers.push(RenderFilenameWildcardModifier::ListSeparator(suffix[0]));
                 } else {
                     // Other [N] forms use render-order contexts which are not
@@ -1187,6 +1232,23 @@ fn expand_render_filename_pattern(
                 .collect::<Vec<_>>()
         })
         .unwrap_or_default();
+    let folder_names = track_id
+        .and_then(|track_id| project.tracks().iter().find(|track| track.id() == track_id))
+        .map(|track| {
+            let mut names = Vec::new();
+            let mut parent_id = track.parent_track();
+            while let Some(id) = parent_id {
+                let Some(parent) = project.tracks().iter().find(|parent| parent.id() == id) else {
+                    break;
+                };
+                names.push(parent.name());
+                parent_id = parent.parent_track();
+            }
+            names.reverse();
+            names
+        })
+        .unwrap_or_default();
+    let parent_name = folder_names.last().copied().unwrap_or_default();
     let item_index = match settings.source {
         aaadaw_app::ProjectWavRenderSource::SelectedAudioItem(item_id) => project
             .audio_items()
@@ -1459,6 +1521,21 @@ fn expand_render_filename_pattern(
                     .unwrap_or('_');
                 result.push_str(&fx_names.join(&separator.to_string()));
             }
+            "trackslashes" => result.push_str(track_name),
+            "folders" => {
+                let separator = modifiers
+                    .iter()
+                    .find_map(|modifier| match modifier {
+                        RenderFilenameWildcardModifier::ListSeparator(separator) => {
+                            Some(*separator)
+                        }
+                        _ => None,
+                    })
+                    .unwrap_or('/');
+                let folders = folder_names.join(&separator.to_string());
+                result.push_str(&folders);
+            }
+            "parent" => result.push_str(parent_name),
             "format" => result.push_str("wav"),
             "samplerate" => result.push_str(&settings.output_sample_rate.to_string()),
             "sampleratek" => result.push_str(&format_render_wildcard_sample_rate_kilohertz(
@@ -1491,8 +1568,15 @@ fn expand_render_filename_pattern(
         }
         if known_token {
             let expansion = result.split_off(expansion_start);
-            let expansion =
+            let mut expansion =
                 apply_render_filename_wildcard_modifiers(&expansion, &token_original, &modifiers);
+            let folders_use_path_separator = token == "folders"
+                && !modifiers.iter().any(|modifier| {
+                    matches!(modifier, RenderFilenameWildcardModifier::ListSeparator(separator) if *separator != '/')
+                });
+            if token == "trackslashes" || folders_use_path_separator {
+                expansion = mark_forced_render_path_separators(&expansion);
+            }
             if expansion.is_empty() {
                 if result
                     .chars()
@@ -3244,6 +3328,78 @@ mod tests {
     }
 
     #[test]
+    fn render_track_folder_wildcards_match_native_hierarchy_and_slash_paths() {
+        let mut project = Project::default();
+        for (index, name) in ["Drums", "Acoustic", "Kick/Snare"].into_iter().enumerate() {
+            project
+                .apply(DawAction::CreateTrack {
+                    index,
+                    name: name.to_owned(),
+                })
+                .expect("folder wildcard track should be created");
+        }
+        let track_ids = project
+            .tracks()
+            .iter()
+            .map(|track| track.id())
+            .collect::<Vec<_>>();
+        for track_id in [track_ids[0], track_ids[1]] {
+            project
+                .apply(DawAction::SetTrackFolder {
+                    track_id,
+                    enabled: true,
+                })
+                .expect("parent tracks should become folders");
+        }
+        for (track_id, parent) in [(track_ids[1], track_ids[0]), (track_ids[2], track_ids[1])] {
+            project
+                .apply(DawAction::SetTrackParent {
+                    track_id,
+                    parent: Some(parent),
+                })
+                .expect("track should be nested in its folder");
+        }
+        let settings = aaadaw_app::ProjectWavRenderSettings {
+            master_ceiling: aaadaw_engine::MasterOutputCeiling::default(),
+            export_options: aaadaw_app::WavExportOptions::default(),
+            output_sample_rate: 48_000,
+            output_channels: WavChannelCount::Stereo,
+            source: aaadaw_app::ProjectWavRenderSource::SelectedTrackStem(track_ids[2]),
+            start_sample: 0,
+            end_sample: 48_000,
+            tail_milliseconds: 0,
+            normalize_peak: false,
+            normalize_peak_target_centi_dbfs: 0,
+        };
+        let output = apply_render_filename_pattern(
+            vec![(settings, Path::new("/renders/base.wav").to_owned())],
+            "$track-$trackslashes-$folders-$folders[,]-$parent",
+            &project,
+            Path::new("/projects/session.aaadaw"),
+        )
+        .expect("track path and parent-folder tokens should resolve");
+        assert_eq!(
+            output[0].1,
+            Path::new("/renders/Kick_Snare-Kick/Snare-Drums/Acoustic-Drums,Acoustic-Acoustic.wav")
+        );
+
+        let root_track_output = apply_render_filename_pattern(
+            vec![(
+                aaadaw_app::ProjectWavRenderSettings {
+                    source: aaadaw_app::ProjectWavRenderSource::SelectedTrackStem(track_ids[0]),
+                    ..settings
+                },
+                Path::new("/renders/base.wav").to_owned(),
+            )],
+            "$folders-$track",
+            &project,
+            Path::new("/projects/session.aaadaw"),
+        )
+        .expect("top-level tracks should have an empty folder path");
+        assert_eq!(root_track_output[0].1, Path::new("/renders/Drums.wav"));
+    }
+
+    #[test]
     fn render_wildcard_picker_lists_and_inserts_supported_tokens() {
         assert_eq!(
             RenderFilenameWildcard::ALL.map(RenderFilenameWildcard::token),
@@ -3300,6 +3456,10 @@ mod tests {
                 "$marker(name)",
                 "$fx",
                 "$fx[X]",
+                "$trackslashes",
+                "$folders",
+                "$folders[X]",
+                "$parent",
             ]
         );
 
