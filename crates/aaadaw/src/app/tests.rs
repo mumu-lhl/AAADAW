@@ -16091,7 +16091,7 @@ fn toggle_selection_of_item_under_mouse_adds_and_removes_the_hovered_item() {
 }
 
 #[test]
-fn hover_selection_actions_add_and_toggle_audio_items() {
+fn hover_selection_actions_select_add_and_toggle_audio_items() {
     let mut app = App::default();
     let _ = app.update(Message::AddTrack);
     let _ = app.update(Message::AddTrack);
@@ -16123,6 +16123,30 @@ fn hover_selection_actions_add_and_toggle_audio_items() {
     let revision_before = app.revision;
     let can_undo_before = app.project.can_undo();
     let can_redo_before = app.project.can_redo();
+
+    let select_command = CommandId::SelectItemUnderMouseCursor;
+    app.action_list
+        .set_query("select item under mouse cursor".to_owned());
+    let select_entry = app
+        .action_list_entries()
+        .into_iter()
+        .find(|entry| entry.id == select_command)
+        .expect("audio select-under-mouse action is searchable");
+    assert!(select_entry.enabled);
+    assert!(select_entry.shortcut.is_none());
+    app.action_list.select("item.select-under-mouse".to_owned());
+    let _ = app.update(Message::ActionListRun(false));
+    assert_eq!(app.timeline.selected_items, HashSet::from([hovered_id]));
+    assert_eq!(app.timeline.selected_item, Some(hovered_id));
+    assert_eq!(app.timeline.selected_track, Some(tracks[1]));
+    assert_eq!(app.revision, revision_before);
+    assert_eq!(app.project.can_undo(), can_undo_before);
+    assert_eq!(app.project.can_redo(), can_redo_before);
+
+    app.timeline
+        .select_items(vec![(previously_selected_id, tracks[0])]);
+    app.timeline.select_track_only(tracks[0]);
+    app.timeline.hovered_item = Some(hovered_id);
 
     for (command, stable_id, query, expected_selected) in [
         (
