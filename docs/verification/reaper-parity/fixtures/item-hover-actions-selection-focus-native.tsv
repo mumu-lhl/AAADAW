@@ -3,8 +3,8 @@ platform	Linux x86_64; isolated Xvfb :347; X11; 1280x800x24
 configuration	Fresh -cfgfile profile; Default_7.0.ReaperThemeZip; no custom keymap, mouse map, or third-party extensions
 probe_script	scripts/reaper_parity/probe-item-hover-actions.lua
 track_selection_result	With only Track A selected, 40529 adding B1 and 40530 toggling B1 off both preserve selected_tracks=A while GetLastTouchedTrack changes A→B.
-selection_api_order	ReaScript GetSelectedMediaItem enumeration follows project item order (A1,A2,B1) after Add A2, even when the SetMediaItemSelected setup listed B1 before A1; it does not expose a separate primary active item.
-active_item_limit	Native multi-item Item Properties reports two takes selected and leaves the differing Take name field blank; no native primary-item identity is exposed by this probe, so AAADAW active-item parity remains open.
+selection_api_order	ReaScript GetSelectedMediaItem enumeration follows project item order (A1,A2,B1) after Add A2, even when the SetMediaItemSelected setup listed B1 before A1; it does not expose a separate Arrange-level primary item.
+active_item_limit	Native multi-item Item Properties reports two takes selected and leaves the differing Take name field blank. The MIDI-editor probe confirms the editor-specific active take follows the first selected project item; it does not expose a distinct Arrange-level active item.
 screenshot	item-hover-actions-selected-track-A-item-B1-native.png; SHA-256 02e2f86d92271b7e68dd14a61b69420deed36be88ece9a78ab991f73a493d70f
 version	7.82/linux-x86_64
 theme	Default_7.0.ReaperThemeZip

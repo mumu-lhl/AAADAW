@@ -1178,6 +1178,14 @@ impl TimelineState {
         self.selected_fx_automation_point = None;
     }
 
+    fn first_selected_item_in_project_order(&self) -> Option<ItemId> {
+        self.cache
+            .items
+            .iter()
+            .find(|item| self.selected_items.contains(&item.id))
+            .map(|item| item.id)
+    }
+
     pub(crate) fn replace_project(
         &mut self,
         project: &Project,
@@ -1442,7 +1450,7 @@ impl TimelineState {
             .selected_item
             .is_some_and(|item_id| self.selected_items.contains(&item_id))
         {
-            self.selected_item = self.selected_items.iter().copied().next();
+            self.selected_item = self.first_selected_item_in_project_order();
         }
         if self
             .selection_anchor
@@ -2382,7 +2390,7 @@ impl TimelineState {
                 self.selected_items.insert(item_id);
                 self.selected_item = Some(item_id);
             } else if self.selected_item == Some(item_id) {
-                self.selected_item = self.selected_items.iter().copied().next();
+                self.selected_item = self.first_selected_item_in_project_order();
             }
             self.selection_anchor = Some(item_id);
         } else if additive {

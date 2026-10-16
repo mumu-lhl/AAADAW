@@ -16091,6 +16091,55 @@ fn toggle_selection_of_item_under_mouse_adds_and_removes_the_hovered_item() {
 }
 
 #[test]
+fn toggling_off_primary_item_chooses_first_remaining_item_in_project_order() {
+    let mut app = App::default();
+    let _ = app.update(Message::AddTrack);
+    let _ = app.update(Message::AddTrack);
+    let tracks = app
+        .project
+        .tracks()
+        .iter()
+        .map(|track| track.id())
+        .collect::<Vec<_>>();
+    for (track_id, start_tick) in [(tracks[0], 240), (tracks[0], 720), (tracks[1], 1_200)] {
+        app.project
+            .apply(DawAction::InsertMidiItem {
+                track_id,
+                start_tick,
+                length_ticks: 480,
+            })
+            .unwrap();
+    }
+    let items = app
+        .project
+        .midi_items()
+        .iter()
+        .map(|item| (item.id(), item.track_id()))
+        .collect::<Vec<_>>();
+    let first_id = items[0].0;
+    let second_id = items[1].0;
+    let third_id = items[2].0;
+    app.timeline.rebuild(&app.project);
+    app.timeline
+        .select_items(vec![items[1], items[2], items[0]]);
+    assert_eq!(app.timeline.selected_item, Some(first_id));
+    app.timeline.hovered_item = Some(first_id);
+    app.action_list
+        .set_query("toggle selection of item under mouse cursor".to_owned());
+    app.action_list
+        .select("item.toggle-under-mouse-selection".to_owned());
+
+    let _ = app.update(Message::ActionListRun(false));
+
+    assert_eq!(
+        app.timeline.selected_items,
+        HashSet::from([second_id, third_id])
+    );
+    assert_eq!(app.timeline.selected_item, Some(second_id));
+    assert_eq!(app.timeline.selection_anchor(), Some(first_id));
+}
+
+#[test]
 fn duplicate_selected_audio_group_preserves_sample_spacing() {
     let mut app = App::default();
     let _ = app.update(Message::AddTrack);
