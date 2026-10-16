@@ -87,7 +87,12 @@ export XDG_STATE_HOME="$run_dir/state"
 export XDG_CACHE_HOME="$run_dir/cache"
 export XDG_RUNTIME_DIR="$run_dir/runtime"
 export LD_LIBRARY_PATH="$runtime_root/../lib/x86_64-linux-gnu${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
-"$binary" >"$run_dir/aaadaw.log" 2>&1 &
+project_path=${AAADAW_PROJECT_PATH:-}
+if [[ -n "$project_path" ]]; then
+  "$binary" "$project_path" >"$run_dir/aaadaw.log" 2>&1 &
+else
+  "$binary" >"$run_dir/aaadaw.log" 2>&1 &
+fi
 app_pid=$!
 
 main_window=
@@ -100,6 +105,15 @@ done
 sleep 0.5
 "$xdotool" windowmap --sync "$main_window"
 "$xdotool" windowfocus --sync "$main_window" || true
+if [[ -n "${AAADAW_SELECT_PROJECT_ITEM_AT:-}" ]]; then
+  IFS=, read -r item_x item_y <<<"$AAADAW_SELECT_PROJECT_ITEM_AT"
+  [[ "$item_x" =~ ^[0-9]+$ && "$item_y" =~ ^[0-9]+$ ]] || {
+    printf 'AAADAW_SELECT_PROJECT_ITEM_AT must be x,y screen coordinates.\n' >&2
+    exit 2
+  }
+  "$xdotool" mousemove --sync "$item_x" "$item_y" click 1
+  sleep 0.3
+fi
 "$xdotool" key --clearmodifiers --window "$main_window" ctrl+alt+r
 
 render_window=
@@ -110,6 +124,16 @@ for _ in $(seq 1 100); do
 done
 [[ -n "$render_window" ]] || { cat "$run_dir/aaadaw.log" >&2; exit 1; }
 sleep 0.5
+if [[ "${AAADAW_OPEN_RENDER_SOURCE:-0}" == 1 ]]; then
+  "$xdotool" mousemove --sync 535 106 click 1
+  sleep 0.3
+fi
+if [[ "${AAADAW_SELECT_RENDER_SOURCE:-}" == selected-media-items ]]; then
+  "$xdotool" mousemove --sync 535 106 click 1
+  sleep 0.2
+  "$xdotool" mousemove --sync 520 230 click 1
+  sleep 0.4
+fi
 insert_wildcard=${AAADAW_INSERT_WILDCARD:-}
 if [[ "${AAADAW_OPEN_WILDCARDS:-0}" == 1 || -n "$insert_wildcard" ]]; then
   "$xdotool" mousemove --sync 575 260 click 1

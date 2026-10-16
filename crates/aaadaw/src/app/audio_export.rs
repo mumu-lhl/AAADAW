@@ -595,24 +595,51 @@ fn selected_media_item_render_jobs(
     selected_items: &HashSet<ItemId>,
     settings: aaadaw_app::ProjectWavRenderSettings,
 ) -> Result<Vec<(aaadaw_app::ProjectWavRenderSettings, PathBuf)>, String> {
-    let selected_midi_count = project
-        .midi_items()
+    let item_order = render_project_item_order(project);
+    let items = item_order
         .iter()
-        .filter(|item| selected_items.contains(&item.id()))
-        .count();
-    if selected_midi_count > 0 {
-        return Err(
-            "Selected media item rendering currently supports audio items; deselect MIDI items"
-                .to_owned(),
-        );
-    }
-    let items = project
-        .audio_items()
-        .iter()
-        .filter(|item| selected_items.contains(&item.id()))
-        .collect::<Vec<_>>();
+        .enumerate()
+        .filter(|(_, item_id)| selected_items.contains(item_id))
+        .map(|(index, item_id)| {
+            if let Some(item) = project
+                .audio_items()
+                .iter()
+                .find(|item| item.id() == *item_id)
+            {
+                return Ok((
+                    index + 1,
+                    aaadaw_app::ProjectWavRenderSource::SelectedAudioItem(*item_id),
+                    item.start_sample(),
+                    item.end_sample(),
+                ));
+            }
+            let item = project
+                .midi_items()
+                .iter()
+                .find(|item| item.id() == *item_id)
+                .ok_or_else(|| "A selected media item no longer exists".to_owned())?;
+            let start_sample = project
+                .sample_at_tick(item.start_tick())
+                .map_err(|error| error.to_string())?;
+            let end_tick = item
+                .start_tick()
+                .checked_add(item.length_ticks())
+                .ok_or_else(|| "Selected MIDI item exceeds the supported timeline".to_owned())?;
+            let end_sample = project
+                .sample_at_tick(end_tick)
+                .map_err(|error| error.to_string())?;
+            Ok((
+                index + 1,
+                aaadaw_app::ProjectWavRenderSource::SelectedMidiItem(*item_id),
+                start_sample,
+                end_sample,
+            ))
+        })
+        .collect::<Result<Vec<_>, String>>()?;
     if items.is_empty() {
-        return Err("Select at least one audio media item in Arrange to render it".to_owned());
+        return Err(
+            "Select one or more Audio or MIDI media items in Arrange to render them".into(),
+        );
     }
     let parent = base_path
         .parent()
@@ -630,13 +657,7 @@ fn selected_media_item_render_jobs(
         .unwrap_or("wav");
     let mut outputs = Vec::with_capacity(items.len());
     let mut used_names = HashSet::with_capacity(items.len());
-    for item in items {
-        let ordinal = project
-            .audio_items()
-            .iter()
-            .position(|candidate| candidate.id() == item.id())
-            .unwrap_or(0)
-            .saturating_add(1);
+    for (ordinal, source, start_sample, end_sample) in items {
         let mut name = format!("{base_name}-item_{ordinal:02}");
         let mut disambiguator = 2;
         while !used_names.insert(name.to_lowercase()) {
@@ -645,9 +666,9 @@ fn selected_media_item_render_jobs(
         }
         outputs.push((
             aaadaw_app::ProjectWavRenderSettings {
-                source: aaadaw_app::ProjectWavRenderSource::SelectedAudioItem(item.id()),
-                start_sample: item.start_sample(),
-                end_sample: item.end_sample(),
+                source,
+                start_sample,
+                end_sample,
                 tail_milliseconds: 0,
                 ..settings
             },
@@ -655,6 +676,120 @@ fn selected_media_item_render_jobs(
         ));
     }
     Ok(outputs)
+}
+
+fn render_project_item_order(project: &Project) -> Vec<ItemId> {
+    let track_order = project
+        .tracks()
+        .iter()
+        .enumerate()
+        .map(|(index, track)| (track.id(), index))
+        .collect::<HashMap<_, _>>();
+    let mut items = project
+        .audio_items()
+        .iter()
+        .map(|item| {
+            (
+                track_order
+                    .get(&item.track_id())
+                    .copied()
+                    .unwrap_or(usize::MAX),
+                item.start_sample(),
+                item.id(),
+            )
+        })
+        .chain(project.midi_items().iter().filter_map(|item| {
+            Some((
+                track_order
+                    .get(&item.track_id())
+                    .copied()
+                    .unwrap_or(usize::MAX),
+                project.sample_at_tick(item.start_tick()).ok()?,
+                item.id(),
+            ))
+        }))
+        .collect::<Vec<_>>();
+    items.sort_unstable_by_key(|(track_index, start_sample, item_id)| {
+        (*track_index, *start_sample, item_id.value())
+    });
+    items.into_iter().map(|(_, _, item_id)| item_id).collect()
+}
+
+fn render_project_item_name(project: &Project, item_id: ItemId) -> Option<&str> {
+    project
+        .audio_items()
+        .iter()
+        .find(|item| item.id() == item_id)
+        .map(aaadaw_core::AudioItem::name)
+        .or_else(|| {
+            project
+                .midi_items()
+                .iter()
+                .find(|item| item.id() == item_id)
+                .map(aaadaw_core::MidiItem::name)
+        })
+}
+
+fn render_project_item_track(project: &Project, item_id: ItemId) -> Option<TrackId> {
+    project
+        .audio_items()
+        .iter()
+        .find(|item| item.id() == item_id)
+        .map(aaadaw_core::AudioItem::track_id)
+        .or_else(|| {
+            project
+                .midi_items()
+                .iter()
+                .find(|item| item.id() == item_id)
+                .map(aaadaw_core::MidiItem::track_id)
+        })
+}
+
+fn render_project_item_timeline_order(
+    project: &Project,
+    item_id: ItemId,
+) -> Option<(usize, usize)> {
+    let target_track = render_project_item_track(project, item_id)?;
+    let target_start = project
+        .audio_items()
+        .iter()
+        .find(|item| item.id() == item_id)
+        .map(|item| item.start_sample())
+        .or_else(|| {
+            project
+                .midi_items()
+                .iter()
+                .find(|item| item.id() == item_id)
+                .and_then(|item| project.sample_at_tick(item.start_tick()).ok())
+        })?;
+    let precedes = |start_sample, candidate_id: ItemId| {
+        start_sample < target_start
+            || (start_sample == target_start && candidate_id.value() < item_id.value())
+    };
+    let audio_before = project
+        .audio_items()
+        .iter()
+        .filter(|item| precedes(item.start_sample(), item.id()));
+    let midi_before = project.midi_items().iter().filter(|item| {
+        project
+            .sample_at_tick(item.start_tick())
+            .is_ok_and(|start_sample| precedes(start_sample, item.id()))
+    });
+    let all_before = audio_before.count() + midi_before.count();
+    let audio_before_track = project
+        .audio_items()
+        .iter()
+        .filter(|item| item.track_id() == target_track && precedes(item.start_sample(), item.id()));
+    let midi_before_track = project.midi_items().iter().filter(|item| {
+        item.track_id() == target_track
+            && project
+                .sample_at_tick(item.start_tick())
+                .is_ok_and(|start_sample| precedes(start_sample, item.id()))
+    });
+    Some((
+        all_before + 1,
+        audio_before_track.count() + midi_before_track.count() + 1,
+    ))
 }
 
 fn project_region_render_jobs(
@@ -1068,16 +1203,16 @@ fn apply_render_filename_pattern_with_context(
         .enumerate()
         .map(|(index, (settings, path))| {
             let item_name_number = match settings.source {
-                aaadaw_app::ProjectWavRenderSource::SelectedAudioItem(item_id) => project
-                    .audio_items()
-                    .iter()
-                    .find(|item| item.id() == item_id)
-                    .filter(|item| !item.name().is_empty())
-                    .map(|item| {
-                        let number = item_name_numbers.entry(item.name().to_owned()).or_default();
-                        *number += 1;
-                        *number
-                    }),
+                aaadaw_app::ProjectWavRenderSource::SelectedAudioItem(item_id)
+                | aaadaw_app::ProjectWavRenderSource::SelectedMidiItem(item_id) => {
+                    render_project_item_name(project, item_id)
+                        .filter(|name| !name.is_empty())
+                        .map(|name| {
+                            let number = item_name_numbers.entry(name.to_owned()).or_default();
+                            *number += 1;
+                            *number
+                        })
+                }
                 _ => None,
             };
             let output_context = RenderFilenameExpansionContext {
@@ -1631,11 +1766,10 @@ fn expand_render_filename_pattern(
         aaadaw_app::ProjectWavRenderSource::SelectedTrackStem(track_id)
         | aaadaw_app::ProjectWavRenderSource::SelectedTrackStemPreFader(track_id)
         | aaadaw_app::ProjectWavRenderSource::SelectedTrackViaMaster(track_id) => Some(track_id),
-        aaadaw_app::ProjectWavRenderSource::SelectedAudioItem(item_id) => project
-            .audio_items()
-            .iter()
-            .find(|item| item.id() == item_id)
-            .map(|item| item.track_id()),
+        aaadaw_app::ProjectWavRenderSource::SelectedAudioItem(item_id)
+        | aaadaw_app::ProjectWavRenderSource::SelectedMidiItem(item_id) => {
+            render_project_item_track(project, item_id)
+        }
         aaadaw_app::ProjectWavRenderSource::MasterMix => None,
     };
     let track_name = track_id
@@ -1715,20 +1849,21 @@ fn expand_render_filename_pattern(
         })
         .unwrap_or_default();
     let parent_name = folder_names.last().copied().unwrap_or_default();
-    let item_index = match settings.source {
-        aaadaw_app::ProjectWavRenderSource::SelectedAudioItem(item_id) => project
-            .audio_items()
-            .iter()
-            .position(|item| item.id() == item_id),
+    let item_id = match settings.source {
+        aaadaw_app::ProjectWavRenderSource::SelectedAudioItem(item_id)
+        | aaadaw_app::ProjectWavRenderSource::SelectedMidiItem(item_id) => Some(item_id),
         _ => None,
     };
-    let item_name = item_index.map_or_else(String::new, |index| {
-        let item = &project.audio_items()[index];
-        if item.name().is_empty() {
-            format!("item_{:02}", index + 1)
-        } else {
-            item.name().to_owned()
-        }
+    let item_index = item_id.and_then(|item_id| {
+        render_project_item_order(project)
+            .iter()
+            .position(|candidate| *candidate == item_id)
+    });
+    let item_name = item_id.map_or_else(String::new, |item_id| {
+        render_project_item_name(project, item_id)
+            .filter(|name| !name.is_empty())
+            .map(str::to_owned)
+            .unwrap_or_else(|| format!("item_{:02}", item_index.unwrap_or(0) + 1))
     });
     let item_number_text = item_index
         .map(|index| format!("{:02}", index + 1))
@@ -1779,31 +1914,8 @@ fn expand_render_filename_pattern(
                 .or_else(|| aaadaw_app::project_content_end_sample(project).ok());
             start == settings.start_sample && end == Some(settings.end_sample)
         });
-    let (timeline_order_text, timeline_order_track_text) = item_index
-        .map(|item_index| {
-            let item = &project.audio_items()[item_index];
-            let precedes = |index: usize, other: &aaadaw_core::AudioItem| {
-                other.start_sample() < item.start_sample()
-                    || (other.start_sample() == item.start_sample() && index < item_index)
-            };
-            let order = project
-                .audio_items()
-                .iter()
-                .enumerate()
-                .filter(|(index, other)| precedes(*index, other))
-                .count()
-                + 1;
-            let track_order = project
-                .audio_items()
-                .iter()
-                .enumerate()
-                .filter(|(index, other)| {
-                    other.track_id() == item.track_id() && precedes(*index, other)
-                })
-                .count()
-                + 1;
-            (order, track_order)
-        })
+    let (timeline_order_text, timeline_order_track_text) = item_id
+        .and_then(|item_id| render_project_item_timeline_order(project, item_id))
         .or_else(|| {
             region.map(|region| {
                 let region_index = project
@@ -2497,12 +2609,7 @@ impl App {
             (RenderSource::SelectedTracksViaMaster, [track_id]) => {
                 aaadaw_app::ProjectWavRenderSource::SelectedTrackViaMaster(*track_id)
             }
-            (RenderSource::SelectedMediaItems, _) => self
-                .effective_selected_audio_item_ids()
-                .first()
-                .copied()
-                .map(aaadaw_app::ProjectWavRenderSource::SelectedAudioItem)
-                .unwrap_or(aaadaw_app::ProjectWavRenderSource::MasterMix),
+            (RenderSource::SelectedMediaItems, _) => aaadaw_app::ProjectWavRenderSource::MasterMix,
             _ => aaadaw_app::ProjectWavRenderSource::MasterMix,
         };
         let settings = aaadaw_app::ProjectWavRenderSettings {
@@ -2970,7 +3077,7 @@ impl App {
         match self.render_dialog.source {
             RenderSource::MasterMix => "Renders the project through the Master mix.",
             RenderSource::SelectedMediaItems => {
-                "Renders each selected audio item from its trimmed media source as a separate WAV."
+                "Renders each selected audio or MIDI item as a separate WAV. MIDI items use their track instrument."
             }
             RenderSource::SelectedTracksStems => {
                 "Renders each selected track as a separate stem without the Master mix gain."
@@ -3068,18 +3175,8 @@ impl App {
     }
 
     pub(super) fn selected_media_item_source_error(&self) -> Option<&'static str> {
-        if self
-            .project
-            .midi_items()
-            .iter()
-            .any(|item| self.timeline.selected_items.contains(&item.id()))
-        {
-            return Some(
-                "Selected media item rendering currently supports audio items; deselect MIDI items.",
-            );
-        }
-        if self.effective_selected_audio_item_ids().is_empty() {
-            return Some("Select one or more audio media items in Arrange to render them.");
+        if self.effective_selected_media_item_ids().is_empty() {
+            return Some("Select one or more Audio or MIDI media items in Arrange to render them.");
         }
         None
     }
@@ -3094,34 +3191,51 @@ impl App {
             .collect()
     }
 
-    fn effective_selected_audio_item_ids(&self) -> Vec<ItemId> {
-        self.project
-            .audio_items()
-            .iter()
-            .filter(|item| self.timeline.selected_items.contains(&item.id()))
-            .map(|item| item.id())
-            .collect()
-    }
-
     fn selected_media_item_union_range(&self) -> Result<(u64, u64), String> {
         if let Some(error) = self.selected_media_item_source_error() {
             return Err(error.to_owned());
         }
-        let mut selected = self
+        let ranges = self
             .project
             .audio_items()
             .iter()
             .filter(|item| self.timeline.selected_items.contains(&item.id()));
-        let first = selected
+        let audio_ranges = ranges
+            .map(|item| (item.start_sample(), item.end_sample()))
+            .collect::<Vec<_>>();
+        let midi_ranges = self
+            .project
+            .midi_items()
+            .iter()
+            .filter(|item| self.timeline.selected_items.contains(&item.id()))
+            .map(|item| {
+                let end_tick = item
+                    .start_tick()
+                    .checked_add(item.length_ticks())
+                    .ok_or_else(|| {
+                        "Selected MIDI item exceeds the supported timeline".to_owned()
+                    })?;
+                let start = self
+                    .project
+                    .sample_at_tick(item.start_tick())
+                    .map_err(|error| error.to_string())?;
+                let end = self
+                    .project
+                    .sample_at_tick(end_tick)
+                    .map_err(|error| error.to_string())?;
+                Ok((start, end))
+            })
+            .collect::<Result<Vec<_>, String>>()?;
+        let mut ranges = audio_ranges.into_iter().chain(midi_ranges);
+        let first = ranges
             .next()
-            .expect("selection validation requires one audio media item");
-        let (start, end) = selected.fold(
-            (first.start_sample(), first.end_sample()),
-            |(start, end), item| (start.min(item.start_sample()), end.max(item.end_sample())),
-        );
+            .expect("selection validation requires one media item");
+        let (start, end) = ranges.fold(first, |(start, end), (next_start, next_end)| {
+            (start.min(next_start), end.max(next_end))
+        });
         (end > start)
             .then_some((start, end))
-            .ok_or_else(|| "Selected audio items must span at least one project sample".to_owned())
+            .ok_or_else(|| "Selected media items must span at least one project sample".to_owned())
     }
 
     fn selected_render_settings(&self) -> Result<ResolvedRenderSettings, String> {
@@ -5559,6 +5673,121 @@ mod tests {
     }
 
     #[test]
+    fn render_filename_selected_midi_items_share_item_names_and_ordinals_with_audio() {
+        let mut project = Project::default();
+        project
+            .apply(DawAction::CreateTrack {
+                index: 0,
+                name: "Mixed items".to_owned(),
+            })
+            .expect("mixed-item fixture track should be created");
+        let track_id = project.tracks()[0].id();
+        project
+            .apply(DawAction::InsertAudioItem {
+                track_id,
+                media_ref: "fixture.wav".to_owned(),
+                start_sample: 0,
+                source_offset_samples: 0,
+                length_samples: 24_000,
+            })
+            .expect("first audio fixture should be inserted");
+        project
+            .apply(DawAction::InsertMidiItem {
+                track_id,
+                start_tick: 960,
+                length_ticks: 960,
+            })
+            .expect("MIDI fixture should be inserted");
+        project
+            .apply(DawAction::InsertAudioItem {
+                track_id,
+                media_ref: "fixture.wav".to_owned(),
+                start_sample: 48_000,
+                source_offset_samples: 0,
+                length_samples: 24_000,
+            })
+            .expect("second audio fixture should be inserted");
+        let item_ids = render_project_item_order(&project);
+        assert_eq!(item_ids.len(), 3);
+        for item_id in item_ids.iter().copied() {
+            if project
+                .audio_items()
+                .iter()
+                .any(|item| item.id() == item_id)
+            {
+                project
+                    .apply(DawAction::SetAudioItemName {
+                        item_id,
+                        name: "Hit".to_owned(),
+                    })
+                    .expect("Audio item should accept the fixture name");
+            } else {
+                project
+                    .apply(DawAction::SetMidiItemName {
+                        item_id,
+                        name: "Hit".to_owned(),
+                    })
+                    .expect("MIDI item should accept the same fixture name");
+            }
+        }
+        let outputs = item_ids
+            .iter()
+            .map(|item_id| {
+                let (source, start_sample, end_sample) = project
+                    .audio_items()
+                    .iter()
+                    .find(|item| item.id() == *item_id)
+                    .map(|item| {
+                        (
+                            aaadaw_app::ProjectWavRenderSource::SelectedAudioItem(*item_id),
+                            item.start_sample(),
+                            item.end_sample(),
+                        )
+                    })
+                    .unwrap_or_else(|| {
+                        let item = project
+                            .midi_items()
+                            .iter()
+                            .find(|item| item.id() == *item_id)
+                            .unwrap();
+                        (
+                            aaadaw_app::ProjectWavRenderSource::SelectedMidiItem(*item_id),
+                            project.sample_at_tick(item.start_tick()).unwrap(),
+                            project
+                                .sample_at_tick(item.start_tick() + item.length_ticks())
+                                .unwrap(),
+                        )
+                    });
+                (
+                    aaadaw_app::ProjectWavRenderSettings {
+                        master_ceiling: aaadaw_engine::MasterOutputCeiling::default(),
+                        export_options: aaadaw_app::WavExportOptions::default(),
+                        output_sample_rate: 48_000,
+                        output_channels: WavChannelCount::Stereo,
+                        source,
+                        start_sample,
+                        end_sample,
+                        tail_milliseconds: 0,
+                        normalize_peak: false,
+                        normalize_peak_target_centi_dbfs: 0,
+                    },
+                    Path::new("/renders/base.wav").to_owned(),
+                )
+            })
+            .collect::<Vec<_>>();
+        let output = apply_render_filename_pattern(
+            outputs,
+            "$item-$namenumber-$itemnumber-$timelineorder_track",
+            &project,
+            Path::new("/projects/mixed-items.aaadaw"),
+        )
+        .expect("audio and MIDI selected-item contexts should resolve consistently");
+        assert_eq!(output[0].1, Path::new("/renders/Hit-01-01-1.wav"));
+        assert_eq!(output[1].1, Path::new("/renders/Hit-02-02-2.wav"));
+        assert_eq!(output[2].1, Path::new("/renders/Hit-03-03-3.wav"));
+    }
+
+    #[test]
     fn render_filename_empty_wildcards_omit_the_nearest_native_separator() {
         let project = Project::default();
         let settings = aaadaw_app::ProjectWavRenderSettings {
@@ -5892,7 +6121,7 @@ mod tests {
     }
 
     #[test]
-    fn selected_media_item_source_rejects_empty_and_midi_only_selection() {
+    fn selected_media_item_source_accepts_midi_only_selection() {
         let mut project = Project::default();
         project
             .apply(DawAction::CreateTrack {
@@ -5921,16 +6150,73 @@ mod tests {
         assert!(
             app.selected_media_item_source_error()
                 .unwrap()
-                .contains("audio media items")
+                .contains("Select one or more Audio or MIDI")
         );
         app.timeline.selected_items.insert(midi_item_id);
-        assert!(!app.has_valid_render_source());
-        assert!(!app.can_submit_render());
-        assert!(
-            app.selected_media_item_source_error()
-                .unwrap()
-                .contains("deselect MIDI")
+        assert!(app.has_valid_render_source());
+        assert!(app.can_submit_render());
+        assert_eq!(app.selected_media_items_summary(), "1 media item");
+        assert_eq!(app.selected_render_settings().unwrap().start_sample, 0);
+        assert_eq!(app.selected_render_settings().unwrap().end_sample, 24_000);
+
+        let destination = std::env::temp_dir().join(format!(
+            "aaadaw-selected-midi-item-{}.wav",
+            std::process::id()
+        ));
+        let settings = aaadaw_app::ProjectWavRenderSettings {
+            master_ceiling: aaadaw_engine::MasterOutputCeiling::default(),
+            export_options: aaadaw_app::WavExportOptions::default(),
+            output_sample_rate: app.project.settings().sample_rate(),
+            output_channels: WavChannelCount::Stereo,
+            source: aaadaw_app::ProjectWavRenderSource::MasterMix,
+            start_sample: 0,
+            end_sample: 24_000,
+            tail_milliseconds: 0,
+            normalize_peak: false,
+            normalize_peak_target_centi_dbfs: 0,
+        };
+        let jobs = selected_media_item_render_jobs(
+            &destination,
+            &app.project,
+            &app.effective_selected_media_item_ids(),
+            settings,
+        )
+        .expect("a selected MIDI item should produce a render job");
+        assert_eq!(jobs.len(), 1);
+        assert_eq!(
+            jobs[0].0.source,
+            aaadaw_app::ProjectWavRenderSource::SelectedMidiItem(midi_item_id)
         );
+        assert_eq!((jobs[0].0.start_sample, jobs[0].0.end_sample), (0, 24_000));
+
+        app.project
+            .apply(DawAction::InsertAudioItem {
+                track_id,
+                media_ref: "asset://mixed-audio-item".to_owned(),
+                start_sample: 48_000,
+                source_offset_samples: 0,
+                length_samples: 24_000,
+            })
+            .expect("an audio item should be insertable alongside the MIDI item");
+        let audio_item_id = app.project.audio_items()[0].id();
+        app.timeline.selected_items.insert(audio_item_id);
+        let jobs = selected_media_item_render_jobs(
+            &destination,
+            &app.project,
+            &app.effective_selected_media_item_ids(),
+            settings,
+        )
+        .expect("a mixed Audio/MIDI selection should produce one job per item");
+        assert_eq!(jobs.len(), 2);
+        assert_eq!(
+            jobs[0].0.source,
+            aaadaw_app::ProjectWavRenderSource::SelectedMidiItem(midi_item_id)
+        );
+        assert_eq!(
+            jobs[1].0.source,
+            aaadaw_app::ProjectWavRenderSource::SelectedAudioItem(audio_item_id)
+        );
+        assert!(jobs[1].1.to_string_lossy().ends_with("-item_02.wav"));
     }
 
     #[test]

@@ -58,6 +58,8 @@ pub enum ProjectWavRenderSource {
     MasterMix,
     /// Render the trimmed media source for one selected audio item directly.
     SelectedAudioItem(ItemId),
+    /// Render one selected MIDI item through its track instrument and effects.
+    SelectedMidiItem(ItemId),
     /// Render one selected track as a stem without the Master mix output stage.
     SelectedTrackStem(TrackId),
     /// Render one selected track's signal before its volume fader and automation.
@@ -732,6 +734,24 @@ pub fn render_project_file_to_wav_with_settings(
             report_progress,
         );
     }
+    if let ProjectWavRenderSource::SelectedMidiItem(item_id) = settings.source {
+        let (render_project, start_sample, end_sample) =
+            selected_midi_item_render_project(project, item_id)?;
+        return render_project_file_to_wav_with_settings(
+            project_path,
+            &render_project,
+            destination,
+            ProjectWavRenderSettings {
+                source: ProjectWavRenderSource::MasterMix,
+                start_sample,
+                end_sample,
+                tail_milliseconds: 0,
+                ..settings
+            },
+            cancelled,
+            report_progress,
+        );
+    }
     let ProjectWavRenderSettings {
         master_ceiling,
         export_options,
@@ -757,6 +777,9 @@ pub fn render_project_file_to_wav_with_settings(
         ProjectWavRenderSource::MasterMix => (None, false),
         ProjectWavRenderSource::SelectedAudioItem(_) => {
             unreachable!("selected audio items use their direct source renderer")
+        }
+        ProjectWavRenderSource::SelectedMidiItem(_) => {
+            unreachable!("selected MIDI items use their isolated track renderer")
         }
         ProjectWavRenderSource::SelectedTrackStem(track_id) => (
             Some(selected_track_stem_project(project, track_id, false)?),
@@ -1023,6 +1046,45 @@ fn selected_audio_item_render_project(
     Ok((render_project, start_sample, end_sample))
 }
 
+fn selected_midi_item_render_project(
+    project: &Project,
+    item_id: ItemId,
+) -> Result<(Project, u64, u64), OfflineRenderError> {
+    let item = project
+        .midi_items()
+        .iter()
+        .find(|item| item.id() == item_id)
+        .ok_or_else(|| OfflineRenderError::Media("selected MIDI item no longer exists".into()))?;
+    let start_tick = item.start_tick();
+    let end_tick = start_tick
+        .checked_add(item.length_ticks())
+        .ok_or(OfflineRenderError::TimelineRange)?;
+    let start_sample = project
+        .sample_at_tick(start_tick)
+        .map_err(|_| OfflineRenderError::TimelineRange)?;
+    let end_sample = project
+        .sample_at_tick(end_tick)
+        .map_err(|_| OfflineRenderError::TimelineRange)?;
+    if end_sample <= start_sample {
+        return Err(OfflineRenderError::TimelineRange);
+    }
+
+    let mut snapshot = project.snapshot();
+    // A MIDI source needs its instrument track to produce audio. Keep that chain
+    // and only this item's events, while removing unrelated media from the render.
+    snapshot.master_mix = aaadaw_core::MasterMix::default();
+    snapshot.audio_items.clear();
+    snapshot
+        .midi_items
+        .retain(|candidate| candidate.id == item_id.value());
+    for track in &mut snapshot.tracks {
+        track.frozen_audio_item_id = None;
+    }
+    let render_project = Project::from_snapshot(snapshot)
+        .map_err(|error| OfflineRenderError::Media(error.to_string()))?;
+    Ok((render_project, start_sample, end_sample))
+}
+
 /// Renders each selected track through Master and publishes the complete WAV stem set.
 ///
 /// Stems are rendered into a private staging directory on the destination filesystem. Existing
@@ -1135,6 +1197,13 @@ pub fn render_project_wav_jobs_to_wavs(
         {
             return Err(OfflineRenderError::Media(
                 "selected audio item no longer exists".to_owned(),
+            ));
+        }
+        if let ProjectWavRenderSource::SelectedMidiItem(item_id) = source
+            && !project.midi_items().iter().any(|item| item.id() == item_id)
+        {
+            return Err(OfflineRenderError::Media(
+                "selected MIDI item no longer exists".to_owned(),
             ));
         }
         let parent = destination
@@ -2057,6 +2126,78 @@ mod tests {
         fs::remove_file(source_path).expect("source WAV should be removed");
         fs::remove_file(output_path).expect("rendered WAV should be removed");
         fs::remove_dir(output_directory).expect("created output directory should be removed");
+        for suffix in ["", "-wal", "-shm"] {
+            let mut path = project_path.as_os_str().to_owned();
+            path.push(suffix);
+            let _ = fs::remove_file(PathBuf::from(path));
+        }
+    }
+
+    #[test]
+    fn selected_midi_item_source_renders_only_its_timeline_range() {
+        let project_path = destination().with_extension("aaadaw");
+        let output_path = destination();
+        let mut project = project_with_one_track();
+        project
+            .apply(DawAction::InsertMidiItem {
+                track_id: project.tracks()[0].id(),
+                start_tick: 960,
+                length_ticks: 960,
+            })
+            .expect("selected MIDI item should be inserted");
+        let selected_item_id = project.midi_items()[0].id();
+        project
+            .apply(DawAction::InsertMidiItem {
+                track_id: project.tracks()[0].id(),
+                start_tick: 4_800,
+                length_ticks: 960,
+            })
+            .expect("unselected MIDI item should be inserted");
+        let mut store = ProjectStore::open(&project_path).expect("project store should open");
+        store.save(&project).expect("project snapshot should save");
+        store.close().expect("project store should close");
+
+        let (isolated, start_sample, end_sample) =
+            selected_midi_item_render_project(&project, selected_item_id)
+                .expect("selected MIDI item should be isolated for rendering");
+        assert_eq!((start_sample, end_sample), (24_000, 48_000));
+        assert!(isolated.audio_items().is_empty());
+        assert_eq!(isolated.midi_items().len(), 1);
+        assert_eq!(isolated.midi_items()[0].id(), selected_item_id);
+
+        render_project_file_to_wav_with_settings(
+            &project_path,
+            &project,
+            &output_path,
+            ProjectWavRenderSettings {
+                master_ceiling: MasterOutputCeiling::default(),
+                export_options: WavExportOptions::default(),
+                output_sample_rate: 48_000,
+                output_channels: WavChannelCount::Stereo,
+                source: ProjectWavRenderSource::SelectedMidiItem(selected_item_id),
+                // The selected source owns its range, as it does for audio items.
+                start_sample: 0,
+                end_sample: 1,
+                tail_milliseconds: 0,
+                normalize_peak: false,
+                normalize_peak_target_centi_dbfs: 0,
+            },
+            &AtomicBool::new(false),
+            |_, _| {},
+        )
+        .expect("selected MIDI item should render through the normal offline project graph");
+        let bytes = fs::read(&output_path).expect("selected MIDI item WAV should be readable");
+        assert_eq!(&bytes[0..4], b"RIFF");
+        assert_eq!(
+            u32::from_le_bytes(bytes[24..28].try_into().unwrap()),
+            48_000
+        );
+        assert_eq!(
+            u32::from_le_bytes(bytes[40..44].try_into().unwrap()),
+            24_000 * 6
+        );
+
+        fs::remove_file(output_path).expect("rendered WAV should be removed");
         for suffix in ["", "-wal", "-shm"] {
             let mut path = project_path.as_os_str().to_owned();
             path.push(suffix);
