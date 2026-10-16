@@ -208,6 +208,11 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
                     RenderFilenameWildcard::ALL.into_iter().take(3),
                 ),
                 wildcard_group_row(
+                    "Computer information:",
+                    std::iter::once(RenderFilenameWildcard::User)
+                        .chain(std::iter::once(RenderFilenameWildcard::Computer)),
+                ),
+                wildcard_group_row(
                     "Project directories:",
                     RenderFilenameWildcard::ALL.into_iter().skip(3).take(2),
                 ),

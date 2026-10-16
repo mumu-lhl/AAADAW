@@ -6,6 +6,8 @@ use aaadaw_core::{DawAction, ItemId, MarkerId, Project, ProjectSnapshot, RegionI
 use aaadaw_storage::ProjectStore;
 use iced::Task;
 use std::collections::HashSet;
+use std::env;
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
@@ -101,10 +103,12 @@ pub(crate) enum RenderFilenameWildcard {
     Parent,
     SelTrack,
     PlayRate,
+    User,
+    Computer,
 }
 
 impl RenderFilenameWildcard {
-    pub(crate) const ALL: [Self; 58] = [
+    pub(crate) const ALL: [Self; 60] = [
         Self::Project,
         Self::Title,
         Self::Author,
@@ -163,6 +167,8 @@ impl RenderFilenameWildcard {
         Self::Parent,
         Self::SelTrack,
         Self::PlayRate,
+        Self::User,
+        Self::Computer,
     ];
 
     pub(crate) const fn token(self) -> &'static str {
@@ -225,6 +231,8 @@ impl RenderFilenameWildcard {
             Self::Parent => "$parent",
             Self::SelTrack => "$seltrack",
             Self::PlayRate => "$playrate",
+            Self::User => "$user",
+            Self::Computer => "$computer",
         }
     }
 }
@@ -233,6 +241,60 @@ const AAADAW_PROJECT_PLAY_RATE: f64 = 1.0;
 
 fn format_render_wildcard_playrate(playrate: f64) -> String {
     format!("{playrate:.3}")
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct RenderFilenameSystemInfo {
+    user: String,
+    computer: String,
+}
+
+struct RenderFilenameExpansionContext<'a> {
+    plugins: &'a [ClapPluginDescriptor],
+    selected_tracks: &'a [TrackId],
+    system_info: &'a RenderFilenameSystemInfo,
+}
+
+impl RenderFilenameSystemInfo {
+    fn current() -> Self {
+        Self {
+            user: render_filename_user_from_values(
+                env::var("USER").ok(),
+                env::var("LOGNAME").ok(),
+                env::var("USERNAME").ok(),
+            ),
+            computer: render_filename_computer_from_values(
+                env::var("HOSTNAME")
+                    .ok()
+                    .filter(|hostname| !hostname.trim().is_empty())
+                    .or_else(|| env::var("COMPUTERNAME").ok()),
+                fs::read_to_string("/etc/hostname").ok(),
+            ),
+        }
+    }
+}
+
+fn render_filename_user_from_values(
+    user: Option<String>,
+    login_name: Option<String>,
+    user_name: Option<String>,
+) -> String {
+    [user, login_name, user_name]
+        .into_iter()
+        .flatten()
+        .find(|value| !value.is_empty())
+        .unwrap_or_default()
+}
+
+fn render_filename_computer_from_values(
+    hostname: Option<String>,
+    hostname_file: Option<String>,
+) -> String {
+    hostname
+        .filter(|value| !value.trim().is_empty())
+        .or(hostname_file)
+        .map(|value| value.trim().to_owned())
+        .unwrap_or_default()
 }
 
 impl RenderSource {
@@ -815,11 +877,37 @@ fn apply_render_filename_pattern_with_selected_tracks(
     plugins: &[ClapPluginDescriptor],
     selected_tracks: &[TrackId],
 ) -> Result<Vec<(aaadaw_app::ProjectWavRenderSettings, PathBuf)>, String> {
+    let system_info = RenderFilenameSystemInfo::current();
+    apply_render_filename_pattern_with_system_info(
+        outputs,
+        pattern,
+        project,
+        project_path,
+        plugins,
+        selected_tracks,
+        &system_info,
+    )
+}
+
+fn apply_render_filename_pattern_with_system_info(
+    outputs: Vec<(aaadaw_app::ProjectWavRenderSettings, PathBuf)>,
+    pattern: &str,
+    project: &Project,
+    project_path: &Path,
+    plugins: &[ClapPluginDescriptor],
+    selected_tracks: &[TrackId],
+    system_info: &RenderFilenameSystemInfo,
+) -> Result<Vec<(aaadaw_app::ProjectWavRenderSettings, PathBuf)>, String> {
     let pattern = pattern.trim().replace(FORCED_RENDER_PATH_SEPARATOR, "_");
     if pattern.is_empty() {
         return Ok(outputs);
     }
 
+    let expansion_context = RenderFilenameExpansionContext {
+        plugins,
+        selected_tracks,
+        system_info,
+    };
     let mut used_names = HashSet::with_capacity(outputs.len());
     outputs
         .into_iter()
@@ -835,8 +923,7 @@ fn apply_render_filename_pattern_with_selected_tracks(
                 project,
                 project_path,
                 settings,
-                plugins,
-                selected_tracks,
+                &expansion_context,
             );
             let Some(relative_path) = safe_render_pattern_relative_path(&expanded) else {
                 return Err("Filename pattern must produce a non-empty file name".to_owned());
@@ -1198,9 +1285,13 @@ fn expand_render_filename_pattern(
     project: &Project,
     project_path: &Path,
     settings: aaadaw_app::ProjectWavRenderSettings,
-    plugins: &[ClapPluginDescriptor],
-    selected_tracks: &[TrackId],
+    context: &RenderFilenameExpansionContext<'_>,
 ) -> String {
+    let RenderFilenameExpansionContext {
+        plugins,
+        selected_tracks,
+        system_info,
+    } = context;
     let project_name = project_path
         .file_stem()
         .and_then(|name| name.to_str())
@@ -1582,6 +1673,8 @@ fn expand_render_filename_pattern(
             }
             "parent" => result.push_str(parent_name),
             "seltrack" => result.push_str(selected_track_name),
+            "user" => result.push_str(&system_info.user),
+            "computer" => result.push_str(&system_info.computer),
             // AAADAW currently has no project transport-rate setting, so its only
             // supported project rate is the 1x default used by its offline renderer.
             "playrate" => {
@@ -3517,6 +3610,8 @@ mod tests {
                 "$parent",
                 "$seltrack",
                 "$playrate",
+                "$user",
+                "$computer",
             ]
         );
 
@@ -3566,6 +3661,24 @@ mod tests {
             "stem-$fx[X]$seltrack$playrate"
         );
         assert!(!app.render_dialog.wildcard_menu_open);
+
+        let _ = app.update(Message::InsertRenderFilenameWildcard(
+            RenderFilenameWildcard::User,
+        ));
+        assert_eq!(
+            app.render_dialog.filename_pattern,
+            "stem-$fx[X]$seltrack$playrate$user"
+        );
+        assert!(!app.render_dialog.wildcard_menu_open);
+
+        let _ = app.update(Message::InsertRenderFilenameWildcard(
+            RenderFilenameWildcard::Computer,
+        ));
+        assert_eq!(
+            app.render_dialog.filename_pattern,
+            "stem-$fx[X]$seltrack$playrate$user$computer"
+        );
+        assert!(!app.render_dialog.wildcard_menu_open);
     }
 
     #[test]
@@ -3594,6 +3707,72 @@ mod tests {
         )
         .expect("the default project playrate should resolve into a safe file name");
         assert_eq!(output[0].1, Path::new("/renders/1.000-Master.wav"));
+    }
+
+    #[test]
+    fn render_filename_system_wildcards_match_native_user_and_computer_values() {
+        assert_eq!(
+            render_filename_user_from_values(
+                Some("FixtureUser".to_owned()),
+                Some("OtherLogin".to_owned()),
+                Some("FallbackUser".to_owned()),
+            ),
+            "FixtureUser"
+        );
+        assert_eq!(
+            render_filename_user_from_values(None, Some("OtherLogin".to_owned()), None),
+            "OtherLogin"
+        );
+        assert_eq!(
+            render_filename_user_from_values(None, None, Some("FallbackUser".to_owned())),
+            "FallbackUser"
+        );
+        assert_eq!(
+            render_filename_computer_from_values(
+                Some("  StudioComputer  ".to_owned()),
+                Some("FallbackComputer\n".to_owned()),
+            ),
+            "StudioComputer"
+        );
+        assert_eq!(
+            render_filename_computer_from_values(
+                Some(" \n".to_owned()),
+                Some("FallbackComputer\n".to_owned()),
+            ),
+            "FallbackComputer"
+        );
+
+        let project = Project::default();
+        let settings = aaadaw_app::ProjectWavRenderSettings {
+            master_ceiling: aaadaw_engine::MasterOutputCeiling::default(),
+            export_options: aaadaw_app::WavExportOptions::default(),
+            output_sample_rate: 48_000,
+            output_channels: WavChannelCount::Stereo,
+            source: aaadaw_app::ProjectWavRenderSource::MasterMix,
+            start_sample: 0,
+            end_sample: 48_000,
+            tail_milliseconds: 0,
+            normalize_peak: false,
+            normalize_peak_target_centi_dbfs: 0,
+        };
+        let system_info = RenderFilenameSystemInfo {
+            user: "FixtureUser".to_owned(),
+            computer: "StudioComputer".to_owned(),
+        };
+        let output = apply_render_filename_pattern_with_system_info(
+            vec![(settings, Path::new("/renders/base.wav").to_owned())],
+            "$user-$computer-$track",
+            &project,
+            Path::new("/projects/system-info.aaadaw"),
+            &[],
+            &[],
+            &system_info,
+        )
+        .expect("system identity wildcards should resolve into a safe output name");
+        assert_eq!(
+            output[0].1,
+            Path::new("/renders/FixtureUser-StudioComputer-Master.wav")
+        );
     }
 
     #[test]

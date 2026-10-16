@@ -1,0 +1,22 @@
+key	value
+reference	Linux REAPER 7.82 / Default 7 / isolated configuration
+probe_script	../../../../scripts/reaper_parity/probe-render-system-information-wildcards.lua
+probe_script_sha256	1fc7a0082f5f1b02a4912ac563f995d5d8d9c7d7e305dd72c900e8105fd5170f
+project	Unsaved disposable project; deterministic one-second 48 kHz stereo PCM24 source
+identity_sanitization	Isolated user namespace and UTS hostname namespace; USER=FixtureUser and kernel hostname=StudioComputer
+pattern	$user-$computer-$track
+source	Master mix
+preview_output	FixtureUser-StudioComputer-Master.wav
+finished_output	FixtureUser-StudioComputer-Master.wav
+user_value	FixtureUser
+computer_value	StudioComputer
+render_format	WAV; 24-bit PCM; 48,000 Hz; 2 channels
+render_frames	48000
+render_duration_seconds	1.000
+output_file_size_bytes	288690
+output_sha256	4b09311f1d3ffcc5006961b12d7438ab2381d0be34cfdb5e35313e2bc1a43898
+preview_screenshot	render-wildcards-system-information-preview-native.png
+preview_screenshot_sha256	7b1434fb211fa142fc693ac651d123082e2e5af9a9c91dec410aee7dea0a4b36
+finished_screenshot	render-wildcards-system-information-finished-native.png
+finished_screenshot_sha256	da75d77d2a961e4a4141db328ffc4b61dba1996ee9aab21a44d91b31cb75cbdc
+native_observation	$user resolves the login identity and $computer resolves the system hostname; token values create the expected filename without affecting rendered PCM

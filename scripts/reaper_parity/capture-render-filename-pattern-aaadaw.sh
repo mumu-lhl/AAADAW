@@ -111,88 +111,87 @@ if [[ "${AAADAW_OPEN_WILDCARDS:-0}" == 1 || -n "$insert_wildcard" ]]; then
   sleep 0.4
 fi
 scroll_wildcards=${AAADAW_SCROLL_WILDCARDS:-0}
-case "$insert_wildcard" in
-  format|samplerate|sampleratek|bitdepth|channels)
-    [[ "$scroll_wildcards" == 0 ]] && scroll_wildcards=2
-    ;;
-  fx|fxdelimited)
-    [[ "$scroll_wildcards" == 0 ]] && scroll_wildcards=3
-    ;;
-  trackslashes|folders|foldersdelimited|parent)
-    [[ "$scroll_wildcards" == 0 ]] && scroll_wildcards=4
-    ;;
-esac
-if [[ "$scroll_wildcards" =~ ^[1-9][0-9]*$ ]]; then
-  "$xdotool" mousemove --sync 550 680 click --repeat "$scroll_wildcards" --delay 50 5
-  sleep 0.3
-fi
 if [[ -n "$insert_wildcard" ]]; then
   case "$insert_wildcard" in
     project) wildcard_x=163; wildcard_y=316 ;;
     title) wildcard_x=236; wildcard_y=316 ;;
     author) wildcard_x=310; wildcard_y=316 ;;
-    projectdirectory) wildcard_x=220; wildcard_y=350 ;;
-    projectdirectorynumbered) wildcard_x=400; wildcard_y=350 ;;
-    projectnotes) wildcard_x=178; wildcard_y=385 ;;
-    projectnotesnamed) wildcard_x=343; wildcard_y=385 ;;
-    bpm) wildcard_x=90; wildcard_y=420 ;;
-    tempo) wildcard_x=165; wildcard_y=420 ;;
-    playrate) wildcard_x=250; wildcard_y=420 ;;
-    timesignature) wildcard_x=166; wildcard_y=455 ;;
-    timesignum) wildcard_x=295; wildcard_y=455 ;;
-    timesigdenom) wildcard_x=425; wildcard_y=455 ;;
-    track) wildcard_x=89; wildcard_y=490 ;;
-    tracknumber) wildcard_x=190; wildcard_y=490 ;;
-    tracknamenumber|tracknameornumber) wildcard_x=347; wildcard_y=490 ;;
-    seltrack) wildcard_x=466; wildcard_y=490 ;;
-    region) wildcard_x=138; wildcard_y=525 ;;
-    regionnumber) wildcard_x=248; wildcard_y=525 ;;
-    regionnumberpadded) wildcard_x=410; wildcard_y=525 ;;
-    regionname) wildcard_x=550; wildcard_y=525 ;;
-    regionnamedvalue) wildcard_x=171; wildcard_y=560 ;;
-    marker) wildcard_x=130; wildcard_y=595 ;;
-    markernumber) wildcard_x=244; wildcard_y=595 ;;
-    markernumberpadded) wildcard_x=410; wildcard_y=595 ;;
-    markername) wildcard_x=550; wildcard_y=595 ;;
-    markernamedvalue) wildcard_x=171; wildcard_y=630 ;;
-    item) wildcard_x=117; wildcard_y=665 ;;
-    itemnumber) wildcard_x=242; wildcard_y=665 ;;
-    start) wildcard_x=126; wildcard_y=700 ;;
-    end) wildcard_x=214; wildcard_y=700 ;;
-    length) wildcard_x=307; wildcard_y=700 ;;
-    startbeats) wildcard_x=115; wildcard_y=735 ;;
-    endbeats) wildcard_x=220; wildcard_y=735 ;;
-    lengthbeats) wildcard_x=335; wildcard_y=735 ;;
-    starttc) wildcard_x=125; wildcard_y=770 ;;
-    endtc) wildcard_x=218; wildcard_y=770 ;;
-    startframes) wildcard_x=122; wildcard_y=805 ;;
-    endframes) wildcard_x=238; wildcard_y=805 ;;
-    lengthframes) wildcard_x=360; wildcard_y=805 ;;
-    startseconds) wildcard_x=122; wildcard_y=840 ;;
-    endseconds) wildcard_x=238; wildcard_y=840 ;;
-    lengthseconds) wildcard_x=360; wildcard_y=840 ;;
-    lenhh) wildcard_x=156; wildcard_y=875 ;;
-    lenmm) wildcard_x=230; wildcard_y=875 ;;
-    lenss) wildcard_x=304; wildcard_y=875 ;;
-    lentt) wildcard_x=376; wildcard_y=875 ;;
-    format) wildcard_x=134; wildcard_y=910 ;;
-    samplerate) wildcard_x=215; wildcard_y=910 ;;
-    sampleratek) wildcard_x=324; wildcard_y=910 ;;
-    bitdepth) wildcard_x=436; wildcard_y=910 ;;
-    channels) wildcard_x=102; wildcard_y=945 ;;
-    fx) wildcard_x=90; wildcard_y=978 ;;
-    fxdelimited) wildcard_x=143; wildcard_y=978 ;;
-    trackslashes) wildcard_x=120; wildcard_y=1012 ;;
-    folders) wildcard_x=260; wildcard_y=1012 ;;
-    foldersdelimited) wildcard_x=350; wildcard_y=1012 ;;
-    parent) wildcard_x=470; wildcard_y=1012 ;;
+    user) wildcard_x=152; wildcard_y=350 ;;
+    computer) wildcard_x=250; wildcard_y=350 ;;
+    projectdirectory) wildcard_x=220; wildcard_y=385 ;;
+    projectdirectorynumbered) wildcard_x=400; wildcard_y=385 ;;
+    projectnotes) wildcard_x=178; wildcard_y=420 ;;
+    projectnotesnamed) wildcard_x=343; wildcard_y=420 ;;
+    bpm) wildcard_x=90; wildcard_y=455 ;;
+    tempo) wildcard_x=165; wildcard_y=455 ;;
+    playrate) wildcard_x=250; wildcard_y=455 ;;
+    timesignature) wildcard_x=166; wildcard_y=490 ;;
+    timesignum) wildcard_x=295; wildcard_y=490 ;;
+    timesigdenom) wildcard_x=425; wildcard_y=490 ;;
+    track) wildcard_x=89; wildcard_y=525 ;;
+    tracknumber) wildcard_x=190; wildcard_y=525 ;;
+    tracknamenumber|tracknameornumber) wildcard_x=347; wildcard_y=525 ;;
+    seltrack) wildcard_x=466; wildcard_y=525 ;;
+    region) wildcard_x=138; wildcard_y=560 ;;
+    regionnumber) wildcard_x=248; wildcard_y=560 ;;
+    regionnumberpadded) wildcard_x=410; wildcard_y=560 ;;
+    regionname) wildcard_x=550; wildcard_y=560 ;;
+    regionnamedvalue) wildcard_x=171; wildcard_y=595 ;;
+    marker) wildcard_x=130; wildcard_y=630 ;;
+    markernumber) wildcard_x=244; wildcard_y=630 ;;
+    markernumberpadded) wildcard_x=410; wildcard_y=630 ;;
+    markername) wildcard_x=550; wildcard_y=630 ;;
+    markernamedvalue) wildcard_x=171; wildcard_y=665 ;;
+    item) wildcard_x=117; wildcard_y=700 ;;
+    itemnumber) wildcard_x=242; wildcard_y=700 ;;
+    start) wildcard_x=126; wildcard_y=735 ;;
+    end) wildcard_x=214; wildcard_y=735 ;;
+    length) wildcard_x=307; wildcard_y=735 ;;
+    startbeats) wildcard_x=115; wildcard_y=770 ;;
+    endbeats) wildcard_x=220; wildcard_y=770 ;;
+    lengthbeats) wildcard_x=335; wildcard_y=770 ;;
+    starttc) wildcard_x=125; wildcard_y=805 ;;
+    endtc) wildcard_x=218; wildcard_y=805 ;;
+    startframes) wildcard_x=122; wildcard_y=840 ;;
+    endframes) wildcard_x=238; wildcard_y=840 ;;
+    lengthframes) wildcard_x=360; wildcard_y=840 ;;
+    startseconds) wildcard_x=122; wildcard_y=875 ;;
+    endseconds) wildcard_x=238; wildcard_y=875 ;;
+    lengthseconds) wildcard_x=360; wildcard_y=875 ;;
+    lenhh) wildcard_x=156; wildcard_y=910 ;;
+    lenmm) wildcard_x=230; wildcard_y=910 ;;
+    lenss) wildcard_x=304; wildcard_y=910 ;;
+    lentt) wildcard_x=376; wildcard_y=910 ;;
+    format) wildcard_x=134; wildcard_y=945 ;;
+    samplerate) wildcard_x=215; wildcard_y=945 ;;
+    sampleratek) wildcard_x=324; wildcard_y=945 ;;
+    bitdepth) wildcard_x=436; wildcard_y=945 ;;
+    channels) wildcard_x=102; wildcard_y=980 ;;
+    fx) wildcard_x=90; wildcard_y=1013 ;;
+    fxdelimited) wildcard_x=143; wildcard_y=1013 ;;
+    trackslashes) wildcard_x=120; wildcard_y=1047 ;;
+    folders) wildcard_x=260; wildcard_y=1047 ;;
+    foldersdelimited) wildcard_x=350; wildcard_y=1047 ;;
+    parent) wildcard_x=470; wildcard_y=1047 ;;
     *) printf 'Unknown AAADAW_INSERT_WILDCARD token: %s\n' "$insert_wildcard" >&2; exit 2 ;;
   esac
+  if [[ "$scroll_wildcards" == 0 ]] && (( wildcard_y > 720 )); then
+    scroll_wildcards=$(((wildcard_y - 550) / 120))
+    [[ "$scroll_wildcards" == 0 ]] && scroll_wildcards=1
+  fi
+  if [[ "$scroll_wildcards" =~ ^[1-9][0-9]*$ ]]; then
+    "$xdotool" mousemove --sync 550 680 click --repeat "$scroll_wildcards" --delay 50 5
+    sleep 0.3
+  fi
   if [[ "$scroll_wildcards" =~ ^[1-9][0-9]*$ ]]; then
     wildcard_y=$((wildcard_y - 120 * scroll_wildcards))
   fi
   "$xdotool" mousemove --sync "$wildcard_x" "$wildcard_y" click 1
   sleep 0.4
+elif [[ "${AAADAW_OPEN_WILDCARDS:-0}" == 1 && "$scroll_wildcards" =~ ^[1-9][0-9]*$ ]]; then
+  # Allow a scrolled-picker screenshot without selecting a token and closing it.
+  "$xdotool" mousemove --sync 550 680 click --repeat "$scroll_wildcards" --delay 50 5
+  sleep 0.3
 fi
 xwininfo -id "$render_window" >"$run_dir/render-window.txt"
 import -display "$display" -window root "$output"

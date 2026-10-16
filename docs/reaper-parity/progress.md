@@ -1661,3 +1661,11 @@ App nextest 655/655、strict all-target App Clippy `-D warnings`、rustfmt、dif
 AAADAW 当前还没有可调 Master transport rate，故项目离线渲染始终 1x，新 token 目前展开为 `1.000`；回归验证默认输出和三位小数格式（含原厂 `1.059` 值）。58-token picker 与实际 `$playrate` 插入来自 Build ID `60ccc8ca9db91d93dbfe7e836ea33429d62e18e5`、SHA-256 `6792eab78a3cca8a93b4441796bdd98755dc490de899117467debd1a7f7a94b7` 的桌面二进制，截图哈希列在 fixture manifest。
 
 完整 `cargo xtest -p aaadaw` 1259/1259、`aaadaw` all-target strict Clippy `-D warnings`、rustfmt、diff 检查、capture 脚本语法及截图/原厂 WAV 哈希核对通过。非默认 Master rate、transport 控件/工程持久化、实时与离线变速播放尚未实现，不能视为 `$playrate` 全语义完成；其余 native wildcard、编辑插入与 preset/persistence 也保持开放，`RENDER-WILDCARDS-001`/P10 继续 `in_progress`。
+
+### 2026-10-16 Render system-information wildcards
+
+加入 `$user` 和 `$computer` 文件名通配符。AAADAW 按 `USER`、`LOGNAME`、`USERNAME` 顺序取用户值；计算机名按 `HOSTNAME`、`COMPUTERNAME` 顺序取值，并回退到 `/etc/hostname`。两者经过现有安全文件名展开逻辑。Render picker 新增 Computer information 分组，当前共 60 个可插入 token。
+
+Linux REAPER 7.82 / Default 7 使用隔离用户与 UTS hostname namespace、通用值 `FixtureUser` / `StudioComputer`，确认 `$user-$computer-$track` 预览和完成渲染均为 `FixtureUser-StudioComputer-Master.wav`；48 kHz stereo PCM24 输出为 48,000 帧。原厂预览、完成列表、WAV、SHA-256 和探针记入[原厂系统信息 fixture](../verification/reaper-parity/fixtures/render-wildcards-system-information-native.tsv)。最终 AAADAW 桌面二进制 Build ID `e4e98a5eb591f05c7bbe72bd2312655eee5e1023`、SHA-256 `c99bb944f49db61276b9fd224116f532530722a8ac54f06a5c8dade3b3987445` 已实际启动；完整 picker、滚动 picker、`$user` 与 `$computer` 实点插入截图及哈希登记在 [Wildcard 验证记录](../verification/reaper-parity/render-filename-patterns.md) 和 fixture manifest。
+
+最终源码验证通过：`cargo xtest -p aaadaw` 1260/1260、`cargo clippy -p aaadaw --all-targets -- -D warnings`、`cargo fmt --all -- --check`、`git diff --check`、截图脚本 `bash -n`，以及 native / AAADAW 图片与 WAV 哈希核验。`$playrate` 非默认传输速度和其余原厂变量仍未完成；`RENDER-WILDCARDS-001` / P10 持续 `in_progress`。
