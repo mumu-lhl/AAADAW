@@ -59,6 +59,7 @@ pub(crate) enum RenderFilenameWildcard {
     TrackNumber,
     TrackNameOrNumber,
     Item,
+    ItemNumber,
     Start,
     End,
     Length,
@@ -86,7 +87,7 @@ pub(crate) enum RenderFilenameWildcard {
 }
 
 impl RenderFilenameWildcard {
-    pub(crate) const ALL: [Self; 40] = [
+    pub(crate) const ALL: [Self; 41] = [
         Self::Project,
         Self::Title,
         Self::Author,
@@ -104,6 +105,7 @@ impl RenderFilenameWildcard {
         Self::Marker,
         Self::MarkerNumber,
         Self::Item,
+        Self::ItemNumber,
         Self::Start,
         Self::End,
         Self::Length,
@@ -147,6 +149,7 @@ impl RenderFilenameWildcard {
             Self::TrackNumber => "$tracknumber",
             Self::TrackNameOrNumber => "$tracknameornumber",
             Self::Item => "$item",
+            Self::ItemNumber => "$itemnumber",
             Self::Start => "$start",
             Self::End => "$end",
             Self::Length => "$length",
@@ -1074,15 +1077,19 @@ fn expand_render_filename_pattern(
                 String::new()
             }
         });
-    let item_name = match settings.source {
+    let item_index = match settings.source {
         aaadaw_app::ProjectWavRenderSource::SelectedAudioItem(item_id) => project
             .audio_items()
             .iter()
-            .position(|item| item.id() == item_id)
-            .map(|index| format!("item_{:02}", index + 1))
-            .unwrap_or_default(),
-        _ => String::new(),
+            .position(|item| item.id() == item_id),
+        _ => None,
     };
+    let item_name = item_index
+        .map(|index| format!("item_{:02}", index + 1))
+        .unwrap_or_default();
+    let item_number_text = item_index
+        .map(|index| format!("{:02}", index + 1))
+        .unwrap_or_default();
     let region = project.regions().iter().find(|region| {
         project.sample_at_tick(region.start_ticks()).ok() == Some(settings.start_sample)
             && project.sample_at_tick(region.end_ticks()).ok() == Some(settings.end_sample)
@@ -1239,6 +1246,7 @@ fn expand_render_filename_pattern(
             "marker" => result.push_str(marker.map_or("", |(_, marker)| marker.name())),
             "markernumber" => result.push_str(&marker_number_text),
             "item" => result.push_str(&item_name),
+            "itemnumber" => result.push_str(&item_number_text),
             "bpm" => result.push_str(&bpm_text),
             _ => {
                 result.push('$');
@@ -2984,6 +2992,7 @@ mod tests {
                 "$marker",
                 "$markernumber",
                 "$item",
+                "$itemnumber",
                 "$start",
                 "$end",
                 "$length",
@@ -3175,6 +3184,50 @@ mod tests {
             output[0].1,
             Path::new("/renders/Drums Kit_DRUMS KIT_drums kit_DrumsKit_Drums_Kit_Drums.wav")
         );
+    }
+
+    #[test]
+    fn render_filename_item_number_matches_the_selected_items_project_order() {
+        let mut project = Project::default();
+        project
+            .apply(DawAction::CreateTrack {
+                index: 0,
+                name: "Item number fixture".to_owned(),
+            })
+            .expect("item number fixture track should be created");
+        let track_id = project.tracks()[0].id();
+        for start_sample in [0, 48_000, 96_000] {
+            project
+                .apply(DawAction::InsertAudioItem {
+                    track_id,
+                    media_ref: "fixture.wav".to_owned(),
+                    start_sample,
+                    source_offset_samples: 0,
+                    length_samples: 48_000,
+                })
+                .expect("item number fixture should be inserted");
+        }
+        let item_id = project.audio_items()[1].id();
+        let settings = aaadaw_app::ProjectWavRenderSettings {
+            master_ceiling: aaadaw_engine::MasterOutputCeiling::default(),
+            export_options: aaadaw_app::WavExportOptions::default(),
+            output_sample_rate: 48_000,
+            output_channels: WavChannelCount::Stereo,
+            source: aaadaw_app::ProjectWavRenderSource::SelectedAudioItem(item_id),
+            start_sample: 48_000,
+            end_sample: 96_000,
+            tail_milliseconds: 0,
+            normalize_peak: false,
+            normalize_peak_target_centi_dbfs: 0,
+        };
+        let output = apply_render_filename_pattern(
+            vec![(settings, Path::new("/renders/base.wav").to_owned())],
+            "$item-$itemnumber",
+            &project,
+            Path::new("/projects/item-number.aaadaw"),
+        )
+        .expect("the selected item's identity and number should expand");
+        assert_eq!(output[0].1, Path::new("/renders/item_02-02.wav"));
     }
 
     #[test]

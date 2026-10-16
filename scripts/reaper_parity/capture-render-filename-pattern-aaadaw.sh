@@ -139,6 +139,7 @@ if [[ -n "$insert_wildcard" ]]; then
     marker) wildcard_x=381; wildcard_y=455 ;;
     markernumber) wildcard_x=497; wildcard_y=455 ;;
     item) wildcard_x=117; wildcard_y=490 ;;
+    itemnumber) wildcard_x=242; wildcard_y=490 ;;
     start) wildcard_x=126; wildcard_y=525 ;;
     end) wildcard_x=214; wildcard_y=525 ;;
     length) wildcard_x=307; wildcard_y=525 ;;
