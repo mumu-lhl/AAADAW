@@ -1,10 +1,14 @@
 version	7.82/linux-x86_64
 theme	Default_7.0.ReaperThemeZip
 fixture	track Piano; item 0.25-1.25 seconds; C4 note, CC1, pitch bend
-project_ppq_at_item_start	0.000000
-project_ppq_at_note_end	960.000000
-project_ppq_at_cc	240.000000
-project_ppq_at_pitch_bend	360.000000
+take_ppq_at_item_start	0.000000
+take_ppq_at_note_end	960.000000
+take_ppq_at_cc	240.000000
+take_ppq_at_pitch_bend	360.000000
+project_ppq_at_item_start	480
+project_ppq_at_note_end	1440
+project_ppq_at_cc	720
+project_ppq_at_pitch_bend	840
 export_action	40849
 export_defaults	Type 1; PPQN 960; tempo/meter/SMPTE/markers unchecked
 native_export_path	/tmp/aaadaw-midi-export-native-20261015.mid

@@ -1,6 +1,6 @@
 use aaadaw_core::{
     DawAction, FrameRate, MidiControllerData, MidiExportOptions, MidiFileType, MidiMarkerType,
-    MidiNoteData, MidiPitchBendData, Project, TempoCurve, encode_standard_midi,
+    MidiNoteData, MidiPitchBendData, Project, TempoCurve, TimeSignature, encode_standard_midi,
     encode_standard_midi_with_conductor_track_name,
 };
 
@@ -297,6 +297,39 @@ fn reaper_782_type_zero_export_matches_native_event_bytes() {
     assert_eq!(
         actual, native,
         "type-0 event ticks and bytes match REAPER 7.82 with metadata options off"
+    );
+}
+
+#[test]
+fn reaper_782_type_one_tempo_and_meter_changes_match_native_bytes() {
+    let mut project = native_midi_fixture_project();
+    project
+        .apply(DawAction::SetTempo {
+            start_tick: 3840,
+            bpm: 90.0,
+        })
+        .unwrap();
+    project
+        .apply(DawAction::SetTimeSignature {
+            start_tick: 3840,
+            signature: TimeSignature::new(3, 4).unwrap(),
+        })
+        .unwrap();
+    let mut options = MidiExportOptions::for_project(&project);
+    options.embed_tempo_and_time_signature = true;
+    let actual = encode_standard_midi_with_conductor_track_name(
+        &project,
+        options,
+        "midi-tempo-meter-native-20261016",
+    )
+    .unwrap();
+    let native = include_bytes!(
+        "../../../docs/verification/reaper-parity/fixtures/menu-export-midi-native-tempo-meter.mid"
+    );
+
+    assert_eq!(
+        actual, native,
+        "Type 1 tempo/meter events and MIDI tracks match REAPER 7.82"
     );
 }
 
