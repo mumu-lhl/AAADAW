@@ -1750,3 +1750,9 @@ AAADAW 音频剪贴板现在记录 Take 名称、Item 音量与 active Take 音�
 Linux REAPER 7.82 / Default 7 探针确认 Copy loop 后即使删除了来源轨道，Paste 仍按复制片段的相对偏移自动创建空白轨道；工程没有任何轨道时粘贴两项会创建两条空轨道，并选择新项目。实测结果与脚本 hash 记录在[destination-track fixture](../verification/reaper-parity/fixtures/item-copy-loop-track-growth-native.tsv)。本轮是 ReaScript 行为探针，没有新增截图。
 
 AAADAW Paste 现在计算缺少的目标轨道数，使用 Core 暴露的下一个单调 TrackId 构造 CreateTrack 操作，再与 looped-item 插入合并到同一 BatchTransaction；包括“只剩一轨”和“零轨”两种情况。一个回归覆盖删除来源轨道后的缺口补建、零轨道粘贴，以及 Undo/Redo 同时移除/恢复新轨道与素材。`ITEM-AUDIO-COPYLOOP-001` 仍为 `in_progress`：非 1x Take 速率映射、跨工程媒体剪贴板、跨既有 source-loop 边界复制和完整视觉/焦点对照待完成。
+
+### 2026-10-16 Arrange hover target after viewport movement
+
+提交 `fb83d68` 修复 Main actions 40528/40529/40530 的 Arrangement hover target 在视图变化后失效：AAADAW 记录鼠标在 timeline 内容坐标中的位置，在滚轮/中键水平 pan、缩放、同步垂直滚动及轨道行布局重建后重新命中 item。新增两个回归验证水平 pan 后命中相邻 item、zoom 后进入空隙，以及垂直滚动后从一轨目标切换到另一轨目标。
+
+`cargo test --quiet -p aaadaw --bin aaadaw` 通过 674/674；Core/App all-target Clippy `-D warnings`、`cargo fmt --all -- --check`、`git diff --check` 和 parity CSV 结构校验通过。重建桌面二进制 Build ID `3a3392dad282d4b91056360ba95627f8cf7d1e61` 在隔离 Xvfb :96 渲染实际 1280×800 窗口；启动图与已跟踪基线像素完全相同。该截图只是启动/render smoke，不是 hover 功能状态截图；功能行为由 App timeline regressions 验证。`ITEM-SELECT-006/007/008` 继续 `in_progress`，因为 REAPER 原厂 Action List 焦点、无目标启用条件及 active item/anchor 语义尚未实测。
