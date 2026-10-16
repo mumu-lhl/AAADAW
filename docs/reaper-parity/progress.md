@@ -1755,7 +1755,7 @@ AAADAW Paste 现在计算缺少的目标轨道数，使用 Core 暴露的下一�
 
 提交 `fb83d68` 修复 Main actions 40528/40529/40530 的 Arrangement hover target 在视图变化后失效：AAADAW 记录鼠标在 timeline 内容坐标中的位置，在滚轮/中键水平 pan、缩放、同步垂直滚动及轨道行布局重建后重新命中 item。新增两个回归验证水平 pan 后命中相邻 item、zoom 后进入空隙，以及垂直滚动后从一轨目标切换到另一轨目标。
 
-`cargo test --quiet -p aaadaw --bin aaadaw` 通过 674/674；Core/App all-target Clippy `-D warnings`、`cargo fmt --all -- --check`、`git diff --check` 和 parity CSV 结构校验通过。重建桌面二进制 Build ID `3a3392dad282d4b91056360ba95627f8cf7d1e61` 在隔离 Xvfb :96 渲染实际 1280×800 窗口；启动图与已跟踪基线像素完全相同。该截图只是启动/render smoke，不是 hover 功能状态截图；功能行为由 App timeline regressions 验证。`ITEM-SELECT-006/007/008` 继续 `in_progress`，因为 REAPER 原厂 Action List 焦点、无目标启用条件及 active item/anchor 语义尚未实测。
+`cargo test --quiet -p aaadaw --bin aaadaw` 通过 674/674；Core/App all-target Clippy `-D warnings`、`cargo fmt --all -- --check`、`git diff --check` 和 parity CSV 结构校验通过。重建桌面二进制 Build ID `3a3392dad282d4b91056360ba95627f8cf7d1e61` 在隔离 Xvfb :96 渲染实际 1280×800 窗口；启动图与已跟踪基线像素完全相同。该截图只是启动/render smoke，不是 hover 功能状态截图；功能行为由 App timeline regressions 验证。此处记录的 Action List 无目标启用与 range anchor 未验证状态已被下文 2026-10-16 原厂实测取代；primary active item 与 track-focus 仍待确认，`ITEM-SELECT-006/007/008` 保持 `in_progress`。
 
 ### 2026-10-16 Main action 40528 empty-lane and Action List target behavior
 
@@ -1763,10 +1763,16 @@ REAPER 7.82 / Default 7 原生指针探针补齐 40528 的无目标语义：A1 �
 
 AAADAW 40528 现在保持可运行，在 track item lane 的空白处清空选择；没有有效 item lane target 时 no-op。空白清除通过应用级 item-selection history 可撤销，且不改变工程内容修订或 Project Undo 栈。真实桌面回归选中 Main 40528 后把鼠标停在第一条 MIDI item 并按 Enter，屏幕显示 item 高亮且 Action List Run 可用；当前二进制 Build ID `539e59063075287e32c116db4093aa10c664db38`、SHA-256 和 1280×800 截图记录在 [AAADAW fixture](../verification/reaper-parity/fixtures/item-hover-actions-aaadaw.tsv)。
 
-定向回归 1/1、AAADAW 主测试套件 674/674、`cargo clippy -p aaadaw -p aaadaw-app --all-targets -- -D warnings`、fmt、diff 和 parity CSV（102 项、15 列、唯一 ID）校验通过。`ITEM-SELECT-006` 继续 `in_progress`：40528 以外的多选 anchor/active item 细节和 40529/40530 的完整 Action List 焦点行为仍需原厂探测；其余 parity matrix 状态不变。
+定向回归 1/1、AAADAW 主测试套件 674/674、`cargo clippy -p aaadaw -p aaadaw-app --all-targets -- -D warnings`、fmt、diff 和 parity CSV（102 项、15 列、唯一 ID）校验通过。该次提交时的 40529/40530 anchor 与 Action List availability 未验证判断已由下文原厂探针更新；primary active item 和 track-focus 仍需探测。
 
 ### 2026-10-16 Main actions 40529/40530：无目标时 Action List 仍可运行
 
 REAPER 7.82 / Default 7 在零轨道、零 item 工程中分别选中 40529、40530 后，两项 Action List 的 Run 按钮都可用；点击后工程仍为空。原厂逐步记录和前后截图见 [availability TSV 与原厂截图](../verification/reaper-parity/fixtures/item-hover-actions-availability-native.tsv)。这修正了上文早期实现中“无 hover target 时禁用”的判断：AAADAW 现对 40528/40529/40530 始终报告可运行，由目标语义决定效果，无 target 时 40529/40530 no-op。
 
-AAADAW 的 40529/40530 回归现在还检查 Action List 搜索结果始终 enabled，并在无 target 时 dispatch 后保留选择、修订号和 Project Undo/redo 状态。用当前桌面二进制在空工程中各运行一次，两项 Run 均保持可用且工程保持空；Build ID、binary SHA 与实窗截图记录在 [AAADAW availability fixture](../verification/reaper-parity/fixtures/item-hover-actions-aaadaw-availability.tsv)。`cargo test --quiet -p aaadaw --bin aaadaw` 674/674、严格 all-target Clippy、fmt 和 diff 检查均通过。`ITEM-SELECT-007/008` 继续 `in_progress`：多个已选 item 时 active item/anchor 的原厂语义尚未探测；40529/40530 与 Action List 焦点组合也仍需覆盖。
+AAADAW 的 40529/40530 回归现在还检查 Action List 搜索结果始终 enabled，并在无 target 时 dispatch 后保留选择、修订号和 Project Undo/redo 状态。用当前桌面二进制在空工程中各运行一次，两项 Run 均保持可用且工程保持空；Build ID、binary SHA 与实窗截图记录在 [AAADAW availability fixture](../verification/reaper-parity/fixtures/item-hover-actions-aaadaw-availability.tsv)。`cargo test --quiet -p aaadaw --bin aaadaw` 674/674、严格 all-target Clippy、fmt 和 diff 检查均通过。此处记录的 Action List 无目标启用状态已完成；随后探针也确认了 40529/40530 的 range anchor 语义。`ITEM-SELECT-007/008` 仍 `in_progress`，因为 primary active item、track focus，以及 Action List Run 与有效 hover target 的组合仍需覆盖。
+
+### 2026-10-16 Main actions 40529/40530：保留 REAPER 的 range-selection anchor
+
+为读出 REAPER 内部没有通过 ReaScript API 暴露的 range anchor，运行 [原厂探针](../scripts/reaper_parity/probe-item-hover-selection-anchor.lua) 后以真实鼠标输入做后续 Shift-click。使用全新 `-cfgfile` 配置，只复制 Default 7 主题，没有自定义 keymap、mouse map 或第三方扩展。基准中点击 A1 后 Shift-click B2 选择 A1/B1/B2；恢复 A1 后运行 40529 将 A2 加入，再对 B2 做相同 Shift-click 得到 A1/A2/B1/B2，说明动作保留原 A1 anchor。40530 加入 A2 后结果相同；先加入再将非锚点 A2 移除后仍得到 A1/B1/B2。单选 A2 后用 40530 移除唯一已选 item，下一次 Shift-click B2 得到 A2/B2，说明即使 anchor item 暂时不在选择集合中，原厂仍保留它。每个步骤的所选 IDs、action、指针坐标、REAPER project-state count 和 Undo label 见 [item-hover anchor TSV](../verification/reaper-parity/fixtures/item-hover-anchor-native.tsv)，原厂 Default 7 实窗截图记录基准选择与 40529 前后的高亮。
+
+AAADAW 的 40529/40530 dispatch 现在保留现有 `selection_anchor`；Primary `selected_item` 仍更新为新增目标，并在取消选择当前 primary 时按现有选择回退。回归检查覆盖 Add/Toggle 添加、移除非锚点、移除唯一锚点后的空选择，以及无 target no-op；还检查 project revision 和 Project Undo/redo 不变。`ITEM-SELECT-007/008` 的 range-anchor 维度已由 REAPER 实窗与 AAADAW 状态测试覆盖，但 primary active-item 和 track-focus 行为尚未验证，因此两行仍是 `in_progress`。

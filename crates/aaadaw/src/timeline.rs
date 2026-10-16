@@ -1162,6 +1162,11 @@ impl TimelineState {
         self.selection_anchor = None;
     }
 
+    #[cfg(test)]
+    pub(crate) fn selection_anchor(&self) -> Option<ItemId> {
+        self.selection_anchor
+    }
+
     pub(crate) fn select_items(&mut self, items: Vec<(ItemId, TrackId)>) {
         self.selected_items = items.iter().map(|(item_id, _)| *item_id).collect();
         self.selected_item = items.last().map(|(item_id, _)| *item_id);
@@ -1829,12 +1834,19 @@ impl TimelineState {
                     self.delete_focus = DeleteFocusTarget::Arrange;
                     self.selected_volume_automation_point = None;
                     self.selected_fx_automation_point = None;
+                    let selection_anchor = self.selection_anchor;
                     let (additive, preserve_existing_for_drag) = match mode {
                         HoveredItemSelectionMode::Replace => (false, false),
                         HoveredItemSelectionMode::Add => (true, true),
                         HoveredItemSelectionMode::Toggle => (true, false),
                     };
                     self.select_item(Some(item_id), additive, false, preserve_existing_for_drag);
+                    if matches!(
+                        mode,
+                        HoveredItemSelectionMode::Add | HoveredItemSelectionMode::Toggle
+                    ) {
+                        self.selection_anchor = selection_anchor;
+                    }
                 } else if mode == HoveredItemSelectionMode::Replace
                     && self.pointer_is_over_item_lane()
                 {
