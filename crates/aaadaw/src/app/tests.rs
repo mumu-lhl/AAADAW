@@ -15634,7 +15634,7 @@ fn item_snap_actions_match_reaper_swing_points_for_audio_and_midi() {
         let selected_tracks = app.timeline.selected_tracks.clone();
         let edit_cursor = app.timeline.edit_cursor_tick;
         let revision = app.revision;
-        app.snap_swing_enabled = true;
+        app.timeline.set_snap_swing_enabled(true);
         let _ = app.update(Message::SnapSwingAmountChanged(swing));
         app.timeline.snap_enabled = false;
         app.action_list
@@ -15719,9 +15719,9 @@ fn snap_grid_settings_command_is_reusable_and_clamps_swing_amount() {
     assert_eq!(app.snap_grid_settings_window_id, Some(window_id));
 
     let _ = app.update(Message::ExecuteCommand(CommandId::ToggleSwingGrid));
-    assert!(app.snap_swing_enabled);
+    assert!(app.timeline.snap_swing_enabled());
     let _ = app.update(Message::SnapSwingAmountChanged(150));
-    assert_eq!(app.snap_swing_amount_percent.0, 100);
+    assert_eq!(app.timeline.snap_swing_amount_percent(), 100);
     let _ = app.update(Message::WindowClosed(window_id));
     assert_eq!(app.snap_grid_settings_window_id, None);
 }

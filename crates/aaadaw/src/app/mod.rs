@@ -303,15 +303,6 @@ enum ShellProfile {
     Touch,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct SnapSwingAmount(i16);
-
-impl Default for SnapSwingAmount {
-    fn default() -> Self {
-        Self(50)
-    }
-}
-
 impl Default for ShellProfile {
     fn default() -> Self {
         if cfg!(target_os = "android") {
@@ -414,8 +405,6 @@ struct App {
     project_settings_window_id: Option<iced::window::Id>,
     project_settings: Option<project_settings::Draft>,
     snap_grid_settings_window_id: Option<iced::window::Id>,
-    snap_swing_enabled: bool,
-    snap_swing_amount_percent: SnapSwingAmount,
     routing_window_id: Option<iced::window::Id>,
     routing_track_id: Option<TrackId>,
     routing_send_drafts: HashMap<aaadaw_core::SendId, routing::SendDraft>,
@@ -2509,10 +2498,12 @@ impl App {
             Message::CloseSnapGridSettings => {
                 task = self.close_snap_grid_settings();
             }
-            Message::SnapSwingGridChanged(enabled) => self.snap_swing_enabled = enabled,
-            Message::ToggleSnapSwingGrid => self.snap_swing_enabled = !self.snap_swing_enabled,
+            Message::SnapSwingGridChanged(enabled) => {
+                self.timeline.set_snap_swing_enabled(enabled);
+            }
+            Message::ToggleSnapSwingGrid => self.timeline.toggle_snap_swing(),
             Message::SnapSwingAmountChanged(amount) => {
-                self.snap_swing_amount_percent = SnapSwingAmount(amount.clamp(-100, 100));
+                self.timeline.set_snap_swing_amount_percent(amount);
             }
             Message::ApplyProjectSettings => task = self.apply_project_settings(),
             Message::SaveProjectSettingsAsDefault => task = self.save_project_settings_as_default(),
@@ -11467,11 +11458,7 @@ impl App {
                     item.start_sample(),
                     grid_ticks,
                     direction,
-                    if self.snap_swing_enabled {
-                        self.snap_swing_amount_percent.0
-                    } else {
-                        0
-                    },
+                    self.timeline.active_snap_swing_amount_percent(),
                 ) {
                     Ok(target) => target,
                     Err(error) => {
@@ -11499,11 +11486,7 @@ impl App {
                     item.start_tick(),
                     grid_ticks,
                     direction,
-                    if self.snap_swing_enabled {
-                        self.snap_swing_amount_percent.0
-                    } else {
-                        0
-                    },
+                    self.timeline.active_snap_swing_amount_percent(),
                 ) {
                     Ok(target_tick) => target_tick,
                     Err(error) => {

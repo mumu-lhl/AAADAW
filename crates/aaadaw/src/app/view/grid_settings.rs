@@ -3,13 +3,13 @@ use iced::widget::{button, checkbox, column, container, row, slider, text};
 use iced::{Alignment, Element, Length};
 
 pub(super) fn view(app: &App) -> Element<'_, Message> {
-    let swing = checkbox(app.snap_swing_enabled)
+    let swing = checkbox(app.timeline.snap_swing_enabled())
         .label("Swing grid")
         .size(14)
         .spacing(7)
         .text_size(13)
         .on_toggle(Message::SnapSwingGridChanged);
-    let amount = app.snap_swing_amount_percent.0;
+    let amount = app.timeline.snap_swing_amount_percent();
     let swing_amount = row![
         text("Swing amount").size(13).width(Length::Fixed(110.0)),
         slider(-100.0..=100.0, f32::from(amount), |value| {

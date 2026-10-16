@@ -1,6 +1,6 @@
 use super::super::{App, MIDI_EDITOR_KEY_WIDTH, Message, MidiEditorLane, MidiEditorTool};
 use super::tokens::{PANEL_PADDING, ROW_GAP, SPACING_LG, SPACING_XS, TOUCH_TARGET_MIN};
-use crate::timeline::{SnapGrid, TimelineEvent};
+use crate::timeline::{SnapGrid, TimelineEvent, snap_tick_to_grid};
 use aaadaw_core::{
     ItemId, MidiControllerData, MidiItem, MidiNoteData, MidiPitchBendData, NoteId, Project,
 };
@@ -198,6 +198,7 @@ fn visible_edit_cursor_tick(app: &App) -> u64 {
 struct MidiSnap {
     grid: SnapGrid,
     enabled: bool,
+    swing_amount_percent: i16,
     cursor_tick: u64,
     context_menu_epoch: u64,
 }
@@ -207,6 +208,7 @@ impl Default for MidiSnap {
         Self {
             grid: SnapGrid::Sixteenth,
             enabled: true,
+            swing_amount_percent: 0,
             cursor_tick: 0,
             context_menu_epoch: 0,
         }
@@ -432,6 +434,7 @@ fn view_with_profile(app: &App, touch_targets: bool) -> Element<'_, Message> {
     let midi_snap = MidiSnap {
         grid: app.timeline.midi_editor_snap_grid,
         enabled: app.timeline.snap_enabled,
+        swing_amount_percent: app.timeline.active_snap_swing_amount_percent(),
         cursor_tick: visible_edit_cursor_tick(app),
         context_menu_epoch: app.midi_expression_context_menu_epoch,
     };
@@ -450,6 +453,7 @@ fn view_with_profile(app: &App, touch_targets: bool) -> Element<'_, Message> {
         snap: MidiSnap {
             grid: app.timeline.midi_editor_snap_grid,
             enabled: app.timeline.snap_enabled,
+            swing_amount_percent: app.timeline.active_snap_swing_amount_percent(),
             cursor_tick: visible_edit_cursor_tick(app),
             context_menu_epoch: app.midi_expression_context_menu_epoch,
         },
@@ -694,6 +698,7 @@ fn controller_lane<'a>(
         snap: MidiSnap {
             grid: app.timeline.midi_editor_snap_grid,
             enabled: app.timeline.snap_enabled,
+            swing_amount_percent: app.timeline.active_snap_swing_amount_percent(),
             cursor_tick: visible_edit_cursor_tick(app),
             context_menu_epoch: app.midi_expression_context_menu_epoch,
         },
@@ -721,6 +726,7 @@ fn pitch_bend_lane<'a>(
         snap: MidiSnap {
             grid: app.timeline.midi_editor_snap_grid,
             enabled: app.timeline.snap_enabled,
+            swing_amount_percent: app.timeline.active_snap_swing_amount_percent(),
             cursor_tick: visible_edit_cursor_tick(app),
             context_menu_epoch: app.midi_expression_context_menu_epoch,
         },
@@ -1035,10 +1041,8 @@ impl canvas::Program<Message> for ControllerLane<'_> {
         let mut frame = canvas::Frame::new(renderer, bounds.size());
         frame.fill_rectangle(Point::ORIGIN, bounds.size(), Color::from_rgb8(27, 31, 34));
         let mapping = self.mapping();
-        let grid_ticks = mapping.grid_ticks();
         let end_tick = mapping.tick_at_x(bounds.width);
-        let mut tick = self.origin_tick / grid_ticks * grid_ticks;
-        while tick <= end_tick.saturating_add(grid_ticks) {
+        for tick in mapping.grid_tick_positions(self.origin_tick, end_tick) {
             let x = mapping.x_at_tick(tick);
             if (0.0..=bounds.width).contains(&x) {
                 let path = canvas::Path::line(Point::new(x, 0.0), Point::new(x, bounds.height));
@@ -1047,10 +1051,6 @@ impl canvas::Program<Message> for ControllerLane<'_> {
                     canvas::Stroke::default().with_color(Color::from_rgb8(43, 48, 51)),
                 );
             }
-            if tick > u64::MAX - grid_ticks {
-                break;
-            }
-            tick += grid_ticks;
         }
         draw_playhead_line(
             &mut frame,
@@ -1459,10 +1459,8 @@ impl canvas::Program<Message> for PitchBendLane<'_> {
         let mut frame = canvas::Frame::new(renderer, bounds.size());
         frame.fill_rectangle(Point::ORIGIN, bounds.size(), Color::from_rgb8(27, 31, 34));
         let mapping = self.mapping();
-        let grid_ticks = mapping.grid_ticks();
         let end_tick = mapping.tick_at_x(bounds.width);
-        let mut tick = self.origin_tick / grid_ticks * grid_ticks;
-        while tick <= end_tick.saturating_add(grid_ticks) {
+        for tick in mapping.grid_tick_positions(self.origin_tick, end_tick) {
             let x = mapping.x_at_tick(tick);
             if (0.0..=bounds.width).contains(&x) {
                 let path = canvas::Path::line(Point::new(x, 0.0), Point::new(x, bounds.height));
@@ -1471,10 +1469,6 @@ impl canvas::Program<Message> for PitchBendLane<'_> {
                     canvas::Stroke::default().with_color(Color::from_rgb8(43, 48, 51)),
                 );
             }
-            if tick > u64::MAX - grid_ticks {
-                break;
-            }
-            tick += grid_ticks;
         }
         draw_playhead_line(
             &mut frame,
@@ -1687,12 +1681,46 @@ impl RollMapping {
             .unwrap_or_else(|| (self.ticks_per_beat / 4).max(1))
     }
 
+    fn grid_tick_positions(self, start_tick: u64, end_tick: u64) -> Vec<u64> {
+        let grid_ticks = self.grid_ticks();
+        let first_index = (start_tick / grid_ticks).saturating_sub(2);
+        let last_index = (end_tick / grid_ticks).saturating_add(3);
+        let swing_amount_percent = self.snap.swing_amount_percent.clamp(-100, 100);
+        let mut positions = Vec::new();
+        for index in first_index..=last_index {
+            let numerator = i128::from(index) * i128::from(grid_ticks) * 200
+                + if index % 2 == 1 {
+                    i128::from(grid_ticks) * i128::from(swing_amount_percent)
+                } else {
+                    0
+                };
+            if numerator < 0 {
+                continue;
+            }
+            let tick = ((numerator + 100) / 200).min(i128::from(u64::MAX)) as u64;
+            if tick <= end_tick.saturating_add(grid_ticks)
+                && tick.saturating_add(grid_ticks) >= start_tick
+            {
+                positions.push(tick);
+            }
+        }
+        positions.sort_unstable();
+        positions.dedup();
+        positions
+    }
+
     fn snap_tick(self, tick: u64, ignore_snap: bool) -> u64 {
         let grid_ticks = self
             .snap
             .grid
             .tick_interval(self.ticks_per_beat.min(u64::from(u32::MAX)) as u32);
-        snap_tick(tick, grid_ticks, self.snap.enabled, ignore_snap)
+        snap_tick_to_grid(
+            tick,
+            grid_ticks,
+            self.snap.enabled,
+            ignore_snap,
+            self.snap.swing_amount_percent,
+        )
     }
 
     fn tick_at_x(self, x: f32) -> u64 {
@@ -2359,9 +2387,7 @@ impl canvas::Program<Message> for PianoRoll<'_> {
             Color::from_rgb8(37, 42, 45),
         );
         let end_tick = mapping.tick_at_x((bounds.width - KEY_WIDTH).max(0.0));
-        let grid_ticks = mapping.grid_ticks();
-        let mut tick = self.origin_tick / grid_ticks * grid_ticks;
-        while tick <= end_tick.saturating_add(grid_ticks) {
+        for tick in mapping.grid_tick_positions(self.origin_tick, end_tick) {
             let x = grid_left + mapping.x_at_tick(tick);
             if x >= grid_left && x <= bounds.width {
                 let project_tick = self.item.start_tick().saturating_add(tick);
@@ -2408,11 +2434,6 @@ impl canvas::Program<Message> for PianoRoll<'_> {
                     });
                 }
             }
-            let next = tick.saturating_add(grid_ticks);
-            if next <= tick {
-                break;
-            }
-            tick = next;
         }
         for row in 0..self.pitch_rows {
             let pitch = self.high_pitch.saturating_sub(row);
@@ -2745,7 +2766,19 @@ impl PianoRoll<'_> {
         let ticks = (f64::from(point.x - drag.start.x) / f64::from(self.pixels_per_beat)
             * self.ticks_per_beat as f64)
             .round() as i64;
-        let delta_tick = snap_delta(ticks, self.mapping(), ignore_snap);
+        let anchor_tick = drag
+            .notes
+            .iter()
+            .find(|(note_id, _)| *note_id == drag.anchor_note_id)
+            .map(|(_, note)| {
+                if drag.resize {
+                    note.tick.saturating_add(note.duration)
+                } else {
+                    note.tick
+                }
+            })
+            .unwrap_or_default();
+        let delta_tick = snap_delta(ticks, anchor_tick, self.mapping(), ignore_snap);
         if drag.velocity {
             drag.delta_velocity = velocity_delta(drag.start.y, point.y);
         } else if drag.resize {
@@ -2975,23 +3008,22 @@ impl PianoRoll<'_> {
     }
 }
 
-fn snap_tick(tick: u64, grid_ticks: Option<u64>, enabled: bool, ignore_snap: bool) -> u64 {
-    let Some(grid_ticks) = grid_ticks.filter(|grid| enabled && !ignore_snap && *grid > 0) else {
-        return tick;
-    };
-    (tick.saturating_add(grid_ticks / 2) / grid_ticks) * grid_ticks
+fn snap_delta(delta_ticks: i64, anchor_tick: u64, mapping: RollMapping, ignore_snap: bool) -> i64 {
+    if !mapping.snap.enabled || ignore_snap {
+        return delta_ticks;
+    }
+    let target_tick = i128::from(anchor_tick) + i128::from(delta_ticks);
+    if !(0..=i128::from(u64::MAX)).contains(&target_tick) {
+        return delta_ticks;
+    }
+    let snapped_tick = mapping.snap_tick(target_tick as u64, false);
+    (i128::from(snapped_tick) - i128::from(anchor_tick))
+        .clamp(i128::from(i64::MIN), i128::from(i64::MAX)) as i64
 }
 
-fn snap_delta(delta_ticks: i64, mapping: RollMapping, ignore_snap: bool) -> i64 {
-    let Some(grid_ticks) = mapping
-        .snap
-        .grid
-        .tick_interval(mapping.ticks_per_beat.min(u64::from(u32::MAX)) as u32)
-        .filter(|_| mapping.snap.enabled && !ignore_snap)
-    else {
-        return delta_ticks;
-    };
-    (delta_ticks as f64 / grid_ticks as f64).round() as i64 * grid_ticks as i64
+#[cfg(test)]
+fn snap_tick(tick: u64, grid_ticks: Option<u64>, enabled: bool, ignore_snap: bool) -> u64 {
+    snap_tick_to_grid(tick, grid_ticks, enabled, ignore_snap, 0)
 }
 
 fn note_data(note: &aaadaw_core::MidiNote) -> MidiNoteData {
@@ -4367,8 +4399,8 @@ mod tests {
         assert_eq!(mapping.grid_ticks(), 320);
         assert_eq!(mapping.snap_tick(190, false), 320);
         assert_eq!(mapping.snap_tick(190, true), 190);
-        assert_eq!(snap_delta(190, mapping, false), 320);
-        assert_eq!(snap_delta(190, mapping, true), 190);
+        assert_eq!(snap_delta(190, 0, mapping, false), 320);
+        assert_eq!(snap_delta(190, 0, mapping, true), 190);
 
         let disabled = RollMapping {
             pitch_rows: PITCH_COUNT,
@@ -4380,7 +4412,51 @@ mod tests {
             ..mapping
         };
         assert_eq!(disabled.snap_tick(190, false), 190);
-        assert_eq!(snap_delta(190, disabled, false), 190);
+        assert_eq!(snap_delta(190, 0, disabled, false), 190);
+    }
+
+    #[test]
+    fn midi_note_move_snaps_the_anchor_onto_swing_grid_points() {
+        let mapping = RollMapping {
+            pitch_rows: PITCH_COUNT,
+            pitch_row_height: NOTE_ROW_HEIGHT,
+            origin_tick: 0,
+            pixels_per_beat: 96.0,
+            ticks_per_beat: 960,
+            high_pitch: 60,
+            snap: MidiSnap {
+                grid: SnapGrid::Sixteenth,
+                enabled: true,
+                swing_amount_percent: 50,
+                ..MidiSnap::default()
+            },
+        };
+
+        assert_eq!(snap_delta(299, 0, mapping, false), 300);
+        assert_eq!(snap_delta(179, 300, mapping, false), 180);
+        assert_eq!(mapping.snap_tick(150, false), 0);
+    }
+
+    #[test]
+    fn midi_editor_draw_grid_uses_the_same_swing_points_as_note_snapping() {
+        let mapping = RollMapping {
+            pitch_rows: PITCH_COUNT,
+            pitch_row_height: NOTE_ROW_HEIGHT,
+            origin_tick: 0,
+            pixels_per_beat: 96.0,
+            ticks_per_beat: 960,
+            high_pitch: 60,
+            snap: MidiSnap {
+                grid: SnapGrid::Sixteenth,
+                enabled: true,
+                swing_amount_percent: 50,
+                ..MidiSnap::default()
+            },
+        };
+        let positions = mapping.grid_tick_positions(0, 600);
+        assert!(positions.contains(&300));
+        assert!(positions.contains(&480));
+        assert!(!positions.contains(&240));
     }
 
     #[test]

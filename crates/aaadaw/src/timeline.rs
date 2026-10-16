@@ -510,6 +510,32 @@ struct TimelineCache {
     track_ids: Arc<[TrackId]>,
     ppq: u32,
     snap_grid_ticks: Option<u64>,
+    swing_grid: SwingGridSettings,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct SwingGridSettings {
+    enabled: bool,
+    amount_percent: i16,
+}
+
+impl Default for SwingGridSettings {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            amount_percent: 50,
+        }
+    }
+}
+
+impl SwingGridSettings {
+    fn active_amount_percent(self) -> i16 {
+        if self.enabled {
+            self.amount_percent.clamp(-100, 100)
+        } else {
+            0
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -2548,10 +2574,15 @@ impl TimelineState {
         let target_start = i128::from(anchor.start_tick) + pointer_delta_ticks;
         let snapped_delta = if self.snap_enabled && !ignore_snap {
             self.cache.snap_grid_ticks.map(|grid| {
-                let grid = i128::from(grid);
-                if target_start >= 0 {
-                    let snapped_start = ((target_start + grid / 2) / grid) * grid;
-                    snapped_start - i128::from(anchor.start_tick)
+                if (0..=i128::from(u64::MAX)).contains(&target_start) {
+                    let snapped_start = snap_tick_to_grid(
+                        target_start as u64,
+                        Some(grid),
+                        true,
+                        false,
+                        self.cache.swing_grid.active_amount_percent(),
+                    );
+                    i128::from(snapped_start) - i128::from(anchor.start_tick)
                 } else {
                     pointer_delta_ticks
                 }
@@ -2603,6 +2634,7 @@ impl TimelineState {
             self.cache.snap_grid_ticks,
             self.snap_enabled,
             ignore_snap,
+            self.cache.swing_grid.active_amount_percent(),
         );
         let (start_tick, end_tick) = match edge {
             ItemTrimEdge::Start => (target_tick, item.end_tick),
@@ -2649,6 +2681,30 @@ impl TimelineState {
 
     pub(crate) fn has_snap_grid(&self) -> bool {
         self.cache.snap_grid_ticks.is_some()
+    }
+
+    pub(crate) fn snap_swing_enabled(&self) -> bool {
+        self.cache.swing_grid.enabled
+    }
+
+    pub(crate) fn snap_swing_amount_percent(&self) -> i16 {
+        self.cache.swing_grid.amount_percent
+    }
+
+    pub(crate) fn active_snap_swing_amount_percent(&self) -> i16 {
+        self.cache.swing_grid.active_amount_percent()
+    }
+
+    pub(crate) fn set_snap_swing_enabled(&mut self, enabled: bool) {
+        self.cache.swing_grid.enabled = enabled;
+    }
+
+    pub(crate) fn toggle_snap_swing(&mut self) {
+        self.cache.swing_grid.enabled = !self.cache.swing_grid.enabled;
+    }
+
+    pub(crate) fn set_snap_swing_amount_percent(&mut self, amount_percent: i16) {
+        self.cache.swing_grid.amount_percent = amount_percent.clamp(-100, 100);
     }
 
     pub(crate) fn midi_editor_has_snap_grid(&self) -> bool {
@@ -3175,6 +3231,7 @@ impl TimelineProgram<'_> {
             self.cache.snap_grid_ticks,
             self.snap_enabled,
             ignore_snap,
+            self.cache.swing_grid.active_amount_percent(),
         );
         let sample = self.project.sample_at_tick(tick).ok()?;
         if let Some((track_id, chain_index, parameter_id)) = drag.fx_target {
@@ -3782,6 +3839,7 @@ impl shader::Program<crate::app::Message> for TimelineProgram<'_> {
                             self.cache.snap_grid_ticks,
                             self.snap_enabled,
                             state.modifiers.shift(),
+                            self.cache.swing_grid.active_amount_percent(),
                         );
                         let (start_tick, end_tick) = drag.range_at(active_tick);
                         Some(
@@ -3812,6 +3870,7 @@ impl shader::Program<crate::app::Message> for TimelineProgram<'_> {
                             self.cache.snap_grid_ticks,
                             self.snap_enabled,
                             state.modifiers.shift(),
+                            self.cache.swing_grid.active_amount_percent(),
                         ),
                         deselect_items_on_click: false,
                         pointer_start_x: position.x,
@@ -3854,6 +3913,7 @@ impl shader::Program<crate::app::Message> for TimelineProgram<'_> {
                     self.cache.snap_grid_ticks,
                     self.snap_enabled,
                     state.modifiers.shift(),
+                    self.cache.swing_grid.active_amount_percent(),
                 );
                 if let Some(track) = self.project.tracks().get(track_index)
                     && let Some(band) = self.fx_lane_resize_target(track.id(), row_y)
@@ -3909,6 +3969,7 @@ impl shader::Program<crate::app::Message> for TimelineProgram<'_> {
                         self.cache.snap_grid_ticks,
                         self.snap_enabled,
                         state.modifiers.shift(),
+                        self.cache.swing_grid.active_amount_percent(),
                     );
                     let Ok(sample) = self.project.sample_at_tick(snapped_tick) else {
                         return None;
@@ -4069,6 +4130,7 @@ impl shader::Program<crate::app::Message> for TimelineProgram<'_> {
                             self.cache.snap_grid_ticks,
                             self.snap_enabled,
                             state.modifiers.shift(),
+                            self.cache.swing_grid.active_amount_percent(),
                         ),
                         deselect_items_on_click: true,
                         pointer_start_x: position.x,
@@ -4097,6 +4159,7 @@ impl shader::Program<crate::app::Message> for TimelineProgram<'_> {
                         self.cache.snap_grid_ticks,
                         self.snap_enabled,
                         state.modifiers.shift(),
+                        self.cache.swing_grid.active_amount_percent(),
                     );
                     let sample = self.project.sample_at_tick(tick).ok()?;
                     if let Some((track_id, chain_index, parameter_id)) = drag.fx_target {
@@ -4946,6 +5009,7 @@ impl canvas::Program<crate::app::Message> for RulerProgram<'_> {
                         self.state.cache.snap_grid_ticks,
                         self.state.snap_enabled,
                         false,
+                        self.state.cache.swing_grid.active_amount_percent(),
                     );
                     if drag.target != LoopPointDragTarget::SetPoint {
                         drag.preview = loop_points_at_drag_target(
@@ -4979,6 +5043,7 @@ impl canvas::Program<crate::app::Message> for RulerProgram<'_> {
                         self.state.cache.snap_grid_ticks,
                         self.state.snap_enabled,
                         false,
+                        self.state.cache.swing_grid.active_amount_percent(),
                     )
                     .min(aaadaw_core::MAX_PROJECT_REGION_TICKS);
                     (drag.preview_start_ticks, drag.preview_end_ticks) = match drag.target {
@@ -5019,6 +5084,7 @@ impl canvas::Program<crate::app::Message> for RulerProgram<'_> {
                     self.state.cache.snap_grid_ticks,
                     self.state.snap_enabled,
                     false,
+                    self.state.cache.swing_grid.active_amount_percent(),
                 );
                 Some(canvas::Action::request_redraw().and_capture())
             }
@@ -6048,16 +6114,57 @@ fn fx_automation_point_at(
         .map(|(index, _)| index)
 }
 
-fn snap_tick_to_grid(tick: u64, grid: Option<u64>, enabled: bool, ignore_snap: bool) -> u64 {
+pub(crate) fn snap_tick_to_grid(
+    tick: u64,
+    grid: Option<u64>,
+    enabled: bool,
+    ignore_snap: bool,
+    swing_amount_percent: i16,
+) -> u64 {
     let Some(grid) = grid.filter(|grid| enabled && !ignore_snap && *grid > 0) else {
         return tick;
     };
-    let grid = u128::from(grid);
-    (((u128::from(tick) + grid / 2) / grid) * grid).min(u128::from(u64::MAX)) as u64
+    if swing_amount_percent == 0 {
+        let grid = u128::from(grid);
+        return (((u128::from(tick) + grid / 2) / grid) * grid).min(u128::from(u64::MAX)) as u64;
+    }
+    let base_index = tick / grid;
+    let swing_amount_percent = swing_amount_percent.clamp(-100, 100);
+    let target_numerator = i128::from(tick) * 200;
+    let mut nearest: Option<(i128, i128)> = None;
+    for index in base_index.saturating_sub(2)..=base_index.saturating_add(3) {
+        let straight_numerator = i128::from(index) * i128::from(grid) * 200;
+        let candidate_numerator = if index % 2 == 1 {
+            straight_numerator + i128::from(grid) * i128::from(swing_amount_percent)
+        } else {
+            straight_numerator
+        };
+        if candidate_numerator < 0 {
+            continue;
+        }
+        let distance = (candidate_numerator - target_numerator).abs();
+        if nearest.is_none_or(|(best_distance, best_numerator)| {
+            distance < best_distance
+                || (distance == best_distance && candidate_numerator < best_numerator)
+        }) {
+            nearest = Some((distance, candidate_numerator));
+        }
+    }
+    let Some((_, numerator)) = nearest else {
+        return tick;
+    };
+    let rounded_tick = (numerator + 100) / 200;
+    rounded_tick.min(i128::from(u64::MAX)) as u64
 }
 
-fn fx_automation_tick_at(tick: u64, grid: Option<u64>, enabled: bool, ignore_snap: bool) -> u64 {
-    snap_tick_to_grid(tick, grid, enabled, ignore_snap)
+fn fx_automation_tick_at(
+    tick: u64,
+    grid: Option<u64>,
+    enabled: bool,
+    ignore_snap: bool,
+    swing_amount_percent: i16,
+) -> u64 {
+    snap_tick_to_grid(tick, grid, enabled, ignore_snap, swing_amount_percent)
 }
 
 fn time_selection_edge_at_tick(
@@ -8052,9 +8159,9 @@ mod tests {
 
     #[test]
     fn fx_automation_placement_uses_arrangement_snap_and_shift_bypass() {
-        assert_eq!(fx_automation_tick_at(361, Some(240), true, false), 480);
-        assert_eq!(fx_automation_tick_at(361, Some(240), true, true), 361);
-        assert_eq!(fx_automation_tick_at(361, Some(240), false, false), 361);
+        assert_eq!(fx_automation_tick_at(361, Some(240), true, false, 0), 480);
+        assert_eq!(fx_automation_tick_at(361, Some(240), true, true, 50), 361);
+        assert_eq!(fx_automation_tick_at(361, Some(240), false, false, 50), 361);
     }
 
     #[test]
@@ -9892,15 +9999,15 @@ mod tests {
         timeline.handle(TimelineEvent::SetSnapGrid(SnapGrid::Sixteenth));
 
         assert_eq!(
-            snap_tick_to_grid(361, timeline.cache.snap_grid_ticks, true, false),
+            snap_tick_to_grid(361, timeline.cache.snap_grid_ticks, true, false, 0),
             480
         );
         assert_eq!(
-            snap_tick_to_grid(359, timeline.cache.snap_grid_ticks, true, false),
+            snap_tick_to_grid(359, timeline.cache.snap_grid_ticks, true, false, 0),
             240
         );
         assert_eq!(
-            snap_tick_to_grid(361, timeline.cache.snap_grid_ticks, true, true),
+            snap_tick_to_grid(361, timeline.cache.snap_grid_ticks, true, true, 50),
             361
         );
 
@@ -9910,9 +10017,33 @@ mod tests {
                 361,
                 timeline.cache.snap_grid_ticks,
                 timeline.snap_enabled,
-                false
+                false,
+                50
             ),
             361
+        );
+    }
+
+    #[test]
+    fn swing_snap_points_shift_odd_grid_lines_and_choose_the_lower_tie() {
+        let snap = |tick, swing| snap_tick_to_grid(tick, Some(240), true, false, swing);
+        assert_eq!(snap(299, 50), 300);
+        assert_eq!(snap(301, 50), 300);
+        assert_eq!(snap(150, 50), 0, "ties choose the lower swung point");
+        assert_eq!(snap(190, -50), 180);
+        assert_eq!(snap(330, -50), 180, "negative swing ties also choose left");
+        assert_eq!(snap(360, 100), 360);
+        assert_eq!(snap(120, -100), 120);
+        assert_eq!(snap(299, 150), 360, "swing amount is clamped");
+        assert_eq!(
+            snap_tick_to_grid(299, Some(240), false, false, 50),
+            299,
+            "global Snap off bypasses swing"
+        );
+        assert_eq!(
+            snap_tick_to_grid(299, Some(240), true, true, 50),
+            299,
+            "Shift bypasses swing"
         );
     }
 
@@ -9985,6 +10116,35 @@ mod tests {
         assert!(!timeline.drag_preview().unwrap().valid);
         timeline.handle(TimelineEvent::EndItemDrag);
         assert!(timeline.drag_preview().is_none());
+    }
+
+    #[test]
+    fn arrange_item_drag_and_trim_use_the_enabled_swing_grid() {
+        let (project, _, items) = project_with_items();
+        let mut timeline = TimelineState::default();
+        timeline.rebuild(&project);
+        timeline.handle(TimelineEvent::SetSnapGrid(SnapGrid::Sixteenth));
+        timeline.set_snap_swing_enabled(true);
+        timeline.set_snap_swing_amount_percent(50);
+
+        timeline.handle(TimelineEvent::BeginItemDrag {
+            item_id: items[0],
+            pointer_delta_ticks: 50,
+            target_track_index: Some(0),
+            range: false,
+            ignore_snap: false,
+            copy: false,
+        });
+        assert_eq!(timeline.drag_preview().unwrap().delta_ticks, 50);
+
+        timeline.handle(TimelineEvent::BeginItemTrim {
+            item_id: items[0],
+            edge: ItemTrimEdge::End,
+            target_tick: 550,
+            ignore_snap: false,
+        });
+        let trim = timeline.item_trim_preview().unwrap();
+        assert_eq!((trim.start_tick, trim.end_tick), (250, 480));
     }
 
     #[test]

@@ -144,7 +144,9 @@ AAADAW 注册稳定 ID `item.snap-left`、`item.snap-right` 与 `item.snap-neare
 
 观测结果是奇数序号网格点按 `swing amount × 网格间隔 ÷ 2` 做有符号偏移，偶数点保持直网格；最近点平局取左。原厂三项动作不依赖全局 Snap 开关；Audio/MIDI 目标相同。非零小节起点不作为这三项动作的候选点，包括直网格和 swing 网格，因此位于 4/4 小节线的 item 会向相邻非小节线网格点移动。AAADAW 新增 `Options > Snap/grid settings...` / `Alt+L` 设置窗、Swing grid 开关、−100% 至 100% 滑块和 Action List 的 `Grid: Toggle swing grid`，并让 41182/41183/41184 按此网格计算目标。定向回归覆盖 25/50/100/−50%、左右/最近、小节线、Snap 关闭、Audio/MIDI、选择及分组 Undo/Redo。
 
-目前 MIDI item 的核心位置仍是整数 PPQ tick；百分比产生小数 tick 时实现会舍入到最近 tick，因此任意 swing 百分比下尚未达到 REAPER 的连续位置精度。Swing 尚未接入普通 item 拖动/trim、Arrange 光标定位和 MIDI editor 的网格吸附；这些现有交互目前仍用直网格。Snap grid / swing 配置目前也未保存到项目，播放期间原厂 Action List 可用状态、AAADAW 实窗视觉与完整键盘焦点尚未对齐；三条矩阵行继续 `in_progress`。
+MIDI item 的核心位置仍是整数 PPQ tick；百分比产生小数 tick 时实现会舍入到最近 tick，因此任意 swing 百分比下尚未达到 REAPER 的连续位置精度。AAADAW 已把同一 swing 网格接入普通 Arrangement item 拖动/trim、时间选区、编辑光标、loop/region 边界、自动化点，以及 MIDI Editor 的插入/移动吸附和网格线显示。针对性回归核对 50% 与负 swing、平局向左、拖动/trim 目标、MIDI note anchor 与绘制网格一致，以及 Snap/Shift 绕过。上述普通交互仍需原厂实测；Snap grid / swing 配置目前也未保存到项目，播放期间原厂 Action List 可用状态、完整实窗视觉与键盘焦点尚未对齐，三条矩阵行继续 `in_progress`。
+
+这次传播改动的 AAADAW binary tests 通过 684/684（nightly Cranelift，保留断言）；Stable all-target Clippy `-D warnings`、fmt 与 `git diff --check` 通过。该结果验证实现回归，不替代尚未完成的对应 REAPER 鼠标/编辑器实测。
 
 AAADAW 新 desktop binary 也已在 1280×800 Xorg :112 中实际启动。Alt+L 打开独立 `Snap/Grid Settings` 窗；初始窗口显示 `1/4`、Swing unchecked、`50%`，实际点击后 checkbox 状态更新；Arrange toolbar 可见 `Grid settings...` 按钮。运行时窗口截图、目标 binary SHA-256 与运行参数见 [AAADAW window fixture](fixtures/item-snap-grid-settings-aaadaw.tsv)，图像分别为[设置初始状态](fixtures/item-snap-grid-settings-aaadaw.png)、[Swing enabled](fixtures/item-snap-grid-settings-swing-enabled-aaadaw.png)和[Arrange toolbar](fixtures/item-snap-grid-toolbar-aaadaw.png)。本次只验证入口、控件状态变化与窗口可运行性，不将局部截图等同于整体视觉验收。
 
