@@ -602,6 +602,18 @@ AAADAW 新增稳定 Action List ID `item.snap-left`、`item.snap-right`、`item.
 
 Stable `aaadaw` 全量测试 500/500 通过，strict all-target Clippy `-D warnings`、fmt、diff 和 parity CSV 92 项/15 列唯一 ID/新增证据路径检查通过。此原厂采样使用四分音符直网格；Swing 网格、播放期间原厂动作可用性与完整 Action List/Arrange 视觉和焦点尚未验收，`ITEM-SELECT-018/019/020` 保持 `in_progress`。AAADAW 目前遵循 `project_edit_busy` 在 playback active 时阻止这些工程编辑，须由后续原厂探针确认这项安全守卫与默认行为的差异范围。
 
+#### 2026-10-16：Swing 网格及 Snap/Grid Settings
+
+REAPER 7.82 / Default 7 探针覆盖直网格、25%、50%、100%、−50% swing，Snap 开关两种状态、九个起点、Audio/MIDI 与三项 item snap action，共 540 行。奇数网格点按 swing 百分比的一半偏移，偶数网格点保持直网格，最近点平局向左；41182/41183/41184 无视全局 Snap 开关。实测非零小节起点不是动作的有效目标点。完整数值、可重放 ReaScript、二进制/数据哈希和配置后的 Settings 截图见 [原厂 swing 验证](../verification/reaper-parity/action-list-and-input.md#2026-10-16-main-actions-411824118341184swing-网格复测)。
+
+AAADAW 已实现 Swing 网格 toggle、−100% 至 100% amount、独立 Snap/Grid Settings 窗、Options 菜单入口、Alt+L 和 42304 Action List 动作；三项 item snap 现在按 signed swing grid 计算，沿用 sample-accurate Audio 比较、单事务 Undo 和 playback busy guard。原厂数值点对应回归已加入。
+
+仍有明确差距：MIDI item 起点模型只有整数 PPQ，分数 tick 目标会量化；Swing 尚未接入普通 item 拖动/trim、Arrange 光标定位及 MIDI editor 的网格吸附；网格/swing 设置尚未随项目保存；Action List/Arrange 实窗截图与焦点、播放期间 native availability 仍未验收。因此 `ITEM-SELECT-018/019/020` 继续 `in_progress`，不能视为完成。
+
+新桌面 binary 已在隔离 Xorg :112 实际启动；Alt+L 打开独立设置窗，真实 XTest pointer/button 切换 Swing checkbox 后画面状态更新，Arrange toolbar 入口也在实窗可见。binary SHA-256、窗口配置及三张 AAADAW 截图见 [Snap/Grid Settings window fixture](../verification/reaper-parity/fixtures/item-snap-grid-settings-aaadaw.tsv)。截图仅确认当前新增窗口和 toolbar 可运行，未作为 REAPER 整体窗口/像素对照验收。
+
+该切片的 AAADAW binary tests 通过 680/680（nightly Cranelift，保留断言）；Stable all-target Clippy `-D warnings`、`cargo fmt --all -- --check`、`git diff --check` 与 parity CSV 102 项/15 列/唯一 ID 检查均通过。
+
 ### 2026-10-13 Render Bounds：All project regions 批量输出
 
 依照 P10，本切片实现了 Render Bounds 的 `All project regions`：每个工程区域按各自采样边界生成 WAV，采用所选文件名作为前缀、区域名作为文件名部分，并对清理后重名的区域追加稳定序号。多文件输出作为一个离线批次执行，复用私有暂存目录、目标不覆盖和失败回滚；Android 暂不开放多文件边界。没有区域时明确提示且禁止提交。原厂 REAPER 7.82 / Default 7 实窗确认该边界菜单项会输出三个区域文件，实际文件均为 48 kHz、PCM24、立体声、48000 帧；UI 截图、输出测量、探针和逐项对照见 [render bounds verification](../verification/reaper-parity/project-render-range.md)。

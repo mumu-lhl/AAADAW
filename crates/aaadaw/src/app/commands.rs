@@ -33,6 +33,8 @@ pub(crate) enum CommandId {
     OpenSettings,
     OpenAbout,
     OpenProjectSettings,
+    OpenSnapGridSettings,
+    ToggleSwingGrid,
     OpenActionList,
     Undo,
     Redo,
@@ -170,6 +172,8 @@ enum CommandKind {
     OpenSettings,
     OpenAbout,
     OpenProjectSettings,
+    OpenSnapGridSettings,
+    ToggleSwingGrid,
     OpenActionList,
     Undo,
     Redo,
@@ -536,6 +540,26 @@ const COMMANDS: &[CommandDefinition] = &[
         label: "Preferences...",
         aliases: &["settings", "preferences", "open settings"],
         shortcuts: PREFERENCES_SHORTCUT,
+        destructive: false,
+        separator_before: false,
+    },
+    CommandDefinition {
+        kind: CommandKind::OpenSnapGridSettings,
+        menu: Some(MainMenu::Options),
+        category: "Grid",
+        label: "Snap/grid settings...",
+        aliases: &["snap grid settings", "grid settings", "swing grid"],
+        shortcuts: &[Shortcut::character('l', Modifiers::ALT)],
+        destructive: false,
+        separator_before: true,
+    },
+    CommandDefinition {
+        kind: CommandKind::ToggleSwingGrid,
+        menu: None,
+        category: "Grid",
+        label: "Grid: Toggle swing grid",
+        aliases: &["toggle swing", "swing grid toggle"],
+        shortcuts: &[],
         destructive: false,
         separator_before: false,
     },
@@ -2116,6 +2140,7 @@ fn default_may_yield(kind: CommandKind) -> bool {
             | CommandKind::OpenActionList
             | CommandKind::OpenAbout
             | CommandKind::OpenProjectSettings
+            | CommandKind::OpenSnapGridSettings
             | CommandKind::OpenItemProperties
             | CommandKind::ToggleItemProperties
             | CommandKind::OpenItemNudgeDialog
@@ -2480,6 +2505,8 @@ fn command_kind_id(kind: CommandKind) -> &'static str {
         CommandKind::OpenSettings => "file.settings",
         CommandKind::OpenAbout => "help.about",
         CommandKind::OpenProjectSettings => "file.project-settings",
+        CommandKind::OpenSnapGridSettings => "grid.snap-settings",
+        CommandKind::ToggleSwingGrid => "grid.toggle-swing",
         CommandKind::OpenActionList => "actions.show-list",
         CommandKind::Undo => "edit.undo",
         CommandKind::Redo => "edit.redo",
@@ -2671,6 +2698,8 @@ pub(super) fn dispatch(app: &mut App, command: CommandId) -> Task<Message> {
         CommandId::OpenSettings => Message::OpenSettings,
         CommandId::OpenAbout => Message::OpenAbout,
         CommandId::OpenProjectSettings => Message::OpenProjectSettings,
+        CommandId::OpenSnapGridSettings => Message::OpenSnapGridSettings,
+        CommandId::ToggleSwingGrid => Message::ToggleSnapSwingGrid,
         CommandId::OpenActionList => Message::OpenActionList,
         CommandId::Undo => Message::Undo,
         CommandId::Redo => Message::Redo,
@@ -2999,6 +3028,8 @@ fn command_enabled(app: &App, kind: CommandKind, track: Option<TrackState>) -> b
         CommandKind::OpenSettings
         | CommandKind::OpenAbout
         | CommandKind::OpenProjectSettings
+        | CommandKind::OpenSnapGridSettings
+        | CommandKind::ToggleSwingGrid
         | CommandKind::OpenActionList
         | CommandKind::OpenMarkerManager => true,
         CommandKind::OpenRegionRenderMatrix => true,
@@ -3337,6 +3368,8 @@ fn command_id(kind: CommandKind) -> CommandId {
         CommandKind::OpenSettings => CommandId::OpenSettings,
         CommandKind::OpenAbout => CommandId::OpenAbout,
         CommandKind::OpenProjectSettings => CommandId::OpenProjectSettings,
+        CommandKind::OpenSnapGridSettings => CommandId::OpenSnapGridSettings,
+        CommandKind::ToggleSwingGrid => CommandId::ToggleSwingGrid,
         CommandKind::OpenActionList => CommandId::OpenActionList,
         CommandKind::Undo => CommandId::Undo,
         CommandKind::Redo => CommandId::Redo,

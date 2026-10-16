@@ -70,6 +70,9 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
             |grid| Message::Timeline(TimelineEvent::SetSnapGrid(grid)),
         )
         .width(Length::Fixed(120.0)),
+        button("Grid settings...")
+            .style(iced::widget::button::secondary)
+            .on_press(Message::ExecuteCommand(CommandId::OpenSnapGridSettings)),
         text("Zoom · MMB drag ↑↓").size(10),
         button("−")
             .on_press(Message::Timeline(TimelineEvent::ZoomAt {

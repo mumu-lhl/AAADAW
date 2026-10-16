@@ -59,6 +59,7 @@ mod config_paths;
 mod desktop_layout;
 mod fader;
 mod fader_data;
+mod grid_settings;
 mod item_nudge;
 mod item_properties;
 mod keyboard_config;
@@ -302,6 +303,15 @@ enum ShellProfile {
     Touch,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct SnapSwingAmount(i16);
+
+impl Default for SnapSwingAmount {
+    fn default() -> Self {
+        Self(50)
+    }
+}
+
 impl Default for ShellProfile {
     fn default() -> Self {
         if cfg!(target_os = "android") {
@@ -403,6 +413,9 @@ struct App {
     about_window_id: Option<iced::window::Id>,
     project_settings_window_id: Option<iced::window::Id>,
     project_settings: Option<project_settings::Draft>,
+    snap_grid_settings_window_id: Option<iced::window::Id>,
+    snap_swing_enabled: bool,
+    snap_swing_amount_percent: SnapSwingAmount,
     routing_window_id: Option<iced::window::Id>,
     routing_track_id: Option<TrackId>,
     routing_send_drafts: HashMap<aaadaw_core::SendId, routing::SendDraft>,
@@ -674,21 +687,92 @@ enum ItemSnapDirection {
     Nearest,
 }
 
-fn midi_item_snap_target(start_tick: u64, grid_ticks: u64, direction: ItemSnapDirection) -> u64 {
-    let lower_tick = start_tick - start_tick % grid_ticks;
-    let remainder = start_tick - lower_tick;
-    if remainder == 0 {
-        return start_tick;
+fn swing_grid_tick_candidates(
+    project: &Project,
+    approximate_tick: f64,
+    grid_ticks: u64,
+    swing_amount_percent: i16,
+) -> Result<Vec<f64>, String> {
+    if !approximate_tick.is_finite() || grid_ticks == 0 {
+        return Err("the current snap grid is not available".to_owned());
     }
-    let Some(upper_tick) = lower_tick.checked_add(grid_ticks) else {
-        return lower_tick;
-    };
-    match direction {
-        ItemSnapDirection::Left => lower_tick,
-        ItemSnapDirection::Right => upper_tick,
-        ItemSnapDirection::Nearest if remainder <= grid_ticks - remainder => lower_tick,
-        ItemSnapDirection::Nearest => upper_tick,
+    let grid_ticks_f64 = grid_ticks as f64;
+    let base_index = (approximate_tick / grid_ticks_f64).floor().max(0.0) as u64;
+    let first_index = base_index.saturating_sub(2);
+    let last_index = base_index.saturating_add(3);
+    let swing_offset = grid_ticks_f64 * f64::from(swing_amount_percent.clamp(-100, 100)) / 200.0;
+    let mut candidates = Vec::with_capacity(6);
+    for index in first_index..=last_index {
+        let straight_tick = index as f64 * grid_ticks_f64;
+        let tick = if index % 2 == 1 {
+            straight_tick + swing_offset
+        } else {
+            straight_tick
+        };
+        if tick < 0.0 {
+            continue;
+        }
+        if tick > 0.0 && tick.fract().abs() < 0.000_001 {
+            let rounded_tick = tick.round();
+            if rounded_tick <= u64::MAX as f64
+                && let Ok(position) = project.musical_position_at_tick(rounded_tick as u64)
+                && position.beat() == 1
+                && position.tick_in_beat() == 0
+            {
+                // REAPER's item snap actions leave non-zero measure starts out of
+                // their target set. The project start itself remains a valid point.
+                continue;
+            }
+        }
+        candidates.push(tick);
     }
+    candidates.sort_by(f64::total_cmp);
+    candidates.dedup_by(|left, right| (*left - *right).abs() < 0.000_001);
+    Ok(candidates)
+}
+
+fn snap_from_grid_candidates(
+    candidates: &[f64],
+    target: f64,
+    direction: ItemSnapDirection,
+) -> Result<f64, String> {
+    let lower = candidates
+        .iter()
+        .copied()
+        .rfind(|candidate| *candidate <= target);
+    let upper = candidates
+        .iter()
+        .copied()
+        .find(|candidate| *candidate >= target);
+    match (lower, upper) {
+        (Some(_lower), Some(upper)) if (upper - target).abs() < 0.000_001 => Ok(upper),
+        (Some(lower), Some(_upper)) if (target - lower).abs() < 0.000_001 => Ok(lower),
+        (Some(lower), Some(upper)) => Ok(match direction {
+            ItemSnapDirection::Left => lower,
+            ItemSnapDirection::Right => upper,
+            ItemSnapDirection::Nearest if target - lower <= upper - target => lower,
+            ItemSnapDirection::Nearest => upper,
+        }),
+        (Some(lower), None) => Ok(lower),
+        (None, Some(upper)) => Ok(upper),
+        (None, None) => Err("could not locate a snap point".to_owned()),
+    }
+}
+
+fn midi_item_swing_snap_target(
+    project: &Project,
+    start_tick: u64,
+    grid_ticks: u64,
+    direction: ItemSnapDirection,
+    swing_amount_percent: i16,
+) -> Result<u64, String> {
+    let candidates =
+        swing_grid_tick_candidates(project, start_tick as f64, grid_ticks, swing_amount_percent)?;
+    let target = snap_from_grid_candidates(&candidates, start_tick as f64, direction)?;
+    if target < 0.0 || target > u64::MAX as f64 {
+        return Err("the snap point is outside the timeline".to_owned());
+    }
+    Ok(target.round() as u64)
 }
 
 fn audio_item_snap_target(
@@ -696,54 +780,27 @@ fn audio_item_snap_target(
     start_sample: u64,
     grid_ticks: u64,
     direction: ItemSnapDirection,
+    swing_amount_percent: i16,
 ) -> Result<u64, String> {
     let approximate_tick = project
-        .tick_at_sample(start_sample)
+        .tick_at_sample_position(start_sample as f64)
         .map_err(|error| error.to_string())?;
-    let mut lower_tick = approximate_tick - approximate_tick % grid_ticks;
-    let mut lower_sample = project
-        .sample_at_tick(lower_tick)
-        .map_err(|error| error.to_string())?;
-
-    while lower_sample > start_sample {
-        lower_tick = lower_tick
-            .checked_sub(grid_ticks)
-            .ok_or_else(|| "could not locate the lower snap point".to_owned())?;
-        lower_sample = project
-            .sample_at_tick(lower_tick)
-            .map_err(|error| error.to_string())?;
+    let candidates =
+        swing_grid_tick_candidates(project, approximate_tick, grid_ticks, swing_amount_percent)?;
+    let candidate_samples = candidates
+        .into_iter()
+        .map(|tick| {
+            project
+                .sample_at_tick_position(tick)
+                .map(|sample| sample.round())
+                .map_err(|error| error.to_string())
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let target = snap_from_grid_candidates(&candidate_samples, start_sample as f64, direction)?;
+    if target < 0.0 || target > u64::MAX as f64 {
+        return Err("the snap point is outside the timeline".to_owned());
     }
-    if lower_sample == start_sample {
-        return Ok(start_sample);
-    }
-
-    let upper_sample = loop {
-        let upper_tick = lower_tick
-            .checked_add(grid_ticks)
-            .ok_or_else(|| "the next snap point exceeds the timeline".to_owned())?;
-        let upper_sample = project
-            .sample_at_tick(upper_tick)
-            .map_err(|error| error.to_string())?;
-        if upper_sample > start_sample {
-            break upper_sample;
-        }
-        if upper_sample == start_sample {
-            return Ok(start_sample);
-        }
-        lower_tick = upper_tick;
-        lower_sample = upper_sample;
-    };
-
-    Ok(match direction {
-        ItemSnapDirection::Left => lower_sample,
-        ItemSnapDirection::Right => upper_sample,
-        ItemSnapDirection::Nearest
-            if start_sample - lower_sample <= upper_sample - start_sample =>
-        {
-            lower_sample
-        }
-        ItemSnapDirection::Nearest => upper_sample,
-    })
+    Ok(target.round() as u64)
 }
 
 fn action_updates_item_mix(action: &DawAction) -> bool {
@@ -1577,6 +1634,8 @@ impl App {
             "Actions".to_owned()
         } else if self.project_settings_window_id == Some(window_id) {
             "Project Settings".to_owned()
+        } else if self.snap_grid_settings_window_id == Some(window_id) {
+            "Snap/Grid Settings".to_owned()
         } else if self.settings_window_id == Some(window_id) {
             "AAADAW Settings".to_owned()
         } else if self.about_window_id == Some(window_id) {
@@ -1880,6 +1939,7 @@ impl App {
                     || self.action_list_window_id == Some(*window_id)
                     || self.settings_window_id == Some(*window_id)
                     || self.project_settings_window_id == Some(*window_id)
+                    || self.snap_grid_settings_window_id == Some(*window_id)
                     || self.midi_export_window_id == Some(*window_id)
         );
         let window_safe_message = menu_ui_message
@@ -1916,6 +1976,11 @@ impl App {
                     | Message::CloseAbout
                     | Message::OpenProjectSettings
                     | Message::CloseProjectSettings
+                    | Message::OpenSnapGridSettings
+                    | Message::CloseSnapGridSettings
+                    | Message::SnapSwingGridChanged(_)
+                    | Message::SnapSwingAmountChanged(_)
+                    | Message::ToggleSnapSwingGrid
                     | Message::SaveProjectSettingsAsDefault
                     | Message::ProjectFrameRateChanged(_)
                     | Message::ProjectFrameRateMenuChanged(_)
@@ -2440,6 +2505,15 @@ impl App {
             }
             Message::OpenProjectSettings => task = self.open_project_settings(),
             Message::CloseProjectSettings => task = self.close_project_settings(),
+            Message::OpenSnapGridSettings => task = self.open_snap_grid_settings(),
+            Message::CloseSnapGridSettings => {
+                task = self.close_snap_grid_settings();
+            }
+            Message::SnapSwingGridChanged(enabled) => self.snap_swing_enabled = enabled,
+            Message::ToggleSnapSwingGrid => self.snap_swing_enabled = !self.snap_swing_enabled,
+            Message::SnapSwingAmountChanged(amount) => {
+                self.snap_swing_amount_percent = SnapSwingAmount(amount.clamp(-100, 100));
+            }
             Message::ApplyProjectSettings => task = self.apply_project_settings(),
             Message::SaveProjectSettingsAsDefault => task = self.save_project_settings_as_default(),
             Message::ProjectSettingsTempoChanged(value) => {
@@ -2873,6 +2947,8 @@ impl App {
                 if self.project_settings_window_id == Some(window_id) {
                     self.project_settings_window_id = None;
                     self.project_settings = None;
+                } else if self.snap_grid_settings_window_id == Some(window_id) {
+                    self.snap_grid_settings_window_id = None;
                 } else if self.item_properties_window_id == Some(window_id) {
                     self.item_properties_window_id = None;
                     self.item_properties = None;
@@ -11391,6 +11467,11 @@ impl App {
                     item.start_sample(),
                     grid_ticks,
                     direction,
+                    if self.snap_swing_enabled {
+                        self.snap_swing_amount_percent.0
+                    } else {
+                        0
+                    },
                 ) {
                     Ok(target) => target,
                     Err(error) => {
@@ -11413,7 +11494,23 @@ impl App {
                 .iter()
                 .find(|item| item.id() == item_id)
             {
-                let target_tick = midi_item_snap_target(item.start_tick(), grid_ticks, direction);
+                let target_tick = match midi_item_swing_snap_target(
+                    &self.project,
+                    item.start_tick(),
+                    grid_ticks,
+                    direction,
+                    if self.snap_swing_enabled {
+                        self.snap_swing_amount_percent.0
+                    } else {
+                        0
+                    },
+                ) {
+                    Ok(target_tick) => target_tick,
+                    Err(error) => {
+                        self.status = format!("Could not snap selected items: {error}");
+                        return;
+                    }
+                };
                 if target_tick != item.start_tick() {
                     actions.push(DawAction::EditMidiItem {
                         item_id,

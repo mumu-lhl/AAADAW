@@ -15568,6 +15568,165 @@ fn item_snap_exact_grid_empty_selection_and_busy_states_do_not_edit() {
 }
 
 #[test]
+fn item_snap_actions_match_reaper_swing_points_for_audio_and_midi() {
+    let cases = [
+        (
+            "positive swing left",
+            72_000,
+            2_880,
+            50,
+            CommandId::SnapSelectedItemsLeft,
+            48_000,
+            1_920,
+        ),
+        (
+            "positive swing right",
+            72_000,
+            2_880,
+            50,
+            CommandId::SnapSelectedItemsRight,
+            78_000,
+            3_120,
+        ),
+        (
+            "quarter-strength swing nearest",
+            63_000,
+            2_520,
+            25,
+            CommandId::SnapSelectedItemsToNearestPoint,
+            75_000,
+            3_000,
+        ),
+        (
+            "full swing nearest",
+            72_000,
+            2_880,
+            100,
+            CommandId::SnapSelectedItemsToNearestPoint,
+            84_000,
+            3_360,
+        ),
+        (
+            "negative swing nearest",
+            72_000,
+            2_880,
+            -50,
+            CommandId::SnapSelectedItemsToNearestPoint,
+            66_000,
+            2_640,
+        ),
+        (
+            "measure start is skipped",
+            96_000,
+            3_840,
+            50,
+            CommandId::SnapSelectedItemsToNearestPoint,
+            78_000,
+            3_120,
+        ),
+    ];
+
+    for (name, audio_start, midi_start, swing, command, audio_target, midi_target) in cases {
+        let mut app = item_snap_test_app(audio_start, midi_start);
+        let audio_id = app.project.audio_items()[0].id();
+        let midi_id = app.project.midi_items()[0].id();
+        let selected_items = app.timeline.selected_items.clone();
+        let selected_tracks = app.timeline.selected_tracks.clone();
+        let edit_cursor = app.timeline.edit_cursor_tick;
+        let revision = app.revision;
+        app.snap_swing_enabled = true;
+        let _ = app.update(Message::SnapSwingAmountChanged(swing));
+        app.timeline.snap_enabled = false;
+        app.action_list
+            .select(commands::stable_id(command).expect("snap action has a stable registry ID"));
+
+        let _ = app.update(Message::ActionListRun(false));
+
+        assert_eq!(app.project.audio_items()[0].id(), audio_id, "{name}");
+        assert_eq!(
+            app.project.audio_items()[0].start_sample(),
+            audio_target,
+            "{name} audio target"
+        );
+        assert_eq!(
+            app.project.audio_items()[0].length_samples(),
+            24_000,
+            "{name}"
+        );
+        assert_eq!(
+            app.project.audio_items()[0].source_offset_samples(),
+            120,
+            "{name}"
+        );
+        assert_eq!(app.project.midi_items()[0].id(), midi_id, "{name}");
+        assert_eq!(
+            app.project.midi_items()[0].start_tick(),
+            midi_target,
+            "{name} MIDI target"
+        );
+        assert_eq!(app.project.midi_items()[0].length_ticks(), 960, "{name}");
+        assert_eq!(app.timeline.selected_items, selected_items, "{name}");
+        assert_eq!(app.timeline.selected_tracks, selected_tracks, "{name}");
+        assert_eq!(app.timeline.edit_cursor_tick, edit_cursor, "{name}");
+        assert_eq!(app.revision, revision + 1, "{name}");
+
+        let _ = app.update(Message::Undo);
+        assert_eq!(
+            app.project.audio_items()[0].start_sample(),
+            audio_start,
+            "{name}"
+        );
+        assert_eq!(
+            app.project.midi_items()[0].start_tick(),
+            midi_start,
+            "{name}"
+        );
+        let _ = app.update(Message::Redo);
+        assert_eq!(
+            app.project.audio_items()[0].start_sample(),
+            audio_target,
+            "{name}"
+        );
+        assert_eq!(
+            app.project.midi_items()[0].start_tick(),
+            midi_target,
+            "{name}"
+        );
+    }
+}
+
+#[test]
+fn snap_grid_settings_command_is_reusable_and_clamps_swing_amount() {
+    let mut app = App::default();
+    let entry = app
+        .action_list_entries()
+        .into_iter()
+        .find(|entry| entry.id == CommandId::OpenSnapGridSettings)
+        .expect("snap/grid settings is available in the Action List");
+    assert_eq!(entry.label, "Snap/grid settings...");
+    assert_eq!(entry.shortcut.as_deref(), Some("Alt+L"));
+    assert_eq!(
+        commands::stable_id(CommandId::ToggleSwingGrid).as_deref(),
+        Some("grid.toggle-swing")
+    );
+
+    let _ = app.update(Message::ExecuteCommand(CommandId::OpenSnapGridSettings));
+    let window_id = app
+        .snap_grid_settings_window_id
+        .expect("snap/grid settings command should open its window");
+    assert_eq!(app.window_title(window_id), "Snap/Grid Settings");
+    let _ = app.update(Message::ExecuteCommand(CommandId::OpenSnapGridSettings));
+    assert_eq!(app.snap_grid_settings_window_id, Some(window_id));
+
+    let _ = app.update(Message::ExecuteCommand(CommandId::ToggleSwingGrid));
+    assert!(app.snap_swing_enabled);
+    let _ = app.update(Message::SnapSwingAmountChanged(150));
+    assert_eq!(app.snap_swing_amount_percent.0, 100);
+    let _ = app.update(Message::WindowClosed(window_id));
+    assert_eq!(app.snap_grid_settings_window_id, None);
+}
+
+#[test]
 fn select_all_items_in_track_action_selects_all_selected_tracks() {
     let mut app = App::default();
     let _ = app.update(Message::AddTrack);

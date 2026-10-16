@@ -138,6 +138,16 @@ AAADAW 注册稳定 ID `item.snap-left`、`item.snap-right` 与 `item.snap-neare
 
 探针以四分音符直网格验证；Swing 网格、播放期间的原厂动作状态及完整 Arrange/Action List 视觉和焦点尚未比对，`ITEM-SELECT-018/019/020` 仍为 `in_progress`，不能据此视为整体 Item parity 完成。
 
+## 2026-10-16 Main actions 41182/41183/41184：Swing 网格复测
+
+用隔离的原厂 Linux REAPER 7.82 / Default 7、120 BPM、4/4、四分音符项目网格运行真实 Main actions，分别对 Audio 和 MIDI item 覆盖直网格、25%、50%、100%、−50% swing，Snap toggle 开/关，九个起点时间及 41182/41183/41184，共 540 行结果。原厂表格与隔离可复现脚本为 [swing TSV](../verification/reaper-parity/fixtures/item-snap-swing-native.tsv) 和 [probe](../../scripts/reaper_parity/probe-item-snap-swing.lua)。REAPER 二进制 SHA-256 为 `9976f5608068b7a58518969001b00b527fb0de6ed7459e0e5dda6f29878ee254`；TSV SHA-256 为 `877e9603e054f17fc4096837c89f76e5ad8c6a54f6c1452c87d9984bda4108b6`。设置窗口截图记录的是探针配置的 swing enabled / 50%，并非首次启动默认状态：[原厂 Snap/Grid Settings](../verification/reaper-parity/fixtures/item-snap-grid-settings-swing-enabled-native.png)，SHA-256 `c5976e92a7aa3650301df041e24ac62c9213888043007125aceaee1c5a6cf5d`。
+
+观测结果是奇数序号网格点按 `swing amount × 网格间隔 ÷ 2` 做有符号偏移，偶数点保持直网格；最近点平局取左。原厂三项动作不依赖全局 Snap 开关；Audio/MIDI 目标相同。非零小节起点不作为这三项动作的候选点，包括直网格和 swing 网格，因此位于 4/4 小节线的 item 会向相邻非小节线网格点移动。AAADAW 新增 `Options > Snap/grid settings...` / `Alt+L` 设置窗、Swing grid 开关、−100% 至 100% 滑块和 Action List 的 `Grid: Toggle swing grid`，并让 41182/41183/41184 按此网格计算目标。定向回归覆盖 25/50/100/−50%、左右/最近、小节线、Snap 关闭、Audio/MIDI、选择及分组 Undo/Redo。
+
+目前 MIDI item 的核心位置仍是整数 PPQ tick；百分比产生小数 tick 时实现会舍入到最近 tick，因此任意 swing 百分比下尚未达到 REAPER 的连续位置精度。Swing 尚未接入普通 item 拖动/trim、Arrange 光标定位和 MIDI editor 的网格吸附；这些现有交互目前仍用直网格。Snap grid / swing 配置目前也未保存到项目，播放期间原厂 Action List 可用状态、AAADAW 实窗视觉与完整键盘焦点尚未对齐；三条矩阵行继续 `in_progress`。
+
+AAADAW 新 desktop binary 也已在 1280×800 Xorg :112 中实际启动。Alt+L 打开独立 `Snap/Grid Settings` 窗；初始窗口显示 `1/4`、Swing unchecked、`50%`，实际点击后 checkbox 状态更新；Arrange toolbar 可见 `Grid settings...` 按钮。运行时窗口截图、目标 binary SHA-256 与运行参数见 [AAADAW window fixture](fixtures/item-snap-grid-settings-aaadaw.tsv)，图像分别为[设置初始状态](fixtures/item-snap-grid-settings-aaadaw.png)、[Swing enabled](fixtures/item-snap-grid-settings-swing-enabled-aaadaw.png)和[Arrange toolbar](fixtures/item-snap-grid-toolbar-aaadaw.png)。本次只验证入口、控件状态变化与窗口可运行性，不将局部截图等同于整体视觉验收。
+
 ## 2026-10-14 Main action 40697：依焦点移除对象
 
 Linux REAPER 7.82 / Default 7 的默认动作导出 `linux-7.82/actions.tsv` 记录 Main action 40697 `Remove items/tracks/envelope points (depending on focus)` 的默认键为 Delete；相邻的 40006 `Item: Remove items` 没有默认键。隔离 REAPER 与 AAADAW 的 701×475 Action List 窗口截图保存在[参照](fixtures/delete-by-focus-action-list-native.png)和[当前 AAADAW](fixtures/delete-by-focus-no-prompt-aaadaw.png)。两边均显示主动作与无提示变体；默认动作 TSV 只为主动作给出 40697，因此无提示变体使用 AAADAW 稳定 ID `edit.delete-focused-no-prompting`，不绑定默认键。Item 菜单命令 `Remove items` 也不绑定快捷键，Delete 只绑定 `edit.delete-focused`，不再错误显示 Delete/Backspace。

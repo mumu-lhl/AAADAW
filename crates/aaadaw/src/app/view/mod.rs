@@ -25,6 +25,7 @@ mod about;
 mod action_list;
 mod arrangement;
 mod fx_chain;
+mod grid_settings;
 mod item_inspector;
 mod item_nudge;
 mod item_properties;
@@ -108,6 +109,8 @@ pub(super) fn view_for_window(app: &App, window_id: iced::window::Id) -> Element
         action_list::view(app)
     } else if app.project_settings_window_id == Some(window_id) {
         super::project_settings::view(app)
+    } else if app.snap_grid_settings_window_id == Some(window_id) {
+        grid_settings::view(app)
     } else if app.settings_window_id == Some(window_id) {
         settings::view(app)
     } else if app.about_window_id == Some(window_id) {
