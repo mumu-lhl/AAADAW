@@ -1,0 +1,11 @@
+key	value
+version	7.82/linux-x86_64
+theme	Default_7.0.ReaperThemeZip
+platform	Linux x86_64; isolated Xvfb :583; X11
+project	Fresh unsaved project with zero tracks and zero items
+pointer	Over the selected Action List Run button; no Arrangement item target
+observation	For both selected Main actions 40529 and 40530, Run is enabled and can be clicked without an item target; the project remains empty after execution
+action_40529_before	item-hover-actions-40529-action-list-native.png; SHA-256 221f96fc0258e580718337a1cd65cff8f5d618a2657d2245e30b2c20479611a6
+action_40529_after	item-hover-actions-40529-action-list-run-native.png; SHA-256 a2b4a20a399dd68c908e790478502c62720ce42fc8d78b6ab4db1bb5b9680a3c
+action_40530_before	item-hover-actions-40530-action-list-native.png; SHA-256 d6adaf2256e8335a0e5766ae90ed1185f5a102996d339aee16d73f2e4a520857
+action_40530_after	item-hover-actions-40530-action-list-run-native.png; SHA-256 9f71d5a7bfae18c1efb3f3d1c03199e90b798408dd1904305c08d8f65ac97971

@@ -560,7 +560,7 @@ Action List Run 回归验证 Audio/MIDI item selection 清空、时间范围/轨
 
 ### 2026-10-13 Main actions 40529/40530：鼠标下 item 添加与切换选择
 
-提交 `682c199` 注册 40529 `Item: Select item under mouse cursor (leaving other items selected)` 与 40530 `Item: Toggle selection of item under mouse cursor`，均无默认快捷键。它们复用同一 Arrangement hover target：40529 永远保持目标选中并保留已有选择，40530 对目标增删选择；二者不改工程/Undo，无有效 hover target 时禁用。
+提交 `682c199` 注册 40529 `Item: Select item under mouse cursor (leaving other items selected)` 与 40530 `Item: Toggle selection of item under mouse cursor`，均无默认快捷键。它们复用同一 Arrangement hover target：40529 永远保持目标选中并保留已有选择，40530 对目标增删选择；二者不改工程/Undo。该提交时按预期目标启用状态处理；2026-10-16 的原厂 Action List 实测发现无目标时 Run 仍可用，后续修正见下文。
 
 `select_item_under_mouse_leaving_other_items_selected_adds_without_toggling` 覆盖两次添加仍不取消已有/目标项；`toggle_selection_of_item_under_mouse_adds_and_removes_the_hovered_item` 覆盖移除和重新加入。完整 `aaadaw` nightly+Cranelift nextest 为 512/512 passed、0 skipped；Stable all-target strict Clippy、fmt、diff 和矩阵 80 项/15 列唯一 ID/证据路径检查通过。Cranelift 显示既有 iced/wgpu recursion-depth warning；Stable Clippy 无警告。`ITEM-SELECT-007/008` 保持 `in_progress`：多选后的原厂 active item/anchor 及 Action List 焦点/hover 边界尚未探测；100% 复刻仍未完成。
 
@@ -1764,3 +1764,9 @@ REAPER 7.82 / Default 7 原生指针探针补齐 40528 的无目标语义：A1 �
 AAADAW 40528 现在保持可运行，在 track item lane 的空白处清空选择；没有有效 item lane target 时 no-op。空白清除通过应用级 item-selection history 可撤销，且不改变工程内容修订或 Project Undo 栈。真实桌面回归选中 Main 40528 后把鼠标停在第一条 MIDI item 并按 Enter，屏幕显示 item 高亮且 Action List Run 可用；当前二进制 Build ID `539e59063075287e32c116db4093aa10c664db38`、SHA-256 和 1280×800 截图记录在 [AAADAW fixture](../verification/reaper-parity/fixtures/item-hover-actions-aaadaw.tsv)。
 
 定向回归 1/1、AAADAW 主测试套件 674/674、`cargo clippy -p aaadaw -p aaadaw-app --all-targets -- -D warnings`、fmt、diff 和 parity CSV（102 项、15 列、唯一 ID）校验通过。`ITEM-SELECT-006` 继续 `in_progress`：40528 以外的多选 anchor/active item 细节和 40529/40530 的完整 Action List 焦点行为仍需原厂探测；其余 parity matrix 状态不变。
+
+### 2026-10-16 Main actions 40529/40530：无目标时 Action List 仍可运行
+
+REAPER 7.82 / Default 7 在零轨道、零 item 工程中分别选中 40529、40530 后，两项 Action List 的 Run 按钮都可用；点击后工程仍为空。原厂逐步记录和前后截图见 [availability TSV 与原厂截图](../verification/reaper-parity/fixtures/item-hover-actions-availability-native.tsv)。这修正了上文早期实现中“无 hover target 时禁用”的判断：AAADAW 现对 40528/40529/40530 始终报告可运行，由目标语义决定效果，无 target 时 40529/40530 no-op。
+
+AAADAW 的 40529/40530 回归现在还检查 Action List 搜索结果始终 enabled，并在无 target 时 dispatch 后保留选择、修订号和 Project Undo/redo 状态。用当前桌面二进制在空工程中各运行一次，两项 Run 均保持可用且工程保持空；Build ID、binary SHA 与实窗截图记录在 [AAADAW availability fixture](../verification/reaper-parity/fixtures/item-hover-actions-aaadaw-availability.tsv)。`cargo test --quiet -p aaadaw --bin aaadaw` 674/674、严格 all-target Clippy、fmt 和 diff 检查均通过。`ITEM-SELECT-007/008` 继续 `in_progress`：多个已选 item 时 active item/anchor 的原厂语义尚未探测；40529/40530 与 Action List 焦点组合也仍需覆盖。

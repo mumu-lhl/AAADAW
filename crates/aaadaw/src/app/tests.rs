@@ -15934,6 +15934,7 @@ fn select_item_under_mouse_leaving_other_items_selected_adds_without_toggling() 
         .into_iter()
         .find(|entry| entry.id == command)
         .expect("add-under-mouse action is searchable");
+    assert!(entry.enabled);
     assert!(entry.shortcut.is_none());
     app.action_list
         .select("item.add-under-mouse-to-selection".to_owned());
@@ -15949,6 +15950,18 @@ fn select_item_under_mouse_leaving_other_items_selected_adds_without_toggling() 
         );
         assert_eq!(app.timeline.selected_item, Some(hovered_id));
     }
+    assert_eq!(app.revision, revision_before);
+    assert_eq!(app.project.can_undo(), can_undo_before);
+    assert_eq!(app.project.can_redo(), can_redo_before);
+
+    app.timeline.handle(TimelineEvent::SetHoveredItem(None));
+    assert!(commands::is_enabled(&app, command));
+    let _ = app.update(Message::ActionListRun(false));
+    assert_eq!(
+        app.timeline.selected_items,
+        HashSet::from([previously_selected_id, hovered_id])
+    );
+    assert_eq!(app.timeline.selected_item, Some(hovered_id));
     assert_eq!(app.revision, revision_before);
     assert_eq!(app.project.can_undo(), can_undo_before);
     assert_eq!(app.project.can_redo(), can_redo_before);
@@ -15998,6 +16011,7 @@ fn toggle_selection_of_item_under_mouse_adds_and_removes_the_hovered_item() {
         .into_iter()
         .find(|entry| entry.id == command)
         .expect("toggle-under-mouse action is searchable");
+    assert!(entry.enabled);
     assert!(entry.shortcut.is_none());
     app.action_list
         .select("item.toggle-under-mouse-selection".to_owned());
@@ -16012,6 +16026,18 @@ fn toggle_selection_of_item_under_mouse_adds_and_removes_the_hovered_item() {
 
     let _ = app.update(Message::ActionListRun(false));
 
+    assert_eq!(
+        app.timeline.selected_items,
+        HashSet::from([retained_id, hovered_id])
+    );
+    assert_eq!(app.timeline.selected_item, Some(hovered_id));
+    assert_eq!(app.revision, revision_before);
+    assert_eq!(app.project.can_undo(), can_undo_before);
+    assert_eq!(app.project.can_redo(), can_redo_before);
+
+    app.timeline.handle(TimelineEvent::SetHoveredItem(None));
+    assert!(commands::is_enabled(&app, command));
+    let _ = app.update(Message::ActionListRun(false));
     assert_eq!(
         app.timeline.selected_items,
         HashSet::from([retained_id, hovered_id])
