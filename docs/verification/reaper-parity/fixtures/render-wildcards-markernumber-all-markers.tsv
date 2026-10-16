@@ -1,0 +1,21 @@
+key	value
+reference	Linux REAPER 7.82 / Default 7 / Linux desktop
+probe_script	../../../../scripts/reaper_parity/probe-render-markers-ui.lua
+source_generator	../../../../scripts/reaper_parity/probe-render-format-vectors.py
+source	48 kHz stereo PCM24 source.wav; 48,000 frames
+source_sha256	187b0243f13ddc06d27181da243ee07f89c593ec11ac9d2b0b3cbc342967b485
+project_markers	Marker 1 at 0 seconds; Marker 2 at 2 seconds; Marker 3 at 4 seconds
+wildcard_pattern	marker-$markernumber[005]
+bounds	All project markers
+render_preview	3 files; first preview path ends in marker-005.wav
+rendered_filenames	marker-005.wav; marker-006.wav; marker-007.wav
+render_format	WAV; 24-bit PCM; 48,000 Hz; 2 channels
+render_lengths_frames	96,000; 96,000; 48,000
+render_file_sizes_bytes	576,690; 576,690; 288,690
+render_file_sha256	7e90af527071087145f69623d6fedaa0f6c897921a5d7d8e0f53bbfc3bd10a7a; 25d7f8c00fb60f6ae0687240e7c05e8077c38af7530058af2464b424e55adb94; a4047a21ddaed36491790347a024fc748f0d9c7feb5c934cc0099fa86ce18b3b
+native_render_dialog_screenshot	render-wildcards-markernumber-all-markers-native.png
+native_render_dialog_screenshot_sha256	e6c3d06a431e690bc2fb3ac965c1ec59a7d0391b0b3459e5481d80d0f48e58c3
+native_finished_render_screenshot	render-wildcards-markernumber-all-markers-finished-native.png
+native_finished_render_screenshot_sha256	62200482c47e1807fed6b0d76dfc4d7ab13f32008cac3dedf2bb3fcea0ac92a4
+native_config	Isolated REAPER profile copied from render-wildcards-native; default theme verified by probe assertions
+native_observation	$markernumber[005] starts at 005 and increments for successive marker renders while preserving three-digit width

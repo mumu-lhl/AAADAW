@@ -54,8 +54,10 @@ pub(crate) enum RenderFilenameWildcard {
     TimeSigDenom,
     Region,
     RegionNumber,
+    RegionNumberNumbered,
     Marker,
     MarkerNumber,
+    MarkerNumberNumbered,
     Track,
     TrackNumber,
     TrackNameOrNumber,
@@ -88,7 +90,7 @@ pub(crate) enum RenderFilenameWildcard {
 }
 
 impl RenderFilenameWildcard {
-    pub(crate) const ALL: [Self; 42] = [
+    pub(crate) const ALL: [Self; 44] = [
         Self::Project,
         Self::Title,
         Self::Author,
@@ -104,8 +106,10 @@ impl RenderFilenameWildcard {
         Self::TrackNameOrNumber,
         Self::Region,
         Self::RegionNumber,
+        Self::RegionNumberNumbered,
         Self::Marker,
         Self::MarkerNumber,
+        Self::MarkerNumberNumbered,
         Self::Item,
         Self::ItemNumber,
         Self::Start,
@@ -146,8 +150,10 @@ impl RenderFilenameWildcard {
             Self::TimeSigDenom => "$timesigdenom",
             Self::Region => "$region",
             Self::RegionNumber => "$regionnumber",
+            Self::RegionNumberNumbered => "$regionnumber[N]",
             Self::Marker => "$marker",
             Self::MarkerNumber => "$markernumber",
+            Self::MarkerNumberNumbered => "$markernumber[N]",
             Self::Track => "$track",
             Self::TrackNumber => "$tracknumber",
             Self::TrackNameOrNumber => "$tracknameornumber",
@@ -901,11 +907,16 @@ enum RenderFilenameWildcardModifier {
     },
     RemoveCharacter(char),
     Truncate(usize),
+    Numbered {
+        start: u64,
+        width: usize,
+    },
 }
 
 fn parse_render_filename_wildcard_modifiers(
     characters: &[char],
     start: usize,
+    token: &str,
 ) -> (usize, Vec<RenderFilenameWildcardModifier>) {
     let mut index = start;
     let mut modifiers = Vec::new();
@@ -942,17 +953,26 @@ fn parse_render_filename_wildcard_modifiers(
                 };
                 let end = index + 1 + relative_end;
                 let suffix = &characters[index + 1..end];
-                let Some(digits) = suffix.strip_prefix(&['<']) else {
-                    // [N] is a render-order counter whose scope depends on the
-                    // selected source. Leave it literal until that context is
-                    // modeled rather than treating it as string padding.
+                if let Some(digits) = suffix.strip_prefix(&['<']) {
+                    let digits = digits.iter().collect::<String>();
+                    let Ok(limit) = digits.parse::<usize>() else {
+                        break;
+                    };
+                    modifiers.push(RenderFilenameWildcardModifier::Truncate(limit));
+                } else if matches!(token, "regionnumber" | "markernumber")
+                    && suffix.iter().all(char::is_ascii_digit)
+                {
+                    let width = suffix.len();
+                    let digits = suffix.iter().collect::<String>();
+                    let Ok(start) = digits.parse::<u64>() else {
+                        break;
+                    };
+                    modifiers.push(RenderFilenameWildcardModifier::Numbered { start, width });
+                } else {
+                    // Other [N] forms use render-order contexts which are not
+                    // modeled by the current single-source filename resolver.
                     break;
-                };
-                let digits = digits.iter().collect::<String>();
-                let Ok(limit) = digits.parse::<usize>() else {
-                    break;
-                };
-                modifiers.push(RenderFilenameWildcardModifier::Truncate(limit));
+                }
                 index = end + 1;
             }
             _ => break,
@@ -1013,6 +1033,11 @@ fn apply_render_filename_wildcard_modifiers(
                 value.chars().filter(|value| *value != *character).collect()
             }
             RenderFilenameWildcardModifier::Truncate(limit) => value.chars().take(*limit).collect(),
+            RenderFilenameWildcardModifier::Numbered { start, width } => value
+                .parse::<u64>()
+                .map(|number| start.saturating_add(number.saturating_sub(1)))
+                .map(|number| format!("{number:0width$}"))
+                .unwrap_or(value),
         };
     }
     value
@@ -1198,7 +1223,7 @@ fn expand_render_filename_pattern(
                 (token_end, None)
             };
         let (wildcard_end, modifiers) = if known_token {
-            parse_render_filename_wildcard_modifiers(&characters, expression_end)
+            parse_render_filename_wildcard_modifiers(&characters, expression_end, &token)
         } else {
             (expression_end, Vec::new())
         };
@@ -3025,8 +3050,10 @@ mod tests {
                 "$tracknameornumber",
                 "$region",
                 "$regionnumber",
+                "$regionnumber[N]",
                 "$marker",
                 "$markernumber",
+                "$markernumber[N]",
                 "$item",
                 "$itemnumber",
                 "$start",
@@ -3080,6 +3107,61 @@ mod tests {
             app.render_dialog.filename_pattern,
             "$project-$track$project$projectnotes(name)"
         );
+    }
+
+    #[test]
+    fn render_filename_region_and_marker_numbers_match_native_start_number_rules() {
+        let mut project = Project::default();
+        for (start_ticks, end_ticks, name) in [(0, 1_920, "First"), (1_920, 3_840, "Second")] {
+            project
+                .apply(DawAction::InsertProjectRegion {
+                    start_ticks,
+                    end_ticks,
+                    name: name.to_owned(),
+                })
+                .expect("numbered region should be inserted");
+        }
+        for (position_ticks, name) in [(0, "First"), (1_920, "Second"), (3_840, "End")] {
+            project
+                .apply(DawAction::InsertProjectMarker {
+                    position_ticks,
+                    name: name.to_owned(),
+                })
+                .expect("numbered marker should be inserted");
+        }
+        let settings = aaadaw_app::ProjectWavRenderSettings {
+            master_ceiling: aaadaw_engine::MasterOutputCeiling::default(),
+            export_options: aaadaw_app::WavExportOptions::default(),
+            output_sample_rate: 48_000,
+            output_channels: WavChannelCount::Stereo,
+            source: aaadaw_app::ProjectWavRenderSource::MasterMix,
+            start_sample: project
+                .sample_at_tick(1_920)
+                .expect("start tick should convert"),
+            end_sample: project
+                .sample_at_tick(3_840)
+                .expect("end tick should convert"),
+            tail_milliseconds: 0,
+            normalize_peak: false,
+            normalize_peak_target_centi_dbfs: 0,
+        };
+        let output = apply_render_filename_pattern(
+            vec![(settings, Path::new("/renders/base.wav").to_owned())],
+            "$regionnumber[001]-$markernumber[005]",
+            &project,
+            Path::new("/projects/numbered.aaadaw"),
+        )
+        .expect("region and marker start-number modifiers should expand");
+        assert_eq!(output[0].1, Path::new("/renders/002-006.wav"));
+
+        let output = apply_render_filename_pattern(
+            vec![(settings, Path::new("/renders/base.wav").to_owned())],
+            "$regionnumber[01]-$markernumber[01]",
+            &project,
+            Path::new("/projects/numbered.aaadaw"),
+        )
+        .expect("two-digit number modifiers should retain their requested width");
+        assert_eq!(output[0].1, Path::new("/renders/02-02.wav"));
     }
 
     #[test]
