@@ -1651,4 +1651,13 @@ App nextest 655/655、strict all-target App Clippy `-D warnings`、rustfmt、dif
 
 实现 `$seltrack` 并把它加入 Tracks picker。Linux REAPER 7.82 / Default 7 选择 Bass 与 Keys 后，Selected tracks (stems) 的 `$seltrack-$track` 输出为 `Bass-Bass.wav`、`Bass-Keys.wav`，其中 `$seltrack` 取工程轨道顺序中第一个选中轨道，`$track` 随各 stem 变化；仅选 Keys 的 Master mix 输出为 `Keys-Master.wav`。原厂预览、成品列表、三份 PCM24 WAV、哈希和复现脚本在[选中轨道 fixture](../verification/reaper-parity/fixtures/render-wildcards-seltrack-native.tsv)。AAADAW 在提交 Render job 时将当前轨道选择上下文传入文件名展开；回归覆盖 Keys-only Master、两个 stem 的 primary selection 保持不变，以及无选中轨道时相邻分隔符清理。
 
-57 项 picker 与实际 `$seltrack` 点击插入截图由桌面 Build ID `7cba54a122ea96c879d7d1d645d7d7c17434a4a8`、二进制 SHA-256 `d30b5f110c6e491bf81d497ab4e108ba75e002471b14ac18c03d0058ba937dc1` 实际启动后复核，截图 hash 记入 [Wildcard 验证记录](../verification/reaper-parity/render-filename-patterns.md) 与 fixture manifest。完整 `cargo xtest -p aaadaw` 1258/1258、目标回归、`aaadaw` all-target strict Clippy `-D warnings`、rustfmt、diff 检查和截图脚本语法通过；`RENDER-WILDCARDS-001`/P10 继续 `in_progress`，`$playrate`、剩余原厂 token、光标/选区插入、预设/跨启动持久化、碰撞提示和更多来源/范围行为仍待完成。
+57 项 picker 与实际 `$seltrack` 点击插入截图由桌面 Build ID `7cba54a122ea96c879d7d1d645d7d7c17434a4a8`、二进制 SHA-256 `d30b5f110c6e491bf81d497ab4e108ba75e002471b14ac18c03d0058ba937dc1` 实际启动后复核，截图 hash 记入 [Wildcard 验证记录](../verification/reaper-parity/render-filename-patterns.md) 与 fixture manifest。完整 `cargo xtest -p aaadaw` 1258/1258、目标回归、`aaadaw` all-target strict Clippy `-D warnings`、rustfmt、diff 检查和截图脚本语法通过；`RENDER-WILDCARDS-001`/P10 继续 `in_progress`，可调 `$playrate`/Master transport 速度、剩余原厂 token、光标/选区插入、预设/跨启动持久化、碰撞提示和更多来源/范围行为仍待完成。
+
+
+### 2026-10-16 Render `$playrate` wildcard
+
+将 `$playrate` 加入 Render Wildcards picker，当前共 58 个 token。Linux REAPER 7.82 / Default 7 的临时工程先用 Transport action 40521 重置 1x，再用 40522 增加一个半音，Master rate 读回 `1.059463094`；`$playrate-$track` 预览并实际渲染为 `1.059-Master.wav`。48 kHz stereo PCM24 成品为 45,306 帧、0.943875 秒，确认原厂按三位小数展开且非 1x 会改变离线渲染时长；复现脚本、预览、完成窗口、WAV 和 SHA-256 在[原厂 playrate fixture](../verification/reaper-parity/fixtures/render-wildcards-playrate-native.tsv)。
+
+AAADAW 当前还没有可调 Master transport rate，故项目离线渲染始终 1x，新 token 目前展开为 `1.000`；回归验证默认输出和三位小数格式（含原厂 `1.059` 值）。58-token picker 与实际 `$playrate` 插入来自 Build ID `60ccc8ca9db91d93dbfe7e836ea33429d62e18e5`、SHA-256 `6792eab78a3cca8a93b4441796bdd98755dc490de899117467debd1a7f7a94b7` 的桌面二进制，截图哈希列在 fixture manifest。
+
+完整 `cargo xtest -p aaadaw` 1259/1259、`aaadaw` all-target strict Clippy `-D warnings`、rustfmt、diff 检查、capture 脚本语法及截图/原厂 WAV 哈希核对通过。非默认 Master rate、transport 控件/工程持久化、实时与离线变速播放尚未实现，不能视为 `$playrate` 全语义完成；其余 native wildcard、编辑插入与 preset/persistence 也保持开放，`RENDER-WILDCARDS-001`/P10 继续 `in_progress`。

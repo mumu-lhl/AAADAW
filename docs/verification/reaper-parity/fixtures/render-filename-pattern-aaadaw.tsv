@@ -249,3 +249,14 @@ aaadaw_seltrack_binary_sha256	d30b5f110c6e491bf81d497ab4e108ba75e002471b14ac18c0
 aaadaw_seltrack_native_semantics	Primary selected project track remains fixed across stem outputs; $track follows each rendered stem; Master mix uses selected track context
 aaadaw_seltrack_resolver_test	app::audio_export::tests::render_selected_track_wildcard_uses_primary_selection_for_each_output
 aaadaw_seltrack_validation	AAADAW workspace nextest 1258/1258 passed with isolated Xvfb; focused resolver regression passed; strict all-target aaadaw Clippy -D warnings passed; cargo fmt --check, git diff --check and capture script bash -n passed; screenshot and native WAV hashes verified
+aaadaw_playrate_current_limit	The token resolves at the current fixed 1x project rate as 1.000; AAADAW does not yet expose or persist an adjustable Master transport rate
+aaadaw_playrate_regression	app::audio_export::tests::render_playrate_wildcard_uses_native_three_decimal_format_at_default_rate
+aaadaw_playrate_native_nondefault	REAPER 7.82 at Master playrate 1.059463094 previews and renders $playrate-$track as 1.059-Master.wav
+aaadaw_playrate_picker_screenshot	render-filename-pattern-wildcards-playrate-aaadaw.png
+aaadaw_playrate_picker_screenshot_sha256	ceadc80d0c4765bdcf03f2ef7eea61d73efb39e783951dc99ba0eb39611e8cb7
+aaadaw_playrate_insert_screenshot	render-filename-pattern-wildcard-playrate-aaadaw.png
+aaadaw_playrate_insert_screenshot_sha256	f908f32102228113cdcc7ae824d96cb5bf7d4e021502d91989050c32e3f4b80d
+aaadaw_playrate_build_id	60ccc8ca9db91d93dbfe7e836ea33429d62e18e5
+aaadaw_playrate_binary_sha256	6792eab78a3cca8a93b4441796bdd98755dc490de899117467debd1a7f7a94b7
+aaadaw_playrate_native_token_capture	58-token picker shows $playrate; clicking the token inserts the exact expression and closes the picker
+aaadaw_playrate_validation	AAADAW workspace nextest 1259/1259 passed with isolated Xvfb; strict all-target aaadaw Clippy -D warnings passed; cargo fmt --check, git diff --check, capture script bash -n, native probe execution, and registered native WAV/screenshot plus AAADAW screenshot SHA-256 checks passed; adjustable transport speed remains open

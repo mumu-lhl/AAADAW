@@ -100,10 +100,11 @@ pub(crate) enum RenderFilenameWildcard {
     FoldersDelimited,
     Parent,
     SelTrack,
+    PlayRate,
 }
 
 impl RenderFilenameWildcard {
-    pub(crate) const ALL: [Self; 57] = [
+    pub(crate) const ALL: [Self; 58] = [
         Self::Project,
         Self::Title,
         Self::Author,
@@ -161,6 +162,7 @@ impl RenderFilenameWildcard {
         Self::FoldersDelimited,
         Self::Parent,
         Self::SelTrack,
+        Self::PlayRate,
     ];
 
     pub(crate) const fn token(self) -> &'static str {
@@ -222,8 +224,15 @@ impl RenderFilenameWildcard {
             Self::FoldersDelimited => "$folders[X]",
             Self::Parent => "$parent",
             Self::SelTrack => "$seltrack",
+            Self::PlayRate => "$playrate",
         }
     }
+}
+
+const AAADAW_PROJECT_PLAY_RATE: f64 = 1.0;
+
+fn format_render_wildcard_playrate(playrate: f64) -> String {
+    format!("{playrate:.3}")
 }
 
 impl RenderSource {
@@ -1573,6 +1582,11 @@ fn expand_render_filename_pattern(
             }
             "parent" => result.push_str(parent_name),
             "seltrack" => result.push_str(selected_track_name),
+            // AAADAW currently has no project transport-rate setting, so its only
+            // supported project rate is the 1x default used by its offline renderer.
+            "playrate" => {
+                result.push_str(&format_render_wildcard_playrate(AAADAW_PROJECT_PLAY_RATE))
+            }
             "format" => result.push_str("wav"),
             "samplerate" => result.push_str(&settings.output_sample_rate.to_string()),
             "sampleratek" => result.push_str(&format_render_wildcard_sample_rate_kilohertz(
@@ -3502,6 +3516,7 @@ mod tests {
                 "$folders[X]",
                 "$parent",
                 "$seltrack",
+                "$playrate",
             ]
         );
 
@@ -3542,6 +3557,43 @@ mod tests {
         ));
         assert_eq!(app.render_dialog.filename_pattern, "stem-$fx[X]$seltrack");
         assert!(!app.render_dialog.wildcard_menu_open);
+
+        let _ = app.update(Message::InsertRenderFilenameWildcard(
+            RenderFilenameWildcard::PlayRate,
+        ));
+        assert_eq!(
+            app.render_dialog.filename_pattern,
+            "stem-$fx[X]$seltrack$playrate"
+        );
+        assert!(!app.render_dialog.wildcard_menu_open);
+    }
+
+    #[test]
+    fn render_playrate_wildcard_uses_native_three_decimal_format_at_default_rate() {
+        assert_eq!(format_render_wildcard_playrate(1.0), "1.000");
+        assert_eq!(format_render_wildcard_playrate(1.059_463_094), "1.059");
+
+        let project = Project::default();
+        let settings = aaadaw_app::ProjectWavRenderSettings {
+            master_ceiling: aaadaw_engine::MasterOutputCeiling::default(),
+            export_options: aaadaw_app::WavExportOptions::default(),
+            output_sample_rate: 48_000,
+            output_channels: WavChannelCount::Stereo,
+            source: aaadaw_app::ProjectWavRenderSource::MasterMix,
+            start_sample: 0,
+            end_sample: 48_000,
+            tail_milliseconds: 0,
+            normalize_peak: false,
+            normalize_peak_target_centi_dbfs: 0,
+        };
+        let output = apply_render_filename_pattern(
+            vec![(settings, Path::new("/renders/base.wav").to_owned())],
+            "$playrate-$track",
+            &project,
+            Path::new("/projects/playrate.aaadaw"),
+        )
+        .expect("the default project playrate should resolve into a safe file name");
+        assert_eq!(output[0].1, Path::new("/renders/1.000-Master.wav"));
     }
 
     #[test]

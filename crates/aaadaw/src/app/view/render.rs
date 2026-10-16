@@ -217,7 +217,11 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
                 ),
                 wildcard_group_row(
                     "Tempo:",
-                    RenderFilenameWildcard::ALL.into_iter().skip(7).take(2),
+                    RenderFilenameWildcard::ALL
+                        .into_iter()
+                        .skip(7)
+                        .take(2)
+                        .chain(std::iter::once(RenderFilenameWildcard::PlayRate)),
                 ),
                 wildcard_group_row(
                     "Time signature:",

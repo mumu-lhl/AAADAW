@@ -137,6 +137,7 @@ if [[ -n "$insert_wildcard" ]]; then
     projectnotesnamed) wildcard_x=343; wildcard_y=385 ;;
     bpm) wildcard_x=90; wildcard_y=420 ;;
     tempo) wildcard_x=165; wildcard_y=420 ;;
+    playrate) wildcard_x=250; wildcard_y=420 ;;
     timesignature) wildcard_x=166; wildcard_y=455 ;;
     timesignum) wildcard_x=295; wildcard_y=455 ;;
     timesigdenom) wildcard_x=425; wildcard_y=455 ;;
