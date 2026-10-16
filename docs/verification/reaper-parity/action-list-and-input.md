@@ -74,6 +74,8 @@ nightly+Cranelift Action List/Settings/映射回归 6/6 通过（496 项过滤�
 
 `select_item_under_mouse_leaving_other_items_selected_adds_without_toggling` 验证添加和对已选 target 的保留；`toggle_selection_of_item_under_mouse_adds_and_removes_the_hovered_item` 验证 toggle 两个方向。原厂对多选后活动 item/anchor、Action List 焦点和视图变换后 hover 的运行时行为尚未核实；这两项及 40528 一样保持 `in_progress`。
 
+随后发现 AAADAW 的 Arrangement 横向平移或缩放会清除 hover 缓存，导致指针停在原处时 Action List 动作失去目标。现在 Arrangement 保留视口内的指针坐标，并在滚轮/中键平移或缩放、垂直滚动及轨道行布局重建后重新命中该坐标下的 item；`stationary_arrange_pointer_retargets_items_after_pan_and_zoom` 覆盖从一个 item 移入另一个 item，以及缩放后指针落入空隙的情况，`stationary_arrange_pointer_retargets_items_after_vertical_scroll` 覆盖滚动后切换到另一轨道下的 item。该修复覆盖 AAADAW 视图变化后的 stale target；原厂 Action List 焦点、active item/anchor 和无目标启用状态仍未验证，相关矩阵保持 `in_progress`。
+
 ## 2026-10-13 Main action 41115：Invert selection
 
 Main Section 动作导出确认 41115 的描述为 `Item: Invert selection`，没有默认快捷键。隔离 REAPER 7.82 / Default 7 原生探针确认：空选择会选择所有 Audio/MIDI items；部分选择会得到全工程补集；全选会清空选择。结果顺序沿用工程/时间顺序，轨道选择和编辑光标不变。每次改变选择都会使工程状态计数增加 1，并把 Undo 标签设为 `Invert item selection`。探针还通过 Main_OnCommand 在零 item 工程中强行调用该动作；这类 API 调用不能证明原厂 Action List 在该状态下是否启用。

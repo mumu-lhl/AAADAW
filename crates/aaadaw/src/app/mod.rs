@@ -4475,7 +4475,7 @@ impl App {
             Message::BeginTrackNameEdit(track_id) => task = self.begin_track_name_edit(track_id),
             Message::TcpScrolled { offset, height } => {
                 let offset_changed = (offset - self.timeline.vertical_scroll).abs() > 0.5;
-                self.timeline.vertical_scroll = offset;
+                self.timeline.set_vertical_scroll(offset);
                 self.timeline.viewport_height = height;
                 if offset_changed {
                     task = scroll_arrangement_to(timeline::TIMELINE_SCROLL_ID, offset);
@@ -4483,7 +4483,7 @@ impl App {
             }
             Message::TimelineScrolled { offset, height } => {
                 let offset_changed = (offset - self.timeline.vertical_scroll).abs() > 0.5;
-                self.timeline.vertical_scroll = offset;
+                self.timeline.set_vertical_scroll(offset);
                 self.timeline.viewport_height = height;
                 if offset_changed {
                     task = scroll_arrangement_to(timeline::TCP_SCROLL_ID, offset);

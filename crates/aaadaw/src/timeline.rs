@@ -137,10 +137,18 @@ impl fmt::Display for SnapGrid {
 #[derive(Debug, Clone)]
 pub(crate) enum TimelineEvent {
     CycleFolderCompact(TrackId),
-    PanByPixels(f32),
+    PanByPixelsAt {
+        delta_x: f32,
+        pointer_position: Point,
+    },
     ZoomAt {
         factor: f32,
         anchor_x: f32,
+    },
+    ZoomAtPosition {
+        factor: f32,
+        anchor_x: f32,
+        pointer_position: Point,
     },
     SelectItem {
         item_id: Option<ItemId>,
@@ -148,6 +156,7 @@ pub(crate) enum TimelineEvent {
         range: bool,
     },
     SetHoveredItem(Option<ItemId>),
+    PointerMoved(Point),
     SelectHoveredItem(HoveredItemSelectionMode),
     SelectItemsInMarquee {
         start_tick: u64,
@@ -899,6 +908,7 @@ pub(crate) struct TimelineState {
     fx_lane_snapshot:
         HashMap<(TrackId, usize, u32), Option<Vec<aaadaw_core::FxParameterAutomationPoint>>>,
     row_layout: Vec<TrackRowLayout>,
+    hovered_item_position: Option<Point>,
     folder_compact: HashMap<TrackId, u8>,
     folder_parents: HashMap<TrackId, Option<TrackId>>,
     folder_tracks: HashSet<TrackId>,
@@ -1117,6 +1127,7 @@ impl Default for TimelineState {
             fx_chain_snapshot: HashMap::new(),
             fx_lane_snapshot: HashMap::new(),
             row_layout: Vec::new(),
+            hovered_item_position: None,
             folder_compact: HashMap::new(),
             folder_parents: HashMap::new(),
             folder_tracks: HashSet::new(),
@@ -1169,6 +1180,7 @@ impl TimelineState {
     ) {
         self.selected_project_marker = None;
         self.hovered_item = None;
+        self.hovered_item_position = None;
         self.context_fade = None;
         self.item_fade_preview = None;
         self.folder_compact.clear();
@@ -1603,7 +1615,6 @@ impl TimelineState {
     }
 
     fn rebuild_row_layout(&mut self) {
-        self.hovered_item = None;
         let mut top = 0.0;
         self.row_layout = self
             .cache
@@ -1639,6 +1650,50 @@ impl TimelineState {
                 row
             })
             .collect();
+        self.refresh_hovered_item();
+    }
+
+    fn hovered_item_at(&self, position: Point) -> Option<ItemId> {
+        if !position.x.is_finite() || !position.y.is_finite() {
+            return None;
+        }
+        let (track_index, row_y) = row_at_y(&self.row_layout, position.y)?;
+        if row_y >= TIMELINE_ROW_HEIGHT {
+            return None;
+        }
+        let tick = tick_at_x(self.origin_tick, self.pixels_per_tick, position.x);
+        self.cache.item_at(track_index, tick).map(|item| item.id)
+    }
+
+    fn refresh_hovered_item(&mut self) {
+        self.hovered_item = self
+            .hovered_item_position
+            .and_then(|position| self.hovered_item_at(position));
+    }
+
+    fn pan_by_pixels(&mut self, delta_x: f32) {
+        let delta =
+            -(f64::from(delta_x) / f64::from(self.pixels_per_tick)) + self.pan_fractional_tick;
+        let whole_ticks = delta.trunc();
+        self.pan_fractional_tick = delta - whole_ticks;
+        self.origin_tick = (i128::from(self.origin_tick) + whole_ticks as i128)
+            .clamp(0, i128::from(u64::MAX)) as u64;
+        self.refresh_hovered_item();
+    }
+
+    fn zoom_at(&mut self, factor: f32, anchor_x: f32) {
+        if !factor.is_finite() || factor <= 0.0 {
+            return;
+        }
+        let anchor_tick = self.origin_tick as f64
+            + f64::from(anchor_x.max(0.0)) / f64::from(self.pixels_per_tick);
+        self.pixels_per_tick =
+            (self.pixels_per_tick * factor).clamp(MIN_PIXELS_PER_TICK, MAX_PIXELS_PER_TICK);
+        let new_origin =
+            anchor_tick - f64::from(anchor_x.max(0.0)) / f64::from(self.pixels_per_tick);
+        self.origin_tick = new_origin.clamp(0.0, u64::MAX as f64).round() as u64;
+        self.pan_fractional_tick = 0.0;
+        self.refresh_hovered_item();
     }
 
     pub(crate) fn row_layout(&self, track_index: usize) -> Option<TrackRowLayout> {
@@ -1649,6 +1704,22 @@ impl TimelineState {
         self.row_layout
             .last()
             .map_or(0.0, |row| row.top + row.height)
+    }
+
+    pub(crate) fn set_vertical_scroll(&mut self, offset: f32) {
+        if !offset.is_finite() {
+            return;
+        }
+        let delta = offset - self.vertical_scroll;
+        self.vertical_scroll = offset;
+        if delta.abs() <= f32::EPSILON {
+            return;
+        }
+        if let Some(mut position) = self.hovered_item_position {
+            position.y += delta;
+            self.hovered_item_position = Some(position);
+            self.refresh_hovered_item();
+        }
     }
 
     fn fx_automation_lane_height(&self, key: (TrackId, usize, u32)) -> f32 {
@@ -1702,33 +1773,30 @@ impl TimelineState {
     pub(crate) fn handle(&mut self, event: TimelineEvent) {
         if !matches!(
             event,
-            TimelineEvent::OpenFadeMenu { .. } | TimelineEvent::SetHoveredItem(_)
+            TimelineEvent::OpenFadeMenu { .. }
+                | TimelineEvent::SetHoveredItem(_)
+                | TimelineEvent::PointerMoved(_)
         ) {
             self.context_fade = None;
         }
         match event {
-            TimelineEvent::PanByPixels(delta_x) => {
-                let delta = -(f64::from(delta_x) / f64::from(self.pixels_per_tick))
-                    + self.pan_fractional_tick;
-                let whole_ticks = delta.trunc();
-                self.pan_fractional_tick = delta - whole_ticks;
-                self.origin_tick = (i128::from(self.origin_tick) + whole_ticks as i128)
-                    .clamp(0, i128::from(u64::MAX)) as u64;
-                self.hovered_item = None;
+            TimelineEvent::PanByPixelsAt {
+                delta_x,
+                pointer_position,
+            } => {
+                self.hovered_item_position = Some(pointer_position);
+                self.pan_by_pixels(delta_x);
             }
             TimelineEvent::ZoomAt { factor, anchor_x } => {
-                if !factor.is_finite() || factor <= 0.0 {
-                    return;
-                }
-                let anchor_tick = self.origin_tick as f64
-                    + f64::from(anchor_x.max(0.0)) / f64::from(self.pixels_per_tick);
-                self.pixels_per_tick =
-                    (self.pixels_per_tick * factor).clamp(MIN_PIXELS_PER_TICK, MAX_PIXELS_PER_TICK);
-                let new_origin =
-                    anchor_tick - f64::from(anchor_x.max(0.0)) / f64::from(self.pixels_per_tick);
-                self.origin_tick = new_origin.clamp(0.0, u64::MAX as f64).round() as u64;
-                self.pan_fractional_tick = 0.0;
-                self.hovered_item = None;
+                self.zoom_at(factor, anchor_x);
+            }
+            TimelineEvent::ZoomAtPosition {
+                factor,
+                anchor_x,
+                pointer_position,
+            } => {
+                self.hovered_item_position = Some(pointer_position);
+                self.zoom_at(factor, anchor_x);
             }
             TimelineEvent::SelectItem {
                 item_id,
@@ -1741,7 +1809,14 @@ impl TimelineState {
                 self.select_item(item_id, additive, range, false);
             }
             TimelineEvent::SetHoveredItem(item_id) => {
+                if item_id.is_none() {
+                    self.hovered_item_position = None;
+                }
                 self.hovered_item = item_id.filter(|id| self.cache.item_indices.contains_key(id));
+            }
+            TimelineEvent::PointerMoved(position) => {
+                self.hovered_item_position = Some(position);
+                self.refresh_hovered_item();
             }
             TimelineEvent::SelectHoveredItem(mode) => {
                 if let Some(item_id) = self.hovered_item {
@@ -2527,6 +2602,7 @@ impl TimelineState {
                 })
                 .collect(),
             hovered_item: self.hovered_item,
+            hovered_item_position: self.hovered_item_position,
             time_selection: self.time_selection,
             snap_enabled: self.snap_enabled,
             selected_track: self.selected_track,
@@ -2604,6 +2680,7 @@ struct TimelineProgram<'a> {
     selected_items: Vec<SelectedItemGeometry>,
     razor_edit_areas: Vec<(u64, u64, u32)>,
     hovered_item: Option<ItemId>,
+    hovered_item_position: Option<Point>,
     time_selection: Option<TimeSelection>,
     snap_enabled: bool,
     selected_track: Option<TrackId>,
@@ -2754,13 +2831,17 @@ impl MiddleDragState {
         let event = match self.axis? {
             MiddleDragAxis::HorizontalPan => {
                 let delta = position.x - self.last.x;
-                (delta.abs() > f32::EPSILON).then_some(TimelineEvent::PanByPixels(delta))
+                (delta.abs() > f32::EPSILON).then_some(TimelineEvent::PanByPixelsAt {
+                    delta_x: delta,
+                    pointer_position: position,
+                })
             }
             MiddleDragAxis::VerticalZoom => {
                 let delta = position.y - self.last.y;
-                (delta.abs() > f32::EPSILON).then_some(TimelineEvent::ZoomAt {
+                (delta.abs() > f32::EPSILON).then_some(TimelineEvent::ZoomAtPosition {
                     factor: 1.12_f32.powf(-delta / 24.0),
                     anchor_x: self.start.x,
+                    pointer_position: position,
                 })
             }
         };
@@ -3233,7 +3314,9 @@ impl shader::Program<crate::app::Message> for TimelineProgram<'_> {
         }
 
         match event {
-            Event::Mouse(mouse::Event::CursorLeft) if self.hovered_item.is_some() => {
+            Event::Mouse(mouse::Event::CursorLeft)
+                if self.hovered_item.is_some() || self.hovered_item_position.is_some() =>
+            {
                 Some(shader::Action::publish(crate::app::Message::Timeline(
                     TimelineEvent::SetHoveredItem(None),
                 )))
@@ -3247,9 +3330,10 @@ impl shader::Program<crate::app::Message> for TimelineProgram<'_> {
                 if state.modifiers.alt() && y != 0.0 {
                     Some(
                         shader::Action::publish(crate::app::Message::Timeline(
-                            TimelineEvent::ZoomAt {
+                            TimelineEvent::ZoomAtPosition {
                                 factor: 1.12_f32.powf(y),
                                 anchor_x: position.x,
+                                pointer_position: position,
                             },
                         ))
                         .and_capture(),
@@ -3258,7 +3342,10 @@ impl shader::Program<crate::app::Message> for TimelineProgram<'_> {
                     let delta_x = if x != 0.0 { x } else { y * 42.0 };
                     Some(
                         shader::Action::publish(crate::app::Message::Timeline(
-                            TimelineEvent::PanByPixels(delta_x),
+                            TimelineEvent::PanByPixelsAt {
+                                delta_x,
+                                pointer_position: position,
+                            },
                         ))
                         .and_capture(),
                     )
@@ -3418,20 +3505,13 @@ impl shader::Program<crate::app::Message> for TimelineProgram<'_> {
                     || state.pending_item_selection_drag.is_some()
                     || state.pending_automation_point.is_some()
                     || state.pending_fx_lane_resize.is_some();
-                if !interaction_in_progress {
-                    let hovered_item = cursor.position_in(bounds).and_then(|position| {
-                        let (track_index, row_y) = row_at_y(self.row_layout, position.y)?;
-                        if row_y >= TIMELINE_ROW_HEIGHT {
-                            return None;
-                        }
-                        let tick = tick_at_x(self.origin_tick, self.pixels_per_tick, position.x);
-                        self.cache.item_at(track_index, tick).map(|item| item.id)
-                    });
-                    if hovered_item != self.hovered_item {
-                        return Some(shader::Action::publish(crate::app::Message::Timeline(
-                            TimelineEvent::SetHoveredItem(hovered_item),
-                        )));
-                    }
+                if !interaction_in_progress
+                    && let Some(position) = cursor.position_in(bounds)
+                    && self.hovered_item_position != Some(position)
+                {
+                    return Some(shader::Action::publish(crate::app::Message::Timeline(
+                        TimelineEvent::PointerMoved(position),
+                    )));
                 }
                 if let Some(mut fade) = state.pending_item_fade {
                     let delta = position.x - fade.start_x;
@@ -9093,9 +9173,10 @@ mod tests {
         let mut timeline = TimelineState::default();
         let anchor_x = 300.0;
         let before = tick_at_x(timeline.origin_tick, timeline.pixels_per_tick, anchor_x);
-        timeline.handle(TimelineEvent::ZoomAt {
+        timeline.handle(TimelineEvent::ZoomAtPosition {
             factor: 1.5,
             anchor_x,
+            pointer_position: Point::new(anchor_x, 10.0),
         });
         let after = tick_at_x(timeline.origin_tick, timeline.pixels_per_tick, anchor_x);
         assert!(before.abs_diff(after) <= 1);
@@ -9104,18 +9185,28 @@ mod tests {
     #[test]
     fn middle_drag_zooms_vertically_and_pans_horizontally() {
         let mut zoom = MiddleDragState::new(Point::new(120.0, 80.0));
-        let Some(TimelineEvent::ZoomAt { factor, anchor_x }) = zoom.update(Point::new(121.0, 48.0))
+        let Some(TimelineEvent::ZoomAtPosition {
+            factor,
+            anchor_x,
+            pointer_position,
+        }) = zoom.update(Point::new(121.0, 48.0))
         else {
             panic!("vertical middle drag should zoom");
         };
         assert!(factor > 1.0);
         assert_eq!(anchor_x, 120.0);
+        assert_eq!(pointer_position, Point::new(121.0, 48.0));
 
         let mut pan = MiddleDragState::new(Point::new(120.0, 80.0));
-        let Some(TimelineEvent::PanByPixels(delta_x)) = pan.update(Point::new(160.0, 81.0)) else {
+        let Some(TimelineEvent::PanByPixelsAt {
+            delta_x,
+            pointer_position,
+        }) = pan.update(Point::new(160.0, 81.0))
+        else {
             panic!("horizontal middle drag should pan");
         };
         assert_eq!(delta_x, 40.0);
+        assert_eq!(pointer_position, Point::new(160.0, 81.0));
     }
 
     #[test]
@@ -9582,11 +9673,11 @@ mod tests {
         .expect("moving over an item should publish its hover target");
         assert!(matches!(
             action.into_inner().0,
-            Some(crate::app::Message::Timeline(
-                TimelineEvent::SetHoveredItem(Some(item_id))
-            )) if item_id == items[0]
+            Some(crate::app::Message::Timeline(TimelineEvent::PointerMoved(position)))
+                if position == item_position
         ));
-        timeline.handle(TimelineEvent::SetHoveredItem(Some(items[0])));
+        timeline.handle(TimelineEvent::PointerMoved(item_position));
+        assert_eq!(timeline.hovered_item, Some(items[0]));
 
         let empty_position = Point::new(bounds.x + 140.0, bounds.y + row.top + 20.0);
         let program = timeline.program(&project, None);
@@ -9602,10 +9693,60 @@ mod tests {
         .expect("moving off an item should clear its hover target");
         assert!(matches!(
             action.into_inner().0,
-            Some(crate::app::Message::Timeline(
-                TimelineEvent::SetHoveredItem(None)
-            ))
+            Some(crate::app::Message::Timeline(TimelineEvent::PointerMoved(position)))
+                if position == Point::new(140.0, row.top + 20.0)
         ));
+        timeline.handle(TimelineEvent::PointerMoved(Point::new(
+            140.0,
+            row.top + 20.0,
+        )));
+        assert_eq!(timeline.hovered_item, None);
+    }
+
+    #[test]
+    fn stationary_arrange_pointer_retargets_items_after_pan_and_zoom() {
+        let (project, _, items) = project_with_items();
+        let mut timeline = TimelineState {
+            pixels_per_tick: 0.1,
+            ..TimelineState::default()
+        };
+        timeline.rebuild(&project);
+        let pointer_position = Point::new(27.0, 20.0);
+        timeline.handle(TimelineEvent::PointerMoved(pointer_position));
+        assert_eq!(timeline.hovered_item, Some(items[0]));
+
+        timeline.handle(TimelineEvent::PanByPixelsAt {
+            delta_x: -75.0,
+            pointer_position,
+        });
+        assert!(timeline.origin_tick > 700);
+        assert_eq!(timeline.hovered_item, Some(items[1]));
+
+        timeline.handle(TimelineEvent::ZoomAtPosition {
+            factor: 2.0,
+            anchor_x: 0.0,
+            pointer_position,
+        });
+        assert_eq!(timeline.hovered_item, None);
+    }
+
+    #[test]
+    fn stationary_arrange_pointer_retargets_items_after_vertical_scroll() {
+        let (project, _, items) = project_with_items();
+        let mut timeline = TimelineState {
+            pixels_per_tick: 0.1,
+            ..TimelineState::default()
+        };
+        timeline.rebuild(&project);
+        timeline.handle(TimelineEvent::PointerMoved(Point::new(27.0, 20.0)));
+        assert_eq!(timeline.hovered_item, Some(items[0]));
+
+        timeline.set_vertical_scroll(TIMELINE_ROW_HEIGHT);
+        assert_eq!(timeline.hovered_item, Some(items[2]));
+        assert_eq!(
+            timeline.hovered_item_position,
+            Some(Point::new(27.0, 148.0))
+        );
     }
 
     #[test]
