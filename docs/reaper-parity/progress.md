@@ -1617,3 +1617,8 @@ App nextest 670/670、strict all-target App Clippy `-D warnings`、rustfmt、dif
 将 REAPER 7.82 Regions/Markers 菜单中的 `$regionname`、`$markername` 加入解析器和 Wildcards picker，当前为 46 项。两者只返回匹配对象的原始名称；空名保持空，不回退为对象编号，旁边的分隔符依原厂帮助规则移除。Linux REAPER 7.82 `All project regions` 实际渲染 `$regionname-$markername` 得到 `Verse-Start.wav`、`Chorus-Next.wav`；未命名对象模式 `$regionname-$regionnumber` 预览并渲染为 `01.wav`、`02.wav`。原厂对话框、完成列表、输出哈希和空名行为截图见[名称 wildcard fixture](../verification/reaper-parity/fixtures/render-wildcards-region-name-native.tsv)。新增回归覆盖两个命名范围及空名时 Region/Marker name token 的无回退行为。
 
 App nextest 672/672、strict all-target App Clippy `-D warnings`、rustfmt、diff 检查及 picker capture 脚本语法通过。Build ID `f62ddf91a3a8c729fd70ab18049948aa2531ad52`、SHA-256 `c5c4ac655fdeeffd5c3fb7ee3e0e77b01e70b808858963a43103421bb0652c6b` 的桌面构建通过实窗截图复核；46 项 picker 与滚动区域、`$regionname` / `$markername` 实点插入和 picker 关闭状态均来自该构建。原厂 named/unnamed 预览和当前 AAADAW 界面截图哈希写入 [Wildcard 验证记录](../verification/reaper-parity/render-filename-patterns.md) 与 fixture manifest。`$region(name)`、`$marker(name)` 表达式及其他未实现原厂 wildcards 仍保持开放，`RENDER-WILDCARDS-001`/P10 继续 `in_progress`。
+
+
+### 2026-10-16 Native direct Item number render
+
+用 Linux REAPER 7.82 的 `Selected media items` source 单独选中三个工程 Item 中的第二个，将 pattern 设为 `$itemnumber`。原厂预览指向 `02.wav`，实际渲染也生成 `02.wav`（48,000 帧、48 kHz stereo PCM24）；渲染对话框、完成列表、源项目、输出哈希与可复现 probe 见[原厂 Item number fixture](../verification/reaper-parity/fixtures/render-wildcards-itemnumber-native.tsv)。这补上了此前只从 `$item` 输出确认序号、但尚未单独渲染 `$itemnumber` 的差异。AAADAW 现有第二个 Item 的 `$itemnumber` 回归值 `02` 与原厂一致；App nextest 672/672、strict all-target App Clippy 及桌面构建结果沿用上方同一代码版本，Render wildcard 验收仍 `in_progress`。
