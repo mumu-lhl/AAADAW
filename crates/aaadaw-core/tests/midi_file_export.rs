@@ -285,6 +285,27 @@ fn reaper_782_type_one_export_matches_native_track_and_event_bytes() {
 }
 
 #[test]
+fn reaper_782_type_one_smpte_offset_matches_native_bytes() {
+    let project = native_midi_fixture_project();
+    let mut options = MidiExportOptions::for_project(&project);
+    options.embed_smpte_offset = true;
+    let actual = encode_standard_midi_with_conductor_track_name(
+        &project,
+        options,
+        "midi-smpte-native-20261016",
+    )
+    .unwrap();
+    let native = include_bytes!(
+        "../../../docs/verification/reaper-parity/fixtures/menu-export-midi-native-smpte.mid"
+    );
+
+    assert_eq!(
+        actual, native,
+        "Type 1 SMPTE offset metadata and MIDI tracks match REAPER 7.82"
+    );
+}
+
+#[test]
 fn reaper_782_type_zero_export_matches_native_event_bytes() {
     let project = native_midi_fixture_project();
     let mut options = MidiExportOptions::for_project(&project);

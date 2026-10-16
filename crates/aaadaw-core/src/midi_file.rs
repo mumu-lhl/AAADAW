@@ -420,6 +420,9 @@ fn conductor_events(
             bytes: meta_event(0x03, track_name)?,
         });
     }
+    let smpte_order_offset = u8::from(options.embed_smpte_offset);
+    let starting_tempo_order = 2 + smpte_order_offset;
+    let ramp_tempo_order = starting_tempo_order + 1;
     let mut tempo_events = Vec::new();
     if options.embed_tempo_and_time_signature || include_base_tempo_and_time_signature {
         let tempo_points = project.tempo_points().collect::<Vec<_>>();
@@ -434,15 +437,30 @@ fn conductor_events(
         for (index, &(start_tick, bpm, curve)) in tempo_points.iter().take(point_count).enumerate()
         {
             if !options.embed_tempo_and_time_signature || curve == TempoCurve::Step {
-                push_tempo_event(&mut tempo_events, start_tick, bpm * basis, 2)?;
+                push_tempo_event(
+                    &mut tempo_events,
+                    start_tick,
+                    bpm * basis,
+                    starting_tempo_order,
+                )?;
                 continue;
             }
             let Some(&(end_tick, end_bpm, _)) = tempo_points.get(index + 1) else {
-                push_tempo_event(&mut tempo_events, start_tick, bpm * basis, 2)?;
+                push_tempo_event(
+                    &mut tempo_events,
+                    start_tick,
+                    bpm * basis,
+                    starting_tempo_order,
+                )?;
                 continue;
             };
             if end_tick <= start_tick {
-                push_tempo_event(&mut tempo_events, start_tick, bpm * basis, 2)?;
+                push_tempo_event(
+                    &mut tempo_events,
+                    start_tick,
+                    bpm * basis,
+                    starting_tempo_order,
+                )?;
                 continue;
             }
             match curve {
@@ -450,7 +468,7 @@ fn conductor_events(
                     let ramp_start = format!("REAPER gradual tempo change start {bpm:.6}");
                     events.push(Event {
                         tick: scale_tick(start_tick, project_ppq, options.ppq)?,
-                        order: 2,
+                        order: starting_tempo_order,
                         bytes: meta_event(0x01, ramp_start.as_bytes())?,
                     });
                     let interval_ticks = (ppq / 8).max(1);
@@ -472,20 +490,30 @@ fn conductor_events(
                             .tick_at_sample_position((start_sample + end_sample) / 2.0)
                             .map_err(|error| error.to_string())?;
                         let midpoint_bpm = project.tempo_at_tick_position(midpoint_tick) * basis;
-                        push_tempo_event(&mut tempo_events, interval_start, midpoint_bpm, 3)?;
+                        push_tempo_event(
+                            &mut tempo_events,
+                            interval_start,
+                            midpoint_bpm,
+                            ramp_tempo_order,
+                        )?;
                         last_interval_start = interval_start;
                         interval_start = interval_end;
                     }
                     let ramp_end = "REAPER gradual tempo change interpolation end";
                     events.push(Event {
                         tick: scale_tick(last_interval_start, project_ppq, options.ppq)?,
-                        order: 4,
+                        order: ramp_tempo_order + 1,
                         bytes: meta_event(0x01, ramp_end.as_bytes())?,
                     });
                 }
                 TempoCurve::Step => unreachable!("step tempo points are handled above"),
                 _ => {
-                    push_tempo_event(&mut tempo_events, start_tick, bpm * basis, 2)?;
+                    push_tempo_event(
+                        &mut tempo_events,
+                        start_tick,
+                        bpm * basis,
+                        starting_tempo_order,
+                    )?;
                     let first_bpm = bpm * basis;
                     let last_bpm = end_bpm * basis;
                     let maximum_span = (ppq / 16).max(1);
@@ -498,6 +526,7 @@ fn conductor_events(
                         last_bpm,
                         maximum_span,
                         0,
+                        starting_tempo_order,
                         &mut tempo_events,
                     )?;
                 }
@@ -544,7 +573,7 @@ fn conductor_events(
         }
         events.push(Event {
             tick: scale_tick(tick, project_ppq, options.ppq)?,
-            order: 1,
+            order: 1 + smpte_order_offset,
             bytes: vec![
                 0xff,
                 0x58,
@@ -560,7 +589,7 @@ fn conductor_events(
     if options.embed_smpte_offset {
         events.push(Event {
             tick: 0,
-            order: 3,
+            order: 1,
             bytes: encode_smpte_offset(project)?,
         });
     }
@@ -580,7 +609,7 @@ fn conductor_events(
             }
             events.push(Event {
                 tick: scale_tick(marker.position_ticks(), project_ppq, options.ppq)?,
-                order: 4,
+                order: ramp_tempo_order + 1,
                 bytes: meta_event(marker_kind, marker.name().as_bytes())?,
             });
         }
@@ -598,6 +627,7 @@ fn subdivide_tempo_curve(
     end_bpm: f64,
     maximum_span: u64,
     depth: u8,
+    tempo_order: u8,
     events: &mut Vec<TempoEvent>,
 ) -> Result<(), String> {
     if end_tick.saturating_sub(start_tick) <= 1 || depth >= 64 {
@@ -623,9 +653,10 @@ fn subdivide_tempo_curve(
         middle_bpm,
         maximum_span,
         depth + 1,
+        tempo_order,
         events,
     )?;
-    push_tempo_event(events, middle_tick, middle_bpm, 2)?;
+    push_tempo_event(events, middle_tick, middle_bpm, tempo_order)?;
     subdivide_tempo_curve(
         project,
         basis,
@@ -635,6 +666,7 @@ fn subdivide_tempo_curve(
         end_bpm,
         maximum_span,
         depth + 1,
+        tempo_order,
         events,
     )
 }
