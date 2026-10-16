@@ -173,6 +173,21 @@ if [[ -n "$insert_wildcard" ]]; then
     folders) wildcard_x=260; wildcard_y=1047 ;;
     foldersdelimited) wildcard_x=350; wildcard_y=1047 ;;
     parent) wildcard_x=470; wildcard_y=1047 ;;
+    date) wildcard_x=112; wildcard_y=1082 ;;
+    time) wildcard_x=184; wildcard_y=1082 ;;
+    datetime) wildcard_x=276; wildcard_y=1082 ;;
+    year) wildcard_x=110; wildcard_y=1117 ;;
+    year2) wildcard_x=180; wildcard_y=1117 ;;
+    month) wildcard_x=255; wildcard_y=1117 ;;
+    monthname) wildcard_x=350; wildcard_y=1117 ;;
+    day) wildcard_x=470; wildcard_y=1117 ;;
+    dayname) wildcard_x=545; wildcard_y=1117 ;;
+    hour) wildcard_x=90; wildcard_y=1152 ;;
+    hour12) wildcard_x=160; wildcard_y=1152 ;;
+    ampm) wildcard_x=235; wildcard_y=1152 ;;
+    minute) wildcard_x=310; wildcard_y=1152 ;;
+    second) wildcard_x=400; wildcard_y=1152 ;;
+    localtime) wildcard_x=510; wildcard_y=1152 ;;
     *) printf 'Unknown AAADAW_INSERT_WILDCARD token: %s\n' "$insert_wildcard" >&2; exit 2 ;;
   esac
   if [[ "$scroll_wildcards" == 0 ]] && (( wildcard_y > 720 )); then

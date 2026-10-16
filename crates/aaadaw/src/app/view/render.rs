@@ -300,6 +300,18 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
                     "Track folders:",
                     RenderFilenameWildcard::ALL.into_iter().skip(52).take(4),
                 ),
+                wildcard_group_row(
+                    "Date/time:",
+                    RenderFilenameWildcard::ALL.into_iter().skip(60).take(3),
+                ),
+                wildcard_group_row(
+                    "Calendar:",
+                    RenderFilenameWildcard::ALL.into_iter().skip(63).take(6),
+                ),
+                wildcard_group_row(
+                    "Clock:",
+                    RenderFilenameWildcard::ALL.into_iter().skip(69).take(6),
+                ),
             ]
             .spacing(tokens::SPACING_XS)
         } else {

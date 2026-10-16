@@ -105,10 +105,25 @@ pub(crate) enum RenderFilenameWildcard {
     PlayRate,
     User,
     Computer,
+    Date,
+    Time,
+    DateTime,
+    Year,
+    YearTwoDigit,
+    Month,
+    MonthName,
+    Day,
+    DayName,
+    Hour,
+    Hour12,
+    AmPm,
+    Minute,
+    Second,
+    LocalTime,
 }
 
 impl RenderFilenameWildcard {
-    pub(crate) const ALL: [Self; 60] = [
+    pub(crate) const ALL: [Self; 75] = [
         Self::Project,
         Self::Title,
         Self::Author,
@@ -169,6 +184,21 @@ impl RenderFilenameWildcard {
         Self::PlayRate,
         Self::User,
         Self::Computer,
+        Self::Date,
+        Self::Time,
+        Self::DateTime,
+        Self::Year,
+        Self::YearTwoDigit,
+        Self::Month,
+        Self::MonthName,
+        Self::Day,
+        Self::DayName,
+        Self::Hour,
+        Self::Hour12,
+        Self::AmPm,
+        Self::Minute,
+        Self::Second,
+        Self::LocalTime,
     ];
 
     pub(crate) const fn token(self) -> &'static str {
@@ -233,6 +263,21 @@ impl RenderFilenameWildcard {
             Self::PlayRate => "$playrate",
             Self::User => "$user",
             Self::Computer => "$computer",
+            Self::Date => "$date",
+            Self::Time => "$time",
+            Self::DateTime => "$datetime",
+            Self::Year => "$year",
+            Self::YearTwoDigit => "$year2",
+            Self::Month => "$month",
+            Self::MonthName => "$monthname",
+            Self::Day => "$day",
+            Self::DayName => "$dayname",
+            Self::Hour => "$hour",
+            Self::Hour12 => "$hour12",
+            Self::AmPm => "$ampm",
+            Self::Minute => "$minute",
+            Self::Second => "$second",
+            Self::LocalTime => "$localtime",
         }
     }
 }
@@ -247,6 +292,42 @@ fn format_render_wildcard_playrate(playrate: f64) -> String {
 struct RenderFilenameSystemInfo {
     user: String,
     computer: String,
+    date_time: RenderFilenameDateTime,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct RenderFilenameDateTime {
+    local: chrono::DateTime<chrono::FixedOffset>,
+}
+
+impl RenderFilenameDateTime {
+    fn current() -> Self {
+        Self {
+            local: chrono::Local::now().fixed_offset(),
+        }
+    }
+
+    fn value(&self, token: &str) -> Option<String> {
+        let value = match token {
+            "date" => self.local.format("%Y-%m-%d").to_string(),
+            "time" => self.local.format("%H_%M_%S").to_string(),
+            "datetime" => self.local.format("%Y-%m-%d %H_%M_%S").to_string(),
+            "year" => self.local.format("%Y").to_string(),
+            "year2" => self.local.format("%y").to_string(),
+            "month" => self.local.format("%m").to_string(),
+            "monthname" => self.local.format("%b").to_string().to_lowercase(),
+            "day" => self.local.format("%d").to_string(),
+            "dayname" => self.local.format("%a").to_string().to_lowercase(),
+            "hour" => self.local.format("%H").to_string(),
+            "hour12" => self.local.format("%I").to_string(),
+            "ampm" => self.local.format("%p").to_string().to_lowercase(),
+            "minute" => self.local.format("%M").to_string(),
+            "second" => self.local.format("%S").to_string(),
+            "localtime" => self.local.format("%a, %b %d %Y %H_%M").to_string(),
+            _ => return None,
+        };
+        Some(value)
+    }
 }
 
 struct RenderFilenameExpansionContext<'a> {
@@ -270,6 +351,7 @@ impl RenderFilenameSystemInfo {
                     .or_else(|| env::var("COMPUTERNAME").ok()),
                 fs::read_to_string("/etc/hostname").ok(),
             ),
+            date_time: RenderFilenameDateTime::current(),
         }
     }
 }
@@ -1476,7 +1558,7 @@ fn expand_render_filename_pattern(
         }
         let token_start = index + 1;
         let mut token_end = token_start;
-        while token_end < characters.len() && characters[token_end].is_ascii_alphabetic() {
+        while token_end < characters.len() && characters[token_end].is_ascii_alphanumeric() {
             token_end += 1;
         }
         if token_end == token_start {
@@ -1489,6 +1571,16 @@ fn expand_render_filename_pattern(
             .collect::<String>();
         if full_token.eq_ignore_ascii_case("projectdirectoryn") && full_token.ends_with('N') {
             token_end -= 1;
+        } else if full_token.len() > "projectdirectory".len()
+            && full_token[.."projectdirectory".len()].eq_ignore_ascii_case("projectdirectory")
+            && full_token["projectdirectory".len()..]
+                .chars()
+                .all(|character| character.is_ascii_digit())
+        {
+            // `$projectdirectoryN` uses a numeric path level, while date/time
+            // wildcards such as `$year2` and `$hour12` include digits in the
+            // wildcard name itself. Keep both forms unambiguous.
+            token_end = token_start + "projectdirectory".len();
         }
         let token_original = characters[token_start..token_end]
             .iter()
@@ -1675,6 +1767,14 @@ fn expand_render_filename_pattern(
             "seltrack" => result.push_str(selected_track_name),
             "user" => result.push_str(&system_info.user),
             "computer" => result.push_str(&system_info.computer),
+            "date" | "time" | "datetime" | "year" | "year2" | "month" | "monthname" | "day"
+            | "dayname" | "hour" | "hour12" | "ampm" | "minute" | "second" | "localtime" => result
+                .push_str(
+                    &system_info
+                        .date_time
+                        .value(&token)
+                        .expect("date/time tokens are in the native wildcard catalog"),
+                ),
             // AAADAW currently has no project transport-rate setting, so its only
             // supported project rate is the 1x default used by its offline renderer.
             "playrate" => {
@@ -3612,6 +3712,21 @@ mod tests {
                 "$playrate",
                 "$user",
                 "$computer",
+                "$date",
+                "$time",
+                "$datetime",
+                "$year",
+                "$year2",
+                "$month",
+                "$monthname",
+                "$day",
+                "$dayname",
+                "$hour",
+                "$hour12",
+                "$ampm",
+                "$minute",
+                "$second",
+                "$localtime",
             ]
         );
 
@@ -3677,6 +3792,15 @@ mod tests {
         assert_eq!(
             app.render_dialog.filename_pattern,
             "stem-$fx[X]$seltrack$playrate$user$computer"
+        );
+        assert!(!app.render_dialog.wildcard_menu_open);
+
+        let _ = app.update(Message::InsertRenderFilenameWildcard(
+            RenderFilenameWildcard::DateTime,
+        ));
+        assert_eq!(
+            app.render_dialog.filename_pattern,
+            "stem-$fx[X]$seltrack$playrate$user$computer$datetime"
         );
         assert!(!app.render_dialog.wildcard_menu_open);
     }
@@ -3758,6 +3882,10 @@ mod tests {
         let system_info = RenderFilenameSystemInfo {
             user: "FixtureUser".to_owned(),
             computer: "StudioComputer".to_owned(),
+            date_time: RenderFilenameDateTime {
+                local: chrono::DateTime::parse_from_rfc3339("2026-10-16T00:29:28-12:00")
+                    .expect("fixed UTC-12 date/time should parse"),
+            },
         };
         let output = apply_render_filename_pattern_with_system_info(
             vec![(settings, Path::new("/renders/base.wav").to_owned())],
@@ -3772,6 +3900,23 @@ mod tests {
         assert_eq!(
             output[0].1,
             Path::new("/renders/FixtureUser-StudioComputer-Master.wav")
+        );
+
+        let output = apply_render_filename_pattern_with_system_info(
+            vec![(settings, Path::new("/renders/base.wav").to_owned())],
+            "$date-$time-$datetime-$year-$year2-$month-$monthname-$day-$dayname-$hour-$hour12-$ampm-$minute-$second-$localtime-$track",
+            &project,
+            Path::new("/projects/system-info.aaadaw"),
+            &[],
+            &[],
+            &system_info,
+        )
+        .expect("date and time wildcards should match native formats");
+        assert_eq!(
+            output[0].1,
+            Path::new(
+                "/renders/2026-10-16-00_29_28-2026-10-16 00_29_28-2026-26-10-oct-16-fri-00-12-am-29-28-Fri, Oct 16 2026 00_29-Master.wav"
+            )
         );
     }
 
