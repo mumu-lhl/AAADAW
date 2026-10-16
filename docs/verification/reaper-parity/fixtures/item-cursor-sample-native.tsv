@@ -1,0 +1,30 @@
+key	value
+captured_at_utc	2026-10-16
+reference	REAPER 7.82/linux-x86_64 rev 338578; Default_7.0.ReaperThemeZip
+platform	Linux x86_64; isolated Xvfb :356; root 1280x800x24; main-window capture 1024x740
+configuration	Fresh isolated -cfgfile profile copied from clean Default 7; no custom keymap, mouse map, or third-party extensions
+audio_device	Closed; no playback or hardware I/O
+reaper_binary	target/reaper782/reaper_linux_x86_64/REAPER/reaper; SHA-256 9976f5608068b7a58518969001b00b527fb0de6ed7459e0e5dda6f29878ee254
+probe_script	scripts/reaper_parity/probe-item-cursor-sample-precision.lua
+probe_invocation	AAADAW_REAPER_PROBE_DIR=/tmp/aaadaw-cursor-sample-native/output AAADAW_REAPER_CURSOR_WAV=docs/verification/reaper-parity/fixtures/item-hover-actionlist-target-audio.wav reaper -cfgfile <isolated-config>/reaper.ini -newinst -nosplash scripts/reaper_parity/probe-item-cursor-sample-precision.lua
+audio_source	item-hover-actionlist-target-audio.wav; mono PCM16, 48000 Hz; SHA-256 b2beb6e035cbd9ab3de482949160e467a29bd658807772ec9451ee9c7698983e
+audio_item	Selected Audio take starts at sample 192012 (4.00025 s) and ends at sample 240012 (5.00025 s); one-second source take
+procedure	The ReaScript created a fresh track and real PCM Audio take, selected it, ensured Main snap command 1157 was on or off per case, then invoked Main actions through Main_OnCommand. Cursor time was read with GetCursorPosition at 15 decimal places; sample index was round(seconds * 48000).
+native_screenshot	item-cursor-sample-native.png; REAPER main window 1024x740; SHA-256 8aeaa2b3cb75252f3f36c1178e28a06b509564a7f19d1ce3f6148e20dd758bc7
+observation	All four actions preserve the off-grid sample boundary with snapping on and off; each cursor action leaves project state-change count at 0. The GUI time display rounds to 0:04.000 while ReaScript returns 4.000250000000000.
+limitation	The screenshot shows the REAPER Arrange result after the probe, not the Action List invocation; action IDs and results are recorded by the script. This confirms cursor semantics and does not close full window/focus parity.
+version	7.82/linux-x86_64
+theme	Default_7.0.ReaperThemeZip
+sample_rate	48000
+item_start_sample	192012
+item_end_sample	240012
+snap_command	1157
+case	action_id	snap_enabled	cursor_seconds	cursor_sample_rounded	project_state_delta
+snap_on_selected_start	41173	true	4.000250000000000	192012	0
+snap_on_selected_end	41174	true	5.000250000000000	240012	0
+snap_on_nearest_right	41168	true	4.000250000000000	192012	0
+snap_on_nearest_left	41167	true	4.000250000000000	192012	0
+snap_off_selected_start	41173	false	4.000250000000000	192012	0
+snap_off_selected_end	41174	false	5.000250000000000	240012	0
+snap_off_nearest_right	41168	false	4.000250000000000	192012	0
+snap_off_nearest_left	41167	false	4.000250000000000	192012	0
