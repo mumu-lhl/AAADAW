@@ -112,20 +112,23 @@ if [[ "${AAADAW_OPEN_WILDCARDS:-0}" == 1 || -n "$insert_wildcard" ]]; then
 fi
 if [[ -n "$insert_wildcard" ]]; then
   case "$insert_wildcard" in
-    project) wildcard_x=143; wildcard_y=316 ;;
-    bpm) wildcard_x=220; wildcard_y=316 ;;
-    tempo) wildcard_x=295; wildcard_y=316 ;;
-    timesignature) wildcard_x=166; wildcard_y=350 ;;
-    timesignum) wildcard_x=295; wildcard_y=350 ;;
-    timesigdenom) wildcard_x=425; wildcard_y=350 ;;
-    track) wildcard_x=89; wildcard_y=385 ;;
-    tracknumber) wildcard_x=190; wildcard_y=385 ;;
-    tracknameornumber) wildcard_x=347; wildcard_y=385 ;;
-    region) wildcard_x=155; wildcard_y=420 ;;
-    regionnumber) wildcard_x=268; wildcard_y=420 ;;
-    marker) wildcard_x=381; wildcard_y=420 ;;
-    markernumber) wildcard_x=497; wildcard_y=420 ;;
-    item) wildcard_x=117; wildcard_y=455 ;;
+    project) wildcard_x=163; wildcard_y=316 ;;
+    title) wildcard_x=236; wildcard_y=316 ;;
+    author) wildcard_x=310; wildcard_y=316 ;;
+    projectnotes) wildcard_x=415; wildcard_y=316 ;;
+    bpm) wildcard_x=90; wildcard_y=350 ;;
+    tempo) wildcard_x=165; wildcard_y=350 ;;
+    timesignature) wildcard_x=166; wildcard_y=385 ;;
+    timesignum) wildcard_x=295; wildcard_y=385 ;;
+    timesigdenom) wildcard_x=425; wildcard_y=385 ;;
+    track) wildcard_x=89; wildcard_y=420 ;;
+    tracknumber) wildcard_x=190; wildcard_y=420 ;;
+    tracknameornumber) wildcard_x=347; wildcard_y=420 ;;
+    region) wildcard_x=155; wildcard_y=455 ;;
+    regionnumber) wildcard_x=268; wildcard_y=455 ;;
+    marker) wildcard_x=381; wildcard_y=455 ;;
+    markernumber) wildcard_x=497; wildcard_y=455 ;;
+    item) wildcard_x=117; wildcard_y=490 ;;
     *) printf 'Unknown AAADAW_INSERT_WILDCARD token: %s\n' "$insert_wildcard" >&2; exit 2 ;;
   esac
   "$xdotool" mousemove --sync "$wildcard_x" "$wildcard_y" click 1

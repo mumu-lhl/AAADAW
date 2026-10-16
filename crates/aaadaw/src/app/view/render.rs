@@ -204,24 +204,28 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
         if app.render_dialog.wildcard_menu_open {
             column![
                 wildcard_group_row(
-                    "Project / tempo:",
-                    RenderFilenameWildcard::ALL.into_iter().take(3),
+                    "Project information:",
+                    RenderFilenameWildcard::ALL.into_iter().take(4),
+                ),
+                wildcard_group_row(
+                    "Tempo:",
+                    RenderFilenameWildcard::ALL.into_iter().skip(4).take(2),
                 ),
                 wildcard_group_row(
                     "Time signature:",
-                    RenderFilenameWildcard::ALL.into_iter().skip(3).take(3),
-                ),
-                wildcard_group_row(
-                    "Tracks:",
                     RenderFilenameWildcard::ALL.into_iter().skip(6).take(3),
                 ),
                 wildcard_group_row(
+                    "Tracks:",
+                    RenderFilenameWildcard::ALL.into_iter().skip(9).take(3),
+                ),
+                wildcard_group_row(
                     "Regions / markers:",
-                    RenderFilenameWildcard::ALL.into_iter().skip(9).take(4),
+                    RenderFilenameWildcard::ALL.into_iter().skip(12).take(4),
                 ),
                 wildcard_group_row(
                     "Media items:",
-                    RenderFilenameWildcard::ALL.into_iter().skip(13),
+                    RenderFilenameWildcard::ALL.into_iter().skip(16),
                 ),
             ]
             .spacing(tokens::SPACING_XS)

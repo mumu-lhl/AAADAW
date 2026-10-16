@@ -44,6 +44,9 @@ pub(crate) enum RenderSource {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum RenderFilenameWildcard {
     Project,
+    Title,
+    Author,
+    ProjectNotes,
     Tempo,
     TimeSignature,
     TimeSigNum,
@@ -60,8 +63,11 @@ pub(crate) enum RenderFilenameWildcard {
 }
 
 impl RenderFilenameWildcard {
-    pub(crate) const ALL: [Self; 14] = [
+    pub(crate) const ALL: [Self; 17] = [
         Self::Project,
+        Self::Title,
+        Self::Author,
+        Self::ProjectNotes,
         Self::Bpm,
         Self::Tempo,
         Self::TimeSignature,
@@ -80,6 +86,9 @@ impl RenderFilenameWildcard {
     pub(crate) const fn token(self) -> &'static str {
         match self {
             Self::Project => "$project",
+            Self::Title => "$title",
+            Self::Author => "$author",
+            Self::ProjectNotes => "$projectnotes",
             Self::Tempo => "$tempo",
             Self::TimeSignature => "$timesignature",
             Self::TimeSigNum => "$timesignum",
@@ -733,16 +742,16 @@ fn expand_render_filename_pattern(
         .and_then(|track_id| project.tracks().iter().find(|track| track.id() == track_id))
         .map(|track| {
             if track.name().is_empty() {
-                track_number_text.as_str()
+                format!("Track {track_number_text}")
             } else {
-                track.name()
+                track.name().to_owned()
             }
         })
         .unwrap_or_else(|| {
             if settings.source == aaadaw_app::ProjectWavRenderSource::MasterMix {
-                "Master"
+                "Master".to_owned()
             } else {
-                ""
+                String::new()
             }
         });
     let item_name = match settings.source {
@@ -820,13 +829,16 @@ fn expand_render_filename_pattern(
             .to_ascii_lowercase();
         match token.as_str() {
             "project" => result.push_str(project_name),
+            "title" => result.push_str(&project.project_notes().title),
+            "author" => result.push_str(&project.project_notes().author),
+            "projectnotes" => result.push_str(&project.project_notes().text),
             "tempo" => result.push_str(&bpm_text),
             "timesignature" => result.push_str(&time_signature_text),
             "timesignum" => result.push_str(&time_signature.numerator().to_string()),
             "timesigdenom" => result.push_str(&time_signature.denominator().to_string()),
             "track" => result.push_str(track_name),
             "tracknumber" => result.push_str(&track_number_text),
-            "tracknameornumber" => result.push_str(track_name_or_number),
+            "tracknameornumber" => result.push_str(&track_name_or_number),
             "region" => result.push_str(region.map_or("", |region| region.name())),
             "regionnumber" => result.push_str(&region_number_text),
             "marker" => result.push_str(marker.map_or("", |(_, marker)| marker.name())),
@@ -2413,7 +2425,7 @@ mod tests {
     use super::super::offline_job_queue::OfflineJobQueue;
     use super::super::offline_job_queue::QueuedOfflineJob;
     use super::*;
-    use aaadaw_core::DawAction;
+    use aaadaw_core::{DawAction, ProjectNotes};
 
     #[test]
     fn render_filename_patterns_expand_native_wildcard_contexts_safely() {
@@ -2447,6 +2459,16 @@ mod tests {
                 name: "Start".to_owned(),
             })
             .expect("filename fixture marker should be inserted");
+        project
+            .apply(DawAction::SetProjectNotes {
+                notes: ProjectNotes {
+                    title: "Session title".to_owned(),
+                    author: "Render author".to_owned(),
+                    text: "Mix notes".to_owned(),
+                    ..ProjectNotes::default()
+                },
+            })
+            .expect("filename fixture project notes should be set");
         let settings = |source| aaadaw_app::ProjectWavRenderSettings {
             master_ceiling: aaadaw_engine::MasterOutputCeiling::default(),
             export_options: aaadaw_app::WavExportOptions::default(),
@@ -2468,7 +2490,7 @@ mod tests {
                 )),
                 output.clone(),
             )],
-            "$project-$region-$regionnumber-$marker-$markernumber-$track-$tracknumber-$tracknameornumber-$bpm-$tempo-$timesignature-$timesignum-$timesigdenom",
+            "$project-$title-$author-$projectnotes-$region-$regionnumber-$marker-$markernumber-$track-$tracknumber-$tracknameornumber-$bpm-$tempo-$timesignature-$timesignum-$timesigdenom",
             &project,
             project_path,
         )
@@ -2476,7 +2498,7 @@ mod tests {
         assert_eq!(
             track_output[0].1,
             Path::new(
-                "/renders/session-Intro-01-Start-01-Drums_Kit-01-Drums_Kit-120-120-4-4-4-4.wav"
+                "/renders/session-Session title-Render author-Mix notes-Intro-01-Start-01-Drums_Kit-01-Drums_Kit-120-120-4-4-4-4.wav"
             )
         );
 
@@ -2494,6 +2516,30 @@ mod tests {
         )
         .expect("region and item tokens should resolve");
         assert_eq!(item_output[0].1, Path::new("/renders/Intro-item_01.wav"));
+
+        project
+            .apply(DawAction::CreateTrack {
+                index: 1,
+                name: String::new(),
+            })
+            .expect("an unnamed filename fixture track should be created");
+        let unnamed_track_id = project.tracks()[1].id();
+        let unnamed_track_output = apply_render_filename_pattern(
+            vec![(
+                settings(aaadaw_app::ProjectWavRenderSource::SelectedTrackStem(
+                    unnamed_track_id,
+                )),
+                Path::new("/renders/base.wav").to_owned(),
+            )],
+            "$tracknameornumber",
+            &project,
+            project_path,
+        )
+        .expect("unnamed tracks should resolve to their numbered display name");
+        assert_eq!(
+            unnamed_track_output[0].1,
+            Path::new("/renders/Track 02.wav")
+        );
     }
 
     #[test]
@@ -2502,6 +2548,9 @@ mod tests {
             RenderFilenameWildcard::ALL.map(RenderFilenameWildcard::token),
             [
                 "$project",
+                "$title",
+                "$author",
+                "$projectnotes",
                 "$bpm",
                 "$tempo",
                 "$timesignature",

@@ -1,6 +1,9 @@
 -- Run in Linux REAPER 7.82 with an isolated Default 7 configuration and an empty unsaved project.
 -- Generate source.wav in the probe directory with the render-fixture example first.
 -- Opens the real Render dialog with one selected item, plus time/region/Razor bounds to compare.
+-- AAADAW_REAPER_WILDCARD_PATTERN can override its default pattern; optional project title/author/
+-- notes are set from AAADAW_REAPER_PROJECT_TITLE, AAADAW_REAPER_PROJECT_AUTHOR, and
+-- AAADAW_REAPER_PROJECT_NOTES; AAADAW_REAPER_TRACK_NAME can set the fixture track name.
 local root = assert(os.getenv("AAADAW_REAPER_PROBE_DIR")) .. "/"
 assert(reaper.GetAppVersion() == "7.82/linux-x86_64")
 assert(reaper.GetLastColorThemeFile():match("Default_7%.0%.ReaperThemeZip$"))
@@ -8,10 +11,26 @@ assert(reaper.GetPlayStateEx(0) == 0)
 assert(reaper.CountTracks(0) == 0)
 local _, project_path = reaper.EnumProjects(-1, "")
 assert(project_path == "", "Use an unsaved disposable project")
+local title = os.getenv("AAADAW_REAPER_PROJECT_TITLE")
+if title then
+  assert(reaper.GetSetProjectInfo_String(0, "PROJECT_TITLE", title, true))
+end
+local author = os.getenv("AAADAW_REAPER_PROJECT_AUTHOR")
+if author then
+  assert(reaper.GetSetProjectInfo_String(0, "PROJECT_AUTHOR", author, true))
+end
+local notes = os.getenv("AAADAW_REAPER_PROJECT_NOTES")
+if notes then
+  reaper.GetSetProjectNotes(0, true, notes)
+end
 
 reaper.InsertTrackAtIndex(0, true)
 local track = reaper.GetTrack(0, 0)
-reaper.GetSetMediaTrackInfo_String(track, "P_NAME", "Render fixture", true)
+local track_name = os.getenv("AAADAW_REAPER_TRACK_NAME")
+if track_name == nil then
+  track_name = "Render fixture"
+end
+reaper.GetSetMediaTrackInfo_String(track, "P_NAME", track_name, true)
 for index, start in ipairs({ 0, 2, 4 }) do
   local item = reaper.AddMediaItemToTrack(track)
   local take = reaper.AddTakeToMediaItem(item)
