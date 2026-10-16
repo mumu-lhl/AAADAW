@@ -40,7 +40,12 @@ for field, value in pairs({
   reaper.GetSetProjectInfo(0, field, value, true)
 end
 reaper.GetSetProjectInfo_String(0, "RENDER_FILE", root, true)
-reaper.GetSetProjectInfo_String(0, "RENDER_PATTERN", "selected-items-$region-$item", true)
+reaper.GetSetProjectInfo_String(
+  0,
+  "RENDER_PATTERN",
+  os.getenv("AAADAW_REAPER_WILDCARD_PATTERN") or "selected-items-$region-$item",
+  true
+)
 reaper.GetSetProjectInfo_String(0, "RENDER_FORMAT", "evaw", true)
 reaper.Main_OnCommand(40015, 0)
 

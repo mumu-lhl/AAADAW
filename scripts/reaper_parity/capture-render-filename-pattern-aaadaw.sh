@@ -112,15 +112,23 @@ if [[ "${AAADAW_OPEN_WILDCARDS:-0}" == 1 || -n "$insert_wildcard" ]]; then
 fi
 if [[ -n "$insert_wildcard" ]]; then
   case "$insert_wildcard" in
-    project) wildcard_x=139 ;;
-    region) wildcard_x=222 ;;
-    marker) wildcard_x=306 ;;
-    track) wildcard_x=385 ;;
-    item) wildcard_x=454 ;;
-    bpm) wildcard_x=520 ;;
+    project) wildcard_x=143; wildcard_y=316 ;;
+    bpm) wildcard_x=220; wildcard_y=316 ;;
+    tempo) wildcard_x=295; wildcard_y=316 ;;
+    timesignature) wildcard_x=166; wildcard_y=350 ;;
+    timesignum) wildcard_x=295; wildcard_y=350 ;;
+    timesigdenom) wildcard_x=425; wildcard_y=350 ;;
+    track) wildcard_x=89; wildcard_y=385 ;;
+    tracknumber) wildcard_x=190; wildcard_y=385 ;;
+    tracknameornumber) wildcard_x=347; wildcard_y=385 ;;
+    region) wildcard_x=155; wildcard_y=420 ;;
+    regionnumber) wildcard_x=268; wildcard_y=420 ;;
+    marker) wildcard_x=381; wildcard_y=420 ;;
+    markernumber) wildcard_x=497; wildcard_y=420 ;;
+    item) wildcard_x=117; wildcard_y=455 ;;
     *) printf 'Unknown AAADAW_INSERT_WILDCARD token: %s\n' "$insert_wildcard" >&2; exit 2 ;;
   esac
-  "$xdotool" mousemove --sync "$wildcard_x" 304 click 1
+  "$xdotool" mousemove --sync "$wildcard_x" "$wildcard_y" click 1
   sleep 0.4
 fi
 xwininfo -id "$render_window" >"$run_dir/render-window.txt"

@@ -44,29 +44,53 @@ pub(crate) enum RenderSource {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum RenderFilenameWildcard {
     Project,
+    Tempo,
+    TimeSignature,
+    TimeSigNum,
+    TimeSigDenom,
     Region,
+    RegionNumber,
     Marker,
+    MarkerNumber,
     Track,
+    TrackNumber,
+    TrackNameOrNumber,
     Item,
     Bpm,
 }
 
 impl RenderFilenameWildcard {
-    pub(crate) const ALL: [Self; 6] = [
+    pub(crate) const ALL: [Self; 14] = [
         Self::Project,
-        Self::Region,
-        Self::Marker,
-        Self::Track,
-        Self::Item,
         Self::Bpm,
+        Self::Tempo,
+        Self::TimeSignature,
+        Self::TimeSigNum,
+        Self::TimeSigDenom,
+        Self::Track,
+        Self::TrackNumber,
+        Self::TrackNameOrNumber,
+        Self::Region,
+        Self::RegionNumber,
+        Self::Marker,
+        Self::MarkerNumber,
+        Self::Item,
     ];
 
     pub(crate) const fn token(self) -> &'static str {
         match self {
             Self::Project => "$project",
+            Self::Tempo => "$tempo",
+            Self::TimeSignature => "$timesignature",
+            Self::TimeSigNum => "$timesignum",
+            Self::TimeSigDenom => "$timesigdenom",
             Self::Region => "$region",
+            Self::RegionNumber => "$regionnumber",
             Self::Marker => "$marker",
+            Self::MarkerNumber => "$markernumber",
             Self::Track => "$track",
+            Self::TrackNumber => "$tracknumber",
+            Self::TrackNameOrNumber => "$tracknameornumber",
             Self::Item => "$item",
             Self::Bpm => "$bpm",
         }
@@ -696,6 +720,31 @@ fn expand_render_filename_pattern(
                 ""
             }
         });
+    let track_number = track_id
+        .and_then(|track_id| {
+            project
+                .tracks()
+                .iter()
+                .position(|track| track.id() == track_id)
+        })
+        .map_or(0, |index| index + 1);
+    let track_number_text = format!("{track_number:02}");
+    let track_name_or_number = track_id
+        .and_then(|track_id| project.tracks().iter().find(|track| track.id() == track_id))
+        .map(|track| {
+            if track.name().is_empty() {
+                track_number_text.as_str()
+            } else {
+                track.name()
+            }
+        })
+        .unwrap_or_else(|| {
+            if settings.source == aaadaw_app::ProjectWavRenderSource::MasterMix {
+                "Master"
+            } else {
+                ""
+            }
+        });
     let item_name = match settings.source {
         aaadaw_app::ProjectWavRenderSource::SelectedAudioItem(item_id) => project
             .audio_items()
@@ -734,6 +783,17 @@ fn expand_render_filename_pattern(
     } else {
         bpm.to_string()
     };
+    let tick = project.tick_at_sample(settings.start_sample).unwrap_or(0);
+    let time_signature = project.time_signature_at_tick(tick);
+    let time_signature_text = format!(
+        "{}-{}",
+        time_signature.numerator(),
+        time_signature.denominator()
+    );
+    let region_number_text =
+        region.map_or_else(String::new, |region| format!("{:02}", region.number()));
+    let marker_number_text =
+        marker.map_or_else(String::new, |(_, marker)| format!("{:02}", marker.number()));
 
     let mut result = String::with_capacity(pattern.len());
     let characters = pattern.chars().collect::<Vec<_>>();
@@ -760,9 +820,17 @@ fn expand_render_filename_pattern(
             .to_ascii_lowercase();
         match token.as_str() {
             "project" => result.push_str(project_name),
+            "tempo" => result.push_str(&bpm_text),
+            "timesignature" => result.push_str(&time_signature_text),
+            "timesignum" => result.push_str(&time_signature.numerator().to_string()),
+            "timesigdenom" => result.push_str(&time_signature.denominator().to_string()),
             "track" => result.push_str(track_name),
+            "tracknumber" => result.push_str(&track_number_text),
+            "tracknameornumber" => result.push_str(track_name_or_number),
             "region" => result.push_str(region.map_or("", |region| region.name())),
+            "regionnumber" => result.push_str(&region_number_text),
             "marker" => result.push_str(marker.map_or("", |(_, marker)| marker.name())),
+            "markernumber" => result.push_str(&marker_number_text),
             "item" => result.push_str(&item_name),
             "bpm" => result.push_str(&bpm_text),
             _ => {
@@ -2400,14 +2468,16 @@ mod tests {
                 )),
                 output.clone(),
             )],
-            "$project-$region-$marker-$track-$bpm",
+            "$project-$region-$regionnumber-$marker-$markernumber-$track-$tracknumber-$tracknameornumber-$bpm-$tempo-$timesignature-$timesignum-$timesigdenom",
             &project,
             project_path,
         )
-        .expect("track/region/marker tokens should resolve");
+        .expect("project, track, region, marker and tempo tokens should resolve");
         assert_eq!(
             track_output[0].1,
-            Path::new("/renders/session-Intro-Start-Drums_Kit-120.wav")
+            Path::new(
+                "/renders/session-Intro-01-Start-01-Drums_Kit-01-Drums_Kit-120-120-4-4-4-4.wav"
+            )
         );
 
         let item_id = project.audio_items()[0].id();
@@ -2430,7 +2500,22 @@ mod tests {
     fn render_wildcard_picker_lists_and_inserts_supported_tokens() {
         assert_eq!(
             RenderFilenameWildcard::ALL.map(RenderFilenameWildcard::token),
-            ["$project", "$region", "$marker", "$track", "$item", "$bpm",]
+            [
+                "$project",
+                "$bpm",
+                "$tempo",
+                "$timesignature",
+                "$timesignum",
+                "$timesigdenom",
+                "$track",
+                "$tracknumber",
+                "$tracknameornumber",
+                "$region",
+                "$regionnumber",
+                "$marker",
+                "$markernumber",
+                "$item",
+            ]
         );
 
         let mut app = App::default();

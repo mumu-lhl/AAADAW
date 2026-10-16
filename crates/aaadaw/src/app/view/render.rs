@@ -10,6 +10,21 @@ use iced::widget::{
 };
 use iced::{Alignment, Element, Length};
 
+fn wildcard_group_row(
+    label: &'static str,
+    wildcards: impl IntoIterator<Item = RenderFilenameWildcard>,
+) -> iced::widget::Row<'static, Message> {
+    wildcards
+        .into_iter()
+        .fold(row![text(label).size(11)], |tokens, wildcard| {
+            tokens.push(
+                button(wildcard.token()).on_press(Message::InsertRenderFilenameWildcard(wildcard)),
+            )
+        })
+        .spacing(tokens::SPACING_XS)
+        .align_y(Alignment::Center)
+}
+
 pub(super) fn view(app: &App) -> Element<'_, Message> {
     let options = app.wav_export_options;
     let bounds = app.render_dialog.bounds;
@@ -165,16 +180,9 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
         .spacing(tokens::SPACING_SM)
         .align_y(Alignment::Center),
         bounds_control,
-        row![
-            column![
-                text("Filename pattern").size(13),
-                text(
-                    "Optional; omit ext. Tokens: $project, $region, $marker, $track, $item, $bpm."
-                )
-                .size(11),
-            ]
-            .spacing(2),
+        column![
             row![
+                text("Filename pattern").size(13),
                 text_input(
                     "$project-$region-$track",
                     &app.render_dialog.filename_pattern
@@ -189,25 +197,36 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
             ]
             .spacing(tokens::SPACING_XS)
             .align_y(Alignment::Center),
+            text("Optional; omit the extension. Choose a wildcard to append it to the pattern.")
+                .size(11),
         ]
-        .spacing(tokens::SPACING_SM)
-        .align_y(Alignment::Center),
+        .spacing(2),
         if app.render_dialog.wildcard_menu_open {
-            RenderFilenameWildcard::ALL
-                .into_iter()
-                .fold(
-                    row![text("Insert wildcard:").size(11)],
-                    |tokens, wildcard| {
-                        tokens.push(
-                            button(wildcard.token())
-                                .on_press(Message::InsertRenderFilenameWildcard(wildcard)),
-                        )
-                    },
-                )
-                .spacing(tokens::SPACING_XS)
-                .align_y(Alignment::Center)
+            column![
+                wildcard_group_row(
+                    "Project / tempo:",
+                    RenderFilenameWildcard::ALL.into_iter().take(3),
+                ),
+                wildcard_group_row(
+                    "Time signature:",
+                    RenderFilenameWildcard::ALL.into_iter().skip(3).take(3),
+                ),
+                wildcard_group_row(
+                    "Tracks:",
+                    RenderFilenameWildcard::ALL.into_iter().skip(6).take(3),
+                ),
+                wildcard_group_row(
+                    "Regions / markers:",
+                    RenderFilenameWildcard::ALL.into_iter().skip(9).take(4),
+                ),
+                wildcard_group_row(
+                    "Media items:",
+                    RenderFilenameWildcard::ALL.into_iter().skip(13),
+                ),
+            ]
+            .spacing(tokens::SPACING_XS)
         } else {
-            row![]
+            column![]
         },
         {
             let fields: Element<'_, Message> =
