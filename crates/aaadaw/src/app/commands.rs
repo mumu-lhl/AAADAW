@@ -19,6 +19,9 @@ pub(crate) enum CommandId {
     SaveProjectAs,
     SaveProjectNewVersion,
     SaveAllProjects,
+    OpenProjectTemplates,
+    OpenProjectTemplate(usize),
+    SaveProjectAsTemplate,
     OpenRecentProjects,
     OpenRecentProject(usize),
     CloseProject,
@@ -154,6 +157,8 @@ enum CommandKind {
     SaveProjectAs,
     SaveProjectNewVersion,
     SaveAllProjects,
+    OpenProjectTemplates,
+    SaveProjectAsTemplate,
     OpenRecentProjects,
     CloseProject,
     CloseAllProjects,
@@ -413,11 +418,31 @@ const COMMANDS: &[CommandDefinition] = &[
         separator_before: false,
     },
     CommandDefinition {
+        kind: CommandKind::OpenProjectTemplates,
+        menu: Some(MainMenu::File),
+        category: "File",
+        label: "Project templates",
+        aliases: &["project templates", "open project template"],
+        shortcuts: &[],
+        destructive: false,
+        separator_before: true,
+    },
+    CommandDefinition {
         kind: CommandKind::OpenRecentProjects,
         menu: Some(MainMenu::File),
         category: "File",
         label: "Recent projects",
         aliases: &["recent projects", "open recent project"],
+        shortcuts: &[],
+        destructive: false,
+        separator_before: false,
+    },
+    CommandDefinition {
+        kind: CommandKind::SaveProjectAsTemplate,
+        menu: None,
+        category: "File",
+        label: "Save project as template...",
+        aliases: &["save project as template", "save as template"],
         shortcuts: &[],
         destructive: false,
         separator_before: false,
@@ -1790,6 +1815,37 @@ pub(super) fn recent_project_entries(app: &App) -> Vec<CommandEntry> {
         .collect()
 }
 
+pub(super) fn project_template_entries(app: &App) -> Vec<CommandEntry> {
+    let mut template_entries = app
+        .project_template_paths
+        .iter()
+        .enumerate()
+        .map(|(index, path)| CommandEntry {
+            id: CommandId::OpenProjectTemplate(index),
+            category: "File",
+            label: path.file_stem().map_or_else(
+                || path.display().to_string(),
+                |name| name.to_string_lossy().into_owned(),
+            ),
+            shortcut: None,
+            enabled: !project_file_busy(app),
+            checked: false,
+            destructive: false,
+            separator_before: false,
+            aliases: vec![path.to_string_lossy().into_owned()],
+        })
+        .collect::<Vec<_>>();
+    if let Some(mut save_template) = entries(app)
+        .into_iter()
+        .find(|entry| entry.command.id == CommandId::SaveProjectAsTemplate)
+        .map(|entry| entry.command)
+    {
+        save_template.separator_before = !template_entries.is_empty();
+        template_entries.push(save_template);
+    }
+    template_entries
+}
+
 fn for_menu_with_recent_entries(
     app: &App,
     menu: MainMenu,
@@ -1801,21 +1857,29 @@ fn for_menu_with_recent_entries(
         .filter(|entry| entry.section == Some(menu))
         .map(|entry| entry.command.clone())
         .collect::<Vec<_>>();
-    if inline_recent_entries
-        && menu == MainMenu::File
-        && app.recent_projects_menu_open
-        && let Some(parent) = menu_entries
-            .iter()
-            .position(|entry| entry.id == CommandId::OpenRecentProjects)
-    {
-        let recent_entries = recent_project_entries(app)
-            .into_iter()
-            .map(|mut entry| {
-                entry.label = format!("  {}", entry.label);
-                entry
-            })
-            .collect::<Vec<_>>();
-        menu_entries.splice(parent + 1..parent + 1, recent_entries);
+    if inline_recent_entries && menu == MainMenu::File {
+        if app.project_templates_menu_open
+            && let Some(parent) = menu_entries
+                .iter()
+                .position(|entry| entry.id == CommandId::OpenProjectTemplates)
+        {
+            let templates = project_template_entries(app);
+            menu_entries.splice(parent + 1..parent + 1, templates);
+        }
+        if app.recent_projects_menu_open
+            && let Some(parent) = menu_entries
+                .iter()
+                .position(|entry| entry.id == CommandId::OpenRecentProjects)
+        {
+            let recent_entries = recent_project_entries(app)
+                .into_iter()
+                .map(|mut entry| {
+                    entry.label = format!("  {}", entry.label);
+                    entry
+                })
+                .collect::<Vec<_>>();
+            menu_entries.splice(parent + 1..parent + 1, recent_entries);
+        }
     }
     if menu == MainMenu::Item {
         if let Some(entry) = menu_entries
@@ -2229,6 +2293,9 @@ pub(super) fn for_track_context(app: &App, track_id: TrackId) -> Vec<CommandEntr
 
 pub(super) fn is_enabled(app: &App, command: CommandId) -> bool {
     match command {
+        CommandId::OpenProjectTemplate(index) => {
+            index < app.project_template_paths.len() && !project_file_busy(app)
+        }
         CommandId::OpenRecentProject(index) => {
             index < app.recent_project_paths.len() && !project_file_busy(app)
         }
@@ -2388,6 +2455,8 @@ fn command_kind_id(kind: CommandKind) -> &'static str {
         CommandKind::SaveProject => "file.save-project",
         CommandKind::SaveProjectAs => "file.save-project-as",
         CommandKind::SaveProjectNewVersion => "file.save-project-new-version",
+        CommandKind::OpenProjectTemplates => "file.project-templates",
+        CommandKind::SaveProjectAsTemplate => "file.save-project-as-template",
         CommandKind::SaveAllProjects => "file.save-all-projects",
         CommandKind::OpenRecentProjects => "file.recent-projects",
         CommandKind::CloseProject => "file.close-project",
@@ -2517,6 +2586,13 @@ fn command_kind_id(kind: CommandKind) -> &'static str {
 }
 
 pub(super) fn dispatch(app: &mut App, command: CommandId) -> Task<Message> {
+    if let CommandId::OpenProjectTemplate(index) = command {
+        let Some(path) = app.project_template_paths.get(index).cloned() else {
+            app.status = "Project template is no longer available".to_owned();
+            return Task::none();
+        };
+        return app.update(Message::OpenProjectTemplate(path));
+    }
     if let CommandId::OpenRecentProject(index) = command {
         let Some(path) = app.recent_project_paths.get(index).cloned() else {
             app.status = "Recent project is no longer available".to_owned();
@@ -2553,6 +2629,9 @@ pub(super) fn dispatch(app: &mut App, command: CommandId) -> Task<Message> {
         return Task::batch(tasks);
     }
     let message = match command {
+        CommandId::OpenProjectTemplate(_) => {
+            unreachable!("project template dispatch returned above")
+        }
         CommandId::OpenRecentProject(_) => unreachable!("recent project dispatch returned above"),
         CommandId::NewProject => Message::NewProject,
         CommandId::CloseProject => Message::CloseProject,
@@ -2565,6 +2644,10 @@ pub(super) fn dispatch(app: &mut App, command: CommandId) -> Task<Message> {
         CommandId::OpenProject => Message::OpenProject,
         CommandId::SaveProject => Message::SaveProject,
         CommandId::SaveAllProjects => Message::SaveProject,
+        CommandId::OpenProjectTemplates => Message::ToggleProjectTemplatesMenu,
+        CommandId::SaveProjectAsTemplate => {
+            Message::PickPath(PathPickerTarget::SaveProjectTemplate)
+        }
         CommandId::OpenRecentProjects => Message::ToggleRecentProjectsMenu,
         CommandId::SaveProjectAs => Message::PickPath(PathPickerTarget::SaveProject),
         CommandId::SaveProjectNewVersion => Message::SaveProjectNewVersion,
@@ -2895,7 +2978,10 @@ fn command_enabled(app: &App, kind: CommandKind, track: Option<TrackState>) -> b
         | CommandKind::CloseAllProjects => !project_edit_busy(app),
         CommandKind::Quit => true,
         CommandKind::SaveProject | CommandKind::SaveAllProjects => !project_file_busy(app),
-        CommandKind::OpenRecentProjects => true,
+        CommandKind::OpenProjectTemplates | CommandKind::OpenRecentProjects => true,
+        CommandKind::SaveProjectAsTemplate => {
+            !cfg!(target_os = "android") && !project_file_busy(app) && !app.path_picker_busy
+        }
         CommandKind::OpenSettings
         | CommandKind::OpenAbout
         | CommandKind::OpenProjectSettings
@@ -3223,6 +3309,8 @@ fn command_id(kind: CommandKind) -> CommandId {
         CommandKind::SaveProject => CommandId::SaveProject,
         CommandKind::SaveProjectAs => CommandId::SaveProjectAs,
         CommandKind::SaveProjectNewVersion => CommandId::SaveProjectNewVersion,
+        CommandKind::OpenProjectTemplates => CommandId::OpenProjectTemplates,
+        CommandKind::SaveProjectAsTemplate => CommandId::SaveProjectAsTemplate,
         CommandKind::SaveAllProjects => CommandId::SaveAllProjects,
         CommandKind::OpenRecentProjects => CommandId::OpenRecentProjects,
         CommandKind::CloseProject => CommandId::CloseProject,

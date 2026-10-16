@@ -131,12 +131,12 @@ pub(super) fn popup_width(menu: MainMenu) -> f32 {
         .map_or(244.0, |layout| layout.popup_width)
 }
 
-pub(super) fn recent_projects_parent_offset(app: &App) -> f32 {
+pub(super) fn submenu_parent_offset(
+    app: &App,
+    parent_command: super::super::commands::CommandId,
+) -> f32 {
     let entries = commands::for_menu(app, MainMenu::File);
-    let Some(parent_index) = entries
-        .iter()
-        .position(|entry| entry.id == super::super::commands::CommandId::OpenRecentProjects)
-    else {
+    let Some(parent_index) = entries.iter().position(|entry| entry.id == parent_command) else {
         return tokens::PANEL_PADDING;
     };
     let popup_width = popup_width(MainMenu::File);
@@ -175,6 +175,30 @@ pub(super) fn recent_projects_dropdown(app: &App, max_width: f32) -> Element<'_,
             let selected = app.menu_selected_command == Some(entry.id);
             contents = contents.push(command(entry, selected, false));
         }
+    }
+    container(contents)
+        .width(Length::Fixed(360.0_f32.min(max_width)))
+        .padding(tokens::PANEL_PADDING)
+        .style(|_| container::Style {
+            background: Some(Color::from_rgb8(37, 41, 44).into()),
+            border: Border::default()
+                .color(Color::from_rgb8(83, 91, 96))
+                .width(1.0)
+                .rounded(2.0),
+            ..container::Style::default()
+        })
+        .into()
+}
+
+pub(super) fn project_templates_dropdown(app: &App, max_width: f32) -> Element<'_, Message> {
+    let entries = commands::project_template_entries(app);
+    let mut contents = column![].spacing(tokens::ROW_GAP);
+    for entry in entries {
+        if entry.separator_before {
+            contents = contents.push(rule::horizontal(1));
+        }
+        let selected = app.menu_selected_command == Some(entry.id);
+        contents = contents.push(command(entry, selected, false));
     }
     container(contents)
         .width(Length::Fixed(360.0_f32.min(max_width)))
@@ -461,11 +485,15 @@ fn command<'a>(
     selected: bool,
     touch_targets: bool,
 ) -> iced::widget::Button<'a, Message> {
-    let recent_projects_parent = entry.id == super::super::commands::CommandId::OpenRecentProjects;
-    let message = if recent_projects_parent {
-        Message::ToggleRecentProjectsMenu
-    } else {
-        Message::ExecuteCommand(entry.id)
+    use super::super::commands::CommandId;
+    let submenu_parent = matches!(
+        entry.id,
+        CommandId::OpenRecentProjects | CommandId::OpenProjectTemplates
+    );
+    let message = match entry.id {
+        CommandId::OpenRecentProjects => Message::ToggleRecentProjectsMenu,
+        CommandId::OpenProjectTemplates => Message::ToggleProjectTemplatesMenu,
+        _ => Message::ExecuteCommand(entry.id),
     };
     let destructive = entry.destructive;
     let button = button(
@@ -473,7 +501,7 @@ fn command<'a>(
             text(if entry.checked { "✓" } else { "" }).width(Length::Fixed(14.0)),
             text(entry.label.clone()).size(14).width(Length::Fill),
             text(entry.shortcut.unwrap_or_default()).size(11),
-            text(if recent_projects_parent { "›" } else { "" })
+            text(if submenu_parent { "›" } else { "" })
                 .size(12)
                 .width(Length::Fixed(12.0)),
         ]

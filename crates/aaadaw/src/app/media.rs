@@ -37,6 +37,12 @@ impl App {
                 .set_mime_type("application/octet-stream")
                 .add_filter("AAADAW project", &["aaadaw"])
                 .save_data(Vec::<u8>::new(), completion),
+            PathPickerTarget::SaveProjectTemplate => robius_file_picker::FileDialog::new()
+                .set_title("Save AAADAW project template")
+                .set_file_name("template.aaadaw")
+                .set_mime_type("application/octet-stream")
+                .add_filter("AAADAW project template", &["aaadaw"])
+                .save_data(Vec::<u8>::new(), completion),
             PathPickerTarget::ExportWav => robius_file_picker::FileDialog::new()
                 .set_title("Render project to WAV")
                 .set_file_name("render.wav")
@@ -85,11 +91,16 @@ impl App {
                 let result = run_blocking("aaadaw-document-stage", move || {
                     let path = match target {
                         PathPickerTarget::SaveProject
+                        | PathPickerTarget::SaveProjectTemplate
                         | PathPickerTarget::ExportWav
                         | PathPickerTarget::ExportMidi => {
                             crate::android_platform::prepare_saf_save(
                                 file,
-                                matches!(target, PathPickerTarget::SaveProject),
+                                matches!(
+                                    target,
+                                    PathPickerTarget::SaveProject
+                                        | PathPickerTarget::SaveProjectTemplate
+                                ),
                             )
                         }
                         PathPickerTarget::AddClapPluginPath => {
@@ -125,6 +136,21 @@ impl App {
                     .map(|name| name.to_string_lossy().into_owned())
             })
             .unwrap_or_else(|| "midi_export.mid".to_owned());
+        let template_file_name = self
+            .project_path
+            .as_deref()
+            .and_then(std::path::Path::file_stem)
+            .map_or_else(
+                || "Project template.aaadaw".to_owned(),
+                |name| format!("{}.aaadaw", name.to_string_lossy()),
+            );
+        let template_directory = super::project_templates::directory();
+        if let Some(directory) = template_directory.as_ref()
+            && let Err(error) = std::fs::create_dir_all(directory)
+        {
+            self.status = format!("Could not create project template folder: {error}");
+            return Task::none();
+        }
         self.path_picker_busy = true;
         self.active_menu = None;
         Task::perform(
@@ -139,6 +165,16 @@ impl App {
                         .set_file_name("project.aaadaw")
                         .add_filter("AAADAW project", &["aaadaw"])
                         .save_file(),
+                    PathPickerTarget::SaveProjectTemplate => {
+                        let mut dialog = rfd::FileDialog::new()
+                            .set_title("Save AAADAW project template")
+                            .set_file_name(template_file_name)
+                            .add_filter("AAADAW project template", &["aaadaw"]);
+                        if let Some(directory) = template_directory {
+                            dialog = dialog.set_directory(directory);
+                        }
+                        dialog.save_file()
+                    }
                     PathPickerTarget::ExportWav => rfd::FileDialog::new()
                         .set_title("Render project to WAV")
                         .set_file_name("render.wav")
@@ -193,6 +229,7 @@ impl App {
                     self.active_menu = None;
                     super::project_io::save_project(self, Some(path))
                 }
+                PathPickerTarget::SaveProjectTemplate => self.save_project_template(path),
                 PathPickerTarget::ExportWav => self.start_offline_render(path),
                 PathPickerTarget::ExportMidi => {
                     if let Some(dialog) = &mut self.midi_export_dialog {

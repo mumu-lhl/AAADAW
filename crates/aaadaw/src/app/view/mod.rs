@@ -280,7 +280,8 @@ fn desktop_view(app: &App) -> Element<'_, Message> {
     if app.active_menu == Some(super::MainMenu::File) && app.recent_projects_menu_open {
         let parent_anchor_x = menu::anchor_x(super::MainMenu::File);
         let parent_popup_width = menu::popup_width(super::MainMenu::File);
-        let parent_row_offset = menu::recent_projects_parent_offset(app);
+        let parent_row_offset =
+            menu::submenu_parent_offset(app, super::commands::CommandId::OpenRecentProjects);
         let submenu =
             float(menu::recent_projects_dropdown(app, 360.0)).translate(move |bounds, viewport| {
                 let parent_max_x =
@@ -300,6 +301,36 @@ fn desktop_view(app: &App) -> Element<'_, Message> {
                 let target_y = desired_y.clamp(viewport.y, max_y);
                 iced::Vector::new(target_x - bounds.x, target_y - bounds.y)
             });
+        layered = stack![layered, submenu]
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .into();
+    }
+    if app.active_menu == Some(super::MainMenu::File) && app.project_templates_menu_open {
+        let parent_anchor_x = menu::anchor_x(super::MainMenu::File);
+        let parent_popup_width = menu::popup_width(super::MainMenu::File);
+        let parent_row_offset =
+            menu::submenu_parent_offset(app, super::commands::CommandId::OpenProjectTemplates);
+        let submenu = float(menu::project_templates_dropdown(app, 360.0)).translate(
+            move |bounds, viewport| {
+                let parent_max_x =
+                    (viewport.x + viewport.width - parent_popup_width).max(viewport.x);
+                let parent_x = (viewport.x + parent_anchor_x).clamp(viewport.x, parent_max_x);
+                let right_x = parent_x + parent_popup_width - 1.0;
+                let left_x = parent_x - bounds.width + 1.0;
+                let desired_x = if right_x + bounds.width <= viewport.x + viewport.width {
+                    right_x
+                } else {
+                    left_x
+                };
+                let max_x = (viewport.x + viewport.width - bounds.width).max(viewport.x);
+                let max_y = (viewport.y + viewport.height - bounds.height).max(viewport.y);
+                let target_x = desired_x.clamp(viewport.x, max_x);
+                let desired_y = viewport.y + menu::bar_bottom() + parent_row_offset;
+                let target_y = desired_y.clamp(viewport.y, max_y);
+                iced::Vector::new(target_x - bounds.x, target_y - bounds.y)
+            },
+        );
         layered = stack![layered, submenu]
             .width(Length::Fill)
             .height(Length::Fill)

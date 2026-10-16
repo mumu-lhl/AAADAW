@@ -72,6 +72,7 @@ mod offline_job_queue;
 mod project_defaults;
 mod project_io;
 mod project_settings;
+mod project_templates;
 mod recent_projects;
 #[cfg(feature = "audio-device")]
 mod recording;
@@ -334,7 +335,12 @@ struct App {
     project_path: Option<PathBuf>,
     recent_project_paths: Vec<PathBuf>,
     recent_projects_menu_open: bool,
+    project_template_paths: Vec<PathBuf>,
+    project_templates_menu_open: bool,
     pending_project_path_to_open: Option<PathBuf>,
+    pending_project_template_source: Option<PathBuf>,
+    pending_project_template_working_copy: Option<project_templates::WorkingCopy>,
+    project_template_source: Option<PathBuf>,
     session_media_dir: Option<UnsavedSessionMedia>,
     retired_unsaved_sessions: Vec<UnsavedSessionMedia>,
     unsaved_session_recovery_candidates: Vec<PathBuf>,
@@ -345,6 +351,7 @@ struct App {
     pending_project_transition: Option<PendingProjectTransition>,
     pending_focused_track_deletion: Option<Vec<TrackId>>,
     project_lock: Option<ProjectSessionLock>,
+    project_template_working_copy: Option<project_templates::WorkingCopy>,
     track_name_edits: HashMap<TrackId, String>,
     midi_item_name_edits: HashMap<ItemId, String>,
     midi_item_name_errors: HashMap<ItemId, String>,
@@ -1321,6 +1328,10 @@ impl App {
             Ok(paths) => app.recent_project_paths = paths,
             Err(error) => tracing::warn!(%error, "recent-project history could not be loaded"),
         }
+        match project_templates::load() {
+            Ok(paths) => app.project_template_paths = paths,
+            Err(error) => tracing::warn!(%error, "project-template list could not be loaded"),
+        }
         match project_defaults::load().and_then(|defaults| defaults.create_project()) {
             Ok(project) => app.project = project,
             Err(error) => {
@@ -1772,6 +1783,7 @@ impl App {
                     | Message::ActionMenuScrolled(_)
                     | Message::RunActionQuery
                     | Message::ToggleRecentProjectsMenu
+                    | Message::ToggleProjectTemplatesMenu
             );
         if !preserve_context_targets
             && !matches!(
@@ -1811,6 +1823,7 @@ impl App {
                 &message,
                 Message::ToggleMainMenu(_)
                     | Message::ToggleRecentProjectsMenu
+                    | Message::ToggleProjectTemplatesMenu
                     | Message::ToggleOfflineJobsPanel
                     | Message::DismissMainMenu
                     | Message::Escape
@@ -1818,11 +1831,13 @@ impl App {
         {
             self.active_menu = None;
             self.recent_projects_menu_open = false;
+            self.project_templates_menu_open = false;
         }
         let menu_ui_message = matches!(
             &message,
             Message::ActionQueryChanged(_)
                 | Message::ToggleRecentProjectsMenu
+                | Message::ToggleProjectTemplatesMenu
                 | Message::ShortcutPressed(_)
                 | Message::ActionMenuScrolled(_)
                 | Message::MenuKeyboard(
@@ -2042,6 +2057,8 @@ impl App {
                 &message,
                 Message::ProjectLoaded(..)
                     | Message::ProjectSaved(..)
+                    | Message::ProjectTemplateCopied(..)
+                    | Message::ProjectTemplateSaved(..)
                     | Message::ProjectMidiExported(..)
                     | Message::ToggleMainMenu(_)
                     | Message::DismissMainMenu
@@ -2334,11 +2351,13 @@ impl App {
                     self.active_menu = None;
                     self.menu_selected_command = None;
                     self.recent_projects_menu_open = false;
+                    self.project_templates_menu_open = false;
                 } else {
                     task = self.open_main_menu(menu);
                 }
             }
             Message::ToggleRecentProjectsMenu => {
+                self.project_templates_menu_open = false;
                 if self.active_menu != Some(MainMenu::File) {
                     task = self.open_main_menu(MainMenu::File);
                     self.recent_projects_menu_open = true;
@@ -2346,6 +2365,16 @@ impl App {
                     self.recent_projects_menu_open = !self.recent_projects_menu_open;
                 }
                 self.menu_selected_command = Some(commands::CommandId::OpenRecentProjects);
+            }
+            Message::ToggleProjectTemplatesMenu => {
+                self.recent_projects_menu_open = false;
+                if self.active_menu != Some(MainMenu::File) {
+                    task = self.open_main_menu(MainMenu::File);
+                    self.project_templates_menu_open = true;
+                } else {
+                    self.project_templates_menu_open = !self.project_templates_menu_open;
+                }
+                self.menu_selected_command = Some(commands::CommandId::OpenProjectTemplates);
             }
             Message::MenuKeyboard(navigation) => {
                 task = self.navigate_main_menu(navigation);
@@ -3982,6 +4011,7 @@ impl App {
             Message::DismissMainMenu => {
                 self.active_menu = None;
                 self.recent_projects_menu_open = false;
+                self.project_templates_menu_open = false;
                 self.offline_jobs_panel_open = false;
             }
             Message::ToggleOfflineJobsPanel => {
@@ -4009,14 +4039,25 @@ impl App {
                     return Task::none();
                 }
                 if !self.cancel_shortcut_capture() {
+                    if self.io_busy
+                        && self.pending_project_transition.is_some()
+                        && self.pending_project_template_working_copy.is_some()
+                    {
+                        self.status =
+                            "Wait for template opening to finish before cancelling".to_owned();
+                        return Task::none();
+                    }
                     if self.pending_project_transition.is_some() {
                         self.pending_project_transition = None;
                         self.pending_project_path_to_open = None;
+                        self.pending_project_template_source = None;
+                        self.pending_project_template_working_copy = None;
                     } else if self.offline_jobs_panel_open {
                         self.offline_jobs_panel_open = false;
                     } else if self.active_menu.take().is_some() {
                         self.menu_selected_command = None;
                         self.recent_projects_menu_open = false;
+                        self.project_templates_menu_open = false;
                     } else if !self.cancel_active_track_draft() {
                         let dismissed_item_menu = self.timeline.context_item.take().is_some();
                         let dismissed_track_menu = self.timeline.context_track.take().is_some();
@@ -4042,6 +4083,39 @@ impl App {
             }
             Message::OpenRecentProject(path) => {
                 task = self.open_recent_project(path);
+            }
+            Message::OpenProjectTemplate(path) => {
+                task = self.open_project_template(path);
+            }
+            Message::ProjectTemplateCopied(source, result) => {
+                self.io_busy = false;
+                if self.pending_project_template_source.as_deref() != Some(source.as_path()) {
+                    if let Ok((directory, project_path)) = result {
+                        drop(project_templates::WorkingCopy {
+                            directory,
+                            project_path,
+                        });
+                    }
+                } else {
+                    match result {
+                        Ok((directory, project_path)) => {
+                            self.pending_project_template_working_copy =
+                                Some(project_templates::WorkingCopy {
+                                    directory,
+                                    project_path: project_path.clone(),
+                                });
+                            self.pending_project_path_to_open = Some(project_path);
+                            task = self.continue_open_project_transition();
+                        }
+                        Err(error) => {
+                            self.pending_project_transition = None;
+                            self.pending_project_path_to_open = None;
+                            self.pending_project_template_source = None;
+                            self.pending_project_template_working_copy = None;
+                            self.status = format!("Could not prepare project template: {error}");
+                        }
+                    }
+                }
             }
             Message::CloseProject => {
                 task = self.begin_project_transition(PendingProjectTransition::CloseProject)
@@ -5004,6 +5078,8 @@ impl App {
             Message::CancelProjectTransition => {
                 self.pending_project_transition = None;
                 self.pending_project_path_to_open = None;
+                self.pending_project_template_source = None;
+                self.pending_project_template_working_copy = None;
             }
             Message::ImportAudio => task = self.start_audio_import(),
             Message::AudioFilePathChanged(path) => self.audio_file_path_query = path,
@@ -5167,7 +5243,25 @@ impl App {
                 match result {
                     Some(Ok((project, arrangement_view_state, project_lock))) => {
                         self.pending_project_transition = None;
+                        let template_working_copy =
+                            self.pending_project_template_working_copy.take();
+                        let template_source = self.pending_project_template_source.take();
+                        let opened_from_template = template_source.as_ref().is_some_and(|_| {
+                            template_working_copy
+                                .as_ref()
+                                .is_some_and(|copy| copy.project_path == path)
+                        });
                         self.project_lock = Some(project_lock);
+                        self.project_template_source = if opened_from_template {
+                            template_source
+                        } else {
+                            None
+                        };
+                        self.project_template_working_copy = if opened_from_template {
+                            template_working_copy
+                        } else {
+                            None
+                        };
                         self.clear_app_history();
                         self.routing_track_id = None;
                         self.routing_send_drafts.clear();
@@ -5208,8 +5302,23 @@ impl App {
                         self.start_audio_waveform_scan(true);
                         self.revision = 0;
                         self.saved_revision = 0;
-                        self.remember_recent_project(&path);
-                        self.status = format!("Opened {}", path.display());
+                        if !opened_from_template {
+                            self.remember_recent_project(&path);
+                        }
+                        self.status = if opened_from_template {
+                            format!(
+                                "Created project from template {}",
+                                self.project_template_source
+                                    .as_deref()
+                                    .and_then(std::path::Path::file_name)
+                                    .map_or_else(
+                                        || "Project template".to_owned(),
+                                        |name| name.to_string_lossy().into_owned(),
+                                    )
+                            )
+                        } else {
+                            format!("Opened {}", path.display())
+                        };
                         task = Task::batch([task, self.show_project_notes_on_load()]);
                         self.recording_recovery_scanning = true;
                         let recovery_path = path.clone();
@@ -5237,6 +5346,9 @@ impl App {
                     }
                     Some(Err(error)) => {
                         self.pending_project_transition = None;
+                        self.pending_project_path_to_open = None;
+                        self.pending_project_template_source = None;
+                        self.pending_project_template_working_copy = None;
                         self.project_path_query = self
                             .project_path
                             .as_ref()
@@ -5246,11 +5358,31 @@ impl App {
                     }
                     None => {
                         self.pending_project_transition = None;
+                        self.pending_project_path_to_open = None;
+                        self.pending_project_template_source = None;
+                        self.pending_project_template_working_copy = None;
                         self.project_path_query = self
                             .project_path
                             .as_ref()
                             .map_or_else(String::new, |path| path.to_string_lossy().into_owned());
                         self.status = "Project open result was unavailable".to_owned();
+                    }
+                }
+            }
+            Message::ProjectTemplateSaved(path, result) => {
+                self.io_busy = false;
+                match result {
+                    Ok(()) => {
+                        match project_templates::load() {
+                            Ok(paths) => self.project_template_paths = paths,
+                            Err(error) => {
+                                tracing::warn!(%error, "saved project templates could not be reloaded")
+                            }
+                        }
+                        self.status = format!("Saved project template {}", path.display());
+                    }
+                    Err(error) => {
+                        self.status = format!("Could not save project template: {error}");
                     }
                 }
             }
@@ -5264,6 +5396,8 @@ impl App {
                         }
                         self.project_path_query = path.to_string_lossy().into_owned();
                         self.project_path = Some(path.clone());
+                        self.project_template_source = None;
+                        self.project_template_working_copy = None;
                         self.retire_unsaved_session_media();
                         self.unsaved_session_snapshot_revision = 0;
                         self.saved_revision = revision;
@@ -5955,6 +6089,7 @@ impl App {
         self.recording_recovery_scanning = false;
         self.midi_note_clipboard.last_paste = None;
         self.project_path = None;
+        self.project_template_source = None;
         self.retire_unsaved_session_media();
         self.unsaved_session_snapshot_revision = 0;
         let session_media_error = match create_unsaved_project_session_dir() {
@@ -5968,6 +6103,7 @@ impl App {
             }
         };
         self.project_lock = None;
+        self.project_template_working_copy = None;
         self.project_path_query.clear();
         self.revision = 0;
         self.saved_revision = 0;
@@ -6086,6 +6222,21 @@ impl App {
     }
 
     fn continue_open_project_transition(&mut self) -> Task<Message> {
+        if let Some(source) = self
+            .pending_project_template_source
+            .clone()
+            .filter(|_| self.pending_project_template_working_copy.is_none())
+        {
+            self.io_busy = true;
+            self.status = format!("Preparing project template {}…", source.display());
+            let source_for_copy = source.clone();
+            return Task::perform(
+                run_blocking("aaadaw-template-working-copy", move || {
+                    project_templates::create_working_copy(&source_for_copy)
+                }),
+                move |result| Message::ProjectTemplateCopied(source, result),
+            );
+        }
         if let Some(path) = self.pending_project_path_to_open.take() {
             self.project_path_query = path.to_string_lossy().into_owned();
             project_io::open_project(self)
@@ -9472,6 +9623,7 @@ impl App {
     fn open_main_menu(&mut self, menu: MainMenu) -> Task<Message> {
         self.active_menu = Some(menu);
         self.recent_projects_menu_open = false;
+        self.project_templates_menu_open = false;
         self.menu_selected_command = self.menu_command_ids(menu).first().copied();
         self.action_menu_scroll_offset = 0.0;
         if menu == MainMenu::Actions {
@@ -9514,15 +9666,30 @@ impl App {
             MenuNavigation::NextMenu | MenuNavigation::PreviousMenu => {
                 let on_recent_projects_parent =
                     self.menu_selected_command == Some(CommandId::OpenRecentProjects);
+                let on_project_templates_parent =
+                    self.menu_selected_command == Some(CommandId::OpenProjectTemplates);
                 let enter_recent_projects =
                     navigation == MenuNavigation::NextMenu && on_recent_projects_parent;
+                let enter_project_templates =
+                    navigation == MenuNavigation::NextMenu && on_project_templates_parent;
                 let leave_recent_projects =
                     navigation == MenuNavigation::PreviousMenu && self.recent_projects_menu_open;
+                let leave_project_templates =
+                    navigation == MenuNavigation::PreviousMenu && self.project_templates_menu_open;
                 if self.active_menu == Some(MainMenu::File)
-                    && (enter_recent_projects || leave_recent_projects)
+                    && (enter_recent_projects
+                        || enter_project_templates
+                        || leave_recent_projects
+                        || leave_project_templates)
                 {
                     self.recent_projects_menu_open = enter_recent_projects;
-                    self.menu_selected_command = Some(CommandId::OpenRecentProjects);
+                    self.project_templates_menu_open = enter_project_templates;
+                    self.menu_selected_command =
+                        Some(if enter_project_templates || leave_project_templates {
+                            CommandId::OpenProjectTemplates
+                        } else {
+                            CommandId::OpenRecentProjects
+                        });
                     return Task::none();
                 }
                 let direction = if navigation == MenuNavigation::NextMenu {
@@ -9545,14 +9712,25 @@ impl App {
                 let Some(menu) = self.active_menu else {
                     return Task::none();
                 };
-                if menu == MainMenu::File && self.recent_projects_menu_open {
-                    let recent_commands = commands::recent_project_entries(self)
-                        .into_iter()
-                        .filter(|entry| entry.enabled)
-                        .map(|entry| entry.id)
-                        .collect::<Vec<_>>();
-                    if recent_commands.is_empty() {
-                        self.menu_selected_command = Some(CommandId::OpenRecentProjects);
+                if menu == MainMenu::File
+                    && (self.recent_projects_menu_open || self.project_templates_menu_open)
+                {
+                    let parent_command = if self.project_templates_menu_open {
+                        CommandId::OpenProjectTemplates
+                    } else {
+                        CommandId::OpenRecentProjects
+                    };
+                    let submenu_commands = if self.project_templates_menu_open {
+                        commands::project_template_entries(self)
+                    } else {
+                        commands::recent_project_entries(self)
+                    }
+                    .into_iter()
+                    .filter(|entry| entry.enabled)
+                    .map(|entry| entry.id)
+                    .collect::<Vec<_>>();
+                    if submenu_commands.is_empty() {
+                        self.menu_selected_command = Some(parent_command);
                         return Task::none();
                     }
                     let direction = if navigation == MenuNavigation::NextCommand {
@@ -9561,7 +9739,7 @@ impl App {
                         -1_isize
                     };
                     let current = self.menu_selected_command.and_then(|selected| {
-                        recent_commands
+                        submenu_commands
                             .iter()
                             .position(|command| *command == selected)
                     });
@@ -9570,18 +9748,18 @@ impl App {
                             if direction > 0 {
                                 0
                             } else {
-                                recent_commands.len() - 1
+                                submenu_commands.len() - 1
                             }
                         },
                         |index| {
                             if direction > 0 {
-                                (index + 1) % recent_commands.len()
+                                (index + 1) % submenu_commands.len()
                             } else {
-                                (index + recent_commands.len() - 1) % recent_commands.len()
+                                (index + submenu_commands.len() - 1) % submenu_commands.len()
                             }
                         },
                     );
-                    self.menu_selected_command = Some(recent_commands[next]);
+                    self.menu_selected_command = Some(submenu_commands[next]);
                     return Task::none();
                 }
                 let commands = self.menu_command_ids(menu);
@@ -9619,11 +9797,7 @@ impl App {
                     .menu_selected_command
                     .filter(|command| commands::is_enabled(self, *command))
                 {
-                    if command == CommandId::OpenRecentProjects {
-                        self.update(Message::ToggleRecentProjectsMenu)
-                    } else {
-                        self.update(Message::ExecuteCommand(command))
-                    }
+                    self.update(Message::ExecuteCommand(command))
                 } else if self.active_menu == Some(MainMenu::Actions) {
                     self.run_action_query()
                 } else {
@@ -11833,7 +12007,7 @@ impl App {
     }
 
     fn save_project_command(&mut self) -> Task<Message> {
-        if self.project_path.is_none() {
+        if self.project_path.is_none() || self.current_project_is_template() {
             self.pick_path(PathPickerTarget::SaveProject)
         } else {
             project_io::save_project(self, None)
@@ -11859,6 +12033,57 @@ impl App {
             self.pending_project_path_to_open = None;
         }
         task
+    }
+
+    fn open_project_template(&mut self, path: PathBuf) -> Task<Message> {
+        self.pending_project_template_source = Some(path);
+        self.pending_project_path_to_open = None;
+        self.pending_project_template_working_copy = None;
+        let task = self.begin_project_transition(PendingProjectTransition::OpenProject);
+        if self.pending_project_transition.is_none() {
+            self.pending_project_template_source = None;
+            self.pending_project_path_to_open = None;
+            self.pending_project_template_working_copy = None;
+        }
+        task
+    }
+
+    fn save_project_template(&mut self, selected_path: PathBuf) -> Task<Message> {
+        if self.io_busy || self.unsaved_session_snapshot_busy || self.path_picker_busy {
+            self.status = "Wait for the current project operation to finish".to_owned();
+            return Task::none();
+        }
+        let Some(template_directory) = project_templates::directory() else {
+            self.status = "Project template folder is unavailable".to_owned();
+            return Task::none();
+        };
+        let path = match project_templates::resolve_save_path(&selected_path, &template_directory) {
+            Ok(path) => path,
+            Err(error) => {
+                self.status = error;
+                return Task::none();
+            }
+        };
+        let snapshot = self.project.snapshot();
+        let view_state = self.project_arrangement_view_state();
+        let source_media_path = self.media_store_path();
+        self.io_busy = true;
+        self.status = format!("Saving project template {}…", path.display());
+        Task::perform(
+            run_blocking("aaadaw-project-template-save", move || {
+                project_io::save_project_template(
+                    path.clone(),
+                    snapshot,
+                    view_state,
+                    source_media_path,
+                )
+                .map(|()| path)
+            }),
+            |result| match result {
+                Ok(path) => Message::ProjectTemplateSaved(path, Ok(())),
+                Err(error) => Message::ProjectTemplateSaved(PathBuf::new(), Err(error)),
+            },
+        )
     }
 }
 

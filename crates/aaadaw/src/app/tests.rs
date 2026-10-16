@@ -6858,10 +6858,14 @@ fn recent_projects_submenu_opens_the_selected_path_through_project_transition_gu
         .expect("File menu should expose Save all projects");
     assert_eq!(
         file_menu[save_all_index + 1].id,
-        CommandId::OpenRecentProjects
+        CommandId::OpenProjectTemplates
     );
     assert_eq!(
         file_menu[save_all_index + 2].id,
+        CommandId::OpenRecentProjects
+    );
+    assert_eq!(
+        file_menu[save_all_index + 3].id,
         CommandId::CloseProject,
         "Recent projects belongs before the close-project section"
     );
@@ -6970,6 +6974,162 @@ fn recent_projects_submenu_opens_the_selected_path_through_project_transition_gu
         format!("{} is already open", recent_path.display())
     );
     assert!(same_project_app.is_dirty());
+}
+
+#[test]
+fn project_templates_open_isolated_working_copies_and_never_overwrite_the_template() {
+    let directory = tempfile::tempdir().expect("test directory should be created");
+    let template_path = directory.path().join("First Project.aaadaw");
+    save_project_file(template_path.clone(), Project::new().snapshot(), false)
+        .expect("test template should be a valid project file");
+    let original_template = std::fs::read(&template_path).unwrap();
+    let mut app = App {
+        project_template_paths: vec![template_path.clone()],
+        ..App::default()
+    };
+
+    let file_menu = commands::for_menu(&app, MainMenu::File);
+    let templates_index = file_menu
+        .iter()
+        .position(|entry| entry.id == CommandId::OpenProjectTemplates)
+        .expect("File menu should expose Project templates");
+    assert_eq!(
+        file_menu[templates_index + 1].id,
+        CommandId::OpenRecentProjects,
+        "Project templates belongs immediately before Recent projects"
+    );
+    let _ = app.update(Message::ToggleMainMenu(MainMenu::File));
+    let _ = app.update(Message::ToggleProjectTemplatesMenu);
+    assert!(app.project_templates_menu_open);
+    assert!(
+        commands::for_menu(&app, MainMenu::File)
+            .iter()
+            .all(|entry| !matches!(entry.id, CommandId::OpenProjectTemplate(_)))
+    );
+    let template_entries = commands::project_template_entries(&app);
+    assert_eq!(template_entries[0].id, CommandId::OpenProjectTemplate(0));
+    assert_eq!(template_entries[0].label, "First Project");
+    assert_eq!(
+        template_entries.last().map(|entry| entry.id),
+        Some(CommandId::SaveProjectAsTemplate)
+    );
+    assert!(
+        commands::for_mobile_menu(&app, MainMenu::File)
+            .iter()
+            .any(|entry| entry.id == CommandId::OpenProjectTemplate(0)),
+        "touch File menus should expose templates inline"
+    );
+
+    app.menu_selected_command = Some(CommandId::OpenProjectTemplates);
+    let _ = app.update(Message::MenuKeyboard(MenuNavigation::NextMenu));
+    assert_eq!(
+        app.menu_selected_command,
+        Some(CommandId::OpenProjectTemplates)
+    );
+    let _ = app.update(Message::MenuKeyboard(MenuNavigation::NextCommand));
+    assert_eq!(
+        app.menu_selected_command,
+        Some(CommandId::OpenProjectTemplate(0))
+    );
+    let _ = app.update(Message::MenuKeyboard(MenuNavigation::NextCommand));
+    assert_eq!(
+        app.menu_selected_command,
+        Some(CommandId::SaveProjectAsTemplate)
+    );
+    let _ = app.update(Message::MenuKeyboard(MenuNavigation::PreviousMenu));
+    assert!(!app.project_templates_menu_open);
+    assert_eq!(
+        app.menu_selected_command,
+        Some(CommandId::OpenProjectTemplates)
+    );
+
+    let _ = app.update(Message::OpenProjectTemplate(template_path.clone()));
+    assert_eq!(
+        app.pending_project_transition,
+        Some(super::PendingProjectTransition::OpenProject)
+    );
+    assert!(app.io_busy);
+    let (working_directory, working_path) =
+        super::project_templates::create_working_copy(&template_path).unwrap();
+    let _ = app.update(Message::ProjectTemplateCopied(
+        template_path.clone(),
+        Ok((working_directory, working_path.clone())),
+    ));
+    assert!(app.io_busy);
+    let working_directory = working_path.parent().unwrap().to_path_buf();
+    let _ = app.update(Message::Escape);
+    assert_eq!(
+        app.pending_project_transition,
+        Some(super::PendingProjectTransition::OpenProject)
+    );
+    assert!(
+        app.pending_project_template_working_copy.is_some(),
+        "Escape must not delete a working copy while project loading is in flight"
+    );
+    assert!(working_directory.exists());
+    let loaded_project = load_project_session(working_path.clone())
+        .expect("working copy should open as an independent project session");
+    let _ = app.update(Message::ProjectLoaded(
+        working_path.clone(),
+        std::sync::Arc::new(std::sync::Mutex::new(Some(Ok(loaded_project)))),
+    ));
+    assert_eq!(app.project_path.as_deref(), Some(working_path.as_path()));
+    assert_eq!(
+        app.project_template_source.as_deref(),
+        Some(template_path.as_path())
+    );
+    assert_eq!(
+        app.project_template_working_copy
+            .as_ref()
+            .map(|working_copy| working_copy.directory.as_path()),
+        working_path.parent()
+    );
+    assert_eq!(
+        app.status,
+        "Created project from template First Project.aaadaw"
+    );
+    assert!(app.recent_project_paths.is_empty());
+
+    drop(super::project_io::save_project(
+        &mut app,
+        Some(template_path.clone()),
+    ));
+    assert!(!app.io_busy, "saving onto the source should be rejected");
+    assert!(app.status.contains("outside the ProjectTemplates folder"));
+    assert_eq!(std::fs::read(&template_path).unwrap(), original_template);
+    let _ = app.update(Message::SaveProject);
+    assert!(
+        app.path_picker_busy,
+        "ordinary Save from a template project must route through Save As"
+    );
+    let _ = app.update(Message::PathPicked(PathPickerTarget::SaveProject, Ok(None)));
+    assert!(!app.path_picker_busy);
+}
+
+#[test]
+fn saving_a_project_as_template_creates_a_valid_non_overwritable_copy() {
+    let directory = tempfile::tempdir().expect("test directory should be created");
+    let template_path = directory.path().join("Blank Project.aaadaw");
+    super::project_io::save_project_template(
+        template_path.clone(),
+        Project::new().snapshot(),
+        ArrangementViewState::default(),
+        None,
+    )
+    .expect("a new project template should be saved");
+    assert!(template_path.is_file());
+    assert!(load_project_file(template_path.clone()).is_ok());
+
+    let original = std::fs::read(&template_path).unwrap();
+    let error = super::project_io::save_project_template(
+        template_path.clone(),
+        Project::new().snapshot(),
+        ArrangementViewState::default(),
+        None,
+    )
+    .expect_err("existing templates must never be overwritten");
+    assert!(error.contains("already exists"));
+    assert_eq!(std::fs::read(template_path).unwrap(), original);
 }
 
 #[test]

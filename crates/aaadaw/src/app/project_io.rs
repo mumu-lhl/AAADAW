@@ -67,6 +67,24 @@ pub(super) fn save_project(app: &mut App, save_as: Option<PathBuf>) -> Task<Mess
         app.status = "Enter a project file path first".to_owned();
         return Task::none();
     };
+    let template_source = app.project_template_source.as_deref();
+    let saves_into_template_folder = super::project_templates::directory()
+        .is_some_and(|directory| super::project_templates::is_within_directory(&path, &directory));
+    let saves_into_working_copy =
+        app.project_template_working_copy
+            .as_ref()
+            .is_some_and(|working_copy| {
+                super::project_templates::is_within_directory(&path, &working_copy.directory)
+            });
+    let replaces_template_source = template_source
+        .is_some_and(|template| super::project_templates::same_path(&path, template));
+    if app.current_project_is_template()
+        && (saves_into_template_folder || saves_into_working_copy || replaces_template_source)
+    {
+        app.status =
+            "Save a project opened from a template outside the ProjectTemplates folder".to_owned();
+        return Task::none();
+    }
     if !app.commit_pending_track_drafts() {
         return Task::none();
     }
@@ -118,7 +136,30 @@ pub(super) fn save_project(app: &mut App, save_as: Option<PathBuf>) -> Task<Mess
     )
 }
 
+pub(super) fn save_project_template(
+    path: PathBuf,
+    snapshot: ProjectSnapshot,
+    arrangement_view_state: ArrangementViewState,
+    source_media_path: Option<PathBuf>,
+) -> Result<(), String> {
+    if path.exists() {
+        return Err("a project template with that name already exists".to_owned());
+    }
+    let mut lock = ProjectSessionLock::acquire(&path).map_err(|error| error.to_string())?;
+    save_project_session_file_with_media(
+        path,
+        snapshot,
+        arrangement_view_state,
+        false,
+        Some(&mut lock),
+        source_media_path,
+    )
+}
+
 pub(super) fn save_new_project_version(app: &mut App) -> Task<Message> {
+    if app.current_project_is_template() {
+        return app.pick_path(super::PathPickerTarget::SaveProject);
+    }
     let Some(current_path) = app.project_path.as_deref() else {
         return app.pick_path(super::PathPickerTarget::SaveProject);
     };

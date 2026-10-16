@@ -109,6 +109,7 @@ impl MobilePanel {
 pub(crate) enum PathPickerTarget {
     OpenProject,
     SaveProject,
+    SaveProjectTemplate,
     ExportWav,
     ExportMidi,
     ImportAudio,
@@ -518,6 +519,10 @@ pub(crate) enum Message {
     ExecuteCommand(CommandId),
     ToggleRecentProjectsMenu,
     OpenRecentProject(PathBuf),
+    ToggleProjectTemplatesMenu,
+    OpenProjectTemplate(PathBuf),
+    ProjectTemplateCopied(PathBuf, Result<(PathBuf, PathBuf), String>),
+    ProjectTemplateSaved(PathBuf, Result<(), String>),
     OpenProject,
     SaveProject,
     SaveProjectNewVersion,

@@ -1,0 +1,17 @@
+# File > Project templates
+
+AAADAW stores Linux desktop project templates in `$XDG_CONFIG_HOME/aaadaw/ProjectTemplates` (or `~/.config/aaadaw/ProjectTemplates`). The File menu lists `.aaadaw` files in case-insensitive filename order under a cascading `Project templates` entry; the cascade ends with `Save project as template...`. Mobile/touch File menus keep the entries inline.
+
+Saving a template writes a complete AAADAW project and its managed audio assets into that folder. The file name gets an `.aaadaw` extension when needed, and an existing template is never overwritten. The native file picker opens in the template folder. If the user navigates to another folder, AAADAW reports that the template must be saved in `ProjectTemplates` instead of silently redirecting the selected name.
+
+Opening a template through the cascade first passes through the ordinary unsaved-project transition guard, then copies the locked source project to a private temporary working directory. AAADAW opens and edits that copy, leaves the template source untouched, and does not add the working copy to Recent projects. Escape does not discard that copy while its asynchronous project load is in flight. Project files opened directly from inside the template folder are also recognized: ordinary Save and Save new version route through Save As, and writes to the template folder are rejected. Saving directly to the source template or an active temporary copy is rejected as well; a successful Save As transfers audio assets, switches the project to the new destination, and removes the old working copy. Replacing or closing the project releases the session lock before removing its temporary directory.
+
+The Android save command is disabled because its current SAF staging flow cannot yet atomically publish a template into the internal `ProjectTemplates` folder. Android template saving remains an open item; Linux is the parity target for this slice.
+
+## Verification
+
+`app::project_templates` tests cover sorted listing, working-copy cleanup/source preservation, extension normalization, rejecting destinations outside the template folder, canonical path classification, and direct-open template detection. App tests open a real SQLite-backed `.aaadaw` template through the guarded transition, verify the working copy survives Escape during asynchronous loading, confirm the omitted MRU entry, reject overwrite of the source, confirm ordinary Save opens Save As, and verify that a saved template is a valid non-overwritable project file.
+
+The final Linux desktop binary (SHA-256 `c4aa545bf69890a7857b6a383cc24f624b044ccce62514b25438441ca835dc20`) was run under Xvfb at 1280×800 with an isolated configuration. Mouse and X11 keyboard input both opened the populated cascade and loaded `First Project.aaadaw`; its Audio track and `melody.wav` waveform were visible, the window title changed, and the template source stayed byte-identical to the original example. The four desktop captures and hashes are catalogued in the [fixture TSV](fixtures/menu-file-project-templates-aaadaw.tsv).
+
+`SHELL-PROJECT-TEMPLATE-001` remains `in_progress`. The REAPER 7.82 File menu reference shows the native cascade parent, but a populated native template list and native save-dialog behavior have not been captured. REAPER's multiple project tabs and its complete project-template format/default-project behavior also remain outside this slice. This work does not claim full File-menu or application parity.
