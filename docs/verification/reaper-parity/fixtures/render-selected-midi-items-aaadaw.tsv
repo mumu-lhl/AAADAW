@@ -12,4 +12,4 @@ capture_environment	AAADAW_PROJECT_PATH=/tmp/aaadaw-selected-midi-render-ui.aaad
 screenshot	fixtures/render-selected-midi-items-aaadaw.png
 screenshot_sha256	9d2e13da4f2300afa025b9d4e111c5ba7464853eea3ab9a7ae629a5981109c74
 offline_render_test	selected_midi_item_source_renders_only_its_timeline_range; 48 kHz; 24,000 frames for the selected 0.5-second item
-native_comparison	Pending REAPER 7.82 source-routing and ReaSynth output comparison
+native_comparison	Native REAPER 7.82 / Default 7 ReaSynth render confirms Selected media items routing and `$item-$namenumber-$itemnumber` output ordering; see fixtures/render-selected-midi-items-native.tsv

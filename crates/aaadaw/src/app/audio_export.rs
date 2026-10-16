@@ -5788,6 +5788,73 @@ mod tests {
     }
 
     #[test]
+    fn render_filename_selected_midi_item_name_number_ignores_unselected_duplicate() {
+        let mut project = Project::default();
+        project
+            .apply(DawAction::CreateTrack {
+                index: 0,
+                name: "MIDI items".to_owned(),
+            })
+            .expect("MIDI fixture track should be created");
+        let track_id = project.tracks()[0].id();
+        let mut item_ids = Vec::new();
+        for start_tick in [0, 1_920, 3_840] {
+            project
+                .apply(DawAction::InsertMidiItem {
+                    track_id,
+                    start_tick,
+                    length_ticks: 960,
+                })
+                .expect("MIDI fixture item should be inserted");
+            let item_id = project.midi_items().last().unwrap().id();
+            project
+                .apply(DawAction::SetMidiItemName {
+                    item_id,
+                    name: "MIDI Hit".to_owned(),
+                })
+                .expect("MIDI fixture item should be named");
+            item_ids.push(item_id);
+        }
+
+        let outputs = [item_ids[0], item_ids[2]]
+            .into_iter()
+            .map(|item_id| {
+                let item = project
+                    .midi_items()
+                    .iter()
+                    .find(|item| item.id() == item_id)
+                    .unwrap();
+                (
+                    aaadaw_app::ProjectWavRenderSettings {
+                        master_ceiling: aaadaw_engine::MasterOutputCeiling::default(),
+                        export_options: aaadaw_app::WavExportOptions::default(),
+                        output_sample_rate: 48_000,
+                        output_channels: WavChannelCount::Stereo,
+                        source: aaadaw_app::ProjectWavRenderSource::SelectedMidiItem(item_id),
+                        start_sample: project.sample_at_tick(item.start_tick()).unwrap(),
+                        end_sample: project
+                            .sample_at_tick(item.start_tick() + item.length_ticks())
+                            .unwrap(),
+                        tail_milliseconds: 0,
+                        normalize_peak: false,
+                        normalize_peak_target_centi_dbfs: 0,
+                    },
+                    Path::new("/renders/base.wav").to_owned(),
+                )
+            })
+            .collect();
+        let output = apply_render_filename_pattern(
+            outputs,
+            "$item-$namenumber-$itemnumber",
+            &project,
+            Path::new("/projects/midi-items.aaadaw"),
+        )
+        .expect("selected MIDI item names should match native output order");
+        assert_eq!(output[0].1, Path::new("/renders/MIDI Hit-01-01.wav"));
+        assert_eq!(output[1].1, Path::new("/renders/MIDI Hit-02-03.wav"));
+    }
+
+    #[test]
     fn render_filename_empty_wildcards_omit_the_nearest_native_separator() {
         let project = Project::default();
         let settings = aaadaw_app::ProjectWavRenderSettings {
