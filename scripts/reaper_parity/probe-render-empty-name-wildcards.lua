@@ -2,6 +2,7 @@
 -- Generate source.wav with probe-render-format-vectors.py in the probe directory.
 -- The Render dialog opens with two regions and boundary markers, unnamed by default.
 -- Set AAADAW_REAPER_WILDCARD_NAMED_OBJECTS=1 to name them for name-only probes.
+-- Set AAADAW_REAPER_WILDCARD_VALUE_NAMES=delimiter to add pipe-separated role=value names.
 -- Select All project regions and inspect the configured wildcard substitutions.
 local root = assert(os.getenv("AAADAW_REAPER_PROBE_DIR")) .. "/"
 assert(reaper.GetAppVersion() == "7.82/linux-x86_64")
@@ -25,13 +26,35 @@ for _, start in ipairs({ 0, 2, 4 }) do
 end
 
 local marker_names = { "Start", "Next", "End" }
+local marker_alternate_names = { "Downbeat", "Midpoint", "Outro" }
 for index, position in ipairs({ 0, 2, 4 }) do
-  local name = os.getenv("AAADAW_REAPER_WILDCARD_NAMED_OBJECTS") == "1" and marker_names[index] or ""
+  local name = ""
+  local value_name_mode = os.getenv("AAADAW_REAPER_WILDCARD_VALUE_NAMES")
+  if value_name_mode == "multi" then
+    name = "role=" .. marker_names[index] .. "\nrole=" .. marker_alternate_names[index]
+  elseif value_name_mode == "delimiter" then
+    name = "role=" .. marker_names[index] .. "|role=" .. marker_alternate_names[index]
+  elseif value_name_mode == "1" then
+    name = "role=" .. marker_names[index]
+  elseif os.getenv("AAADAW_REAPER_WILDCARD_NAMED_OBJECTS") == "1" then
+    name = marker_names[index]
+  end
   assert(reaper.AddProjectMarker2(0, false, position, 0, name, -1, 0))
 end
 local region_names = { "Verse", "Chorus" }
+local region_alternate_names = { "Intro", "Main" }
 for index, bounds in ipairs({ { 0, 2 }, { 2, 4 } }) do
-  local name = os.getenv("AAADAW_REAPER_WILDCARD_NAMED_OBJECTS") == "1" and region_names[index] or ""
+  local name = ""
+  local value_name_mode = os.getenv("AAADAW_REAPER_WILDCARD_VALUE_NAMES")
+  if value_name_mode == "multi" then
+    name = "role=" .. region_names[index] .. "\nrole=" .. region_alternate_names[index]
+  elseif value_name_mode == "delimiter" then
+    name = "role=" .. region_names[index] .. "|role=" .. region_alternate_names[index]
+  elseif value_name_mode == "1" then
+    name = "role=" .. region_names[index]
+  elseif os.getenv("AAADAW_REAPER_WILDCARD_NAMED_OBJECTS") == "1" then
+    name = region_names[index]
+  end
   assert(reaper.AddProjectMarker2(0, true, bounds[1], bounds[2], name, -1, 0))
 end
 

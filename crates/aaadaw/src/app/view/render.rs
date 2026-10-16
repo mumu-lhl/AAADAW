@@ -228,8 +228,16 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
                     RenderFilenameWildcard::ALL.into_iter().skip(13).take(4),
                 ),
                 wildcard_group_row(
+                    "Region values:",
+                    std::iter::once(RenderFilenameWildcard::RegionNamedValue),
+                ),
+                wildcard_group_row(
                     "Markers:",
                     RenderFilenameWildcard::ALL.into_iter().skip(17).take(4),
+                ),
+                wildcard_group_row(
+                    "Marker values:",
+                    std::iter::once(RenderFilenameWildcard::MarkerNamedValue),
                 ),
                 wildcard_group_row(
                     "Media items:",

@@ -89,10 +89,12 @@ pub(crate) enum RenderFilenameWildcard {
     BitDepth,
     Channels,
     Bpm,
+    RegionNamedValue,
+    MarkerNamedValue,
 }
 
 impl RenderFilenameWildcard {
-    pub(crate) const ALL: [Self; 46] = [
+    pub(crate) const ALL: [Self; 48] = [
         Self::Project,
         Self::Title,
         Self::Author,
@@ -139,6 +141,8 @@ impl RenderFilenameWildcard {
         Self::SampleRateKilohertz,
         Self::BitDepth,
         Self::Channels,
+        Self::RegionNamedValue,
+        Self::MarkerNamedValue,
     ];
 
     pub(crate) const fn token(self) -> &'static str {
@@ -189,6 +193,8 @@ impl RenderFilenameWildcard {
             Self::BitDepth => "$bitdepth",
             Self::Channels => "$channels",
             Self::Bpm => "$bpm",
+            Self::RegionNamedValue => "$region(name)",
+            Self::MarkerNamedValue => "$marker(name)",
         }
     }
 }
@@ -1053,12 +1059,17 @@ fn is_render_filename_wildcard_separator(character: char) -> bool {
     matches!(character, ' ' | '-' | '_' | '.')
 }
 
-fn project_note_named_value(notes: &str, name: &str) -> String {
+fn project_note_named_value(notes: &str, name: &str, separator: Option<char>) -> String {
     notes
         .lines()
         .find_map(|line| {
             let (key, value) = line.split_once('=')?;
-            (key == name).then(|| value.to_owned())
+            (key == name).then(|| {
+                separator
+                    .and_then(|separator| value.split(separator).next())
+                    .unwrap_or(value)
+                    .to_owned()
+            })
         })
         .unwrap_or_default()
 }
@@ -1227,8 +1238,10 @@ fn expand_render_filename_pattern(
         let known_token = RenderFilenameWildcard::ALL.iter().any(|wildcard| {
             wildcard.token().trim_start_matches('$').split('(').next() == Some(token.as_str())
         });
-        let (expression_end, project_note_name) =
-            if token == "projectnotes" && characters.get(token_end) == Some(&'(') {
+        let (expression_end, named_value_key, named_value_separator) =
+            if matches!(token.as_str(), "projectnotes" | "region" | "marker")
+                && characters.get(token_end) == Some(&'(')
+            {
                 let expression_start = token_end + 1;
                 characters[expression_start..]
                     .iter()
@@ -1238,11 +1251,24 @@ fn expand_render_filename_pattern(
                         let name = characters[expression_start..expression_end - 1]
                             .iter()
                             .collect::<String>();
-                        (expression_end, Some(name))
+                        let separator = if matches!(token.as_str(), "region" | "marker")
+                            && characters.get(expression_end) == Some(&'[')
+                            && characters.get(expression_end + 2) == Some(&']')
+                        {
+                            Some(characters[expression_end + 1])
+                        } else {
+                            None
+                        };
+                        let expression_end = if separator.is_some() {
+                            expression_end + 3
+                        } else {
+                            expression_end
+                        };
+                        (expression_end, Some(name), separator)
                     })
-                    .unwrap_or((token_end, None))
+                    .unwrap_or((token_end, None, None))
             } else {
-                (token_end, None)
+                (token_end, None, None)
             };
         let (wildcard_end, modifiers) = if known_token {
             parse_render_filename_wildcard_modifiers(&characters, expression_end, &token)
@@ -1255,10 +1281,30 @@ fn expand_render_filename_pattern(
             "title" => result.push_str(&project.project_notes().title),
             "author" => result.push_str(&project.project_notes().author),
             "projectnotes" => result.push_str(
-                &project_note_name
+                &named_value_key
                     .as_deref()
-                    .map(|name| project_note_named_value(&project.project_notes().text, name))
+                    .map(|name| project_note_named_value(&project.project_notes().text, name, None))
                     .unwrap_or_else(|| project.project_notes().text.clone()),
+            ),
+            "region" if named_value_key.is_some() => result.push_str(
+                &named_value_key
+                    .as_deref()
+                    .map(|name| {
+                        region.map_or_else(String::new, |region| {
+                            project_note_named_value(region.name(), name, named_value_separator)
+                        })
+                    })
+                    .unwrap_or_default(),
+            ),
+            "marker" if named_value_key.is_some() => result.push_str(
+                &named_value_key
+                    .as_deref()
+                    .map(|name| {
+                        marker.map_or_else(String::new, |(_, marker)| {
+                            project_note_named_value(marker.name(), name, named_value_separator)
+                        })
+                    })
+                    .unwrap_or_default(),
             ),
             "start" => result.push_str(&format_render_wildcard_clock(
                 project,
@@ -3105,6 +3151,8 @@ mod tests {
                 "$sampleratek",
                 "$bitdepth",
                 "$channels",
+                "$region(name)",
+                "$marker(name)",
             ]
         );
 
@@ -3280,6 +3328,133 @@ mod tests {
                 Path::new("/projects/unnamed.aaadaw"),
             )
             .expect("an empty name-only value should not add a number fallback");
+            assert_eq!(output[0].1, Path::new("/renders").join(expected_name));
+        }
+    }
+
+    #[test]
+    fn render_filename_region_and_marker_named_values_match_native_key_value_rules() {
+        let mut project = Project::default();
+        for (start_ticks, end_ticks, name) in
+            [(0, 1_920, "role=Verse"), (1_920, 3_840, "role=Chorus")]
+        {
+            project
+                .apply(DawAction::InsertProjectRegion {
+                    start_ticks,
+                    end_ticks,
+                    name: name.to_owned(),
+                })
+                .expect("named-value region should be inserted");
+        }
+        for (position_ticks, name) in [(0, "role=Start"), (1_920, "role=Next"), (3_840, "role=End")]
+        {
+            project
+                .apply(DawAction::InsertProjectMarker {
+                    position_ticks,
+                    name: name.to_owned(),
+                })
+                .expect("named-value marker should be inserted");
+        }
+
+        for (start_ticks, end_ticks, expected_name) in [
+            (0, 1_920, "Verse-Start.wav"),
+            (1_920, 3_840, "Chorus-Next.wav"),
+        ] {
+            let settings = aaadaw_app::ProjectWavRenderSettings {
+                master_ceiling: aaadaw_engine::MasterOutputCeiling::default(),
+                export_options: aaadaw_app::WavExportOptions::default(),
+                output_sample_rate: 48_000,
+                output_channels: WavChannelCount::Stereo,
+                source: aaadaw_app::ProjectWavRenderSource::MasterMix,
+                start_sample: project
+                    .sample_at_tick(start_ticks)
+                    .expect("start tick should convert"),
+                end_sample: project
+                    .sample_at_tick(end_ticks)
+                    .expect("end tick should convert"),
+                tail_milliseconds: 0,
+                normalize_peak: false,
+                normalize_peak_target_centi_dbfs: 0,
+            };
+            let output = apply_render_filename_pattern(
+                vec![(settings, Path::new("/renders/base.wav").to_owned())],
+                "$region(role)-$marker(role)",
+                &project,
+                Path::new("/projects/named-values.aaadaw"),
+            )
+            .expect("Region and Marker named values should expand");
+            assert_eq!(output[0].1, Path::new("/renders").join(expected_name));
+
+            let missing_key_output = apply_render_filename_pattern(
+                vec![(settings, Path::new("/renders/base.wav").to_owned())],
+                "$region(missing)-$marker(role)",
+                &project,
+                Path::new("/projects/named-values.aaadaw"),
+            )
+            .expect("missing named values should expand to empty");
+            let marker_name = if start_ticks == 0 {
+                "Start.wav"
+            } else {
+                "Next.wav"
+            };
+            assert_eq!(
+                missing_key_output[0].1,
+                Path::new("/renders").join(marker_name)
+            );
+        }
+    }
+
+    #[test]
+    fn render_filename_region_and_marker_named_values_accept_native_separators() {
+        let mut project = Project::default();
+        project
+            .apply(DawAction::InsertProjectRegion {
+                start_ticks: 0,
+                end_ticks: 1_920,
+                name: "role=Verse|alternate=Intro".to_owned(),
+            })
+            .expect("separator fixture region should be inserted");
+        project
+            .apply(DawAction::InsertProjectMarker {
+                position_ticks: 0,
+                name: "role=Start|alternate=Downbeat".to_owned(),
+            })
+            .expect("separator fixture marker should be inserted");
+        project
+            .apply(DawAction::InsertProjectMarker {
+                position_ticks: 1_920,
+                name: "role=End|alternate=Outro".to_owned(),
+            })
+            .expect("separator fixture end marker should be inserted");
+        let settings = aaadaw_app::ProjectWavRenderSettings {
+            master_ceiling: aaadaw_engine::MasterOutputCeiling::default(),
+            export_options: aaadaw_app::WavExportOptions::default(),
+            output_sample_rate: 48_000,
+            output_channels: WavChannelCount::Stereo,
+            source: aaadaw_app::ProjectWavRenderSource::MasterMix,
+            start_sample: 0,
+            end_sample: project
+                .sample_at_tick(1_920)
+                .expect("region end tick should convert"),
+            tail_milliseconds: 0,
+            normalize_peak: false,
+            normalize_peak_target_centi_dbfs: 0,
+        };
+
+        for (pattern, expected_name) in [
+            (
+                "$region(role)-$marker(role)",
+                "Verse_alternate=Intro-Start_alternate=Downbeat.wav",
+            ),
+            ("$region(role)[|]-$marker(role)[|]", "Verse-Start.wav"),
+        ] {
+            let output = apply_render_filename_pattern(
+                vec![(settings, Path::new("/renders/base.wav").to_owned())],
+                pattern,
+                &project,
+                Path::new("/projects/named-values.aaadaw"),
+            )
+            .expect("native named-value separators should expand");
             assert_eq!(output[0].1, Path::new("/renders").join(expected_name));
         }
     }
