@@ -373,27 +373,19 @@ fn project_region_render_jobs(
                 unreachable!("selected media items are not a region source mode")
             }
             RenderSource::RegionRenderMatrix => {
-                let mut destinations = Vec::new();
-                if region.renders_master_mix() {
-                    destinations.push((
-                        aaadaw_app::ProjectWavRenderSource::MasterMix,
-                        region_base.clone(),
-                    ));
-                }
-                for track in project
+                let assigned_tracks = project
                     .tracks()
                     .iter()
                     .filter(|track| region.render_track_ids().contains(&track.id()))
-                {
-                    destinations.extend(selected_track_stem_destinations(
-                        &region_base,
-                        project,
-                        &[track.id()],
-                        false,
-                        SelectedTrackStemMode::ViaMaster,
-                    )?);
-                }
-                destinations
+                    .map(|track| track.id())
+                    .collect::<Vec<_>>();
+                selected_track_stem_destinations(
+                    &region_base,
+                    project,
+                    &assigned_tracks,
+                    region.renders_master_mix(),
+                    SelectedTrackStemMode::ViaMaster,
+                )?
             }
         };
         for (render_source, destination) in destinations {
@@ -2777,7 +2769,7 @@ mod tests {
                     end_sample: 48_000,
                     ..settings
                 },
-                PathBuf::from("./matrix-prefix-Verse.wav")
+                PathBuf::from("./matrix-prefix-Verse-Master.wav")
             )
         );
         assert_eq!(
@@ -2804,6 +2796,231 @@ mod tests {
                 PathBuf::from("./matrix-prefix-Verse-2-Guitar.wav")
             )
         );
+    }
+
+    #[test]
+    fn region_render_matrix_wavs_match_native_target_count_ranges_and_samples() {
+        fn riff_chunk<'a>(bytes: &'a [u8], chunk_id: &[u8; 4]) -> &'a [u8] {
+            assert_eq!(&bytes[0..4], b"RIFF");
+            assert_eq!(&bytes[8..12], b"WAVE");
+            let mut offset = 12;
+            while offset + 8 <= bytes.len() {
+                let id = &bytes[offset..offset + 4];
+                let length =
+                    u32::from_le_bytes(bytes[offset + 4..offset + 8].try_into().unwrap()) as usize;
+                let start = offset + 8;
+                let end = start + length;
+                assert!(end <= bytes.len(), "RIFF chunk must fit within the file");
+                if id == chunk_id {
+                    return &bytes[start..end];
+                }
+                offset = end + (length & 1);
+            }
+            panic!("RIFF chunk {:?} should exist", chunk_id);
+        }
+
+        let directory = tempfile::tempdir().expect("render fixture directory should be created");
+        let project_path = directory.path().join("region-matrix.aaadaw");
+        let mut store = ProjectStore::open(&project_path).expect("project store should be created");
+        let mut media_refs = Vec::new();
+        for (name, value) in [("Drums", 0.125_f32), ("Bass", 0.25), ("Guitar", 0.375)] {
+            let source_path = directory.path().join(format!("{name}.wav"));
+            let mut source = aaadaw_app::WavExport::create(
+                &source_path,
+                48_000,
+                aaadaw_app::WavExportOptions {
+                    sample_format: aaadaw_app::WavSampleFormat::Pcm24,
+                    dither: false,
+                },
+            )
+            .expect("matrix source WAV should be created");
+            source
+                .write_frames(&vec![[value, value]; 4 * 48_000])
+                .expect("matrix source frames should be written");
+            source
+                .finish()
+                .expect("matrix source WAV should be published");
+            media_refs.push(
+                store
+                    .import_audio_file(source_path)
+                    .expect("matrix source should be embedded in the project"),
+            );
+        }
+        store
+            .close()
+            .expect("project store should close before rendering");
+
+        let mut project = Project::default();
+        for (index, name) in [("Drums", 0), ("Bass", 1), ("Guitar", 2)] {
+            project
+                .apply(DawAction::CreateTrack {
+                    index: name,
+                    name: index.to_owned(),
+                })
+                .expect("matrix track should be created");
+        }
+        let track_ids = project
+            .tracks()
+            .iter()
+            .map(|track| track.id())
+            .collect::<Vec<_>>();
+        for (track_id, media_ref) in track_ids.iter().copied().zip(media_refs) {
+            project
+                .apply(DawAction::InsertAudioItem {
+                    track_id,
+                    media_ref,
+                    start_sample: 0,
+                    source_offset_samples: 0,
+                    length_samples: 4 * 48_000,
+                })
+                .expect("matrix audio item should be inserted");
+        }
+        for (start_ticks, end_ticks, name) in [(0, 3_840, "Intro"), (3_840, 7_680, "Verse")] {
+            project
+                .apply(DawAction::InsertProjectRegion {
+                    start_ticks,
+                    end_ticks,
+                    name: name.to_owned(),
+                })
+                .expect("matrix region should be inserted");
+        }
+        let regions = project.regions().to_vec();
+        project
+            .apply(DawAction::SetProjectRegionRenderMatrix {
+                region_id: regions[0].id(),
+                render_master_mix: true,
+                render_track_ids: vec![track_ids[0], track_ids[2]],
+            })
+            .expect("Intro matrix assignments should be stored");
+        project
+            .apply(DawAction::SetProjectRegionRenderMatrix {
+                region_id: regions[1].id(),
+                render_master_mix: false,
+                render_track_ids: vec![track_ids[1]],
+            })
+            .expect("Verse matrix assignments should be stored");
+
+        let settings = aaadaw_app::ProjectWavRenderSettings {
+            master_ceiling: aaadaw_engine::MasterOutputCeiling::default(),
+            export_options: aaadaw_app::WavExportOptions {
+                sample_format: aaadaw_app::WavSampleFormat::Pcm24,
+                dither: false,
+            },
+            output_sample_rate: 48_000,
+            output_channels: WavChannelCount::Stereo,
+            source: aaadaw_app::ProjectWavRenderSource::MasterMix,
+            start_sample: 0,
+            end_sample: 4 * 48_000,
+            tail_milliseconds: 0,
+            normalize_peak: false,
+            normalize_peak_target_centi_dbfs: 0,
+        };
+        let prefix = directory.path().join("matrix-prefix.wav");
+        let outputs = project_region_render_jobs(
+            &prefix,
+            &project,
+            RenderSource::RegionRenderMatrix,
+            &[],
+            false,
+            settings,
+            None,
+        )
+        .expect("assigned matrix targets should produce render jobs");
+        assert_eq!(
+            outputs
+                .iter()
+                .map(|(_, path)| path.file_name().unwrap().to_string_lossy().into_owned())
+                .collect::<Vec<_>>(),
+            [
+                "matrix-prefix-Intro-Master.wav",
+                "matrix-prefix-Intro-Drums.wav",
+                "matrix-prefix-Intro-Guitar.wav",
+                "matrix-prefix-Verse-Bass.wav",
+            ]
+        );
+        assert_eq!(
+            outputs
+                .iter()
+                .map(|(settings, _)| (settings.start_sample, settings.end_sample))
+                .collect::<Vec<_>>(),
+            [(0, 96_000), (0, 96_000), (0, 96_000), (96_000, 192_000)]
+        );
+
+        aaadaw_app::render_project_wav_jobs_to_wavs(
+            &project_path,
+            &project,
+            &outputs,
+            &std::sync::atomic::AtomicBool::new(false),
+            |_, _| {},
+        )
+        .expect("all matrix render jobs should publish as one WAV batch");
+
+        let native_fixtures = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../docs/verification/reaper-parity/fixtures/region-render-matrix-render");
+        for (name, native_name, left, right) in [
+            (
+                "matrix-prefix-Intro-Master.wav",
+                "Intro-Master.wav",
+                0.75_f64,
+                0.75_f64,
+            ),
+            (
+                "matrix-prefix-Intro-Drums.wav",
+                "Intro-Drums.wav",
+                0.125,
+                0.125,
+            ),
+            (
+                "matrix-prefix-Intro-Guitar.wav",
+                "Intro-Guitar.wav",
+                0.375,
+                0.375,
+            ),
+            ("matrix-prefix-Verse-Bass.wav", "Verse-Bass.wav", 0.25, 0.25),
+        ] {
+            let bytes = std::fs::read(directory.path().join(name))
+                .expect("matrix output should be readable");
+            let native = std::fs::read(native_fixtures.join(native_name))
+                .expect("native REAPER matrix output fixture should be available");
+            let format = riff_chunk(&bytes, b"fmt ");
+            let native_format = riff_chunk(&native, b"fmt ");
+            assert_eq!(
+                u32::from_le_bytes(format[4..8].try_into().unwrap()),
+                48_000,
+                "{name} sample rate"
+            );
+            assert_eq!(u16::from_le_bytes(format[2..4].try_into().unwrap()), 2);
+            assert_eq!(u16::from_le_bytes(format[14..16].try_into().unwrap()), 24);
+            assert_eq!(format, native_format, "{name} format should match REAPER");
+            let samples = riff_chunk(&bytes, b"data");
+            let native_samples = riff_chunk(&native, b"data");
+            assert_eq!(samples.len(), 96_000 * 6, "{name} should be 96,000 frames");
+            assert_eq!(
+                samples, native_samples,
+                "{name} PCM payload should match the REAPER matrix render"
+            );
+            let sample = |encoded: &[u8]| {
+                let padded = [
+                    encoded[0],
+                    encoded[1],
+                    encoded[2],
+                    if encoded[2] & 0x80 == 0 { 0 } else { 0xff },
+                ];
+                i32::from_le_bytes(padded)
+            };
+            let expected_left = (left * 8_388_608.0).round() as i32;
+            let expected_right = (right * 8_388_608.0).round() as i32;
+            assert_eq!(
+                sample(&samples[0..3]),
+                expected_left,
+                "{name} native left amplitude"
+            );
+            assert_eq!(
+                sample(&samples[3..6]),
+                expected_right,
+                "{name} native right amplitude"
+            );
+        }
     }
 
     #[test]
