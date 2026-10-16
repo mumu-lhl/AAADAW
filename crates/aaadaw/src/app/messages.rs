@@ -1,6 +1,6 @@
 #[cfg(feature = "audio-device")]
 use super::SharedPreparedPlayback;
-use super::audio_export::{RenderBounds, RenderSampleRate, RenderSource};
+use super::audio_export::{RenderBounds, RenderFilenameWildcard, RenderSampleRate, RenderSource};
 use super::commands::CommandId;
 use super::{SharedAudioAssetManagementWorker, SharedAudioImportWorker};
 use crate::timeline::TimelineEvent;
@@ -580,6 +580,8 @@ pub(crate) enum Message {
     SetRenderTailEnabled(bool),
     SetRenderTailDuration(String),
     SetRenderFilenamePattern(String),
+    ToggleRenderWildcardMenu,
+    InsertRenderFilenameWildcard(RenderFilenameWildcard),
     FreezeTrack(TrackId),
     FreezeTrackFinished(Result<FreezeTrackResult, String>),
     UnfreezeTrack(TrackId),

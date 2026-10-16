@@ -6,15 +6,22 @@ native_selected_item_output	bounds-ui-Region 2-item_02.wav
 native_matrix_pattern	$region-$track
 native_matrix_outputs	Intro-Master.wav; Intro-Drums.wav; Intro-Guitar.wav; Verse-Bass.wav
 aaadaw_tokens	$project; $region; $marker; $track; $item; $bpm
+aaadaw_wildcard_picker_tokens	$project; $region; $marker; $track; $item; $bpm
+aaadaw_wildcard_picker_behavior	Selecting a token appends it to the pattern end and closes the picker
 aaadaw_fallback	Blank pattern preserves pre-existing generated destination names
 aaadaw_path_behavior	Selected destination supplies output directory and extension; expanded name is sanitized as one filename component
 aaadaw_duplicate_behavior	Duplicate resolved names fail before jobs are queued
-aaadaw_regressions	app::audio_export::tests::render_filename_patterns_expand_native_wildcard_contexts_safely; app::audio_export::tests::render_filename_patterns_preserve_unknown_tokens_and_reject_duplicate_targets; app::audio_export::tests::queued_selected_track_stems_freeze_track_order_and_output_names; app::audio_export::tests::region_render_matrix_wavs_match_native_target_count_ranges_and_samples
+aaadaw_regressions	app::audio_export::tests::render_wildcard_picker_lists_and_inserts_supported_tokens; app::audio_export::tests::render_filename_patterns_expand_native_wildcard_contexts_safely; app::audio_export::tests::render_filename_patterns_preserve_unknown_tokens_and_reject_duplicate_targets; app::audio_export::tests::queued_selected_track_stems_freeze_track_order_and_output_names; app::audio_export::tests::region_render_matrix_wavs_match_native_target_count_ranges_and_samples
 aaadaw_matrix_audio_comparison	Four outputs; 96,000 frames each; PCM24 stereo data chunks equal native REAPER fixtures byte-for-byte
-aaadaw_window_build_id	1f92198bb6bc4e01c9c82556cd6b62946f0bf8e6
-aaadaw_window_binary_sha256	783687912dac3df073d4d79a5ef9a5cabf024f74bef5560224690911934b2954
+aaadaw_window_build_id	ad7bc0e13c5764f835ac43639152df93f7ca4ea0
+aaadaw_window_binary_sha256	41d9e8391fa3797b52c2c402fd50fdd9eddc34d9d1b2b210abdee823c7253b61
 aaadaw_window_screenshot	render-filename-pattern-aaadaw.png
-aaadaw_window_screenshot_sha256	c67263a252028b492e847d5765fe8e3143c5b043e786edae1b938c0cf4497fb9
+aaadaw_window_screenshot_sha256	2ee3076176a0c6d16709f6804a2472fc1233d21cbca201b51338c64f2dc2ef1b
+aaadaw_wildcard_picker_screenshot	render-filename-pattern-wildcards-aaadaw.png
+aaadaw_wildcard_picker_screenshot_sha256	d8bd0a46e19c9e7f4d824318ab791a15a98f4a6d289d17804d6e6d8a8a5184d3
+aaadaw_wildcard_insert_screenshot	render-filename-pattern-wildcard-insert-aaadaw.png
+aaadaw_wildcard_insert_screenshot_sha256	d062843a9358fc3e110bcc4dd525ee6bf83b65d9d96de86cad8b489702bc47ab
+aaadaw_wildcard_insert_interaction	X11 click on visible $track picker button inserts $track and closes the picker
 aaadaw_window_geometry	1280x800 desktop display; Render project to WAV window 640x720
-verification	App nextest 662/662 before final targeted reruns; changed native matrix test rerun 1/1; changed queue-pattern test rerun 1/1; strict all-target App Clippy; stripped-debug desktop build; rustfmt
-remaining_differences	No Wildcards chooser/preset UI or cross-launch persistence; other native tokens, escapes, ordering, collision prompts, and full source/range coverage remain open
+verification	App nextest 663/663; strict all-target App Clippy -D warnings; picker message regression and direct X11 picker click visually confirmed; stripped-debug desktop build; three visual captures from Build ID ad7bc0e13c5764f835ac43639152df93f7ca4ea0; rustfmt, diff check, 102-row parity CSV and three screenshot SHA-256 checks passed
+remaining_differences	Picker exposes six tokens and appends at pattern end; no insertion at caret/selection, complete native token set, escape/order rules, presets or cross-launch persistence; native collision prompts and full source/range coverage remain open

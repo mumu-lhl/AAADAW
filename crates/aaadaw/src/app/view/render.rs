@@ -1,6 +1,6 @@
 use super::super::audio_export::{
-    RenderBounds, RenderSampleRate, RenderSource, parse_render_peak_target_centi_dbfs,
-    parse_render_tail_milliseconds,
+    RenderBounds, RenderFilenameWildcard, RenderSampleRate, RenderSource,
+    parse_render_peak_target_centi_dbfs, parse_render_tail_milliseconds,
 };
 use super::super::{App, Message, PathPickerTarget};
 use super::tokens;
@@ -174,17 +174,41 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
                 .size(11),
             ]
             .spacing(2),
-            text_input(
-                "$project-$region-$track",
-                &app.render_dialog.filename_pattern
-            )
-            .on_input(Message::SetRenderFilenamePattern)
-            .size(13)
-            .padding([4, 8])
-            .width(Length::Fill),
+            row![
+                text_input(
+                    "$project-$region-$track",
+                    &app.render_dialog.filename_pattern
+                )
+                .on_input(Message::SetRenderFilenamePattern)
+                .size(13)
+                .padding([4, 8])
+                .width(Length::Fill),
+                button("Wildcards…")
+                    .on_press(Message::ToggleRenderWildcardMenu)
+                    .padding([4, 8]),
+            ]
+            .spacing(tokens::SPACING_XS)
+            .align_y(Alignment::Center),
         ]
         .spacing(tokens::SPACING_SM)
         .align_y(Alignment::Center),
+        if app.render_dialog.wildcard_menu_open {
+            RenderFilenameWildcard::ALL
+                .into_iter()
+                .fold(
+                    row![text("Insert wildcard:").size(11)],
+                    |tokens, wildcard| {
+                        tokens.push(
+                            button(wildcard.token())
+                                .on_press(Message::InsertRenderFilenameWildcard(wildcard)),
+                        )
+                    },
+                )
+                .spacing(tokens::SPACING_XS)
+                .align_y(Alignment::Center)
+        } else {
+            row![]
+        },
         {
             let fields: Element<'_, Message> =
                 if !selected_media_items && bounds == RenderBounds::CustomTimeRange {

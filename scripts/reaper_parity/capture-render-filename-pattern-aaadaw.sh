@@ -105,12 +105,30 @@ for _ in $(seq 1 100); do
 done
 [[ -n "$render_window" ]] || { cat "$run_dir/aaadaw.log" >&2; exit 1; }
 sleep 0.5
+insert_wildcard=${AAADAW_INSERT_WILDCARD:-}
+if [[ "${AAADAW_OPEN_WILDCARDS:-0}" == 1 || -n "$insert_wildcard" ]]; then
+  "$xdotool" mousemove --sync 575 260 click 1
+  sleep 0.4
+fi
+if [[ -n "$insert_wildcard" ]]; then
+  case "$insert_wildcard" in
+    project) wildcard_x=139 ;;
+    region) wildcard_x=222 ;;
+    marker) wildcard_x=306 ;;
+    track) wildcard_x=385 ;;
+    item) wildcard_x=454 ;;
+    bpm) wildcard_x=520 ;;
+    *) printf 'Unknown AAADAW_INSERT_WILDCARD token: %s\n' "$insert_wildcard" >&2; exit 2 ;;
+  esac
+  "$xdotool" mousemove --sync "$wildcard_x" 304 click 1
+  sleep 0.4
+fi
 xwininfo -id "$render_window" >"$run_dir/render-window.txt"
 import -display "$display" -window root "$output"
 printf 'display\t%s\n' "$display"
 printf 'build_id\t%s\n' "$(readelf -n "$binary" | sed -n 's/.*Build ID: //p' | head -1)"
 printf 'binary_sha256\t%s\n' "$(sha256sum "$binary" | cut -d ' ' -f 1)"
-printf 'render_window\t%s\n' "$(cat "$run_dir/render-window.txt" | rg -m1 'Width:|Height:' | tr '\n' ' ')"
+printf 'render_window\t%s\n' "$(cat "$run_dir/render-window.txt" | rg 'Width:|Height:' | tr '\n' ' ')"
 printf 'screenshot\t%s\n' "$output"
 printf 'screenshot_sha256\t%s\n' "$(sha256sum "$output" | cut -d ' ' -f 1)"
 printf 'run_logs\t%s\n' "$run_dir"

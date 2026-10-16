@@ -41,6 +41,38 @@ pub(crate) enum RenderSource {
     RegionRenderMatrix,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum RenderFilenameWildcard {
+    Project,
+    Region,
+    Marker,
+    Track,
+    Item,
+    Bpm,
+}
+
+impl RenderFilenameWildcard {
+    pub(crate) const ALL: [Self; 6] = [
+        Self::Project,
+        Self::Region,
+        Self::Marker,
+        Self::Track,
+        Self::Item,
+        Self::Bpm,
+    ];
+
+    pub(crate) const fn token(self) -> &'static str {
+        match self {
+            Self::Project => "$project",
+            Self::Region => "$region",
+            Self::Marker => "$marker",
+            Self::Track => "$track",
+            Self::Item => "$item",
+            Self::Bpm => "$bpm",
+        }
+    }
+}
+
 impl RenderSource {
     pub(crate) const ALL: [Self; 6] = [
         Self::MasterMix,
@@ -812,6 +844,7 @@ pub(super) struct RenderDialogState {
     pub(super) tail_duration_text: String,
     pub(super) stems_pre_fader: bool,
     pub(super) filename_pattern: String,
+    pub(super) wildcard_menu_open: bool,
 }
 
 #[derive(Debug)]
@@ -840,6 +873,7 @@ impl Default for RenderDialogState {
             tail_duration_text: "1000".to_owned(),
             stems_pre_fader: false,
             filename_pattern: String::new(),
+            wildcard_menu_open: false,
         }
     }
 }
@@ -2390,6 +2424,33 @@ mod tests {
         )
         .expect("region and item tokens should resolve");
         assert_eq!(item_output[0].1, Path::new("/renders/Intro-item_01.wav"));
+    }
+
+    #[test]
+    fn render_wildcard_picker_lists_and_inserts_supported_tokens() {
+        assert_eq!(
+            RenderFilenameWildcard::ALL.map(RenderFilenameWildcard::token),
+            ["$project", "$region", "$marker", "$track", "$item", "$bpm",]
+        );
+
+        let mut app = App::default();
+        let _ = app.update(Message::ToggleRenderWildcardMenu);
+        assert!(app.render_dialog.wildcard_menu_open);
+
+        let _ = app.update(Message::SetRenderFilenamePattern("$project-".to_owned()));
+        let _ = app.update(Message::InsertRenderFilenameWildcard(
+            RenderFilenameWildcard::Track,
+        ));
+        assert_eq!(app.render_dialog.filename_pattern, "$project-$track");
+        assert!(!app.render_dialog.wildcard_menu_open);
+
+        let _ = app.update(Message::InsertRenderFilenameWildcard(
+            RenderFilenameWildcard::Project,
+        ));
+        assert_eq!(
+            app.render_dialog.filename_pattern,
+            "$project-$track$project"
+        );
     }
 
     #[test]

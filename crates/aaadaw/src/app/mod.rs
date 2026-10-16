@@ -3545,6 +3545,15 @@ impl App {
             Message::SetRenderFilenamePattern(value) => {
                 self.render_dialog.filename_pattern = value;
             }
+            Message::ToggleRenderWildcardMenu => {
+                self.render_dialog.wildcard_menu_open = !self.render_dialog.wildcard_menu_open;
+            }
+            Message::InsertRenderFilenameWildcard(wildcard) => {
+                self.render_dialog
+                    .filename_pattern
+                    .push_str(wildcard.token());
+                self.render_dialog.wildcard_menu_open = false;
+            }
             Message::RecordingOffsetTextChanged(value) => {
                 self.audio_recording_offset_query = Some(value);
             }
