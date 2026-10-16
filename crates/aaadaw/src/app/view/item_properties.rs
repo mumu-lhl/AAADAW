@@ -23,6 +23,16 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
     };
     let content = column![
         row![
+            text("Position:").width(120),
+            field(ItemPropertyField::Position, 130)
+        ]
+        .spacing(6),
+        row![
+            text("Length:").width(120),
+            field(ItemPropertyField::Length, 130)
+        ]
+        .spacing(6),
+        row![
             text("Display:").width(120),
             pick_list(
                 [
@@ -51,13 +61,11 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
         ]
         .spacing(6),
         row![
-            text("Position:").width(120),
-            field(ItemPropertyField::Position, 130)
-        ]
-        .spacing(6),
-        row![
-            text("Length:").width(120),
-            field(ItemPropertyField::Length, 130)
+            text("Take name:").width(120),
+            text_input("", &draft.name)
+                .on_input(Message::ItemPropertyNameChanged)
+                .on_submit(Message::ApplyItemProperties(true))
+                .width(Length::Fill)
         ]
         .spacing(6),
         row![

@@ -248,9 +248,14 @@ impl App {
         self.item_properties_generation = self.project_generation;
         self.timeline.context_item = None;
         self.timeline.context_fade = None;
+        let window_height = if self.item_properties.is_some() {
+            500.0
+        } else {
+            390.0
+        };
         let (id, task) = iced::window::open(iced::window::Settings {
-            size: iced::Size::new(526.0, 390.0),
-            min_size: Some(iced::Size::new(526.0, 390.0)),
+            size: iced::Size::new(526.0, window_height),
+            min_size: Some(iced::Size::new(526.0, window_height)),
             ..iced::window::Settings::default()
         });
         self.item_properties_window_id = Some(id);
@@ -289,6 +294,16 @@ impl App {
         };
         let id = item.id();
         let current = item.fades();
+        let target_name = if draft.name_changed {
+            if draft.name.chars().count() > 128 {
+                self.item_properties.as_mut().expect("open draft").error =
+                    Some("Take name must be 128 characters or fewer".to_owned());
+                return Task::none();
+            }
+            draft.name.clone()
+        } else {
+            item.name().to_owned()
+        };
         let current_take_volume = item.take_volume();
         let current_take_pan = item.take_pan();
         let sample_rate = self.project.settings().sample_rate();
@@ -348,6 +363,12 @@ impl App {
             current_take_pan
         };
         let mut actions = Vec::new();
+        if target_name != item.name() {
+            actions.push(aaadaw_core::DawAction::SetAudioItemName {
+                item_id: id,
+                name: target_name.clone(),
+            });
+        }
         if changes_placement {
             actions.push(aaadaw_core::DawAction::EditAudioItem {
                 item_id: id,
@@ -397,6 +418,7 @@ impl App {
             self.apply_action(action, "Item properties applied");
             if !self.project.audio_items().iter().any(|item| {
                 item.id() == id
+                    && item.name() == target_name
                     && item.fades() == fades
                     && item.take_volume() == take_volume
                     && item.take_pan() == take_pan
@@ -863,6 +885,8 @@ impl ItemPropertyField {
 #[derive(Debug, Clone)]
 pub(crate) struct ItemProperties {
     pub(crate) item_id: ItemId,
+    pub(crate) name: String,
+    name_changed: bool,
     pub(crate) fields: [String; 11],
     pub(crate) loop_source: bool,
     pub(crate) muted: bool,
@@ -1025,6 +1049,7 @@ impl ItemProperties {
             sample_rate,
         );
         draft.unit = unit;
+        draft.name = item.name().to_owned();
         for (index, samples) in [item.start_sample(), item.length_samples()]
             .into_iter()
             .enumerate()
@@ -1048,7 +1073,8 @@ impl ItemProperties {
     }
 
     pub(crate) fn has_changes(&self) -> bool {
-        self.loop_source_changed
+        self.name_changed
+            || self.loop_source_changed
             || self.mute_changed
             || self.phase_changed
             || self.changed.iter().any(|changed| *changed)
@@ -1113,6 +1139,8 @@ impl ItemProperties {
         let output = fades.fade_out.curve().parameters();
         Self {
             item_id,
+            name: String::new(),
+            name_changed: false,
             fields: [
                 format_time(fades.fade_in.length_samples() / f64::from(sample_rate)),
                 format!("{:.2}", input.curvature()),
@@ -1142,6 +1170,12 @@ impl ItemProperties {
     pub(crate) fn edit(&mut self, field: ItemPropertyField, text: String) {
         self.fields[field.index()] = text;
         self.changed[field.index()] = true;
+        self.error = None;
+    }
+
+    pub(crate) fn set_name(&mut self, name: String) {
+        self.name = name;
+        self.name_changed = true;
         self.error = None;
     }
 

@@ -23,7 +23,7 @@ use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 /// Latest database schema version understood by this release.
-pub const CURRENT_SCHEMA_VERSION: u32 = 53;
+pub const CURRENT_SCHEMA_VERSION: u32 = 54;
 
 const MIGRATION_29: &str = "ALTER TABLE project_meta ADD COLUMN start_measure INTEGER NOT NULL DEFAULT 1 CHECK(start_measure BETWEEN -2147483648 AND 2147483647);";
 const MIGRATION_30: &str = "ALTER TABLE project_meta ADD COLUMN bpm_basis INTEGER NOT NULL DEFAULT 1 CHECK(bpm_basis BETWEEN 0 AND 5);";
@@ -63,6 +63,7 @@ CREATE TABLE IF NOT EXISTS project_region_render_tracks (
     UNIQUE(region_id, position)
 );
 "#;
+const MIGRATION_54: &str = "ALTER TABLE audio_items ADD COLUMN name TEXT NOT NULL DEFAULT '';";
 
 const MIGRATION_38: &str = r#"
 CREATE TABLE IF NOT EXISTS arrangement_time_ranges (
@@ -412,6 +413,7 @@ CREATE TABLE IF NOT EXISTS audio_items (
     track_id INTEGER NOT NULL REFERENCES tracks(id) ON DELETE CASCADE,
     position INTEGER NOT NULL CHECK (position >= 0),
     media_ref TEXT NOT NULL CHECK (length(trim(media_ref)) > 0),
+    name TEXT NOT NULL DEFAULT '',
     start_sample INTEGER NOT NULL CHECK (start_sample >= 0),
     source_offset_samples INTEGER NOT NULL CHECK (source_offset_samples >= 0),
     signed_source_offset_samples INTEGER NOT NULL DEFAULT 0,
@@ -3303,6 +3305,13 @@ fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
                 }
                 transaction.execute_batch(MIGRATION_53)?;
             }
+            54 => {
+                if table_exists(&transaction, "audio_items")?
+                    && !table_has_column(&transaction, "audio_items", "name")?
+                {
+                    transaction.execute_batch(MIGRATION_54)?;
+                }
+            }
             missing => return Err(StorageError::MissingMigration(missing - 1)),
         }
         transaction.pragma_update(None, "user_version", next_version)?;
@@ -3493,15 +3502,16 @@ fn write_snapshot(
 
     for (position, item) in snapshot.audio_items.iter().enumerate() {
         transaction.execute(
-            "INSERT INTO audio_items(id, track_id, position, media_ref, start_sample, \
+            "INSERT INTO audio_items(id, track_id, position, media_ref, name, start_sample, \
              source_offset_samples, signed_source_offset_samples, length_samples, volume, take_volume, take_pan, muted, phase_inverted, loop_source, \
              source_section_start_samples, source_section_length_samples) \
-             VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
+             VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
             params![
                 to_sql_integer(item.id)?,
                 to_sql_integer(item.track_id)?,
                 usize_to_sql(position)?,
                 item.media_ref,
+                item.name,
                 to_sql_integer(item.start_sample)?,
                 item.source_offset_samples.max(0),
                 item.source_offset_samples,
@@ -4163,7 +4173,7 @@ fn read_audio_items(connection: &Connection) -> Result<Vec<AudioItemSnapshot>, S
         return Err(StorageError::Snapshot(SnapshotError::InvalidProjectData));
     }
     let mut statement = connection.prepare(
-        "SELECT id, track_id, position, media_ref, start_sample, signed_source_offset_samples, \
+        "SELECT id, track_id, position, media_ref, name, start_sample, signed_source_offset_samples, \
          length_samples, volume, take_volume, take_pan, muted, phase_inverted, loop_source, \
          source_section_start_samples, source_section_length_samples \
          FROM audio_items ORDER BY position",
@@ -4175,17 +4185,18 @@ fn read_audio_items(connection: &Connection) -> Result<Vec<AudioItemSnapshot>, S
                 row.get::<_, i64>(1)?,
                 row.get::<_, i64>(2)?,
                 row.get::<_, String>(3)?,
-                row.get::<_, i64>(4)?,
+                row.get::<_, String>(4)?,
                 row.get::<_, i64>(5)?,
                 row.get::<_, i64>(6)?,
-                row.get::<_, f64>(7)?,
+                row.get::<_, i64>(7)?,
                 row.get::<_, f64>(8)?,
                 row.get::<_, f64>(9)?,
-                row.get::<_, i64>(10)?,
+                row.get::<_, f64>(10)?,
                 row.get::<_, i64>(11)?,
                 row.get::<_, i64>(12)?,
-                row.get::<_, Option<i64>>(13)?,
+                row.get::<_, i64>(13)?,
                 row.get::<_, Option<i64>>(14)?,
+                row.get::<_, Option<i64>>(15)?,
             ))
         })?
         .collect::<Result<Vec<_>, _>>()?;
@@ -4197,6 +4208,7 @@ fn read_audio_items(connection: &Connection) -> Result<Vec<AudioItemSnapshot>, S
                 track_id,
                 position,
                 media_ref,
+                name,
                 start_sample,
                 source_offset,
                 length,
@@ -4251,6 +4263,7 @@ fn read_audio_items(connection: &Connection) -> Result<Vec<AudioItemSnapshot>, S
                     id: from_sql_u64(id)?,
                     track_id: from_sql_u64(track_id)?,
                     media_ref,
+                    name,
                     start_sample: from_sql_u64(start_sample)?,
                     source_offset_samples: source_offset,
                     length_samples: from_sql_u64(length)?,
@@ -4707,6 +4720,54 @@ mod loop_source_storage_tests {
     use super::ProjectStore;
     use aaadaw_core::{DawAction, MidiNoteData, Project};
     use rusqlite::Connection;
+
+    #[test]
+    fn audio_item_name_round_trips_and_schema_53_migrates() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("audio-item-name.aaadaw");
+        let mut project = Project::new();
+        project
+            .apply(DawAction::CreateTrack {
+                index: 0,
+                name: "Audio".to_owned(),
+            })
+            .unwrap();
+        project
+            .apply(DawAction::InsertAudioItem {
+                track_id: project.tracks()[0].id(),
+                media_ref: "asset://source.wav".to_owned(),
+                start_sample: 0,
+                source_offset_samples: 0,
+                length_samples: 4_800,
+            })
+            .unwrap();
+        let item_id = project.audio_items()[0].id();
+        project
+            .apply(DawAction::SetAudioItemName {
+                item_id,
+                name: "Verse guitar".to_owned(),
+            })
+            .unwrap();
+
+        let mut store = ProjectStore::open(&path).unwrap();
+        store.save(&project).unwrap();
+        assert_eq!(
+            store.load().unwrap().audio_items()[0].name(),
+            "Verse guitar"
+        );
+        store
+            .connection
+            .execute_batch("ALTER TABLE audio_items DROP COLUMN name; PRAGMA user_version = 53;")
+            .unwrap();
+        store.close().unwrap();
+
+        let store = ProjectStore::open(&path).unwrap();
+        assert_eq!(
+            store.schema_version().unwrap(),
+            super::CURRENT_SCHEMA_VERSION
+        );
+        assert_eq!(store.load().unwrap().audio_items()[0].name(), "");
+    }
 
     #[test]
     fn loop_source_metadata_round_trips_with_audio_items() {

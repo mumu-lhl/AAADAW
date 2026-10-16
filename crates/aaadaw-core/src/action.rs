@@ -347,6 +347,11 @@ pub enum DawAction {
     DeleteAudioItem {
         item_id: ItemId,
     },
+    /// Set the audio item's active take name. An empty name restores the source label.
+    SetAudioItemName {
+        item_id: ItemId,
+        name: String,
+    },
     /// Insert an empty MIDI item on a track.
     InsertMidiItem {
         track_id: TrackId,

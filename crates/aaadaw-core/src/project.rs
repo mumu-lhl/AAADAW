@@ -1881,6 +1881,7 @@ impl Project {
                     id: item.id.value(),
                     track_id: item.track_id.value(),
                     media_ref: item.media_ref.clone(),
+                    name: item.name.clone(),
                     start_sample: item.start_sample,
                     source_offset_samples: item.source_offset_samples,
                     length_samples: item.length_samples,
@@ -2184,6 +2185,7 @@ impl Project {
             if !item_ids.insert(item.id)
                 || !track_ids.contains(&item.track_id)
                 || item.media_ref.trim().is_empty()
+                || item.name.chars().count() > 128
                 || !item.volume.is_finite()
                 || !(0.0..=crate::MAX_AUDIO_ITEM_VOLUME).contains(&item.volume)
                 || !item.take_volume.is_finite()
@@ -2210,6 +2212,7 @@ impl Project {
                 id: ItemId::from_raw(item.id),
                 track_id: TrackId::from_raw(item.track_id),
                 media_ref: item.media_ref,
+                name: item.name,
                 start_sample: item.start_sample,
                 source_offset_samples: item.source_offset_samples,
                 length_samples: item.length_samples,
@@ -3145,6 +3148,7 @@ impl Project {
                     id: ItemId::from_raw(ids.next_item_id),
                     track_id,
                     media_ref,
+                    name: String::new(),
                     start_sample,
                     source_offset_samples: 0,
                     length_samples,
@@ -3366,6 +3370,7 @@ impl Project {
                     id: ItemId::from_raw(ids.next_item_id),
                     track_id,
                     media_ref,
+                    name: String::new(),
                     start_sample,
                     source_offset_samples,
                     length_samples,
@@ -3435,6 +3440,7 @@ impl Project {
                     id: ItemId::from_raw(ids.next_item_id),
                     track_id,
                     media_ref,
+                    name: String::new(),
                     start_sample,
                     source_offset_samples: source_offset_samples_signed,
                     length_samples,
@@ -3695,6 +3701,25 @@ impl Project {
                     index,
                     item: state.audio_items[index].clone(),
                 }
+            }
+            DawAction::SetAudioItemName { item_id, name } => {
+                if name.chars().count() > 128 {
+                    return Err(ActionError::InvalidAudioItemName);
+                }
+                let before = state
+                    .audio_items
+                    .iter()
+                    .find(|item| item.id == item_id)
+                    .ok_or(ActionError::AudioItemNotFound { item_id })?
+                    .clone();
+                if is_frozen_render(state, item_id) {
+                    return Err(ActionError::FrozenRenderCannotBeEdited { item_id });
+                }
+                let after = AudioItem {
+                    name,
+                    ..before.clone()
+                };
+                ProjectEvent::AudioItemChanged { before, after }
             }
             DawAction::InsertMidiItem {
                 track_id,
@@ -5337,6 +5362,7 @@ impl Project {
 
 fn valid_audio_item(item: &AudioItem) -> bool {
     !item.media_ref.trim().is_empty()
+        && item.name.chars().count() <= 128
         && item.volume.is_finite()
         && (0.0..=crate::MAX_AUDIO_ITEM_VOLUME).contains(&item.volume)
         && item.take_volume.is_finite()

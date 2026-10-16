@@ -504,7 +504,11 @@ impl TimelineCache {
                 start_tick,
                 end_tick: end_tick.max(start_tick),
                 kind: ItemKind::Audio,
-                label: media_label(item.media_ref()),
+                label: if item.name().is_empty() {
+                    media_label(item.media_ref())
+                } else {
+                    item.name().to_owned()
+                },
                 media_ref: Some(item.media_ref().to_owned()),
                 midi_notes: Vec::new(),
                 midi_source_offset_ticks: 0,

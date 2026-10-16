@@ -18198,6 +18198,49 @@ fn item_properties_mute_and_phase_apply_atomically_with_undo() {
 }
 
 #[test]
+fn audio_item_properties_rename_and_restore_the_source_label_in_one_undo_step() {
+    use super::item_properties::{ItemProperties, TimeUnit};
+
+    let mut app = App::default();
+    app.project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Audio".into(),
+        })
+        .unwrap();
+    app.project
+        .apply(DawAction::InsertAudioItem {
+            track_id: app.project.tracks()[0].id(),
+            media_ref: "asset://item-properties-name".into(),
+            start_sample: 0,
+            source_offset_samples: 0,
+            length_samples: 4_800,
+        })
+        .unwrap();
+    let item = app.project.audio_items()[0].clone();
+    let mut draft = ItemProperties::from_item(&item, 48_000, TimeUnit::Samples);
+    draft.set_name("Kick close".to_owned());
+    app.item_properties = Some(draft);
+    let initial_revision = app.revision;
+
+    let _ = app.update(Message::ApplyItemProperties(false));
+    assert_eq!(app.project.audio_items()[0].name(), "Kick close");
+    assert_eq!(app.revision, initial_revision + 1);
+
+    let _ = app.update(Message::Undo);
+    assert_eq!(app.project.audio_items()[0].name(), "");
+    let _ = app.update(Message::Redo);
+    assert_eq!(app.project.audio_items()[0].name(), "Kick close");
+
+    let mut draft =
+        ItemProperties::from_item(&app.project.audio_items()[0], 48_000, TimeUnit::Samples);
+    draft.set_name(String::new());
+    app.item_properties = Some(draft);
+    let _ = app.update(Message::ApplyItemProperties(false));
+    assert_eq!(app.project.audio_items()[0].name(), "");
+}
+
+#[test]
 fn midi_item_properties_opens_applies_mute_and_keeps_notes_undoable() {
     use super::item_properties::{ItemPropertyField, TimeUnit};
 

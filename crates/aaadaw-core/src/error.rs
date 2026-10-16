@@ -118,6 +118,8 @@ pub enum ActionError {
     InvalidMidiItemLength,
     /// A MIDI item name must contain 1 to 128 non-whitespace characters.
     InvalidMidiItemName,
+    /// An audio item name must contain no more than 128 characters.
+    InvalidAudioItemName,
     /// A MIDI item's start and length exceed the supported tick range.
     InvalidMidiItemPosition,
     /// The requested MIDI item does not exist in the project.
@@ -305,6 +307,9 @@ impl fmt::Display for ActionError {
             Self::InvalidMidiItemLength => formatter.write_str("MIDI item length must be positive"),
             Self::InvalidMidiItemName => {
                 formatter.write_str("MIDI item name must contain 1 to 128 characters")
+            }
+            Self::InvalidAudioItemName => {
+                formatter.write_str("audio item name must contain 128 characters or fewer")
             }
             Self::InvalidMidiItemPosition => {
                 formatter.write_str("MIDI item position exceeds the supported tick range")

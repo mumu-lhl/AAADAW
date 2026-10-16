@@ -1708,3 +1708,11 @@ Linux REAPER 7.82 / Default 7 原厂探针用八个同名 Verse 区域确认预�
 当前桌面 Build ID `c2784759262e4699dbca9cec2ac9765cea514a79`、binary SHA-256 `f2ad5c466a4d2cf656e37adbae339f8845e6871e0d5cf405b5b95ec61e894ac6` 已运行并做实际 X11 点击；完整 87 项 chooser 以及 `$note[X]`、`$note`、`$natural`、`$namenumber` 插入截图已登记在 [Wildcard 验收文档](../verification/reaper-parity/render-filename-patterns.md) 和 fixture manifest。
 
 resolver 回归覆盖八个连续重复区域、三个音高形式、原厂字面 `$note[X]` 的八文件预览序列，以及无 `$region`/`$item` 上下文的 `$namenumber` 空值。最终 `cargo xtest -p aaadaw` 1268/1268、strict all-target Clippy `-D warnings`、`cargo fmt --all -- --check`、`git diff --check`、截图脚本 `bash -n` 以及 native WAV/PNG 和 AAADAW 截图的登记哈希均通过。`RENDER-WILDCARDS-001` / P10 继续 `in_progress`；活动 Item 名称、Help C0 与实际 C-1 差异、`{lane}`、预设与更多 Render 语义仍待实测实现。
+
+### 2026-10-16 Audio Take name 与 `$namenumber`
+
+Audio Item Properties 新增与 REAPER 原厂文案一致的 **Take name** 字段；名称通过 Core action、snapshot 和 schema 54 持久化，支持撤销/重做、清空恢复 source label，并在时间线与 `$item` 中使用。`$namenumber` 对所选音频 Item 渲染批次内的同名 Take 计数；空 Take name 仍遵循原厂 `item_NN` 显示/命名回退。Media Item Properties 尚有多 Take/comp、item timebase、播放速率/音高、通道、envelope、stretch、source controls 和批量字段等差距。
+
+Linux REAPER 7.82 / Default 7 原厂实测将三个 Take name 都设为 `Hit`，只选择第一与第三个 Item，Source 设为 Selected media items，`$item-$namenumber` 的预览及完成结果为 `Hit-01.wav`、`Hit-02.wav`，证明未选中的同名 Item 不消耗序号。交叉模式 `$item-$region-$namenumber` 的原厂预览/完成文件则为 `Hit-Region 1-01.wav` 与 `Hit-Region 3-01.wav`，确认两种 name token 同时出现时 `$namenumber` 绑定 Region；AAADAW 的 resolver 回归覆盖该优先级。预览/完成截图、两份 PCM24 WAV 与 SHA-256 记录在 [Take name 原厂 fixture](../verification/reaper-parity/fixtures/render-item-take-name-native.tsv)；AAADAW 当前桌面 [Take name 属性截图](../verification/reaper-parity/fixtures/audio-item-properties-take-name-aaadaw.png)与二进制 Build ID/SHA 见[验收文档](../verification/reaper-parity/audio-item-take-name.md)。
+
+Core/Storage 测试、App 二进制测试 669/669、strict all-target App Clippy `-D warnings`、`cargo fmt --check` 与 `git diff --check` 通过；`ITEM-PROPERTIES-001` 与 `RENDER-WILDCARDS-001` 继续 `in_progress`。当前 audio item 仅表示一个 active Take；所选 MIDI Item 的 `$item`/`$namenumber` 和更完整属性窗口仍待实现及原厂验证。

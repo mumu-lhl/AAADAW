@@ -5,7 +5,7 @@ use aaadaw_app::{ClapPluginDescriptor, WavChannelCount, WavSampleFormat};
 use aaadaw_core::{DawAction, ItemId, MarkerId, Project, ProjectSnapshot, RegionId, TrackId};
 use aaadaw_storage::ProjectStore;
 use iced::Task;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -375,6 +375,7 @@ struct RenderFilenameExpansionContext<'a> {
     allow_slash_in_wildcard_substitutions: bool,
     file_number: u64,
     file_count: usize,
+    item_name_number: Option<usize>,
 }
 
 #[derive(Clone, Copy)]
@@ -1036,6 +1037,7 @@ fn apply_render_filename_pattern_with_selected_tracks_and_options(
         allow_slash_in_wildcard_substitutions,
         file_number: 1,
         file_count: 1,
+        item_name_number: None,
     };
     apply_render_filename_pattern_with_context(
         outputs,
@@ -1060,13 +1062,28 @@ fn apply_render_filename_pattern_with_context(
 
     let file_count = outputs.len();
     let mut used_names = HashSet::with_capacity(file_count);
+    let mut item_name_numbers = HashMap::<String, usize>::new();
     outputs
         .into_iter()
         .enumerate()
         .map(|(index, (settings, path))| {
+            let item_name_number = match settings.source {
+                aaadaw_app::ProjectWavRenderSource::SelectedAudioItem(item_id) => project
+                    .audio_items()
+                    .iter()
+                    .find(|item| item.id() == item_id)
+                    .filter(|item| !item.name().is_empty())
+                    .map(|item| {
+                        let number = item_name_numbers.entry(item.name().to_owned()).or_default();
+                        *number += 1;
+                        *number
+                    }),
+                _ => None,
+            };
             let output_context = RenderFilenameExpansionContext {
                 file_number: u64::try_from(index).unwrap_or(u64::MAX).saturating_add(1),
                 file_count,
+                item_name_number,
                 ..*expansion_context
             };
             let fallback = path
@@ -1578,6 +1595,16 @@ fn render_filename_pattern_has_region_name(pattern: &str) -> bool {
     })
 }
 
+fn render_filename_pattern_has_item_name(pattern: &str) -> bool {
+    pattern.split('$').skip(1).any(|expression| {
+        let token = expression
+            .split(|character: char| !character.is_ascii_alphanumeric())
+            .next()
+            .unwrap_or_default();
+        token.eq_ignore_ascii_case("item")
+    })
+}
+
 fn expand_render_filename_pattern(
     pattern: &str,
     fallback: &str,
@@ -1593,6 +1620,7 @@ fn expand_render_filename_pattern(
         allow_slash_in_wildcard_substitutions,
         file_number,
         file_count,
+        item_name_number,
     } = context;
     let project_name = project_path
         .file_stem()
@@ -1694,9 +1722,14 @@ fn expand_render_filename_pattern(
             .position(|item| item.id() == item_id),
         _ => None,
     };
-    let item_name = item_index
-        .map(|index| format!("item_{:02}", index + 1))
-        .unwrap_or_default();
+    let item_name = item_index.map_or_else(String::new, |index| {
+        let item = &project.audio_items()[index];
+        if item.name().is_empty() {
+            format!("item_{:02}", index + 1)
+        } else {
+            item.name().to_owned()
+        }
+    });
     let item_number_text = item_index
         .map(|index| format!("{:02}", index + 1))
         .unwrap_or_default();
@@ -1704,9 +1737,8 @@ fn expand_render_filename_pattern(
         project.sample_at_tick(region.start_ticks()).ok() == Some(settings.start_sample)
             && project.sample_at_tick(region.end_ticks()).ok() == Some(settings.end_sample)
     });
-    let name_number_text = region
-        .filter(|_| render_filename_pattern_has_region_name(pattern))
-        .map_or_else(String::new, |region| {
+    let name_number_text = if render_filename_pattern_has_region_name(pattern) {
+        region.map_or_else(String::new, |region| {
             let region_index = project
                 .regions()
                 .iter()
@@ -1726,7 +1758,12 @@ fn expand_render_filename_pattern(
                     })
                     .count()
             )
-        });
+        })
+    } else if render_filename_pattern_has_item_name(pattern) {
+        item_name_number.map_or_else(String::new, |number| format!("{number:02}"))
+    } else {
+        String::new()
+    };
     let marker = project
         .markers()
         .iter()
@@ -4274,6 +4311,7 @@ mod tests {
             allow_slash_in_wildcard_substitutions: false,
             file_number: 1,
             file_count: 1,
+            item_name_number: None,
         };
         let output = apply_render_filename_pattern_with_context(
             vec![(settings, Path::new("/renders/base.wav").to_owned())],
@@ -5423,6 +5461,101 @@ mod tests {
         )
         .expect("the selected item's identity and number should expand");
         assert_eq!(output[0].1, Path::new("/renders/item_02-02.wav"));
+    }
+
+    #[test]
+    fn render_filename_item_name_and_duplicate_name_number_follow_the_selected_item() {
+        let mut project = Project::default();
+        project
+            .apply(DawAction::CreateTrack {
+                index: 0,
+                name: "Item names".to_owned(),
+            })
+            .expect("item-name fixture track should be created");
+        let track_id = project.tracks()[0].id();
+        for start_sample in [0, 48_000, 96_000] {
+            project
+                .apply(DawAction::InsertAudioItem {
+                    track_id,
+                    media_ref: "fixture.wav".to_owned(),
+                    start_sample,
+                    source_offset_samples: 0,
+                    length_samples: 48_000,
+                })
+                .expect("item-name fixture should be inserted");
+        }
+        for (start_ticks, end_ticks, name) in [(0, 1_920, "Region 1"), (3_840, 5_760, "Region 3")] {
+            project
+                .apply(DawAction::InsertProjectRegion {
+                    start_ticks,
+                    end_ticks,
+                    name: name.to_owned(),
+                })
+                .expect("item-name fixture region should be inserted");
+        }
+        let item_ids = project
+            .audio_items()
+            .iter()
+            .map(aaadaw_core::AudioItem::id)
+            .collect::<Vec<_>>();
+        for item_id in item_ids.iter().copied() {
+            project
+                .apply(DawAction::SetAudioItemName {
+                    item_id,
+                    name: "Hit".to_owned(),
+                })
+                .expect("duplicate item names should be accepted");
+        }
+        let settings = |item_id, start_sample| aaadaw_app::ProjectWavRenderSettings {
+            master_ceiling: aaadaw_engine::MasterOutputCeiling::default(),
+            export_options: aaadaw_app::WavExportOptions::default(),
+            output_sample_rate: 48_000,
+            output_channels: WavChannelCount::Stereo,
+            source: aaadaw_app::ProjectWavRenderSource::SelectedAudioItem(item_id),
+            start_sample,
+            end_sample: start_sample + 48_000,
+            tail_milliseconds: 0,
+            normalize_peak: false,
+            normalize_peak_target_centi_dbfs: 0,
+        };
+
+        let output = apply_render_filename_pattern(
+            vec![
+                (
+                    settings(item_ids[0], 0),
+                    Path::new("/renders/base.wav").to_owned(),
+                ),
+                (
+                    settings(item_ids[2], 96_000),
+                    Path::new("/renders/base.wav").to_owned(),
+                ),
+            ],
+            "$item-$namenumber-$itemnumber",
+            &project,
+            Path::new("/projects/item-names.aaadaw"),
+        )
+        .expect("selected Item name and its duplicate ordinal should expand");
+        assert_eq!(output[0].1, Path::new("/renders/Hit-01-01.wav"));
+        assert_eq!(output[1].1, Path::new("/renders/Hit-02-03.wav"));
+
+        let output = apply_render_filename_pattern(
+            vec![
+                (
+                    settings(item_ids[0], 0),
+                    Path::new("/renders/base.wav").to_owned(),
+                ),
+                (
+                    settings(item_ids[2], 96_000),
+                    Path::new("/renders/base.wav").to_owned(),
+                ),
+            ],
+            "$item-$region-$namenumber",
+            &project,
+            Path::new("/projects/item-names.aaadaw"),
+        )
+        .expect("the name-number context should follow the region name wildcard");
+        assert_eq!(output[0].1, Path::new("/renders/Hit-Region 1-01.wav"));
+        assert_eq!(output[1].1, Path::new("/renders/Hit-Region 3-01.wav"));
     }
 
     #[test]

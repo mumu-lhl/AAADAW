@@ -17,6 +17,7 @@ pub struct AudioItem {
     pub(crate) id: ItemId,
     pub(crate) track_id: TrackId,
     pub(crate) media_ref: String,
+    pub(crate) name: String,
     pub(crate) start_sample: u64,
     pub(crate) source_offset_samples: i64,
     pub(crate) length_samples: u64,
@@ -45,6 +46,11 @@ impl AudioItem {
     /// Returns the opaque media reference resolved outside the core.
     pub fn media_ref(&self) -> &str {
         &self.media_ref
+    }
+
+    /// Returns the active take name, or an empty string when the source label is shown.
+    pub fn name(&self) -> &str {
+        &self.name
     }
 
     /// Returns the absolute start position in project samples.

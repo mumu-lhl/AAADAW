@@ -1966,6 +1966,7 @@ impl App {
                     | Message::NudgeSelectedItems(_)
                     | Message::ItemPropertiesUnitChanged(_)
                     | Message::ItemPropertyFieldChanged(..)
+                    | Message::ItemPropertyNameChanged(_)
                     | Message::ItemPropertyLoopSourceChanged(_)
                     | Message::ItemPropertyMuteChanged(_)
                     | Message::BatchItemPropertyMuteChanged(_)
@@ -2651,6 +2652,11 @@ impl App {
                     draft.edit(field, text);
                 } else if let Some(draft) = &mut self.midi_item_properties {
                     draft.edit(field, text);
+                }
+            }
+            Message::ItemPropertyNameChanged(name) => {
+                if let Some(draft) = &mut self.item_properties {
+                    draft.set_name(name);
                 }
             }
             Message::ItemPropertyLoopSourceChanged(enabled) => {

@@ -178,6 +178,7 @@ pub struct AudioItemSnapshot {
     pub id: u64,
     pub track_id: u64,
     pub media_ref: String,
+    pub name: String,
     pub start_sample: u64,
     pub source_offset_samples: i64,
     pub length_samples: u64,

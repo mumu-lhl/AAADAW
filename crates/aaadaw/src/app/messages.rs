@@ -254,6 +254,7 @@ pub(crate) enum Message {
     NudgeSelectedItems(i8),
     ItemPropertiesUnitChanged(super::item_properties::TimeUnit),
     ItemPropertyFieldChanged(super::item_properties::ItemPropertyField, String),
+    ItemPropertyNameChanged(String),
     ItemPropertyLoopSourceChanged(bool),
     ItemPropertyMuteChanged(bool),
     BatchItemPropertyMuteChanged(bool),
