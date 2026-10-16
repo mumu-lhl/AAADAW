@@ -91,6 +91,10 @@ pub(crate) enum RenderFilenameWildcard {
     FileNumber,
     FileNumberNumbered,
     FileCount,
+    Note,
+    NoteNumbered,
+    Natural,
+    NameNumber,
     TimelineOrder,
     TimelineOrderNumbered,
     TimelineOrderTrack,
@@ -132,7 +136,7 @@ pub(crate) enum RenderFilenameWildcard {
 }
 
 impl RenderFilenameWildcard {
-    pub(crate) const ALL: [Self; 83] = [
+    pub(crate) const ALL: [Self; 87] = [
         Self::Project,
         Self::Title,
         Self::Author,
@@ -179,6 +183,10 @@ impl RenderFilenameWildcard {
         Self::FileNumber,
         Self::FileNumberNumbered,
         Self::FileCount,
+        Self::Note,
+        Self::NoteNumbered,
+        Self::Natural,
+        Self::NameNumber,
         Self::TimelineOrder,
         Self::TimelineOrderNumbered,
         Self::TimelineOrderTrack,
@@ -265,6 +273,10 @@ impl RenderFilenameWildcard {
             Self::FileNumber => "$filenumber",
             Self::FileNumberNumbered => "$filenumber[N]",
             Self::FileCount => "$filecount",
+            Self::Note => "$note",
+            Self::NoteNumbered => "$note[X]",
+            Self::Natural => "$natural",
+            Self::NameNumber => "$namenumber",
             Self::TimelineOrder => "$timelineorder",
             Self::TimelineOrderNumbered => "$timelineorder[N]",
             Self::TimelineOrderTrack => "$timelineorder_track",
@@ -1278,6 +1290,50 @@ fn format_render_wildcard_bit_depth(sample_format: WavSampleFormat) -> String {
     .to_owned()
 }
 
+fn parse_render_wildcard_note_start(note: &[char]) -> Option<i64> {
+    let (&letter, suffix) = note.split_first()?;
+    let pitch = match letter.to_ascii_uppercase() {
+        'C' => 0_i64,
+        'D' => 2,
+        'E' => 4,
+        'F' => 5,
+        'G' => 7,
+        'A' => 9,
+        'B' => 11,
+        _ => return None,
+    };
+    let (pitch, octave_start) = match suffix.first() {
+        Some('#') => (pitch + 1, 1),
+        Some('b' | 'B') => (pitch - 1, 1),
+        _ => (pitch, 0),
+    };
+    let octave = suffix[octave_start..]
+        .iter()
+        .collect::<String>()
+        .parse::<i64>()
+        .ok()?;
+    octave.checked_add(1)?.checked_mul(12)?.checked_add(pitch)
+}
+
+fn format_render_wildcard_chromatic_note(start: i64, file_number: u64) -> String {
+    const PITCHES: [&str; 12] = [
+        "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B",
+    ];
+    let ordinal = i64::try_from(file_number.saturating_sub(1)).unwrap_or(i64::MAX);
+    let note = start.saturating_add(ordinal);
+    let octave = note.div_euclid(12).saturating_sub(1);
+    format!("{}{octave}", PITCHES[note.rem_euclid(12) as usize])
+}
+
+fn format_render_wildcard_natural_note(file_number: u64) -> String {
+    const NOTES: [&str; 7] = ["C", "D", "E", "F", "G", "A", "B"];
+    let ordinal = file_number.saturating_sub(1);
+    let octave = i64::try_from(ordinal / 7)
+        .unwrap_or(i64::MAX)
+        .saturating_sub(1);
+    format!("{}{octave}", NOTES[(ordinal % 7) as usize])
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum RenderFilenameWildcardModifier {
     ReplaceCharacters {
@@ -1290,6 +1346,7 @@ enum RenderFilenameWildcardModifier {
         start: u64,
         width: usize,
     },
+    NoteStart(Option<i64>),
     ListSeparator(char),
     UniqueIdLength(Option<usize>),
 }
@@ -1345,6 +1402,16 @@ fn parse_render_filename_wildcard_modifiers(
                         start: 1,
                         width: suffix.len(),
                     });
+                } else if token == "note"
+                    && suffix.len() == 1
+                    && suffix[0].eq_ignore_ascii_case(&'X')
+                {
+                    modifiers.push(RenderFilenameWildcardModifier::NoteStart(None));
+                } else if token == "note" {
+                    let Some(start) = parse_render_wildcard_note_start(suffix) else {
+                        break;
+                    };
+                    modifiers.push(RenderFilenameWildcardModifier::NoteStart(Some(start)));
                 } else if matches!(token, "timelineorder" | "timelineorder_track")
                     && suffix.iter().all(char::is_ascii_digit)
                 {
@@ -1449,6 +1516,7 @@ fn apply_render_filename_wildcard_modifiers(
                 .map(|number| format!("{number:0width$}"))
                 .unwrap_or(value),
             RenderFilenameWildcardModifier::ListSeparator(_) => value,
+            RenderFilenameWildcardModifier::NoteStart(_) => value,
             RenderFilenameWildcardModifier::UniqueIdLength(Some(_)) => value,
             RenderFilenameWildcardModifier::UniqueIdLength(None) => String::new(),
         };
@@ -1498,6 +1566,16 @@ fn render_filename_named_value(text: &str, name: &str, separator: Option<char>) 
             (key == name).then(|| value.to_owned())
         })
         .unwrap_or_default()
+}
+
+fn render_filename_pattern_has_region_name(pattern: &str) -> bool {
+    pattern.split('$').skip(1).any(|expression| {
+        let token = expression
+            .split(|character: char| !character.is_ascii_alphanumeric())
+            .next()
+            .unwrap_or_default();
+        token.eq_ignore_ascii_case("region")
+    })
 }
 
 fn expand_render_filename_pattern(
@@ -1626,6 +1704,29 @@ fn expand_render_filename_pattern(
         project.sample_at_tick(region.start_ticks()).ok() == Some(settings.start_sample)
             && project.sample_at_tick(region.end_ticks()).ok() == Some(settings.end_sample)
     });
+    let name_number_text = region
+        .filter(|_| render_filename_pattern_has_region_name(pattern))
+        .map_or_else(String::new, |region| {
+            let region_index = project
+                .regions()
+                .iter()
+                .position(|candidate| candidate.id() == region.id())
+                .unwrap_or(0);
+            format!(
+                "{:02}",
+                project
+                    .regions()
+                    .iter()
+                    .enumerate()
+                    .filter(|(index, candidate)| {
+                        candidate.name() == region.name()
+                            && (candidate.start_ticks() < region.start_ticks()
+                                || (candidate.start_ticks() == region.start_ticks()
+                                    && *index <= region_index))
+                    })
+                    .count()
+            )
+        });
     let marker = project
         .markers()
         .iter()
@@ -1949,6 +2050,24 @@ fn expand_render_filename_pattern(
             "lentt" => result.push_str(&length_components[3]),
             "filenumber" => result.push_str(&file_number.to_string()),
             "filecount" => result.push_str(&file_count.to_string()),
+            "note" => match modifiers.iter().find_map(|modifier| match modifier {
+                RenderFilenameWildcardModifier::NoteStart(start) => Some(*start),
+                _ => None,
+            }) {
+                // REAPER's picker inserts `$note[X]` as a template. If X is
+                // left in place, its first output is empty and subsequent
+                // outputs follow the default chromatic sequence.
+                Some(None) if *file_number > 1 => result.push_str(
+                    &format_render_wildcard_chromatic_note(0, file_number.saturating_sub(1)),
+                ),
+                Some(None) => {}
+                Some(Some(start)) => {
+                    result.push_str(&format_render_wildcard_chromatic_note(start, *file_number));
+                }
+                None => result.push_str(&format_render_wildcard_chromatic_note(0, *file_number)),
+            },
+            "natural" => result.push_str(&format_render_wildcard_natural_note(*file_number)),
+            "namenumber" => result.push_str(&name_number_text),
             "timelineorder" => result.push_str(&timeline_order_text),
             "timelineorder_track" => result.push_str(&timeline_order_track_text),
             "fx" => {
@@ -3938,6 +4057,10 @@ mod tests {
                 "$filenumber",
                 "$filenumber[N]",
                 "$filecount",
+                "$note",
+                "$note[X]",
+                "$natural",
+                "$namenumber",
                 "$timelineorder",
                 "$timelineorder[N]",
                 "$timelineorder_track",
@@ -4686,6 +4809,103 @@ mod tests {
         )
         .expect("item timeline counters should include global and same-track order");
         assert_eq!(output[0].1, Path::new("/renders/3-02.wav"));
+    }
+
+    #[test]
+    fn render_filename_recording_notes_and_duplicate_region_names_follow_output_order() {
+        let mut project = Project::default();
+        for index in 0..8_u64 {
+            let start_ticks = index * 3_840;
+            let end_ticks = start_ticks + 1_920;
+            project
+                .apply(DawAction::InsertProjectRegion {
+                    start_ticks,
+                    end_ticks,
+                    name: "Verse".to_owned(),
+                })
+                .expect("duplicate region names should be allowed");
+        }
+        let jobs = project
+            .regions()
+            .iter()
+            .map(|region| {
+                let start_sample = project
+                    .sample_at_tick(region.start_ticks())
+                    .expect("region start should convert");
+                let end_sample = project
+                    .sample_at_tick(region.end_ticks())
+                    .expect("region end should convert");
+                let settings = aaadaw_app::ProjectWavRenderSettings {
+                    master_ceiling: aaadaw_engine::MasterOutputCeiling::default(),
+                    export_options: aaadaw_app::WavExportOptions::default(),
+                    output_sample_rate: 48_000,
+                    output_channels: WavChannelCount::Stereo,
+                    source: aaadaw_app::ProjectWavRenderSource::MasterMix,
+                    start_sample,
+                    end_sample,
+                    tail_milliseconds: 0,
+                    normalize_peak: false,
+                    normalize_peak_target_centi_dbfs: 0,
+                };
+                (settings, Path::new("/renders/file.wav").to_owned())
+            })
+            .collect::<Vec<_>>();
+        let first_settings = jobs[0].0;
+        let output = apply_render_filename_pattern(
+            jobs,
+            "$region-$namenumber-$note-$note[B2]-$natural",
+            &project,
+            Path::new("/projects/recording-notes.aaadaw"),
+        )
+        .expect("recording note names should be unique in output order");
+        let expected = [
+            "Verse-01-C-1-B2-C-1.wav",
+            "Verse-02-C#-1-C3-D-1.wav",
+            "Verse-03-D-1-C#3-E-1.wav",
+            "Verse-04-D#-1-D3-F-1.wav",
+            "Verse-05-E-1-D#3-G-1.wav",
+            "Verse-06-F-1-E3-A-1.wav",
+            "Verse-07-F#-1-F3-B-1.wav",
+            "Verse-08-G-1-F#3-C0.wav",
+        ];
+        assert_eq!(
+            output
+                .iter()
+                .map(|(_, path)| path.file_name().unwrap().to_str().unwrap())
+                .collect::<Vec<_>>(),
+            expected
+        );
+        let placeholder = apply_render_filename_pattern(
+            output.clone(),
+            "$note[X]-$natural-$namenumber",
+            &project,
+            Path::new("/projects/recording-notes.aaadaw"),
+        )
+        .expect("the unfilled note template should follow the native preview");
+        assert_eq!(
+            placeholder
+                .iter()
+                .map(|(_, path)| path.file_name().unwrap().to_str().unwrap())
+                .collect::<Vec<_>>(),
+            [
+                "C-1.wav",
+                "C-1-D-1.wav",
+                "C#-1-E-1.wav",
+                "D-1-F-1.wav",
+                "D#-1-G-1.wav",
+                "E-1-A-1.wav",
+                "F-1-B-1.wav",
+                "F#-1-C0.wav",
+            ]
+        );
+        let first_placeholder = apply_render_filename_pattern(
+            vec![(first_settings, Path::new("/renders/file.wav").to_owned())],
+            "$note[X]-$natural-$namenumber",
+            &project,
+            Path::new("/projects/recording-notes.aaadaw"),
+        )
+        .expect("the literal note placeholder is empty on the first output");
+        assert_eq!(first_placeholder[0].1, Path::new("/renders/C-1.wav"));
     }
 
     #[test]

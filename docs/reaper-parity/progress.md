@@ -1697,3 +1697,14 @@ Linux REAPER 7.82 / Default 7 使用 All project regions 渲染 Verse、Chorus �
 Linux REAPER 7.82 / Default 7 的 All project regions 预览与实际完成渲染确认 Verse/Chorus 分别展开为 `1-005-01` 和 `2-006-02`，对应 `$timelineorder`、`$timelineorder[005]` 与 `$timelineorder_track[01]`。预览、完成列表、两个 PCM24 WAV 和 SHA-256 保存在[原厂 timeline-order fixture](../verification/reaper-parity/fixtures/render-wildcards-timeline-order-native.tsv)。
 
 最终 AAADAW 桌面 Build ID `91021083969acc5430035fb35ebb4edcd8b91bfd`、二进制 SHA-256 `57afa64c721d8315b665709025284afd01bc3b4e956b8e8ea45121ddb9b1bdd5` 的 picker 和 `$timelineorder_track[N]` 实点插入截图及哈希已登记在 Wildcard 文档与 fixture manifest。两个回归分别覆盖逆序输出批次的 Region 时间排序/起始位数和 Selected Media Items 的全局/同轨排序。AAADAW workspace nextest 1267/1267、strict all-target Clippy `-D warnings`、格式与 diff 检查、截图脚本语法和新增 fixture hash 检查通过。`RENDER-WILDCARDS-001` / P10 继续 `in_progress`；`$note`、`$natural`、`$namenumber`、`{lane}`、预设和插入/持久化行为仍待实现。
+
+
+### 2026-10-16 Render recording-order wildcards
+
+加入 `$note`、`$note[X]`、`$natural` 和 `$namenumber`，Render Wildcards picker 扩展为 87 项。录音音高通配符按本次输出批次次序递增：`$note` 从 REAPER 实际默认输出的 C-1 开始逐半音上升，`$note[B2]` 从 B2 开始，字面 `$note[X]` 首个输出为空、后续从默认 C-1 开始递增，`$natural` 只遍历 C/D/E/F/G/A/B 自然音。区域重名时 `$namenumber` 以两位数编号，目前 Region 仅在 pattern 含 `$region` 名称 token 时计算重名编号；活动 Item 名称编号仍未实现。
+
+Linux REAPER 7.82 / Default 7 原厂探针用八个同名 Verse 区域确认预览与完成输出为 `Verse-01-C-1-B2-C-1.wav` 至 `Verse-08-G-1-F#3-C0.wav`；8 个 PCM24 WAV、预览/完成截图、空模板上下文截图及 SHA-256 均存于 [recording-order fixture](../verification/reaper-parity/fixtures/render-wildcards-recording-order-native.tsv)。帮助第 5 页将首音描述为 C0，而这台 Default 7 配置实际输出 C-1；当前遵循实测结果，并将 octave-label preference 核对保留为开放项。重复活动 Item 名称尚不可计数，因为 AAADAW 项目模型还没有 Item/Take name。
+
+当前桌面 Build ID `c2784759262e4699dbca9cec2ac9765cea514a79`、binary SHA-256 `f2ad5c466a4d2cf656e37adbae339f8845e6871e0d5cf405b5b95ec61e894ac6` 已运行并做实际 X11 点击；完整 87 项 chooser 以及 `$note[X]`、`$note`、`$natural`、`$namenumber` 插入截图已登记在 [Wildcard 验收文档](../verification/reaper-parity/render-filename-patterns.md) 和 fixture manifest。
+
+resolver 回归覆盖八个连续重复区域、三个音高形式、原厂字面 `$note[X]` 的八文件预览序列，以及无 `$region`/`$item` 上下文的 `$namenumber` 空值。最终 `cargo xtest -p aaadaw` 1268/1268、strict all-target Clippy `-D warnings`、`cargo fmt --all -- --check`、`git diff --check`、截图脚本 `bash -n` 以及 native WAV/PNG 和 AAADAW 截图的登记哈希均通过。`RENDER-WILDCARDS-001` / P10 继续 `in_progress`；活动 Item 名称、Help C0 与实际 C-1 差异、`{lane}`、预设与更多 Render 语义仍待实测实现。
