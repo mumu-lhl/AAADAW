@@ -91,6 +91,10 @@ pub(crate) enum RenderFilenameWildcard {
     FileNumber,
     FileNumberNumbered,
     FileCount,
+    TimelineOrder,
+    TimelineOrderNumbered,
+    TimelineOrderTrack,
+    TimelineOrderTrackNumbered,
     Format,
     SampleRate,
     SampleRateKilohertz,
@@ -128,7 +132,7 @@ pub(crate) enum RenderFilenameWildcard {
 }
 
 impl RenderFilenameWildcard {
-    pub(crate) const ALL: [Self; 79] = [
+    pub(crate) const ALL: [Self; 83] = [
         Self::Project,
         Self::Title,
         Self::Author,
@@ -175,6 +179,10 @@ impl RenderFilenameWildcard {
         Self::FileNumber,
         Self::FileNumberNumbered,
         Self::FileCount,
+        Self::TimelineOrder,
+        Self::TimelineOrderNumbered,
+        Self::TimelineOrderTrack,
+        Self::TimelineOrderTrackNumbered,
         Self::Format,
         Self::SampleRate,
         Self::SampleRateKilohertz,
@@ -257,6 +265,10 @@ impl RenderFilenameWildcard {
             Self::FileNumber => "$filenumber",
             Self::FileNumberNumbered => "$filenumber[N]",
             Self::FileCount => "$filecount",
+            Self::TimelineOrder => "$timelineorder",
+            Self::TimelineOrderNumbered => "$timelineorder[N]",
+            Self::TimelineOrderTrack => "$timelineorder_track",
+            Self::TimelineOrderTrackNumbered => "$timelineorder_track[N]",
             Self::Format => "$format",
             Self::SampleRate => "$samplerate",
             Self::SampleRateKilohertz => "$sampleratek",
@@ -1333,6 +1345,17 @@ fn parse_render_filename_wildcard_modifiers(
                         start: 1,
                         width: suffix.len(),
                     });
+                } else if matches!(token, "timelineorder" | "timelineorder_track")
+                    && suffix.iter().all(char::is_ascii_digit)
+                {
+                    let digits = suffix.iter().collect::<String>();
+                    let Ok(start) = digits.parse::<u64>() else {
+                        break;
+                    };
+                    modifiers.push(RenderFilenameWildcardModifier::Numbered {
+                        start,
+                        width: suffix.len(),
+                    });
                 } else if matches!(token, "regionnumber" | "markernumber")
                     && suffix.iter().all(char::is_ascii_digit)
                 {
@@ -1618,6 +1641,56 @@ fn expand_render_filename_pattern(
                 .or_else(|| aaadaw_app::project_content_end_sample(project).ok());
             start == settings.start_sample && end == Some(settings.end_sample)
         });
+    let (timeline_order_text, timeline_order_track_text) = item_index
+        .map(|item_index| {
+            let item = &project.audio_items()[item_index];
+            let precedes = |index: usize, other: &aaadaw_core::AudioItem| {
+                other.start_sample() < item.start_sample()
+                    || (other.start_sample() == item.start_sample() && index < item_index)
+            };
+            let order = project
+                .audio_items()
+                .iter()
+                .enumerate()
+                .filter(|(index, other)| precedes(*index, other))
+                .count()
+                + 1;
+            let track_order = project
+                .audio_items()
+                .iter()
+                .enumerate()
+                .filter(|(index, other)| {
+                    other.track_id() == item.track_id() && precedes(*index, other)
+                })
+                .count()
+                + 1;
+            (order, track_order)
+        })
+        .or_else(|| {
+            region.map(|region| {
+                let region_index = project
+                    .regions()
+                    .iter()
+                    .position(|candidate| candidate.id() == region.id())
+                    .unwrap_or(0);
+                let order = project
+                    .regions()
+                    .iter()
+                    .enumerate()
+                    .filter(|(index, other)| {
+                        other.start_ticks() < region.start_ticks()
+                            || (other.start_ticks() == region.start_ticks()
+                                && *index < region_index)
+                    })
+                    .count()
+                    + 1;
+                (order, order)
+            })
+        })
+        .map_or_else(
+            || (String::new(), String::new()),
+            |(order, track_order)| (order.to_string(), track_order.to_string()),
+        );
     let bpm = project
         .tick_at_sample(settings.start_sample)
         .ok()
@@ -1688,7 +1761,20 @@ fn expand_render_filename_pattern(
         let full_token = characters[token_start..token_end]
             .iter()
             .collect::<String>();
-        if full_token.eq_ignore_ascii_case("projectdirectoryn") && full_token.ends_with('N') {
+        if full_token.eq_ignore_ascii_case("timelineorder")
+            && characters.get(token_end) == Some(&'_')
+        {
+            let mut suffix_end = token_end;
+            while suffix_end < characters.len()
+                && (characters[suffix_end].is_ascii_alphanumeric() || characters[suffix_end] == '_')
+            {
+                suffix_end += 1;
+            }
+            if suffix_end > token_end + 1 {
+                token_end = suffix_end;
+            }
+        } else if full_token.eq_ignore_ascii_case("projectdirectoryn") && full_token.ends_with('N')
+        {
             token_end -= 1;
         } else if full_token.len() > "projectdirectory".len()
             && full_token[.."projectdirectory".len()].eq_ignore_ascii_case("projectdirectory")
@@ -1863,6 +1949,8 @@ fn expand_render_filename_pattern(
             "lentt" => result.push_str(&length_components[3]),
             "filenumber" => result.push_str(&file_number.to_string()),
             "filecount" => result.push_str(&file_count.to_string()),
+            "timelineorder" => result.push_str(&timeline_order_text),
+            "timelineorder_track" => result.push_str(&timeline_order_track_text),
             "fx" => {
                 let separator = modifiers
                     .iter()
@@ -3850,6 +3938,10 @@ mod tests {
                 "$filenumber",
                 "$filenumber[N]",
                 "$filecount",
+                "$timelineorder",
+                "$timelineorder[N]",
+                "$timelineorder_track",
+                "$timelineorder_track[N]",
                 "$format",
                 "$samplerate",
                 "$sampleratek",
@@ -4488,6 +4580,115 @@ mod tests {
     }
 
     #[test]
+    fn render_filename_timeline_order_uses_regions_time_and_numeric_start_modifiers() {
+        let mut project = Project::default();
+        for (start_ticks, end_ticks, name) in [(0, 1_920, "First"), (1_920, 3_840, "Second")] {
+            project
+                .apply(DawAction::InsertProjectRegion {
+                    start_ticks,
+                    end_ticks,
+                    name: name.to_owned(),
+                })
+                .expect("timeline-order region should be inserted");
+        }
+        let base_settings = aaadaw_app::ProjectWavRenderSettings {
+            master_ceiling: aaadaw_engine::MasterOutputCeiling::default(),
+            export_options: aaadaw_app::WavExportOptions::default(),
+            output_sample_rate: 48_000,
+            output_channels: WavChannelCount::Stereo,
+            source: aaadaw_app::ProjectWavRenderSource::MasterMix,
+            start_sample: 0,
+            end_sample: 0,
+            tail_milliseconds: 0,
+            normalize_peak: false,
+            normalize_peak_target_centi_dbfs: 0,
+        };
+        let first = aaadaw_app::ProjectWavRenderSettings {
+            end_sample: project
+                .sample_at_tick(1_920)
+                .expect("first end should convert"),
+            ..base_settings
+        };
+        let second = aaadaw_app::ProjectWavRenderSettings {
+            start_sample: project
+                .sample_at_tick(1_920)
+                .expect("second start should convert"),
+            end_sample: project
+                .sample_at_tick(3_840)
+                .expect("second end should convert"),
+            ..base_settings
+        };
+        let output = apply_render_filename_pattern(
+            vec![
+                (second, Path::new("/renders/second.wav").to_owned()),
+                (first, Path::new("/renders/first.wav").to_owned()),
+            ],
+            "$timelineorder-$timelineorder[005]-$timelineorder_track[01]-$region",
+            &project,
+            Path::new("/projects/timeline-order.aaadaw"),
+        )
+        .expect("timeline counters should follow project time rather than batch order");
+        assert_eq!(output[0].1, Path::new("/renders/2-006-02-Second.wav"));
+        assert_eq!(output[1].1, Path::new("/renders/1-005-01-First.wav"));
+    }
+
+    #[test]
+    fn render_filename_timeline_order_counts_selected_items_globally_and_per_track() {
+        let mut project = Project::default();
+        project
+            .apply(DawAction::CreateTrack {
+                index: 0,
+                name: "First track".to_owned(),
+            })
+            .expect("first timeline track should be created");
+        project
+            .apply(DawAction::CreateTrack {
+                index: 1,
+                name: "Second track".to_owned(),
+            })
+            .expect("second timeline track should be created");
+        let first_track = project.tracks()[0].id();
+        let second_track = project.tracks()[1].id();
+        for (track_id, start_sample) in [(first_track, 48_000), (second_track, 0), (first_track, 0)]
+        {
+            project
+                .apply(DawAction::InsertAudioItem {
+                    track_id,
+                    media_ref: "timeline-fixture.wav".to_owned(),
+                    start_sample,
+                    source_offset_samples: 0,
+                    length_samples: 48_000,
+                })
+                .expect("timeline item should be inserted");
+        }
+        let selected_item = project
+            .audio_items()
+            .iter()
+            .find(|item| item.track_id() == first_track && item.start_sample() == 48_000)
+            .expect("late item on the first track should exist");
+        let settings = aaadaw_app::ProjectWavRenderSettings {
+            master_ceiling: aaadaw_engine::MasterOutputCeiling::default(),
+            export_options: aaadaw_app::WavExportOptions::default(),
+            output_sample_rate: 48_000,
+            output_channels: WavChannelCount::Stereo,
+            source: aaadaw_app::ProjectWavRenderSource::SelectedAudioItem(selected_item.id()),
+            start_sample: selected_item.start_sample(),
+            end_sample: selected_item.start_sample() + selected_item.length_samples(),
+            tail_milliseconds: 0,
+            normalize_peak: false,
+            normalize_peak_target_centi_dbfs: 0,
+        };
+        let output = apply_render_filename_pattern(
+            vec![(settings, Path::new("/renders/item.wav").to_owned())],
+            "$timelineorder-$timelineorder_track[01]",
+            &project,
+            Path::new("/projects/timeline-item.aaadaw"),
+        )
+        .expect("item timeline counters should include global and same-track order");
+        assert_eq!(output[0].1, Path::new("/renders/3-02.wav"));
+    }
+
+    #[test]
     fn render_filename_regionname_and_markername_match_native_name_only_values() {
         let mut project = Project::default();
         for (start_ticks, end_ticks, name) in [(0, 1_920, "Verse"), (1_920, 3_840, "Chorus")] {
@@ -5073,6 +5274,18 @@ mod tests {
         )
         .expect("unknown wildcard text should remain visible");
         assert_eq!(unknown[0].1, Path::new("renders/session-$unknown.wav"));
+
+        let unknown_underscore = apply_render_filename_pattern(
+            vec![(settings, PathBuf::from("renders/unknown.wav"))],
+            "$timelineorder_suffix",
+            &project,
+            project_path,
+        )
+        .expect("unknown underscore wildcard names should remain literal");
+        assert_eq!(
+            unknown_underscore[0].1,
+            Path::new("renders/$timelineorder_suffix.wav")
+        );
 
         let duplicate = apply_render_filename_pattern(
             vec![

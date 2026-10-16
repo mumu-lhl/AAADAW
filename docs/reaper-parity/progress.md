@@ -1689,3 +1689,11 @@ AAADAW 的 Wildcards picker 新增 Options 复选框，默认开启；每次点�
 Linux REAPER 7.82 / Default 7 使用 All project regions 渲染 Verse、Chorus 两个 region：`file-$filenumber[01]-$filecount-$region` 预览和完成输出为 `file-01-2-Verse.wav`、`file-02-2-Chorus.wav`；去掉宽度后为 `file-1-2-Verse.wav`、`file-2-2-Chorus.wav`。四张原厂预览/完成截图、PCM24 WAV 和 SHA-256 记录在[原厂 file-counter fixture](../verification/reaper-parity/fixtures/render-wildcards-file-counters-native.tsv)。
 
 最终桌面构建 Build ID `19207d803b3ead43ff9a6029af23d378b660c6b5`、二进制 SHA-256 `23840c4f7a5368f7c7e98099ff272bec2deb8247cf1314c829f24e552c9d0dc1` 已实际运行；Recording 分组截图和实点 `$filenumber[N]` 插入截图及哈希记录在 [Wildcard 验证记录](../verification/reaper-parity/render-filename-patterns.md) 与 fixture manifest。`cargo xtest -p aaadaw` 全量 1265/1265、`cargo clippy -p aaadaw --all-targets -- -D warnings`、`cargo fmt --all -- --check`、`git diff --check`、截图脚本 `bash -n`，以及新增 native/AAADAW PNG 和 PCM24 WAV 的 SHA-256 检查均通过。`RENDER-WILDCARDS-001` / P10 继续 `in_progress`；`$note`、`$natural`、`$namenumber`、timeline-order tokens、caret/selection 插入、presets、跨启动模式持久化和其它 Render 行为仍未完成。
+
+### 2026-10-16 Render timeline-order wildcards
+
+加入 `$timelineorder`、`$timelineorder[N]`、`$timelineorder_track` 和 `$timelineorder_track[N]`，Render picker 扩展到 83 项，并为 Timeline order 与 Timeline order by track 增加独立分组。AAADAW 根据匹配的 Region/媒体项在项目中的时间位置计算序号，而不是依赖当前渲染队列的排列；媒体项的 `_track` 形式只计算同轨项目，并保留原厂 `[N]` 起始编号和零填充宽度规则。
+
+Linux REAPER 7.82 / Default 7 的 All project regions 预览与实际完成渲染确认 Verse/Chorus 分别展开为 `1-005-01` 和 `2-006-02`，对应 `$timelineorder`、`$timelineorder[005]` 与 `$timelineorder_track[01]`。预览、完成列表、两个 PCM24 WAV 和 SHA-256 保存在[原厂 timeline-order fixture](../verification/reaper-parity/fixtures/render-wildcards-timeline-order-native.tsv)。
+
+最终 AAADAW 桌面 Build ID `91021083969acc5430035fb35ebb4edcd8b91bfd`、二进制 SHA-256 `57afa64c721d8315b665709025284afd01bc3b4e956b8e8ea45121ddb9b1bdd5` 的 picker 和 `$timelineorder_track[N]` 实点插入截图及哈希已登记在 Wildcard 文档与 fixture manifest。两个回归分别覆盖逆序输出批次的 Region 时间排序/起始位数和 Selected Media Items 的全局/同轨排序。AAADAW workspace nextest 1267/1267、strict all-target Clippy `-D warnings`、格式与 diff 检查、截图脚本语法和新增 fixture hash 检查通过。`RENDER-WILDCARDS-001` / P10 继续 `in_progress`；`$note`、`$natural`、`$namenumber`、`{lane}`、预设和插入/持久化行为仍待实现。
