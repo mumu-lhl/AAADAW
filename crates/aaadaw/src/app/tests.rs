@@ -6840,6 +6840,110 @@ fn save_all_projects_routes_through_the_active_project_save() {
 }
 
 #[test]
+fn recent_projects_submenu_opens_the_selected_path_through_project_transition_guards() {
+    let directory = tempfile::tempdir().expect("test directory should be created");
+    let recent_path = directory.path().join("Mix.aaadaw");
+    std::fs::write(&recent_path, b"project fixture").unwrap();
+    let mut app = App {
+        recent_project_paths: vec![recent_path.clone()],
+        ..App::default()
+    };
+
+    let file_menu = commands::for_menu(&app, MainMenu::File);
+    let save_all_index = file_menu
+        .iter()
+        .position(|entry| entry.id == CommandId::SaveAllProjects)
+        .expect("File menu should expose Save all projects");
+    assert_eq!(
+        file_menu[save_all_index + 1].id,
+        CommandId::OpenRecentProjects
+    );
+    assert_eq!(
+        file_menu[save_all_index + 2].id,
+        CommandId::CloseProject,
+        "Recent projects belongs before the close-project section"
+    );
+
+    let _ = app.update(Message::ToggleMainMenu(MainMenu::File));
+    let _ = app.update(Message::ToggleRecentProjectsMenu);
+    assert!(app.recent_projects_menu_open);
+    let recent_entries = commands::for_menu(&app, MainMenu::File);
+    let recent_entry = recent_entries
+        .iter()
+        .find(|entry| entry.id == CommandId::OpenRecentProject(0))
+        .expect("expanded submenu should list the recent path");
+    assert!(recent_entry.label.contains("Mix.aaadaw"));
+
+    app.menu_selected_command = Some(CommandId::OpenRecentProjects);
+    let _ = app.update(Message::MenuKeyboard(MenuNavigation::NextMenu));
+    assert!(
+        app.recent_projects_menu_open,
+        "Right should enter the submenu"
+    );
+    let _ = app.update(Message::MenuKeyboard(MenuNavigation::NextCommand));
+    assert_eq!(
+        app.menu_selected_command,
+        Some(CommandId::OpenRecentProject(0))
+    );
+    let _ = app.update(Message::MenuKeyboard(MenuNavigation::PreviousMenu));
+    assert!(
+        !app.recent_projects_menu_open,
+        "Left should return to the parent item"
+    );
+    assert_eq!(
+        app.menu_selected_command,
+        Some(CommandId::OpenRecentProjects)
+    );
+
+    let _ = app.update(Message::ExecuteCommand(CommandId::OpenRecentProject(0)));
+    assert!(app.io_busy);
+    assert_eq!(app.project_path_query, recent_path.to_string_lossy());
+    assert_eq!(app.status, format!("Opening {}…", recent_path.display()));
+    assert_eq!(
+        app.pending_project_transition,
+        Some(super::PendingProjectTransition::OpenProject)
+    );
+
+    let mut dirty_app = App {
+        recent_project_paths: vec![recent_path.clone()],
+        revision: 1,
+        ..App::default()
+    };
+    let _ = dirty_app.update(Message::ExecuteCommand(CommandId::OpenRecentProject(0)));
+    assert_eq!(
+        dirty_app.pending_project_transition,
+        Some(super::PendingProjectTransition::OpenProject)
+    );
+    assert_eq!(
+        dirty_app.pending_project_path_to_open,
+        Some(recent_path.clone())
+    );
+    assert_eq!(dirty_app.status, "Save changes to the current project?");
+
+    let _ = dirty_app.update(Message::CancelProjectTransition);
+    assert_eq!(dirty_app.pending_project_path_to_open, None);
+    assert!(dirty_app.is_dirty());
+
+    let project_lock = aaadaw_storage::ProjectSessionLock::acquire(&recent_path)
+        .expect("the current recent project should be lockable");
+    let mut same_project_app = App {
+        recent_project_paths: vec![recent_path.clone()],
+        project_path: Some(recent_path.clone()),
+        project_lock: Some(project_lock),
+        revision: 1,
+        ..App::default()
+    };
+    let _ = same_project_app.update(Message::ExecuteCommand(CommandId::OpenRecentProject(0)));
+    assert_eq!(same_project_app.pending_project_transition, None);
+    assert_eq!(same_project_app.pending_project_path_to_open, None);
+    assert_eq!(
+        same_project_app.status,
+        format!("{} is already open", recent_path.display())
+    );
+    assert!(same_project_app.is_dirty());
+}
+
+#[test]
 fn close_all_projects_routes_through_the_guarded_single_project_close() {
     let mut app = App {
         project_path_query: "current.aaadaw".to_owned(),

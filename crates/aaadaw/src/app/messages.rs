@@ -516,6 +516,8 @@ pub(crate) enum Message {
     ResetShortcutBindings,
     RunActionQuery,
     ExecuteCommand(CommandId),
+    ToggleRecentProjectsMenu,
+    OpenRecentProject(PathBuf),
     OpenProject,
     SaveProject,
     SaveProjectNewVersion,

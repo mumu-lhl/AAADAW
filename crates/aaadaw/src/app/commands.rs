@@ -19,6 +19,8 @@ pub(crate) enum CommandId {
     SaveProjectAs,
     SaveProjectNewVersion,
     SaveAllProjects,
+    OpenRecentProjects,
+    OpenRecentProject(usize),
     CloseProject,
     CloseAllProjects,
     ExportWav,
@@ -152,6 +154,7 @@ enum CommandKind {
     SaveProjectAs,
     SaveProjectNewVersion,
     SaveAllProjects,
+    OpenRecentProjects,
     CloseProject,
     CloseAllProjects,
     ExportWav,
@@ -405,6 +408,16 @@ const COMMANDS: &[CommandDefinition] = &[
         category: "File",
         label: "Save all projects",
         aliases: &["save all projects", "save all"],
+        shortcuts: &[],
+        destructive: false,
+        separator_before: false,
+    },
+    CommandDefinition {
+        kind: CommandKind::OpenRecentProjects,
+        menu: Some(MainMenu::File),
+        category: "File",
+        label: "Recent projects",
+        aliases: &["recent projects", "open recent project"],
         shortcuts: &[],
         destructive: false,
         separator_before: false,
@@ -1758,6 +1771,30 @@ pub(super) fn for_menu(app: &App, menu: MainMenu) -> Vec<CommandEntry> {
         .filter(|entry| entry.section == Some(menu))
         .map(|entry| entry.command.clone())
         .collect::<Vec<_>>();
+    if menu == MainMenu::File
+        && app.recent_projects_menu_open
+        && let Some(parent) = menu_entries
+            .iter()
+            .position(|entry| entry.id == CommandId::OpenRecentProjects)
+    {
+        let recent_entries = app
+            .recent_project_paths
+            .iter()
+            .enumerate()
+            .map(|(index, path)| CommandEntry {
+                id: CommandId::OpenRecentProject(index),
+                category: "File",
+                label: format!("  {}", path.display()),
+                shortcut: None,
+                enabled: !project_file_busy(app),
+                checked: false,
+                destructive: false,
+                separator_before: false,
+                aliases: vec![path.to_string_lossy().into_owned()],
+            })
+            .collect::<Vec<_>>();
+        menu_entries.splice(parent + 1..parent + 1, recent_entries);
+    }
     if menu == MainMenu::Item {
         if let Some(entry) = menu_entries
             .iter_mut()
@@ -2170,6 +2207,9 @@ pub(super) fn for_track_context(app: &App, track_id: TrackId) -> Vec<CommandEntr
 
 pub(super) fn is_enabled(app: &App, command: CommandId) -> bool {
     match command {
+        CommandId::OpenRecentProject(index) => {
+            index < app.recent_project_paths.len() && !project_file_busy(app)
+        }
         CommandId::Macro(id) => app
             .action_macros
             .iter()
@@ -2327,6 +2367,7 @@ fn command_kind_id(kind: CommandKind) -> &'static str {
         CommandKind::SaveProjectAs => "file.save-project-as",
         CommandKind::SaveProjectNewVersion => "file.save-project-new-version",
         CommandKind::SaveAllProjects => "file.save-all-projects",
+        CommandKind::OpenRecentProjects => "file.recent-projects",
         CommandKind::CloseProject => "file.close-project",
         CommandKind::CloseAllProjects => "file.close-all-projects",
         CommandKind::ExportWav => "audio.export-wav",
@@ -2454,6 +2495,13 @@ fn command_kind_id(kind: CommandKind) -> &'static str {
 }
 
 pub(super) fn dispatch(app: &mut App, command: CommandId) -> Task<Message> {
+    if let CommandId::OpenRecentProject(index) = command {
+        let Some(path) = app.recent_project_paths.get(index).cloned() else {
+            app.status = "Recent project is no longer available".to_owned();
+            return Task::none();
+        };
+        return app.update(Message::OpenRecentProject(path));
+    }
     if let CommandId::Macro(id) = command {
         let Some(action_macro) = app
             .action_macros
@@ -2483,6 +2531,7 @@ pub(super) fn dispatch(app: &mut App, command: CommandId) -> Task<Message> {
         return Task::batch(tasks);
     }
     let message = match command {
+        CommandId::OpenRecentProject(_) => unreachable!("recent project dispatch returned above"),
         CommandId::NewProject => Message::NewProject,
         CommandId::CloseProject => Message::CloseProject,
         CommandId::CloseAllProjects => Message::CloseProject,
@@ -2494,6 +2543,7 @@ pub(super) fn dispatch(app: &mut App, command: CommandId) -> Task<Message> {
         CommandId::OpenProject => Message::OpenProject,
         CommandId::SaveProject => Message::SaveProject,
         CommandId::SaveAllProjects => Message::SaveProject,
+        CommandId::OpenRecentProjects => Message::ToggleRecentProjectsMenu,
         CommandId::SaveProjectAs => Message::PickPath(PathPickerTarget::SaveProject),
         CommandId::SaveProjectNewVersion => Message::SaveProjectNewVersion,
         CommandId::ExportWav => Message::OpenRenderWindow,
@@ -2823,6 +2873,7 @@ fn command_enabled(app: &App, kind: CommandKind, track: Option<TrackState>) -> b
         | CommandKind::CloseAllProjects => !project_edit_busy(app),
         CommandKind::Quit => true,
         CommandKind::SaveProject | CommandKind::SaveAllProjects => !project_file_busy(app),
+        CommandKind::OpenRecentProjects => true,
         CommandKind::OpenSettings
         | CommandKind::OpenAbout
         | CommandKind::OpenProjectSettings
@@ -3151,6 +3202,7 @@ fn command_id(kind: CommandKind) -> CommandId {
         CommandKind::SaveProjectAs => CommandId::SaveProjectAs,
         CommandKind::SaveProjectNewVersion => CommandId::SaveProjectNewVersion,
         CommandKind::SaveAllProjects => CommandId::SaveAllProjects,
+        CommandKind::OpenRecentProjects => CommandId::OpenRecentProjects,
         CommandKind::CloseProject => CommandId::CloseProject,
         CommandKind::CloseAllProjects => CommandId::CloseAllProjects,
         CommandKind::ExportWav => CommandId::ExportWav,

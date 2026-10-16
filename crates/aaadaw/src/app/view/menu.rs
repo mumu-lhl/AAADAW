@@ -205,6 +205,12 @@ fn menu_commands(
         let selected = app.menu_selected_command == Some(entry.id);
         contents = contents.push(command(entry, selected, touch_targets));
     }
+    if menu == MainMenu::File
+        && app.recent_projects_menu_open
+        && app.recent_project_paths.is_empty()
+    {
+        contents = contents.push(text("No recent projects").size(11));
+    }
     if menu == MainMenu::Track && app.selected_track_id().is_none() {
         contents = contents.push(text("Right-click a track to select it").size(11));
     }
@@ -388,13 +394,21 @@ fn command<'a>(
     selected: bool,
     touch_targets: bool,
 ) -> iced::widget::Button<'a, Message> {
-    let message = Message::ExecuteCommand(entry.id);
+    let recent_projects_parent = entry.id == super::super::commands::CommandId::OpenRecentProjects;
+    let message = if recent_projects_parent {
+        Message::ToggleRecentProjectsMenu
+    } else {
+        Message::ExecuteCommand(entry.id)
+    };
     let destructive = entry.destructive;
     let button = button(
         row![
             text(if entry.checked { "✓" } else { "" }).width(Length::Fixed(14.0)),
             text(entry.label.clone()).size(14).width(Length::Fill),
             text(entry.shortcut.unwrap_or_default()).size(11),
+            text(if recent_projects_parent { "›" } else { "" })
+                .size(12)
+                .width(Length::Fixed(12.0)),
         ]
         .spacing(tokens::SPACING_MD)
         .align_y(Alignment::Center),

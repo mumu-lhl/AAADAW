@@ -72,6 +72,7 @@ mod offline_job_queue;
 mod project_defaults;
 mod project_io;
 mod project_settings;
+mod recent_projects;
 #[cfg(feature = "audio-device")]
 mod recording;
 mod recording_recovery;
@@ -331,6 +332,9 @@ struct App {
     android_app_unfocused: bool,
     project_path_query: String,
     project_path: Option<PathBuf>,
+    recent_project_paths: Vec<PathBuf>,
+    recent_projects_menu_open: bool,
+    pending_project_path_to_open: Option<PathBuf>,
     session_media_dir: Option<UnsavedSessionMedia>,
     retired_unsaved_sessions: Vec<UnsavedSessionMedia>,
     unsaved_session_recovery_candidates: Vec<PathBuf>,
@@ -1313,6 +1317,10 @@ impl App {
 
     fn new() -> (Self, Task<Message>) {
         let mut app = Self::default();
+        match recent_projects::load() {
+            Ok(paths) => app.recent_project_paths = paths,
+            Err(error) => tracing::warn!(%error, "recent-project history could not be loaded"),
+        }
         match project_defaults::load().and_then(|defaults| defaults.create_project()) {
             Ok(project) => app.project = project,
             Err(error) => {
@@ -1763,6 +1771,7 @@ impl App {
                     | Message::ToggleTransportDetails
                     | Message::ActionMenuScrolled(_)
                     | Message::RunActionQuery
+                    | Message::ToggleRecentProjectsMenu
             );
         if !preserve_context_targets
             && !matches!(
@@ -1801,16 +1810,19 @@ impl App {
             && !matches!(
                 &message,
                 Message::ToggleMainMenu(_)
+                    | Message::ToggleRecentProjectsMenu
                     | Message::ToggleOfflineJobsPanel
                     | Message::DismissMainMenu
                     | Message::Escape
             )
         {
             self.active_menu = None;
+            self.recent_projects_menu_open = false;
         }
         let menu_ui_message = matches!(
             &message,
             Message::ActionQueryChanged(_)
+                | Message::ToggleRecentProjectsMenu
                 | Message::ShortcutPressed(_)
                 | Message::ActionMenuScrolled(_)
                 | Message::MenuKeyboard(
@@ -2321,9 +2333,19 @@ impl App {
                 if self.active_menu == Some(menu) {
                     self.active_menu = None;
                     self.menu_selected_command = None;
+                    self.recent_projects_menu_open = false;
                 } else {
                     task = self.open_main_menu(menu);
                 }
+            }
+            Message::ToggleRecentProjectsMenu => {
+                if self.active_menu != Some(MainMenu::File) {
+                    task = self.open_main_menu(MainMenu::File);
+                    self.recent_projects_menu_open = true;
+                } else {
+                    self.recent_projects_menu_open = !self.recent_projects_menu_open;
+                }
+                self.menu_selected_command = Some(commands::CommandId::OpenRecentProjects);
             }
             Message::MenuKeyboard(navigation) => {
                 task = self.navigate_main_menu(navigation);
@@ -3959,6 +3981,7 @@ impl App {
             }
             Message::DismissMainMenu => {
                 self.active_menu = None;
+                self.recent_projects_menu_open = false;
                 self.offline_jobs_panel_open = false;
             }
             Message::ToggleOfflineJobsPanel => {
@@ -3988,10 +4011,12 @@ impl App {
                 if !self.cancel_shortcut_capture() {
                     if self.pending_project_transition.is_some() {
                         self.pending_project_transition = None;
+                        self.pending_project_path_to_open = None;
                     } else if self.offline_jobs_panel_open {
                         self.offline_jobs_panel_open = false;
                     } else if self.active_menu.take().is_some() {
                         self.menu_selected_command = None;
+                        self.recent_projects_menu_open = false;
                     } else if !self.cancel_active_track_draft() {
                         let dismissed_item_menu = self.timeline.context_item.take().is_some();
                         let dismissed_track_menu = self.timeline.context_track.take().is_some();
@@ -4014,6 +4039,9 @@ impl App {
             }
             Message::NewProject => {
                 task = self.begin_project_transition(PendingProjectTransition::NewProject)
+            }
+            Message::OpenRecentProject(path) => {
+                task = self.open_recent_project(path);
             }
             Message::CloseProject => {
                 task = self.begin_project_transition(PendingProjectTransition::CloseProject)
@@ -4975,6 +5003,7 @@ impl App {
             }
             Message::CancelProjectTransition => {
                 self.pending_project_transition = None;
+                self.pending_project_path_to_open = None;
             }
             Message::ImportAudio => task = self.start_audio_import(),
             Message::AudioFilePathChanged(path) => self.audio_file_path_query = path,
@@ -5179,6 +5208,7 @@ impl App {
                         self.start_audio_waveform_scan(true);
                         self.revision = 0;
                         self.saved_revision = 0;
+                        self.remember_recent_project(&path);
                         self.status = format!("Opened {}", path.display());
                         task = Task::batch([task, self.show_project_notes_on_load()]);
                         self.recording_recovery_scanning = true;
@@ -5237,6 +5267,7 @@ impl App {
                         self.retire_unsaved_session_media();
                         self.unsaved_session_snapshot_revision = 0;
                         self.saved_revision = revision;
+                        self.remember_recent_project(&path);
                         continue_transition =
                             self.revision == revision && self.pending_project_transition.is_some();
                         self.status = if self.revision == revision {
@@ -6023,9 +6054,7 @@ impl App {
                 self.status = "Project closed".to_owned();
                 Task::none()
             }
-            Some(PendingProjectTransition::OpenProject) => {
-                self.pick_path(PathPickerTarget::OpenProject)
-            }
+            Some(PendingProjectTransition::OpenProject) => self.continue_open_project_transition(),
             Some(PendingProjectTransition::CloseMainWindow(window_id)) => {
                 self.pending_project_transition = None;
                 self.close_main_window(window_id)
@@ -6047,14 +6076,21 @@ impl App {
                 self.status = "Project closed".to_owned();
                 Task::none()
             }
-            Some(PendingProjectTransition::OpenProject) => {
-                self.pick_path(PathPickerTarget::OpenProject)
-            }
+            Some(PendingProjectTransition::OpenProject) => self.continue_open_project_transition(),
             Some(PendingProjectTransition::CloseMainWindow(window_id)) => {
                 self.pending_project_transition = None;
                 self.close_main_window(window_id)
             }
             None => Task::none(),
+        }
+    }
+
+    fn continue_open_project_transition(&mut self) -> Task<Message> {
+        if let Some(path) = self.pending_project_path_to_open.take() {
+            self.project_path_query = path.to_string_lossy().into_owned();
+            project_io::open_project(self)
+        } else {
+            self.pick_path(PathPickerTarget::OpenProject)
         }
     }
 
@@ -9435,6 +9471,7 @@ impl App {
 
     fn open_main_menu(&mut self, menu: MainMenu) -> Task<Message> {
         self.active_menu = Some(menu);
+        self.recent_projects_menu_open = false;
         self.menu_selected_command = self.menu_command_ids(menu).first().copied();
         self.action_menu_scroll_offset = 0.0;
         if menu == MainMenu::Actions {
@@ -9475,6 +9512,19 @@ impl App {
         match navigation {
             MenuNavigation::OpenMenu(menu) => self.open_main_menu(menu),
             MenuNavigation::NextMenu | MenuNavigation::PreviousMenu => {
+                let on_recent_projects_parent =
+                    self.menu_selected_command == Some(CommandId::OpenRecentProjects);
+                let enter_recent_projects =
+                    navigation == MenuNavigation::NextMenu && on_recent_projects_parent;
+                let leave_recent_projects =
+                    navigation == MenuNavigation::PreviousMenu && self.recent_projects_menu_open;
+                if self.active_menu == Some(MainMenu::File)
+                    && (enter_recent_projects || leave_recent_projects)
+                {
+                    self.recent_projects_menu_open = enter_recent_projects;
+                    self.menu_selected_command = Some(CommandId::OpenRecentProjects);
+                    return Task::none();
+                }
                 let direction = if navigation == MenuNavigation::NextMenu {
                     1_isize
                 } else {
@@ -9530,7 +9580,11 @@ impl App {
                     .menu_selected_command
                     .filter(|command| commands::is_enabled(self, *command))
                 {
-                    self.update(Message::ExecuteCommand(command))
+                    if command == CommandId::OpenRecentProjects {
+                        self.update(Message::ToggleRecentProjectsMenu)
+                    } else {
+                        self.update(Message::ExecuteCommand(command))
+                    }
                 } else if self.active_menu == Some(MainMenu::Actions) {
                     self.run_action_query()
                 } else {
@@ -11753,6 +11807,19 @@ impl App {
 
     fn open_project_command(&mut self) -> Task<Message> {
         self.begin_project_transition(PendingProjectTransition::OpenProject)
+    }
+
+    fn open_recent_project(&mut self, path: PathBuf) -> Task<Message> {
+        if self.project_path.as_deref() == Some(path.as_path()) && self.project_lock.is_some() {
+            self.status = format!("{} is already open", path.display());
+            return Task::none();
+        }
+        self.pending_project_path_to_open = Some(path);
+        let task = self.begin_project_transition(PendingProjectTransition::OpenProject);
+        if self.pending_project_transition.is_none() {
+            self.pending_project_path_to_open = None;
+        }
+        task
     }
 }
 
