@@ -2355,6 +2355,7 @@ impl Project {
             DawAction::InsertLoopedAudioItemWithMix {
                 track_id,
                 media_ref,
+                name,
                 start_sample,
                 source_offset_samples,
                 length_samples,
@@ -2385,6 +2386,7 @@ impl Project {
                                 source_section_start_samples,
                                 source_section_length_samples,
                             },
+                            DawAction::SetAudioItemName { item_id, name },
                             DawAction::SetAudioItemVolume { item_id, volume },
                             DawAction::SetAudioItemTakeMix {
                                 item_id,

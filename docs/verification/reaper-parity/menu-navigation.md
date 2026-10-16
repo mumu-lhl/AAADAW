@@ -52,7 +52,7 @@ Linux REAPER 7.82 / Default 7 的空轨 Item 菜单显示启用的 `Copy loop of
 
 AAADAW 将动作注册为 Action List `Copy loop of selected area of audio items`（`item.copy-loop-selected-area`，Ctrl+Alt+L），Item 菜单显示原厂短标签。音频剪贴板记录当前工程的源引用、样本偏移、区段长度和相对轨道顺序；Edit > `Paste`（Ctrl+V）在播放光标处将这些片段作为一个可撤销编辑插入，并在源工程已有的目标轨道间保留相对顺序。空工程 Copy 仍启用且安全 no-op，空剪贴板 Paste 禁用。真实原厂 ReaScript 结果、原厂菜单截图、AAADAW Item/Edit 实窗图与哈希见 [Copy loop fixture](fixtures/menu-item-copy-loop.tsv)。
 
-`copy_loop_of_selected_audio_area_pastes_source_sections_on_one_undo_step` 用 48 kHz 源与 44.1 kHz 工程的样本换算验证完整选区、部分相交项排除、MIDI 排除、多轨偏移、光标粘贴、一次 Undo 及剪贴板保留；同一回归还检查 item 音量与 active Take 音量/声像在粘贴、Undo/Redo 和二次粘贴中的保留。新建粘贴项的零淡化符合原厂探针。剪贴板只在同一工程代次有效，且不自动新建缺少的目标轨道。原厂探针确认非 1x Take 播放率会保留并改变复制源区段的映射，但 AAADAW 模型还没有播放率字段；跨工程媒体引用、跨既有循环边界的复制和完整界面/焦点对照仍未完成，因此 `ITEM-AUDIO-COPYLOOP-001` 保持 `in_progress`。属性值、原厂案例和已知差异见 [Audio loop-copy property verification](item-copy-loop-properties.md) 与对应 [native fixture](fixtures/item-copy-loop-properties-native.tsv)。
+`copy_loop_of_selected_audio_area_pastes_source_sections_on_one_undo_step` 用 48 kHz 源与 44.1 kHz 工程的样本换算验证完整选区、部分相交项排除、MIDI 排除、多轨偏移、光标粘贴、一次 Undo 及剪贴板保留；同一回归还检查 item 音量、active Take 名称、Take 音量/声像在粘贴、Undo/Redo 和二次粘贴中的保留。REAPER 会为命名的 loop 粘贴项添加 ` loop`，空名称保持空，并且重复复制不叠加第二个后缀；新建粘贴项的零淡化也符合原厂探针。剪贴板只在同一工程代次有效，且不自动新建缺少的目标轨道。原厂探针确认非 1x Take 播放率会保留并改变复制源区段的映射，但 AAADAW 模型还没有播放率字段；跨工程媒体引用、跨既有循环边界的复制和完整界面/焦点对照仍未完成，因此 `ITEM-AUDIO-COPYLOOP-001` 保持 `in_progress`。属性值、原厂案例和已知差异见 [Audio loop-copy property verification](item-copy-loop-properties.md)、[mix fixture](fixtures/item-copy-loop-properties-native.tsv) 与 [Take-name fixture](fixtures/item-copy-loop-name-native.tsv)。
 
 ### Item 菜单的 Enclose media items in razor edit
 

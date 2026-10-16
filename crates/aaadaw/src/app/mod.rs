@@ -224,6 +224,7 @@ struct AudioItemClipboard {
 #[derive(Clone, Debug, PartialEq)]
 struct AudioItemClipboardEntry {
     media_ref: String,
+    name: String,
     source_offset_samples: u64,
     source_section_start_samples: u64,
     source_section_length_samples: u64,
@@ -11784,6 +11785,11 @@ impl App {
             }
             entries.push(AudioItemClipboardEntry {
                 media_ref: item.media_ref().to_owned(),
+                name: if item.name().is_empty() || item.name().ends_with(" loop") {
+                    item.name().to_owned()
+                } else {
+                    format!("{} loop", item.name())
+                },
                 source_offset_samples: 0,
                 source_section_start_samples: source_position_samples,
                 source_section_length_samples,
@@ -11969,6 +11975,7 @@ impl App {
                 Some(DawAction::InsertLoopedAudioItemWithMix {
                     track_id,
                     media_ref: item.media_ref.clone(),
+                    name: item.name.clone(),
                     start_sample,
                     source_offset_samples: item.source_offset_samples,
                     source_section_start_samples: item.source_section_start_samples,

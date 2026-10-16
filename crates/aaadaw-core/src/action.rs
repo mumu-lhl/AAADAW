@@ -297,6 +297,7 @@ pub enum DawAction {
     InsertLoopedAudioItemWithMix {
         track_id: TrackId,
         media_ref: String,
+        name: String,
         start_sample: u64,
         source_offset_samples: u64,
         length_samples: u64,

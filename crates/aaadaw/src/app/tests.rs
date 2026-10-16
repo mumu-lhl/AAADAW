@@ -12418,6 +12418,12 @@ fn copy_loop_of_selected_audio_area_pastes_source_sections_on_one_undo_step() {
         })
         .unwrap();
     app.project
+        .apply(DawAction::SetAudioItemName {
+            item_id: full_first_id,
+            name: "Lead phrase".to_owned(),
+        })
+        .unwrap();
+    app.project
         .apply(DawAction::SetAudioItemPhase {
             item_id: full_second_id,
             inverted: true,
@@ -12434,6 +12440,12 @@ fn copy_loop_of_selected_audio_area_pastes_source_sections_on_one_undo_step() {
             item_id: full_second_id,
             volume: 0.65,
             pan: 0.45,
+        })
+        .unwrap();
+    app.project
+        .apply(DawAction::SetAudioItemName {
+            item_id: full_second_id,
+            name: "Bass loop".to_owned(),
         })
         .unwrap();
     app.timeline.select_items(vec![
@@ -12483,9 +12495,11 @@ fn copy_loop_of_selected_audio_area_pastes_source_sections_on_one_undo_step() {
     assert_eq!(clipboard.items[0].volume, 0.6);
     assert_eq!(clipboard.items[0].take_volume, 1.25);
     assert_eq!(clipboard.items[0].take_pan, -0.3);
+    assert_eq!(clipboard.items[0].name, "Lead phrase loop");
     assert_eq!(clipboard.items[1].volume, 0.8);
     assert_eq!(clipboard.items[1].take_volume, 0.65);
     assert_eq!(clipboard.items[1].take_pan, 0.45);
+    assert_eq!(clipboard.items[1].name, "Bass loop");
     assert_eq!(clipboard.items[0].length_samples, selection_length);
     assert_eq!(
         clipboard.items[0].source_section_length_samples,
@@ -12531,9 +12545,11 @@ fn copy_loop_of_selected_audio_area_pastes_source_sections_on_one_undo_step() {
     assert_eq!(pasted[0].volume(), clipboard.items[0].volume);
     assert_eq!(pasted[0].take_volume(), clipboard.items[0].take_volume);
     assert_eq!(pasted[0].take_pan(), clipboard.items[0].take_pan);
+    assert_eq!(pasted[0].name(), clipboard.items[0].name);
     assert_eq!(pasted[1].volume(), clipboard.items[1].volume);
     assert_eq!(pasted[1].take_volume(), clipboard.items[1].take_volume);
     assert_eq!(pasted[1].take_pan(), clipboard.items[1].take_pan);
+    assert_eq!(pasted[1].name(), clipboard.items[1].name);
     assert!(pasted.iter().all(|item| item.is_loop_source()));
     assert_eq!(
         pasted[0].source_section_length_samples(),
@@ -12570,12 +12586,14 @@ fn copy_loop_of_selected_audio_area_pastes_source_sections_on_one_undo_step() {
         clipboard.items[0].take_volume
     );
     assert_eq!(restored_paste[0].take_pan(), clipboard.items[0].take_pan);
+    assert_eq!(restored_paste[0].name(), clipboard.items[0].name);
     assert_eq!(restored_paste[1].volume(), clipboard.items[1].volume);
     assert_eq!(
         restored_paste[1].take_volume(),
         clipboard.items[1].take_volume
     );
     assert_eq!(restored_paste[1].take_pan(), clipboard.items[1].take_pan);
+    assert_eq!(restored_paste[1].name(), clipboard.items[1].name);
     let _ = app.update(Message::Undo);
     assert!(
         app.project
@@ -12605,12 +12623,14 @@ fn copy_loop_of_selected_audio_area_pastes_source_sections_on_one_undo_step() {
         clipboard.items[0].take_volume
     );
     assert_eq!(second_paste[0].take_pan(), clipboard.items[0].take_pan);
+    assert_eq!(second_paste[0].name(), clipboard.items[0].name);
     assert_eq!(second_paste[1].volume(), clipboard.items[1].volume);
     assert_eq!(
         second_paste[1].take_volume(),
         clipboard.items[1].take_volume
     );
     assert_eq!(second_paste[1].take_pan(), clipboard.items[1].take_pan);
+    assert_eq!(second_paste[1].name(), clipboard.items[1].name);
 
     app.project_generation = app.project_generation.saturating_add(1);
     assert!(!commands::is_enabled(&app, CommandId::PasteItems));

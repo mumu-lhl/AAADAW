@@ -1734,10 +1734,12 @@ AAADAW now has a direct regression for the same first/third selection and expect
 Validation follow-up: `render_filename_selected_midi_item_name_number_ignores_unselected_duplicate` passes 1/1 against the native first/third item names; strict all-target `aaadaw`/`aaadaw-app` Clippy `-D warnings`, formatting, diff, script syntax, and native/AAADAW fixture SHA-256 checks pass. The full workspace Xvfb suite passed 1,275/1,275 before this new focused regression.
 
 
-### 2026-10-16 Audio item loop-copy mix properties
+### 2026-10-16 Audio item loop-copy mix and Take-name properties
 
 Linux REAPER 7.82 / Default 7 的属性探针确认，Copy loop/Paste 保留 Audio Item 音量以及 active Take 音量、声像和播放率；本探针的完整项与起始边缘选区都把 pasted fade-in/out 重置为 0。播放率 1.25 时，3–7 秒时间选区对应源区段 3.75–8.75 秒，粘贴长度仍为 4 秒。原始探针结果 SHA-256、具体属性和环境记录在[原厂属性 fixture](../verification/reaper-parity/fixtures/item-copy-loop-properties-native.tsv)；这是行为探针，本轮没有新增截图。
 
-AAADAW 音频剪贴板现在记录 Item 音量与 active Take 音量/声像；Core 插入动作将 looped item 创建及混音值写入同一原子 Undo 事务。已有的多轨复制回归现在检查不同混音值跨复制、粘贴、Undo/Redo 和第二次粘贴仍一致；新项的 0 淡化与探针结果一致。模型尚无 Take 播放率字段，因此 1.25x 下源区段的速率映射仍未实现；跨工程媒体剪贴板、自动创建目标轨道、跨既有 source-loop 边界复制和完整窗口/焦点验收继续开放，`ITEM-AUDIO-COPYLOOP-001` 保持 `in_progress`。
+另一个 REAPER 7.82 探针发现：将 `Lead phrase` Take 的选区粘贴后，名称成为 `Lead phrase loop`；空 Take 名仍为空；再次复制已带 ` loop` 的项不会增加第二个后缀。结果与脚本哈希记录在[Take-name fixture](../verification/reaper-parity/fixtures/item-copy-loop-name-native.tsv)。
 
-完整 `cargo xtest -p aaadaw` 在本地 Xvfb `DISPLAY=:98` 下通过 1276/1276、0 skipped；Stable `cargo clippy -p aaadaw-core -p aaadaw --all-targets -- -D warnings`、`cargo fmt --all -- --check`、`git diff --check` 通过。Parity matrix 仍将该条目标记为 `in_progress`，因为非 1x Take 速率映射和完整原厂/AAADAW 交互范围尚未覆盖。
+AAADAW 音频剪贴板现在记录 Take 名称、Item 音量与 active Take 音量/声像；粘贴命名 Take 时按原厂规则追加一次 ` loop` 后缀，同时保留空名和已经带后缀的名称。Core 插入动作将 looped item 创建、名称及混音值写入同一原子 Undo 事务。多轨复制回归检查不同名称和混音值跨复制、粘贴、Undo/Redo 和第二次粘贴仍一致；新项的 0 淡化与探针结果一致。模型尚无 Take 播放率字段，因此 1.25x 下源区段的速率映射仍未实现；跨工程媒体剪贴板、自动创建目标轨道、跨既有 source-loop 边界复制和完整窗口/焦点验收继续开放，`ITEM-AUDIO-COPYLOOP-001` 保持 `in_progress`。
+
+混音属性切片的完整 `cargo xtest -p aaadaw` 在本地 Xvfb `DISPLAY=:98` 下通过 1276/1276、0 skipped。随后加入 Take 名称后，AAADAW 主 binary tests 通过 671/671，`cargo test -p aaadaw-core` 的全部测试 binary 均通过，Copy loop 定向回归也再次通过 1/1；Stable `cargo clippy -p aaadaw-core -p aaadaw --all-targets -- -D warnings`、`cargo fmt --all -- --check`、`git diff --check` 通过。Parity matrix 仍将该条目标记为 `in_progress`，因为非 1x Take 速率映射和完整原厂/AAADAW 交互范围尚未覆盖。

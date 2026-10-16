@@ -1,0 +1,10 @@
+key	value
+reference	7.82/linux-x86_64; Default 7
+action	40014 Copy loop; 42398 Paste items/tracks
+selection	3.0–7.0 seconds
+named_source_take	Lead phrase
+named_pasted_take	Lead phrase loop
+unnamed_source_take	(empty; source label is displayed)
+unnamed_pasted_take	(empty)
+repeated_loop_source_take	Lead phrase loop
+repeated_loop_pasted_take	Lead phrase loop
