@@ -1,0 +1,9 @@
+# Audio item loop-copy properties
+
+This slice extends `ITEM-AUDIO-COPYLOOP-001` with property-level copy/paste behavior. The probe ran REAPER 7.82 for Linux x86_64 with Default 7, an isolated profile, a stopped transport, and a generated 10-second WAV. The script and raw result are recorded in [the native fixture](fixtures/item-copy-loop-properties-native.tsv).
+
+With a 3–7 second time selection and a source item set to item volume 0.5, fade-in 0.5 seconds, fade-out 0.75 seconds, Take volume 0.25, Take pan 0.5, and Take playrate 1.25, REAPER's Copy loop (40014) followed by Paste items/tracks (42398) created a 4-second item at 12 seconds. It retained item volume, Take volume, Take pan, and Take playrate; both fades were zero. The copied source section began at 3.75 seconds and was 5 seconds long, reflecting the active Take rate. The complete-item and start-edge cases in the same probe also pasted with zero fades while retaining the tested mix values.
+
+AAADAW now records item volume and the active Take volume/pan in its project-local audio clipboard. A dedicated insertion action creates the looped item and applies those values as one atomic, undoable transaction. The app regression checks two differently mixed items across copy, paste, Undo, Redo, a second paste, and track offsets. New items already receive zero fades, matching the probed REAPER result.
+
+Take playback rate is not represented in AAADAW's audio-item model. The non-unity-rate case therefore remains incomplete, including its source-section position and length conversion; this change does not claim that case as equivalent. The clipboard still requires existing destination tracks and rejects a copied selection that crosses an already-looped source boundary. Cross-project media clipboard behavior and broader native/AAADAW window comparisons also remain open. No new screenshot was taken for this property-only probe.

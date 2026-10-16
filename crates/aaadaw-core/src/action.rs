@@ -293,6 +293,21 @@ pub enum DawAction {
         source_section_start_samples: u64,
         source_section_length_samples: u64,
     },
+    /// Insert a looped source section while preserving item volume and active Take mix.
+    InsertLoopedAudioItemWithMix {
+        track_id: TrackId,
+        media_ref: String,
+        start_sample: u64,
+        source_offset_samples: u64,
+        length_samples: u64,
+        muted: bool,
+        phase_inverted: bool,
+        source_section_start_samples: u64,
+        source_section_length_samples: u64,
+        volume: f32,
+        take_volume: f32,
+        take_pan: f32,
+    },
     /// Enable or disable looping for an audio item's current source section.
     SetAudioItemLoopSource {
         item_id: ItemId,

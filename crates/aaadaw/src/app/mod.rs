@@ -213,7 +213,7 @@ struct MidiNoteClipboard {
     last_paste: Option<(ItemId, u64)>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 struct AudioItemClipboard {
     project_generation: u64,
     project_sample_rate: u32,
@@ -221,13 +221,16 @@ struct AudioItemClipboard {
     items: Vec<AudioItemClipboardEntry>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 struct AudioItemClipboardEntry {
     media_ref: String,
     source_offset_samples: u64,
     source_section_start_samples: u64,
     source_section_length_samples: u64,
     length_samples: u64,
+    volume: f32,
+    take_volume: f32,
+    take_pan: f32,
     muted: bool,
     phase_inverted: bool,
     track_offset: usize,
@@ -11785,6 +11788,9 @@ impl App {
                 source_section_start_samples: source_position_samples,
                 source_section_length_samples,
                 length_samples: span_samples,
+                volume: item.volume(),
+                take_volume: item.take_volume(),
+                take_pan: item.take_pan(),
                 muted: item.is_muted(),
                 phase_inverted: item.is_phase_inverted(),
                 track_offset: track_index - first_track_index,
@@ -11960,7 +11966,7 @@ impl App {
             .filter_map(|item| {
                 let track_index = anchor_index.checked_add(item.track_offset)?;
                 let track_id = self.project.tracks().get(track_index)?.id();
-                Some(DawAction::InsertLoopedAudioItem {
+                Some(DawAction::InsertLoopedAudioItemWithMix {
                     track_id,
                     media_ref: item.media_ref.clone(),
                     start_sample,
@@ -11970,6 +11976,9 @@ impl App {
                     muted: item.muted,
                     phase_inverted: item.phase_inverted,
                     source_section_length_samples: item.source_section_length_samples,
+                    volume: item.volume,
+                    take_volume: item.take_volume,
+                    take_pan: item.take_pan,
                 })
             })
             .collect::<Vec<_>>();

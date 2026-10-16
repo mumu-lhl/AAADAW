@@ -2352,6 +2352,49 @@ impl Project {
                 }
                 return Ok(ProjectEvent::Transaction { tx_id, events });
             }
+            DawAction::InsertLoopedAudioItemWithMix {
+                track_id,
+                media_ref,
+                start_sample,
+                source_offset_samples,
+                length_samples,
+                muted,
+                phase_inverted,
+                source_section_start_samples,
+                source_section_length_samples,
+                volume,
+                take_volume,
+                take_pan,
+            } => {
+                let item_id = ItemId::from_raw(ids.next_item_id);
+                let tx_id = ids.next_item_id;
+                return Self::apply_action(
+                    state,
+                    ids,
+                    DawAction::BatchTransaction {
+                        tx_id,
+                        actions: vec![
+                            DawAction::InsertLoopedAudioItem {
+                                track_id,
+                                media_ref,
+                                start_sample,
+                                source_offset_samples,
+                                length_samples,
+                                muted,
+                                phase_inverted,
+                                source_section_start_samples,
+                                source_section_length_samples,
+                            },
+                            DawAction::SetAudioItemVolume { item_id, volume },
+                            DawAction::SetAudioItemTakeMix {
+                                item_id,
+                                volume: take_volume,
+                                pan: take_pan,
+                            },
+                        ],
+                    },
+                );
+            }
             action => action,
         };
 
@@ -4369,6 +4412,9 @@ impl Project {
                 }
             }
             DawAction::BatchTransaction { .. } => {
+                return Err(ActionError::HistoryInvariantViolation);
+            }
+            DawAction::InsertLoopedAudioItemWithMix { .. } => {
                 return Err(ActionError::HistoryInvariantViolation);
             }
         };
