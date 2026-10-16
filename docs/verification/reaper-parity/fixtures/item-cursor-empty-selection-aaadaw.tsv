@@ -1,0 +1,15 @@
+key	value
+captured_at_utc	2026-10-16
+platform	Linux x86_64; Xorg dummy display :112; 24-bit TrueColor; X11; root 1280x800
+binary_build_id	501a2645dcc0be1bc0b878cef77851f433e9afe8
+binary_sha256	956f69368c4da5e5490c697a80ebf00b1e0a5c2ab4458448a49be1f9917fb14c
+project_fixture	cursor-sample.aaadaw template; Track B Audio item present but no item selected; Inspector reads "Select an Item to inspect it."
+interaction	Clicked an empty part of Track B at 6 seconds to clear item selection, opened Main Action List, filtered "move cursor to end of items", and ran the selected result. The Action List Run button was enabled before and after Run.
+before_result	No item selected; Transport shows 4.1.0 / 0:06.000; Main 41174 is selected in Action List and Run is enabled.
+after_result	No item selected; Transport remains 4.1.0 / 0:06.000; Inspector remains empty. Main action 41174 is a no-op with no selected item.
+before_screenshot	item-cursor-empty-selection-before-aaadaw.png; 1280x800; SHA-256 d54a453d896fad902d974ef3229bb0893d4103c20c3573cb28d6ddfa6e51525d
+actionlist_before_screenshot	item-cursor-empty-selection-actionlist-before-aaadaw.png; result selected and Run enabled; SHA-256 a41372cea0a08a10b446f7e2a4be9d82c97e0b5cdd69a22c50b0e5ccb5d00204
+actionlist_after_screenshot	item-cursor-empty-selection-actionlist-after-aaadaw.png; result remains selected after Run; SHA-256 c0387e8b49c75d3eaa07b97afb363dc40435c6779fc560ef16e0670a3c598278
+after_screenshot	item-cursor-empty-selection-after-aaadaw.png; cursor remains at 6.000 s and no item is selected; SHA-256 d54a453d896fad902d974ef3229bb0893d4103c20c3573cb28d6ddfa6e51525d
+native_semantics	REAPER 7.82 Main 41174 also leaves the cursor unchanged with no selected item; see empty_selection_end in item-navigation-native.tsv.
+remaining_scope	This records AAADAW's empty-selection UI state and no-op. A separate native REAPER Action List screenshot/state check, complete focus behavior, and overall Arrange UI parity remain open.
