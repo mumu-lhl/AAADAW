@@ -115,6 +115,9 @@ case "$insert_wildcard" in
   format|samplerate|sampleratek|bitdepth|channels)
     [[ "$scroll_wildcards" == 0 ]] && scroll_wildcards=2
     ;;
+  fx|fxdelimited)
+    [[ "$scroll_wildcards" == 0 ]] && scroll_wildcards=3
+    ;;
 esac
 if [[ "$scroll_wildcards" =~ ^[1-9][0-9]*$ ]]; then
   "$xdotool" mousemove --sync 550 680 click --repeat "$scroll_wildcards" --delay 50 5
@@ -172,6 +175,8 @@ if [[ -n "$insert_wildcard" ]]; then
     sampleratek) wildcard_x=324; wildcard_y=910 ;;
     bitdepth) wildcard_x=436; wildcard_y=910 ;;
     channels) wildcard_x=102; wildcard_y=945 ;;
+    fx) wildcard_x=90; wildcard_y=978 ;;
+    fxdelimited) wildcard_x=143; wildcard_y=978 ;;
     *) printf 'Unknown AAADAW_INSERT_WILDCARD token: %s\n' "$insert_wildcard" >&2; exit 2 ;;
   esac
   if [[ "$scroll_wildcards" =~ ^[1-9][0-9]*$ ]]; then

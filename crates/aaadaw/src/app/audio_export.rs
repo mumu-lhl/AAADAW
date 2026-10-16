@@ -1,7 +1,7 @@
 use super::messages::FreezeTrackResult;
 use super::offline_job_queue::{EnqueueError, OfflineJobId};
 use super::{App, Message, run_blocking};
-use aaadaw_app::{WavChannelCount, WavSampleFormat};
+use aaadaw_app::{ClapPluginDescriptor, WavChannelCount, WavSampleFormat};
 use aaadaw_core::{DawAction, ItemId, MarkerId, Project, ProjectSnapshot, RegionId, TrackId};
 use aaadaw_storage::ProjectStore;
 use iced::Task;
@@ -93,10 +93,12 @@ pub(crate) enum RenderFilenameWildcard {
     Bpm,
     RegionNamedValue,
     MarkerNamedValue,
+    Fx,
+    FxDelimited,
 }
 
 impl RenderFilenameWildcard {
-    pub(crate) const ALL: [Self; 50] = [
+    pub(crate) const ALL: [Self; 52] = [
         Self::Project,
         Self::Title,
         Self::Author,
@@ -147,6 +149,8 @@ impl RenderFilenameWildcard {
         Self::Channels,
         Self::RegionNamedValue,
         Self::MarkerNamedValue,
+        Self::Fx,
+        Self::FxDelimited,
     ];
 
     pub(crate) const fn token(self) -> &'static str {
@@ -201,6 +205,8 @@ impl RenderFilenameWildcard {
             Self::Bpm => "$bpm",
             Self::RegionNamedValue => "$region(name)",
             Self::MarkerNamedValue => "$marker(name)",
+            Self::Fx => "$fx",
+            Self::FxDelimited => "$fx[X]",
         }
     }
 }
@@ -723,11 +729,22 @@ fn safe_stem_component(name: &str) -> String {
         .to_owned()
 }
 
+#[cfg(test)]
 fn apply_render_filename_pattern(
     outputs: Vec<(aaadaw_app::ProjectWavRenderSettings, PathBuf)>,
     pattern: &str,
     project: &Project,
     project_path: &Path,
+) -> Result<Vec<(aaadaw_app::ProjectWavRenderSettings, PathBuf)>, String> {
+    apply_render_filename_pattern_with_plugins(outputs, pattern, project, project_path, &[])
+}
+
+fn apply_render_filename_pattern_with_plugins(
+    outputs: Vec<(aaadaw_app::ProjectWavRenderSettings, PathBuf)>,
+    pattern: &str,
+    project: &Project,
+    project_path: &Path,
+    plugins: &[ClapPluginDescriptor],
 ) -> Result<Vec<(aaadaw_app::ProjectWavRenderSettings, PathBuf)>, String> {
     let pattern = pattern.trim();
     if pattern.is_empty() {
@@ -743,7 +760,14 @@ fn apply_render_filename_pattern(
                 .and_then(|stem| stem.to_str())
                 .filter(|stem| !stem.is_empty())
                 .unwrap_or("render");
-            let expanded = expand_render_filename_pattern(pattern, fallback, project, project_path, settings);
+            let expanded = expand_render_filename_pattern(
+                pattern,
+                fallback,
+                project,
+                project_path,
+                settings,
+                plugins,
+            );
             let name = safe_stem_component(&expanded);
             if name.is_empty() {
                 return Err("Filename pattern must produce a non-empty file name".to_owned());
@@ -767,14 +791,15 @@ fn apply_render_filename_pattern(
         .collect()
 }
 
-fn apply_stem_filename_pattern(
+fn apply_stem_filename_pattern_with_plugins(
     outputs: Vec<(aaadaw_app::ProjectWavRenderSource, PathBuf)>,
     settings: aaadaw_app::ProjectWavRenderSettings,
     pattern: &str,
     project: &Project,
     project_path: &Path,
+    plugins: &[ClapPluginDescriptor],
 ) -> Result<Vec<(aaadaw_app::ProjectWavRenderSource, PathBuf)>, String> {
-    apply_render_filename_pattern(
+    apply_render_filename_pattern_with_plugins(
         outputs
             .into_iter()
             .map(|(source, path)| {
@@ -786,6 +811,7 @@ fn apply_stem_filename_pattern(
         pattern,
         project,
         project_path,
+        plugins,
     )
     .map(|outputs| {
         outputs
@@ -929,6 +955,7 @@ enum RenderFilenameWildcardModifier {
         start: u64,
         width: usize,
     },
+    ListSeparator(char),
 }
 
 fn parse_render_filename_wildcard_modifiers(
@@ -986,6 +1013,8 @@ fn parse_render_filename_wildcard_modifiers(
                         break;
                     };
                     modifiers.push(RenderFilenameWildcardModifier::Numbered { start, width });
+                } else if token == "fx" && suffix.len() == 1 {
+                    modifiers.push(RenderFilenameWildcardModifier::ListSeparator(suffix[0]));
                 } else {
                     // Other [N] forms use render-order contexts which are not
                     // modeled by the current single-source filename resolver.
@@ -1056,6 +1085,7 @@ fn apply_render_filename_wildcard_modifiers(
                 .map(|number| start.saturating_add(number.saturating_sub(1)))
                 .map(|number| format!("{number:0width$}"))
                 .unwrap_or(value),
+            RenderFilenameWildcardModifier::ListSeparator(_) => value,
         };
     }
     value
@@ -1089,6 +1119,7 @@ fn expand_render_filename_pattern(
     project: &Project,
     project_path: &Path,
     settings: aaadaw_app::ProjectWavRenderSettings,
+    plugins: &[ClapPluginDescriptor],
 ) -> String {
     let project_name = project_path
         .file_stem()
@@ -1141,6 +1172,21 @@ fn expand_render_filename_pattern(
                 String::new()
             }
         });
+    let fx_names = track_id
+        .and_then(|track_id| project.tracks().iter().find(|track| track.id() == track_id))
+        .map(|track| {
+            track
+                .fx_chain()
+                .iter()
+                .filter_map(|fx| {
+                    plugins
+                        .iter()
+                        .find(|descriptor| descriptor.plugin_id == fx.plugin_id())
+                        .map(|descriptor| descriptor.name.as_str())
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
     let item_index = match settings.source {
         aaadaw_app::ProjectWavRenderSource::SelectedAudioItem(item_id) => project
             .audio_items()
@@ -1401,6 +1447,18 @@ fn expand_render_filename_pattern(
             "lenmm" => result.push_str(&length_components[1]),
             "lenss" => result.push_str(&length_components[2]),
             "lentt" => result.push_str(&length_components[3]),
+            "fx" => {
+                let separator = modifiers
+                    .iter()
+                    .find_map(|modifier| match modifier {
+                        RenderFilenameWildcardModifier::ListSeparator(separator) => {
+                            Some(*separator)
+                        }
+                        _ => None,
+                    })
+                    .unwrap_or('_');
+                result.push_str(&fx_names.join(&separator.to_string()));
+            }
             "format" => result.push_str("wav"),
             "samplerate" => result.push_str(&settings.output_sample_rate.to_string()),
             "sampleratek" => result.push_str(&format_render_wildcard_sample_rate_kilohertz(
@@ -1762,11 +1820,12 @@ impl App {
             } else {
                 outputs
             };
-            let outputs = match apply_render_filename_pattern(
+            let outputs = match apply_render_filename_pattern_with_plugins(
                 outputs,
                 &filename_pattern,
                 &self.project,
                 &naming_project_path,
+                &self.clap_plugin_scan.plugins,
             ) {
                 Ok(outputs) => outputs,
                 Err(error) => {
@@ -1871,11 +1930,12 @@ impl App {
                     return Task::none();
                 }
             };
-            let outputs = match apply_render_filename_pattern(
+            let outputs = match apply_render_filename_pattern_with_plugins(
                 outputs,
                 &filename_pattern,
                 &self.project,
                 &naming_project_path,
+                &self.clap_plugin_scan.plugins,
             ) {
                 Ok(outputs) => outputs,
                 Err(error) => {
@@ -1996,12 +2056,13 @@ impl App {
                     return Task::none();
                 }
             };
-            let outputs = match apply_stem_filename_pattern(
+            let outputs = match apply_stem_filename_pattern_with_plugins(
                 outputs,
                 settings,
                 &filename_pattern,
                 &self.project,
                 &naming_project_path,
+                &self.clap_plugin_scan.plugins,
             ) {
                 Ok(outputs) => outputs,
                 Err(error) => {
@@ -2025,11 +2086,12 @@ impl App {
                 },
             )
         } else {
-            let mut outputs = match apply_render_filename_pattern(
+            let mut outputs = match apply_render_filename_pattern_with_plugins(
                 vec![(settings, destination.clone())],
                 &filename_pattern,
                 &self.project,
                 &naming_project_path,
+                &self.clap_plugin_scan.plugins,
             ) {
                 Ok(outputs) => outputs,
                 Err(error) => {
@@ -3236,6 +3298,8 @@ mod tests {
                 "$channels",
                 "$region(name)",
                 "$marker(name)",
+                "$fx",
+                "$fx[X]",
             ]
         );
 
@@ -3263,6 +3327,99 @@ mod tests {
         assert_eq!(
             app.render_dialog.filename_pattern,
             "$project-$track$project$projectnotes(name)"
+        );
+        let _ = app.update(Message::SetRenderFilenamePattern("stem-".to_owned()));
+        let _ = app.update(Message::InsertRenderFilenameWildcard(
+            RenderFilenameWildcard::FxDelimited,
+        ));
+        assert_eq!(app.render_dialog.filename_pattern, "stem-$fx[X]");
+        assert!(!app.render_dialog.wildcard_menu_open);
+    }
+
+    #[test]
+    fn render_filename_fx_wildcards_match_native_list_separators_and_display_names() {
+        let mut project = Project::default();
+        project
+            .apply(DawAction::CreateTrack {
+                index: 0,
+                name: "FX Wildcard".to_owned(),
+            })
+            .expect("track should be created");
+        let track_id = project.tracks()[0].id();
+        project
+            .apply(DawAction::SetTrackFxChain {
+                track_id,
+                plugins: vec![
+                    aaadaw_core::TrackFxPlugin::new("vendor.volume", "/plugins/volume.clap")
+                        .expect("volume plugin reference should be valid"),
+                    aaadaw_core::TrackFxPlugin::new("vendor.eq", "/plugins/eq.clap")
+                        .expect("EQ plugin reference should be valid"),
+                ],
+            })
+            .expect("track FX chain should be set");
+        let plugins = [
+            aaadaw_app::ClapPluginDescriptor {
+                entry_path: PathBuf::from("/plugins/volume.clap"),
+                plugin_id: "vendor.volume".to_owned(),
+                name: "Volume Adjustment".to_owned(),
+                vendor: Some("Cockos".to_owned()),
+                features: vec!["audio-effect".to_owned()],
+            },
+            aaadaw_app::ClapPluginDescriptor {
+                entry_path: PathBuf::from("/plugins/eq.clap"),
+                plugin_id: "vendor.eq".to_owned(),
+                name: "ReaEQ".to_owned(),
+                vendor: Some("Cockos".to_owned()),
+                features: vec!["audio-effect".to_owned()],
+            },
+        ];
+        let settings = |source| aaadaw_app::ProjectWavRenderSettings {
+            master_ceiling: aaadaw_engine::MasterOutputCeiling::default(),
+            export_options: aaadaw_app::WavExportOptions::default(),
+            output_sample_rate: 48_000,
+            output_channels: WavChannelCount::Stereo,
+            source,
+            start_sample: 0,
+            end_sample: 48_000,
+            tail_milliseconds: 0,
+            normalize_peak: false,
+            normalize_peak_target_centi_dbfs: 0,
+        };
+        let project_path = Path::new("/projects/fx-wildcard.aaadaw");
+        let output = apply_render_filename_pattern_with_plugins(
+            vec![(
+                settings(aaadaw_app::ProjectWavRenderSource::SelectedTrackStem(
+                    track_id,
+                )),
+                Path::new("/renders/base.wav").to_owned(),
+            )],
+            "$track-$fx-$fx[,]",
+            &project,
+            project_path,
+            &plugins,
+        )
+        .expect("FX names and custom separators should expand");
+        assert_eq!(
+            output[0].1,
+            Path::new("/renders/FX Wildcard-Volume Adjustment_ReaEQ-Volume Adjustment,ReaEQ.wav")
+        );
+
+        let case_adjusted = apply_render_filename_pattern_with_plugins(
+            vec![(
+                settings(aaadaw_app::ProjectWavRenderSource::SelectedTrackStem(
+                    track_id,
+                )),
+                Path::new("/renders/base.wav").to_owned(),
+            )],
+            "$FX[+]",
+            &project,
+            project_path,
+            &plugins,
+        )
+        .expect("single-character FX separators should be preserved");
+        assert_eq!(
+            case_adjusted[0].1,
+            Path::new("/renders/VOLUME ADJUSTMENT+REAEQ.wav")
         );
     }
 

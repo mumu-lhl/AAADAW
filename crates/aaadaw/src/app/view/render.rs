@@ -279,6 +279,10 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
                     "Channels:",
                     RenderFilenameWildcard::ALL.into_iter().skip(47).take(1),
                 ),
+                wildcard_group_row(
+                    "Track FX:",
+                    RenderFilenameWildcard::ALL.into_iter().skip(50).take(2),
+                ),
             ]
             .spacing(tokens::SPACING_XS)
         } else {
