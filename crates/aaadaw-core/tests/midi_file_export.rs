@@ -194,7 +194,7 @@ fn midi_export_repeats_loop_source_events_to_fill_the_visible_item() {
 }
 
 #[test]
-fn exports_tempo_ramps_as_bounded_step_events() {
+fn exports_linear_tempo_ramps_on_the_native_eighth_note_grid() {
     let mut project = Project::new();
     project
         .apply(DawAction::SetTempo {
@@ -219,14 +219,19 @@ fn exports_tempo_ramps_as_bounded_step_events() {
         .filter(|window| *window == [0xff, 0x51, 0x03])
         .count();
 
-    assert!(
-        tempo_events > 60,
-        "the tempo ramp should not become a single jump"
+    assert_eq!(
+        tempo_events, 33,
+        "a four-quarter-note ramp uses 1/8-note steps"
     );
     assert!(
         bytes
-            .windows(6)
-            .any(|window| window == [0xff, 0x51, 0x03, 0x07, 0xa1, 0x20])
+            .windows(b"REAPER gradual tempo change start 120.000000".len())
+            .any(|window| window == b"REAPER gradual tempo change start 120.000000")
+    );
+    assert!(
+        bytes
+            .windows(b"REAPER gradual tempo change interpolation end".len())
+            .any(|window| window == b"REAPER gradual tempo change interpolation end")
     );
     assert!(
         bytes
@@ -333,7 +338,44 @@ fn reaper_782_type_one_tempo_and_meter_changes_match_native_bytes() {
     );
 }
 
+#[test]
+fn reaper_782_type_one_linear_tempo_ramp_matches_native_bytes() {
+    let mut project = native_midi_fixture_project_with_length(960);
+    project
+        .apply(DawAction::SetTempo {
+            start_tick: 7680,
+            bpm: 60.0,
+        })
+        .unwrap();
+    project
+        .apply(DawAction::SetTempoCurve {
+            start_tick: 0,
+            curve: TempoCurve::Linear,
+        })
+        .unwrap();
+    let mut options = MidiExportOptions::for_project(&project);
+    options.embed_tempo_and_time_signature = true;
+    let actual = encode_standard_midi_with_conductor_track_name(
+        &project,
+        options,
+        "midi-tempo-ramp-native-20261016",
+    )
+    .unwrap();
+    let native = include_bytes!(
+        "../../../docs/verification/reaper-parity/fixtures/menu-export-midi-native-tempo-ramp.mid"
+    );
+
+    assert_eq!(
+        actual, native,
+        "Type 1 linear tempo-ramp events and tracks match REAPER 7.82"
+    );
+}
+
 fn native_midi_fixture_project() -> Project {
+    native_midi_fixture_project_with_length(1920)
+}
+
+fn native_midi_fixture_project_with_length(item_length_ticks: u64) -> Project {
     let mut project = Project::new();
     project
         .apply(DawAction::CreateTrack {
@@ -346,7 +388,7 @@ fn native_midi_fixture_project() -> Project {
         .apply(DawAction::InsertMidiItem {
             track_id,
             start_tick: 480,
-            length_ticks: 1920,
+            length_ticks: item_length_ticks,
         })
         .unwrap();
     let item_id = project.midi_items()[0].id();

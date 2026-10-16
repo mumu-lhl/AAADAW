@@ -1554,6 +1554,10 @@ impl Project {
         self.state.tempo_map.tempo_at_tick(tick)
     }
 
+    pub(crate) fn tempo_at_tick_position(&self, tick: f64) -> f64 {
+        self.state.tempo_map.tempo_at_tick_position(tick)
+    }
+
     /// Returns the ordered tempo points as `(start_tick, bpm, curve_to_next)` tuples.
     pub fn tempo_points(&self) -> impl Iterator<Item = (u64, f64, TempoCurve)> + '_ {
         self.state.tempo_map.points()

@@ -897,6 +897,23 @@ impl TempoMap {
         tempo_at_progress(point.bpm, next.bpm, point.curve_to_next, progress)
     }
 
+    pub(crate) fn tempo_at_tick_position(&self, tick: f64) -> f64 {
+        let index = self
+            .points
+            .partition_point(|point| point.start_tick as f64 <= tick)
+            .saturating_sub(1);
+        let point = self.points[index];
+        let Some(next) = self.points.get(index + 1) else {
+            return point.bpm;
+        };
+        if point.curve_to_next == TempoCurve::Step {
+            return point.bpm;
+        }
+        let progress =
+            (tick - point.start_tick as f64) / (next.start_tick - point.start_tick) as f64;
+        tempo_at_progress(point.bpm, next.bpm, point.curve_to_next, progress)
+    }
+
     pub(crate) fn sample_at_tick(&self, tick: u64) -> Result<u64, TimebaseError> {
         if tick > MAX_EXACT_FLOAT_POSITION {
             return Err(TimebaseError::PositionOutOfRange);

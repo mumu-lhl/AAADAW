@@ -14,6 +14,12 @@ struct Event {
     bytes: Vec<u8>,
 }
 
+struct TempoEvent {
+    tick: u64,
+    bpm: f64,
+    order: u8,
+}
+
 /// The Standard MIDI File track layout selected for project export.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum MidiFileType {
@@ -139,8 +145,8 @@ pub fn encode_standard_midi_with_conductor_track_name(
                         .min(item_end);
                     push_midi_note_events(
                         &mut events_by_track[track_index],
-                        project_start,
-                        project_end,
+                        project_midi_item_event_tick(project, item, project_start)?,
+                        project_midi_item_event_tick(project, item, project_end)?,
                         project_ppq,
                         options.ppq,
                         note.pitch(),
@@ -170,8 +176,8 @@ pub fn encode_standard_midi_with_conductor_track_name(
                     .ok_or_else(|| "MIDI note ends beyond the supported timeline".to_owned())?;
                 push_midi_note_events(
                     &mut events_by_track[track_index],
-                    project_start_tick,
-                    project_end_tick,
+                    project_midi_item_event_tick(project, item, project_start_tick)?,
+                    project_midi_item_event_tick(project, item, project_end_tick)?,
                     project_ppq,
                     options.ppq,
                     note.pitch(),
@@ -184,7 +190,11 @@ pub fn encode_standard_midi_with_conductor_track_name(
             if item.is_loop_source() {
                 for project_tick in item.project_ticks_at_content_tick(controller.tick) {
                     ensure_midi_event_capacity(&mut midi_event_count, 1)?;
-                    let tick = scale_tick(project_tick, project_ppq, options.ppq)?;
+                    let tick = scale_tick(
+                        project_midi_item_event_tick(project, item, project_tick)?,
+                        project_ppq,
+                        options.ppq,
+                    )?;
                     events_by_track[track_index].push(Event {
                         tick,
                         order: 1,
@@ -208,7 +218,11 @@ pub fn encode_standard_midi_with_conductor_track_name(
                         .ok_or_else(|| {
                             "MIDI controller is beyond the supported timeline".to_owned()
                         })?;
-                    let tick = scale_tick(project_tick, project_ppq, options.ppq)?;
+                    let tick = scale_tick(
+                        project_midi_item_event_tick(project, item, project_tick)?,
+                        project_ppq,
+                        options.ppq,
+                    )?;
                     events_by_track[track_index].push(Event {
                         tick,
                         order: 1,
@@ -222,7 +236,11 @@ pub fn encode_standard_midi_with_conductor_track_name(
             if item.is_loop_source() {
                 for project_tick in item.project_ticks_at_content_tick(bend.tick) {
                     ensure_midi_event_capacity(&mut midi_event_count, 1)?;
-                    let tick = scale_tick(project_tick, project_ppq, options.ppq)?;
+                    let tick = scale_tick(
+                        project_midi_item_event_tick(project, item, project_tick)?,
+                        project_ppq,
+                        options.ppq,
+                    )?;
                     events_by_track[track_index].push(Event {
                         tick,
                         order: 1,
@@ -248,7 +266,11 @@ pub fn encode_standard_midi_with_conductor_track_name(
                         .ok_or_else(|| {
                             "MIDI pitch bend is beyond the supported timeline".to_owned()
                         })?;
-                    let tick = scale_tick(project_tick, project_ppq, options.ppq)?;
+                    let tick = scale_tick(
+                        project_midi_item_event_tick(project, item, project_tick)?,
+                        project_ppq,
+                        options.ppq,
+                    )?;
                     events_by_track[track_index].push(Event {
                         tick,
                         order: 1,
@@ -320,6 +342,38 @@ fn ensure_midi_event_capacity(count: &mut usize, additional: usize) -> Result<()
     Ok(())
 }
 
+fn project_midi_item_event_tick(
+    project: &Project,
+    item: &crate::MidiItem,
+    event_tick: u64,
+) -> Result<u64, String> {
+    // REAPER exports source events at their elapsed-time position inside the item. Mapping the
+    // item-relative fraction through the project's timebase preserves its native ramp behavior.
+    let item_start = item.start_tick();
+    let item_length = item.length_ticks();
+    let item_end = item_start
+        .checked_add(item_length)
+        .ok_or_else(|| "MIDI item extends beyond the supported timeline".to_owned())?;
+    if item_length == 0 || !(item_start..=item_end).contains(&event_tick) {
+        return Err("MIDI event lies outside its item's visible time range".to_owned());
+    }
+    let start_sample = project
+        .sample_at_tick_position(item_start as f64)
+        .map_err(|error| error.to_string())?;
+    let end_sample = project
+        .sample_at_tick_position(item_end as f64)
+        .map_err(|error| error.to_string())?;
+    let progress = (event_tick - item_start) as f64 / item_length as f64;
+    let event_sample = start_sample + (end_sample - start_sample) * progress;
+    let event_tick = project
+        .tick_at_sample_position(event_sample)
+        .map_err(|error| error.to_string())?;
+    if !event_tick.is_finite() || event_tick < 0.0 || event_tick > (1_u64 << 53) as f64 {
+        return Err("MIDI event lies beyond the supported project timeline".to_owned());
+    }
+    Ok(event_tick.round() as u64)
+}
+
 fn push_midi_note_events(
     events: &mut Vec<Event>,
     project_start_tick: u64,
@@ -379,46 +433,92 @@ fn conductor_events(
 
         for (index, &(start_tick, bpm, curve)) in tempo_points.iter().take(point_count).enumerate()
         {
-            push_tempo_event(&mut tempo_events, start_tick, bpm * basis)?;
             if !options.embed_tempo_and_time_signature || curve == TempoCurve::Step {
+                push_tempo_event(&mut tempo_events, start_tick, bpm * basis, 2)?;
                 continue;
             }
             let Some(&(end_tick, end_bpm, _)) = tempo_points.get(index + 1) else {
+                push_tempo_event(&mut tempo_events, start_tick, bpm * basis, 2)?;
                 continue;
             };
             if end_tick <= start_tick {
+                push_tempo_event(&mut tempo_events, start_tick, bpm * basis, 2)?;
                 continue;
             }
-            let first_bpm = bpm * basis;
-            let last_bpm = end_bpm * basis;
-            let maximum_span = (ppq / 16).max(1);
-            subdivide_tempo_curve(
-                project,
-                basis,
-                start_tick,
-                first_bpm,
-                end_tick,
-                last_bpm,
-                maximum_span,
-                0,
-                &mut tempo_events,
-            )?;
+            match curve {
+                TempoCurve::Linear => {
+                    let ramp_start = format!("REAPER gradual tempo change start {bpm:.6}");
+                    events.push(Event {
+                        tick: scale_tick(start_tick, project_ppq, options.ppq)?,
+                        order: 2,
+                        bytes: meta_event(0x01, ramp_start.as_bytes())?,
+                    });
+                    let interval_ticks = (ppq / 8).max(1);
+                    let mut interval_start = start_tick;
+                    let mut last_interval_start = start_tick;
+                    while interval_start < end_tick {
+                        if tempo_events.len() >= MAX_TEMPO_EVENTS {
+                            return Err("tempo ramp exceeds the MIDI export event limit".to_owned());
+                        }
+                        let interval_end =
+                            interval_start.saturating_add(interval_ticks).min(end_tick);
+                        let start_sample = project
+                            .sample_at_tick_position(interval_start as f64)
+                            .map_err(|error| error.to_string())?;
+                        let end_sample = project
+                            .sample_at_tick_position(interval_end as f64)
+                            .map_err(|error| error.to_string())?;
+                        let midpoint_tick = project
+                            .tick_at_sample_position((start_sample + end_sample) / 2.0)
+                            .map_err(|error| error.to_string())?;
+                        let midpoint_bpm = project.tempo_at_tick_position(midpoint_tick) * basis;
+                        push_tempo_event(&mut tempo_events, interval_start, midpoint_bpm, 3)?;
+                        last_interval_start = interval_start;
+                        interval_start = interval_end;
+                    }
+                    let ramp_end = "REAPER gradual tempo change interpolation end";
+                    events.push(Event {
+                        tick: scale_tick(last_interval_start, project_ppq, options.ppq)?,
+                        order: 4,
+                        bytes: meta_event(0x01, ramp_end.as_bytes())?,
+                    });
+                }
+                TempoCurve::Step => unreachable!("step tempo points are handled above"),
+                _ => {
+                    push_tempo_event(&mut tempo_events, start_tick, bpm * basis, 2)?;
+                    let first_bpm = bpm * basis;
+                    let last_bpm = end_bpm * basis;
+                    let maximum_span = (ppq / 16).max(1);
+                    subdivide_tempo_curve(
+                        project,
+                        basis,
+                        start_tick,
+                        first_bpm,
+                        end_tick,
+                        last_bpm,
+                        maximum_span,
+                        0,
+                        &mut tempo_events,
+                    )?;
+                }
+            }
         }
     }
 
-    for (tick, bpm) in tempo_events {
-        let microseconds_per_quarter = (60_000_000.0 / bpm).round();
+    for tempo_event in tempo_events {
+        let microseconds_per_quarter = (60_000_000.0 / tempo_event.bpm).round();
         if !microseconds_per_quarter.is_finite()
             || !(1.0..=16_777_215.0).contains(&microseconds_per_quarter)
         {
             return Err(format!(
-                "tempo {bpm:.3} BPM cannot be represented in a MIDI file"
+                "tempo {:.3} BPM cannot be represented in a MIDI file",
+                tempo_event.bpm
             ));
         }
         let value = microseconds_per_quarter as u32;
         events.push(Event {
-            tick: scale_tick(tick, project_ppq, options.ppq)?,
-            order: 2,
+            tick: scale_tick(tempo_event.tick, project_ppq, options.ppq)?,
+            order: tempo_event.order,
             bytes: vec![
                 0xff,
                 0x51,
@@ -498,7 +598,7 @@ fn subdivide_tempo_curve(
     end_bpm: f64,
     maximum_span: u64,
     depth: u8,
-    events: &mut Vec<(u64, f64)>,
+    events: &mut Vec<TempoEvent>,
 ) -> Result<(), String> {
     if end_tick.saturating_sub(start_tick) <= 1 || depth >= 64 {
         return Ok(());
@@ -525,7 +625,7 @@ fn subdivide_tempo_curve(
         depth + 1,
         events,
     )?;
-    events.push((middle_tick, middle_bpm));
+    push_tempo_event(events, middle_tick, middle_bpm, 2)?;
     subdivide_tempo_curve(
         project,
         basis,
@@ -539,14 +639,19 @@ fn subdivide_tempo_curve(
     )
 }
 
-fn push_tempo_event(events: &mut Vec<(u64, f64)>, tick: u64, bpm: f64) -> Result<(), String> {
+fn push_tempo_event(
+    events: &mut Vec<TempoEvent>,
+    tick: u64,
+    bpm: f64,
+    order: u8,
+) -> Result<(), String> {
     if !bpm.is_finite() || bpm <= 0.0 {
         return Err("project contains an invalid tempo".to_owned());
     }
     if events.len() >= MAX_TEMPO_EVENTS {
         return Err("tempo map exceeds the MIDI export event limit".to_owned());
     }
-    events.push((tick, bpm));
+    events.push(TempoEvent { tick, bpm, order });
     Ok(())
 }
 
