@@ -1,7 +1,8 @@
 -- Run in Linux REAPER 7.82 with a fresh isolated Default 7 configuration.
 -- Generate source.wav with probe-render-format-vectors.py in the probe directory.
--- The Render dialog opens with two unnamed regions and boundary markers. Select
--- All project regions and inspect how $region and $marker substitute empty names.
+-- The Render dialog opens with two regions and boundary markers, unnamed by default.
+-- Set AAADAW_REAPER_WILDCARD_NAMED_OBJECTS=1 to name them for name-only probes.
+-- Select All project regions and inspect the configured wildcard substitutions.
 local root = assert(os.getenv("AAADAW_REAPER_PROBE_DIR")) .. "/"
 assert(reaper.GetAppVersion() == "7.82/linux-x86_64")
 assert(reaper.GetLastColorThemeFile():match("Default_7%.0%.ReaperThemeZip$"))
@@ -23,11 +24,16 @@ for _, start in ipairs({ 0, 2, 4 }) do
   reaper.SetMediaItemInfo_Value(item, "D_FADEOUTLEN", 0)
 end
 
-for _, position in ipairs({ 0, 2, 4 }) do
-  assert(reaper.AddProjectMarker2(0, false, position, 0, "", -1, 0))
+local marker_names = { "Start", "Next", "End" }
+for index, position in ipairs({ 0, 2, 4 }) do
+  local name = os.getenv("AAADAW_REAPER_WILDCARD_NAMED_OBJECTS") == "1" and marker_names[index] or ""
+  assert(reaper.AddProjectMarker2(0, false, position, 0, name, -1, 0))
 end
-assert(reaper.AddProjectMarker2(0, true, 0, 2, "", -1, 0))
-assert(reaper.AddProjectMarker2(0, true, 2, 4, "", -1, 0))
+local region_names = { "Verse", "Chorus" }
+for index, bounds in ipairs({ { 0, 2 }, { 2, 4 } }) do
+  local name = os.getenv("AAADAW_REAPER_WILDCARD_NAMED_OBJECTS") == "1" and region_names[index] or ""
+  assert(reaper.AddProjectMarker2(0, true, bounds[1], bounds[2], name, -1, 0))
+end
 
 for field, value in pairs({
   RENDER_SETTINGS = 0,

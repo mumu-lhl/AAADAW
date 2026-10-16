@@ -225,47 +225,47 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
                 ),
                 wildcard_group_row(
                     "Regions:",
-                    RenderFilenameWildcard::ALL.into_iter().skip(13).take(3),
+                    RenderFilenameWildcard::ALL.into_iter().skip(13).take(4),
                 ),
                 wildcard_group_row(
                     "Markers:",
-                    RenderFilenameWildcard::ALL.into_iter().skip(16).take(3),
+                    RenderFilenameWildcard::ALL.into_iter().skip(17).take(4),
                 ),
                 wildcard_group_row(
                     "Media items:",
-                    RenderFilenameWildcard::ALL.into_iter().skip(19).take(2),
+                    RenderFilenameWildcard::ALL.into_iter().skip(21).take(2),
                 ),
                 wildcard_group_row(
                     "Position:",
-                    RenderFilenameWildcard::ALL.into_iter().skip(21).take(3),
+                    RenderFilenameWildcard::ALL.into_iter().skip(23).take(3),
                 ),
                 wildcard_group_row(
                     "Beats:",
-                    RenderFilenameWildcard::ALL.into_iter().skip(24).take(3),
+                    RenderFilenameWildcard::ALL.into_iter().skip(26).take(3),
                 ),
                 wildcard_group_row(
                     "Timecode:",
-                    RenderFilenameWildcard::ALL.into_iter().skip(27).take(2),
+                    RenderFilenameWildcard::ALL.into_iter().skip(29).take(2),
                 ),
                 wildcard_group_row(
                     "Frames:",
-                    RenderFilenameWildcard::ALL.into_iter().skip(29).take(3),
+                    RenderFilenameWildcard::ALL.into_iter().skip(31).take(3),
                 ),
                 wildcard_group_row(
                     "Seconds:",
-                    RenderFilenameWildcard::ALL.into_iter().skip(32).take(3),
+                    RenderFilenameWildcard::ALL.into_iter().skip(34).take(3),
                 ),
                 wildcard_group_row(
                     "Length components:",
-                    RenderFilenameWildcard::ALL.into_iter().skip(35).take(4),
+                    RenderFilenameWildcard::ALL.into_iter().skip(37).take(4),
                 ),
                 wildcard_group_row(
                     "Output format:",
-                    RenderFilenameWildcard::ALL.into_iter().skip(39).take(4),
+                    RenderFilenameWildcard::ALL.into_iter().skip(41).take(4),
                 ),
                 wildcard_group_row(
                     "Channels:",
-                    RenderFilenameWildcard::ALL.into_iter().skip(43).take(1),
+                    RenderFilenameWildcard::ALL.into_iter().skip(45).take(1),
                 ),
             ]
             .spacing(tokens::SPACING_XS)

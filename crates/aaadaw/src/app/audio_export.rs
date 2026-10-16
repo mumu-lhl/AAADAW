@@ -55,9 +55,11 @@ pub(crate) enum RenderFilenameWildcard {
     Region,
     RegionNumber,
     RegionNumberNumbered,
+    RegionName,
     Marker,
     MarkerNumber,
     MarkerNumberNumbered,
+    MarkerName,
     Track,
     TrackNumber,
     TrackNameOrNumber,
@@ -90,7 +92,7 @@ pub(crate) enum RenderFilenameWildcard {
 }
 
 impl RenderFilenameWildcard {
-    pub(crate) const ALL: [Self; 44] = [
+    pub(crate) const ALL: [Self; 46] = [
         Self::Project,
         Self::Title,
         Self::Author,
@@ -107,9 +109,11 @@ impl RenderFilenameWildcard {
         Self::Region,
         Self::RegionNumber,
         Self::RegionNumberNumbered,
+        Self::RegionName,
         Self::Marker,
         Self::MarkerNumber,
         Self::MarkerNumberNumbered,
+        Self::MarkerName,
         Self::Item,
         Self::ItemNumber,
         Self::Start,
@@ -151,9 +155,11 @@ impl RenderFilenameWildcard {
             Self::Region => "$region",
             Self::RegionNumber => "$regionnumber",
             Self::RegionNumberNumbered => "$regionnumber[N]",
+            Self::RegionName => "$regionname",
             Self::Marker => "$marker",
             Self::MarkerNumber => "$markernumber",
             Self::MarkerNumberNumbered => "$markernumber[N]",
+            Self::MarkerName => "$markername",
             Self::Track => "$track",
             Self::TrackNumber => "$tracknumber",
             Self::TrackNameOrNumber => "$tracknameornumber",
@@ -1192,6 +1198,8 @@ fn expand_render_filename_pattern(
             marker.name().to_owned()
         }
     });
+    let region_name = region.map_or_else(String::new, |region| region.name().to_owned());
+    let marker_name = marker.map_or_else(String::new, |(_, marker)| marker.name().to_owned());
 
     let mut result = String::with_capacity(pattern.len());
     let characters = pattern.chars().collect::<Vec<_>>();
@@ -1317,8 +1325,10 @@ fn expand_render_filename_pattern(
             "tracknameornumber" => result.push_str(&track_name_or_number),
             "region" => result.push_str(&region_name_or_number),
             "regionnumber" => result.push_str(&region_number_text),
+            "regionname" => result.push_str(&region_name),
             "marker" => result.push_str(&marker_name_or_number),
             "markernumber" => result.push_str(&marker_number_text),
+            "markername" => result.push_str(&marker_name),
             "item" => result.push_str(&item_name),
             "itemnumber" => result.push_str(&item_number_text),
             "bpm" => result.push_str(&bpm_text),
@@ -3065,9 +3075,11 @@ mod tests {
                 "$region",
                 "$regionnumber",
                 "$regionnumber[N]",
+                "$regionname",
                 "$marker",
                 "$markernumber",
                 "$markernumber[N]",
+                "$markername",
                 "$item",
                 "$itemnumber",
                 "$start",
@@ -3176,6 +3188,100 @@ mod tests {
         )
         .expect("two-digit number modifiers should retain their requested width");
         assert_eq!(output[0].1, Path::new("/renders/02-02.wav"));
+    }
+
+    #[test]
+    fn render_filename_regionname_and_markername_match_native_name_only_values() {
+        let mut project = Project::default();
+        for (start_ticks, end_ticks, name) in [(0, 1_920, "Verse"), (1_920, 3_840, "Chorus")] {
+            project
+                .apply(DawAction::InsertProjectRegion {
+                    start_ticks,
+                    end_ticks,
+                    name: name.to_owned(),
+                })
+                .expect("named region should be inserted");
+        }
+        for (position_ticks, name) in [(0, "Start"), (1_920, "Next"), (3_840, "End")] {
+            project
+                .apply(DawAction::InsertProjectMarker {
+                    position_ticks,
+                    name: name.to_owned(),
+                })
+                .expect("named marker should be inserted");
+        }
+
+        for (start_ticks, end_ticks, expected_name) in [
+            (0, 1_920, "Verse-Start.wav"),
+            (1_920, 3_840, "Chorus-Next.wav"),
+        ] {
+            let settings = aaadaw_app::ProjectWavRenderSettings {
+                master_ceiling: aaadaw_engine::MasterOutputCeiling::default(),
+                export_options: aaadaw_app::WavExportOptions::default(),
+                output_sample_rate: 48_000,
+                output_channels: WavChannelCount::Stereo,
+                source: aaadaw_app::ProjectWavRenderSource::MasterMix,
+                start_sample: project
+                    .sample_at_tick(start_ticks)
+                    .expect("start tick should convert"),
+                end_sample: project
+                    .sample_at_tick(end_ticks)
+                    .expect("end tick should convert"),
+                tail_milliseconds: 0,
+                normalize_peak: false,
+                normalize_peak_target_centi_dbfs: 0,
+            };
+            let output = apply_render_filename_pattern(
+                vec![(settings, Path::new("/renders/base.wav").to_owned())],
+                "$regionname-$markername",
+                &project,
+                Path::new("/projects/named.aaadaw"),
+            )
+            .expect("name-only Region and Marker values should expand");
+            assert_eq!(output[0].1, Path::new("/renders").join(expected_name));
+        }
+
+        let mut unnamed_project = Project::default();
+        unnamed_project
+            .apply(DawAction::InsertProjectRegion {
+                start_ticks: 0,
+                end_ticks: 1_920,
+                name: String::new(),
+            })
+            .expect("unnamed region should be inserted");
+        for position_ticks in [0, 1_920] {
+            unnamed_project
+                .apply(DawAction::InsertProjectMarker {
+                    position_ticks,
+                    name: String::new(),
+                })
+                .expect("unnamed marker should be inserted");
+        }
+        let settings = aaadaw_app::ProjectWavRenderSettings {
+            master_ceiling: aaadaw_engine::MasterOutputCeiling::default(),
+            export_options: aaadaw_app::WavExportOptions::default(),
+            output_sample_rate: 48_000,
+            output_channels: WavChannelCount::Stereo,
+            source: aaadaw_app::ProjectWavRenderSource::MasterMix,
+            start_sample: 0,
+            end_sample: 48_000,
+            tail_milliseconds: 0,
+            normalize_peak: false,
+            normalize_peak_target_centi_dbfs: 0,
+        };
+        for (pattern, expected_name) in [
+            ("$regionname-$regionnumber", "01.wav"),
+            ("$markername-$markernumber", "01.wav"),
+        ] {
+            let output = apply_render_filename_pattern(
+                vec![(settings, Path::new("/renders/base.wav").to_owned())],
+                pattern,
+                &unnamed_project,
+                Path::new("/projects/unnamed.aaadaw"),
+            )
+            .expect("an empty name-only value should not add a number fallback");
+            assert_eq!(output[0].1, Path::new("/renders").join(expected_name));
+        }
     }
 
     #[test]

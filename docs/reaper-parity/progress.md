@@ -1610,3 +1610,10 @@ App nextest 670/670、strict all-target App Clippy `-D warnings`、rustfmt、dif
 ### 2026-10-16 Empty Region and Marker name fallbacks
 
 原厂 Render wildcard 帮助将 `$region` / `$marker` 定义为对象名称或 ID。Linux REAPER 7.82 用两个空名 Region、其起始空名 Marker 和 `All project regions` 实际渲染 `$region-$marker`，文件名为 `01-01.wav` 与 `02-02.wav`；预览、完成列表、输出哈希和可复现探针见[空名 Region/Marker fixture](../verification/reaper-parity/fixtures/render-wildcards-empty-name-native.tsv)。AAADAW 现在在对象存在且名称为空时回退到两位可见编号，不存在匹配对象时仍为空；新增双范围 resolver 回归覆盖该行为。App nextest 671/671、strict all-target App Clippy `-D warnings`、rustfmt、diff 检查和截图脚本语法通过。Build ID `c78a3f5245a5ea08c61a8ad42a75c710d051bb5a`、SHA-256 `62cf2ef340b75d995d7ff3503391a0c2a8263b23f55f1390feac45ba632f0c35` 的实际 Render 窗口已启动，并从该构建复拍字段、44 项 picker、滚动 picker 和插入状态；截图与两个原厂命名 fixture 的哈希已记入 [Wildcard 验证记录](../verification/reaper-parity/render-filename-patterns.md) 及 manifest。
+
+
+### 2026-10-16 Region and Marker name wildcards
+
+将 REAPER 7.82 Regions/Markers 菜单中的 `$regionname`、`$markername` 加入解析器和 Wildcards picker，当前为 46 项。两者只返回匹配对象的原始名称；空名保持空，不回退为对象编号，旁边的分隔符依原厂帮助规则移除。Linux REAPER 7.82 `All project regions` 实际渲染 `$regionname-$markername` 得到 `Verse-Start.wav`、`Chorus-Next.wav`；未命名对象模式 `$regionname-$regionnumber` 预览并渲染为 `01.wav`、`02.wav`。原厂对话框、完成列表、输出哈希和空名行为截图见[名称 wildcard fixture](../verification/reaper-parity/fixtures/render-wildcards-region-name-native.tsv)。新增回归覆盖两个命名范围及空名时 Region/Marker name token 的无回退行为。
+
+App nextest 672/672、strict all-target App Clippy `-D warnings`、rustfmt、diff 检查及 picker capture 脚本语法通过。Build ID `f62ddf91a3a8c729fd70ab18049948aa2531ad52`、SHA-256 `c5c4ac655fdeeffd5c3fb7ee3e0e77b01e70b808858963a43103421bb0652c6b` 的桌面构建通过实窗截图复核；46 项 picker 与滚动区域、`$regionname` / `$markername` 实点插入和 picker 关闭状态均来自该构建。原厂 named/unnamed 预览和当前 AAADAW 界面截图哈希写入 [Wildcard 验证记录](../verification/reaper-parity/render-filename-patterns.md) 与 fixture manifest。`$region(name)`、`$marker(name)` 表达式及其他未实现原厂 wildcards 仍保持开放，`RENDER-WILDCARDS-001`/P10 继续 `in_progress`。

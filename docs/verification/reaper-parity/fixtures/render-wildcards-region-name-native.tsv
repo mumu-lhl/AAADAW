@@ -1,0 +1,30 @@
+key	value
+reference	Linux REAPER 7.82 / Default 7 / Linux desktop
+captured_at_utc	2026-10-16
+probe_script	../../../../scripts/reaper_parity/probe-render-empty-name-wildcards.lua
+source_generator	../../../../scripts/reaper_parity/probe-render-format-vectors.py
+source	48 kHz stereo PCM24 source.wav; 48,000 frames; SHA-256 187b0243f13ddc06d27181da243ee07f89c593ec11ac9d2b0b3cbc342967b485
+configuration	Isolated REAPER profile copied from render-wildcards-native; Default_7.0.ReaperThemeZip asserted by probe
+named_wildcard_pattern	$regionname-$markername
+named_objects	Regions Verse [0, 2 seconds), Chorus [2, 4 seconds); markers Start at 0, Next at 2, End at 4 seconds
+bounds	All project regions
+named_render_preview	2 files; preview path ends in Verse-Start.wav
+named_rendered_filenames	Verse-Start.wav; Chorus-Next.wav
+named_render_format	WAV; 24-bit PCM; 48,000 Hz; 2 channels
+named_render_lengths_frames	96,000; 96,000
+named_render_file_sizes_bytes	576,690; 576,690
+named_render_file_sha256	5186c4ab4785e519a8a3b329d08e28a1e70800ef0a9f73d198004f487496b57e; d31552ff0ca15c56b23a601c67ce8dc7db396dc4040f5f924ddedcdc734e4406
+native_render_dialog_screenshot	render-wildcards-region-name-all-regions-native.png
+native_render_dialog_screenshot_sha256	cbddd51215ee52bd644ff0b925cfd9d50a6b0eb803f384c64b08afc6a330ad55
+native_finished_render_screenshot	render-wildcards-region-name-finished-native.png
+native_finished_render_screenshot_sha256	1ca189fc10662d4edb1e1b424b49f3148a76a76b46f9ba7b4f76be29803f9ff5
+unnamed_wildcard_pattern	$regionname-$regionnumber
+unnamed_render_preview	2 files; preview path ends in 01.wav
+unnamed_rendered_filenames	01.wav; 02.wav
+unnamed_render_file_sizes_bytes	576,690; 576,690
+unnamed_render_file_sha256	990acae79ab9f6bae0662333061c80331aeed5c0ec82726335d44afc465b70e3; 29641de5e26dd68d22dc34cf06f102b187f11962e26dd51445f51139e51534a8
+unnamed_preview_screenshot	render-wildcards-regionname-empty-preview-native.png
+unnamed_preview_screenshot_sha256	77e84247e5745935f07ad5beb815ee2d2d69533e27a9a1d0508d7e30be724ac8
+unnamed_finished_screenshot	render-wildcards-regionname-empty-finished-native.png
+unnamed_finished_screenshot_sha256	76cd89d5a5096bcf848a43f6fba359f90a9941e33d4332866c2563b0b972dd24
+native_observation	$regionname and $markername yield exact object names; with an empty region name, $regionname adds no number fallback and the adjacent hyphen is removed

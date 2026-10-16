@@ -138,9 +138,11 @@ if [[ -n "$insert_wildcard" ]]; then
     region) wildcard_x=138; wildcard_y=490 ;;
     regionnumber) wildcard_x=248; wildcard_y=490 ;;
     regionnumberpadded) wildcard_x=410; wildcard_y=490 ;;
+    regionname) wildcard_x=550; wildcard_y=490 ;;
     marker) wildcard_x=130; wildcard_y=525 ;;
     markernumber) wildcard_x=244; wildcard_y=525 ;;
     markernumberpadded) wildcard_x=410; wildcard_y=525 ;;
+    markername) wildcard_x=550; wildcard_y=525 ;;
     item) wildcard_x=117; wildcard_y=560 ;;
     itemnumber) wildcard_x=242; wildcard_y=560 ;;
     start) wildcard_x=126; wildcard_y=595 ;;
