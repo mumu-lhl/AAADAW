@@ -16091,6 +16091,73 @@ fn toggle_selection_of_item_under_mouse_adds_and_removes_the_hovered_item() {
 }
 
 #[test]
+fn hover_selection_actions_add_and_toggle_audio_items() {
+    let mut app = App::default();
+    let _ = app.update(Message::AddTrack);
+    let _ = app.update(Message::AddTrack);
+    let tracks = app
+        .project
+        .tracks()
+        .iter()
+        .map(|track| track.id())
+        .collect::<Vec<_>>();
+    for (track_id, start_sample) in [(tracks[0], 0), (tracks[1], 48_000)] {
+        app.project
+            .apply(DawAction::InsertAudioItem {
+                track_id,
+                media_ref: "asset://hover-selection-audio-test".to_owned(),
+                start_sample,
+                source_offset_samples: 0,
+                length_samples: 24_000,
+            })
+            .unwrap();
+    }
+    let previously_selected_id = app.project.audio_items()[0].id();
+    let hovered_id = app.project.audio_items()[1].id();
+    app.timeline.rebuild(&app.project);
+    app.timeline
+        .select_items(vec![(previously_selected_id, tracks[0])]);
+    app.timeline.select_track_only(tracks[0]);
+    app.timeline.hovered_item = Some(hovered_id);
+
+    let revision_before = app.revision;
+    let can_undo_before = app.project.can_undo();
+    let can_redo_before = app.project.can_redo();
+
+    for (command, stable_id, query, expected_selected) in [
+        (
+            CommandId::AddItemUnderMouseToSelection,
+            "item.add-under-mouse-to-selection",
+            "leaving other items selected",
+            HashSet::from([previously_selected_id, hovered_id]),
+        ),
+        (
+            CommandId::ToggleSelectionOfItemUnderMouse,
+            "item.toggle-under-mouse-selection",
+            "toggle selection of item under mouse cursor",
+            HashSet::from([previously_selected_id]),
+        ),
+    ] {
+        app.action_list.set_query(query.to_owned());
+        let entry = app
+            .action_list_entries()
+            .into_iter()
+            .find(|entry| entry.id == command)
+            .expect("audio hover-selection action is searchable");
+        assert!(entry.enabled);
+        assert!(entry.shortcut.is_none());
+        app.action_list.select(stable_id.to_owned());
+        let _ = app.update(Message::ActionListRun(false));
+        assert_eq!(app.timeline.selected_items, expected_selected);
+        assert_eq!(app.timeline.selected_track, Some(tracks[1]));
+        assert_eq!(app.timeline.selected_tracks, HashSet::from([tracks[0]]));
+        assert_eq!(app.revision, revision_before);
+        assert_eq!(app.project.can_undo(), can_undo_before);
+        assert_eq!(app.project.can_redo(), can_redo_before);
+    }
+}
+
+#[test]
 fn toggling_off_primary_item_chooses_first_remaining_item_in_project_order() {
     let mut app = App::default();
     let _ = app.update(Message::AddTrack);

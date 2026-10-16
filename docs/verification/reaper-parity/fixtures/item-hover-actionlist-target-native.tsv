@@ -1,0 +1,14 @@
+captured_at_utc	2026-10-16
+version	7.82/linux-x86_64
+theme	Default_7.0.ReaperThemeZip
+platform	Linux x86_64; isolated Xvfb :350; X11; 1280x800x24
+configuration	Fresh clean Default 7 config; no custom keymap, mouse map, or third-party extensions; audio device closed; transport stopped
+probe_script	scripts/reaper_parity/probe-item-hover-actionlist-target.lua
+fixture	Track A items A1/A2 and Track B items B1/B2; initial selection A1
+procedure	Open Action List, move its 701x475 window to x0,y300, select an action result, move the real pointer to B1 at 500,225, then press Enter. The Arrangement remains visible above the Action List.
+case	action_id	pointer_xy	hovered_item	selection_before	selection_api_order_before	selection_after	selection_api_order_after	selected_tracks_after	last_touched_track_after	project_state_change_count	undo_label_after
+actionlist_add_hovered_item	40529	500,225	B1	A1	A1	A1,B1	A1,B1		B	3	Change media item selection
+actionlist_toggle_hovered_item_off	40530	500,225	B1	A1,B1	A1,B1	A1	A1		B	5	Change media item selection
+observation	Action List keyboard Run uses the still-visible Arrangement mouse target: 40529 adds B1 to A1, then 40530 removes B1 and restores A1. GetItemFromPoint reports B1 for both runs; the last-touched track is B.
+screenshot_before_40530	item-hover-actionlist-target-40530-before-native.png; SHA-256 1219960d0e36121aad43bb818232ec45846a640a71d522048846d2e77ae9f0b2
+screenshot_after_40530	item-hover-actionlist-target-40530-after-native.png; SHA-256 ec563084b783e80961be12cb9194325b970e11e0318a2da30382fc79aeb177af
