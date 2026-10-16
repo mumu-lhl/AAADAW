@@ -188,6 +188,7 @@ if [[ -n "$insert_wildcard" ]]; then
     minute) wildcard_x=310; wildcard_y=1152 ;;
     second) wildcard_x=400; wildcard_y=1152 ;;
     localtime) wildcard_x=510; wildcard_y=1152 ;;
+    uniqueid) wildcard_x=180; wildcard_y=1187 ;;
     *) printf 'Unknown AAADAW_INSERT_WILDCARD token: %s\n' "$insert_wildcard" >&2; exit 2 ;;
   esac
   if [[ "$scroll_wildcards" == 0 ]] && (( wildcard_y > 720 )); then

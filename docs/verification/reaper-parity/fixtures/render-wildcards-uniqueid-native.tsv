@@ -1,0 +1,26 @@
+key	value
+reference	Linux REAPER 7.82 / Default 7 / isolated config
+probe	scripts/reaper_parity/probe-render-uniqueid-wildcard.lua
+probe_script_sha256	9e1a4095849ccbf219a97e22ab046ec785a48fd0a49e158515bcc99c8086eaa0
+capture_environment	TZ inherited from host; unsaved disposable project; one-second PCM24 source
+wildcard_pattern	$uniqueid[1]-$uniqueid[2]-$uniqueid[3]-$uniqueid[4]-$uniqueid[5]-$uniqueid[7]-$uniqueid[8]-$uniqueid[9]-$uniqueid[10]-$uniqueid[12]-$uniqueid[16]-$uniqueid[17]-$uniqueid[31]-$uniqueid[32]-$uniqueid[33]-$uniqueid[64]-$uniqueid-$track
+rendered_output	d6590763-6560c0b3-e141132f-b5b99eea-8e98ec28-bde5df22-d5941fa3-1b3a40f0a-ab7ba485dc-21d3587cdfef-46fd480a5a86a49c-9a46909d4542de81-badd0d99922a8ecd-935268b064316a83-fedf10049c44576b-966ce1bd50375988-5cea2a06-Master.wav
+rendered_output_size_bytes	288690
+rendered_output_sha256	d037396679487c0f06506c65bdb0715f09b87d8e268280ba6136e0cf501a2b07
+rendered_wav	render-wildcards-uniqueid-native.wav
+rendered_uniqueid_lengths	8,8,8,8,8,8,8,9,10,12,16,16,16,16,16,16,8
+length_semantics	Tested N=1,2,3,4,5,7,8 => 8 hexadecimal characters; N=9 => 9; N=10 => 10; N=12 => 12; N=16 => 16; tested N=17,31,32,33,64 => 16; no suffix defaults to 8
+generation_semantics	Every wildcard occurrence receives a distinct lowercase hexadecimal value; preview and completed render values differ
+length_placeholder_pattern	$uniqueid[N]-$uniqueid[0]-$uniqueid[8]-$uniqueid[16]-$track
+length_placeholder_output	bb955b3c-60565292-3f48de2c-a9dea6babd81e0e1-Master.wav
+length_placeholder_sha256	9572475e97daf449dfd813188cd34d23b1359647a12361a1c9e5e700e0471094
+length_placeholder_wav	render-wildcards-uniqueid-template-native.wav
+length_placeholder_semantics	Literal [N] expands empty and removes its adjacent separator; N=0 clamps to the default minimum of 8 characters
+preview_screenshot	render-wildcards-uniqueid-preview-native.png
+preview_screenshot_sha256	50a64ac102430a59bd22d82b64d334b0cabaea44d6d20d429100b0c8e2965cff
+finished_screenshot	render-wildcards-uniqueid-finished-native.png
+finished_screenshot_sha256	ada09b9ab7c75d53b39ae088d1ff39c9a5e478a652e89b05af658caf20838d3f
+length_placeholder_preview_screenshot	render-wildcards-uniqueid-template-preview-native.png
+length_placeholder_preview_screenshot_sha256	ce788bafef0feca1810a43b70979a576bc9c78d409146926f45b869b49e1b666
+length_placeholder_finished_screenshot	render-wildcards-uniqueid-template-finished-native.png
+length_placeholder_finished_screenshot_sha256	5b244ad2ec5932836a13e7a4885f80c78d0514b4eebdafd2ef5d57a792edb081

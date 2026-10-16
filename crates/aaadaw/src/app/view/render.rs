@@ -312,6 +312,10 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
                     "Clock:",
                     RenderFilenameWildcard::ALL.into_iter().skip(69).take(6),
                 ),
+                wildcard_group_row(
+                    "Unique ID:",
+                    RenderFilenameWildcard::ALL.into_iter().skip(75).take(1),
+                ),
             ]
             .spacing(tokens::SPACING_XS)
         } else {

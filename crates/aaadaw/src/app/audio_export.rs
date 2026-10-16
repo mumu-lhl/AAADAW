@@ -9,8 +9,9 @@ use std::collections::HashSet;
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::Ordering;
-use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, OnceLock};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 const JOB_HISTORY_CAPACITY: usize = 4;
 
@@ -120,10 +121,11 @@ pub(crate) enum RenderFilenameWildcard {
     Minute,
     Second,
     LocalTime,
+    UniqueId,
 }
 
 impl RenderFilenameWildcard {
-    pub(crate) const ALL: [Self; 75] = [
+    pub(crate) const ALL: [Self; 76] = [
         Self::Project,
         Self::Title,
         Self::Author,
@@ -199,6 +201,7 @@ impl RenderFilenameWildcard {
         Self::Minute,
         Self::Second,
         Self::LocalTime,
+        Self::UniqueId,
     ];
 
     pub(crate) const fn token(self) -> &'static str {
@@ -278,6 +281,7 @@ impl RenderFilenameWildcard {
             Self::Minute => "$minute",
             Self::Second => "$second",
             Self::LocalTime => "$localtime",
+            Self::UniqueId => "$uniqueid[N]",
         }
     }
 }
@@ -1204,6 +1208,7 @@ enum RenderFilenameWildcardModifier {
         width: usize,
     },
     ListSeparator(char),
+    UniqueIdLength(Option<usize>),
 }
 
 fn parse_render_filename_wildcard_modifiers(
@@ -1261,6 +1266,17 @@ fn parse_render_filename_wildcard_modifiers(
                         break;
                     };
                     modifiers.push(RenderFilenameWildcardModifier::Numbered { start, width });
+                } else if token == "uniqueid"
+                    && suffix.len() == 1
+                    && suffix[0].eq_ignore_ascii_case(&'N')
+                {
+                    // The picker inserts the native template. REAPER leaves that
+                    // placeholder empty until the user replaces N with a length.
+                    modifiers.push(RenderFilenameWildcardModifier::UniqueIdLength(None));
+                } else if token == "uniqueid" && suffix.iter().all(char::is_ascii_digit) {
+                    let digits = suffix.iter().collect::<String>();
+                    let length = digits.parse::<usize>().unwrap_or(usize::MAX);
+                    modifiers.push(RenderFilenameWildcardModifier::UniqueIdLength(Some(length)));
                 } else if matches!(token, "fx" | "folders") && suffix.len() == 1 {
                     modifiers.push(RenderFilenameWildcardModifier::ListSeparator(suffix[0]));
                 } else {
@@ -1334,9 +1350,33 @@ fn apply_render_filename_wildcard_modifiers(
                 .map(|number| format!("{number:0width$}"))
                 .unwrap_or(value),
             RenderFilenameWildcardModifier::ListSeparator(_) => value,
+            RenderFilenameWildcardModifier::UniqueIdLength(Some(_)) => value,
+            RenderFilenameWildcardModifier::UniqueIdLength(None) => String::new(),
         };
     }
     value
+}
+
+fn format_render_filename_unique_id(length: usize) -> String {
+    static SEED: OnceLock<u64> = OnceLock::new();
+    static NEXT_ID: AtomicU64 = AtomicU64::new(0);
+
+    let seed = *SEED.get_or_init(|| {
+        let time = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos() as u64;
+        time ^ (u64::from(std::process::id()) << 32)
+    });
+    let counter = NEXT_ID.fetch_add(1, Ordering::Relaxed);
+    let mut value = seed.wrapping_add(counter.wrapping_mul(0x9e37_79b9_7f4a_7c15));
+    value = (value ^ (value >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+    value = (value ^ (value >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+    value ^= value >> 31;
+
+    let value = format!("{value:016x}");
+    let length = length.clamp(8, 16);
+    value[..length].to_owned()
 }
 
 fn is_render_filename_wildcard_separator(character: char) -> bool {
@@ -1614,7 +1654,12 @@ fn expand_render_filename_pattern(
         };
         let known_token = token == "tracknameornumber"
             || RenderFilenameWildcard::ALL.iter().any(|wildcard| {
-                wildcard.token().trim_start_matches('$').split('(').next() == Some(token.as_str())
+                wildcard
+                    .token()
+                    .trim_start_matches('$')
+                    .split(['(', '['])
+                    .next()
+                    == Some(token.as_str())
             });
         let (expression_end, named_value_key, named_value_separator) =
             if matches!(token.as_str(), "projectnotes" | "region" | "marker")
@@ -1767,6 +1812,19 @@ fn expand_render_filename_pattern(
             "seltrack" => result.push_str(selected_track_name),
             "user" => result.push_str(&system_info.user),
             "computer" => result.push_str(&system_info.computer),
+            "uniqueid" => {
+                let requested_length = modifiers.iter().find_map(|modifier| match modifier {
+                    RenderFilenameWildcardModifier::UniqueIdLength(length) => Some(*length),
+                    _ => None,
+                });
+                match requested_length {
+                    Some(None) => {}
+                    Some(Some(length)) => {
+                        result.push_str(&format_render_filename_unique_id(length))
+                    }
+                    None => result.push_str(&format_render_filename_unique_id(8)),
+                }
+            }
             "date" | "time" | "datetime" | "year" | "year2" | "month" | "monthname" | "day"
             | "dayname" | "hour" | "hour12" | "ampm" | "minute" | "second" | "localtime" => result
                 .push_str(
@@ -3727,6 +3785,7 @@ mod tests {
                 "$minute",
                 "$second",
                 "$localtime",
+                "$uniqueid[N]",
             ]
         );
 
@@ -3801,6 +3860,15 @@ mod tests {
         assert_eq!(
             app.render_dialog.filename_pattern,
             "stem-$fx[X]$seltrack$playrate$user$computer$datetime"
+        );
+        assert!(!app.render_dialog.wildcard_menu_open);
+
+        let _ = app.update(Message::InsertRenderFilenameWildcard(
+            RenderFilenameWildcard::UniqueId,
+        ));
+        assert_eq!(
+            app.render_dialog.filename_pattern,
+            "stem-$fx[X]$seltrack$playrate$user$computer$datetime$uniqueid[N]"
         );
         assert!(!app.render_dialog.wildcard_menu_open);
     }
@@ -3918,6 +3986,69 @@ mod tests {
                 "/renders/2026-10-16-00_29_28-2026-10-16 00_29_28-2026-26-10-oct-16-fri-00-12-am-29-28-Fri, Oct 16 2026 00_29-Master.wav"
             )
         );
+    }
+
+    #[test]
+    fn render_filename_unique_ids_match_native_lengths_and_per_occurrence_values() {
+        let project = Project::default();
+        let settings = aaadaw_app::ProjectWavRenderSettings {
+            master_ceiling: aaadaw_engine::MasterOutputCeiling::default(),
+            export_options: aaadaw_app::WavExportOptions::default(),
+            output_sample_rate: 48_000,
+            output_channels: WavChannelCount::Stereo,
+            source: aaadaw_app::ProjectWavRenderSource::MasterMix,
+            start_sample: 0,
+            end_sample: 48_000,
+            tail_milliseconds: 0,
+            normalize_peak: false,
+            normalize_peak_target_centi_dbfs: 0,
+        };
+        let output = apply_render_filename_pattern(
+            vec![
+                (settings, Path::new("/renders/first.wav").to_owned()),
+                (settings, Path::new("/renders/second.wav").to_owned()),
+            ],
+            "$uniqueid-$uniqueid[4]-$uniqueid[8]-$uniqueid[9]-$uniqueid[12]-$uniqueid[16]-$uniqueid[17]-$uniqueid[64]-$uniqueid[N]-$track",
+            &project,
+            Path::new("/projects/uniqueid.aaadaw"),
+        )
+        .expect("unique ID wildcards should produce safe output names");
+
+        let first = output[0].1.file_stem().unwrap().to_str().unwrap();
+        let ids = first.split('-').collect::<Vec<_>>();
+        assert_eq!(ids.len(), 9);
+        assert_eq!(
+            ids[..8].iter().map(|value| value.len()).collect::<Vec<_>>(),
+            [8, 8, 8, 9, 12, 16, 16, 16]
+        );
+        assert_eq!(ids[8], "Master");
+        assert!(ids[..8].iter().all(|value| {
+            value
+                .chars()
+                .all(|character| character.is_ascii_digit() || ('a'..='f').contains(&character))
+        }));
+        assert_eq!(ids[..8].iter().copied().collect::<HashSet<_>>().len(), 8);
+
+        let second = output[1].1.file_stem().unwrap().to_str().unwrap();
+        let second_ids = second.split('-').collect::<Vec<_>>();
+        assert_eq!(second_ids.len(), 9);
+        assert_eq!(second_ids[5].len(), 16);
+        assert!(second_ids[..8].iter().all(|value| {
+            value
+                .chars()
+                .all(|character| character.is_ascii_digit() || ('a'..='f').contains(&character))
+        }));
+        assert_ne!(ids[5], second_ids[5]);
+        assert_ne!(first, second);
+
+        let placeholder = apply_render_filename_pattern(
+            vec![(settings, Path::new("/renders/base.wav").to_owned())],
+            "$uniqueid[N]-$track",
+            &project,
+            Path::new("/projects/uniqueid.aaadaw"),
+        )
+        .expect("the native length template should resolve empty until edited");
+        assert_eq!(placeholder[0].1, Path::new("/renders/Master.wav"));
     }
 
     #[test]

@@ -1669,3 +1669,9 @@ AAADAW 当前还没有可调 Master transport rate，故项目离线渲染始终
 Linux REAPER 7.82 / Default 7 使用隔离用户与 UTS hostname namespace、通用值 `FixtureUser` / `StudioComputer`，确认 `$user-$computer-$track` 预览和完成渲染均为 `FixtureUser-StudioComputer-Master.wav`；48 kHz stereo PCM24 输出为 48,000 帧。原厂预览、完成列表、WAV、SHA-256 和探针记入[原厂系统信息 fixture](../verification/reaper-parity/fixtures/render-wildcards-system-information-native.tsv)。最终 AAADAW 桌面二进制 Build ID `e4e98a5eb591f05c7bbe72bd2312655eee5e1023`、SHA-256 `c99bb944f49db61276b9fd224116f532530722a8ac54f06a5c8dade3b3987445` 已实际启动；完整 picker、滚动 picker、`$user` 与 `$computer` 实点插入截图及哈希登记在 [Wildcard 验证记录](../verification/reaper-parity/render-filename-patterns.md) 和 fixture manifest。
 
 最终源码验证通过：`cargo xtest -p aaadaw` 1260/1260、`cargo clippy -p aaadaw --all-targets -- -D warnings`、`cargo fmt --all -- --check`、`git diff --check`、截图脚本 `bash -n`，以及 native / AAADAW 图片与 WAV 哈希核验。`$playrate` 非默认传输速度和其余原厂变量仍未完成；`RENDER-WILDCARDS-001` / P10 持续 `in_progress`。
+
+### 2026-10-16 Render `$uniqueid[N]` wildcard
+
+为 REAPER 7.82 Render Wildcards 增加 `$uniqueid[N]`，picker 现有 76 项。原厂预览和实际渲染验证值为小写十六进制，省略长度时默认为 8，长度请求按 8–16 截断；每次出现分别生成 ID，字面模板 `$uniqueid[N]` 为空并触发相邻分隔符清理。精确测试的边界值、原厂预览/完成截图、两份 PCM24 WAV 及哈希保存在[unique ID fixture](../verification/reaper-parity/fixtures/render-wildcards-uniqueid-native.tsv)。
+
+AAADAW resolver 为每个表达式生成独立 ID，并回归覆盖默认长度、8–16 下限/上限、重复项唯一性、小写格式及 `[N]` 空模板；picker 的 Unique ID 分组和 X11 实点插入分别由 Build ID `bf339f42b4f8bfba05d3e3020ed03639859b69b2`、SHA-256 `aa9a2eadd05687306cd65e5bfa50e981bf90e98f50ede940863f3b9c3040fb09` 的实际桌面构建截图验证，哈希记录在 [Wildcard 验证文档](../verification/reaper-parity/render-filename-patterns.md) 与 fixture manifest。完整 AAADAW workspace nextest 1261/1261、strict all-target Clippy `-D warnings`、rustfmt、diff 检查、截图脚本语法和登记的 native/AAADAW fixture 哈希均通过。`$uniqueid[N]` 已实现；其余原厂 wildcard、光标/选区插入、通用 Allow `/`、预设持久化、更多来源/范围与完整 Render 窗口交互仍开放，`RENDER-WILDCARDS-001` / P10 保持 `in_progress`。
