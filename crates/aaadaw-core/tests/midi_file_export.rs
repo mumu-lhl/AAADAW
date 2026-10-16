@@ -421,6 +421,48 @@ fn reaper_782_type_zero_export_matches_native_event_bytes() {
 }
 
 #[test]
+fn reaper_782_type_zero_hash_marker_filter_matches_native_bytes() {
+    let project = native_midi_marker_fixture_project();
+    let options = MidiExportOptions {
+        file_type: MidiFileType::Type0,
+        export_markers: true,
+        marker_type: MidiMarkerType::Markers,
+        only_markers_starting_with_hash: true,
+        ..MidiExportOptions::for_project(&project)
+    };
+    let actual = encode_standard_midi(&project, options).unwrap();
+    let native = include_bytes!(
+        "../../../docs/verification/reaper-parity/fixtures/menu-export-midi-native-type0-markers-filtered.mid"
+    );
+
+    assert_eq!(
+        actual, native,
+        "Type 0 filtered marker events match REAPER 7.82"
+    );
+}
+
+#[test]
+fn reaper_782_type_zero_hash_cue_filter_matches_native_bytes() {
+    let project = native_midi_marker_fixture_project();
+    let options = MidiExportOptions {
+        file_type: MidiFileType::Type0,
+        export_markers: true,
+        marker_type: MidiMarkerType::Cues,
+        only_markers_starting_with_hash: true,
+        ..MidiExportOptions::for_project(&project)
+    };
+    let actual = encode_standard_midi(&project, options).unwrap();
+    let native = include_bytes!(
+        "../../../docs/verification/reaper-parity/fixtures/menu-export-midi-native-type0-cues-filtered.mid"
+    );
+
+    assert_eq!(
+        actual, native,
+        "Type 0 filtered cue events match REAPER 7.82"
+    );
+}
+
+#[test]
 fn reaper_782_type_one_tempo_and_meter_changes_match_native_bytes() {
     let mut project = native_midi_fixture_project();
     project
