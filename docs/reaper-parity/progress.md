@@ -608,7 +608,7 @@ REAPER 7.82 / Default 7 探针覆盖直网格、25%、50%、100%、−50% swing�
 
 AAADAW 已实现 Swing 网格 toggle、−100% 至 100% amount、独立 Snap/Grid Settings 窗、Options 菜单入口、Alt+L 和 42304 Action List 动作；三项 item snap 现在按 signed swing grid 计算，沿用 sample-accurate Audio 比较、单事务 Undo 和 playback busy guard。原厂数值点对应回归已加入。
 
-仍有明确差距：MIDI item 起点模型只有整数 PPQ，分数 tick 目标会量化；普通 Arrange 鼠标吸附、MIDI editor Swing 线与音符移动还需要 REAPER 7.82 实测；Action List/Arrange 实窗截图与焦点、播放期间 native availability 仍未验收。因此 `ITEM-SELECT-018/019/020` 继续 `in_progress`，不能视为完成。
+目前 Swing 候选点和 MIDI item 起点均以 1/200 PPQ 子刻度精确表示；该分母覆盖整数网格间隔与整数 Swing 百分比产生的目标位置。精度已贯穿 project action/Undo、SQLite schema 56、Arrangement 几何、实时 MIDI 采样调度和 SMF 输出；定向回归核对了 964.8 与 955.2 PPQ。普通 Arrange 鼠标吸附、MIDI editor Swing 线与音符移动仍需 REAPER 7.82 实测；Action List/Arrange 全窗截图和焦点、播放期间 native availability 与跨会话设置行为也仍未验收。因此 `ITEM-SELECT-018/019/020` 继续 `in_progress`，不能视为完成。
 
 新桌面 binary 已在隔离 Xorg :112 实际启动；Alt+L 打开独立设置窗，真实 XTest pointer/button 切换 Swing checkbox 后画面状态更新，Arrange toolbar 入口也在实窗可见。binary SHA-256、窗口配置及三张 AAADAW 截图见 [Snap/Grid Settings window fixture](../verification/reaper-parity/fixtures/item-snap-grid-settings-aaadaw.tsv)。截图仅确认当前新增窗口和 toolbar 可运行，未作为 REAPER 整体窗口/像素对照验收。
 
@@ -624,13 +624,19 @@ nightly Cranelift 下 `aaadaw` binary tests 通过 684/684；Stable all-target C
 
 Storage 往返与 schema 54 → 55 默认值迁移由 `arrangement_view_state_round_trips_and_survives_project_only_saves` 和 `schema_54_projects_gain_default_snap_and_swing_settings` 覆盖；Timeline 项目替换验证全部设置恢复和无视图状态项目的默认值；真实项目 session 保存/重开回归覆盖 Snap off、八分网格、MIDI 三十二分网格及 37% Swing；未保存工程恢复回归确认 Swing 修改推进 revision 并排入恢复快照。Xvfb 下 nightly Cranelift workspace nextest 全量 1290/1290 通过；改正 lint 后 4 个存储、Timeline 和 session 定向回归再次通过。Stable workspace all-target check、strict Clippy、fmt 与 diff 检查通过。最新 Cranelift desktop binary 在 Xvfb :96 实际启动，渲染的 Arrange toolbar 截图与 binary hash 见 [桌面 smoke fixture](../verification/reaper-parity/fixtures/item-snap-grid-desktop-smoke.tsv) 和[截图](../verification/reaper-parity/fixtures/item-snap-grid-desktop-smoke.png)。截图仅验证启动画面与可见 Snap/Grid 控件；项目设置保存/重开仍由状态持久化回归验证。
 
-设置持久化实现不关闭 `ITEM-SELECT-018/019/020`：REAPER 原厂跨会话保存行为尚未单独探测；MIDI item 起点的分数 PPQ 表示、常规 Arrange 与 MIDI Editor swing 鼠标行为对照、播放期间 Action List 可用性、全窗口视觉/焦点对照仍未完成。
+设置持久化实现不关闭 `ITEM-SELECT-018/019/020`：REAPER 原厂跨会话保存行为尚未单独探测；常规 Arrange 与 MIDI Editor swing 鼠标行为对照、播放期间 Action List 可用性、全窗口视觉/焦点对照仍未完成。
 
 #### 2026-10-16：原厂 MIDI item 分数 PPQ 定位
 
 在 REAPER 7.82 / Default 7 的 120 BPM、4/4 工程网格下追加 90 个 MIDI item 原厂动作结果：41182/41183/41184、Snap 开/关及正负整数百分比 swing。+1% Swing 的 41183 将 0.5 秒 item 起点移动到 0.5025 秒，即 964.8 PPQ；−1% Swing 的最近动作将其移到 0.4975 秒，即 955.2 PPQ，均保留 item 长度和选择。参照脚本与原厂数据见 [sub-tick probe](../../scripts/reaper_parity/probe-item-snap-subtick.lua) 和 [native TSV](../verification/reaper-parity/fixtures/item-snap-subtick-native.tsv)。
 
-之前 540 行原厂探针的 25%、50%、100% 数值在四分音符网格上恰好产生整数 PPQ，不能据此排除分数位置。新的原厂结果确认 REAPER 使用分数项目 PPQ；AAADAW 目前在 `midi_item_swing_snap_target` 舍入到整数 tick，因此尚不匹配。接下来为 Core MIDI item 起点设计可持久化的高分辨率项目位置，并贯穿事务、渲染与播放，再用上述原厂数值建立端到端对照。`ITEM-SELECT-018/019/020` 继续 `in_progress`。
+之前 540 行原厂探针的 25%、50%、100% 数值在四分音符网格上恰好产生整数 PPQ，不能据此排除分数位置。新的原厂结果确认 REAPER 使用分数项目 PPQ；AAADAW 随后增加精确 MIDI item 位置类型和 `SetMidiItemPosition` action，Swing 候选按整数子刻度运算，不再把 +1%/−1% 目标舍入到整 tick。工程 schema 56 持久化子刻度，旧 schema 55 项目默认导入为整 tick；回放事件映射到连续采样位置，SMF 导出在所选输出 PPQ 才舍入，Arrangement 绘制也保留起止位置的小数部分。新增回归分别确认核心事件映射、Undo/Redo、schema 55 迁移、SQLite 往返、964.8/955.2 候选、实际播放采样点和高分辨率 SMF PPQ。此项代码链路已贯通，但原厂逐项交互截图、常规 Arrange/MIDI Editor mouse 对照、播放期间 Action List 可用性和全窗口视觉/焦点仍未验收；`ITEM-SELECT-018/019/020` 保持 `in_progress`。
+
+#### 2026-10-16：MIDI item fractional PPQ 模型与回放/导出
+
+`MidiItemPosition` 使用 200 个子刻度表示每个项目 PPQ tick；已观测到的 Swing 目标 964.8 和 955.2 均可无损保存。`SetMidiItemPosition` 进入工程事件历史，schema 56 在 `items.start_tick_subtick` 存储位置；schema 55 迁移保持旧项目为整 tick。核心的 MIDI event iterator 提供精确项目位置，实时 schedule 以连续 PPQ 转 sample 后才落到可播放 sample，SMF export 保留小数直到换算到用户选定的 MIDI 文件 PPQ。Arrangement item geometry 使用精确起止位置。
+
+针对性验证包含 `fractional_midi_item_positions_survive_moves_and_event_mapping`（含复制位置保留）、`schema_55_midi_items_migrate_with_zero_fractional_ppq`、`midi_loop_metadata_round_trips_through_snapshots_and_sqlite`、`midi_item_snap_retains_reaper_fractional_swing_ppq`、`event_plan_preserves_fractional_ppq_item_positions_in_playback_samples`、`fractional_midi_item_bounds_survive_timeline_geometry_cache` 和 `midi_export_keeps_fractional_item_position_until_output_ppq_rounding`；完整 MIDI export native byte regressions 通过 27/27。Xvfb 下 nightly Cranelift workspace suite 已通过，Stable strict all-target Clippy `-D warnings` 通过；补充的复制与几何回归也通过。仍需建立从 REAPER 原厂 Action 到 AAADAW 实窗项目位置的直接图像对照；此缺口不改变三条 snap matrix row 的 `in_progress` 状态。
 
 ### 2026-10-13 Render Bounds：All project regions 批量输出
 

@@ -28,7 +28,8 @@ pub use fades::{AudioFade, AudioItemFades, FadeCurve, FadeCurveParameters, FadeS
 pub use markers::{MAX_PROJECT_MARKER_NUMBER, MarkerId, ProjectMarker};
 pub use master::MasterMix;
 pub use midi::{
-    ItemId, MidiControllerData, MidiItem, MidiNote, MidiNoteData, MidiPitchBendData, NoteId,
+    ItemId, MIDI_ITEM_SUBTICKS_PER_TICK, MidiControllerData, MidiItem, MidiItemPosition, MidiNote,
+    MidiNoteData, MidiPitchBendData, NoteId,
 };
 pub use midi_file::{
     MidiExportOptions, MidiFileType, MidiMarkerType, encode_standard_midi,

@@ -129,8 +129,8 @@ pub fn encode_standard_midi_with_conductor_track_name(
             ));
         };
         let item_end = item
-            .start_tick()
-            .checked_add(item.length_ticks())
+            .start_position()
+            .checked_add_ticks(item.length_ticks())
             .ok_or_else(|| "MIDI item extends beyond the supported timeline".to_owned())?;
         for note in item.notes() {
             let note_end_tick = note
@@ -138,10 +138,10 @@ pub fn encode_standard_midi_with_conductor_track_name(
                 .checked_add(note.duration())
                 .ok_or_else(|| "MIDI note extends beyond the supported timeline".to_owned())?;
             if item.is_loop_source() {
-                for project_start in item.project_ticks_at_content_tick(note.tick()) {
+                for project_start in item.project_positions_at_content_tick(note.tick()) {
                     ensure_midi_event_capacity(&mut midi_event_count, 2)?;
                     let project_end = project_start
-                        .checked_add(note.duration())
+                        .checked_add_ticks(note.duration())
                         .ok_or_else(|| "MIDI note ends beyond the supported timeline".to_owned())?
                         .min(item_end);
                     push_midi_note_events(
@@ -167,18 +167,18 @@ pub fn encode_standard_midi_with_conductor_track_name(
                     continue;
                 }
                 ensure_midi_event_capacity(&mut midi_event_count, 2)?;
-                let project_start_tick = item
-                    .start_tick()
-                    .checked_add(visible_start - item.source_offset_ticks())
+                let project_start_position = item
+                    .start_position()
+                    .checked_add_ticks(visible_start - item.source_offset_ticks())
                     .ok_or_else(|| "MIDI note starts beyond the supported timeline".to_owned())?;
-                let project_end_tick = item
-                    .start_tick()
-                    .checked_add(visible_end - item.source_offset_ticks())
+                let project_end_position = item
+                    .start_position()
+                    .checked_add_ticks(visible_end - item.source_offset_ticks())
                     .ok_or_else(|| "MIDI note ends beyond the supported timeline".to_owned())?;
                 push_midi_note_events(
                     &mut events_by_track[track_index],
-                    project_midi_item_event_tick(project, item, project_start_tick)?,
-                    project_midi_item_event_tick(project, item, project_end_tick)?,
+                    project_midi_item_event_tick(project, item, project_start_position)?,
+                    project_midi_item_event_tick(project, item, project_end_position)?,
                     project_ppq,
                     options.ppq,
                     note.pitch(),
@@ -189,10 +189,10 @@ pub fn encode_standard_midi_with_conductor_track_name(
 
         for controller in item.controllers() {
             if item.is_loop_source() {
-                for project_tick in item.project_ticks_at_content_tick(controller.tick) {
+                for project_position in item.project_positions_at_content_tick(controller.tick) {
                     ensure_midi_event_capacity(&mut midi_event_count, 1)?;
-                    let tick = scale_tick(
-                        project_midi_item_event_tick(project, item, project_tick)?,
+                    let tick = scale_tick_position(
+                        project_midi_item_event_tick(project, item, project_position)?,
                         project_ppq,
                         options.ppq,
                     )?;
@@ -213,14 +213,13 @@ pub fn encode_standard_midi_with_conductor_track_name(
                     && controller.tick < visible_content_end
                 {
                     ensure_midi_event_capacity(&mut midi_event_count, 1)?;
-                    let project_tick = item
-                        .start_tick()
-                        .checked_add(controller.tick - item.source_offset_ticks())
+                    let project_position = item
+                        .project_position_at_content_tick(controller.tick)
                         .ok_or_else(|| {
-                            "MIDI controller is beyond the supported timeline".to_owned()
-                        })?;
-                    let tick = scale_tick(
-                        project_midi_item_event_tick(project, item, project_tick)?,
+                        "MIDI controller is beyond the supported timeline".to_owned()
+                    })?;
+                    let tick = scale_tick_position(
+                        project_midi_item_event_tick(project, item, project_position)?,
                         project_ppq,
                         options.ppq,
                     )?;
@@ -235,10 +234,10 @@ pub fn encode_standard_midi_with_conductor_track_name(
 
         for bend in item.pitch_bends() {
             if item.is_loop_source() {
-                for project_tick in item.project_ticks_at_content_tick(bend.tick) {
+                for project_position in item.project_positions_at_content_tick(bend.tick) {
                     ensure_midi_event_capacity(&mut midi_event_count, 1)?;
-                    let tick = scale_tick(
-                        project_midi_item_event_tick(project, item, project_tick)?,
+                    let tick = scale_tick_position(
+                        project_midi_item_event_tick(project, item, project_position)?,
                         project_ppq,
                         options.ppq,
                     )?;
@@ -261,14 +260,13 @@ pub fn encode_standard_midi_with_conductor_track_name(
                     })?;
                 if bend.tick >= item.source_offset_ticks() && bend.tick < visible_content_end {
                     ensure_midi_event_capacity(&mut midi_event_count, 1)?;
-                    let project_tick = item
-                        .start_tick()
-                        .checked_add(bend.tick - item.source_offset_ticks())
+                    let project_position = item
+                        .project_position_at_content_tick(bend.tick)
                         .ok_or_else(|| {
                             "MIDI pitch bend is beyond the supported timeline".to_owned()
                         })?;
-                    let tick = scale_tick(
-                        project_midi_item_event_tick(project, item, project_tick)?,
+                    let tick = scale_tick_position(
+                        project_midi_item_event_tick(project, item, project_position)?,
                         project_ppq,
                         options.ppq,
                     )?;
@@ -346,25 +344,28 @@ fn ensure_midi_event_capacity(count: &mut usize, additional: usize) -> Result<()
 fn project_midi_item_event_tick(
     project: &Project,
     item: &crate::MidiItem,
-    event_tick: u64,
-) -> Result<u64, String> {
+    event_position: crate::MidiItemPosition,
+) -> Result<f64, String> {
     // REAPER exports source events at their elapsed-time position inside the item. Mapping the
     // item-relative fraction through the project's timebase preserves its native ramp behavior.
-    let item_start = item.start_tick();
+    let item_start = item.start_position();
     let item_length = item.length_ticks();
     let item_end = item_start
-        .checked_add(item_length)
+        .checked_add_ticks(item_length)
         .ok_or_else(|| "MIDI item extends beyond the supported timeline".to_owned())?;
-    if item_length == 0 || !(item_start..=item_end).contains(&event_tick) {
+    if item_length == 0 || !(item_start..=item_end).contains(&event_position) {
         return Err("MIDI event lies outside its item's visible time range".to_owned());
     }
+    let item_start_tick = item_start.as_ticks_f64();
+    let item_end_tick = item_end.as_ticks_f64();
+    let event_tick = event_position.as_ticks_f64();
     let start_sample = project
-        .sample_at_tick_position(item_start as f64)
+        .sample_at_tick_position(item_start_tick)
         .map_err(|error| error.to_string())?;
     let end_sample = project
-        .sample_at_tick_position(item_end as f64)
+        .sample_at_tick_position(item_end_tick)
         .map_err(|error| error.to_string())?;
-    let progress = (event_tick - item_start) as f64 / item_length as f64;
+    let progress = (event_tick - item_start_tick) / item_length as f64;
     let event_sample = start_sample + (end_sample - start_sample) * progress;
     let event_tick = project
         .tick_at_sample_position(event_sample)
@@ -372,20 +373,20 @@ fn project_midi_item_event_tick(
     if !event_tick.is_finite() || event_tick < 0.0 || event_tick > (1_u64 << 53) as f64 {
         return Err("MIDI event lies beyond the supported project timeline".to_owned());
     }
-    Ok(event_tick.round() as u64)
+    Ok(event_tick)
 }
 
 fn push_midi_note_events(
     events: &mut Vec<Event>,
-    project_start_tick: u64,
-    project_end_tick: u64,
+    project_start_tick: f64,
+    project_end_tick: f64,
     project_ppq: u32,
     export_ppq: u16,
     pitch: u8,
     velocity: u8,
 ) -> Result<(), String> {
-    let start_tick = scale_tick(project_start_tick, project_ppq, export_ppq)?;
-    let mut end_tick = scale_tick(project_end_tick, project_ppq, export_ppq)?;
+    let start_tick = scale_tick_position(project_start_tick, project_ppq, export_ppq)?;
+    let mut end_tick = scale_tick_position(project_end_tick, project_ppq, export_ppq)?;
     // Preserve a positive note duration when PPQ conversion rounds both ends to the
     // same exported tick. A zero-length note-off would sort before its note-on below.
     if end_tick <= start_tick {
@@ -699,6 +700,17 @@ fn scale_tick(tick: u64, project_ppq: u32, export_ppq: u16) -> Result<u64, Strin
     let scaled = (numerator + u128::from(project_ppq / 2)) / u128::from(project_ppq);
     u64::try_from(scaled)
         .map_err(|_| "scaled MIDI position exceeds the supported timeline".to_owned())
+}
+
+fn scale_tick_position(tick: f64, project_ppq: u32, export_ppq: u16) -> Result<u64, String> {
+    if project_ppq == 0 {
+        return Err("project PPQ resolution must be greater than zero".to_owned());
+    }
+    let scaled = tick * f64::from(export_ppq) / f64::from(project_ppq);
+    if !scaled.is_finite() || scaled < 0.0 || scaled >= u64::MAX as f64 {
+        return Err("scaled MIDI position exceeds the supported timeline".to_owned());
+    }
+    Ok(scaled.round() as u64)
 }
 
 fn encode_smpte_offset(project: &Project) -> Result<Vec<u8>, String> {

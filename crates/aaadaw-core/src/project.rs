@@ -1222,7 +1222,14 @@ fn duplicate_midi_item_at(
         .find(|item| item.id == item_id)
         .ok_or(ActionError::MidiItemNotFound { item_id })?
         .track_id;
-    duplicate_midi_item_to_track(state, ids, item_id, track_id, start_tick)
+    duplicate_midi_item_to_track_at_position(
+        state,
+        ids,
+        item_id,
+        track_id,
+        crate::MidiItemPosition::new(start_tick, 0)
+            .expect("zero fractional PPQ is a valid item position"),
+    )
 }
 
 fn duplicate_midi_item_to_track(
@@ -1231,6 +1238,23 @@ fn duplicate_midi_item_to_track(
     item_id: ItemId,
     track_id: TrackId,
     start_tick: u64,
+) -> Result<ProjectEvent, ActionError> {
+    duplicate_midi_item_to_track_at_position(
+        state,
+        ids,
+        item_id,
+        track_id,
+        crate::MidiItemPosition::new(start_tick, 0)
+            .expect("zero fractional PPQ is a valid item position"),
+    )
+}
+
+fn duplicate_midi_item_to_track_at_position(
+    state: &mut ProjectState,
+    ids: &mut IdAllocator,
+    item_id: ItemId,
+    track_id: TrackId,
+    start_position: crate::MidiItemPosition,
 ) -> Result<ProjectEvent, ActionError> {
     let original = state
         .midi_items
@@ -1245,8 +1269,8 @@ fn duplicate_midi_item_to_track(
     if target_track.is_frozen() {
         return Err(ActionError::CannotEditFrozenTrackSource { track_id });
     }
-    let item_end = start_tick
-        .checked_add(original.length_ticks)
+    start_position
+        .checked_add_ticks(original.length_ticks)
         .ok_or(ActionError::InvalidMidiItemPosition)?;
     let next_item_id = ids
         .next_item_id
@@ -1268,11 +1292,12 @@ fn duplicate_midi_item_to_track(
         id: ItemId::from_raw(ids.next_item_id),
         track_id,
         name: original.name.clone(),
-        start_tick,
+        start_tick: start_position.tick(),
+        start_tick_subtick: start_position.subtick(),
         source_offset_ticks: original.source_offset_ticks,
         loop_source: original.loop_source,
         source_loop_length_ticks: original.source_loop_length_ticks,
-        length_ticks: item_end - start_tick,
+        length_ticks: original.length_ticks,
         muted: original.muted,
         notes: Arc::new(notes),
         controllers: Arc::clone(&original.controllers),
@@ -1909,6 +1934,7 @@ impl Project {
                     track_id: item.track_id.value(),
                     name: item.name.clone(),
                     start_tick: item.start_tick,
+                    start_tick_subtick: item.start_tick_subtick,
                     source_offset_ticks: item.source_offset_ticks,
                     loop_source: item.loop_source,
                     source_loop_length_ticks: item.source_loop_length_ticks,
@@ -2240,6 +2266,7 @@ impl Project {
                 || item.name.chars().count() > 128
                 || item.length_ticks == 0
                 || item.source_loop_length_ticks == 0
+                || u16::from(item.start_tick_subtick) >= crate::MIDI_ITEM_SUBTICKS_PER_TICK
                 || item.start_tick.checked_add(item.length_ticks).is_none()
                 || item
                     .source_offset_ticks
@@ -2281,6 +2308,7 @@ impl Project {
                 track_id: TrackId::from_raw(item.track_id),
                 name: item.name,
                 start_tick: item.start_tick,
+                start_tick_subtick: item.start_tick_subtick,
                 source_offset_ticks: item.source_offset_ticks,
                 loop_source: item.loop_source,
                 source_loop_length_ticks: item.source_loop_length_ticks,
@@ -3797,6 +3825,7 @@ impl Project {
                     track_id,
                     name: "MIDI".to_owned(),
                     start_tick,
+                    start_tick_subtick: 0,
                     source_offset_ticks: 0,
                     loop_source: true,
                     source_loop_length_ticks: length_ticks,
@@ -3854,6 +3883,24 @@ impl Project {
                 let after = MidiItem {
                     start_tick,
                     length_ticks,
+                    start_tick_subtick: before.start_tick_subtick,
+                    ..before.clone()
+                };
+                ProjectEvent::MidiItemChanged { before, after }
+            }
+            DawAction::SetMidiItemPosition { item_id, position } => {
+                let item = state
+                    .midi_items
+                    .iter()
+                    .find(|item| item.id == item_id)
+                    .ok_or(ActionError::MidiItemNotFound { item_id })?;
+                if position.checked_add_ticks(item.length_ticks).is_none() {
+                    return Err(ActionError::InvalidMidiItemPosition);
+                }
+                let before = item.clone();
+                let after = MidiItem {
+                    start_tick: position.tick(),
+                    start_tick_subtick: position.subtick(),
                     ..before.clone()
                 };
                 ProjectEvent::MidiItemChanged { before, after }
@@ -3888,6 +3935,7 @@ impl Project {
                     start_tick,
                     length_ticks,
                     source_offset_ticks,
+                    start_tick_subtick: before.start_tick_subtick,
                     ..before.clone()
                 };
                 ProjectEvent::MidiItemChanged { before, after }
@@ -4037,11 +4085,17 @@ impl Project {
                     .iter()
                     .find(|item| item.id == item_id)
                     .ok_or(ActionError::MidiItemNotFound { item_id })?;
-                let start_tick = original
-                    .start_tick
-                    .checked_add(original.length_ticks)
+                let start_position = original
+                    .start_position()
+                    .checked_add_ticks(original.length_ticks)
                     .ok_or(ActionError::InvalidMidiItemPosition)?;
-                duplicate_midi_item_at(state, ids, item_id, start_tick)?
+                duplicate_midi_item_to_track_at_position(
+                    state,
+                    ids,
+                    item_id,
+                    original.track_id,
+                    start_position,
+                )?
             }
             DawAction::DuplicateMidiItemAt {
                 item_id,
@@ -4154,6 +4208,11 @@ impl Project {
                         track_id: original.track_id,
                         name: original.name.clone(),
                         start_tick: segment_start,
+                        start_tick_subtick: if index == 0 {
+                            original.start_tick_subtick
+                        } else {
+                            0
+                        },
                         source_offset_ticks: if index == 0 {
                             original.source_offset_ticks
                         } else {
@@ -5450,6 +5509,7 @@ fn source_track_for_action(state: &ProjectState, action: &DawAction) -> Option<T
         | DawAction::SetTrackFxParameterAutomation { track_id, .. }
         | DawAction::InsertMidiItem { track_id, .. } => Some(*track_id),
         DawAction::EditMidiItem { item_id, .. }
+        | DawAction::SetMidiItemPosition { item_id, .. }
         | DawAction::EditMidiItemPlacement { item_id, .. }
         | DawAction::SetMidiItemContents { item_id, .. }
         | DawAction::TrimMidiItemStart { item_id, .. }
@@ -5515,13 +5575,7 @@ fn valid_midi_note_range_in_bounds(
 }
 
 fn midi_source_tick_at_project_tick(item: &MidiItem, project_tick: u64) -> Option<u64> {
-    if item.is_loop_source() {
-        item.source_tick_at_project_tick(project_tick)
-    } else {
-        project_tick
-            .checked_sub(item.start_tick())?
-            .checked_add(item.source_offset_ticks())
-    }
+    item.source_tick_at_project_tick(project_tick)
 }
 
 fn valid_midi_pitch_bends(pitch_bends: &[MidiPitchBendData]) -> bool {

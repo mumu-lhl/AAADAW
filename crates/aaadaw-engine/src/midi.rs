@@ -1,9 +1,22 @@
 use crate::transport::TransportBlockSegment;
-use aaadaw_core::{NoteId, Project, TimebaseError, Track, TrackId};
+use aaadaw_core::{MidiItemPosition, NoteId, Project, TimebaseError, Track, TrackId};
 use std::collections::HashMap;
 use std::fmt;
 
 const MAX_COMPILED_MIDI_EVENTS: usize = 1_000_000;
+
+fn sample_at_midi_position(
+    project: &Project,
+    position: MidiItemPosition,
+) -> Result<u64, MidiScheduleError> {
+    let sample = project
+        .sample_at_tick_position(position.as_ticks_f64())
+        .map_err(MidiScheduleError::Timebase)?;
+    if !sample.is_finite() || sample < 0.0 || sample > u64::MAX as f64 {
+        return Err(MidiScheduleError::PositionOutOfRange);
+    }
+    Ok(sample.round() as u64)
+}
 
 /// A MIDI event kind. Shared-sample ordering also accounts for sustain-on/off semantics.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
@@ -407,25 +420,21 @@ impl MidiEventPlan {
                 continue;
             }
 
-            let clip_end_tick = item
-                .start_tick()
-                .checked_add(item.length_ticks())
+            let clip_end_position = item
+                .start_position()
+                .checked_add_ticks(item.length_ticks())
                 .ok_or(MidiScheduleError::PositionOutOfRange)?;
             for note in item.notes() {
-                for start_tick in item.project_ticks_at_content_tick(note.tick()) {
+                for start_position in item.project_positions_at_content_tick(note.tick()) {
                     if events.len() > MAX_COMPILED_MIDI_EVENTS - 2 {
                         return Err(MidiScheduleError::EventLimitExceeded);
                     }
-                    let end_tick = start_tick
-                        .checked_add(note.duration())
+                    let end_position = start_position
+                        .checked_add_ticks(note.duration())
                         .ok_or(MidiScheduleError::PositionOutOfRange)?
-                        .min(clip_end_tick);
-                    let start_sample = project
-                        .sample_at_tick(start_tick)
-                        .map_err(MidiScheduleError::Timebase)?;
-                    let end_sample = project
-                        .sample_at_tick(end_tick)
-                        .map_err(MidiScheduleError::Timebase)?;
+                        .min(clip_end_position);
+                    let start_sample = sample_at_midi_position(project, start_position)?;
+                    let end_sample = sample_at_midi_position(project, end_position)?;
                     notes.push(CompiledMidiNote {
                         start_sample,
                         end_sample,
@@ -457,13 +466,11 @@ impl MidiEventPlan {
                 }
             }
             for controller in item.controllers() {
-                for absolute_tick in item.project_ticks_at_content_tick(controller.tick) {
+                for position in item.project_positions_at_content_tick(controller.tick) {
                     if events.len() == MAX_COMPILED_MIDI_EVENTS {
                         return Err(MidiScheduleError::EventLimitExceeded);
                     }
-                    let absolute_sample = project
-                        .sample_at_tick(absolute_tick)
-                        .map_err(MidiScheduleError::Timebase)?;
+                    let absolute_sample = sample_at_midi_position(project, position)?;
                     let timeline = controller_timelines.iter_mut().find(|timeline| {
                         timeline.track_id == item.track_id()
                             && timeline.controller == controller.controller
@@ -497,13 +504,11 @@ impl MidiEventPlan {
                 }
             }
             for bend in item.pitch_bends() {
-                for absolute_tick in item.project_ticks_at_content_tick(bend.tick) {
+                for position in item.project_positions_at_content_tick(bend.tick) {
                     if events.len() == MAX_COMPILED_MIDI_EVENTS {
                         return Err(MidiScheduleError::EventLimitExceeded);
                     }
-                    let absolute_sample = project
-                        .sample_at_tick(absolute_tick)
-                        .map_err(MidiScheduleError::Timebase)?;
+                    let absolute_sample = sample_at_midi_position(project, position)?;
                     let timeline = pitch_bend_timelines
                         .iter_mut()
                         .find(|timeline| timeline.track_id == item.track_id());

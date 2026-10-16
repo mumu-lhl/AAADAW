@@ -1,6 +1,78 @@
 use crate::TrackId;
 use std::sync::Arc;
 
+/// Number of exact fractional PPQ positions stored within each project tick.
+///
+/// REAPER's item-snap actions can place MIDI items at values such as 964.8 PPQ.
+/// Its swing grid is expressed as an integer percentage of half a grid interval,
+/// so 200 subdivisions represent every such snap point exactly.
+pub const MIDI_ITEM_SUBTICKS_PER_TICK: u16 = 200;
+
+/// An exact MIDI item position measured in project ticks and 1/200-tick units.
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct MidiItemPosition {
+    tick: u64,
+    subtick: u8,
+}
+
+impl MidiItemPosition {
+    /// Creates a MIDI item position. `subtick` must be less than 200.
+    pub fn new(tick: u64, subtick: u8) -> Option<Self> {
+        (u16::from(subtick) < MIDI_ITEM_SUBTICKS_PER_TICK).then_some(Self { tick, subtick })
+    }
+
+    pub(crate) fn from_scaled_subticks(value: i128) -> Option<Self> {
+        if value < 0 {
+            return None;
+        }
+        let units = i128::from(MIDI_ITEM_SUBTICKS_PER_TICK);
+        let tick = u64::try_from(value / units).ok()?;
+        let subtick = u8::try_from(value % units).ok()?;
+        Some(Self { tick, subtick })
+    }
+
+    pub(crate) fn scaled_subticks(self) -> i128 {
+        i128::from(self.tick) * i128::from(MIDI_ITEM_SUBTICKS_PER_TICK) + i128::from(self.subtick)
+    }
+
+    /// Reconstructs an exact position from nonnegative 1/200-tick units.
+    pub fn from_total_subticks(value: u128) -> Option<Self> {
+        let units = u128::from(MIDI_ITEM_SUBTICKS_PER_TICK);
+        Some(Self {
+            tick: u64::try_from(value / units).ok()?,
+            subtick: u8::try_from(value % units).ok()?,
+        })
+    }
+
+    /// Returns this position as an exact count of 1/200-tick units.
+    pub fn total_subticks(self) -> u128 {
+        u128::from(self.tick) * u128::from(MIDI_ITEM_SUBTICKS_PER_TICK) + u128::from(self.subtick)
+    }
+
+    /// Returns the whole-tick component, flooring fractional PPQ positions.
+    pub fn tick(self) -> u64 {
+        self.tick
+    }
+
+    /// Returns the fractional component in 1/200-tick units.
+    pub fn subtick(self) -> u8 {
+        self.subtick
+    }
+
+    /// Returns this position as a continuous project-tick value.
+    pub fn as_ticks_f64(self) -> f64 {
+        self.tick as f64 + f64::from(self.subtick) / f64::from(MIDI_ITEM_SUBTICKS_PER_TICK)
+    }
+
+    /// Adds an integral tick duration while retaining the fractional position.
+    pub fn checked_add_ticks(self, ticks: u64) -> Option<Self> {
+        Some(Self {
+            tick: self.tick.checked_add(ticks)?,
+            subtick: self.subtick,
+        })
+    }
+}
+
 /// The identifier of a MIDI item in a project.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct ItemId(u64);
@@ -102,6 +174,7 @@ pub struct MidiItem {
     pub(crate) track_id: TrackId,
     pub(crate) name: String,
     pub(crate) start_tick: u64,
+    pub(crate) start_tick_subtick: u8,
     pub(crate) source_offset_ticks: u64,
     pub(crate) loop_source: bool,
     pub(crate) source_loop_length_ticks: u64,
@@ -133,6 +206,15 @@ impl MidiItem {
         self.start_tick
     }
 
+    /// Returns the exact project position, including a fractional PPQ component.
+    pub fn start_position(&self) -> MidiItemPosition {
+        // Project validation guarantees this invariant for every constructed item.
+        MidiItemPosition {
+            tick: self.start_tick,
+            subtick: self.start_tick_subtick,
+        }
+    }
+
     /// Returns how far the visible clip start is trimmed into its stored MIDI content.
     pub fn source_offset_ticks(&self) -> u64 {
         self.source_offset_ticks
@@ -150,11 +232,19 @@ impl MidiItem {
 
     /// Maps a project tick inside this item to its stored MIDI source tick.
     pub fn source_tick_at_project_tick(&self, project_tick: u64) -> Option<u64> {
-        let project_offset = project_tick.checked_sub(self.start_tick)?;
-        if project_offset >= self.length_ticks {
+        let project_subticks = u128::from(project_tick) * u128::from(MIDI_ITEM_SUBTICKS_PER_TICK);
+        let item_start_subticks = self.start_position().total_subticks();
+        let project_offset_subticks = project_subticks.checked_sub(item_start_subticks)?;
+        let item_length_subticks =
+            u128::from(self.length_ticks) * u128::from(MIDI_ITEM_SUBTICKS_PER_TICK);
+        if project_offset_subticks >= item_length_subticks {
             return None;
         }
-        let source_tick = self.source_offset_ticks.checked_add(project_offset)?;
+        let source_subticks = u128::from(self.source_offset_ticks)
+            .checked_mul(u128::from(MIDI_ITEM_SUBTICKS_PER_TICK))?
+            .checked_add(project_offset_subticks)?;
+        let source_tick =
+            u64::try_from(source_subticks / u128::from(MIDI_ITEM_SUBTICKS_PER_TICK)).ok()?;
         if self.loop_source {
             (self.source_loop_length_ticks > 0).then(|| source_tick % self.source_loop_length_ticks)
         } else {
@@ -167,8 +257,21 @@ impl MidiItem {
     /// The iterator is allocation-free. Looped events advance by the preserved source loop
     /// length; a non-looped item yields at most one occurrence.
     pub fn project_ticks_at_content_tick(&self, content_tick: u64) -> impl Iterator<Item = u64> {
-        let clip_end = self.start_tick.saturating_add(self.length_ticks);
-        let first_tick = if self.loop_source {
+        self.project_positions_at_content_tick(content_tick)
+            .map(MidiItemPosition::tick)
+    }
+
+    /// Returns each exact project occurrence of a stored source event visible in this item.
+    ///
+    /// The iterator is allocation-free, including for looped sources. Positions preserve the
+    /// fractional PPQ component of the item start.
+    pub fn project_positions_at_content_tick(
+        &self,
+        content_tick: u64,
+    ) -> impl Iterator<Item = MidiItemPosition> {
+        let item_start = self.start_position();
+        let clip_end = item_start.checked_add_ticks(self.length_ticks);
+        let first_position = if self.loop_source {
             if self.source_loop_length_ticks == 0 {
                 None
             } else {
@@ -180,21 +283,25 @@ impl MidiItem {
                 } else {
                     loop_length - (source_offset - source_tick)
                 };
-                self.start_tick.checked_add(phase)
+                item_start.checked_add_ticks(phase)
             }
         } else {
-            self.project_tick_at_content_tick(content_tick)
+            let source_delta = i128::from(content_tick) - i128::from(self.source_offset_ticks);
+            MidiItemPosition::from_scaled_subticks(
+                item_start.scaled_subticks()
+                    + source_delta * i128::from(MIDI_ITEM_SUBTICKS_PER_TICK),
+            )
         };
         let interval = self.loop_source.then_some(self.source_loop_length_ticks);
-        let mut next_tick = first_tick;
+        let mut next_position = first_position;
         std::iter::from_fn(move || {
-            let tick = next_tick?;
-            if tick < self.start_tick || tick >= clip_end {
-                next_tick = None;
+            let position = next_position?;
+            if position < item_start || clip_end.is_none_or(|end| position >= end) {
+                next_position = None;
                 return None;
             }
-            next_tick = interval.and_then(|interval| tick.checked_add(interval));
-            Some(tick)
+            next_position = interval.and_then(|interval| position.checked_add_ticks(interval));
+            Some(position)
         })
     }
 
@@ -206,6 +313,11 @@ impl MidiItem {
         let project_tick = i128::from(self.start_tick) + i128::from(content_tick)
             - i128::from(self.source_offset_ticks);
         u64::try_from(project_tick).ok()
+    }
+
+    /// Maps a stored event tick to its exact project position, if it fits the timeline.
+    pub fn project_position_at_content_tick(&self, content_tick: u64) -> Option<MidiItemPosition> {
+        self.project_positions_at_content_tick(content_tick).next()
     }
 
     /// Returns the item's duration in project ticks.

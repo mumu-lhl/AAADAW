@@ -11,10 +11,10 @@ use super::shortcut;
 #[cfg(feature = "audio-device")]
 use super::{ActiveRecording, SharedRecordingStart};
 use super::{
-    App, MainMenu, MainWorkspace, MenuNavigation, Message, MidiEditorTool, MobilePanel,
-    PathPickerTarget, fx_chain_plugin_drag_event, keyboard_shortcut_event, menu_navigation_event,
-    midi_editor_shortcut_event, midi_expression_context_menu_event, mobile_back_event,
-    shortcut_message,
+    App, ItemSnapDirection, MainMenu, MainWorkspace, MenuNavigation, Message, MidiEditorTool,
+    MobilePanel, PathPickerTarget, fx_chain_plugin_drag_event, keyboard_shortcut_event,
+    menu_navigation_event, midi_editor_shortcut_event, midi_expression_context_menu_event,
+    midi_item_swing_snap_target, mobile_back_event, shortcut_message,
 };
 #[cfg(feature = "audio-device")]
 use super::{prepare_project_playback_file, prepare_project_playback_file_with_loop_points};
@@ -22,7 +22,8 @@ use crate::timeline::{SnapGrid, TimelineEvent};
 #[cfg(all(feature = "jack-backend", feature = "pipewire-backend"))]
 use aaadaw_app::PlaybackBackend;
 use aaadaw_core::{
-    DawAction, MidiControllerData, MidiNoteData, Project, RazorEditArea, TrackFxPlugin,
+    DawAction, MidiControllerData, MidiItemPosition, MidiNoteData, Project, RazorEditArea,
+    TrackFxPlugin,
 };
 use aaadaw_media::{AudioStreamDecoder, AudioWaveform};
 use aaadaw_storage::{ArrangementViewState, ProjectSessionLock, ProjectStore};
@@ -15708,6 +15709,24 @@ fn item_snap_actions_match_reaper_swing_points_for_audio_and_midi() {
             "{name}"
         );
     }
+}
+
+#[test]
+fn midi_item_snap_retains_reaper_fractional_swing_ppq() {
+    let project = Project::new();
+    let straight = MidiItemPosition::new(960, 0).unwrap();
+
+    assert_eq!(
+        midi_item_swing_snap_target(&project, straight, 960, ItemSnapDirection::Right, 1,).unwrap(),
+        MidiItemPosition::new(964, 160).unwrap(),
+        "REAPER action 41183 places +1% swing at 964.8 PPQ"
+    );
+    assert_eq!(
+        midi_item_swing_snap_target(&project, straight, 960, ItemSnapDirection::Nearest, -1,)
+            .unwrap(),
+        MidiItemPosition::new(955, 40).unwrap(),
+        "REAPER action 41184 places -1% swing at 955.2 PPQ"
+    );
 }
 
 #[test]

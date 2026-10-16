@@ -1,5 +1,6 @@
 use aaadaw_core::{
-    DawAction, MidiControllerData, MidiNoteData, MidiPitchBendData, Project, TempoCurve,
+    DawAction, MidiControllerData, MidiItemPosition, MidiNoteData, MidiPitchBendData, Project,
+    TempoCurve,
 };
 use aaadaw_engine::{
     MidiEventKind, MidiEventPlan, MidiScheduleError, MidiSegmentCursor, ScheduledMidiEvent,
@@ -80,6 +81,38 @@ fn event_plan_uses_tempo_map_and_queries_half_open_sample_blocks() {
     let event = output[0].expect("the event should be initialized");
     assert_eq!(event.kind, MidiEventKind::NoteOff);
     assert_eq!(event.velocity, 0);
+}
+
+#[test]
+fn event_plan_preserves_fractional_ppq_item_positions_in_playback_samples() {
+    let (mut project, track_id) = project_with_note(69, 0, 120);
+    let item_id = project.midi_items()[0].id();
+    let position = MidiItemPosition::new(964, 160).unwrap();
+    project
+        .apply(DawAction::SetMidiItemPosition { item_id, position })
+        .expect("fractional MIDI placement should succeed");
+
+    let expected_start = project
+        .sample_at_tick_position(position.as_ticks_f64())
+        .unwrap()
+        .round() as u64;
+    assert_eq!(expected_start, 24_120);
+    let plan = MidiEventPlan::compile(&project).expect("valid project should compile");
+    let mut output = [None; 2];
+    assert_eq!(
+        plan.events_for_block(24_100, 1, &mut output)
+            .expect("the preceding whole-tick sample should query"),
+        0
+    );
+    assert_eq!(
+        plan.events_for_block(expected_start, 1, &mut output)
+            .expect("fractional event sample should query"),
+        1
+    );
+    let event = output[0].expect("the note-on should be present");
+    assert_eq!(event.kind, MidiEventKind::NoteOn);
+    assert_eq!(event.track_id, track_id);
+    assert_eq!(event.sample_offset, 0);
 }
 
 #[test]

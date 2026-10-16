@@ -17,7 +17,7 @@ use aaadaw_app::{
 use aaadaw_core::ProjectSnapshot;
 use aaadaw_core::{
     AudioItem, DawAction, FxParameterChange, ItemId, MarkerId, MeterPointSnapshot, MidiItem,
-    Project, RazorEditArea, RegionId, TempoCurve, TimeSignature, TrackId,
+    MidiItemPosition, Project, RazorEditArea, RegionId, TempoCurve, TimeSignature, TrackId,
 };
 #[cfg(feature = "audio-device")]
 use aaadaw_engine::{
@@ -750,18 +750,92 @@ fn snap_from_grid_candidates(
 
 fn midi_item_swing_snap_target(
     project: &Project,
-    start_tick: u64,
+    start_position: MidiItemPosition,
     grid_ticks: u64,
     direction: ItemSnapDirection,
     swing_amount_percent: i16,
-) -> Result<u64, String> {
+) -> Result<MidiItemPosition, String> {
     let candidates =
-        swing_grid_tick_candidates(project, start_tick as f64, grid_ticks, swing_amount_percent)?;
-    let target = snap_from_grid_candidates(&candidates, start_tick as f64, direction)?;
-    if target < 0.0 || target > u64::MAX as f64 {
-        return Err("the snap point is outside the timeline".to_owned());
+        swing_grid_position_candidates(project, start_position, grid_ticks, swing_amount_percent)?;
+    let lower = candidates
+        .iter()
+        .copied()
+        .rfind(|candidate| *candidate <= start_position);
+    let upper = candidates
+        .iter()
+        .copied()
+        .find(|candidate| *candidate >= start_position);
+    match (lower, upper) {
+        (Some(_), Some(upper)) if upper == start_position => Ok(upper),
+        (Some(lower), Some(_)) if lower == start_position => Ok(lower),
+        (Some(lower), Some(upper)) => Ok(match direction {
+            ItemSnapDirection::Left => lower,
+            ItemSnapDirection::Right => upper,
+            ItemSnapDirection::Nearest
+                if start_position.total_subticks() - lower.total_subticks()
+                    <= upper.total_subticks() - start_position.total_subticks() =>
+            {
+                lower
+            }
+            ItemSnapDirection::Nearest => upper,
+        }),
+        (Some(lower), None) => Ok(lower),
+        (None, Some(upper)) => Ok(upper),
+        (None, None) => Err("could not locate a snap point".to_owned()),
     }
-    Ok(target.round() as u64)
+}
+
+fn swing_grid_position_candidates(
+    project: &Project,
+    approximate_position: MidiItemPosition,
+    grid_ticks: u64,
+    swing_amount_percent: i16,
+) -> Result<Vec<MidiItemPosition>, String> {
+    if grid_ticks == 0 {
+        return Err("the current snap grid is not available".to_owned());
+    }
+    let base_index = approximate_position.tick() / grid_ticks;
+    let first_index = base_index.saturating_sub(2);
+    let last_index = base_index.saturating_add(3);
+    let swing_amount = i128::from(swing_amount_percent.clamp(-100, 100));
+    let grid_subticks = i128::from(grid_ticks)
+        .checked_mul(i128::from(aaadaw_core::MIDI_ITEM_SUBTICKS_PER_TICK))
+        .ok_or_else(|| "the snap grid is outside the supported timeline".to_owned())?;
+    let mut candidates = Vec::with_capacity(6);
+    for index in first_index..=last_index {
+        let straight = i128::from(index)
+            .checked_mul(grid_subticks)
+            .ok_or_else(|| "the snap grid is outside the supported timeline".to_owned())?;
+        let swing = if index % 2 == 1 {
+            i128::from(grid_ticks)
+                .checked_mul(swing_amount)
+                .ok_or_else(|| "the swing offset is outside the supported timeline".to_owned())?
+        } else {
+            0
+        };
+        let total_subticks = straight
+            .checked_add(swing)
+            .ok_or_else(|| "the swing point is outside the supported timeline".to_owned())?;
+        if total_subticks < 0 {
+            continue;
+        }
+        let Some(position) = MidiItemPosition::from_total_subticks(total_subticks as u128) else {
+            continue;
+        };
+        if position.subtick() == 0
+            && position.tick() > 0
+            && let Ok(musical_position) = project.musical_position_at_tick(position.tick())
+            && musical_position.beat() == 1
+            && musical_position.tick_in_beat() == 0
+        {
+            // REAPER's item-snap actions omit non-zero measure starts from their target set.
+            continue;
+        }
+        candidates.push(position);
+    }
+    candidates.sort_unstable();
+    candidates.dedup();
+    Ok(candidates)
 }
 
 fn audio_item_snap_target(
@@ -818,6 +892,7 @@ fn action_rebuilds_playback_graph(action: &DawAction) -> bool {
         | DawAction::DeleteTempoPoint { .. }
         | DawAction::SetTempoCurve { .. }
         | DawAction::SetTrackFxParameterAutomation { .. }
+        | DawAction::SetMidiItemPosition { .. }
         | DawAction::EditMidiItemPlacement { .. }
         | DawAction::SetMidiItemContents { .. }
         | DawAction::SetMidiItemLoopSource { .. }
@@ -11494,9 +11569,9 @@ impl App {
                 .iter()
                 .find(|item| item.id() == item_id)
             {
-                let target_tick = match midi_item_swing_snap_target(
+                let target_position = match midi_item_swing_snap_target(
                     &self.project,
-                    item.start_tick(),
+                    item.start_position(),
                     grid_ticks,
                     direction,
                     self.timeline.active_snap_swing_amount_percent(),
@@ -11507,11 +11582,10 @@ impl App {
                         return;
                     }
                 };
-                if target_tick != item.start_tick() {
-                    actions.push(DawAction::EditMidiItem {
+                if target_position != item.start_position() {
+                    actions.push(DawAction::SetMidiItemPosition {
                         item_id,
-                        start_tick: target_tick,
-                        length_ticks: item.length_ticks(),
+                        position: target_position,
                     });
                 }
             }

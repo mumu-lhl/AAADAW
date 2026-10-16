@@ -195,6 +195,7 @@ pub struct MidiItemSnapshot {
     pub track_id: u64,
     pub name: String,
     pub start_tick: u64,
+    pub start_tick_subtick: u8,
     pub source_offset_ticks: u64,
     pub loop_source: bool,
     pub source_loop_length_ticks: u64,

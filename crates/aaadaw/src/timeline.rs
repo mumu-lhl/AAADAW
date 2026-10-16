@@ -356,7 +356,9 @@ struct TimelineItem {
     track_id: TrackId,
     track_index: usize,
     start_tick: u64,
+    start_tick_subtick: u8,
     end_tick: u64,
+    end_tick_subtick: u8,
     kind: ItemKind,
     label: String,
     media_ref: Option<String>,
@@ -498,7 +500,9 @@ impl TimelineCache {
                 track_id: item.track_id(),
                 track_index,
                 start_tick,
+                start_tick_subtick: 0,
                 end_tick: end_tick.max(start_tick),
+                end_tick_subtick: 0,
                 kind: ItemKind::Audio,
                 label: if item.name().is_empty() {
                     media_label(item.media_ref())
@@ -526,7 +530,9 @@ impl TimelineCache {
                 track_id: item.track_id(),
                 track_index,
                 start_tick: item.start_tick(),
+                start_tick_subtick: item.start_position().subtick(),
                 end_tick: item.start_tick().saturating_add(item.length_ticks()),
+                end_tick_subtick: item.start_position().subtick(),
                 kind: ItemKind::Midi,
                 label: item.name().to_owned(),
                 media_ref: None,
@@ -552,7 +558,14 @@ impl TimelineCache {
             });
         }
 
-        items.sort_by_key(|item| (item.track_index, item.start_tick, item.id.value()));
+        items.sort_by_key(|item| {
+            (
+                item.track_index,
+                item.start_tick,
+                item.start_tick_subtick,
+                item.id.value(),
+            )
+        });
         self.generation = self.generation.wrapping_add(1);
         self.item_indices = items
             .iter()
@@ -4596,14 +4609,24 @@ fn item_trim_edge_at_x(
         .filter(|item| item.track_index == track_index)
         .flat_map(|item| {
             [
-                (item.start_tick, ItemTrimEdge::Start),
-                (item.end_tick, ItemTrimEdge::End),
+                (
+                    item.start_tick as f64
+                        + f64::from(item.start_tick_subtick)
+                            / f64::from(aaadaw_core::MIDI_ITEM_SUBTICKS_PER_TICK),
+                    ItemTrimEdge::Start,
+                ),
+                (
+                    item.end_tick as f64
+                        + f64::from(item.end_tick_subtick)
+                            / f64::from(aaadaw_core::MIDI_ITEM_SUBTICKS_PER_TICK),
+                    ItemTrimEdge::End,
+                ),
             ]
             .into_iter()
             .map(move |(tick, edge)| (item, tick, edge))
         })
         .filter_map(|(item, tick, edge)| {
-            let edge_x = (tick as f64 - origin_tick as f64) * f64::from(pixels_per_tick);
+            let edge_x = (tick - origin_tick as f64) * f64::from(pixels_per_tick);
             let distance = (f64::from(x) - edge_x).abs();
             (distance <= ITEM_TRIM_EDGE_HIT_RADIUS_PX).then_some((item.id, edge, distance))
         })
@@ -5834,23 +5857,39 @@ impl canvas::Program<crate::app::Message> for ItemLabelsProgram<'_> {
                 .state
                 .item_trim_preview
                 .filter(|trim| trim.item_id == item.id);
-            let (start_tick, end_tick, track_index) = if let Some(trim) = trim {
-                (trim.start_tick, trim.end_tick, item.track_index as i128)
-            } else if let Some(preview) = preview {
-                let start_tick = u64::try_from(i128::from(item.start_tick) + preview.delta_ticks)
-                    .unwrap_or(item.start_tick);
-                let end_tick = u64::try_from(i128::from(item.end_tick) + preview.delta_ticks)
-                    .unwrap_or(item.end_tick);
-                let track_index = i128::try_from(item.track_index).unwrap_or(i128::MAX)
-                    + i128::from(preview.track_delta);
-                (start_tick, end_tick, track_index)
-            } else {
-                (
-                    item.start_tick,
-                    item.end_tick,
-                    i128::try_from(item.track_index).unwrap_or(i128::MAX),
-                )
-            };
+            let (start_tick, start_tick_subtick, end_tick, end_tick_subtick, track_index) =
+                if let Some(trim) = trim {
+                    (
+                        trim.start_tick,
+                        0,
+                        trim.end_tick,
+                        0,
+                        item.track_index as i128,
+                    )
+                } else if let Some(preview) = preview {
+                    let start_tick =
+                        u64::try_from(i128::from(item.start_tick) + preview.delta_ticks)
+                            .unwrap_or(item.start_tick);
+                    let end_tick = u64::try_from(i128::from(item.end_tick) + preview.delta_ticks)
+                        .unwrap_or(item.end_tick);
+                    let track_index = i128::try_from(item.track_index).unwrap_or(i128::MAX)
+                        + i128::from(preview.track_delta);
+                    (
+                        start_tick,
+                        item.start_tick_subtick,
+                        end_tick,
+                        item.end_tick_subtick,
+                        track_index,
+                    )
+                } else {
+                    (
+                        item.start_tick,
+                        item.start_tick_subtick,
+                        item.end_tick,
+                        item.end_tick_subtick,
+                        i128::try_from(item.track_index).unwrap_or(i128::MAX),
+                    )
+                };
             let Some(row) = usize::try_from(track_index)
                 .ok()
                 .and_then(|index| self.state.row_layout(index))
@@ -5865,9 +5904,12 @@ impl canvas::Program<crate::app::Message> for ItemLabelsProgram<'_> {
             {
                 continue;
             }
-            let left = (i128::from(start_tick) - i128::from(self.state.origin_tick)) as f64
+            let subticks_per_tick = f64::from(aaadaw_core::MIDI_ITEM_SUBTICKS_PER_TICK);
+            let left = (start_tick as f64 + f64::from(start_tick_subtick) / subticks_per_tick
+                - self.state.origin_tick as f64)
                 * f64::from(self.state.pixels_per_tick);
-            let right = (i128::from(end_tick) - i128::from(self.state.origin_tick)) as f64
+            let right = (end_tick as f64 + f64::from(end_tick_subtick) / subticks_per_tick
+                - self.state.origin_tick as f64)
                 * f64::from(self.state.pixels_per_tick);
             let width = right - left;
             if right < 0.0 || left > f64::from(bounds.width) || width < 18.0 {
@@ -6147,8 +6189,8 @@ mod tests {
         slowest_tempo_in_viewport, snap_tick_to_grid, tick_at_x, time_selection_edge_at_tick,
     };
     use aaadaw_core::{
-        DawAction, FxParameterAutomationPoint, Project, ProjectSettings, TempoCurve, TimeSignature,
-        TrackFxPlugin, VolumeAutomationPoint,
+        DawAction, FxParameterAutomationPoint, MidiItemPosition, Project, ProjectSettings,
+        TempoCurve, TimeSignature, TrackFxPlugin, VolumeAutomationPoint,
     };
     use aaadaw_media::{AudioStreamDecoder, AudioWaveform};
     use iced::{Event, Point, Rectangle, Size, keyboard, mouse};
@@ -7461,6 +7503,47 @@ mod tests {
         );
         assert_eq!(
             item_trim_edge_at_x(&cache, 0, 1_440.0, 0, 1.0),
+            Some((item_id, ItemTrimEdge::End))
+        );
+    }
+
+    #[test]
+    fn fractional_midi_item_bounds_survive_timeline_geometry_cache() {
+        let mut project = Project::new();
+        project
+            .apply(DawAction::CreateTrack {
+                index: 0,
+                name: "MIDI".to_owned(),
+            })
+            .unwrap();
+        project
+            .apply(DawAction::InsertMidiItem {
+                track_id: project.tracks()[0].id(),
+                start_tick: 0,
+                length_ticks: 960,
+            })
+            .unwrap();
+        let item_id = project.midi_items()[0].id();
+        project
+            .apply(DawAction::SetMidiItemPosition {
+                item_id,
+                position: MidiItemPosition::new(964, 160).unwrap(),
+            })
+            .unwrap();
+
+        let mut cache = TimelineCache::default();
+        cache.rebuild(&project, SnapGrid::Quarter);
+        let item = cache.items.iter().find(|item| item.id == item_id).unwrap();
+        assert_eq!(item.start_tick, 964);
+        assert_eq!(item.start_tick_subtick, 160);
+        assert_eq!(item.end_tick, 1_924);
+        assert_eq!(item.end_tick_subtick, 160);
+        assert_eq!(
+            item_trim_edge_at_x(&cache, 0, 964.8, 0, 1.0),
+            Some((item_id, ItemTrimEdge::Start))
+        );
+        assert_eq!(
+            item_trim_edge_at_x(&cache, 0, 1_924.8, 0, 1.0),
             Some((item_id, ItemTrimEdge::End))
         );
     }

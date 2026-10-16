@@ -1,7 +1,7 @@
 use crate::{
-    GridFraction, ItemId, MarkerId, MeterPointSnapshot, MidiControllerData, MidiNoteData,
-    MidiPitchBendData, NoteId, RegionId, TempoCurve, TimeSignature, TrackFxPlugin, TrackId,
-    TrackInstrument, VolumeAutomationPoint,
+    GridFraction, ItemId, MarkerId, MeterPointSnapshot, MidiControllerData, MidiItemPosition,
+    MidiNoteData, MidiPitchBendData, NoteId, RegionId, TempoCurve, TimeSignature, TrackFxPlugin,
+    TrackId, TrackInstrument, VolumeAutomationPoint,
 };
 
 /// A command that changes project state.
@@ -384,6 +384,11 @@ pub enum DawAction {
         item_id: ItemId,
         start_tick: u64,
         length_ticks: u64,
+    },
+    /// Set a MIDI item's exact PPQ start position, including fractional PPQ.
+    SetMidiItemPosition {
+        item_id: ItemId,
+        position: MidiItemPosition,
     },
     /// Edit a MIDI item's timeline and source offsets together without changing its events.
     EditMidiItemPlacement {

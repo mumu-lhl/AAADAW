@@ -1,7 +1,7 @@
 use aaadaw_core::{
-    DawAction, FrameRate, MidiControllerData, MidiExportOptions, MidiFileType, MidiMarkerType,
-    MidiNoteData, MidiPitchBendData, Project, TempoCurve, TimeSignature, encode_standard_midi,
-    encode_standard_midi_with_conductor_track_name,
+    DawAction, FrameRate, MidiControllerData, MidiExportOptions, MidiFileType, MidiItemPosition,
+    MidiMarkerType, MidiNoteData, MidiPitchBendData, Project, TempoCurve, TimeSignature,
+    encode_standard_midi, encode_standard_midi_with_conductor_track_name,
 };
 
 #[test]
@@ -103,6 +103,109 @@ fn exports_tracks_notes_controllers_pitch_bends_tempo_meter_and_markers() {
             .windows(8)
             .any(|window| { window == [0xff, 0x03, 5, b'P', b'i', b'a', b'n', b'o'] })
     );
+}
+
+#[test]
+fn midi_export_keeps_fractional_item_position_until_output_ppq_rounding() {
+    let mut project = Project::new();
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Fractional MIDI".to_owned(),
+        })
+        .unwrap();
+    project
+        .apply(DawAction::InsertMidiItem {
+            track_id: project.tracks()[0].id(),
+            start_tick: 0,
+            length_ticks: 1_920,
+        })
+        .unwrap();
+    let item_id = project.midi_items()[0].id();
+    project
+        .apply(DawAction::AddMidiNotes {
+            item_id,
+            notes: vec![MidiNoteData {
+                pitch: 60,
+                tick: 0,
+                duration: 120,
+                velocity: 100,
+            }],
+        })
+        .unwrap();
+    project
+        .apply(DawAction::SetMidiItemPosition {
+            item_id,
+            position: MidiItemPosition::new(964, 160).unwrap(),
+        })
+        .unwrap();
+    let options = MidiExportOptions {
+        file_type: MidiFileType::Type0,
+        ppq: 4_800,
+        embed_tempo_and_time_signature: false,
+        export_markers: false,
+        ..MidiExportOptions::for_project(&project)
+    };
+    let bytes = encode_standard_midi(&project, options).unwrap();
+    let event_tick = find_note_on_tick(&bytes, 60, 100);
+    assert_eq!(event_tick, 4_824, "964.8 / 960 * 4800 = 4824");
+}
+
+fn find_note_on_tick(bytes: &[u8], pitch: u8, velocity: u8) -> u64 {
+    assert_eq!(&bytes[14..18], b"MTrk");
+    let track_length = u32::from_be_bytes(bytes[18..22].try_into().unwrap()) as usize;
+    let track_end = 22 + track_length;
+    let mut cursor = 22;
+    let mut absolute_tick = 0_u64;
+    while cursor < track_end {
+        let mut delta = 0_u64;
+        loop {
+            let byte = bytes[cursor];
+            cursor += 1;
+            delta = (delta << 7) | u64::from(byte & 0x7f);
+            if byte & 0x80 == 0 {
+                break;
+            }
+        }
+        absolute_tick += delta;
+        let status = bytes[cursor];
+        cursor += 1;
+        if status == 0xff {
+            cursor += 1;
+            let mut length = 0_usize;
+            loop {
+                let byte = bytes[cursor];
+                cursor += 1;
+                length = (length << 7) | usize::from(byte & 0x7f);
+                if byte & 0x80 == 0 {
+                    break;
+                }
+            }
+            cursor += length;
+        } else if status == 0xf0 || status == 0xf7 {
+            let mut length = 0_usize;
+            loop {
+                let byte = bytes[cursor];
+                cursor += 1;
+                length = (length << 7) | usize::from(byte & 0x7f);
+                if byte & 0x80 == 0 {
+                    break;
+                }
+            }
+            cursor += length;
+        } else {
+            let data_length = match status & 0xf0 {
+                0xc0 | 0xd0 => 1,
+                _ => 2,
+            };
+            let data = &bytes[cursor..cursor + data_length];
+            cursor += data_length;
+            if status & 0xf0 == 0x90 && data == [pitch, velocity] {
+                return absolute_tick;
+            }
+        }
+    }
+    panic!("MIDI note-on event was not found");
 }
 
 #[test]

@@ -25,7 +25,7 @@ use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 /// Latest database schema version understood by this release.
-pub const CURRENT_SCHEMA_VERSION: u32 = 55;
+pub const CURRENT_SCHEMA_VERSION: u32 = 56;
 
 const MIGRATION_29: &str = "ALTER TABLE project_meta ADD COLUMN start_measure INTEGER NOT NULL DEFAULT 1 CHECK(start_measure BETWEEN -2147483648 AND 2147483647);";
 const MIGRATION_30: &str = "ALTER TABLE project_meta ADD COLUMN bpm_basis INTEGER NOT NULL DEFAULT 1 CHECK(bpm_basis BETWEEN 0 AND 5);";
@@ -66,6 +66,7 @@ CREATE TABLE IF NOT EXISTS project_region_render_tracks (
 );
 "#;
 const MIGRATION_54: &str = "ALTER TABLE audio_items ADD COLUMN name TEXT NOT NULL DEFAULT '';";
+const MIGRATION_56: &str = "ALTER TABLE items ADD COLUMN start_tick_subtick INTEGER NOT NULL DEFAULT 0 CHECK (start_tick_subtick BETWEEN 0 AND 199);";
 
 const MIGRATION_38: &str = r#"
 CREATE TABLE IF NOT EXISTS arrangement_time_ranges (
@@ -174,6 +175,7 @@ CREATE TABLE items (
     track_id INTEGER NOT NULL REFERENCES tracks(id) ON DELETE CASCADE,
     position INTEGER NOT NULL CHECK (position >= 0),
     start_tick INTEGER NOT NULL CHECK (start_tick >= 0),
+    start_tick_subtick INTEGER NOT NULL DEFAULT 0 CHECK (start_tick_subtick BETWEEN 0 AND 199),
     length_ticks INTEGER NOT NULL CHECK (length_ticks > 0),
     muted INTEGER NOT NULL DEFAULT 0 CHECK (muted IN (0, 1)),
     UNIQUE (track_id, position)
@@ -3433,6 +3435,13 @@ fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
                     }
                 }
             }
+            56 => {
+                if table_exists(&transaction, "items")?
+                    && !table_has_column(&transaction, "items", "start_tick_subtick")?
+                {
+                    transaction.execute_batch(MIGRATION_56)?;
+                }
+            }
             missing => return Err(StorageError::MissingMigration(missing - 1)),
         }
         transaction.pragma_update(None, "user_version", next_version)?;
@@ -3665,13 +3674,14 @@ fn write_snapshot(
 
     for (position, item) in snapshot.midi_items.iter().enumerate() {
         transaction.execute(
-            "INSERT INTO items(id, track_id, position, start_tick, length_ticks, name, source_offset_ticks, loop_source, source_loop_length_ticks, muted) \
-             VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+            "INSERT INTO items(id, track_id, position, start_tick, start_tick_subtick, length_ticks, name, source_offset_ticks, loop_source, source_loop_length_ticks, muted) \
+             VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
             params![
                 to_sql_integer(item.id)?,
                 to_sql_integer(item.track_id)?,
                 usize_to_sql(position)?,
                 to_sql_integer(item.start_tick)?,
+                i64::from(item.start_tick_subtick),
                 to_sql_integer(item.length_ticks)?,
                 item.name,
                 to_sql_integer(item.source_offset_ticks)?,
@@ -4525,7 +4535,7 @@ fn read_midi_items(connection: &Connection) -> Result<(Vec<MidiItemSnapshot>, bo
     }
 
     let mut item_statement = connection.prepare(
-        "SELECT id, track_id, position, start_tick, length_ticks, name, source_offset_ticks, loop_source, source_loop_length_ticks, muted \
+        "SELECT id, track_id, position, start_tick, start_tick_subtick, length_ticks, name, source_offset_ticks, loop_source, source_loop_length_ticks, muted \
          FROM items ORDER BY position",
     )?;
     let item_rows = item_statement
@@ -4536,11 +4546,12 @@ fn read_midi_items(connection: &Connection) -> Result<(Vec<MidiItemSnapshot>, bo
                 row.get::<_, i64>(2)?,
                 row.get::<_, i64>(3)?,
                 row.get::<_, i64>(4)?,
-                row.get::<_, String>(5)?,
-                row.get::<_, i64>(6)?,
+                row.get::<_, i64>(5)?,
+                row.get::<_, String>(6)?,
                 row.get::<_, i64>(7)?,
                 row.get::<_, i64>(8)?,
                 row.get::<_, i64>(9)?,
+                row.get::<_, i64>(10)?,
             ))
         })?
         .collect::<Result<Vec<_>, _>>()?;
@@ -4550,6 +4561,7 @@ fn read_midi_items(connection: &Connection) -> Result<(Vec<MidiItemSnapshot>, bo
         track_id,
         position,
         start_tick,
+        start_tick_subtick,
         length_ticks,
         name,
         source_offset_ticks,
@@ -4578,6 +4590,7 @@ fn read_midi_items(connection: &Connection) -> Result<(Vec<MidiItemSnapshot>, bo
             track_id: from_sql_u64(track_id)?,
             name,
             start_tick: from_sql_u64(start_tick)?,
+            start_tick_subtick: from_sql_u8(start_tick_subtick)?,
             source_offset_ticks: from_sql_u64(source_offset_ticks)?,
             loop_source,
             source_loop_length_ticks: from_sql_u64(source_loop_length_ticks)?,
@@ -4867,7 +4880,7 @@ mod saved_snapshot_tests {
 #[cfg(test)]
 mod loop_source_storage_tests {
     use super::ProjectStore;
-    use aaadaw_core::{DawAction, MidiNoteData, Project};
+    use aaadaw_core::{DawAction, MidiItemPosition, MidiNoteData, Project};
     use rusqlite::Connection;
 
     #[test]
@@ -5320,6 +5333,13 @@ mod loop_source_storage_tests {
                 source_offset_ticks: 240,
             })
             .unwrap();
+        let exact_position = MidiItemPosition::new(1_080, 100).unwrap();
+        project
+            .apply(DawAction::SetMidiItemPosition {
+                item_id,
+                position: exact_position,
+            })
+            .unwrap();
 
         let mut store = ProjectStore::open(&path).unwrap();
         store.save(&project).unwrap();
@@ -5331,6 +5351,47 @@ mod loop_source_storage_tests {
         assert_eq!(item.source_loop_length_ticks(), 960);
         assert_eq!(item.source_offset_ticks(), 240);
         assert_eq!(item.length_ticks(), 1_500);
+        assert_eq!(item.start_position(), exact_position);
+    }
+
+    #[test]
+    fn schema_55_midi_items_migrate_with_zero_fractional_ppq() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("midi-subtick-schema-55.aaadaw");
+        let mut project = Project::new();
+        project
+            .apply(DawAction::CreateTrack {
+                index: 0,
+                name: "Legacy MIDI".to_owned(),
+            })
+            .unwrap();
+        project
+            .apply(DawAction::InsertMidiItem {
+                track_id: project.tracks()[0].id(),
+                start_tick: 964,
+                length_ticks: 960,
+            })
+            .unwrap();
+        let mut store = ProjectStore::open(&path).unwrap();
+        store.save(&project).unwrap();
+        store
+            .connection
+            .execute_batch(
+                "ALTER TABLE items DROP COLUMN start_tick_subtick;
+                 PRAGMA user_version = 55;",
+            )
+            .unwrap();
+        store.close().unwrap();
+
+        let store = ProjectStore::open(&path).unwrap();
+        assert_eq!(
+            store.schema_version().unwrap(),
+            super::CURRENT_SCHEMA_VERSION
+        );
+        let loaded = store.load().unwrap();
+        let item = &loaded.midi_items()[0];
+        assert_eq!(item.start_tick(), 964);
+        assert_eq!(item.start_position().subtick(), 0);
     }
 
     #[test]

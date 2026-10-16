@@ -1,6 +1,6 @@
 use aaadaw_core::{
-    ActionError, DawAction, GridFraction, MidiControllerData, MidiNoteData, MidiPitchBendData,
-    Project,
+    ActionError, DawAction, GridFraction, MidiControllerData, MidiItemPosition, MidiNoteData,
+    MidiPitchBendData, Project,
 };
 
 #[test]
@@ -55,6 +55,67 @@ fn midi_source_loop_length_and_offset_map_events_across_the_visible_clip() {
     assert_eq!(
         item.project_ticks_at_content_tick(120).collect::<Vec<_>>(),
         [460, 1_420]
+    );
+}
+
+#[test]
+fn fractional_midi_item_positions_survive_moves_and_event_mapping() {
+    let mut project = Project::new();
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Fractional MIDI".to_owned(),
+        })
+        .unwrap();
+    project
+        .apply(DawAction::InsertMidiItem {
+            track_id: project.tracks()[0].id(),
+            start_tick: 0,
+            length_ticks: 960,
+        })
+        .unwrap();
+    let item_id = project.midi_items()[0].id();
+    project
+        .apply(DawAction::AddMidiNotes {
+            item_id,
+            notes: vec![MidiNoteData {
+                pitch: 60,
+                tick: 0,
+                duration: 120,
+                velocity: 100,
+            }],
+        })
+        .unwrap();
+    let position = MidiItemPosition::new(964, 160).unwrap();
+    project
+        .apply(DawAction::SetMidiItemPosition { item_id, position })
+        .unwrap();
+
+    let item = &project.midi_items()[0];
+    assert_eq!(item.start_tick(), 964);
+    assert_eq!(item.start_position(), position);
+    assert_eq!(
+        item.project_position_at_content_tick(0),
+        Some(MidiItemPosition::new(964, 160).unwrap())
+    );
+    assert_eq!(
+        item.project_position_at_content_tick(1),
+        Some(MidiItemPosition::new(965, 160).unwrap())
+    );
+
+    project.undo().unwrap();
+    assert_eq!(
+        project.midi_items()[0].start_position(),
+        MidiItemPosition::default()
+    );
+    project.redo().unwrap();
+    assert_eq!(project.midi_items()[0].start_position(), position);
+    project
+        .apply(DawAction::DuplicateMidiItem { item_id })
+        .unwrap();
+    assert_eq!(
+        project.midi_items()[1].start_position(),
+        position.checked_add_ticks(960).unwrap()
     );
 }
 
