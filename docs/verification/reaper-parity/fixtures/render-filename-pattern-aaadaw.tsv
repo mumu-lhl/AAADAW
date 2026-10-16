@@ -28,10 +28,7 @@ aaadaw_wildcard_picker_behavior	Grouped by project information, tempo, time sign
 aaadaw_fallback	Blank pattern preserves pre-existing generated destination names
 aaadaw_path_behavior	Selected destination supplies output directory and extension; expanded name is sanitized as one filename component
 aaadaw_duplicate_behavior	Duplicate resolved names fail before jobs are queued
-aaadaw_regressions	app::audio_export::tests::render_wildcard_picker_lists_and_inserts_supported_tokens; app::audio_export::tests::render_filename_patterns_expand_native_wildcard_contexts_safely; app::audio_export::tests::render_filename_patterns_preserve_unknown_tokens_and_reject_duplicate_targets; app::audio_export::tests::queued_selected_track_stems_freeze_track_order_and_output_names; app::audio_export::tests::region_render_matrix_wavs_match_native_target_count_ranges_and_samples; app::audio_export::tests::render_filename_position_and_length_wildcards_match_native_formats; app::audio_export::tests::render_filename_output_wildcards_match_native_format_and_channel_values
 aaadaw_matrix_audio_comparison	Four outputs; 96,000 frames each; PCM24 stereo data chunks equal native REAPER fixtures byte-for-byte
-aaadaw_window_build_id	33c695bb92717bccbf4a2727bcdfc47b10d62e70
-aaadaw_window_binary_sha256	98bc3bbc1a43e833000d576b04c99ae345e9eb1e0c42119e2a2fb1f08ce2b5eb
 aaadaw_window_screenshot	render-filename-pattern-aaadaw.png
 aaadaw_window_screenshot_sha256	9f65520a38e85e85b7c9cc9e97a499583f222fe11b943a9c4e5a14799bcd316d
 aaadaw_wildcard_picker_screenshot	render-filename-pattern-wildcards-aaadaw.png
@@ -65,8 +62,6 @@ native_position_screenshot_frames	render-wildcards-frames-native.png
 native_position_screenshot_frames_sha256	c7a3ae74c3ba3db4cf26cd1055e57520f641a9884a8dbfdb4155f5f4b0ab0114
 native_position_screenshot_length	render-wildcards-length-native.png
 native_position_screenshot_length_sha256	5eefbd0bd9b4f6478adb09ca410a8bbe982f379123ab16c80688f62a4873ddf3
-verification	App nextest 665/665; strict all-target App Clippy -D warnings; stripped-debug desktop build; AAADAW screenshots recaptured from Build ID 33c695bb92717bccbf4a2727bcdfc47b10d62e70; actual X11 click inserts $sampleratek after picker auto-scroll; REAPER native menu/help catalog and WAV format/channel previews documented; native selected-item and marker probes accept pattern/title/author/notes/track-name/item-start/item-length overrides; rustfmt, diff check, 102-row unique parity CSV and all 36 screenshot SHA-256 checks passed
-remaining_differences	40 implemented tokens are only a subset of the 97 visible native menu entries; native hierarchical menu interaction, token expressions and ordering/escaping rules, presets/cross-launch persistence, collision prompts, project time offset, meter-change, non-30-fps/drop-frame, Tail-boundary behavior, other source/range contexts, non-WAV formats, and multi-channel $chid behavior remain open
 aaadaw_wildcard_picker_scrolled_screenshot	render-filename-pattern-wildcards-scrolled-aaadaw.png
 aaadaw_wildcard_picker_scrolled_screenshot_sha256	81411caac7467eebbba1419418e6aece334b86f680f6a6f23124950c62a93337
 native_output_format_pattern	$format-$samplerate-$sampleratek-$bitdepth-$channels-$chid
@@ -78,7 +73,6 @@ native_output_format_44100_mono_ima_adpcm_output	wav-44100-44.1-4-1.wav
 native_output_format_evidence	REAPER 7.82 preview confirms format/rate/rate-kHz/bit-depth/channel substitution; $chid resolves empty in the current single-file Mono/Stereo source and is excluded until multichannel source/output support is implemented
 native_catalog_token_count	97 visible menu entries across 9 categories
 native_catalog_categories	Project Information; Regions/Markers; Media Items; Position/Length; Recording; Output Format; Channels; Date/Time/Unique ID; Computer Information
-native_catalog_help_semantics	Capitalization modifiers; <X> removal and <abcdeX> replacement; [N] zero-padding and [<N] prefix slicing; empty wildcard adjacent delimiter removal; / directory creation option; {lane}; name=value named note/marker/item/region/take-marker lookup; position and recording order semantics
 native_catalog_screenshot_menu	render-wildcards-menu-native.png
 native_catalog_screenshot_menu_sha256	19f6321855a4347ad40d06d7e2981d1d3b9c2d329723e56c2678898b37e876e3
 native_catalog_screenshot_project_info	render-wildcards-project-info-native.png
@@ -126,3 +120,10 @@ native_catalog_screenshot_bitdepth_ima_sha256	6e12f39a3acf4cc15de47f290e1d7283d3
 native_catalog_screenshot_bitdepth_cadpcm	render-wildcards-bitdepth-cadpcm-native.png
 native_catalog_screenshot_bitdepth_cadpcm_sha256	27bb50f225da9436c27c6573bce74321e67a2ef2d493ca9377aa90e6890619ea
 native_catalog_document	../render-wildcard-catalog.md
+aaadaw_regressions	app::audio_export::tests::render_wildcard_picker_lists_and_inserts_supported_tokens; app::audio_export::tests::render_filename_patterns_expand_native_wildcard_contexts_safely; app::audio_export::tests::render_filename_patterns_preserve_unknown_tokens_and_reject_duplicate_targets; app::audio_export::tests::queued_selected_track_stems_freeze_track_order_and_output_names; app::audio_export::tests::region_render_matrix_wavs_match_native_target_count_ranges_and_samples; app::audio_export::tests::render_filename_position_and_length_wildcards_match_native_formats; app::audio_export::tests::render_filename_output_wildcards_match_native_format_and_channel_values; app::audio_export::tests::render_filename_wildcard_case_and_character_rules_match_native_help; app::audio_export::tests::render_filename_empty_wildcards_omit_the_nearest_native_separator
+aaadaw_wildcard_syntax	Native case modifiers; <X> character removal; <abcdeX> character replacement; [<N] prefix truncation; omission of one adjacent space/hyphen/underscore/dot when the resolved value is empty; [N] render-order counter, / directory creation, {lane}, and named-value expressions remain unimplemented
+remaining_differences	97 native menu entries cataloged; 40 tokens implemented. Named expressions/notes, project directory and folder hierarchy, parent and FX names, marker/item identity and ordering, recording counters, date/time/unique IDs, user/computer values, [N] render-order counters, / directory creation, {lane}, presets, Master $Track substitution, non-WAV formats, per-channel $chid, insertion at caret/selection, project time offset, meter/frame-rate/drop-frame and Tail behavior, and additional source/range combinations remain open
+aaadaw_window_build_id	a480f6100388ac6490b4f413814d75229198eb5f
+aaadaw_window_binary_sha256	1226585dcc778face967763c06889ff339f1334ed3954f5114e2c0856d58fa7c
+verification	App nextest 667/667; strict all-target App Clippy -D warnings; current stripped-debug desktop binary Build ID a480f6100388ac6490b4f413814d75229198eb5f and SHA-256 1226585dcc778face967763c06889ff339f1334ed3954f5114e2c0856d58fa7c; Render field, full 40-token picker, scrolled picker, and actual $sampleratek insertion screenshots recaptured from this binary; native REAPER help pages document case/replacement/truncation/empty-separator rules; regressions cover those rules; temporary pkg-config metadata outside the repository points to installed GLib runtime libraries; rustfmt, diff check, 102-row unique parity CSV, and all 36 screenshot SHA-256 checks passed
+native_catalog_help_semantics	Capitalization modifiers; <X> character removal and <abcdeX> replacement; [N] zero-padded render-order numbering and [<N] prefix slicing; empty adjacent separator removal; / directory creation option; {lane}; name=value named note/marker/item/region/take-marker lookup; position and recording order semantics

@@ -887,6 +887,135 @@ fn format_render_wildcard_bit_depth(sample_format: WavSampleFormat) -> String {
     .to_owned()
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum RenderFilenameWildcardModifier {
+    ReplaceCharacters {
+        characters: Vec<char>,
+        replacement: char,
+    },
+    RemoveCharacter(char),
+    Truncate(usize),
+}
+
+fn parse_render_filename_wildcard_modifiers(
+    characters: &[char],
+    start: usize,
+) -> (usize, Vec<RenderFilenameWildcardModifier>) {
+    let mut index = start;
+    let mut modifiers = Vec::new();
+    while index < characters.len() {
+        match characters[index] {
+            '<' => {
+                let Some(relative_end) = characters[index + 1..]
+                    .iter()
+                    .position(|character| *character == '>')
+                else {
+                    break;
+                };
+                let end = index + 1 + relative_end;
+                if end == index + 1 {
+                    break;
+                }
+                let modifier = &characters[index + 1..end];
+                if modifier.len() == 1 {
+                    modifiers.push(RenderFilenameWildcardModifier::RemoveCharacter(modifier[0]));
+                } else if let Some(replacement) = modifier.last().copied() {
+                    modifiers.push(RenderFilenameWildcardModifier::ReplaceCharacters {
+                        characters: modifier[..modifier.len() - 1].to_vec(),
+                        replacement,
+                    });
+                }
+                index = end + 1;
+            }
+            '[' => {
+                let Some(relative_end) = characters[index + 1..]
+                    .iter()
+                    .position(|character| *character == ']')
+                else {
+                    break;
+                };
+                let end = index + 1 + relative_end;
+                let suffix = &characters[index + 1..end];
+                let Some(digits) = suffix.strip_prefix(&['<']) else {
+                    // [N] is a render-order counter whose scope depends on the
+                    // selected source. Leave it literal until that context is
+                    // modeled rather than treating it as string padding.
+                    break;
+                };
+                let digits = digits.iter().collect::<String>();
+                let Ok(limit) = digits.parse::<usize>() else {
+                    break;
+                };
+                modifiers.push(RenderFilenameWildcardModifier::Truncate(limit));
+                index = end + 1;
+            }
+            _ => break,
+        }
+    }
+    (index, modifiers)
+}
+
+fn apply_render_filename_wildcard_case(value: &str, token: &str) -> String {
+    let mut token_characters = token.chars();
+    let Some(first) = token_characters.next() else {
+        return value.to_owned();
+    };
+    let Some(second) = token_characters.next() else {
+        return value.to_owned();
+    };
+
+    if first.is_ascii_uppercase() && second.is_ascii_uppercase() {
+        value.to_uppercase()
+    } else if first.is_ascii_lowercase() && second.is_ascii_uppercase() {
+        value.to_lowercase()
+    } else if first.is_ascii_uppercase() {
+        let mut value_characters = value.chars();
+        let Some(first_value_character) = value_characters.next() else {
+            return String::new();
+        };
+        first_value_character
+            .to_uppercase()
+            .chain(value_characters)
+            .collect()
+    } else {
+        value.to_owned()
+    }
+}
+
+fn apply_render_filename_wildcard_modifiers(
+    value: &str,
+    token: &str,
+    modifiers: &[RenderFilenameWildcardModifier],
+) -> String {
+    let mut value = apply_render_filename_wildcard_case(value, token);
+    for modifier in modifiers {
+        value = match modifier {
+            RenderFilenameWildcardModifier::ReplaceCharacters {
+                characters,
+                replacement,
+            } => value
+                .chars()
+                .map(|character| {
+                    if characters.contains(&character) {
+                        *replacement
+                    } else {
+                        character
+                    }
+                })
+                .collect(),
+            RenderFilenameWildcardModifier::RemoveCharacter(character) => {
+                value.chars().filter(|value| *value != *character).collect()
+            }
+            RenderFilenameWildcardModifier::Truncate(limit) => value.chars().take(*limit).collect(),
+        };
+    }
+    value
+}
+
+fn is_render_filename_wildcard_separator(character: char) -> bool {
+    matches!(character, ' ' | '-' | '_' | '.')
+}
+
 fn expand_render_filename_pattern(
     pattern: &str,
     fallback: &str,
@@ -1024,10 +1153,19 @@ fn expand_render_filename_pattern(
             index += 1;
             continue;
         }
-        let token = characters[token_start..token_end]
+        let token_original = characters[token_start..token_end]
             .iter()
-            .collect::<String>()
-            .to_ascii_lowercase();
+            .collect::<String>();
+        let token = token_original.to_ascii_lowercase();
+        let known_token = RenderFilenameWildcard::ALL
+            .iter()
+            .any(|wildcard| wildcard.token().trim_start_matches('$') == token);
+        let (wildcard_end, modifiers) = if known_token {
+            parse_render_filename_wildcard_modifiers(&characters, token_end)
+        } else {
+            (token_end, Vec::new())
+        };
+        let expansion_start = result.len();
         match token.as_str() {
             "project" => result.push_str(project_name),
             "title" => result.push_str(&project.project_notes().title),
@@ -1107,7 +1245,32 @@ fn expand_render_filename_pattern(
                 result.extend(&characters[token_start..token_end]);
             }
         }
-        index = token_end;
+        if known_token {
+            let expansion = result.split_off(expansion_start);
+            let expansion =
+                apply_render_filename_wildcard_modifiers(&expansion, &token_original, &modifiers);
+            if expansion.is_empty() {
+                if result
+                    .chars()
+                    .next_back()
+                    .is_some_and(is_render_filename_wildcard_separator)
+                {
+                    result.pop();
+                } else if characters
+                    .get(wildcard_end)
+                    .copied()
+                    .is_some_and(is_render_filename_wildcard_separator)
+                {
+                    index = wildcard_end + 1;
+                    continue;
+                }
+            } else {
+                result.push_str(&expansion);
+            }
+            index = wildcard_end;
+        } else {
+            index = token_end;
+        }
     }
     result
 }
@@ -2976,6 +3139,76 @@ mod tests {
                 Some(format!("{bit_depth}-48-2.wav").as_str())
             );
         }
+    }
+
+    #[test]
+    fn render_filename_wildcard_case_and_character_rules_match_native_help() {
+        let mut project = Project::default();
+        project
+            .apply(DawAction::CreateTrack {
+                index: 0,
+                name: "Drums Kit".to_owned(),
+            })
+            .expect("modifier fixture track should be created");
+        let track_id = project.tracks()[0].id();
+        let settings = aaadaw_app::ProjectWavRenderSettings {
+            master_ceiling: aaadaw_engine::MasterOutputCeiling::default(),
+            export_options: aaadaw_app::WavExportOptions::default(),
+            output_sample_rate: 48_000,
+            output_channels: WavChannelCount::Stereo,
+            source: aaadaw_app::ProjectWavRenderSource::SelectedTrackStem(track_id),
+            start_sample: 0,
+            end_sample: 48_000,
+            tail_milliseconds: 0,
+            normalize_peak: false,
+            normalize_peak_target_centi_dbfs: 0,
+        };
+
+        let output = apply_render_filename_pattern(
+            vec![(settings, Path::new("/renders/base.wav").to_owned())],
+            "$Track|$TRACK|$tRACK|$track< >|$track< _>|$track[<5]",
+            &project,
+            Path::new("/projects/modifiers.aaadaw"),
+        )
+        .expect("native wildcard text modifiers should expand");
+        assert_eq!(
+            output[0].1,
+            Path::new("/renders/Drums Kit_DRUMS KIT_drums kit_DrumsKit_Drums_Kit_Drums.wav")
+        );
+    }
+
+    #[test]
+    fn render_filename_empty_wildcards_omit_the_nearest_native_separator() {
+        let project = Project::default();
+        let settings = aaadaw_app::ProjectWavRenderSettings {
+            master_ceiling: aaadaw_engine::MasterOutputCeiling::default(),
+            export_options: aaadaw_app::WavExportOptions::default(),
+            output_sample_rate: 48_000,
+            output_channels: WavChannelCount::Stereo,
+            source: aaadaw_app::ProjectWavRenderSource::MasterMix,
+            start_sample: 0,
+            end_sample: 48_000,
+            tail_milliseconds: 0,
+            normalize_peak: false,
+            normalize_peak_target_centi_dbfs: 0,
+        };
+        let output = apply_render_filename_pattern(
+            vec![(settings, Path::new("/renders/base.wav").to_owned())],
+            "$region-$track.$marker_$format",
+            &project,
+            Path::new("/projects/empty.aaadaw"),
+        )
+        .expect("empty native wildcard values should omit adjacent separators");
+        assert_eq!(output[0].1, Path::new("/renders/Master_wav.wav"));
+
+        let output = apply_render_filename_pattern(
+            vec![(settings, Path::new("/renders/base.wav").to_owned())],
+            "$marker_$format",
+            &project,
+            Path::new("/projects/empty.aaadaw"),
+        )
+        .expect("a leading empty wildcard should omit its following separator");
+        assert_eq!(output[0].1, Path::new("/renders/wav.wav"));
     }
 
     #[test]

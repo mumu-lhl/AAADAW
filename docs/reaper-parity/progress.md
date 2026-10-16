@@ -26,7 +26,7 @@
 | P7 | 未开始 | MIDI |
 | P8 | 未开始 | 自动化 |
 | P9 | 未开始 | 插件 |
-| P10 | 进行中 | 工程帧率/时间码、Notes 与 General 起始速度/拍号/采样率/有符号 Start measure/BPM basis/标尺间隔锚点/Project start time 显示偏移/已实现字段的默认工程设置保存；媒体默认已有 64pt playback/192pt render sinc，Render 支持 Entire project/Time selection/Custom time range/All project regions/All project markers、默认关闭且整数毫秒输入的 Tail、Project/常用预设输出采样率转换、Mono/Stereo WAV、PCM8/16/24/32、Float32/64、4-bit IMA ADPCM、2-bit cADPCM 与 8-bit u-Law、可调 sample-peak、Selected tracks (stems)/pre-fader/via master、Master mix and stems，以及 Region Render Matrix 的 All/Selected Regions 批量任务构造、一组 4 文件原厂 PCM24 对照和 40 个常用 Wildcard token（其中 18 个 Position/Length 项及 5 个输出格式/通道值与 REAPER 7.82 实窗输出比对）；$region-$track 原厂文件名与完整 PCM 已一致，完整 Wildcards chooser/规则/跨启动保存及其他路由行为仍待验收；cADPCM 编码尚未逐字节一致、Selected regions/markers、其他 Bounds、多声道、其他归一化/限制后处理和完整原厂对照仍缺 |
+| P10 | 进行中 | 工程帧率/时间码、Notes 与 General 起始速度/拍号/采样率/有符号 Start measure/BPM basis/标尺间隔锚点/Project start time 显示偏移/已实现字段的默认工程设置保存；媒体默认已有 64pt playback/192pt render sinc，Render 支持 Entire project/Time selection/Custom time range/All project regions/All project markers、默认关闭且整数毫秒输入的 Tail、Project/常用预设输出采样率转换、Mono/Stereo WAV、PCM8/16/24/32、Float32/64、4-bit IMA ADPCM、2-bit cADPCM 与 8-bit u-Law、可调 sample-peak、Selected tracks (stems)/pre-fader/via master、Master mix and stems，以及 Region Render Matrix 的 All/Selected Regions 批量任务构造、一组 4 文件原厂 PCM24 对照和 40 个常用 Wildcard token（其中 18 个 Position/Length 项及 5 个输出格式/通道值与 REAPER 7.82 实窗输出比对；原厂大小写、字符替换/删除、[<N] 截取和空值分隔符规则已接入）；$region-$track 原厂文件名与完整 PCM 已一致，完整 Wildcards chooser/规则/跨启动保存及其他路由行为仍待验收；cADPCM 编码尚未逐字节一致、Selected regions/markers、其他 Bounds、多声道、其他归一化/限制后处理和完整原厂对照仍缺 |
 | P11 | 未开始 | 其他原厂界面 |
 | P12 | 未开始 | 全量验收 |
 
@@ -1584,3 +1584,8 @@ App nextest 664/664、strict all-target App Clippy `-D warnings`、stripped-debu
 重新组织 picker 末端为独立 Output format 与 Channels 行，并为新增的屏外组补充滚动插入路径；实点 `$sampleratek` 后字段填入正确 token 且面板关闭。40 项分组与滚动后的下半组已用当前 Build ID `33c695bb92717bccbf4a2727bcdfc47b10d62e70` 的实际桌面二进制截图。
 
 另从原厂实窗采集九类共 97 个 wildcard 菜单项、Master $Track substitution 与目录创建选项，并记录 wildcard help 的大小写、字符替换、序号/截取、空值分隔符清理、命名 notes 与位置语义；详情及截图在[原厂 Wildcard catalog](../verification/reaper-parity/render-wildcard-catalog.md)。AAADAW 当前实现 40 项，其余原厂 token、层级 submenu 交互、语法、预设和多源/range 行为继续保持未完成。App nextest 665/665、strict all-target App Clippy `-D warnings`、stripped-debug 构建、格式检查、diff、102 项唯一验收矩阵及 36 张登记截图 SHA-256 通过；`RENDER-WILDCARDS-001`/P10 仍 `in_progress`。
+
+
+## 2026-10-16 Native wildcard text rules
+
+按 REAPER 7.82 Wildcard help 实现大小写模式（首字母大写、整体大写、整体小写）、`<X>` 删除字符、`<abcdeX>` 字符映射替换、`[<N]` 前缀截取，以及空值旁一个空格/连字符/下划线/点号的省略。新增两项 resolver 回归，覆盖这些规则；App nextest 667/667、strict all-target App Clippy `-D warnings` 通过。重建并运行 Build ID `a480f6100388ac6490b4f413814d75229198eb5f` 的桌面二进制，复拍 Render 字段、40 项 picker、滚动 picker 与 `$sampleratek` 实际点击插入界面；帮助页及菜单证据见[原厂 Wildcard catalog](../verification/reaper-parity/render-wildcard-catalog.md)。`[N]` 渲染序号、`/` 目录创建、`{lane}`、命名值表达式与其余原厂 token 仍未实现，`RENDER-WILDCARDS-001` 保持 `in_progress`。
