@@ -1,7 +1,7 @@
 use super::messages::FreezeTrackResult;
 use super::offline_job_queue::{EnqueueError, OfflineJobId};
 use super::{App, Message, run_blocking};
-use aaadaw_app::WavChannelCount;
+use aaadaw_app::{WavChannelCount, WavSampleFormat};
 use aaadaw_core::{DawAction, ItemId, MarkerId, Project, ProjectSnapshot, RegionId, TrackId};
 use aaadaw_storage::ProjectStore;
 use iced::Task;
@@ -77,11 +77,16 @@ pub(crate) enum RenderFilenameWildcard {
     LengthMinutes,
     LengthSecondsComponent,
     LengthMilliseconds,
+    Format,
+    SampleRate,
+    SampleRateKilohertz,
+    BitDepth,
+    Channels,
     Bpm,
 }
 
 impl RenderFilenameWildcard {
-    pub(crate) const ALL: [Self; 35] = [
+    pub(crate) const ALL: [Self; 40] = [
         Self::Project,
         Self::Title,
         Self::Author,
@@ -117,6 +122,11 @@ impl RenderFilenameWildcard {
         Self::LengthMinutes,
         Self::LengthSecondsComponent,
         Self::LengthMilliseconds,
+        Self::Format,
+        Self::SampleRate,
+        Self::SampleRateKilohertz,
+        Self::BitDepth,
+        Self::Channels,
     ];
 
     pub(crate) const fn token(self) -> &'static str {
@@ -155,6 +165,11 @@ impl RenderFilenameWildcard {
             Self::LengthMinutes => "$lenmm",
             Self::LengthSecondsComponent => "$lenss",
             Self::LengthMilliseconds => "$lentt",
+            Self::Format => "$format",
+            Self::SampleRate => "$samplerate",
+            Self::SampleRateKilohertz => "$sampleratek",
+            Self::BitDepth => "$bitdepth",
+            Self::Channels => "$channels",
             Self::Bpm => "$bpm",
         }
     }
@@ -845,6 +860,33 @@ fn format_render_wildcard_length_components(seconds: f64) -> [String; 4] {
     ]
 }
 
+fn format_render_wildcard_sample_rate_kilohertz(sample_rate: u32) -> String {
+    let kilohertz = sample_rate / 1_000;
+    let remainder = sample_rate % 1_000;
+    if remainder == 0 {
+        kilohertz.to_string()
+    } else if remainder.is_multiple_of(100) {
+        format!("{kilohertz}.{}", remainder / 100)
+    } else if remainder.is_multiple_of(10) {
+        format!("{kilohertz}.{:02}", remainder / 10)
+    } else {
+        format!("{kilohertz}.{remainder:03}")
+    }
+}
+
+fn format_render_wildcard_bit_depth(sample_format: WavSampleFormat) -> String {
+    match sample_format {
+        WavSampleFormat::Pcm8 | WavSampleFormat::MuLaw8 => "8",
+        WavSampleFormat::Pcm16 => "16",
+        WavSampleFormat::Pcm24 => "24",
+        WavSampleFormat::Pcm32 | WavSampleFormat::Float32 => "32",
+        WavSampleFormat::Float64 => "64",
+        WavSampleFormat::ImaAdpcm4 => "4",
+        WavSampleFormat::Cadpcm2 => "2",
+    }
+    .to_owned()
+}
+
 fn expand_render_filename_pattern(
     pattern: &str,
     fallback: &str,
@@ -1038,6 +1080,15 @@ fn expand_render_filename_pattern(
             "lenmm" => result.push_str(&length_components[1]),
             "lenss" => result.push_str(&length_components[2]),
             "lentt" => result.push_str(&length_components[3]),
+            "format" => result.push_str("wav"),
+            "samplerate" => result.push_str(&settings.output_sample_rate.to_string()),
+            "sampleratek" => result.push_str(&format_render_wildcard_sample_rate_kilohertz(
+                settings.output_sample_rate,
+            )),
+            "bitdepth" => result.push_str(&format_render_wildcard_bit_depth(
+                settings.export_options.sample_format,
+            )),
+            "channels" => result.push_str(&settings.output_channels.channels().to_string()),
             "tempo" => result.push_str(&bpm_text),
             "timesignature" => result.push_str(&time_signature_text),
             "timesignum" => result.push_str(&time_signature.numerator().to_string()),
@@ -2788,6 +2839,11 @@ mod tests {
                 "$lenmm",
                 "$lenss",
                 "$lentt",
+                "$format",
+                "$samplerate",
+                "$sampleratek",
+                "$bitdepth",
+                "$channels",
             ]
         );
 
@@ -2856,6 +2912,70 @@ mod tests {
                 "/renders/0-02.125-0-03.359-0-01.234-2.1.25-2.3.72-0.2.47-00.00.02.03-00.00.03.10-63-100-37-2.125-3.359-1.234-0-0-1-234.wav"
             )
         );
+    }
+
+    #[test]
+    fn render_filename_output_wildcards_match_native_format_and_channel_values() {
+        let project = Project::default();
+        let mut settings = aaadaw_app::ProjectWavRenderSettings {
+            master_ceiling: aaadaw_engine::MasterOutputCeiling::default(),
+            export_options: aaadaw_app::WavExportOptions::default(),
+            output_sample_rate: 44_100,
+            output_channels: WavChannelCount::Mono,
+            source: aaadaw_app::ProjectWavRenderSource::MasterMix,
+            start_sample: 0,
+            end_sample: 48_000,
+            tail_milliseconds: 0,
+            normalize_peak: false,
+            normalize_peak_target_centi_dbfs: 0,
+        };
+        settings.export_options.sample_format = WavSampleFormat::Pcm16;
+
+        let output = apply_render_filename_pattern(
+            vec![(settings, Path::new("/renders/base.wav").to_owned())],
+            "$format-$samplerate-$sampleratek-$bitdepth-$channels",
+            &project,
+            Path::new("/projects/format.aaadaw"),
+        )
+        .expect("output-format wildcards should expand");
+        assert_eq!(output[0].1, Path::new("/renders/wav-44100-44.1-16-1.wav"));
+
+        settings.output_sample_rate = 22_050;
+        let output = apply_render_filename_pattern(
+            vec![(settings, Path::new("/renders/base.wav").to_owned())],
+            "$samplerate-$sampleratek-$channels",
+            &project,
+            Path::new("/projects/format.aaadaw"),
+        )
+        .expect("fractional kilohertz sample rates should retain precision");
+        assert_eq!(output[0].1, Path::new("/renders/22050-22.05-1.wav"));
+
+        settings.output_sample_rate = 48_000;
+        settings.output_channels = WavChannelCount::Stereo;
+        for (sample_format, bit_depth) in [
+            (WavSampleFormat::Pcm8, "8"),
+            (WavSampleFormat::Pcm16, "16"),
+            (WavSampleFormat::Pcm24, "24"),
+            (WavSampleFormat::Pcm32, "32"),
+            (WavSampleFormat::Float32, "32"),
+            (WavSampleFormat::Float64, "64"),
+            (WavSampleFormat::ImaAdpcm4, "4"),
+            (WavSampleFormat::Cadpcm2, "2"),
+            (WavSampleFormat::MuLaw8, "8"),
+        ] {
+            settings.export_options.sample_format = sample_format;
+            let output = apply_render_filename_pattern(
+                vec![(settings, Path::new("/renders/base.wav").to_owned())],
+                "$bitdepth-$sampleratek-$channels",
+                &project,
+                Path::new("/projects/format.aaadaw"),
+            )
+            .expect("supported WAV bit depth should expand");
+            assert_eq!(
+                output[0].1.file_name().and_then(|name| name.to_str()),
+                Some(format!("{bit_depth}-48-2.wav").as_str())
+            );
+        }
     }
 
     #[test]

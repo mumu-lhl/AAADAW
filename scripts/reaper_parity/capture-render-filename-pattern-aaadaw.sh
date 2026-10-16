@@ -110,6 +110,16 @@ if [[ "${AAADAW_OPEN_WILDCARDS:-0}" == 1 || -n "$insert_wildcard" ]]; then
   "$xdotool" mousemove --sync 575 260 click 1
   sleep 0.4
 fi
+scroll_wildcards=${AAADAW_SCROLL_WILDCARDS:-0}
+case "$insert_wildcard" in
+  format|samplerate|sampleratek|bitdepth|channels)
+    [[ "$scroll_wildcards" == 0 ]] && scroll_wildcards=2
+    ;;
+esac
+if [[ "$scroll_wildcards" =~ ^[1-9][0-9]*$ ]]; then
+  "$xdotool" mousemove --sync 550 680 click --repeat "$scroll_wildcards" --delay 50 5
+  sleep 0.3
+fi
 if [[ -n "$insert_wildcard" ]]; then
   case "$insert_wildcard" in
     project) wildcard_x=163; wildcard_y=316 ;;
@@ -147,8 +157,16 @@ if [[ -n "$insert_wildcard" ]]; then
     lenmm) wildcard_x=230; wildcard_y=700 ;;
     lenss) wildcard_x=304; wildcard_y=700 ;;
     lentt) wildcard_x=376; wildcard_y=700 ;;
+    format) wildcard_x=134; wildcard_y=735 ;;
+    samplerate) wildcard_x=215; wildcard_y=735 ;;
+    sampleratek) wildcard_x=324; wildcard_y=735 ;;
+    bitdepth) wildcard_x=436; wildcard_y=735 ;;
+    channels) wildcard_x=102; wildcard_y=770 ;;
     *) printf 'Unknown AAADAW_INSERT_WILDCARD token: %s\n' "$insert_wildcard" >&2; exit 2 ;;
   esac
+  if [[ "$scroll_wildcards" =~ ^[1-9][0-9]*$ ]]; then
+    wildcard_y=$((wildcard_y - 120 * scroll_wildcards))
+  fi
   "$xdotool" mousemove --sync "$wildcard_x" "$wildcard_y" click 1
   sleep 0.4
 fi

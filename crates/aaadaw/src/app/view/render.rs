@@ -251,6 +251,14 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
                     "Length components:",
                     RenderFilenameWildcard::ALL.into_iter().skip(31).take(4),
                 ),
+                wildcard_group_row(
+                    "Output format:",
+                    RenderFilenameWildcard::ALL.into_iter().skip(35).take(4),
+                ),
+                wildcard_group_row(
+                    "Channels:",
+                    RenderFilenameWildcard::ALL.into_iter().skip(39).take(1),
+                ),
             ]
             .spacing(tokens::SPACING_XS)
         } else {

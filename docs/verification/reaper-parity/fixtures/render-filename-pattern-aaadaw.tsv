@@ -1,6 +1,6 @@
 key	value
 reference	Linux REAPER 7.82 / Default 7 / Linux desktop
-native_reference	images/render-selected-items-native.png; render-selected-items-native.tsv; region-render-matrix-render-native.tsv; render-wildcards-context-native.png; render-wildcards-marker-native.png; render-wildcards-metadata-native.png; render-wildcards-unnamed-track-native.png; render-wildcards-clock-native.png; render-wildcards-beats-native.png; render-wildcards-timecode-native.png; render-wildcards-frames-native.png; render-wildcards-length-native.png
+native_reference	images/render-selected-items-native.png; render-selected-items-native.tsv; region-render-matrix-render-native.tsv; render-wildcards-context-native.png; render-wildcards-marker-native.png; render-wildcards-metadata-native.png; render-wildcards-unnamed-track-native.png; render-wildcards-clock-native.png; render-wildcards-beats-native.png; render-wildcards-timecode-native.png; render-wildcards-frames-native.png; render-wildcards-length-native.png; render-wildcards-menu-native.png; render-wildcards-project-info-native.png; render-wildcards-regions-native.png; render-wildcards-media-native.png; render-wildcards-position-native.png; render-wildcards-recording-native.png; render-wildcards-format-native.png; render-wildcards-channels-native.png; render-wildcards-date-native.png; render-wildcards-computer-native.png; render-wildcards-master-track-native.png; render-wildcards-options-native.png; render-wildcards-help-1-native.png; render-wildcards-help-2-native.png; render-wildcards-help-3-native.png; render-wildcards-help-4-native.png; render-wildcards-help-5-native.png; render-wildcards-format-preview-native.png; render-wildcards-mono-native.png; render-wildcards-samplerate-22050-native.png; render-wildcards-bitdepth-16-native.png; render-wildcards-bitdepth-ima-native.png; render-wildcards-bitdepth-cadpcm-native.png
 native_selected_item_pattern	$region-$item
 native_selected_item_output	bounds-ui-Region 2-item_02.wav
 native_matrix_pattern	$region-$track
@@ -21,24 +21,24 @@ native_unnamed_track_output	Track 01.wav
 native_unnamed_track_evidence	Native Render preview after setting the fixture track name to an empty string
 native_unnamed_track_screenshot	render-wildcards-unnamed-track-native.png
 native_unnamed_track_screenshot_sha256	fc28dbf10f433746a70ce20d9460c0d71c5da17d736dcb362fd757e2e09bf58f
-native_pattern_override	AAADAW_REAPER_WILDCARD_PATTERN overrides the selected-item and marker probe patterns; the selected-item probe also accepts title/author/notes, track-name, item-start, and item-length inputs
-aaadaw_tokens	$project; $title; $author; $projectnotes; $bpm; $tempo; $timesignature; $timesignum; $timesigdenom; $track; $tracknumber; $tracknameornumber; $region; $regionnumber; $marker; $markernumber; $item; $start; $end; $length; $startbeats; $endbeats; $lengthbeats; $starttc; $endtc; $startframes; $endframes; $lengthframes; $startseconds; $endseconds; $lengthseconds; $lenhh; $lenmm; $lenss; $lentt
-aaadaw_wildcard_picker_tokens	$project; $title; $author; $projectnotes; $bpm; $tempo; $timesignature; $timesignum; $timesigdenom; $track; $tracknumber; $tracknameornumber; $region; $regionnumber; $marker; $markernumber; $item; $start; $end; $length; $startbeats; $endbeats; $lengthbeats; $starttc; $endtc; $startframes; $endframes; $lengthframes; $startseconds; $endseconds; $lengthseconds; $lenhh; $lenmm; $lenss; $lentt
-aaadaw_wildcard_picker_behavior	Grouped by project information, tempo, time signature, tracks, regions/markers, media items, and Position/Length; selecting a token appends it to the pattern end and closes the picker
+native_pattern_override	AAADAW_REAPER_WILDCARD_PATTERN overrides the selected-item and marker probe patterns; selected-item probe also accepts title/author/notes, track-name, item-start, and item-length inputs
+aaadaw_tokens	$project; $title; $author; $projectnotes; $bpm; $tempo; $timesignature; $timesignum; $timesigdenom; $track; $tracknumber; $tracknameornumber; $region; $regionnumber; $marker; $markernumber; $item; $start; $end; $length; $startbeats; $endbeats; $lengthbeats; $starttc; $endtc; $startframes; $endframes; $lengthframes; $startseconds; $endseconds; $lengthseconds; $lenhh; $lenmm; $lenss; $lentt; $format; $samplerate; $sampleratek; $bitdepth; $channels
+aaadaw_wildcard_picker_tokens	$project; $title; $author; $projectnotes; $bpm; $tempo; $timesignature; $timesignum; $timesigdenom; $track; $tracknumber; $tracknameornumber; $region; $regionnumber; $marker; $markernumber; $item; $start; $end; $length; $startbeats; $endbeats; $lengthbeats; $starttc; $endtc; $startframes; $endframes; $lengthframes; $startseconds; $endseconds; $lengthseconds; $lenhh; $lenmm; $lenss; $lentt; $format; $samplerate; $sampleratek; $bitdepth; $channels
+aaadaw_wildcard_picker_behavior	Grouped by project information, tempo, time signature, tracks, regions/markers, media items, Position/Length, output format, and channels; panel scrolls to lower groups; selecting a token appends it to the pattern end and closes the picker
 aaadaw_fallback	Blank pattern preserves pre-existing generated destination names
 aaadaw_path_behavior	Selected destination supplies output directory and extension; expanded name is sanitized as one filename component
 aaadaw_duplicate_behavior	Duplicate resolved names fail before jobs are queued
-aaadaw_regressions	app::audio_export::tests::render_wildcard_picker_lists_and_inserts_supported_tokens; app::audio_export::tests::render_filename_patterns_expand_native_wildcard_contexts_safely; app::audio_export::tests::render_filename_patterns_preserve_unknown_tokens_and_reject_duplicate_targets; app::audio_export::tests::queued_selected_track_stems_freeze_track_order_and_output_names; app::audio_export::tests::region_render_matrix_wavs_match_native_target_count_ranges_and_samples; app::audio_export::tests::render_filename_position_and_length_wildcards_match_native_formats
+aaadaw_regressions	app::audio_export::tests::render_wildcard_picker_lists_and_inserts_supported_tokens; app::audio_export::tests::render_filename_patterns_expand_native_wildcard_contexts_safely; app::audio_export::tests::render_filename_patterns_preserve_unknown_tokens_and_reject_duplicate_targets; app::audio_export::tests::queued_selected_track_stems_freeze_track_order_and_output_names; app::audio_export::tests::region_render_matrix_wavs_match_native_target_count_ranges_and_samples; app::audio_export::tests::render_filename_position_and_length_wildcards_match_native_formats; app::audio_export::tests::render_filename_output_wildcards_match_native_format_and_channel_values
 aaadaw_matrix_audio_comparison	Four outputs; 96,000 frames each; PCM24 stereo data chunks equal native REAPER fixtures byte-for-byte
-aaadaw_window_build_id	e87616caa9eaeeece5108c1ee126b55983742dfb
-aaadaw_window_binary_sha256	ff474c1d4c1d701f0dbd51853f8de43aaa5f4959aff02048b4ea0308cf4db6e9
+aaadaw_window_build_id	33c695bb92717bccbf4a2727bcdfc47b10d62e70
+aaadaw_window_binary_sha256	98bc3bbc1a43e833000d576b04c99ae345e9eb1e0c42119e2a2fb1f08ce2b5eb
 aaadaw_window_screenshot	render-filename-pattern-aaadaw.png
 aaadaw_window_screenshot_sha256	9f65520a38e85e85b7c9cc9e97a499583f222fe11b943a9c4e5a14799bcd316d
 aaadaw_wildcard_picker_screenshot	render-filename-pattern-wildcards-aaadaw.png
-aaadaw_wildcard_picker_screenshot_sha256	251566e22fba401c28e1c65f0b54f0d174e82f4ac2ba4f893e7810a7dbc30f27
+aaadaw_wildcard_picker_screenshot_sha256	ba9527996ca0b576fe7560d47d32acdae08e52de7aa8b2e1a7f20199b9fe9322
 aaadaw_wildcard_insert_screenshot	render-filename-pattern-wildcard-insert-aaadaw.png
-aaadaw_wildcard_insert_screenshot_sha256	92662fcb4f1a785f53ae56ef9c7b4b8180fa7285a485835a15fc8030372974b4
-aaadaw_wildcard_insert_interaction	X11 click on the bottom-row $lentt picker button inserts $lentt into the filename field and closes the picker
+aaadaw_wildcard_insert_screenshot_sha256	e64345d4c1861bc941e494955a1a3b10206856ffaf81c877eed44bb946641297
+aaadaw_wildcard_insert_interaction	X11 click on $sampleratek after scrolling the picker to lower groups inserts $sampleratek into the filename field and closes the picker
 aaadaw_window_geometry	1280x800 desktop display; Render project to WAV window 640x720
 native_context_screenshot	render-wildcards-context-native.png
 native_context_screenshot_sha256	2f7cec40f5f8b096717580f3f50357077d2c6a35337a0cc7df338ae3cfeb5364
@@ -65,5 +65,64 @@ native_position_screenshot_frames	render-wildcards-frames-native.png
 native_position_screenshot_frames_sha256	c7a3ae74c3ba3db4cf26cd1055e57520f641a9884a8dbfdb4155f5f4b0ab0114
 native_position_screenshot_length	render-wildcards-length-native.png
 native_position_screenshot_length_sha256	5eefbd0bd9b4f6478adb09ca410a8bbe982f379123ab16c80688f62a4873ddf3
-verification	App nextest 664/664; strict all-target App Clippy -D warnings; stripped-debug desktop build; AAADAW screenshots recaptured from Build ID e87616caa9eaeeece5108c1ee126b55983742dfb; actual X11 click inserts bottom-row $lentt and closes the picker; native selected-item and marker probes accept pattern/title/author/notes/track-name/item-start/item-length overrides; rustfmt, diff check, 102-row parity CSV and all twelve screenshot SHA-256 checks passed
-remaining_differences	35 implemented tokens are only a subset of REAPER's full set; insertion is at pattern end with no caret/selection support; full token set, expressions and ordering/escaping rules, presets or cross-launch persistence, native collision prompts, and time-offset, meter-change, non-30-fps, drop-frame and tail-boundary position behavior plus full source/range coverage remain open
+verification	App nextest 665/665; strict all-target App Clippy -D warnings; stripped-debug desktop build; AAADAW screenshots recaptured from Build ID 33c695bb92717bccbf4a2727bcdfc47b10d62e70; actual X11 click inserts $sampleratek after picker auto-scroll; REAPER native menu/help catalog and WAV format/channel previews documented; native selected-item and marker probes accept pattern/title/author/notes/track-name/item-start/item-length overrides; rustfmt, diff check, 102-row unique parity CSV and all 36 screenshot SHA-256 checks passed
+remaining_differences	40 implemented tokens are only a subset of the 97 visible native menu entries; native hierarchical menu interaction, token expressions and ordering/escaping rules, presets/cross-launch persistence, collision prompts, project time offset, meter-change, non-30-fps/drop-frame, Tail-boundary behavior, other source/range contexts, non-WAV formats, and multi-channel $chid behavior remain open
+aaadaw_wildcard_picker_scrolled_screenshot	render-filename-pattern-wildcards-scrolled-aaadaw.png
+aaadaw_wildcard_picker_scrolled_screenshot_sha256	81411caac7467eebbba1419418e6aece334b86f680f6a6f23124950c62a93337
+native_output_format_pattern	$format-$samplerate-$sampleratek-$bitdepth-$channels-$chid
+native_output_format_44100_stereo_output	wav-44100-44.1-24-2.wav
+native_output_format_44100_mono_output	wav-44100-44.1-24-1.wav
+native_output_format_22050_mono_cadpcm_output	wav-22050-22.05-2-1.wav
+native_output_format_44100_mono_pcm16_output	wav-44100-44.1-16-1.wav
+native_output_format_44100_mono_ima_adpcm_output	wav-44100-44.1-4-1.wav
+native_output_format_evidence	REAPER 7.82 preview confirms format/rate/rate-kHz/bit-depth/channel substitution; $chid resolves empty in the current single-file Mono/Stereo source and is excluded until multichannel source/output support is implemented
+native_catalog_token_count	97 visible menu entries across 9 categories
+native_catalog_categories	Project Information; Regions/Markers; Media Items; Position/Length; Recording; Output Format; Channels; Date/Time/Unique ID; Computer Information
+native_catalog_help_semantics	Capitalization modifiers; <X> removal and <abcdeX> replacement; [N] zero-padding and [<N] prefix slicing; empty wildcard adjacent delimiter removal; / directory creation option; {lane}; name=value named note/marker/item/region/take-marker lookup; position and recording order semantics
+native_catalog_screenshot_menu	render-wildcards-menu-native.png
+native_catalog_screenshot_menu_sha256	19f6321855a4347ad40d06d7e2981d1d3b9c2d329723e56c2678898b37e876e3
+native_catalog_screenshot_project_info	render-wildcards-project-info-native.png
+native_catalog_screenshot_project_info_sha256	1e3cbf039ee5626ade69a9a826b7e44f4ed149d13203b292b2af849d01806632
+native_catalog_screenshot_regions	render-wildcards-regions-native.png
+native_catalog_screenshot_regions_sha256	146e67a66e73192d95889a6ef2d19bf63ab9a4c09db023c9e03233ee8c6187db
+native_catalog_screenshot_media	render-wildcards-media-native.png
+native_catalog_screenshot_media_sha256	e53b607d1c852c8bbf7adadc99f507500c1d21cb00ddba9418caa4ac90b63272
+native_catalog_screenshot_position	render-wildcards-position-native.png
+native_catalog_screenshot_position_sha256	fe90454a046343bbddc43b992b329da894392e7555e96bab14cc22c1545405f2
+native_catalog_screenshot_recording	render-wildcards-recording-native.png
+native_catalog_screenshot_recording_sha256	e7d3ca3ede67e281e019cc1a10fe8a28d21337b8cf9e31435d5cb21a3b6b6d1b
+native_catalog_screenshot_format	render-wildcards-format-native.png
+native_catalog_screenshot_format_sha256	d61a01b9538d6777d6f74d51e019ebd307334951b62a37bae8cb30cc9b62b9c9
+native_catalog_screenshot_channels	render-wildcards-channels-native.png
+native_catalog_screenshot_channels_sha256	fcbf5d9c17de1e4f06e6c2b355f28c5bdae40efddc38e0ead2050a51cbef137b
+native_catalog_screenshot_date_time	render-wildcards-date-native.png
+native_catalog_screenshot_date_time_sha256	43cba2558a163ad7d70a3b882c62c5759d65168282ca9a7eba5fe0564f668737
+native_catalog_screenshot_computer	render-wildcards-computer-native.png
+native_catalog_screenshot_computer_sha256	f850a8ee38325068fa143e25c110a46f4a7696e3f44ac9746d60c2264c014e5a
+native_catalog_screenshot_master_track_substitution	render-wildcards-master-track-native.png
+native_catalog_screenshot_master_track_substitution_sha256	2e547f4278cf731937ab7d38d266081b75cde174c4fdbd0b8d28154fe2b91369
+native_catalog_screenshot_directory_options	render-wildcards-options-native.png
+native_catalog_screenshot_directory_options_sha256	44f91ffe6a3562180cbfd9241e7014bc5c2187e30f467313904a39db48e6cfb3
+native_catalog_screenshot_help_1	render-wildcards-help-1-native.png
+native_catalog_screenshot_help_1_sha256	20ceaf7e937ec0bde354827ffdf4be272b80e5a49b48c0cb0e4bf415b6143b71
+native_catalog_screenshot_help_2	render-wildcards-help-2-native.png
+native_catalog_screenshot_help_2_sha256	c13356a0fa5b6fcfe3035a83043cebe470a1f6c91b163d6e25dd5c296c84173d
+native_catalog_screenshot_help_3	render-wildcards-help-3-native.png
+native_catalog_screenshot_help_3_sha256	2f1a799b61c9f65a9743e698cc8b5c65634b8c2635b3d4eb9ea431dbc86d8fed
+native_catalog_screenshot_help_4	render-wildcards-help-4-native.png
+native_catalog_screenshot_help_4_sha256	e82056c16864e1dae7d619c12a92c2c34af238b2bd8c1f95038ba11bf3632a7b
+native_catalog_screenshot_help_5	render-wildcards-help-5-native.png
+native_catalog_screenshot_help_5_sha256	5f66e4c78045290bf354f5a912982d1901457872f56679e0574a8cf560de3722
+native_catalog_screenshot_format_preview	render-wildcards-format-preview-native.png
+native_catalog_screenshot_format_preview_sha256	5f8ab31e110b19fa10406dacff69f5e5baac29478cadf42858a85769d070e29c
+native_catalog_screenshot_mono_preview	render-wildcards-mono-native.png
+native_catalog_screenshot_mono_preview_sha256	f60cb7d2772fc7a815248958ef1e65e13fa4609b2062d954332b049f6804d5fe
+native_catalog_screenshot_samplerate_22050	render-wildcards-samplerate-22050-native.png
+native_catalog_screenshot_samplerate_22050_sha256	de05ef43cafa40af051ac9d1a8ed7185bb7f095edd9ad8817ba0df4ddc53600c
+native_catalog_screenshot_bitdepth_pcm16	render-wildcards-bitdepth-16-native.png
+native_catalog_screenshot_bitdepth_pcm16_sha256	913bbea269a88d6f038382b89e9c69a96a53ce96d7ef66edc1c1bcfff1d6ea42
+native_catalog_screenshot_bitdepth_ima	render-wildcards-bitdepth-ima-native.png
+native_catalog_screenshot_bitdepth_ima_sha256	6e12f39a3acf4cc15de47f290e1d7283d3133cb0f9eee7380e3c7723936506c8
+native_catalog_screenshot_bitdepth_cadpcm	render-wildcards-bitdepth-cadpcm-native.png
+native_catalog_screenshot_bitdepth_cadpcm_sha256	27bb50f225da9436c27c6573bce74321e67a2ef2d493ca9377aa90e6890619ea
+native_catalog_document	../render-wildcard-catalog.md

@@ -26,7 +26,7 @@
 | P7 | 未开始 | MIDI |
 | P8 | 未开始 | 自动化 |
 | P9 | 未开始 | 插件 |
-| P10 | 进行中 | 工程帧率/时间码、Notes 与 General 起始速度/拍号/采样率/有符号 Start measure/BPM basis/标尺间隔锚点/Project start time 显示偏移/已实现字段的默认工程设置保存；媒体默认已有 64pt playback/192pt render sinc，Render 支持 Entire project/Time selection/Custom time range/All project regions/All project markers、默认关闭且整数毫秒输入的 Tail、Project/常用预设输出采样率转换、Mono/Stereo WAV、PCM8/16/24/32、Float32/64、4-bit IMA ADPCM、2-bit cADPCM 与 8-bit u-Law、可调 sample-peak、Selected tracks (stems)/pre-fader/via master、Master mix and stems，以及 Region Render Matrix 的 All/Selected Regions 批量任务构造、一组 4 文件原厂 PCM24 对照和 35 个常用 Wildcard token（其中新增 18 个 Position/Length 项并与 REAPER 7.82 实窗输出比对）；$region-$track 原厂文件名与完整 PCM 已一致，完整 Wildcards chooser/规则/跨启动保存及其他路由行为仍待验收；cADPCM 编码尚未逐字节一致、Selected regions/markers、其他 Bounds、多声道、其他归一化/限制后处理和完整原厂对照仍缺 |
+| P10 | 进行中 | 工程帧率/时间码、Notes 与 General 起始速度/拍号/采样率/有符号 Start measure/BPM basis/标尺间隔锚点/Project start time 显示偏移/已实现字段的默认工程设置保存；媒体默认已有 64pt playback/192pt render sinc，Render 支持 Entire project/Time selection/Custom time range/All project regions/All project markers、默认关闭且整数毫秒输入的 Tail、Project/常用预设输出采样率转换、Mono/Stereo WAV、PCM8/16/24/32、Float32/64、4-bit IMA ADPCM、2-bit cADPCM 与 8-bit u-Law、可调 sample-peak、Selected tracks (stems)/pre-fader/via master、Master mix and stems，以及 Region Render Matrix 的 All/Selected Regions 批量任务构造、一组 4 文件原厂 PCM24 对照和 40 个常用 Wildcard token（其中 18 个 Position/Length 项及 5 个输出格式/通道值与 REAPER 7.82 实窗输出比对）；$region-$track 原厂文件名与完整 PCM 已一致，完整 Wildcards chooser/规则/跨启动保存及其他路由行为仍待验收；cADPCM 编码尚未逐字节一致、Selected regions/markers、其他 Bounds、多声道、其他归一化/限制后处理和完整原厂对照仍缺 |
 | P11 | 未开始 | 其他原厂界面 |
 | P12 | 未开始 | 全量验收 |
 
@@ -1575,3 +1575,12 @@ Render 窗口新增可选文件名模式字段及分组的 `Wildcards…` 插入
 Render filename picker 新增 `$start`、`$end`、`$length`、beat、timecode、frame、seconds 与 length-component 共 18 个 Position/Length tokens，picker 扩展到 35 项并按功能分组。REAPER 7.82 默认设置下，用 2.125–3.359 秒选中 Item 验证时钟、4/4 拍位置、30 fps timecode/frame、秒与毫秒长度输出；原厂截图及预期值已入 fixture。修复 Media items 行误收全部后续按钮造成的横向溢出；更新后的 640×720 Render 窗口完整展示各组按钮，并通过 X11 实点最底部 `$lentt` 按钮，确认写入字段后关闭 picker。
 
 App nextest 664/664、strict all-target App Clippy `-D warnings`、stripped-debug 桌面构建通过；默认界面、全量 picker、实际 token 插入截图来自同一 Build ID，并记录在 [Wildcard 验证](../verification/reaper-parity/render-filename-patterns.md) 与 fixture manifest。格式、diff 检查、102 行唯一 ID 矩阵与全部 12 张登记截图 SHA-256 通过。项目时间偏移、跨拍号范围、非 30 fps、drop-frame、Tail 交互及 REAPER 完整 wildcard 清单仍待原厂比对，`RENDER-WILDCARDS-001`/P10 持续 `in_progress`。
+
+
+## 2026-10-16 Render format/channel wildcards and native catalog
+
+根据 REAPER 7.82 Wildcards 菜单及 help 页新增 `$format`、`$samplerate`、`$sampleratek`、`$bitdepth` 和 `$channels`，AAADAW picker 扩展到 40 项。原厂实窗预览验证 48 kHz/24-bit/stereo、44.1 kHz/mono/16-bit、22.05 kHz/mono/2-bit cADPCM，以及 IMA 4-bit；千赫兹字符串分别匹配 `48`、`44.1`、`22.05`，频道数匹配 1/2，压缩 WAV 的 bit depth 按 4/2 显示。功能回归覆盖 9 种已有 WAV sample format、44100/22050/48000 sample rates 和 Mono/Stereo。
+
+重新组织 picker 末端为独立 Output format 与 Channels 行，并为新增的屏外组补充滚动插入路径；实点 `$sampleratek` 后字段填入正确 token 且面板关闭。40 项分组与滚动后的下半组已用当前 Build ID `33c695bb92717bccbf4a2727bcdfc47b10d62e70` 的实际桌面二进制截图。
+
+另从原厂实窗采集九类共 97 个 wildcard 菜单项、Master $Track substitution 与目录创建选项，并记录 wildcard help 的大小写、字符替换、序号/截取、空值分隔符清理、命名 notes 与位置语义；详情及截图在[原厂 Wildcard catalog](../verification/reaper-parity/render-wildcard-catalog.md)。AAADAW 当前实现 40 项，其余原厂 token、层级 submenu 交互、语法、预设和多源/range 行为继续保持未完成。App nextest 665/665、strict all-target App Clippy `-D warnings`、stripped-debug 构建、格式检查、diff、102 项唯一验收矩阵及 36 张登记截图 SHA-256 通过；`RENDER-WILDCARDS-001`/P10 仍 `in_progress`。
