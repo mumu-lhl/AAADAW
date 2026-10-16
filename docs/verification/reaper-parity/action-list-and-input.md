@@ -106,9 +106,9 @@ Main Section 动作导出列出 41127 `Item: Select next adjacent non-overlappin
 
 ## 2026-10-13 Main actions 41167/41168：移动光标到最近 item 边缘
 
-Main Section 动作导出列出 41167 `Item navigation: Move cursor left to nearest item edge` 与 41168 `Item navigation: Move cursor right to nearest item edge`，均无默认快捷键。原厂 7.82 探针确认两项搜索整个工程的 Audio 与 MIDI item 起止边缘，不依赖 item 选择；边缘必须严格位于当前 edit cursor 的左侧或右侧。光标正好位于一个边缘时会跳过该点，继续寻找下一个边缘。AAADAW 逻辑和无方向目标时的禁用条件与这些观察一致；执行只移动光标，保留 item 选择和项目/Undo 历史。
+Main Section 动作导出列出 41167 `Item navigation: Move cursor left to nearest item edge` 与 41168 `Item navigation: Move cursor right to nearest item edge`，均无默认快捷键。原厂 7.82 探针确认两项搜索整个工程的 Audio 与 MIDI item 起止边缘，不依赖 item 选择；边缘必须严格位于当前 edit cursor 的左侧或右侧。光标正好位于一个边缘时会跳过该点，继续寻找下一个边缘。AAADAW 按连续项目采样位置比较候选边缘，Audio 边缘保持精确样本、MIDI 边缘使用 tick；执行只移动光标，保留 item 选择和项目/Undo 历史。
 
-`item_edge_navigation_actions_move_to_nearest_audio_or_midi_boundary` 覆盖混合类型、Action List Run、双向无目标、item 选择保留和工程历史不变；原厂音频边缘、MIDI 边缘、无选择及相等端点输出见 [item navigation TSV](fixtures/item-navigation-native.tsv)。Action List 焦点和整套 Arrange 实窗对照仍待完成，`ITEM-SELECT-012/013` 保持 `in_progress`。
+`item_edge_navigation_actions_move_to_nearest_audio_or_midi_boundary` 现在以非 tick 对齐 Audio 边界测试混合类型、Action List Run、双向导航、无目标、严格跳过相等端点、item 选择保留和工程历史不变；原厂音频边缘、MIDI 边缘、无选择及相等端点输出见 [item navigation TSV](fixtures/item-navigation-native.tsv)。REAPER 原厂非 tick 对齐位置和 AAADAW 实窗光标位置仍待比较；Action List 焦点和整套 Arrange 实窗对照也未完成，`ITEM-SELECT-012/013` 保持 `in_progress`。
 
 ## 2026-10-13 Main actions 41139/41140：相邻轨道 item 导航
 
@@ -122,9 +122,11 @@ AAADAW 注册稳定 ID `item.select-previous-track` 与 `item.select-next-track`
 
 Main Section 动作目录列出 41173 `Item navigation: Move cursor to start of items` 与 41174 `Item navigation: Move cursor to end of items`。REAPER 7.82 / Default 7 真实点击探针确认：单选时分别移动到该 Audio 或 MIDI item 的起点/终点；多选时 41173 使用所有所选 items 的最早起点，41174 使用最晚终点，且范围可跨轨。空 item 选择时两项均不移动光标；执行不修改 item/track 选择或工程状态。
 
-AAADAW 已加入稳定动作 ID `item.navigate-cursor-selected-start` 与 `item.navigate-cursor-selected-end`，在共同项目 tick 上计算所选 Audio/MIDI 区间的外侧边界，只移动 edit cursor。`selected_item_cursor_actions_use_outer_audio_midi_bounds` 通过 Action List Run 覆盖跨轨 Audio/MIDI 选择、忽略未选 item、保留 item/track 选择、无选择 no-op 及工程/Undo 状态不变。当前时间线光标是整数 tick，Audio sample endpoint 转 tick 时可能量化；非 tick 对齐样本的精确光标位置尚未验证，不能据此视为完整通过。原厂逐项结果见 [item navigation TSV](fixtures/item-navigation-native.tsv)；可用上文探针脚本在真实点击一个 item 后追加 `41173`/`41174` 请求，多选使用 Ctrl-click。
+AAADAW 已加入稳定动作 ID `item.navigate-cursor-selected-start` 与 `item.navigate-cursor-selected-end`，分别移动到所选 Audio/MIDI 区间的最早与最晚边界。Audio 边界以项目 sample 精确保留，MIDI 边界保留项目 tick；Arrange 光标 shader 使用分数 tick 定位，播放 seek、Audio 导入、Loop 粘贴、光标处分割和 Nudge/Set 光标目标读取同一精确位置。`selected_item_cursor_actions_use_outer_audio_midi_bounds` 覆盖跨轨混合选择、未选项过滤、选择/工程/Undo 保持；`selected_audio_item_cursor_actions_preserve_sample_exact_boundaries` 覆盖非 tick 对齐 Audio 起止样本、光标位置、导入、光标处分割和普通 tick 光标重置；`item_edge_navigation_actions_move_to_nearest_audio_or_midi_boundary` 也使用非 tick 对齐 Audio 边界。原厂逐项结果见 [item navigation TSV](fixtures/item-navigation-native.tsv)；可用上文探针脚本在真实点击一个 item 后追加 `41173`/`41174` 请求，多选使用 Ctrl-click。
 
-当前尚未确认空 item 选择时 Action List 的启用状态、窗口焦点和完整 Arrange 视觉边界，`ITEM-SELECT-016/017` 保持 `in_progress`。
+AAADAW 的 Main 41173 实窗操作已通过 Action List 完成：选择 Track B 的 Audio item 后运行 `Item navigation: Move cursor to start of items`，Transport 到达 `0:04.000`，Item Inspector 保持显示精确起点 sample `192012`，Arrange 光标落在该 item 起边界。运行前后 Action List 与 Arrange 截图、1280×800 Xorg 配置、Build ID、binary/screenshot hashes 和可重建的 off-grid 项目见 [AAADAW cursor fixture](fixtures/item-cursor-sample-aaadaw.tsv)、[运行前](fixtures/item-cursor-sample-before-aaadaw.png)、[Action List 运行前](fixtures/item-cursor-sample-actionlist-before-aaadaw.png)、[Action List 运行后](fixtures/item-cursor-sample-actionlist-after-aaadaw.png)和[Arrange 结果](fixtures/item-cursor-sample-after-aaadaw.png)。子 tick 的屏幕位移低于当前最大水平缩放下的一个像素，截图仅验证真实界面调用与 item-edge 定位；sample 精确性由 `selected_audio_item_cursor_actions_preserve_sample_exact_boundaries` 回归验证。
+
+REAPER 原厂非 tick 对齐 Audio 边界精度、空 item 选择时 Action List 启用状态和完整窗口焦点仍待对照；目前没有单独采集 Main 41174 的实窗截图，因此不能把这两项视为完成，`ITEM-SELECT-016/017` 保持 `in_progress`。
 
 ## 2026-10-13 Main actions 41182/41183/41184：所选 items 网格对齐
 

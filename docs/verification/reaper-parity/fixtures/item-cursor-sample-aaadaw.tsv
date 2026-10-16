@@ -1,0 +1,21 @@
+key	value
+captured_at_utc	2026-10-16
+platform	Linux x86_64; Xorg dummy display :112; 24-bit TrueColor; X11
+screen_size	Xorg root 1280x800; captures include the Arrangement and the separate Actions window where stated
+display_config	/tmp/aaadaw-dummy-xorg.conf; no window manager; WGPU_BACKEND=gl; isolated XDG config/data/state/cache/runtime directories under target/aaadaw-cursor-visual
+project_fixture	Project template cursor-sample.aaadaw; Track A MIDI item plus selected Track B mono PCM16/48 kHz Audio item; Audio start sample 192012 (12 samples after 4 seconds)
+project_generator	crates/aaadaw-storage/examples/generate_item_hover_audio_demo.rs
+project_regeneration	rtk run cargo run --locked -p aaadaw-storage --example generate_item_hover_audio_demo -- <project.aaadaw> docs/verification/reaper-parity/fixtures/item-hover-actionlist-target-audio.wav 192012
+project_template_sha256	6a175b9b9608a10c1eff779eeb7763155bf531fd9dd110804e3b16eeb9ab4d37; generated runtime project at target/aaadaw-cursor-visual/config/aaadaw/ProjectTemplates/cursor-sample.aaadaw is not committed
+audio_source	item-hover-actionlist-target-audio.wav; SHA-256 b2beb6e035cbd9ab3de482949160e467a29bd658807772ec9451ee9c7698983e
+binary	target/debug/aaadaw
+binary_build_id	501a2645dcc0be1bc0b878cef77851f433e9afe8
+binary_sha256	956f69368c4da5e5490c697a80ebf00b1e0a5c2ab4458448a49be1f9917fb14c
+interaction	Selected Track B Audio item, opened Main Action List (Shift+/), filtered “move cursor to start of items”, selected Main 41173, and clicked Run; the bare Xorg session required explicit XSetInputFocus for the main and Actions X11 windows.
+before_result	The Audio item inspector shows start sample 192012 while the edit cursor remains at 0:00.000.
+after_result	The bottom transport shows 3.1.0 / 0:04.000, the Actions result remains selected after Run, and the post-action Arrangement shows the cursor at the Audio start; the selected item inspector continues to report start sample 192012.
+before_screenshot	item-cursor-sample-before-aaadaw.png; 1280x800; SHA-256 f09e56d527258edcfa388555ddfc7b4183cd6d94aee38234bc4bd3641f1bfd65
+actionlist_before_screenshot	item-cursor-sample-actionlist-before-aaadaw.png; 1280x800; SHA-256 d4232c96c967593fed9c2b436d093c9ce669828c67ab92daddc662bab453a346
+actionlist_after_screenshot	item-cursor-sample-actionlist-after-aaadaw.png; 1280x800; SHA-256 0fe39b16871ecc1724494fe814bc979dbe82d26d0661b4e1677ef00d3b1341a1
+after_screenshot	item-cursor-sample-after-aaadaw.png; 1280x800; SHA-256 201a3db37ac2c613a74a7f08ade710176b9963d822b9be7d4f58df053c69e05c
+limitation	The cursor/sample result is exercised through the real desktop Action List. At this horizontal scale the sub-tick delta is below a pixel; sample exactness is established by App tests, not claimed from pixel measurement. REAPER native off-grid comparison and a separate 41174 desktop capture remain open.

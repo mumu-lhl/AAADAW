@@ -72,7 +72,7 @@ pub(super) struct TimelinePrimitive {
     pub(super) row_layout: Vec<TrackRowLayout>,
     pub(super) origin_tick: u64,
     pub(super) pixels_per_tick: f32,
-    pub(super) edit_cursor_tick: u64,
+    pub(super) edit_cursor_tick_position: f64,
     pub(super) playhead_tick: Option<u64>,
     pub(super) selected_items: Vec<SelectedItemGeometry>,
     pub(super) razor_edit_areas: Vec<(u64, u64, u32)>,
@@ -786,10 +786,12 @@ impl Primitive for TimelinePrimitive {
                 kind: AUTOMATION_POINT,
             }));
         }
+        let (edit_cursor_tick, edit_cursor_sub_tick) =
+            split_tick_position(self.edit_cursor_tick_position);
         dynamic.push(GpuRect::new(GpuRectSpec {
-            start_tick: self.edit_cursor_tick,
-            end_tick: self.edit_cursor_tick,
-            y: 0.0,
+            start_tick: edit_cursor_tick,
+            end_tick: edit_cursor_tick,
+            y: edit_cursor_sub_tick,
             height: self.height,
             color: [231, 184, 101, 255],
             item_id: 0,
@@ -840,8 +842,8 @@ impl Primitive for TimelinePrimitive {
             origin_cursor: [
                 (self.origin_tick >> 32) as u32,
                 self.origin_tick as u32,
-                (self.edit_cursor_tick >> 32) as u32,
-                self.edit_cursor_tick as u32,
+                (edit_cursor_tick >> 32) as u32,
+                edit_cursor_tick as u32,
             ],
             playhead_selection: [playhead[0], playhead[1], u32::MAX, u32::MAX],
             state: [self.selected_track_index, 0, 0, 0],
@@ -870,6 +872,17 @@ impl Primitive for TimelinePrimitive {
 
 fn split_tick(value: u64) -> [u32; 2] {
     [(value >> 32) as u32, value as u32]
+}
+
+fn split_tick_position(value: f64) -> (u64, f32) {
+    if !value.is_finite() || value <= 0.0 {
+        return (0, 0.0);
+    }
+    let whole = value.floor();
+    if whole >= u64::MAX as f64 {
+        return (u64::MAX, 0.0);
+    }
+    (whole as u64, (value - whole) as f32)
 }
 
 fn shift_tick(tick: u64, delta: i128) -> Option<u64> {
@@ -995,12 +1008,19 @@ fn ensure_capacity(
 
 #[cfg(test)]
 mod tests {
-    use super::linearize_srgb;
+    use super::{linearize_srgb, split_tick_position};
 
     #[test]
     fn gpu_vertex_colors_are_converted_from_srgb_to_linear() {
         assert_eq!(linearize_srgb(0), 0);
         assert_eq!(linearize_srgb(128), 55);
         assert_eq!(linearize_srgb(255), 255);
+    }
+
+    #[test]
+    fn edit_cursor_fractional_tick_is_kept_for_exact_sample_positions() {
+        let (whole_tick, fractional_tick) = split_tick_position(800.04);
+        assert_eq!(whole_tick, 800);
+        assert!((fractional_tick - 0.04).abs() < 1.0e-6);
     }
 }

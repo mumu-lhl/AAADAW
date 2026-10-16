@@ -64,7 +64,8 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
                     ))
                     .width(Length::Fixed(50.0))
                     .into();
-                let current = if marker.position_ticks() == app.timeline.edit_cursor_tick {
+                let cursor_tick = app.timeline.edit_cursor_tick_position(&app.project);
+                let current = if marker.position_ticks() as f64 == cursor_tick {
                     "•"
                 } else {
                     ""
@@ -112,8 +113,9 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
                     region.end_ticks(),
                 )
                 .unwrap_or_else(|_| format!("{} ticks", region.end_ticks() - region.start_ticks()));
-                let current = if region.start_ticks() <= app.timeline.edit_cursor_tick
-                    && app.timeline.edit_cursor_tick < region.end_ticks()
+                let cursor_tick = app.timeline.edit_cursor_tick_position(&app.project);
+                let current = if region.start_ticks() as f64 <= cursor_tick
+                    && cursor_tick < region.end_ticks() as f64
                 {
                     "•"
                 } else {

@@ -578,9 +578,9 @@ Action List Run 回归验证 Audio/MIDI item selection 清空、时间范围/轨
 
 ### 2026-10-13 Main actions 41167/41168：移动光标到最近 item 边缘
 
-动作目录确认 41167/41168 左右最近 item edge 导航无默认快捷键。原厂运行探针确认范围为整个工程的 Audio 与 MIDI items，即使没有 item 选择也可运行；等于当前光标的边缘会跳过。AAADAW 比较全工程 Audio sample 和 MIDI tick 起止边界，按当前 edit cursor 查找严格更左/更右的最近边缘；只更新时间线 edit cursor、保留 item selection，不修改工程历史。方向上没有边缘时禁用。
+动作目录确认 41167/41168 左右最近 item edge 导航无默认快捷键。原厂运行探针确认范围为整个工程的 Audio 与 MIDI items，即使没有 item 选择也可运行；等于当前光标的边缘会跳过。AAADAW 比较连续项目 sample 位置，Audio 起止边界不再先量化为整数 tick，MIDI 边缘仍使用 tick；只更新时间线 edit cursor、保留 item selection，不修改工程历史。方向上没有边缘时禁用。
 
-`item_edge_navigation_actions_move_to_nearest_audio_or_midi_boundary` 覆盖混合边缘、无选择、方向无目标、相等端点、选择保留及工程/Undo 不变；原厂结果见 [item-navigation fixture](../verification/reaper-parity/fixtures/item-navigation-native.tsv)。`ITEM-SELECT-012/013` 保持 `in_progress`：完整 Action List 焦点和 Arrange 实窗外观还未验收。
+`item_edge_navigation_actions_move_to_nearest_audio_or_midi_boundary` 使用非 tick 对齐 Audio 边界，覆盖混合边缘、无选择、方向无目标、相等端点、选择保留及工程/Undo 不变；原厂结果见 [item-navigation fixture](../verification/reaper-parity/fixtures/item-navigation-native.tsv)。REAPER 原厂 off-grid 光标精度、AAADAW 当前分数 tick 光标实窗捕获、完整 Action List 焦点和 Arrange 实窗外观还未验收，`ITEM-SELECT-012/013` 保持 `in_progress`。
 
 ### 2026-10-13 Main actions 41139/41140：相邻轨道 item 导航及原厂边界修正
 
@@ -1802,3 +1802,11 @@ AAADAW 回归 `hover_selection_actions_select_add_and_toggle_audio_items` 现覆
 新增 AAADAW 桌面实窗验证：在 Action List 过滤并选中 Main 40529，将鼠标停在 Arrange 的 Audio B1 后按 Enter。B1 在运行前无选择边框，运行后显示橙色选择边框；屏幕同时包含独立 Actions 窗口和 Arrange。前后截图、1280×800 Xvfb 配置、Audio A1/B1 fixture、二进制 Build ID/SHA-256 与截图 SHA-256 见 [AAADAW TSV](../verification/reaper-parity/fixtures/item-hover-actionlist-audio-add-aaadaw.tsv)、[运行前](../verification/reaper-parity/fixtures/item-hover-actionlist-audio-add-aaadaw-before.png)和[运行后](../verification/reaper-parity/fixtures/item-hover-actionlist-audio-add-aaadaw-after.png)。项目生成器位于 `crates/aaadaw-storage/examples/generate_item_hover_audio_demo.rs`，使用已提交的 1 秒 PCM 测试 WAV 可重新创建相同素材布局。
 
 这项实窗证据补齐了 AAADAW Action List 40529 在 Audio item 有效 hover target 上的截图；REAPER 原厂对照已覆盖 40529 添加及 40530 移除 Audio B1。当前环境中的 Xvfb/AAADAW 进程已结束，因此本次只新增 40529 的前后截图，40530 桌面有效目标仍需另行采集。测试生成器成功运行；截图对应二进制 Build ID `fda58cf28ba57c9c30f520bf78522b03ef32de2b`，SHA-256 `004e67d3bd3c4e5bea9efedf48bcb96a53a2b5f481f12ef8c3cccf789f21e8c5`。`ITEM-SELECT-007/008` 继续 `in_progress`，其它选择语义和焦点边界未全部验收。
+
+### 2026-10-16 Main actions 41167–41174：保留 Audio item 的精确样本光标
+
+修正最近 item 边缘导航和所选 item 起止光标的量化：Audio 边界现在以 `Sample` 保存，MIDI 边界仍以 `Tick` 保存；跨媒体比较统一到连续 sample 位置。Arrangement shader 接收分数 tick 并偏移光标，后续 Playback seek、Audio Loop paste、光标处分割、导入定位、Nudge 与工程起点使用同一精确样本。普通 tick 光标事件会清除精确样本覆盖。
+
+`item_edge_navigation_actions_move_to_nearest_audio_or_midi_boundary` 和 `selected_audio_item_cursor_actions_preserve_sample_exact_boundaries` 覆盖非 tick 对齐边界、左右导航、41173/41174、普通 tick 重置、导入、Loop paste 与 Audio 分割。Linux 实窗中选中 start sample `192012` 的 Track B Audio item，并在 Action List 运行 Main 41173；Transport 到达 4 秒、Inspector 仍显示 sample `192012`。Xorg :112 / 1280×800 截图及 Build ID、binary 与图片 hashes 见 [cursor fixture](../verification/reaper-parity/fixtures/item-cursor-sample-aaadaw.tsv)；项目生成器现可传入 off-grid 起始 sample。
+
+AAADAW 主测试目标 678/678 passed；`cargo clippy --locked -p aaadaw -p aaadaw-app --all-targets -- -D warnings`、fmt 与 `git diff --check` 通过。截图只能证明真实 Action List 操作与当前界面状态；当前最大缩放下子 tick 的屏幕位移小于一像素。REAPER 原厂 off-grid 位置语义、41174 独立实窗截图、Action List 空选择可用性和完整焦点/界面验收仍待补证，`ITEM-SELECT-012/013/016/017` 保持 `in_progress`。

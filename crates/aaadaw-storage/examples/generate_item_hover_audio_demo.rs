@@ -15,6 +15,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "docs/verification/reaper-parity/fixtures/item-hover-actionlist-target-audio.wav",
         )
     });
+    let audio_start_sample = args
+        .next()
+        .map(|value| value.to_string_lossy().parse::<u64>())
+        .transpose()?
+        .unwrap_or(192_000);
     let media_bytes = fs::read(&media_path)?;
     let byte_len = media_bytes.len() as u64;
     let mut project = Project::new();
@@ -37,7 +42,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     project.apply(DawAction::InsertAudioItem {
         track_id: tracks[1],
         media_ref: "asset://item-hover-audio-demo".to_owned(),
-        start_sample: 192_000,
+        start_sample: audio_start_sample,
         source_offset_samples: 0,
         length_samples: 48_000,
     })?;

@@ -68,8 +68,8 @@ pub(super) fn apply_start_time_command(
     }
     let result = match command {
         start_time_menu::StartTimeCommand::SetTimeAtCursor => app
-            .project
-            .sample_at_tick(app.timeline.edit_cursor_tick)
+            .timeline
+            .edit_cursor_sample(&app.project)
             .map(|sample| {
                 format_project_time(
                     -(sample as f64 / f64::from(app.project.settings().sample_rate())),
@@ -109,7 +109,7 @@ pub(super) fn apply_start_time_command(
 }
 
 fn start_measure_for_edit_cursor(app: &App) -> Result<i32, String> {
-    let tick = app.timeline.edit_cursor_tick;
+    let tick = app.timeline.edit_cursor_tick_position(&app.project).floor() as u64;
     let position = app
         .project
         .musical_position_at_tick(tick)

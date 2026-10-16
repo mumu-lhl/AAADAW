@@ -250,6 +250,10 @@ pub(crate) enum TimelineEvent {
     ClearSelectedFxAutomationPoint,
     SelectEmpty(u64),
     SetEditCursor(u64),
+    SetEditCursorPosition {
+        tick: u64,
+        position: EditCursorPosition,
+    },
     SelectProjectMarker {
         marker_id: MarkerId,
         position_ticks: u64,
@@ -339,6 +343,48 @@ pub(crate) enum TimelineEvent {
         split: Split,
         ratio: f32,
     },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum EditCursorPosition {
+    Tick(u64),
+    Sample(u64),
+}
+
+impl EditCursorPosition {
+    pub(crate) fn tick(self, project: &Project) -> Result<u64, aaadaw_core::TimebaseError> {
+        match self {
+            Self::Tick(tick) => Ok(tick),
+            Self::Sample(sample) => project.tick_at_sample(sample),
+        }
+    }
+
+    pub(crate) fn tick_position(
+        self,
+        project: &Project,
+    ) -> Result<f64, aaadaw_core::TimebaseError> {
+        match self {
+            Self::Tick(tick) => Ok(tick as f64),
+            Self::Sample(sample) => project.tick_at_sample_position(sample as f64),
+        }
+    }
+
+    pub(crate) fn sample(self, project: &Project) -> Result<u64, aaadaw_core::TimebaseError> {
+        match self {
+            Self::Tick(tick) => project.sample_at_tick(tick),
+            Self::Sample(sample) => Ok(sample),
+        }
+    }
+
+    pub(crate) fn sample_position(
+        self,
+        project: &Project,
+    ) -> Result<f64, aaadaw_core::TimebaseError> {
+        match self {
+            Self::Tick(tick) => project.sample_at_tick_position(tick as f64),
+            Self::Sample(sample) => Ok(sample as f64),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -886,6 +932,7 @@ pub(crate) struct TimelineState {
     pub(crate) snap_grid: SnapGrid,
     pub(crate) midi_editor_snap_grid: SnapGrid,
     pub(crate) edit_cursor_tick: u64,
+    edit_cursor_position: Option<EditCursorPosition>,
     pub(crate) origin_tick: u64,
     pub(crate) pixels_per_tick: f32,
     cache: TimelineCache,
@@ -1106,6 +1153,7 @@ impl Default for TimelineState {
             snap_grid: SnapGrid::Quarter,
             midi_editor_snap_grid: SnapGrid::Sixteenth,
             edit_cursor_tick: 0,
+            edit_cursor_position: None,
             origin_tick: 0,
             pixels_per_tick: 0.065,
             cache,
@@ -1789,6 +1837,29 @@ impl TimelineState {
         }
     }
 
+    pub(crate) fn cursor_position(&self) -> EditCursorPosition {
+        self.edit_cursor_position
+            .unwrap_or(EditCursorPosition::Tick(self.edit_cursor_tick))
+    }
+
+    pub(crate) fn edit_cursor_sample(
+        &self,
+        project: &Project,
+    ) -> Result<u64, aaadaw_core::TimebaseError> {
+        self.cursor_position().sample(project)
+    }
+
+    pub(crate) fn edit_cursor_tick_position(&self, project: &Project) -> f64 {
+        self.cursor_position()
+            .tick_position(project)
+            .unwrap_or(self.edit_cursor_tick as f64)
+    }
+
+    pub(crate) fn set_edit_cursor_tick(&mut self, tick: u64) {
+        self.edit_cursor_tick = tick;
+        self.edit_cursor_position = None;
+    }
+
     pub(crate) fn handle(&mut self, event: TimelineEvent) {
         if !matches!(
             event,
@@ -2051,16 +2122,20 @@ impl TimelineState {
                 self.delete_focus = DeleteFocusTarget::Arrange;
                 self.selected_volume_automation_point = None;
                 self.selected_fx_automation_point = None;
-                self.edit_cursor_tick = tick;
+                self.set_edit_cursor_tick(tick);
                 self.select_item(None, false, false, false);
             }
-            TimelineEvent::SetEditCursor(tick) => self.edit_cursor_tick = tick,
+            TimelineEvent::SetEditCursor(tick) => self.set_edit_cursor_tick(tick),
+            TimelineEvent::SetEditCursorPosition { tick, position } => {
+                self.edit_cursor_tick = tick;
+                self.edit_cursor_position = Some(position);
+            }
             TimelineEvent::SelectProjectMarker {
                 marker_id,
                 position_ticks,
             } => {
                 self.selected_project_marker = Some(marker_id);
-                self.edit_cursor_tick = position_ticks;
+                self.set_edit_cursor_tick(position_ticks);
             }
             TimelineEvent::SelectProjectRegion {
                 start_ticks,
@@ -2068,7 +2143,7 @@ impl TimelineState {
                 ..
             } => {
                 self.set_time_selection(TimeSelection::normalized(start_ticks, end_ticks));
-                self.edit_cursor_tick = start_ticks;
+                self.set_edit_cursor_tick(start_ticks);
             }
             TimelineEvent::EditProjectMarker { .. } => {}
             TimelineEvent::MoveProjectMarker { marker_id, .. } => {
@@ -2617,7 +2692,7 @@ impl TimelineState {
             waveform_geometry_cache: Arc::clone(&self.waveform_geometry_cache),
             origin_tick: self.origin_tick,
             pixels_per_tick: self.pixels_per_tick,
-            edit_cursor_tick: self.edit_cursor_tick,
+            edit_cursor_tick_position: self.edit_cursor_tick_position(project),
             playhead_tick,
             selected_items: self.selected_item_geometries(),
             razor_edit_areas: project
@@ -2708,7 +2783,7 @@ struct TimelineProgram<'a> {
     waveform_geometry_cache: Arc<Mutex<CachedWaveformGeometry>>,
     origin_tick: u64,
     pixels_per_tick: f32,
-    edit_cursor_tick: u64,
+    edit_cursor_tick_position: f64,
     playhead_tick: Option<u64>,
     selected_items: Vec<SelectedItemGeometry>,
     razor_edit_areas: Vec<(u64, u64, u32)>,
@@ -4381,7 +4456,7 @@ impl shader::Program<crate::app::Message> for TimelineProgram<'_> {
             row_layout: self.row_layout.to_vec(),
             origin_tick: self.origin_tick,
             pixels_per_tick: self.pixels_per_tick,
-            edit_cursor_tick: self.edit_cursor_tick,
+            edit_cursor_tick_position: self.edit_cursor_tick_position,
             playhead_tick: self.playhead_tick,
             selected_items: self.selected_items.clone(),
             razor_edit_areas: self.razor_edit_areas.clone(),

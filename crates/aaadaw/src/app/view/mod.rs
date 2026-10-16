@@ -539,7 +539,21 @@ fn mobile_view(app: &App, viewport_width: f32, viewport_height: f32) -> Element<
             ]
             .align_y(Alignment::Center),
             row![
-                text(format!("{}", app.timeline.edit_cursor_tick)).size(12),
+                text({
+                    let position = app.timeline.cursor_position();
+                    match position {
+                        crate::timeline::EditCursorPosition::Tick(tick) => tick.to_string(),
+                        crate::timeline::EditCursorPosition::Sample(_) => {
+                            let tick = app.timeline.edit_cursor_tick_position(&app.project);
+                            if tick.fract().abs() < 1.0e-9 {
+                                format!("{:.0}", tick)
+                            } else {
+                                format!("{tick:.6}")
+                            }
+                        }
+                    }
+                })
+                .size(12),
                 iced::widget::Space::new().width(Length::Fill),
                 text(app.status.clone()).size(11).width(Length::Fill),
             ]

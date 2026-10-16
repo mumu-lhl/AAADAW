@@ -338,9 +338,7 @@ impl App {
 
     fn refresh_item_nudge_set_value(&mut self) {
         let sample = if self.item_nudge_dialog.target == Target::EditCursor {
-            self.project
-                .sample_at_tick(self.timeline.edit_cursor_tick)
-                .ok()
+            self.timeline.edit_cursor_sample(&self.project).ok()
         } else {
             self.selected_item_start_samples()
                 .ok()
@@ -445,8 +443,8 @@ impl App {
             return;
         }
         let result = self
-            .project
-            .sample_at_tick(self.timeline.edit_cursor_tick)
+            .timeline
+            .edit_cursor_sample(&self.project)
             .map_err(|error| error.to_string());
         match result {
             Ok(sample) => {
@@ -574,7 +572,7 @@ impl App {
                     return;
                 }
             };
-            let current = match self.project.sample_at_tick(self.timeline.edit_cursor_tick) {
+            let current = match self.timeline.edit_cursor_sample(&self.project) {
                 Ok(sample) => sample,
                 Err(error) => {
                     self.item_nudge_dialog.error = Some(error.to_string());
@@ -606,8 +604,8 @@ impl App {
             }
         }
         match self.project.tick_at_sample(sample) {
-            Ok(tick) => {
-                self.timeline.edit_cursor_tick = tick;
+            Ok(_) => {
+                self.set_edit_cursor_position(crate::timeline::EditCursorPosition::Sample(sample));
                 self.item_nudge_dialog.error = None;
             }
             Err(error) => self.item_nudge_dialog.error = Some(error.to_string()),
@@ -2308,7 +2306,7 @@ impl App {
     }
 
     fn move_edit_cursor_by_samples(&mut self, delta_samples: i128) {
-        let sample = match self.project.sample_at_tick(self.timeline.edit_cursor_tick) {
+        let sample = match self.timeline.edit_cursor_sample(&self.project) {
             Ok(sample) => sample,
             Err(error) => {
                 self.item_nudge_dialog.error = Some(error.to_string());
@@ -2330,8 +2328,8 @@ impl App {
             }
         }
         match self.project.tick_at_sample(sample) {
-            Ok(tick) => {
-                self.timeline.edit_cursor_tick = tick;
+            Ok(_) => {
+                self.set_edit_cursor_position(crate::timeline::EditCursorPosition::Sample(sample));
                 self.item_nudge_dialog.error = None;
             }
             Err(error) => self.item_nudge_dialog.error = Some(error.to_string()),
@@ -2591,8 +2589,8 @@ impl App {
     fn pixel_relative_set_anchor_sample(&self) -> Result<u64, String> {
         if self.item_nudge_dialog.target == Target::EditCursor {
             return self
-                .project
-                .sample_at_tick(self.timeline.edit_cursor_tick)
+                .timeline
+                .edit_cursor_sample(&self.project)
                 .map_err(|error| error.to_string());
         }
         let selected = self.selected_item_start_samples()?;
@@ -2684,8 +2682,8 @@ impl App {
             Unit::Notes => return self.note_value_delta_samples(direction),
             Unit::Pixels => {
                 let anchor = if self.item_nudge_dialog.target == Target::EditCursor {
-                    self.project
-                        .sample_at_tick(self.timeline.edit_cursor_tick)
+                    self.timeline
+                        .edit_cursor_sample(&self.project)
                         .map_err(|error| error.to_string())?
                 } else {
                     self.selected_item_start_samples()?
@@ -2807,8 +2805,8 @@ impl App {
     fn musical_nudge_anchor_sample(&self) -> Result<u64, String> {
         if self.item_nudge_dialog.target == Target::EditCursor {
             return self
-                .project
-                .sample_at_tick(self.timeline.edit_cursor_tick)
+                .timeline
+                .edit_cursor_sample(&self.project)
                 .map_err(|error| error.to_string());
         }
         self.selected_item_start_samples()?

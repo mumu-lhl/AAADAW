@@ -3443,10 +3443,12 @@ pub(super) fn project_edit_busy(app: &App) -> bool {
 }
 
 pub(super) fn nearest_project_marker_to_delete(app: &App) -> Option<aaadaw_core::MarkerId> {
-    let cursor_samples = app
-        .project
-        .sample_at_tick_position(app.timeline.edit_cursor_tick as f64)
-        .ok()?;
+    let cursor_samples = match app.timeline.cursor_position() {
+        crate::timeline::EditCursorPosition::Tick(tick) => {
+            app.project.sample_at_tick_position(tick as f64).ok()?
+        }
+        crate::timeline::EditCursorPosition::Sample(sample) => sample as f64,
+    };
     let radius_samples =
         f64::from(app.project.settings().sample_rate()) * PROJECT_MARKER_DELETE_RADIUS_SECONDS;
     app.project
@@ -3473,11 +3475,13 @@ pub(super) fn nearest_project_marker_to_delete(app: &App) -> Option<aaadaw_core:
 /// overlap the most recently started Region wins; equal starts prefer the
 /// shorter Region, and identical bounds retain the earlier Region identity.
 pub(super) fn project_region_at_cursor(app: &App) -> Option<aaadaw_core::RegionId> {
-    let cursor = app.timeline.edit_cursor_tick;
+    let cursor = app.timeline.edit_cursor_tick_position(&app.project);
     app.project
         .regions()
         .iter()
-        .filter(|region| region.start_ticks() <= cursor && cursor < region.end_ticks())
+        .filter(|region| {
+            region.start_ticks() as f64 <= cursor && cursor < region.end_ticks() as f64
+        })
         .min_by(|left, right| {
             right
                 .start_ticks()

@@ -369,8 +369,8 @@ impl App {
                 .ok_or_else(|| "Add an audio track before importing audio".to_owned())?
         };
         let start_sample = self
-            .project
-            .sample_at_tick(self.timeline.edit_cursor_tick)
+            .timeline
+            .edit_cursor_sample(&self.project)
             .map_err(|error| format!("Edit cursor is outside the project time range: {error}"))?;
         Ok((track.id(), start_sample))
     }

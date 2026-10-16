@@ -4612,16 +4612,16 @@ impl App {
                 }
             }
             Message::PreviousProjectMarker => {
-                let cursor = self.timeline.edit_cursor_tick;
+                let cursor = self.timeline.edit_cursor_tick_position(&self.project);
                 let target = self
                     .project
                     .markers()
                     .iter()
                     .rev()
-                    .find(|marker| marker.position_ticks() < cursor)
+                    .find(|marker| (marker.position_ticks() as f64) < cursor)
                     .map(|marker| marker.position_ticks())
                     .unwrap_or(0);
-                if target == cursor {
+                if (target as f64) >= cursor {
                     self.status = "No previous project marker".to_owned();
                 } else {
                     self.handle_timeline_view_event(timeline::TimelineEvent::SetEditCursor(target));
@@ -4629,37 +4629,53 @@ impl App {
                 }
             }
             Message::NextProjectMarker => {
-                let cursor = self.timeline.edit_cursor_tick;
+                let cursor = self
+                    .timeline
+                    .cursor_position()
+                    .sample_position(&self.project)
+                    .unwrap_or(f64::INFINITY);
+                let cursor_tick = self.timeline.edit_cursor_tick_position(&self.project);
                 let next_marker = self
                     .project
                     .markers()
                     .iter()
-                    .find(|marker| marker.position_ticks() > cursor)
-                    .map(|marker| marker.position_ticks());
-                let project_end = self
-                    .project
-                    .audio_items()
-                    .iter()
-                    .filter_map(|item| self.project.tick_at_sample(item.end_sample()).ok())
-                    .chain(
-                        self.project
-                            .midi_items()
-                            .iter()
-                            .map(|item| item.start_tick().saturating_add(item.length_ticks())),
-                    )
-                    .chain(
-                        self.project
-                            .markers()
-                            .iter()
-                            .map(|marker| marker.position_ticks()),
-                    )
-                    .max()
-                    .unwrap_or(0);
-                let target = next_marker.unwrap_or(project_end);
-                if target <= cursor {
+                    .find(|marker| (marker.position_ticks() as f64) > cursor_tick)
+                    .map(|marker| timeline::EditCursorPosition::Tick(marker.position_ticks()));
+                let project_end =
+                    self.project
+                        .audio_items()
+                        .iter()
+                        .map(|item| timeline::EditCursorPosition::Sample(item.end_sample()))
+                        .chain(self.project.midi_items().iter().map(|item| {
+                            timeline::EditCursorPosition::Tick(
+                                item.start_tick().saturating_add(item.length_ticks()),
+                            )
+                        }))
+                        .chain(self.project.markers().iter().map(|marker| {
+                            timeline::EditCursorPosition::Tick(marker.position_ticks())
+                        }))
+                        .filter_map(|position| {
+                            Some((position.sample_position(&self.project).ok()?, position))
+                        })
+                        .reduce(
+                            |current, next| {
+                                if next.0 > current.0 { next } else { current }
+                            },
+                        )
+                        .map(|(_, position)| position);
+                let target = next_marker.or(project_end);
+                if target
+                    .and_then(|position| {
+                        position
+                            .sample_position(&self.project)
+                            .ok()
+                            .map(|sample| (position, sample))
+                    })
+                    .is_none_or(|(_, sample)| sample <= cursor)
+                {
                     self.status = "No next project marker or project end".to_owned();
                 } else {
-                    self.handle_timeline_view_event(timeline::TimelineEvent::SetEditCursor(target));
+                    self.set_edit_cursor_position(target.expect("validated target is present"));
                     self.status = if next_marker.is_some() {
                         "Moved to next project marker".to_owned()
                     } else {
@@ -4981,8 +4997,8 @@ impl App {
                 |app| app.select_item_on_adjacent_track(next_track),
             ),
             Message::MoveEditCursorToNearestItemEdge(forward) => {
-                if let Some(tick) = self.nearest_item_edge(forward) {
-                    self.handle_timeline_view_event(timeline::TimelineEvent::SetEditCursor(tick));
+                if let Some(position) = self.nearest_item_edge(forward) {
+                    self.set_edit_cursor_position(position);
                 }
             }
             Message::MoveEditCursorToSelectedItemsBoundary(move_to_end) => {
@@ -5366,7 +5382,7 @@ impl App {
                         self.timeline.selected_track = None;
                         self.timeline.selected_tracks.clear();
                         self.timeline.origin_tick = 0;
-                        self.timeline.edit_cursor_tick = 0;
+                        self.timeline.set_edit_cursor_tick(0);
                         self.timeline.vertical_scroll = 0.0;
                         task = Task::batch([
                             scroll_arrangement_to(timeline::TCP_SCROLL_ID, 0.0),
@@ -5947,15 +5963,14 @@ impl App {
 
     fn handle_timeline_view_event(&mut self, event: timeline::TimelineEvent) {
         #[cfg(feature = "audio-device")]
-        let edit_cursor_tick = match &event {
-            timeline::TimelineEvent::SelectEmpty(tick)
-            | timeline::TimelineEvent::SetEditCursor(tick) => Some(*tick),
-            timeline::TimelineEvent::SelectProjectMarker { position_ticks, .. } => {
-                Some(*position_ticks)
-            }
-            timeline::TimelineEvent::SelectProjectRegion { start_ticks, .. } => Some(*start_ticks),
-            _ => None,
-        };
+        let edit_cursor_moves = matches!(
+            &event,
+            timeline::TimelineEvent::SelectEmpty(_)
+                | timeline::TimelineEvent::SetEditCursor(_)
+                | timeline::TimelineEvent::SetEditCursorPosition { .. }
+                | timeline::TimelineEvent::SelectProjectMarker { .. }
+                | timeline::TimelineEvent::SelectProjectRegion { .. }
+        );
         if let timeline::TimelineEvent::MoveProjectMarker {
             marker_id,
             position_ticks,
@@ -6118,11 +6133,11 @@ impl App {
             self.timeline.set_item_trim_valid(valid);
         }
         #[cfg(feature = "audio-device")]
-        if let Some(tick) = edit_cursor_tick
+        if edit_cursor_moves
             && !self.playback_playing
             && !self.playback_paused
             && !self.playback_busy
-            && let Ok(sample) = self.project.sample_at_tick(tick)
+            && let Ok(sample) = self.timeline.edit_cursor_sample(&self.project)
         {
             self.playhead_sample = sample;
             self.playback_start_sample = sample;
@@ -6203,7 +6218,7 @@ impl App {
         self.timeline.time_selection = None;
         self.timeline.loop_points = None;
         self.timeline.origin_tick = 0;
-        self.timeline.edit_cursor_tick = 0;
+        self.timeline.set_edit_cursor_tick(0);
         self.timeline.vertical_scroll = 0.0;
         self.clear_track_draft_state();
         self.track_mix_gesture = None;
@@ -10243,13 +10258,22 @@ impl App {
         use_time_selection: bool,
         source_sample_rates: Option<&HashMap<String, u32>>,
     ) -> Result<Option<DawAction>, String> {
-        let boundaries = if use_time_selection {
+        let tick_boundaries = if use_time_selection {
             let Some(selection) = self.timeline.time_selection else {
                 return Ok(None);
             };
             vec![selection.start_tick, selection.end_tick]
         } else {
             vec![self.timeline.edit_cursor_tick]
+        };
+        let cursor_sample = if use_time_selection {
+            None
+        } else {
+            Some(
+                self.timeline
+                    .edit_cursor_sample(&self.project)
+                    .map_err(|error| error.to_string())?,
+            )
         };
         let mut selected_item_ids = self
             .timeline
@@ -10270,20 +10294,30 @@ impl App {
                 let source_sample_rate = source_sample_rates
                     .and_then(|rates| rates.get(item.media_ref()).copied())
                     .unwrap_or_else(|| self.project.settings().sample_rate());
-                split_audio_item_actions(
-                    &self.project,
-                    item,
-                    &boundaries,
-                    source_sample_rate,
-                    &mut actions,
-                )?;
+                if let Some(sample) = cursor_sample {
+                    split_audio_item_actions_at_samples(
+                        &self.project,
+                        item,
+                        &[sample],
+                        source_sample_rate,
+                        &mut actions,
+                    )?;
+                } else {
+                    split_audio_item_actions(
+                        &self.project,
+                        item,
+                        &tick_boundaries,
+                        source_sample_rate,
+                        &mut actions,
+                    )?;
+                }
             } else if let Some(item) = self
                 .project
                 .midi_items()
                 .iter()
                 .find(|item| item.id() == item_id)
             {
-                split_midi_item_actions(item, &boundaries, &mut actions)?;
+                split_midi_item_actions(item, &tick_boundaries, &mut actions)?;
             }
         }
         if actions.is_empty() {
@@ -10304,9 +10338,16 @@ impl App {
             let Some(selection) = self.timeline.time_selection else {
                 return Ok(HashMap::new());
             };
-            vec![selection.start_tick, selection.end_tick]
+            [selection.start_tick, selection.end_tick]
+                .into_iter()
+                .filter_map(|tick| self.project.sample_at_tick(tick).ok())
+                .collect::<Vec<_>>()
         } else {
-            vec![self.timeline.edit_cursor_tick]
+            vec![
+                self.timeline
+                    .edit_cursor_sample(&self.project)
+                    .map_err(|error| error.to_string())?,
+            ]
         };
         let media_refs = self
             .project
@@ -10314,11 +10355,9 @@ impl App {
             .iter()
             .filter(|item| self.timeline.selected_items.contains(&item.id()))
             .filter(|item| {
-                boundaries.iter().any(|tick| {
-                    self.project.sample_at_tick(*tick).is_ok_and(|sample| {
-                        item.start_sample() < sample && sample < item.end_sample()
-                    })
-                })
+                boundaries
+                    .iter()
+                    .any(|sample| item.start_sample() < *sample && *sample < item.end_sample())
             })
             .map(|item| item.media_ref().to_owned())
             .collect::<Vec<_>>();
@@ -10728,8 +10767,7 @@ impl App {
     }
 
     fn split_all_items_at_cursor(&mut self) {
-        let cursor_tick = self.timeline.edit_cursor_tick;
-        let cursor_sample = match self.project.sample_at_tick(cursor_tick) {
+        let cursor_sample = match self.timeline.edit_cursor_sample(&self.project) {
             Ok(sample) => sample,
             Err(error) => {
                 self.status = format!("Split failed: {error}");
@@ -10791,22 +10829,26 @@ impl App {
         &self,
         source_sample_rates: Option<&HashMap<String, u32>>,
     ) -> Result<Option<DawAction>, String> {
-        let boundaries = [self.timeline.edit_cursor_tick];
+        let tick_boundaries = [self.timeline.edit_cursor_tick];
+        let sample_boundaries = [self
+            .timeline
+            .edit_cursor_sample(&self.project)
+            .map_err(|error| error.to_string())?];
         let mut actions = Vec::new();
         for item in self.project.audio_items() {
             let source_sample_rate = source_sample_rates
                 .and_then(|rates| rates.get(item.media_ref()).copied())
                 .unwrap_or_else(|| self.project.settings().sample_rate());
-            split_audio_item_actions(
+            split_audio_item_actions_at_samples(
                 &self.project,
                 item,
-                &boundaries,
+                &sample_boundaries,
                 source_sample_rate,
                 &mut actions,
             )?;
         }
         for item in self.project.midi_items() {
-            split_midi_item_actions(item, &boundaries, &mut actions)?;
+            split_midi_item_actions(item, &tick_boundaries, &mut actions)?;
         }
         if actions.is_empty() {
             Ok(None)
@@ -11219,12 +11261,16 @@ impl App {
         }
     }
 
-    pub(super) fn nearest_item_edge(&self, forward: bool) -> Option<u64> {
-        let cursor = self.timeline.edit_cursor_tick;
+    pub(super) fn nearest_item_edge(&self, forward: bool) -> Option<timeline::EditCursorPosition> {
+        let cursor_sample = self
+            .timeline
+            .cursor_position()
+            .sample_position(&self.project)
+            .ok()?;
         let audio_edges = self.project.audio_items().iter().flat_map(|item| {
             [item.start_sample(), item.end_sample()]
                 .into_iter()
-                .filter_map(|sample| self.project.tick_at_sample(sample).ok())
+                .map(timeline::EditCursorPosition::Sample)
         });
         let midi_edges = self.project.midi_items().iter().flat_map(|item| {
             [
@@ -11233,30 +11279,83 @@ impl App {
             ]
             .into_iter()
             .flatten()
+            .map(timeline::EditCursorPosition::Tick)
         });
-        let edges = audio_edges.chain(midi_edges);
-        if forward {
-            edges.filter(|tick| *tick > cursor).min()
-        } else {
-            edges.filter(|tick| *tick < cursor).max()
-        }
+        audio_edges
+            .chain(midi_edges)
+            .filter_map(|position| Some((position.sample_position(&self.project).ok()?, position)))
+            .filter(|(sample, _)| {
+                if forward {
+                    *sample > cursor_sample
+                } else {
+                    *sample < cursor_sample
+                }
+            })
+            .reduce(|current, next| {
+                let choose_next = if forward {
+                    next.0 < current.0
+                } else {
+                    next.0 > current.0
+                };
+                if choose_next { next } else { current }
+            })
+            .map(|(_, position)| position)
     }
 
     fn move_cursor_to_selected_items_boundary(&mut self, move_to_end: bool) {
-        let tick = self
-            .project_item_ranges()
-            .into_iter()
-            .filter(|(item_id, _, _, _)| self.timeline.selected_items.contains(item_id))
-            .map(|(_, _, start, end)| if move_to_end { end } else { start })
-            .reduce(|current, next| {
-                if move_to_end {
-                    current.max(next)
+        let audio_positions = self
+            .project
+            .audio_items()
+            .iter()
+            .filter(|item| self.timeline.selected_items.contains(&item.id()))
+            .map(|item| {
+                timeline::EditCursorPosition::Sample(if move_to_end {
+                    item.end_sample()
                 } else {
-                    current.min(next)
-                }
+                    item.start_sample()
+                })
             });
-        if let Some(tick) = tick {
-            self.handle_timeline_view_event(timeline::TimelineEvent::SetEditCursor(tick));
+        let midi_positions = self
+            .project
+            .midi_items()
+            .iter()
+            .filter(|item| self.timeline.selected_items.contains(&item.id()))
+            .filter_map(|item| {
+                let tick = if move_to_end {
+                    item.start_tick().checked_add(item.length_ticks())?
+                } else {
+                    item.start_tick()
+                };
+                Some(timeline::EditCursorPosition::Tick(tick))
+            });
+        let position = audio_positions
+            .chain(midi_positions)
+            .filter_map(|position| Some((position.sample_position(&self.project).ok()?, position)))
+            .reduce(|current, next| {
+                let choose_next = if move_to_end {
+                    next.0 > current.0
+                } else {
+                    next.0 < current.0
+                };
+                if choose_next { next } else { current }
+            })
+            .map(|(_, position)| position);
+        if let Some(position) = position {
+            self.set_edit_cursor_position(position);
+        }
+    }
+
+    pub(super) fn set_edit_cursor_position(&mut self, position: timeline::EditCursorPosition) {
+        match position.tick(&self.project) {
+            Ok(tick) => {
+                self.handle_timeline_view_event(timeline::TimelineEvent::SetEditCursorPosition {
+                    tick,
+                    position,
+                });
+            }
+            Err(error) => {
+                self.status = format!("Could not move the edit cursor: {error}");
+            }
         }
     }
 
@@ -11947,7 +12046,7 @@ impl App {
                     .position(|track| track.id() == track_id)
             })
             .unwrap_or(0);
-        let Ok(start_sample) = self.project.sample_at_tick(self.timeline.edit_cursor_tick) else {
+        let Ok(start_sample) = self.timeline.edit_cursor_sample(&self.project) else {
             self.status = "Could not paste items at the edit cursor".to_owned();
             return;
         };

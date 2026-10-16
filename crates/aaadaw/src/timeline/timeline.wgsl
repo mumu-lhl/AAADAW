@@ -75,6 +75,9 @@ fn vs_main(
         width = uniforms.view.x;
     } else if (kind >= 3u && kind <= 6u) || kind == 10u {
         width = uniforms.view.w;
+        if kind == 5u {
+            x += y_height.x * uniforms.view.z * uniforms.view.w;
+        }
         if corner.x > 0.5 {
             x += select(1.0, 2.0, kind == 5u || kind == 6u);
         }
@@ -90,6 +93,9 @@ fn vs_main(
         width = max(width, 3.0);
     }
     var logical_y = y_height.x + corner.y * y_height.y;
+    if kind == 5u {
+        logical_y = corner.y * y_height.y;
+    }
     if kind == 12u {
         logical_y = mix(y_height.x, y_height.y, corner.x) + (corner.y - 0.5) * 2.5;
     }

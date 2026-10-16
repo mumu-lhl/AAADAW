@@ -4336,7 +4336,7 @@ fn project_markers_insert_navigate_and_undo_through_app_actions() {
     assert_eq!(app.project.markers()[0].position_ticks(), 240);
     assert_eq!(app.project.markers()[1].id(), later_id);
 
-    app.timeline.edit_cursor_tick = 0;
+    app.timeline.set_edit_cursor_tick(0);
     let _ = app.update(Message::NextProjectMarker);
     assert_eq!(app.timeline.edit_cursor_tick, 240);
     let _ = app.update(Message::NextProjectMarker);
@@ -12516,8 +12516,8 @@ fn copy_loop_of_selected_audio_area_pastes_source_sections_on_one_undo_step() {
         })
         .unwrap();
     app.timeline.selected_track = Some(track_ids[0]);
-    app.timeline.edit_cursor_tick = 57_600;
-    let paste_start = app.project.sample_at_tick(57_600).unwrap();
+    let paste_start = 57_601;
+    app.set_edit_cursor_position(crate::timeline::EditCursorPosition::Sample(paste_start));
     let paste_length =
         u64::try_from((u128::from(selection_length) * 48_000 + 44_100 / 2) / 44_100).unwrap();
     let _ = app.update(Message::ExecuteCommand(CommandId::PasteItems));
@@ -12603,7 +12603,7 @@ fn copy_loop_of_selected_audio_area_pastes_source_sections_on_one_undo_step() {
     );
 
     app.timeline.selected_track = Some(track_ids[1]);
-    app.timeline.edit_cursor_tick = 76_800;
+    app.timeline.set_edit_cursor_tick(76_800);
     let second_paste_start = app.project.sample_at_tick(76_800).unwrap();
     let _ = app.update(Message::ExecuteCommand(CommandId::PasteItems));
     let second_paste = app
@@ -15120,8 +15120,8 @@ fn item_edge_navigation_actions_move_to_nearest_audio_or_midi_boundary() {
     let mut app = App::default();
     let _ = app.update(Message::AddTrack);
     let track_id = app.project.tracks()[0].id();
-    let audio_start = app.project.sample_at_tick(960).unwrap();
-    let audio_end = app.project.sample_at_tick(1_920).unwrap();
+    let audio_start = 20_001;
+    let audio_end = 35_004;
     app.project
         .apply(DawAction::InsertAudioItem {
             track_id,
@@ -15141,7 +15141,7 @@ fn item_edge_navigation_actions_move_to_nearest_audio_or_midi_boundary() {
     let selected_item = app.project.audio_items()[0].id();
     app.timeline.rebuild(&app.project);
     app.timeline.select_items(vec![(selected_item, track_id)]);
-    app.timeline.edit_cursor_tick = 2_500;
+    app.timeline.set_edit_cursor_tick(2_500);
     let revision_before = app.revision;
     let can_undo_before = app.project.can_undo();
     let can_redo_before = app.project.can_redo();
@@ -15158,10 +15158,18 @@ fn item_edge_navigation_actions_move_to_nearest_audio_or_midi_boundary() {
         .expect("left edge navigation action is searchable");
     assert!(left_entry.shortcut.is_none());
     let _ = app.update(Message::ActionListRun(false));
-    assert_eq!(app.timeline.edit_cursor_tick, 1_920);
+    assert_eq!(
+        app.timeline.edit_cursor_tick,
+        app.project.tick_at_sample(audio_end).unwrap()
+    );
+    assert_eq!(
+        app.timeline.cursor_position(),
+        crate::timeline::EditCursorPosition::Sample(audio_end)
+    );
+    assert_eq!(app.timeline.edit_cursor_sample(&app.project), Ok(audio_end));
     assert_eq!(app.timeline.selected_items, HashSet::from([selected_item]));
 
-    app.timeline.edit_cursor_tick = 2_500;
+    app.timeline.set_edit_cursor_tick(2_500);
     let right = CommandId::MoveEditCursorToNextItemEdge;
     assert!(commands::is_enabled(&app, right));
     app.action_list
@@ -15170,9 +15178,9 @@ fn item_edge_navigation_actions_move_to_nearest_audio_or_midi_boundary() {
     assert_eq!(app.timeline.edit_cursor_tick, 2_880);
     assert_eq!(app.timeline.selected_items, HashSet::from([selected_item]));
 
-    app.timeline.edit_cursor_tick = 0;
+    app.timeline.set_edit_cursor_tick(0);
     assert!(!commands::is_enabled(&app, left));
-    app.timeline.edit_cursor_tick = 3_840;
+    app.timeline.set_edit_cursor_tick(3_840);
     assert!(!commands::is_enabled(&app, right));
     assert_eq!(app.revision, revision_before);
     assert_eq!(app.project.can_undo(), can_undo_before);
@@ -15287,6 +15295,130 @@ fn selected_item_cursor_actions_use_outer_audio_midi_bounds() {
     assert_eq!(app.revision, revision_before);
     assert_eq!(app.project.can_undo(), can_undo_before);
     assert_eq!(app.project.can_redo(), can_redo_before);
+}
+
+#[test]
+fn selected_audio_item_cursor_actions_preserve_sample_exact_boundaries() {
+    let directory = tempfile::tempdir().unwrap();
+    let project_path = directory.path().join("sample-exact-cursor.aaadaw");
+    let media_ref = "asset://sample-exact-item-cursor";
+    let mut store = ProjectStore::open(&project_path).unwrap();
+    store
+        .import_audio_asset(
+            media_ref,
+            "sample-exact.wav",
+            std::io::Cursor::new([0_u8; 4]),
+        )
+        .unwrap();
+    store
+        .set_audio_asset_metadata(
+            media_ref,
+            &aaadaw_storage::AudioAssetMetadata {
+                container: "wav".to_owned(),
+                codec: "pcm".to_owned(),
+                sample_rate: Some(48_000),
+                channel_count: Some(1),
+                bits_per_sample: Some(16),
+                frame_count: Some(60_000),
+                duration_nanos: Some(1_250_000_000),
+                byte_len: Some(4),
+            },
+        )
+        .unwrap();
+    store.close().unwrap();
+
+    let mut app = App {
+        project_path: Some(project_path),
+        ..App::default()
+    };
+    let _ = app.update(Message::AddTrack);
+    let track_id = app.project.tracks()[0].id();
+    let start_sample = 20_001;
+    let end_sample = 35_004;
+    app.project
+        .apply(DawAction::InsertAudioItem {
+            track_id,
+            media_ref: media_ref.to_owned(),
+            start_sample,
+            source_offset_samples: 0,
+            length_samples: end_sample - start_sample,
+        })
+        .unwrap();
+    let item_id = app.project.audio_items()[0].id();
+    app.timeline.rebuild(&app.project);
+    app.timeline.select_items(vec![(item_id, track_id)]);
+
+    app.action_list
+        .set_query("move cursor to start of items".to_owned());
+    app.action_list
+        .select("item.navigate-cursor-selected-start".to_owned());
+    let _ = app.update(Message::ActionListRun(false));
+    assert_eq!(
+        app.timeline.cursor_position(),
+        crate::timeline::EditCursorPosition::Sample(start_sample)
+    );
+    assert_eq!(
+        app.timeline.edit_cursor_sample(&app.project),
+        Ok(start_sample)
+    );
+    assert_ne!(
+        app.project
+            .sample_at_tick(app.timeline.edit_cursor_tick)
+            .unwrap(),
+        start_sample,
+        "the integer tick label alone would quantize this boundary"
+    );
+    let exact_start_tick = app
+        .project
+        .tick_at_sample_position(start_sample as f64)
+        .unwrap();
+    assert!((app.timeline.edit_cursor_tick_position(&app.project) - exact_start_tick).abs() < 1e-9);
+    assert_eq!(app.audio_import_placement().unwrap().1, start_sample);
+    #[cfg(feature = "audio-device")]
+    {
+        assert_eq!(app.playhead_sample, start_sample);
+        assert_eq!(app.playback_start_sample, start_sample);
+    }
+
+    app.action_list
+        .set_query("move cursor to end of items".to_owned());
+    app.action_list
+        .select("item.navigate-cursor-selected-end".to_owned());
+    let _ = app.update(Message::ActionListRun(false));
+    assert_eq!(
+        app.timeline.cursor_position(),
+        crate::timeline::EditCursorPosition::Sample(end_sample)
+    );
+    assert_eq!(
+        app.timeline.edit_cursor_sample(&app.project),
+        Ok(end_sample)
+    );
+
+    let split_sample = 27_002;
+    app.set_edit_cursor_position(crate::timeline::EditCursorPosition::Sample(split_sample));
+    let _ = app.update(Message::SplitSelectedItemsAtCursor);
+    let mut split_items = app
+        .project
+        .audio_items()
+        .iter()
+        .map(|item| (item.start_sample(), item.end_sample()))
+        .collect::<Vec<_>>();
+    split_items.sort_unstable();
+    assert_eq!(
+        split_items,
+        vec![(start_sample, split_sample), (split_sample, end_sample)],
+        "cursor-based splitting must use the exact sample boundary"
+    );
+
+    app.handle_timeline_view_event(crate::timeline::TimelineEvent::SetEditCursor(1_440));
+    assert_eq!(
+        app.timeline.cursor_position(),
+        crate::timeline::EditCursorPosition::Tick(1_440)
+    );
+    assert_eq!(
+        app.timeline.edit_cursor_sample(&app.project),
+        app.project.sample_at_tick(1_440)
+    );
 }
 
 #[test]
