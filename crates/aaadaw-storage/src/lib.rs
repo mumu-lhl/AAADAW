@@ -9,7 +9,7 @@ mod store;
 
 pub use arrangement_view::{
     ArrangementTimeRangeState, ArrangementViewState, FolderCompactViewState,
-    FxAutomationLaneViewState, VolumeAutomationLaneViewState,
+    FxAutomationLaneViewState, GridDivision, VolumeAutomationLaneViewState,
 };
 pub use project_lock::ProjectSessionLock;
 

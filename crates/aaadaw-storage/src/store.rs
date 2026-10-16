@@ -1,4 +1,6 @@
-use crate::{ArrangementViewState, FxAutomationLaneViewState, VolumeAutomationLaneViewState};
+use crate::{
+    ArrangementViewState, FxAutomationLaneViewState, GridDivision, VolumeAutomationLaneViewState,
+};
 use aaadaw_core::{
     AudioItemSnapshot, BpmBasis, MeterPointSnapshot, MidiControllerData, MidiItemSnapshot,
     MidiNoteData, MidiNoteSnapshot, MidiPitchBendData, PanMode, Project, ProjectMarkerSnapshot,
@@ -23,7 +25,7 @@ use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 /// Latest database schema version understood by this release.
-pub const CURRENT_SCHEMA_VERSION: u32 = 54;
+pub const CURRENT_SCHEMA_VERSION: u32 = 55;
 
 const MIGRATION_29: &str = "ALTER TABLE project_meta ADD COLUMN start_measure INTEGER NOT NULL DEFAULT 1 CHECK(start_measure BETWEEN -2147483648 AND 2147483647);";
 const MIGRATION_30: &str = "ALTER TABLE project_meta ADD COLUMN bpm_basis INTEGER NOT NULL DEFAULT 1 CHECK(bpm_basis BETWEEN 0 AND 5);";
@@ -634,6 +636,11 @@ mod arrangement_view_state_tests {
                 end_seconds: 3.5,
             }),
             repeat_enabled: true,
+            snap_enabled: false,
+            snap_grid: crate::GridDivision::DottedEighth,
+            midi_editor_snap_grid: crate::GridDivision::ThirtySecondTriplet,
+            swing_grid_enabled: true,
+            swing_amount_percent: -73,
         };
 
         let directory = tempfile::tempdir().unwrap();
@@ -695,6 +702,52 @@ mod arrangement_view_state_tests {
         assert_eq!(
             store.load_arrangement_view_state().unwrap(),
             Some(ArrangementViewState::default())
+        );
+        store
+            .save_with_arrangement_view_state(&Project::new(), &saved_state)
+            .unwrap();
+        assert_eq!(
+            store.load_arrangement_view_state().unwrap(),
+            Some(saved_state)
+        );
+        store.close().unwrap();
+    }
+
+    #[test]
+    fn schema_54_projects_gain_default_snap_and_swing_settings() {
+        use rusqlite::Connection;
+
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("snap-grid-schema-54.aaadaw");
+        let mut store = ProjectStore::open(&path).unwrap();
+        let saved_state = ArrangementViewState {
+            repeat_enabled: true,
+            ..ArrangementViewState::default()
+        };
+        store
+            .save_with_arrangement_view_state(&Project::new(), &saved_state)
+            .unwrap();
+        drop(store);
+
+        let connection = Connection::open(&path).unwrap();
+        connection
+            .execute_batch(
+                "ALTER TABLE arrangement_view_meta DROP COLUMN snap_enabled; \
+                 ALTER TABLE arrangement_view_meta DROP COLUMN snap_grid; \
+                 ALTER TABLE arrangement_view_meta DROP COLUMN midi_editor_snap_grid; \
+                 ALTER TABLE arrangement_view_meta DROP COLUMN swing_grid_enabled; \
+                 ALTER TABLE arrangement_view_meta DROP COLUMN swing_amount_percent; \
+                 UPDATE arrangement_view_meta SET state_version = 1; \
+                 PRAGMA user_version = 54;",
+            )
+            .unwrap();
+        drop(connection);
+
+        let mut store = ProjectStore::open(&path).unwrap();
+        assert_eq!(store.schema_version().unwrap(), CURRENT_SCHEMA_VERSION);
+        assert_eq!(
+            store.load_arrangement_view_state().unwrap(),
+            Some(saved_state.clone())
         );
         store
             .save_with_arrangement_view_state(&Project::new(), &saved_state)
@@ -799,6 +852,7 @@ mod arrangement_view_state_tests {
             time_selection: None,
             loop_points: None,
             repeat_enabled: false,
+            ..ArrangementViewState::default()
         };
         assert!(matches!(
             store.save_with_arrangement_view_state(&Project::new(), &invalid_view_state),
@@ -2584,12 +2638,33 @@ impl ProjectStore {
         let state_version = self
             .connection
             .query_row(
-                "SELECT state_version, repeat_enabled FROM arrangement_view_meta WHERE singleton = 1",
+                "SELECT state_version, repeat_enabled, snap_enabled, snap_grid, \
+                 midi_editor_snap_grid, swing_grid_enabled, swing_amount_percent \
+                 FROM arrangement_view_meta WHERE singleton = 1",
                 [],
-                |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
+                |row| {
+                    Ok((
+                        row.get::<_, i64>(0)?,
+                        row.get::<_, i64>(1)?,
+                        row.get::<_, i64>(2)?,
+                        row.get::<_, i64>(3)?,
+                        row.get::<_, i64>(4)?,
+                        row.get::<_, i64>(5)?,
+                        row.get::<_, i64>(6)?,
+                    ))
+                },
             )
             .optional()?;
-        let Some((state_version, repeat_enabled)) = state_version else {
+        let Some((
+            state_version,
+            repeat_enabled,
+            snap_enabled,
+            snap_grid,
+            midi_editor_snap_grid,
+            swing_grid_enabled,
+            swing_amount_percent,
+        )) = state_version
+        else {
             return Ok(None);
         };
         if state_version != 1 {
@@ -2604,6 +2679,24 @@ impl ProjectStore {
                 1 => true,
                 _ => return Err(StorageError::InvalidStoredData("invalid Repeat state")),
             },
+            snap_enabled: match snap_enabled {
+                0 => false,
+                1 => true,
+                _ => return Err(StorageError::InvalidStoredData("invalid Snap state")),
+            },
+            snap_grid: GridDivision::from_storage_id(snap_grid)
+                .ok_or(StorageError::InvalidStoredData("invalid Arrangement grid"))?,
+            midi_editor_snap_grid: GridDivision::from_storage_id(midi_editor_snap_grid)
+                .ok_or(StorageError::InvalidStoredData("invalid MIDI Editor grid"))?,
+            swing_grid_enabled: match swing_grid_enabled {
+                0 => false,
+                1 => true,
+                _ => return Err(StorageError::InvalidStoredData("invalid Swing state")),
+            },
+            swing_amount_percent: i16::try_from(swing_amount_percent)
+                .ok()
+                .filter(|value| (-100..=100).contains(value))
+                .ok_or(StorageError::InvalidStoredData("invalid Swing amount"))?,
             ..ArrangementViewState::default()
         };
         let mut volume_statement = self
@@ -3312,6 +3405,34 @@ fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
                     transaction.execute_batch(MIGRATION_54)?;
                 }
             }
+            55 => {
+                for (column, migration) in [
+                    (
+                        "snap_enabled",
+                        "ALTER TABLE arrangement_view_meta ADD COLUMN snap_enabled INTEGER NOT NULL DEFAULT 1 CHECK(snap_enabled IN (0, 1));",
+                    ),
+                    (
+                        "snap_grid",
+                        "ALTER TABLE arrangement_view_meta ADD COLUMN snap_grid INTEGER NOT NULL DEFAULT 2 CHECK(snap_grid BETWEEN 0 AND 14);",
+                    ),
+                    (
+                        "midi_editor_snap_grid",
+                        "ALTER TABLE arrangement_view_meta ADD COLUMN midi_editor_snap_grid INTEGER NOT NULL DEFAULT 4 CHECK(midi_editor_snap_grid BETWEEN 0 AND 14);",
+                    ),
+                    (
+                        "swing_grid_enabled",
+                        "ALTER TABLE arrangement_view_meta ADD COLUMN swing_grid_enabled INTEGER NOT NULL DEFAULT 0 CHECK(swing_grid_enabled IN (0, 1));",
+                    ),
+                    (
+                        "swing_amount_percent",
+                        "ALTER TABLE arrangement_view_meta ADD COLUMN swing_amount_percent INTEGER NOT NULL DEFAULT 50 CHECK(swing_amount_percent BETWEEN -100 AND 100);",
+                    ),
+                ] {
+                    if !table_has_column(&transaction, "arrangement_view_meta", column)? {
+                        transaction.execute_batch(migration)?;
+                    }
+                }
+            }
             missing => return Err(StorageError::MissingMigration(missing - 1)),
         }
         transaction.pragma_update(None, "user_version", next_version)?;
@@ -3666,6 +3787,9 @@ fn write_arrangement_view_state(
 ) -> Result<(), StorageError> {
     validate_time_range(view_state.time_selection, false)?;
     validate_time_range(view_state.loop_points, true)?;
+    if !(-100..=100).contains(&view_state.swing_amount_percent) {
+        return Err(StorageError::InvalidStoredData("invalid Swing amount"));
+    }
     transaction.execute("DELETE FROM arrangement_folder_compact", [])?;
     for folder in &view_state.folder_compact {
         if folder.mode > 2 {
@@ -3681,10 +3805,35 @@ fn write_arrangement_view_state(
     transaction.execute("DELETE FROM arrangement_volume_lanes", [])?;
     transaction.execute("DELETE FROM arrangement_fx_lanes", [])?;
     transaction.execute(
-        "INSERT INTO arrangement_view_meta(singleton, state_version, repeat_enabled) VALUES(1, 1, ?1) \
+        "INSERT INTO arrangement_view_meta(\
+         singleton, state_version, repeat_enabled, snap_enabled, snap_grid, \
+         midi_editor_snap_grid, swing_grid_enabled, swing_amount_percent) \
+         VALUES(1, 1, ?1, ?2, ?3, ?4, ?5, ?6) \
          ON CONFLICT(singleton) DO UPDATE SET state_version = excluded.state_version, \
-         repeat_enabled = excluded.repeat_enabled",
-        [if view_state.repeat_enabled { 1_i64 } else { 0_i64 }],
+         repeat_enabled = excluded.repeat_enabled, snap_enabled = excluded.snap_enabled, \
+         snap_grid = excluded.snap_grid, midi_editor_snap_grid = excluded.midi_editor_snap_grid, \
+         swing_grid_enabled = excluded.swing_grid_enabled, \
+         swing_amount_percent = excluded.swing_amount_percent",
+        params![
+            if view_state.repeat_enabled {
+                1_i64
+            } else {
+                0_i64
+            },
+            if view_state.snap_enabled {
+                1_i64
+            } else {
+                0_i64
+            },
+            view_state.snap_grid.storage_id(),
+            view_state.midi_editor_snap_grid.storage_id(),
+            if view_state.swing_grid_enabled {
+                1_i64
+            } else {
+                0_i64
+            },
+            i64::from(view_state.swing_amount_percent),
+        ],
     )?;
     transaction.execute(
         "INSERT INTO arrangement_time_ranges(\

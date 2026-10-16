@@ -608,7 +608,7 @@ REAPER 7.82 / Default 7 探针覆盖直网格、25%、50%、100%、−50% swing�
 
 AAADAW 已实现 Swing 网格 toggle、−100% 至 100% amount、独立 Snap/Grid Settings 窗、Options 菜单入口、Alt+L 和 42304 Action List 动作；三项 item snap 现在按 signed swing grid 计算，沿用 sample-accurate Audio 比较、单事务 Undo 和 playback busy guard。原厂数值点对应回归已加入。
 
-仍有明确差距：MIDI item 起点模型只有整数 PPQ，分数 tick 目标会量化；Snap/grid/swing 设置尚未随项目保存；普通 Arrange 鼠标吸附、MIDI editor Swing 线与音符移动还需要 REAPER 7.82 实测；Action List/Arrange 实窗截图与焦点、播放期间 native availability 仍未验收。因此 `ITEM-SELECT-018/019/020` 继续 `in_progress`，不能视为完成。
+仍有明确差距：MIDI item 起点模型只有整数 PPQ，分数 tick 目标会量化；普通 Arrange 鼠标吸附、MIDI editor Swing 线与音符移动还需要 REAPER 7.82 实测；Action List/Arrange 实窗截图与焦点、播放期间 native availability 仍未验收。因此 `ITEM-SELECT-018/019/020` 继续 `in_progress`，不能视为完成。
 
 新桌面 binary 已在隔离 Xorg :112 实际启动；Alt+L 打开独立设置窗，真实 XTest pointer/button 切换 Swing checkbox 后画面状态更新，Arrange toolbar 入口也在实窗可见。binary SHA-256、窗口配置及三张 AAADAW 截图见 [Snap/Grid Settings window fixture](../verification/reaper-parity/fixtures/item-snap-grid-settings-aaadaw.tsv)。截图仅确认当前新增窗口和 toolbar 可运行，未作为 REAPER 整体窗口/像素对照验收。
 
@@ -616,7 +616,15 @@ AAADAW 已实现 Swing 网格 toggle、−100% 至 100% amount、独立 Snap/Gri
 
 Arrangement item 拖动和 trim、时间选区端点、编辑光标、loop/region 边界、自动化点，以及 MIDI Editor 的吸附式插入/移动和 Swing 网格线现在共用整数分子运算的 Swing 候选点算法。它按网格序号偏移奇数点、保留偶数点，平局选择左侧，Snap 关闭或 Shift 暂时绕过时保持原位置；MIDI note 群组移动以锚定音符的目标起点吸附，使选区内相对间距不变。相关 timeline 与 MIDI Editor 回归覆盖正/负 swing、边界拖动及可见网格与吸附点一致。
 
-nightly Cranelift 下 `aaadaw` binary tests 通过 684/684；Stable all-target Clippy `-D warnings`、`cargo fmt --all -- --check` 和 `git diff --check` 通过。普通鼠标和 MIDI Editor Swing 语义尚未对照原厂，项目内持久化、分数 tick MIDI 起点、播放状态与全窗口焦点/像素对照仍开放；因此三项 snap action 的矩阵状态保持 `in_progress`。
+nightly Cranelift 下 `aaadaw` binary tests 通过 684/684；Stable all-target Clippy `-D warnings`、`cargo fmt --all -- --check` 和 `git diff --check` 通过。普通鼠标和 MIDI Editor Swing 语义尚未对照原厂，分数 tick MIDI 起点、播放状态与全窗口焦点/像素对照仍开放；因此三项 snap action 的矩阵状态保持 `in_progress`。
+
+#### 2026-10-16：Snap/Grid/Swing 设置按项目持久化
+
+工程 schema 升至 55，在 `arrangement_view_meta` 保存全局 Snap 开关、Arrangement 网格、MIDI Editor 网格、Swing 开关及 −100% 至 100% amount。旧 schema 工程迁移后采用当前默认值（Snap on、Arrangement 1/4、MIDI Editor 1/16、Swing off、50%），已有自动化轨道、范围与 Repeat 状态保持。设置从项目视图状态恢复；UI 和 Action List 修改经过同一视图事件路径更新工程 revision，并进入正常保存和未保存工程恢复快照。
+
+Storage 往返与 schema 54 → 55 默认值迁移由 `arrangement_view_state_round_trips_and_survives_project_only_saves` 和 `schema_54_projects_gain_default_snap_and_swing_settings` 覆盖；Timeline 项目替换验证全部设置恢复和无视图状态项目的默认值；真实项目 session 保存/重开回归覆盖 Snap off、八分网格、MIDI 三十二分网格及 37% Swing；未保存工程恢复回归确认 Swing 修改推进 revision 并排入恢复快照。Xvfb 下 nightly Cranelift workspace nextest 全量 1290/1290 通过；改正 lint 后 4 个存储、Timeline 和 session 定向回归再次通过。Stable workspace all-target check、strict Clippy、fmt 与 diff 检查通过。最新 Cranelift desktop binary 在 Xvfb :96 实际启动，渲染的 Arrange toolbar 截图与 binary hash 见 [桌面 smoke fixture](../verification/reaper-parity/fixtures/item-snap-grid-desktop-smoke.tsv) 和[截图](../verification/reaper-parity/fixtures/item-snap-grid-desktop-smoke.png)。截图仅验证启动画面与可见 Snap/Grid 控件；项目设置保存/重开仍由状态持久化回归验证。
+
+设置持久化实现不关闭 `ITEM-SELECT-018/019/020`：REAPER 原厂跨会话保存行为尚未单独探测；MIDI item 起点的分数 PPQ 表示、常规 Arrange 与 MIDI Editor swing 鼠标行为对照、播放期间 Action List 可用性、全窗口视觉/焦点对照仍未完成。
 
 ### 2026-10-13 Render Bounds：All project regions 批量输出
 

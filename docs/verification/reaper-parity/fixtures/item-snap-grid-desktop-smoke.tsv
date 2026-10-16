@@ -1,0 +1,11 @@
+field	value
+date	2026-10-16
+reference	AAADAW Linux desktop, freshly rebuilt Cranelift binary
+build	cargo +nightly build -p aaadaw; RUSTFLAGS=-Zcodegen-backend=cranelift; CARGO_PROFILE_DEV_DEBUG=0
+display	Xvfb :96, 1280x800x24, X11
+binary_sha256	f78a663b03978d2c413ed727c29a3488ca38d0e08b44a364b7cba277db4dafae
+window	AAADAW main window mapped and rendered
+visible_controls	Snap On; Arrangement grid 1/4; Grid settings... toolbar button
+screenshot	item-snap-project-persistence-desktop-smoke.png
+screenshot_sha256	5983232a7cbe2cccfc9b20feb1d36f805f879d847cf558bb74e838e2d255ad1d
+scope	Startup/render and current Arrange toolbar visibility only; empty-project defaults shown, not a project reload or persistence test

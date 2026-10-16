@@ -10898,9 +10898,11 @@ fn edits_in_an_unsaved_session_schedule_a_recovery_snapshot() {
     };
 
     let _ = app.update(Message::AddTrack);
+    let _ = app.update(Message::SnapSwingGridChanged(true));
+    let _ = app.update(Message::SnapSwingAmountChanged(-25));
 
     assert!(app.unsaved_session_snapshot_at.is_some());
-    assert_eq!(app.revision, 1);
+    assert_eq!(app.revision, 3);
 }
 
 #[cfg(unix)]
@@ -10948,6 +10950,11 @@ fn project_session_round_trip_restores_arrangement_view_state() {
             end_seconds: 2.0,
         }),
         repeat_enabled: true,
+        snap_enabled: false,
+        snap_grid: aaadaw_storage::GridDivision::Eighth,
+        midi_editor_snap_grid: aaadaw_storage::GridDivision::ThirtySecond,
+        swing_grid_enabled: true,
+        swing_amount_percent: 37,
     };
     let mut session_lock = ProjectSessionLock::acquire(&path).unwrap();
     save_project_session_file_with_media(
@@ -10971,6 +10978,14 @@ fn project_session_round_trip_restores_arrangement_view_state() {
 
     let mut timeline = crate::timeline::TimelineState::default();
     timeline.replace_project(&loaded_project, loaded_view_state.as_ref());
+    assert!(!timeline.snap_enabled);
+    assert_eq!(timeline.snap_grid, crate::timeline::SnapGrid::Eighth);
+    assert_eq!(
+        timeline.midi_editor_snap_grid,
+        crate::timeline::SnapGrid::ThirtySecond
+    );
+    assert!(timeline.snap_swing_enabled());
+    assert_eq!(timeline.snap_swing_amount_percent(), 37);
     let row = timeline.row_layout(0).unwrap();
     assert_eq!(row.fx_lane_count, 1);
     assert_eq!(row.height, crate::timeline::TIMELINE_ROW_HEIGHT + 48.0);
@@ -15633,10 +15648,10 @@ fn item_snap_actions_match_reaper_swing_points_for_audio_and_midi() {
         let selected_items = app.timeline.selected_items.clone();
         let selected_tracks = app.timeline.selected_tracks.clone();
         let edit_cursor = app.timeline.edit_cursor_tick;
-        let revision = app.revision;
-        app.timeline.set_snap_swing_enabled(true);
+        let _ = app.update(Message::SnapSwingGridChanged(true));
         let _ = app.update(Message::SnapSwingAmountChanged(swing));
-        app.timeline.snap_enabled = false;
+        let _ = app.update(Message::Timeline(TimelineEvent::ToggleSnap));
+        let revision = app.revision;
         app.action_list
             .select(commands::stable_id(command).expect("snap action has a stable registry ID"));
 
@@ -15718,10 +15733,29 @@ fn snap_grid_settings_command_is_reusable_and_clamps_swing_amount() {
     let _ = app.update(Message::ExecuteCommand(CommandId::OpenSnapGridSettings));
     assert_eq!(app.snap_grid_settings_window_id, Some(window_id));
 
+    let initial_revision = app.revision;
     let _ = app.update(Message::ExecuteCommand(CommandId::ToggleSwingGrid));
     assert!(app.timeline.snap_swing_enabled());
+    assert_eq!(app.revision, initial_revision + 1);
     let _ = app.update(Message::SnapSwingAmountChanged(150));
     assert_eq!(app.timeline.snap_swing_amount_percent(), 100);
+    assert_eq!(app.revision, initial_revision + 2);
+    let _ = app.update(Message::Timeline(TimelineEvent::SetSnapGrid(
+        crate::timeline::SnapGrid::Eighth,
+    )));
+    assert_eq!(app.timeline.snap_grid, crate::timeline::SnapGrid::Eighth);
+    assert_eq!(app.revision, initial_revision + 3);
+    let _ = app.update(Message::Timeline(TimelineEvent::SetMidiEditorSnapGrid(
+        crate::timeline::SnapGrid::ThirtySecond,
+    )));
+    assert_eq!(
+        app.timeline.midi_editor_snap_grid,
+        crate::timeline::SnapGrid::ThirtySecond
+    );
+    assert_eq!(app.revision, initial_revision + 4);
+    let _ = app.update(Message::Timeline(TimelineEvent::ToggleSnap));
+    assert!(!app.timeline.snap_enabled);
+    assert_eq!(app.revision, initial_revision + 5);
     let _ = app.update(Message::WindowClosed(window_id));
     assert_eq!(app.snap_grid_settings_window_id, None);
 }

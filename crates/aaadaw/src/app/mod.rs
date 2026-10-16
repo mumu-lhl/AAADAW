@@ -2499,11 +2499,17 @@ impl App {
                 task = self.close_snap_grid_settings();
             }
             Message::SnapSwingGridChanged(enabled) => {
-                self.timeline.set_snap_swing_enabled(enabled);
+                self.handle_timeline_view_event(timeline::TimelineEvent::SetSnapSwingEnabled(
+                    enabled,
+                ));
             }
-            Message::ToggleSnapSwingGrid => self.timeline.toggle_snap_swing(),
+            Message::ToggleSnapSwingGrid => {
+                self.handle_timeline_view_event(timeline::TimelineEvent::ToggleSnapSwing)
+            }
             Message::SnapSwingAmountChanged(amount) => {
-                self.timeline.set_snap_swing_amount_percent(amount);
+                self.handle_timeline_view_event(
+                    timeline::TimelineEvent::SetSnapSwingAmountPercent(amount),
+                );
             }
             Message::ApplyProjectSettings => task = self.apply_project_settings(),
             Message::SaveProjectSettingsAsDefault => task = self.save_project_settings_as_default(),
@@ -6182,6 +6188,13 @@ impl App {
                 | timeline::TimelineEvent::CycleFolderCompact(_)
                 | timeline::TimelineEvent::ToggleFxAutomation { .. }
                 | timeline::TimelineEvent::ResizeFxAutomationLane { .. }
+                | timeline::TimelineEvent::ToggleSnap
+                | timeline::TimelineEvent::SetSnapGrid(_)
+                | timeline::TimelineEvent::SetSnapSwingEnabled(_)
+                | timeline::TimelineEvent::ToggleSnapSwing
+                | timeline::TimelineEvent::SetSnapSwingAmountPercent(_)
+                | timeline::TimelineEvent::ToggleMidiEditorSnap
+                | timeline::TimelineEvent::SetMidiEditorSnapGrid(_)
         )
         .then(|| self.project_arrangement_view_state());
         let previous_time_ranges = (self.timeline.time_selection, self.timeline.loop_points);

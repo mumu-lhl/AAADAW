@@ -15,7 +15,6 @@ use iced::{
     Color, Element, Event, Font, Length, Pixels, Point, Rectangle, Size, Theme, keyboard, mouse,
 };
 use std::collections::{HashMap, HashSet};
-use std::fmt;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -39,99 +38,12 @@ const LOOP_POINT_HANDLE_ROW_HEIGHT: f32 = 9.0;
 const LOOP_POINT_HANDLE_HIT_RADIUS: f32 = 8.0;
 const LOOP_POINT_HANDLE_WIDTH: f32 = 7.0;
 
+pub(crate) use aaadaw_storage::GridDivision as SnapGrid;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ArrangementPane {
     TrackControls,
     Timeline,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum SnapGrid {
-    Whole,
-    Half,
-    Quarter,
-    Eighth,
-    Sixteenth,
-    ThirtySecond,
-    DottedHalf,
-    DottedQuarter,
-    DottedEighth,
-    DottedSixteenth,
-    HalfTriplet,
-    QuarterTriplet,
-    EighthTriplet,
-    SixteenthTriplet,
-    ThirtySecondTriplet,
-}
-
-impl SnapGrid {
-    pub(crate) const ALL: [Self; 15] = [
-        Self::Whole,
-        Self::Half,
-        Self::Quarter,
-        Self::Eighth,
-        Self::Sixteenth,
-        Self::ThirtySecond,
-        Self::DottedHalf,
-        Self::DottedQuarter,
-        Self::DottedEighth,
-        Self::DottedSixteenth,
-        Self::HalfTriplet,
-        Self::QuarterTriplet,
-        Self::EighthTriplet,
-        Self::SixteenthTriplet,
-        Self::ThirtySecondTriplet,
-    ];
-
-    fn ratio(self) -> (u64, u64) {
-        match self {
-            Self::Whole => (4, 1),
-            Self::Half => (2, 1),
-            Self::Quarter => (1, 1),
-            Self::Eighth => (1, 2),
-            Self::Sixteenth => (1, 4),
-            Self::ThirtySecond => (1, 8),
-            Self::DottedHalf => (3, 1),
-            Self::DottedQuarter => (3, 2),
-            Self::DottedEighth => (3, 4),
-            Self::DottedSixteenth => (3, 8),
-            Self::HalfTriplet => (4, 3),
-            Self::QuarterTriplet => (2, 3),
-            Self::EighthTriplet => (1, 3),
-            Self::SixteenthTriplet => (1, 6),
-            Self::ThirtySecondTriplet => (1, 12),
-        }
-    }
-
-    pub(crate) fn tick_interval(self, ppq: u32) -> Option<u64> {
-        let (numerator, denominator) = self.ratio();
-        let ticks = u64::from(ppq).checked_mul(numerator)?;
-        (ticks % denominator == 0)
-            .then_some(ticks / denominator)
-            .filter(|ticks| *ticks > 0)
-    }
-}
-
-impl fmt::Display for SnapGrid {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(match self {
-            Self::Whole => "1/1",
-            Self::Half => "1/2",
-            Self::Quarter => "1/4",
-            Self::Eighth => "1/8",
-            Self::Sixteenth => "1/16",
-            Self::ThirtySecond => "1/32",
-            Self::DottedHalf => "1/2 dotted",
-            Self::DottedQuarter => "1/4 dotted",
-            Self::DottedEighth => "1/8 dotted",
-            Self::DottedSixteenth => "1/16 dotted",
-            Self::HalfTriplet => "1/2 triplet",
-            Self::QuarterTriplet => "1/4 triplet",
-            Self::EighthTriplet => "1/8 triplet",
-            Self::SixteenthTriplet => "1/16 triplet",
-            Self::ThirtySecondTriplet => "1/32 triplet",
-        })
-    }
 }
 
 #[derive(Debug, Clone)]
@@ -295,6 +207,9 @@ pub(crate) enum TimelineEvent {
     ClearTimeSelectionAndLoopPoints,
     ToggleSnap,
     SetSnapGrid(SnapGrid),
+    SetSnapSwingEnabled(bool),
+    ToggleSnapSwing,
+    SetSnapSwingAmountPercent(i16),
     ToggleMidiEditorSnap,
     SetMidiEditorSnapGrid(SnapGrid),
     BeginItemDrag {
@@ -1265,6 +1180,15 @@ impl TimelineState {
         project: &Project,
         view_state: Option<&ArrangementViewState>,
     ) {
+        self.snap_enabled = view_state.is_none_or(|state| state.snap_enabled);
+        self.snap_grid = view_state.map_or(SnapGrid::Quarter, |state| state.snap_grid);
+        self.midi_editor_snap_grid =
+            view_state.map_or(SnapGrid::Sixteenth, |state| state.midi_editor_snap_grid);
+        self.cache.swing_grid =
+            view_state.map_or_else(SwingGridSettings::default, |state| SwingGridSettings {
+                enabled: state.swing_grid_enabled,
+                amount_percent: state.swing_amount_percent.clamp(-100, 100),
+            });
         self.selected_project_marker = None;
         self.hovered_item = None;
         self.hovered_item_position = None;
@@ -1447,6 +1371,11 @@ impl TimelineState {
                 time_range_at_project_seconds(project, range.start_tick, range.end_tick)
             }),
             repeat_enabled: false,
+            snap_enabled: self.snap_enabled,
+            snap_grid: self.snap_grid,
+            midi_editor_snap_grid: self.midi_editor_snap_grid,
+            swing_grid_enabled: self.cache.swing_grid.enabled,
+            swing_amount_percent: self.cache.swing_grid.amount_percent,
         }
     }
 
@@ -2268,6 +2197,13 @@ impl TimelineState {
                 if self.cache.snap_grid_ticks.is_none() {
                     self.snap_enabled = false;
                 }
+            }
+            TimelineEvent::SetSnapSwingEnabled(enabled) => {
+                self.set_snap_swing_enabled(enabled);
+            }
+            TimelineEvent::ToggleSnapSwing => self.toggle_snap_swing(),
+            TimelineEvent::SetSnapSwingAmountPercent(amount) => {
+                self.set_snap_swing_amount_percent(amount);
             }
             TimelineEvent::ToggleMidiEditorSnap => {
                 if self.midi_editor_has_snap_grid() {
@@ -8282,6 +8218,11 @@ mod tests {
             start_tick: 2_880,
             end_tick: 3_840,
         });
+        source.handle(TimelineEvent::SetSnapGrid(SnapGrid::EighthTriplet));
+        source.handle(TimelineEvent::SetMidiEditorSnapGrid(SnapGrid::DottedEighth));
+        source.handle(TimelineEvent::ToggleSnap);
+        source.handle(TimelineEvent::SetSnapSwingEnabled(true));
+        source.handle(TimelineEvent::SetSnapSwingAmountPercent(-37));
         let saved_view = source.arrangement_view_state(&project);
 
         let mut reopened = TimelineState::default();
@@ -8305,6 +8246,11 @@ mod tests {
                 end_tick: 3_840,
             })
         );
+        assert!(!reopened.snap_enabled);
+        assert_eq!(reopened.snap_grid, SnapGrid::EighthTriplet);
+        assert_eq!(reopened.midi_editor_snap_grid, SnapGrid::DottedEighth);
+        assert!(reopened.snap_swing_enabled());
+        assert_eq!(reopened.snap_swing_amount_percent(), -37);
         assert_eq!(
             reopened.row_layout(0).unwrap().height,
             TIMELINE_ROW_HEIGHT + 48.0
@@ -8332,6 +8278,11 @@ mod tests {
         assert!(reopened.hidden_volume_automation_tracks.is_empty());
         assert_eq!(reopened.time_selection, None);
         assert_eq!(reopened.loop_points, None);
+        assert!(reopened.snap_enabled);
+        assert_eq!(reopened.snap_grid, SnapGrid::Quarter);
+        assert_eq!(reopened.midi_editor_snap_grid, SnapGrid::Sixteenth);
+        assert!(!reopened.snap_swing_enabled());
+        assert_eq!(reopened.snap_swing_amount_percent(), 50);
         assert_eq!(reopened.row_layout(0).unwrap().height, TIMELINE_ROW_HEIGHT);
     }
 
