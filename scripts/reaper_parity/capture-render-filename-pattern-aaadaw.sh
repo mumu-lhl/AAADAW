@@ -22,7 +22,12 @@ done
 [[ -x "$xdotool" ]] || { printf 'xdotool executable is missing: %s\n' "$xdotool" >&2; exit 2; }
 
 mkdir -p "$repo_root/target" "$(dirname -- "$output")"
-run_dir=$(mktemp -d "$repo_root/target/aaadaw-render-wildcards.XXXXXX")
+run_dir=${AAADAW_CAPTURE_RUN_DIR:-}
+if [[ -z "$run_dir" ]]; then
+  run_dir=$(mktemp -d "$repo_root/target/aaadaw-render-wildcards.XXXXXX")
+else
+  mkdir -p "$run_dir"
+fi
 mkdir -p "$run_dir/config" "$run_dir/data" "$run_dir/state" "$run_dir/cache" "$run_dir/runtime"
 chmod 700 "$run_dir/runtime"
 
@@ -207,6 +212,18 @@ if [[ -n "$insert_wildcard" ]]; then
 elif [[ "${AAADAW_OPEN_WILDCARDS:-0}" == 1 && "$scroll_wildcards" =~ ^[1-9][0-9]*$ ]]; then
   # Allow a scrolled-picker screenshot without selecting a token and closing it.
   "$xdotool" mousemove --sync 550 680 click --repeat "$scroll_wildcards" --delay 50 5
+  sleep 0.3
+fi
+if [[ "${AAADAW_TOGGLE_ALLOW_SLASH:-0}" == 1 ]]; then
+  [[ "${AAADAW_OPEN_WILDCARDS:-0}" == 1 ]] || {
+    printf 'AAADAW_TOGGLE_ALLOW_SLASH requires AAADAW_OPEN_WILDCARDS=1.\n' >&2
+    exit 2
+  }
+  [[ "$scroll_wildcards" =~ ^[1-9][0-9]*$ ]] || {
+    printf 'AAADAW_TOGGLE_ALLOW_SLASH requires a scrolled picker showing Options.\n' >&2
+    exit 2
+  }
+  "$xdotool" mousemove --sync 80 495 click 1
   sleep 0.3
 fi
 xwininfo -id "$render_window" >"$run_dir/render-window.txt"

@@ -338,6 +338,14 @@ struct RenderFilenameExpansionContext<'a> {
     plugins: &'a [ClapPluginDescriptor],
     selected_tracks: &'a [TrackId],
     system_info: &'a RenderFilenameSystemInfo,
+    allow_slash_in_wildcard_substitutions: bool,
+}
+
+#[derive(Clone, Copy)]
+struct RenderFilenameWildcardOptions<'a> {
+    plugins: &'a [ClapPluginDescriptor],
+    selected_tracks: &'a [TrackId],
+    allow_slash_in_wildcard_substitutions: bool,
 }
 
 impl RenderFilenameSystemInfo {
@@ -955,6 +963,7 @@ fn apply_render_filename_pattern_with_plugins(
     )
 }
 
+#[cfg(test)]
 fn apply_render_filename_pattern_with_selected_tracks(
     outputs: Vec<(aaadaw_app::ProjectWavRenderSettings, PathBuf)>,
     pattern: &str,
@@ -963,37 +972,54 @@ fn apply_render_filename_pattern_with_selected_tracks(
     plugins: &[ClapPluginDescriptor],
     selected_tracks: &[TrackId],
 ) -> Result<Vec<(aaadaw_app::ProjectWavRenderSettings, PathBuf)>, String> {
-    let system_info = RenderFilenameSystemInfo::current();
-    apply_render_filename_pattern_with_system_info(
+    apply_render_filename_pattern_with_selected_tracks_and_options(
         outputs,
         pattern,
         project,
         project_path,
         plugins,
         selected_tracks,
-        &system_info,
+        false,
     )
 }
 
-fn apply_render_filename_pattern_with_system_info(
+fn apply_render_filename_pattern_with_selected_tracks_and_options(
     outputs: Vec<(aaadaw_app::ProjectWavRenderSettings, PathBuf)>,
     pattern: &str,
     project: &Project,
     project_path: &Path,
     plugins: &[ClapPluginDescriptor],
     selected_tracks: &[TrackId],
-    system_info: &RenderFilenameSystemInfo,
+    allow_slash_in_wildcard_substitutions: bool,
+) -> Result<Vec<(aaadaw_app::ProjectWavRenderSettings, PathBuf)>, String> {
+    let system_info = RenderFilenameSystemInfo::current();
+    let expansion_context = RenderFilenameExpansionContext {
+        plugins,
+        selected_tracks,
+        system_info: &system_info,
+        allow_slash_in_wildcard_substitutions,
+    };
+    apply_render_filename_pattern_with_context(
+        outputs,
+        pattern,
+        project,
+        project_path,
+        &expansion_context,
+    )
+}
+
+fn apply_render_filename_pattern_with_context(
+    outputs: Vec<(aaadaw_app::ProjectWavRenderSettings, PathBuf)>,
+    pattern: &str,
+    project: &Project,
+    project_path: &Path,
+    expansion_context: &RenderFilenameExpansionContext<'_>,
 ) -> Result<Vec<(aaadaw_app::ProjectWavRenderSettings, PathBuf)>, String> {
     let pattern = pattern.trim().replace(FORCED_RENDER_PATH_SEPARATOR, "_");
     if pattern.is_empty() {
         return Ok(outputs);
     }
 
-    let expansion_context = RenderFilenameExpansionContext {
-        plugins,
-        selected_tracks,
-        system_info,
-    };
     let mut used_names = HashSet::with_capacity(outputs.len());
     outputs
         .into_iter()
@@ -1009,7 +1035,7 @@ fn apply_render_filename_pattern_with_system_info(
                 project,
                 project_path,
                 settings,
-                &expansion_context,
+                expansion_context,
             );
             let Some(relative_path) = safe_render_pattern_relative_path(&expanded) else {
                 return Err("Filename pattern must produce a non-empty file name".to_owned());
@@ -1041,6 +1067,7 @@ fn apply_render_filename_pattern_with_system_info(
         .collect()
 }
 
+#[cfg(test)]
 fn apply_stem_filename_pattern_with_plugins(
     outputs: Vec<(aaadaw_app::ProjectWavRenderSource, PathBuf)>,
     settings: aaadaw_app::ProjectWavRenderSettings,
@@ -1050,7 +1077,29 @@ fn apply_stem_filename_pattern_with_plugins(
     plugins: &[ClapPluginDescriptor],
     selected_tracks: &[TrackId],
 ) -> Result<Vec<(aaadaw_app::ProjectWavRenderSource, PathBuf)>, String> {
-    apply_render_filename_pattern_with_selected_tracks(
+    apply_stem_filename_pattern_with_plugins_and_options(
+        outputs,
+        settings,
+        pattern,
+        project,
+        project_path,
+        RenderFilenameWildcardOptions {
+            plugins,
+            selected_tracks,
+            allow_slash_in_wildcard_substitutions: false,
+        },
+    )
+}
+
+fn apply_stem_filename_pattern_with_plugins_and_options(
+    outputs: Vec<(aaadaw_app::ProjectWavRenderSource, PathBuf)>,
+    settings: aaadaw_app::ProjectWavRenderSettings,
+    pattern: &str,
+    project: &Project,
+    project_path: &Path,
+    wildcard_options: RenderFilenameWildcardOptions<'_>,
+) -> Result<Vec<(aaadaw_app::ProjectWavRenderSource, PathBuf)>, String> {
+    apply_render_filename_pattern_with_selected_tracks_and_options(
         outputs
             .into_iter()
             .map(|(source, path)| {
@@ -1062,8 +1111,9 @@ fn apply_stem_filename_pattern_with_plugins(
         pattern,
         project,
         project_path,
-        plugins,
-        selected_tracks,
+        wildcard_options.plugins,
+        wildcard_options.selected_tracks,
+        wildcard_options.allow_slash_in_wildcard_substitutions,
     )
     .map(|outputs| {
         outputs
@@ -1413,6 +1463,7 @@ fn expand_render_filename_pattern(
         plugins,
         selected_tracks,
         system_info,
+        allow_slash_in_wildcard_substitutions,
     } = context;
     let project_name = project_path
         .file_stem()
@@ -1876,7 +1927,10 @@ fn expand_render_filename_pattern(
                 && !modifiers.iter().any(|modifier| {
                     matches!(modifier, RenderFilenameWildcardModifier::ListSeparator(separator) if *separator != '/')
                 });
-            if token == "trackslashes" || folders_use_path_separator {
+            if *allow_slash_in_wildcard_substitutions
+                || token == "trackslashes"
+                || folders_use_path_separator
+            {
                 expansion = mark_forced_render_path_separators(&expansion);
             }
             if expansion.is_empty() {
@@ -1974,6 +2028,7 @@ pub(super) struct RenderDialogState {
     pub(super) tail_duration_text: String,
     pub(super) stems_pre_fader: bool,
     pub(super) filename_pattern: String,
+    pub(super) allow_slash_in_wildcard_substitutions: bool,
     pub(super) wildcard_menu_open: bool,
 }
 
@@ -2003,6 +2058,7 @@ impl Default for RenderDialogState {
             tail_duration_text: "1000".to_owned(),
             stems_pre_fader: false,
             filename_pattern: String::new(),
+            allow_slash_in_wildcard_substitutions: true,
             wildcard_menu_open: false,
         }
     }
@@ -2206,13 +2262,14 @@ impl App {
             } else {
                 outputs
             };
-            let outputs = match apply_render_filename_pattern_with_selected_tracks(
+            let outputs = match apply_render_filename_pattern_with_selected_tracks_and_options(
                 outputs,
                 &filename_pattern,
                 &self.project,
                 &naming_project_path,
                 &self.clap_plugin_scan.plugins,
                 &selected_tracks,
+                self.render_dialog.allow_slash_in_wildcard_substitutions,
             ) {
                 Ok(outputs) => outputs,
                 Err(error) => {
@@ -2317,13 +2374,14 @@ impl App {
                     return Task::none();
                 }
             };
-            let outputs = match apply_render_filename_pattern_with_selected_tracks(
+            let outputs = match apply_render_filename_pattern_with_selected_tracks_and_options(
                 outputs,
                 &filename_pattern,
                 &self.project,
                 &naming_project_path,
                 &self.clap_plugin_scan.plugins,
                 &selected_tracks,
+                self.render_dialog.allow_slash_in_wildcard_substitutions,
             ) {
                 Ok(outputs) => outputs,
                 Err(error) => {
@@ -2444,14 +2502,19 @@ impl App {
                     return Task::none();
                 }
             };
-            let outputs = match apply_stem_filename_pattern_with_plugins(
+            let outputs = match apply_stem_filename_pattern_with_plugins_and_options(
                 outputs,
                 settings,
                 &filename_pattern,
                 &self.project,
                 &naming_project_path,
-                &self.clap_plugin_scan.plugins,
-                &selected_tracks,
+                RenderFilenameWildcardOptions {
+                    plugins: &self.clap_plugin_scan.plugins,
+                    selected_tracks: &selected_tracks,
+                    allow_slash_in_wildcard_substitutions: self
+                        .render_dialog
+                        .allow_slash_in_wildcard_substitutions,
+                },
             ) {
                 Ok(outputs) => outputs,
                 Err(error) => {
@@ -2475,13 +2538,14 @@ impl App {
                 },
             )
         } else {
-            let mut outputs = match apply_render_filename_pattern_with_selected_tracks(
+            let mut outputs = match apply_render_filename_pattern_with_selected_tracks_and_options(
                 vec![(settings, destination.clone())],
                 &filename_pattern,
                 &self.project,
                 &naming_project_path,
                 &self.clap_plugin_scan.plugins,
                 &selected_tracks,
+                self.render_dialog.allow_slash_in_wildcard_substitutions,
             ) {
                 Ok(outputs) => outputs,
                 Err(error) => {
@@ -3955,14 +4019,18 @@ mod tests {
                     .expect("fixed UTC-12 date/time should parse"),
             },
         };
-        let output = apply_render_filename_pattern_with_system_info(
+        let expansion_context = RenderFilenameExpansionContext {
+            plugins: &[],
+            selected_tracks: &[],
+            system_info: &system_info,
+            allow_slash_in_wildcard_substitutions: false,
+        };
+        let output = apply_render_filename_pattern_with_context(
             vec![(settings, Path::new("/renders/base.wav").to_owned())],
             "$user-$computer-$track",
             &project,
             Path::new("/projects/system-info.aaadaw"),
-            &[],
-            &[],
-            &system_info,
+            &expansion_context,
         )
         .expect("system identity wildcards should resolve into a safe output name");
         assert_eq!(
@@ -3970,14 +4038,12 @@ mod tests {
             Path::new("/renders/FixtureUser-StudioComputer-Master.wav")
         );
 
-        let output = apply_render_filename_pattern_with_system_info(
+        let output = apply_render_filename_pattern_with_context(
             vec![(settings, Path::new("/renders/base.wav").to_owned())],
             "$date-$time-$datetime-$year-$year2-$month-$monthname-$day-$dayname-$hour-$hour12-$ampm-$minute-$second-$localtime-$track",
             &project,
             Path::new("/projects/system-info.aaadaw"),
-            &[],
-            &[],
-            &system_info,
+            &expansion_context,
         )
         .expect("date and time wildcards should match native formats");
         assert_eq!(
@@ -4049,6 +4115,65 @@ mod tests {
         )
         .expect("the native length template should resolve empty until edited");
         assert_eq!(placeholder[0].1, Path::new("/renders/Master.wav"));
+    }
+
+    #[test]
+    fn render_filename_allow_slash_option_creates_directories_but_forced_slashes_stay_active() {
+        let mut project = Project::default();
+        project
+            .apply(DawAction::CreateTrack {
+                index: 0,
+                name: "Kick/Snare".to_owned(),
+            })
+            .expect("slash-name track should be created");
+        let track_id = project.tracks()[0].id();
+        let settings = aaadaw_app::ProjectWavRenderSettings {
+            master_ceiling: aaadaw_engine::MasterOutputCeiling::default(),
+            export_options: aaadaw_app::WavExportOptions::default(),
+            output_sample_rate: 48_000,
+            output_channels: WavChannelCount::Stereo,
+            source: aaadaw_app::ProjectWavRenderSource::SelectedTrackStem(track_id),
+            start_sample: 0,
+            end_sample: 48_000,
+            tail_milliseconds: 0,
+            normalize_peak: false,
+            normalize_peak_target_centi_dbfs: 0,
+        };
+        let output = apply_render_filename_pattern_with_selected_tracks_and_options(
+            vec![(settings, Path::new("/renders/base.wav").to_owned())],
+            "$track",
+            &project,
+            Path::new("/projects/slashes.aaadaw"),
+            &[],
+            &[],
+            false,
+        )
+        .expect("disabled slash substitutions should keep one safe filename component");
+        assert_eq!(output[0].1, Path::new("/renders/Kick_Snare.wav"));
+
+        let output = apply_render_filename_pattern_with_selected_tracks_and_options(
+            vec![(settings, Path::new("/renders/base.wav").to_owned())],
+            "$track",
+            &project,
+            Path::new("/projects/slashes.aaadaw"),
+            &[],
+            &[],
+            true,
+        )
+        .expect("enabled slash substitutions should create a nested output path");
+        assert_eq!(output[0].1, Path::new("/renders/Kick/Snare.wav"));
+
+        let forced = apply_render_filename_pattern_with_selected_tracks_and_options(
+            vec![(settings, Path::new("/renders/base.wav").to_owned())],
+            "$trackslashes",
+            &project,
+            Path::new("/projects/slashes.aaadaw"),
+            &[],
+            &[],
+            false,
+        )
+        .expect("the Track slashes wildcard should force nested output when the option is off");
+        assert_eq!(forced[0].1, Path::new("/renders/Kick/Snare.wav"));
     }
 
     #[test]

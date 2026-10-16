@@ -580,6 +580,7 @@ pub(crate) enum Message {
     SetRenderTailEnabled(bool),
     SetRenderTailDuration(String),
     SetRenderFilenamePattern(String),
+    SetRenderWildcardAllowSlash(bool),
     ToggleRenderWildcardMenu,
     InsertRenderFilenameWildcard(RenderFilenameWildcard),
     FreezeTrack(TrackId),

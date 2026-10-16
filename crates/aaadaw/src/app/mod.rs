@@ -79,6 +79,7 @@ mod recording;
 mod recording_recovery;
 mod region_properties;
 mod region_render_matrix;
+mod render_wildcard_preferences;
 mod routing;
 mod shortcut;
 #[cfg(test)]
@@ -1379,6 +1380,15 @@ impl App {
             }
             Err(error) => {
                 app.status = format!("Loop/time selection preferences unavailable: {error}");
+            }
+        }
+        match render_wildcard_preferences::load() {
+            Ok(preferences) => {
+                app.render_dialog.allow_slash_in_wildcard_substitutions =
+                    preferences.allow_slash_in_substitutions;
+            }
+            Err(error) => {
+                app.status = format!("Render wildcard preferences unavailable: {error}");
             }
         }
         match item_properties::load_unit() {
@@ -3544,6 +3554,13 @@ impl App {
             }
             Message::SetRenderFilenamePattern(value) => {
                 self.render_dialog.filename_pattern = value;
+            }
+            Message::SetRenderWildcardAllowSlash(enabled) => {
+                self.render_dialog.allow_slash_in_wildcard_substitutions = enabled;
+                if let Err(error) = render_wildcard_preferences::save(enabled) {
+                    self.status =
+                        format!("Render wildcard preferences could not be saved: {error}");
+                }
             }
             Message::ToggleRenderWildcardMenu => {
                 self.render_dialog.wildcard_menu_open = !self.render_dialog.wildcard_menu_open;

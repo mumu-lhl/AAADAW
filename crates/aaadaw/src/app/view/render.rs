@@ -316,6 +316,14 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
                     "Unique ID:",
                     RenderFilenameWildcard::ALL.into_iter().skip(75).take(1),
                 ),
+                row![
+                    text("Options:").size(12),
+                    checkbox(app.render_dialog.allow_slash_in_wildcard_substitutions)
+                        .label("Allow / (create directory) in wildcard substitutions")
+                        .on_toggle(Message::SetRenderWildcardAllowSlash),
+                ]
+                .spacing(tokens::SPACING_SM)
+                .align_y(Alignment::Center),
             ]
             .spacing(tokens::SPACING_XS)
         } else {

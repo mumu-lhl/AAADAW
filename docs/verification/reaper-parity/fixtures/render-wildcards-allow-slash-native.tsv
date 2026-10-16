@@ -1,0 +1,24 @@
+key	value
+reference	Linux REAPER 7.82 / Default 7 / isolated configuration
+captured_at_utc	2026-10-16
+probe_script	scripts/reaper_parity/probe-render-track-folder-wildcards.lua; render dialog source and pattern set to Selected tracks (stems) and $track
+theme	Default_7.0.ReaperThemeZip explicitly loaded by the native probe
+fresh_configuration_default	Checked in Wildcards > Options > Allow / (create directory) in wildcard substitutions
+allow_slash_option_persistence	After toggling off and restarting REAPER with the same isolated configuration, the option remained unchecked
+selected_track	Kick/Snare (project track index 3, nested under Drums > Acoustic)
+render_source	Selected tracks (stems)
+wildcard_pattern	$track
+wildcard_expansion	Kick/Snare
+preview_output	output/Kick/Snare.wav
+rendered_output	output/Kick/Snare.wav
+render_settings	WAV; 24-bit PCM; 48000 Hz; stereo; 48000 frames
+render_file	render-wildcards-allow-slash-native.wav
+render_file_size_bytes	288690
+render_file_sha256	e51c0198bb570ddcd074db69e80d1e5dc4b5f9c13c1baf37fc89b61301249de3
+options_menu_screenshot	render-wildcards-allow-slash-options-native.png; SHA-256 2909f224ee8f543149cdd03272ed2b0ac0a38de667bee73bf38e9c97a281f5bc
+preview_screenshot	render-wildcards-allow-slash-preview-native.png; SHA-256 5af363ee1552fd6d80b95ea9fe8217e8b32c8e2c432cf614b6673ba919e48334
+finished_screenshot	render-wildcards-allow-slash-finished-native.png; SHA-256 edd796153e657c8970f6c56ef401c853760d92e0ad340d3b2ab73591c637b124
+fresh_default_screenshot	render-wildcards-allow-slash-default-native.png; SHA-256 932dacc75d187314d46504326bda7da1c74d03c520e311cbe4154d499a50809e
+disabled_option_preview	$track resolves to Kick_Snare.wav; screenshot render-wildcards-allow-slash-disabled-preview-native.png; SHA-256 cbd8a6e9deee0b373a67b2eaff246ca125653975673d604cda39e31e7d923edc
+persisted_unchecked_screenshot	render-wildcards-allow-slash-persisted-native.png; SHA-256 79a26343b25f8733e110fcb6b7132b8a54358180a794676507fe3c3f0da90354
+forced_separator_regression	With the general option disabled, $trackslashes and $folders still expand path separators; see render-wildcards-track-folders-native.tsv
