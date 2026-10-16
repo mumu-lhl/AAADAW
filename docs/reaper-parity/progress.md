@@ -626,6 +626,12 @@ Storage 往返与 schema 54 → 55 默认值迁移由 `arrangement_view_state_ro
 
 设置持久化实现不关闭 `ITEM-SELECT-018/019/020`：REAPER 原厂跨会话保存行为尚未单独探测；MIDI item 起点的分数 PPQ 表示、常规 Arrange 与 MIDI Editor swing 鼠标行为对照、播放期间 Action List 可用性、全窗口视觉/焦点对照仍未完成。
 
+#### 2026-10-16：原厂 MIDI item 分数 PPQ 定位
+
+在 REAPER 7.82 / Default 7 的 120 BPM、4/4 工程网格下追加 90 个 MIDI item 原厂动作结果：41182/41183/41184、Snap 开/关及正负整数百分比 swing。+1% Swing 的 41183 将 0.5 秒 item 起点移动到 0.5025 秒，即 964.8 PPQ；−1% Swing 的最近动作将其移到 0.4975 秒，即 955.2 PPQ，均保留 item 长度和选择。参照脚本与原厂数据见 [sub-tick probe](../../scripts/reaper_parity/probe-item-snap-subtick.lua) 和 [native TSV](../verification/reaper-parity/fixtures/item-snap-subtick-native.tsv)。
+
+之前 540 行原厂探针的 25%、50%、100% 数值在四分音符网格上恰好产生整数 PPQ，不能据此排除分数位置。新的原厂结果确认 REAPER 使用分数项目 PPQ；AAADAW 目前在 `midi_item_swing_snap_target` 舍入到整数 tick，因此尚不匹配。接下来为 Core MIDI item 起点设计可持久化的高分辨率项目位置，并贯穿事务、渲染与播放，再用上述原厂数值建立端到端对照。`ITEM-SELECT-018/019/020` 继续 `in_progress`。
+
 ### 2026-10-13 Render Bounds：All project regions 批量输出
 
 依照 P10，本切片实现了 Render Bounds 的 `All project regions`：每个工程区域按各自采样边界生成 WAV，采用所选文件名作为前缀、区域名作为文件名部分，并对清理后重名的区域追加稳定序号。多文件输出作为一个离线批次执行，复用私有暂存目录、目标不覆盖和失败回滚；Android 暂不开放多文件边界。没有区域时明确提示且禁止提交。原厂 REAPER 7.82 / Default 7 实窗确认该边界菜单项会输出三个区域文件，实际文件均为 48 kHz、PCM24、立体声、48000 帧；UI 截图、输出测量、探针和逐项对照见 [render bounds verification](../verification/reaper-parity/project-render-range.md)。
