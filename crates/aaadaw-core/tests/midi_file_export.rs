@@ -447,6 +447,32 @@ fn reaper_782_type_one_smpte_offset_matches_native_bytes() {
 }
 
 #[test]
+fn reaper_782_type_one_nonzero_smpte_offset_matches_native_bytes() {
+    let mut project = native_midi_fixture_project();
+    project
+        .apply(DawAction::SetProjectStartTimeOffsetSeconds { seconds: 10.5 })
+        .unwrap();
+    let options = MidiExportOptions {
+        embed_smpte_offset: true,
+        ..MidiExportOptions::for_project(&project)
+    };
+    let actual = encode_standard_midi_with_conductor_track_name(
+        &project,
+        options,
+        "midi-smpte-offset-native-20261016",
+    )
+    .unwrap();
+    let native = include_bytes!(
+        "../../../docs/verification/reaper-parity/fixtures/menu-export-midi-native-smpte-nonzero-offset.mid"
+    );
+
+    assert_eq!(
+        actual, native,
+        "Type 1 nonzero SMPTE offset metadata and MIDI tracks match REAPER 7.82"
+    );
+}
+
+#[test]
 fn reaper_782_type_zero_export_matches_native_event_bytes() {
     let project = native_midi_fixture_project();
     let mut options = MidiExportOptions::for_project(&project);
