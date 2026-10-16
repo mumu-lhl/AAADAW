@@ -88,6 +88,9 @@ pub(crate) enum RenderFilenameWildcard {
     LengthMinutes,
     LengthSecondsComponent,
     LengthMilliseconds,
+    FileNumber,
+    FileNumberNumbered,
+    FileCount,
     Format,
     SampleRate,
     SampleRateKilohertz,
@@ -125,7 +128,7 @@ pub(crate) enum RenderFilenameWildcard {
 }
 
 impl RenderFilenameWildcard {
-    pub(crate) const ALL: [Self; 76] = [
+    pub(crate) const ALL: [Self; 79] = [
         Self::Project,
         Self::Title,
         Self::Author,
@@ -169,6 +172,9 @@ impl RenderFilenameWildcard {
         Self::LengthMinutes,
         Self::LengthSecondsComponent,
         Self::LengthMilliseconds,
+        Self::FileNumber,
+        Self::FileNumberNumbered,
+        Self::FileCount,
         Self::Format,
         Self::SampleRate,
         Self::SampleRateKilohertz,
@@ -248,6 +254,9 @@ impl RenderFilenameWildcard {
             Self::LengthMinutes => "$lenmm",
             Self::LengthSecondsComponent => "$lenss",
             Self::LengthMilliseconds => "$lentt",
+            Self::FileNumber => "$filenumber",
+            Self::FileNumberNumbered => "$filenumber[N]",
+            Self::FileCount => "$filecount",
             Self::Format => "$format",
             Self::SampleRate => "$samplerate",
             Self::SampleRateKilohertz => "$sampleratek",
@@ -334,11 +343,14 @@ impl RenderFilenameDateTime {
     }
 }
 
+#[derive(Clone, Copy)]
 struct RenderFilenameExpansionContext<'a> {
     plugins: &'a [ClapPluginDescriptor],
     selected_tracks: &'a [TrackId],
     system_info: &'a RenderFilenameSystemInfo,
     allow_slash_in_wildcard_substitutions: bool,
+    file_number: u64,
+    file_count: usize,
 }
 
 #[derive(Clone, Copy)]
@@ -998,6 +1010,8 @@ fn apply_render_filename_pattern_with_selected_tracks_and_options(
         selected_tracks,
         system_info: &system_info,
         allow_slash_in_wildcard_substitutions,
+        file_number: 1,
+        file_count: 1,
     };
     apply_render_filename_pattern_with_context(
         outputs,
@@ -1020,10 +1034,17 @@ fn apply_render_filename_pattern_with_context(
         return Ok(outputs);
     }
 
-    let mut used_names = HashSet::with_capacity(outputs.len());
+    let file_count = outputs.len();
+    let mut used_names = HashSet::with_capacity(file_count);
     outputs
         .into_iter()
-        .map(|(settings, path)| {
+        .enumerate()
+        .map(|(index, (settings, path))| {
+            let output_context = RenderFilenameExpansionContext {
+                file_number: u64::try_from(index).unwrap_or(u64::MAX).saturating_add(1),
+                file_count,
+                ..*expansion_context
+            };
             let fallback = path
                 .file_stem()
                 .and_then(|stem| stem.to_str())
@@ -1035,7 +1056,7 @@ fn apply_render_filename_pattern_with_context(
                 project,
                 project_path,
                 settings,
-                expansion_context,
+                &output_context,
             );
             let Some(relative_path) = safe_render_pattern_relative_path(&expanded) else {
                 return Err("Filename pattern must produce a non-empty file name".to_owned());
@@ -1307,6 +1328,11 @@ fn parse_render_filename_wildcard_modifiers(
                         break;
                     };
                     modifiers.push(RenderFilenameWildcardModifier::Truncate(limit));
+                } else if token == "filenumber" && suffix.iter().all(char::is_ascii_digit) {
+                    modifiers.push(RenderFilenameWildcardModifier::Numbered {
+                        start: 1,
+                        width: suffix.len(),
+                    });
                 } else if matches!(token, "regionnumber" | "markernumber")
                     && suffix.iter().all(char::is_ascii_digit)
                 {
@@ -1464,6 +1490,8 @@ fn expand_render_filename_pattern(
         selected_tracks,
         system_info,
         allow_slash_in_wildcard_substitutions,
+        file_number,
+        file_count,
     } = context;
     let project_name = project_path
         .file_stem()
@@ -1833,6 +1861,8 @@ fn expand_render_filename_pattern(
             "lenmm" => result.push_str(&length_components[1]),
             "lenss" => result.push_str(&length_components[2]),
             "lentt" => result.push_str(&length_components[3]),
+            "filenumber" => result.push_str(&file_number.to_string()),
+            "filecount" => result.push_str(&file_count.to_string()),
             "fx" => {
                 let separator = modifiers
                     .iter()
@@ -3817,6 +3847,9 @@ mod tests {
                 "$lenmm",
                 "$lenss",
                 "$lentt",
+                "$filenumber",
+                "$filenumber[N]",
+                "$filecount",
                 "$format",
                 "$samplerate",
                 "$sampleratek",
@@ -4024,6 +4057,8 @@ mod tests {
             selected_tracks: &[],
             system_info: &system_info,
             allow_slash_in_wildcard_substitutions: false,
+            file_number: 1,
+            file_count: 1,
         };
         let output = apply_render_filename_pattern_with_context(
             vec![(settings, Path::new("/renders/base.wav").to_owned())],
@@ -4399,6 +4434,57 @@ mod tests {
         )
         .expect("two-digit number modifiers should retain their requested width");
         assert_eq!(output[0].1, Path::new("/renders/02-02.wav"));
+    }
+
+    #[test]
+    fn render_filename_file_number_and_file_count_follow_output_batch_order() {
+        let project = Project::default();
+        let settings = aaadaw_app::ProjectWavRenderSettings {
+            master_ceiling: aaadaw_engine::MasterOutputCeiling::default(),
+            export_options: aaadaw_app::WavExportOptions::default(),
+            output_sample_rate: 48_000,
+            output_channels: WavChannelCount::Stereo,
+            source: aaadaw_app::ProjectWavRenderSource::MasterMix,
+            start_sample: 0,
+            end_sample: 48_000,
+            tail_milliseconds: 0,
+            normalize_peak: false,
+            normalize_peak_target_centi_dbfs: 0,
+        };
+        let project_path = Path::new("/projects/file-counters.aaadaw");
+        let outputs = vec![
+            (settings, Path::new("/renders/first.wav").to_owned()),
+            (settings, Path::new("/renders/second.wav").to_owned()),
+        ];
+
+        let numbered = apply_render_filename_pattern(
+            outputs.clone(),
+            "$filenumber[01]-$filecount",
+            &project,
+            project_path,
+        )
+        .expect("zero-padded file counters should expand in output order");
+        assert_eq!(numbered[0].1, Path::new("/renders/01-2.wav"));
+        assert_eq!(numbered[1].1, Path::new("/renders/02-2.wav"));
+
+        let bare = apply_render_filename_pattern(
+            outputs,
+            "$filenumber-$filecount",
+            &project,
+            project_path,
+        )
+        .expect("bare file counters should expand in output order");
+        assert_eq!(bare[0].1, Path::new("/renders/1-2.wav"));
+        assert_eq!(bare[1].1, Path::new("/renders/2-2.wav"));
+
+        let single = apply_render_filename_pattern(
+            vec![(settings, Path::new("/renders/single.wav").to_owned())],
+            "$filecount-$filenumber[001]",
+            &project,
+            project_path,
+        )
+        .expect("single-file batches should report one padded file number and count");
+        assert_eq!(single[0].1, Path::new("/renders/1-001.wav"));
     }
 
     #[test]

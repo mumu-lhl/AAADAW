@@ -1,0 +1,29 @@
+key	value
+reference	Linux REAPER 7.82 / Default 7 / isolated configuration
+probe_script	scripts/reaper_parity/probe-render-empty-name-wildcards.lua
+project	Two named project regions rendered with All project regions: Verse and Chorus
+source	Master mix; All project regions
+format	WAV; 24-bit PCM; 48,000 Hz; stereo
+numbered_pattern	file-$filenumber[01]-$filecount-$region
+numbered_native_preview	file-01-2-Verse.wav; file-02-2-Chorus.wav; 2 files
+numbered_native_finished_outputs	file-01-2-Verse.wav; file-02-2-Chorus.wav
+numbered_preview_screenshot	render-wildcards-file-counters-numbered-preview.png
+numbered_preview_screenshot_sha256	ed903b017a212136a9751a879d787347a1f70917eae2bd2e55061df861562393
+numbered_finished_screenshot	render-wildcards-file-counters-numbered-finished.png
+numbered_finished_screenshot_sha256	50ff44297d741a94568968baaba16f2d2ed1333b5f26c51c0d82e76cbdf1a90f
+numbered_verse_wav	render-wildcards-file-counters-file-01-2-Verse.wav
+numbered_verse_wav_sha256	ecbc1b442c53332106e1ba2e4d057f879d2ce5b49aa5bab9ab135fb5422af2fc
+numbered_chorus_wav	render-wildcards-file-counters-file-02-2-Chorus.wav
+numbered_chorus_wav_sha256	939d49971a36c0832da312b6b0f0cc89ced113c2b216e0f709baade8ff062999
+bare_pattern	file-$filenumber-$filecount-$region
+bare_native_preview	file-1-2-Verse.wav; file-2-2-Chorus.wav; 2 files
+bare_native_finished_outputs	file-1-2-Verse.wav; file-2-2-Chorus.wav
+bare_preview_screenshot	render-wildcards-file-counters-bare-preview.png
+bare_preview_screenshot_sha256	4ef5f16acb57a914ad7ee8a1a0e1523d903abc20f714e9f8782b15ca3c05ec7b
+bare_finished_screenshot	render-wildcards-file-counters-bare-finished.png
+bare_finished_screenshot_sha256	7afe4f8bb652a21f446f778c5562e73617c81086d73eb7d28a88a4c5b9667bdd
+bare_verse_wav	render-wildcards-file-counters-file-1-2-Verse.wav
+bare_verse_wav_sha256	c39358c05d4611ccff4177d25a653f72d7f443881ce456d8af213b28270ed535
+bare_chorus_wav	render-wildcards-file-counters-file-2-2-Chorus.wav
+bare_chorus_wav_sha256	9dc6a798f3fa85f2462f8081431de05f43ea0db91a05fc62bc8195c1edc18c44
+native_observation	$filenumber advances from 1 in output order; [01] means two-digit zero padding; $filecount is the batch total for every file

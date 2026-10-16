@@ -295,3 +295,13 @@ aaadaw_allow_slash_binary_sha256	4c3fdf55279d7582b8cb10d20d40074e5753eb145b08ae7
 aaadaw_allow_slash_resolver_test	app::audio_export::tests::render_filename_allow_slash_option_creates_directories_but_forced_slashes_stay_active
 aaadaw_allow_slash_preference_tests	app::render_wildcard_preferences::tests::render_wildcard_preferences_default_on_and_round_trip; app::render_wildcard_preferences::tests::unsupported_render_wildcard_preferences_version_fails_closed
 aaadaw_allow_slash_validation	Build completed and desktop Render picker inspected; UI toggle wrote the false preference; second app launch loaded false and screenshot confirmed unchecked state; full workspace nextest 1264/1264 passed; strict all-target Clippy -D warnings, cargo fmt --all -- --check, git diff --check, capture script bash -n, and native/AAADAW fixture SHA-256 checks passed
+
+aaadaw_filenumber_tokens	$filenumber; $filenumber[N] with N zero-padding width; $filecount for the full output batch
+aaadaw_file_counter_native_fixture	render-wildcards-file-counters-native.tsv; $filenumber[01] => 01/02, bare $filenumber => 1/2, $filecount => 2 on both output files; four REAPER 7.82 preview/finished screenshots and PCM24 WAV hashes recorded
+aaadaw_file_counter_picker_screenshot	render-filename-pattern-aaadaw-file-counters.png; SHA-256 ecc1fcbcdf9459152272df30d825e4e825e341555be75aaadcfa24860d3ec35a; Recording row visible in actual desktop picker
+aaadaw_filenumber_insert_screenshot	render-filename-pattern-wildcard-filenumberpadded-aaadaw.png; SHA-256 bf0e7324cb1fb2c44b7a9b3ae756233b5763f76706c9d5af115b28119bce4fbf; X11 click inserted $filenumber[N] and closed the picker
+aaadaw_file_counter_build_id	19207d803b3ead43ff9a6029af23d378b660c6b5
+aaadaw_file_counter_binary_sha256	23840c4f7a5368f7c7e98099ff272bec2deb8247cf1314c829f24e552c9d0dc1
+aaadaw_file_counter_test	app::audio_export::tests::render_filename_file_number_and_file_count_follow_output_batch_order
+aaadaw_file_counter_picker_test	app::audio_export::tests::render_wildcard_picker_lists_and_inserts_supported_tokens
+aaadaw_file_counter_validation	Focused resolver and picker regressions passed; full workspace nextest, strict all-target aaadaw Clippy -D warnings, formatting, diff, capture script syntax, and fixture hashes pending

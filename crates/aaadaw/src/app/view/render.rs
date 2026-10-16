@@ -285,36 +285,40 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
                     RenderFilenameWildcard::ALL.into_iter().skip(39).take(4),
                 ),
                 wildcard_group_row(
+                    "Recording:",
+                    RenderFilenameWildcard::ALL.into_iter().skip(43).take(3),
+                ),
+                wildcard_group_row(
                     "Output format:",
-                    RenderFilenameWildcard::ALL.into_iter().skip(43).take(4),
+                    RenderFilenameWildcard::ALL.into_iter().skip(46).take(4),
                 ),
                 wildcard_group_row(
                     "Channels:",
-                    RenderFilenameWildcard::ALL.into_iter().skip(47).take(1),
+                    RenderFilenameWildcard::ALL.into_iter().skip(50).take(1),
                 ),
                 wildcard_group_row(
                     "Track FX:",
-                    RenderFilenameWildcard::ALL.into_iter().skip(50).take(2),
+                    RenderFilenameWildcard::ALL.into_iter().skip(53).take(2),
                 ),
                 wildcard_group_row(
                     "Track folders:",
-                    RenderFilenameWildcard::ALL.into_iter().skip(52).take(4),
+                    RenderFilenameWildcard::ALL.into_iter().skip(55).take(4),
                 ),
                 wildcard_group_row(
                     "Date/time:",
-                    RenderFilenameWildcard::ALL.into_iter().skip(60).take(3),
+                    RenderFilenameWildcard::ALL.into_iter().skip(63).take(3),
                 ),
                 wildcard_group_row(
                     "Calendar:",
-                    RenderFilenameWildcard::ALL.into_iter().skip(63).take(6),
+                    RenderFilenameWildcard::ALL.into_iter().skip(66).take(6),
                 ),
                 wildcard_group_row(
                     "Clock:",
-                    RenderFilenameWildcard::ALL.into_iter().skip(69).take(6),
+                    RenderFilenameWildcard::ALL.into_iter().skip(72).take(6),
                 ),
                 wildcard_group_row(
                     "Unique ID:",
-                    RenderFilenameWildcard::ALL.into_iter().skip(75).take(1),
+                    RenderFilenameWildcard::ALL.into_iter().skip(78).take(1),
                 ),
                 row![
                     text("Options:").size(12),
