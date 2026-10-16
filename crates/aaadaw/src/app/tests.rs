@@ -15912,6 +15912,8 @@ fn select_item_under_mouse_leaving_other_items_selected_adds_without_toggling() 
     app.timeline.rebuild(&app.project);
     app.timeline
         .select_items(vec![(previously_selected_id, tracks[0])]);
+    app.timeline.select_track_only(tracks[0]);
+    assert_eq!(app.timeline.selected_tracks, HashSet::from([tracks[0]]));
     app.timeline.hovered_item = Some(hovered_id);
 
     let command = CommandId::AddItemUnderMouseToSelection;
@@ -15949,6 +15951,8 @@ fn select_item_under_mouse_leaving_other_items_selected_adds_without_toggling() 
             HashSet::from([previously_selected_id, hovered_id])
         );
         assert_eq!(app.timeline.selected_item, Some(hovered_id));
+        assert_eq!(app.timeline.selected_track, Some(tracks[1]));
+        assert_eq!(app.timeline.selected_tracks, HashSet::from([tracks[0]]));
         assert_eq!(
             app.timeline.selection_anchor(),
             Some(previously_selected_id)
@@ -15966,6 +15970,8 @@ fn select_item_under_mouse_leaving_other_items_selected_adds_without_toggling() 
         HashSet::from([previously_selected_id, hovered_id])
     );
     assert_eq!(app.timeline.selected_item, Some(hovered_id));
+    assert_eq!(app.timeline.selected_track, Some(tracks[1]));
+    assert_eq!(app.timeline.selected_tracks, HashSet::from([tracks[0]]));
     assert_eq!(
         app.timeline.selection_anchor(),
         Some(previously_selected_id)
@@ -16000,6 +16006,8 @@ fn toggle_selection_of_item_under_mouse_adds_and_removes_the_hovered_item() {
     app.timeline.rebuild(&app.project);
     app.timeline
         .select_items(vec![(hovered_id, tracks[1]), (retained_id, tracks[0])]);
+    app.timeline.select_track_only(tracks[0]);
+    assert_eq!(app.timeline.selected_tracks, HashSet::from([tracks[0]]));
     assert_eq!(app.timeline.selection_anchor(), Some(retained_id));
     app.timeline.hovered_item = Some(hovered_id);
 
@@ -16032,6 +16040,8 @@ fn toggle_selection_of_item_under_mouse_adds_and_removes_the_hovered_item() {
 
     assert_eq!(app.timeline.selected_items, HashSet::from([retained_id]));
     assert_eq!(app.timeline.selected_item, Some(retained_id));
+    assert_eq!(app.timeline.selected_track, Some(tracks[1]));
+    assert_eq!(app.timeline.selected_tracks, HashSet::from([tracks[0]]));
     assert_eq!(app.timeline.selection_anchor(), Some(retained_id));
 
     let _ = app.update(Message::ActionListRun(false));
@@ -16041,6 +16051,8 @@ fn toggle_selection_of_item_under_mouse_adds_and_removes_the_hovered_item() {
         HashSet::from([retained_id, hovered_id])
     );
     assert_eq!(app.timeline.selected_item, Some(hovered_id));
+    assert_eq!(app.timeline.selected_track, Some(tracks[1]));
+    assert_eq!(app.timeline.selected_tracks, HashSet::from([tracks[0]]));
     assert_eq!(app.timeline.selection_anchor(), Some(retained_id));
     assert_eq!(app.revision, revision_before);
     assert_eq!(app.project.can_undo(), can_undo_before);
@@ -16054,6 +16066,8 @@ fn toggle_selection_of_item_under_mouse_adds_and_removes_the_hovered_item() {
         HashSet::from([retained_id, hovered_id])
     );
     assert_eq!(app.timeline.selected_item, Some(hovered_id));
+    assert_eq!(app.timeline.selected_track, Some(tracks[1]));
+    assert_eq!(app.timeline.selected_tracks, HashSet::from([tracks[0]]));
     assert_eq!(app.timeline.selection_anchor(), Some(retained_id));
     assert_eq!(app.revision, revision_before);
     assert_eq!(app.project.can_undo(), can_undo_before);

@@ -1,0 +1,16 @@
+captured_at_utc	2026-10-16
+platform	Linux x86_64; isolated Xvfb :347; X11; 1280x800x24
+configuration	Fresh -cfgfile profile; Default_7.0.ReaperThemeZip; no custom keymap, mouse map, or third-party extensions
+probe_script	scripts/reaper_parity/probe-item-hover-actions.lua
+track_selection_result	With only Track A selected, 40529 adding B1 and 40530 toggling B1 off both preserve selected_tracks=A while GetLastTouchedTrack changes A→B.
+selection_api_order	ReaScript GetSelectedMediaItem enumeration follows project item order (A1,A2,B1) after Add A2, even when the SetMediaItemSelected setup listed B1 before A1; it does not expose a separate primary active item.
+active_item_limit	Native multi-item Item Properties reports two takes selected and leaves the differing Take name field blank; no native primary-item identity is exposed by this probe, so AAADAW active-item parity remains open.
+screenshot	item-hover-actions-selected-track-A-item-B1-native.png; SHA-256 02e2f86d92271b7e68dd14a61b69420deed36be88ece9a78ab991f73a493d70f
+version	7.82/linux-x86_64
+theme	Default_7.0.ReaperThemeZip
+fixture	Two tracks; MIDI items A1/A2 and B1/B2 at 1-2, 4-5, 1-2, and 3-4 seconds
+case	action_id	pointer_xy	hovered_item	selection_before	selection_api_order_before	selection_after	selection_api_order_after	selected_tracks_before	selected_tracks_after	last_touched_track_before	last_touched_track_after	project_state_delta	undo_before	undo_after	cursor_seconds
+add_A2_after_B1_A1_api_order	40529	800,140	A2	A1,B1	A1,B1	A1,A2,B1	A1,A2,B1			A	A	2		Change media item selection	0.000000
+toggle_A2_after_A1_B1_api_order	40530	800,140	A2	A1,B1	A1,B1	A1,A2,B1	A1,A2,B1			A	A	2	Change media item selection	Change media item selection	0.000000
+add_B1_when_track_A_selected	40529	500,225	B1	A1	A1	A1,B1	A1,B1	A	A	A	B	2	Change media item selection	Change media item selection	0.000000
+toggle_B1_when_track_A_selected	40530	500,225	B1	A1,B1	A1,B1	A1	A1	A	A	B	B	2	Change media item selection	Change media item selection	0.000000

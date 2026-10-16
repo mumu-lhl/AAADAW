@@ -58,6 +58,17 @@ local function selected_items()
   return table.concat(found, ",")
 end
 
+local function selected_items_api_order()
+  local found = {}
+  for index = 0, reaper.CountSelectedMediaItems(0) - 1 do
+    local item = reaper.GetSelectedMediaItem(0, index)
+    for label, candidate in pairs(items) do
+      if candidate == item then found[#found + 1] = label end
+    end
+  end
+  return table.concat(found, ",")
+end
+
 local function set_selected(spec)
   for _, item in pairs(items) do reaper.SetMediaItemSelected(item, false) end
   if spec ~= "none" and spec ~= "" then
@@ -90,10 +101,23 @@ local function selected_tracks()
   return table.concat(names, ",")
 end
 
+local function track_name(track)
+  if not track then return "none" end
+  for name, candidate in pairs(tracks) do
+    if track == candidate then return name end
+  end
+  return "other"
+end
+
+local function last_touched_track()
+  if type(reaper.GetLastTouchedTrack) ~= "function" then return "unavailable" end
+  return track_name(reaper.GetLastTouchedTrack())
+end
+
 out:write("version\t", reaper.GetAppVersion(), "\n")
 out:write("theme\tDefault_7.0.ReaperThemeZip\n")
 out:write("fixture\tTwo tracks; MIDI items A1/A2 and B1/B2 at 1-2, 4-5, 1-2, and 3-4 seconds\n")
-out:write("case\taction_id\tpointer_xy\thovered_item\tselection_before\tselection_after\tselected_tracks_after\tproject_state_delta\tundo_before\tundo_after\tcursor_seconds\n")
+out:write("case\taction_id\tpointer_xy\thovered_item\tselection_before\tselection_api_order_before\tselection_after\tselection_api_order_after\tselected_tracks_before\tselected_tracks_after\tlast_touched_track_before\tlast_touched_track_after\tproject_state_delta\tundo_before\tundo_after\tcursor_seconds\n")
 out:flush()
 
 local ready = assert(io.open(ready_path, "w"))
@@ -114,6 +138,9 @@ local function poll()
       local before = selected_items()
       local x, y = reaper.GetMousePosition()
       local hovered_before = hovered_item()
+      local selected_tracks_before = selected_tracks()
+      local last_touched_before = last_touched_track()
+      local api_order_before = selected_items_api_order()
       local project_state_before = reaper.GetProjectStateChangeCount(0)
       local undo_before = reaper.Undo_CanUndo2(0) or ""
       reaper.Main_OnCommand(tonumber(action_text), 0)
@@ -123,8 +150,13 @@ local function poll()
         tostring(x) .. "," .. tostring(y),
         hovered_before,
         before,
+        api_order_before,
         selected_items(),
+        selected_items_api_order(),
+        selected_tracks_before,
         selected_tracks(),
+        last_touched_before,
+        last_touched_track(),
         tostring(reaper.GetProjectStateChangeCount(0) - project_state_before),
         undo_before,
         reaper.Undo_CanUndo2(0) or "",
