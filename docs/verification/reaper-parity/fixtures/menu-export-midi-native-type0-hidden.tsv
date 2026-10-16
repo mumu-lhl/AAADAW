@@ -17,3 +17,9 @@ native_unchecked_file	fixtures/menu-export-midi-native-type0-hidden-excluded.mid
 native_checked_file	fixtures/menu-export-midi-native-type0-hidden-included.mid; 64 bytes; SHA-256 bad852e9d322144a0287782ff88d22dcdcc7eb89a58fdd38e64edd82f680fccc
 native_events	One SMF Type 0 track; #Intro marker tick 0; C4 note 480-1440; CC1 tick 720; pitch bend tick 840; Verse marker tick 960; no #Hidden event; End-of-Track tick 1440
 observation	In REAPER 7.82, Type 0 omits the individually hidden #Hidden marker even when Export hidden markers is checked; checked and unchecked files are byte-identical
+cue_native_dialog_unchecked	fixtures/menu-export-midi-native-type0-hidden-cues-excluded-dialog.png; 518x452; SHA-256 7d74d446f5dec17aa5f81722fcf99f2feea23aa02fb3bb0b1ad5a7e7252deb5b
+cue_native_dialog_checked	fixtures/menu-export-midi-native-type0-hidden-cues-included-dialog.png; 518x452; SHA-256 e5980c8c7d99e599b8a7ce1c1e90b17d38ed48c298b8f012bf53579cc539d339
+cue_native_unchecked_file	fixtures/menu-export-midi-native-type0-hidden-cues-excluded.mid; 64 bytes; SHA-256 61024b8de96421d3c9a3efc075fae1678ad287e8abac673e1196156cd17798ae
+cue_native_checked_file	fixtures/menu-export-midi-native-type0-hidden-cues-included.mid; 64 bytes; SHA-256 61024b8de96421d3c9a3efc075fae1678ad287e8abac673e1196156cd17798ae
+cue_native_events	One SMF Type 0 track; #Intro cue tick 0; C4 note 480-1440; CC1 tick 720; pitch bend tick 840; Verse cue tick 960; no #Hidden cue; End-of-Track tick 1440
+cue_observation	Selecting cues writes FF 07 events; checking Export hidden markers still does not add the hidden #Hidden cue
