@@ -1,0 +1,21 @@
+version	7.82/linux-x86_64
+theme	Default_7.0.ReaperThemeZip
+fixture	track Piano; C4 note, CC1, pitch bend; visible #Intro at tick 0; visible Verse at tick 960; hidden #Hidden at tick 1920
+export_action	40849
+export_mode	Multitrack MIDI file (type 1 MIDI file)
+export_ppqn	960
+export_tempo_meter_changes	unchecked
+export_smpte_offset	unchecked
+export_markers	checked
+export_marker_type	markers
+export_marker_filter	checked
+export_hidden_markers	unchecked
+native_conductor_events	name at tick 0; 4/4 and 120 BPM at tick 0; only #Intro marker at tick 0; End-of-Track tick 0
+native_midi_track_events	Piano C4 note tick 480-1440, CC1 tick 720, pitch bend tick 840, End-of-Track tick 1440
+native_export_path	/tmp/midi-markers-filtered-native-20261016.mid
+native_export_bytes	132
+native_export_sha256	92a29395c79581df9bb2e62802ce915b784c1bd4bae9ca2eb7367c0c0f1a345c
+native_dialog_screenshot	fixtures/menu-export-midi-native-marker-filtered-dialog.png
+native_dialog_screenshot_sha256	a563793535e6f780cc9c01ae33f8832d247fa4605a11cfb563ca41164a48267a
+native_binary_fixture	fixtures/menu-export-midi-native-marker-filtered.mid
+native_probe	scripts/reaper_parity/probe-midi-export-marker-filter.lua
