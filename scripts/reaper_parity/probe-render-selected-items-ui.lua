@@ -32,6 +32,7 @@ if track_name == nil then
   track_name = "Render fixture"
 end
 reaper.GetSetMediaTrackInfo_String(track, "P_NAME", track_name, true)
+reaper.SetTrackSelected(track, true)
 local selected_item_start = tonumber(os.getenv("AAADAW_REAPER_SELECTED_ITEM_START")) or 2
 local selected_item_length = tonumber(os.getenv("AAADAW_REAPER_SELECTED_ITEM_LENGTH")) or 1
 for index, start in ipairs({ 0, selected_item_start, 4 }) do

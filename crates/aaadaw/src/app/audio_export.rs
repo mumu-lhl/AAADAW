@@ -166,7 +166,7 @@ impl RenderFilenameWildcard {
             Self::MarkerName => "$markername",
             Self::Track => "$track",
             Self::TrackNumber => "$tracknumber",
-            Self::TrackNameOrNumber => "$tracknameornumber",
+            Self::TrackNameOrNumber => "$tracknamenumber",
             Self::Item => "$item",
             Self::ItemNumber => "$itemnumber",
             Self::Start => "$start",
@@ -1229,9 +1229,10 @@ fn expand_render_filename_pattern(
             .iter()
             .collect::<String>();
         let token = token_original.to_ascii_lowercase();
-        let known_token = RenderFilenameWildcard::ALL.iter().any(|wildcard| {
-            wildcard.token().trim_start_matches('$').split('(').next() == Some(token.as_str())
-        });
+        let known_token = token == "tracknameornumber"
+            || RenderFilenameWildcard::ALL.iter().any(|wildcard| {
+                wildcard.token().trim_start_matches('$').split('(').next() == Some(token.as_str())
+            });
         let (expression_end, named_value_key, named_value_separator) =
             if matches!(token.as_str(), "projectnotes" | "region" | "marker")
                 && characters.get(token_end) == Some(&'(')
@@ -1364,7 +1365,7 @@ fn expand_render_filename_pattern(
             "timesigdenom" => result.push_str(&time_signature.denominator().to_string()),
             "track" => result.push_str(track_name),
             "tracknumber" => result.push_str(&track_number_text),
-            "tracknameornumber" => result.push_str(&track_name_or_number),
+            "tracknamenumber" | "tracknameornumber" => result.push_str(&track_name_or_number),
             "region" => result.push_str(&region_name_or_number),
             "regionnumber" => result.push_str(&region_number_text),
             "regionname" => result.push_str(&region_name),
@@ -3044,7 +3045,7 @@ mod tests {
                 )),
                 output.clone(),
             )],
-            "$project-$title-$author-$projectnotes-$region-$regionnumber-$marker-$markernumber-$track-$tracknumber-$tracknameornumber-$bpm-$tempo-$timesignature-$timesignum-$timesigdenom",
+            "$project-$title-$author-$projectnotes-$region-$regionnumber-$marker-$markernumber-$track-$tracknumber-$tracknamenumber-$tracknameornumber-$bpm-$tempo-$timesignature-$timesignum-$timesigdenom",
             &project,
             project_path,
         )
@@ -3052,7 +3053,7 @@ mod tests {
         assert_eq!(
             track_output[0].1,
             Path::new(
-                "/renders/session-Session title-Render author-Mix notes-Intro-01-Start-01-Drums_Kit-01-Drums_Kit-120-120-4-4-4-4.wav"
+                "/renders/session-Session title-Render author-Mix notes-Intro-01-Start-01-Drums_Kit-01-Drums_Kit-Drums_Kit-120-120-4-4-4-4.wav"
             )
         );
 
@@ -3085,14 +3086,14 @@ mod tests {
                 )),
                 Path::new("/renders/base.wav").to_owned(),
             )],
-            "$tracknameornumber",
+            "$tracknamenumber-$tracknameornumber",
             &project,
             project_path,
         )
         .expect("unnamed tracks should resolve to their numbered display name");
         assert_eq!(
             unnamed_track_output[0].1,
-            Path::new("/renders/Track 02.wav")
+            Path::new("/renders/Track 02-Track 02.wav")
         );
     }
 
@@ -3113,7 +3114,7 @@ mod tests {
                 "$timesigdenom",
                 "$track",
                 "$tracknumber",
-                "$tracknameornumber",
+                "$tracknamenumber",
                 "$region",
                 "$regionnumber",
                 "$regionnumber[N]",

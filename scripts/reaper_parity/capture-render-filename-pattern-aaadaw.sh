@@ -134,7 +134,7 @@ if [[ -n "$insert_wildcard" ]]; then
     timesigdenom) wildcard_x=425; wildcard_y=420 ;;
     track) wildcard_x=89; wildcard_y=455 ;;
     tracknumber) wildcard_x=190; wildcard_y=455 ;;
-    tracknameornumber) wildcard_x=347; wildcard_y=455 ;;
+    tracknamenumber|tracknameornumber) wildcard_x=347; wildcard_y=455 ;;
     region) wildcard_x=138; wildcard_y=490 ;;
     regionnumber) wildcard_x=248; wildcard_y=490 ;;
     regionnumberpadded) wildcard_x=410; wildcard_y=490 ;;

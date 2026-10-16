@@ -1624,3 +1624,8 @@ App nextest 672/672、strict all-target App Clippy `-D warnings`、rustfmt、dif
 ### 2026-10-16 Native direct Item number render
 
 用 Linux REAPER 7.82 的 `Selected media items` source 单独选中三个工程 Item 中的第二个，将 pattern 设为 `$itemnumber`。原厂预览指向 `02.wav`，实际渲染也生成 `02.wav`（48,000 帧、48 kHz stereo PCM24）；渲染对话框、完成列表、源项目、输出哈希与可复现 probe 见[原厂 Item number fixture](../verification/reaper-parity/fixtures/render-wildcards-itemnumber-native.tsv)。这补上了此前只从 `$item` 输出确认序号、但尚未单独渲染 `$itemnumber` 的差异。AAADAW 现有第二个 Item 的 `$itemnumber` 回归值 `02` 与原厂一致；App nextest 672/672、strict all-target App Clippy 及桌面构建结果沿用上方同一代码版本，Render wildcard 验收仍 `in_progress`。
+
+
+### 2026-10-16 Native `$tracknamenumber` picker token
+
+將 Tracks picker 的 `$tracknameornumber` 文字修正為 REAPER 7.82 Project Information 菜單使用的 `$tracknamenumber`，並保留舊拼法作為解析器兼容別名。原廠 `Selected tracks (stems)` 對空名首軌以 `$tracknamenumber` 預覽並實際生成 `Track 01.wav`（48 kHz、stereo、PCM24、240,000 frames）；原廠預覽/完成列表、WAV 哈希及探針記入 [native fixture](../verification/reaper-parity/fixtures/render-wildcards-tracknamenumber-native.tsv)。新桌面 Build ID `c8737e71c4c13fff201e069c653e602b5b54f20e`、SHA-256 `93bb0479cce315090bb9731590ab5f6f7168985eaa3ed3e8192259ab21cd6538` 的實窗截圖確認 picker 顯示 `$tracknamenumber`，實點插入後輸入框內容正確且 picker 關閉，见 [AAADAW insertion capture](../verification/reaper-parity/fixtures/render-filename-pattern-wildcard-tracknamenumber-aaadaw.png)。完整 App nextest 674/674、strict all-target App Clippy `-D warnings`、rustfmt、shell syntax 和 diff 检查通过。Picker 仍保持 48 个已实现 token，目录/层级与其他原厂变量继续开放，`RENDER-WILDCARDS-001`/P10 继续 `in_progress`。
