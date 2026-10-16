@@ -225,7 +225,11 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
                 ),
                 wildcard_group_row(
                     "Tracks:",
-                    RenderFilenameWildcard::ALL.into_iter().skip(12).take(3),
+                    RenderFilenameWildcard::ALL
+                        .into_iter()
+                        .skip(12)
+                        .take(3)
+                        .chain(std::iter::once(RenderFilenameWildcard::SelTrack),),
                 ),
                 wildcard_group_row(
                     "Regions:",

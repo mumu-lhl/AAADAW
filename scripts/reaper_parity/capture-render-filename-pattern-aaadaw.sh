@@ -143,6 +143,7 @@ if [[ -n "$insert_wildcard" ]]; then
     track) wildcard_x=89; wildcard_y=490 ;;
     tracknumber) wildcard_x=190; wildcard_y=490 ;;
     tracknamenumber|tracknameornumber) wildcard_x=347; wildcard_y=490 ;;
+    seltrack) wildcard_x=466; wildcard_y=490 ;;
     region) wildcard_x=138; wildcard_y=525 ;;
     regionnumber) wildcard_x=248; wildcard_y=525 ;;
     regionnumberpadded) wildcard_x=410; wildcard_y=525 ;;

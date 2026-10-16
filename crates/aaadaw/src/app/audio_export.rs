@@ -99,10 +99,11 @@ pub(crate) enum RenderFilenameWildcard {
     Folders,
     FoldersDelimited,
     Parent,
+    SelTrack,
 }
 
 impl RenderFilenameWildcard {
-    pub(crate) const ALL: [Self; 56] = [
+    pub(crate) const ALL: [Self; 57] = [
         Self::Project,
         Self::Title,
         Self::Author,
@@ -159,6 +160,7 @@ impl RenderFilenameWildcard {
         Self::Folders,
         Self::FoldersDelimited,
         Self::Parent,
+        Self::SelTrack,
     ];
 
     pub(crate) const fn token(self) -> &'static str {
@@ -219,6 +221,7 @@ impl RenderFilenameWildcard {
             Self::Folders => "$folders",
             Self::FoldersDelimited => "$folders[X]",
             Self::Parent => "$parent",
+            Self::SelTrack => "$seltrack",
         }
     }
 }
@@ -777,12 +780,31 @@ fn apply_render_filename_pattern(
     apply_render_filename_pattern_with_plugins(outputs, pattern, project, project_path, &[])
 }
 
+#[cfg(test)]
 fn apply_render_filename_pattern_with_plugins(
     outputs: Vec<(aaadaw_app::ProjectWavRenderSettings, PathBuf)>,
     pattern: &str,
     project: &Project,
     project_path: &Path,
     plugins: &[ClapPluginDescriptor],
+) -> Result<Vec<(aaadaw_app::ProjectWavRenderSettings, PathBuf)>, String> {
+    apply_render_filename_pattern_with_selected_tracks(
+        outputs,
+        pattern,
+        project,
+        project_path,
+        plugins,
+        &[],
+    )
+}
+
+fn apply_render_filename_pattern_with_selected_tracks(
+    outputs: Vec<(aaadaw_app::ProjectWavRenderSettings, PathBuf)>,
+    pattern: &str,
+    project: &Project,
+    project_path: &Path,
+    plugins: &[ClapPluginDescriptor],
+    selected_tracks: &[TrackId],
 ) -> Result<Vec<(aaadaw_app::ProjectWavRenderSettings, PathBuf)>, String> {
     let pattern = pattern.trim().replace(FORCED_RENDER_PATH_SEPARATOR, "_");
     if pattern.is_empty() {
@@ -805,6 +827,7 @@ fn apply_render_filename_pattern_with_plugins(
                 project_path,
                 settings,
                 plugins,
+                selected_tracks,
             );
             let Some(relative_path) = safe_render_pattern_relative_path(&expanded) else {
                 return Err("Filename pattern must produce a non-empty file name".to_owned());
@@ -843,8 +866,9 @@ fn apply_stem_filename_pattern_with_plugins(
     project: &Project,
     project_path: &Path,
     plugins: &[ClapPluginDescriptor],
+    selected_tracks: &[TrackId],
 ) -> Result<Vec<(aaadaw_app::ProjectWavRenderSource, PathBuf)>, String> {
-    apply_render_filename_pattern_with_plugins(
+    apply_render_filename_pattern_with_selected_tracks(
         outputs
             .into_iter()
             .map(|(source, path)| {
@@ -857,6 +881,7 @@ fn apply_stem_filename_pattern_with_plugins(
         project,
         project_path,
         plugins,
+        selected_tracks,
     )
     .map(|outputs| {
         outputs
@@ -1165,6 +1190,7 @@ fn expand_render_filename_pattern(
     project_path: &Path,
     settings: aaadaw_app::ProjectWavRenderSettings,
     plugins: &[ClapPluginDescriptor],
+    selected_tracks: &[TrackId],
 ) -> String {
     let project_name = project_path
         .file_stem()
@@ -1217,6 +1243,16 @@ fn expand_render_filename_pattern(
                 String::new()
             }
         });
+    let selected_track_name = selected_tracks
+        .first()
+        .and_then(|track_id| {
+            project
+                .tracks()
+                .iter()
+                .find(|track| track.id() == *track_id)
+        })
+        .map(|track| track.name())
+        .unwrap_or_default();
     let fx_names = track_id
         .and_then(|track_id| project.tracks().iter().find(|track| track.id() == track_id))
         .map(|track| {
@@ -1536,6 +1572,7 @@ fn expand_render_filename_pattern(
                 result.push_str(&folders);
             }
             "parent" => result.push_str(parent_name),
+            "seltrack" => result.push_str(selected_track_name),
             "format" => result.push_str("wav"),
             "samplerate" => result.push_str(&settings.output_sample_rate.to_string()),
             "sampleratek" => result.push_str(&format_render_wildcard_sample_rate_kilohertz(
@@ -1904,12 +1941,13 @@ impl App {
             } else {
                 outputs
             };
-            let outputs = match apply_render_filename_pattern_with_plugins(
+            let outputs = match apply_render_filename_pattern_with_selected_tracks(
                 outputs,
                 &filename_pattern,
                 &self.project,
                 &naming_project_path,
                 &self.clap_plugin_scan.plugins,
+                &selected_tracks,
             ) {
                 Ok(outputs) => outputs,
                 Err(error) => {
@@ -2014,12 +2052,13 @@ impl App {
                     return Task::none();
                 }
             };
-            let outputs = match apply_render_filename_pattern_with_plugins(
+            let outputs = match apply_render_filename_pattern_with_selected_tracks(
                 outputs,
                 &filename_pattern,
                 &self.project,
                 &naming_project_path,
                 &self.clap_plugin_scan.plugins,
+                &selected_tracks,
             ) {
                 Ok(outputs) => outputs,
                 Err(error) => {
@@ -2147,6 +2186,7 @@ impl App {
                 &self.project,
                 &naming_project_path,
                 &self.clap_plugin_scan.plugins,
+                &selected_tracks,
             ) {
                 Ok(outputs) => outputs,
                 Err(error) => {
@@ -2170,12 +2210,13 @@ impl App {
                 },
             )
         } else {
-            let mut outputs = match apply_render_filename_pattern_with_plugins(
+            let mut outputs = match apply_render_filename_pattern_with_selected_tracks(
                 vec![(settings, destination.clone())],
                 &filename_pattern,
                 &self.project,
                 &naming_project_path,
                 &self.clap_plugin_scan.plugins,
+                &selected_tracks,
             ) {
                 Ok(outputs) => outputs,
                 Err(error) => {
@@ -3460,6 +3501,7 @@ mod tests {
                 "$folders",
                 "$folders[X]",
                 "$parent",
+                "$seltrack",
             ]
         );
 
@@ -3494,6 +3536,95 @@ mod tests {
         ));
         assert_eq!(app.render_dialog.filename_pattern, "stem-$fx[X]");
         assert!(!app.render_dialog.wildcard_menu_open);
+
+        let _ = app.update(Message::InsertRenderFilenameWildcard(
+            RenderFilenameWildcard::SelTrack,
+        ));
+        assert_eq!(app.render_dialog.filename_pattern, "stem-$fx[X]$seltrack");
+        assert!(!app.render_dialog.wildcard_menu_open);
+    }
+
+    #[test]
+    fn render_selected_track_wildcard_uses_primary_selection_for_each_output() {
+        let mut project = Project::default();
+        for (index, name) in ["Bass", "Keys"].into_iter().enumerate() {
+            project
+                .apply(DawAction::CreateTrack {
+                    index,
+                    name: name.to_owned(),
+                })
+                .expect("selected-track wildcard tracks should be created");
+        }
+        let track_ids = project
+            .tracks()
+            .iter()
+            .map(|track| track.id())
+            .collect::<Vec<_>>();
+        let settings = aaadaw_app::ProjectWavRenderSettings {
+            master_ceiling: aaadaw_engine::MasterOutputCeiling::default(),
+            export_options: aaadaw_app::WavExportOptions::default(),
+            output_sample_rate: 48_000,
+            output_channels: WavChannelCount::Stereo,
+            source: aaadaw_app::ProjectWavRenderSource::MasterMix,
+            start_sample: 0,
+            end_sample: 48_000,
+            tail_milliseconds: 0,
+            normalize_peak: false,
+            normalize_peak_target_centi_dbfs: 0,
+        };
+        let project_path = Path::new("/projects/selected-track.aaadaw");
+
+        let master = apply_render_filename_pattern_with_selected_tracks(
+            vec![(settings, Path::new("/renders/base.wav").to_owned())],
+            "$seltrack-$track",
+            &project,
+            project_path,
+            &[],
+            &[track_ids[1]],
+        )
+        .expect("a single selected track should name the Master mix output");
+        assert_eq!(master[0].1, Path::new("/renders/Keys-Master.wav"));
+
+        let stems = apply_stem_filename_pattern_with_plugins(
+            vec![
+                (
+                    aaadaw_app::ProjectWavRenderSource::SelectedTrackStem(track_ids[0]),
+                    Path::new("/renders/base.wav").to_owned(),
+                ),
+                (
+                    aaadaw_app::ProjectWavRenderSource::SelectedTrackStem(track_ids[1]),
+                    Path::new("/renders/base.wav").to_owned(),
+                ),
+            ],
+            settings,
+            "$seltrack-$track",
+            &project,
+            project_path,
+            &[],
+            &track_ids,
+        )
+        .expect("selected stems should retain the primary track separately from each stem");
+        assert_eq!(
+            stems
+                .iter()
+                .map(|(_, path)| path.as_path())
+                .collect::<Vec<_>>(),
+            [
+                Path::new("/renders/Bass-Bass.wav"),
+                Path::new("/renders/Bass-Keys.wav"),
+            ]
+        );
+
+        let unselected = apply_render_filename_pattern_with_selected_tracks(
+            vec![(settings, Path::new("/renders/base.wav").to_owned())],
+            "$seltrack-$track",
+            &project,
+            project_path,
+            &[],
+            &[],
+        )
+        .expect("an empty track selection should leave only the Master name");
+        assert_eq!(unselected[0].1, Path::new("/renders/Master.wav"));
     }
 
     #[test]

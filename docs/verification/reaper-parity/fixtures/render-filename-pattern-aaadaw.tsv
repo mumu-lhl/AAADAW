@@ -239,3 +239,13 @@ aaadaw_track_folder_picker_build_id	4a7f27b4516bc27bc533f60bc2671ed348a06377
 aaadaw_track_folder_picker_binary_sha256	2356db806cad853df4c810dfce6d013b6d58bb401d51c2495ef59a7a4bd70a94
 aaadaw_track_folder_output_directories	Single render and multi-stem batches create wildcard-derived subdirectories; cancellation removes newly created empty directories
 aaadaw_track_folder_validation	AAADAW App nextest 656/656 passed; aaadaw-app nextest 201/201 passed; strict all-target Clippy -D warnings passed; cargo fmt --check, git diff --check and capture script bash -n passed; all track-folder screenshot and WAV hashes verified
+aaadaw_seltrack_picker_tokens	57
+aaadaw_seltrack_picker_screenshot	render-filename-pattern-wildcards-seltrack-aaadaw.png
+aaadaw_seltrack_picker_screenshot_sha256	d4f64146fb90ff53a46baeeef2cd2461487b9a34a3433cc3318e4f52f14bf9bf
+aaadaw_seltrack_insert_screenshot	render-filename-pattern-wildcard-seltrack-aaadaw.png
+aaadaw_seltrack_insert_screenshot_sha256	b82b754a5ff61bbe807a103fb1d467ab77164be405d3031b11bc737a4af83bb9
+aaadaw_seltrack_build_id	7cba54a122ea96c879d7d1d645d7d7c17434a4a8
+aaadaw_seltrack_binary_sha256	d30b5f110c6e491bf81d497ab4e108ba75e002471b14ac18c03d0058ba937dc1
+aaadaw_seltrack_native_semantics	Primary selected project track remains fixed across stem outputs; $track follows each rendered stem; Master mix uses selected track context
+aaadaw_seltrack_resolver_test	app::audio_export::tests::render_selected_track_wildcard_uses_primary_selection_for_each_output
+aaadaw_seltrack_validation	AAADAW workspace nextest 1258/1258 passed with isolated Xvfb; focused resolver regression passed; strict all-target aaadaw Clippy -D warnings passed; cargo fmt --check, git diff --check and capture script bash -n passed; screenshot and native WAV hashes verified
