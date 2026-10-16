@@ -1,0 +1,11 @@
+field	value
+date	2026-10-16
+binary	target/debug/aaadaw; Build ID 36e4f474d45ca8c5f1a6274ef39f312e82cd4d8a; SHA-256 607901b9c819cb513ea19ea424b1de39ab1df55b061d519e178ab6e6af56fe15
+display	Linux X11; bundled Xvfb :338; 1280x800x24; no window manager
+profile	Fresh isolated XDG config/data/state/cache directories
+audio	Unavailable in this build; transport stayed stopped
+initial_state	New project; zero tracks; no project edit
+input	XTest focused the main window, sent Alt+F, ArrowUp, and Escape
+file_alt_open	File menu opened; New project selected; no command executed; fixtures/menu-navigation-file-alt-open-aaadaw.png; SHA-256 fd1b211ceaad843c06f1fdb087cf260f8da68ad720f4e22c97aaec44eaa2d9ea
+file_arrow_up	Quit selected; menu stayed open; no command executed; project stayed empty; fixtures/menu-navigation-file-alt-up-aaadaw.png; SHA-256 dbf9f61a693c6dd0d8a266d7ea939d5cfaaa43ccb254a9652d6faeb4591d3d28
+escape	Menu closed; project stayed empty; frame matches startup fixture; fixtures/menu-navigation-file-alt-escape-aaadaw.png; SHA-256 ae7790daa7323931332582152cd05219af623ac5530147835ee56910ba2ebd9b

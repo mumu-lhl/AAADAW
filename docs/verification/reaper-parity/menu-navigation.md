@@ -8,6 +8,8 @@
 
 主窗口按原厂已验证的 `Alt+F/E/V/I/O/A/H` 打开 File/Edit/View/Insert/Options/Actions/Help 菜单；快捷键只在 Iced 将按键标为未消费时触发。同一访问键会重新打开对应菜单，不会意外将它关掉。F10 不再打开菜单。主菜单栏和左右导航现有原厂九项顺序。REAPER 原厂 File 菜单的 `Close project` 使用 Ctrl+F4，Main Action List 40860 名称为 `Close current project tab`；AAADAW File 菜单现提供 `Close project`，Ctrl+F4 通过未保存工程 Save / Don't Save / Cancel 保护后关闭当前工程并回到空工程。原厂 File 菜单参考与 AAADAW 菜单、确认框截图/哈希见[Close project fixture](fixtures/menu-close-project-aaadaw.tsv)。AAADAW 目前只有单工程模型，不实现 REAPER 的多标签工程和 Close all projects。
 
+当前 Linux 桌面程序（Build ID `36e4f474d45ca8c5f1a6274ef39f312e82cd4d8a`，SHA-256 `607901b9c819cb513ea19ea424b1de39ab1df55b061d519e178ab6e6af56fe15`）在 Xvfb 中通过 XTest 实际输入按键：`Alt+F` 打开 File 并选中 `New project`，ArrowUp 选中 `Quit` 但不执行，Escape 关闭菜单。空工程状态没有改变；关闭后的截图与启动截图逐字节一致。[键盘 fixture](fixtures/menu-navigation-aaadaw.tsv)记录输入步骤和三张截图哈希。
+
 REAPER Main Action 40022 `File: Save project as...` 默认 Ctrl+Alt+S。AAADAW File 菜单名称、快捷键和默认绑定现已对齐；该命令复用已有保存文件选择器。真实 AAADAW 菜单截图和 SHA-256 见[Save project as fixture](fixtures/menu-save-project-as-aaadaw.tsv)，定向回归确认默认组合映射为 SaveProjectAs，执行后进入保存选择器状态。Xvfb 中没有可见的原生文件选择器窗口供截图比对。
 
 REAPER 原厂 File 末项为 `Quit`，Action List 名称 `File: Quit REAPER`，快捷键 Ctrl+Q（Action 40004）。AAADAW 现将 Quit 放在 File 菜单末项；ArrowUp 从首项循环到 Quit，Ctrl+Q 发起主窗口关闭并沿用 Save / Don't Save / Cancel 未保存工程保护。AAADAW 边界和实际退出确认截图、步骤、状态及哈希见[菜单 Quit fixture](fixtures/menu-keyboard-boundary-aaadaw.tsv)。File 其余原厂命令尚未齐全，因此菜单整体顺序仍不一致。Options 包含 Preferences...（Ctrl+P）和“Loop points linked to time selection”开关；后者显示当前状态勾选，执行后通过现有全局偏好保存路径持久化，不修改工程修订。Help 有“Action list and shortcuts...”入口和单实例 About AAADAW 窗口，`Ctrl+F1` 打开 About。

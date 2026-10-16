@@ -1535,3 +1535,9 @@ AAADAW's first byte comparison exposed the 13-byte extra hidden-marker event. Th
 Repeated the hidden-marker A/B export in Cue points mode in the same verified REAPER project. The Type 0 dialog writes cue meta-events (`FF 07`), but `Export hidden markers` remains a no-op: checked and unchecked output are both 64 bytes with SHA-256 `61024b8de96421d3c9a3efc075fae1678ad287e8abac673e1196156cd17798ae`, and neither file contains hidden `#Hidden`. Both dialog screenshots and MIDI files are added to the [native fixture manifest](../verification/reaper-parity/fixtures/menu-export-midi-native-type0-hidden.tsv).
 
 Added exact full-file regressions for both cue checkbox states. Core and desktop App nextest passed 809/809 with no skipped tests; strict all-target Core/App Clippy (`-D warnings`), rustfmt, and `git diff --check` pass. `FILE-MIDI-EXPORT-001` remains `in_progress` for Type 0 hidden-ruler and filtered-hidden combinations, other tempo-map and SMPTE modes, Unicode/long names, remaining export settings and full UI/menu parity.
+
+### 2026-10-16 Verify real-window File menu keyboard navigation
+
+Drove the current Linux AAADAW desktop binary under Xvfb using XTest. `Alt+F` opened File with `New project` selected; ArrowUp moved selection to `Quit` without invoking it; Escape closed the menu. The project remained empty and stopped, and the Escape frame is byte-identical to the baseline startup screenshot. Build ID, executable hash, input sequence, and all three real-window screenshots are recorded in the [menu navigation fixture](../verification/reaper-parity/fixtures/menu-navigation-aaadaw.tsv).
+
+This closes only the captured File-menu keyboard sequence. `SHELL-MENU-KEYBOARD-001` remains `in_progress` for complete menu command coverage/order, every menu's focus and submenu behavior, and native styling parity.
