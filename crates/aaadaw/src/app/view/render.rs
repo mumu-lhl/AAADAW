@@ -225,7 +225,31 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
                 ),
                 wildcard_group_row(
                     "Media items:",
-                    RenderFilenameWildcard::ALL.into_iter().skip(16),
+                    RenderFilenameWildcard::ALL.into_iter().skip(16).take(1),
+                ),
+                wildcard_group_row(
+                    "Position:",
+                    RenderFilenameWildcard::ALL.into_iter().skip(17).take(3),
+                ),
+                wildcard_group_row(
+                    "Beats:",
+                    RenderFilenameWildcard::ALL.into_iter().skip(20).take(3),
+                ),
+                wildcard_group_row(
+                    "Timecode:",
+                    RenderFilenameWildcard::ALL.into_iter().skip(23).take(2),
+                ),
+                wildcard_group_row(
+                    "Frames:",
+                    RenderFilenameWildcard::ALL.into_iter().skip(25).take(3),
+                ),
+                wildcard_group_row(
+                    "Seconds:",
+                    RenderFilenameWildcard::ALL.into_iter().skip(28).take(3),
+                ),
+                wildcard_group_row(
+                    "Length components:",
+                    RenderFilenameWildcard::ALL.into_iter().skip(31).take(4),
                 ),
             ]
             .spacing(tokens::SPACING_XS)

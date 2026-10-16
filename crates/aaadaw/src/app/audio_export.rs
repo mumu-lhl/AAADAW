@@ -59,11 +59,29 @@ pub(crate) enum RenderFilenameWildcard {
     TrackNumber,
     TrackNameOrNumber,
     Item,
+    Start,
+    End,
+    Length,
+    StartBeats,
+    EndBeats,
+    LengthBeats,
+    StartTimecode,
+    EndTimecode,
+    StartFrames,
+    EndFrames,
+    LengthFrames,
+    StartSeconds,
+    EndSeconds,
+    LengthSeconds,
+    LengthHours,
+    LengthMinutes,
+    LengthSecondsComponent,
+    LengthMilliseconds,
     Bpm,
 }
 
 impl RenderFilenameWildcard {
-    pub(crate) const ALL: [Self; 17] = [
+    pub(crate) const ALL: [Self; 35] = [
         Self::Project,
         Self::Title,
         Self::Author,
@@ -81,6 +99,24 @@ impl RenderFilenameWildcard {
         Self::Marker,
         Self::MarkerNumber,
         Self::Item,
+        Self::Start,
+        Self::End,
+        Self::Length,
+        Self::StartBeats,
+        Self::EndBeats,
+        Self::LengthBeats,
+        Self::StartTimecode,
+        Self::EndTimecode,
+        Self::StartFrames,
+        Self::EndFrames,
+        Self::LengthFrames,
+        Self::StartSeconds,
+        Self::EndSeconds,
+        Self::LengthSeconds,
+        Self::LengthHours,
+        Self::LengthMinutes,
+        Self::LengthSecondsComponent,
+        Self::LengthMilliseconds,
     ];
 
     pub(crate) const fn token(self) -> &'static str {
@@ -101,6 +137,24 @@ impl RenderFilenameWildcard {
             Self::TrackNumber => "$tracknumber",
             Self::TrackNameOrNumber => "$tracknameornumber",
             Self::Item => "$item",
+            Self::Start => "$start",
+            Self::End => "$end",
+            Self::Length => "$length",
+            Self::StartBeats => "$startbeats",
+            Self::EndBeats => "$endbeats",
+            Self::LengthBeats => "$lengthbeats",
+            Self::StartTimecode => "$starttc",
+            Self::EndTimecode => "$endtc",
+            Self::StartFrames => "$startframes",
+            Self::EndFrames => "$endframes",
+            Self::LengthFrames => "$lengthframes",
+            Self::StartSeconds => "$startseconds",
+            Self::EndSeconds => "$endseconds",
+            Self::LengthSeconds => "$lengthseconds",
+            Self::LengthHours => "$lenhh",
+            Self::LengthMinutes => "$lenmm",
+            Self::LengthSecondsComponent => "$lenss",
+            Self::LengthMilliseconds => "$lentt",
             Self::Bpm => "$bpm",
         }
     }
@@ -696,6 +750,101 @@ fn apply_stem_filename_pattern(
     })
 }
 
+fn format_render_wildcard_seconds(seconds: f64) -> String {
+    if !seconds.is_finite() {
+        return String::new();
+    }
+    format!("{seconds:.3}")
+        .trim_end_matches('0')
+        .trim_end_matches('.')
+        .to_owned()
+}
+
+fn format_render_wildcard_clock(project: &Project, sample: u64) -> String {
+    project
+        .project_time_at_sample(sample)
+        .map(crate::project_time::format_project_time)
+        .unwrap_or_default()
+        .replace(':', "-")
+}
+
+fn format_render_wildcard_timecode(project: &Project, sample: u64) -> String {
+    project
+        .project_time_at_sample(sample)
+        .and_then(|seconds| {
+            crate::project_time::format_project_timecode(project.settings().frame_rate(), seconds)
+        })
+        .unwrap_or_default()
+        .replace(':', ".")
+}
+
+fn format_render_wildcard_frames(seconds: f64, frame_rate: aaadaw_core::FrameRate) -> String {
+    if !seconds.is_finite() {
+        return String::new();
+    }
+    let frames = ((seconds.abs() + 1e-8) * frame_rate.frames_per_second()).floor();
+    let frames = if frames >= u64::MAX as f64 {
+        u64::MAX
+    } else {
+        frames as u64
+    };
+    if seconds < 0.0 {
+        format!("-{frames}")
+    } else {
+        frames.to_string()
+    }
+}
+
+fn format_render_wildcard_beat_position(project: &Project, tick: u64) -> String {
+    let Ok(position) = project.musical_position_at_tick(tick) else {
+        return String::new();
+    };
+    let meter = project.time_signature_at_tick(tick);
+    let ticks_per_beat =
+        (u64::from(project.settings().ppq()) * 4 / u64::from(meter.denominator())).max(1);
+    let hundredths = (position.tick_in_beat() * 100 + ticks_per_beat / 2) / ticks_per_beat;
+    if hundredths >= 100 {
+        let next_tick = tick.saturating_add(ticks_per_beat.saturating_sub(position.tick_in_beat()));
+        if let Ok(next) = project.musical_position_at_tick(next_tick) {
+            return format!("{}.{}.{:02}", next.measure(), next.beat(), 0);
+        }
+    }
+    format!("{}.{}.{hundredths:02}", position.measure(), position.beat())
+}
+
+fn format_render_wildcard_beat_length(project: &Project, start_tick: u64, end_tick: u64) -> String {
+    let meter = project.time_signature_at_tick(start_tick);
+    let ticks_per_beat =
+        (u64::from(project.settings().ppq()) * 4 / u64::from(meter.denominator())).max(1);
+    let ticks = end_tick.saturating_sub(start_tick);
+    let mut beats = ticks / ticks_per_beat;
+    let mut hundredths = ((ticks % ticks_per_beat) * 100 + ticks_per_beat / 2) / ticks_per_beat;
+    if hundredths >= 100 {
+        beats = beats.saturating_add(1);
+        hundredths = 0;
+    }
+    format!("0.{beats}.{hundredths:02}")
+}
+
+fn format_render_wildcard_length_components(seconds: f64) -> [String; 4] {
+    if !seconds.is_finite() || seconds < 0.0 {
+        return std::array::from_fn(|_| String::new());
+    }
+    let total_milliseconds = ((seconds + 1e-8) * 1_000.0).floor();
+    let total_milliseconds = if total_milliseconds >= u64::MAX as f64 {
+        u64::MAX
+    } else {
+        total_milliseconds as u64
+    };
+    let total_seconds = total_milliseconds / 1_000;
+    [
+        (total_seconds / 3_600).to_string(),
+        (total_seconds / 60 % 60).to_string(),
+        (total_seconds % 60).to_string(),
+        format!("{:03}", total_milliseconds % 1_000),
+    ]
+}
+
 fn expand_render_filename_pattern(
     pattern: &str,
     fallback: &str,
@@ -799,6 +948,16 @@ fn expand_render_filename_pattern(
         time_signature.numerator(),
         time_signature.denominator()
     );
+    let sample_rate = f64::from(project.settings().sample_rate());
+    let start_seconds = settings.start_sample as f64 / sample_rate;
+    let end_seconds = settings.end_sample as f64 / sample_rate;
+    let length_seconds = end_seconds - start_seconds;
+    let start_tick = project.tick_at_sample(settings.start_sample).unwrap_or(0);
+    let end_tick = project
+        .tick_at_sample(settings.end_sample)
+        .unwrap_or(start_tick);
+    let length_components = format_render_wildcard_length_components(length_seconds);
+    let frame_rate = project.settings().frame_rate();
     let region_number_text =
         region.map_or_else(String::new, |region| format!("{:02}", region.number()));
     let marker_number_text =
@@ -832,6 +991,53 @@ fn expand_render_filename_pattern(
             "title" => result.push_str(&project.project_notes().title),
             "author" => result.push_str(&project.project_notes().author),
             "projectnotes" => result.push_str(&project.project_notes().text),
+            "start" => result.push_str(&format_render_wildcard_clock(
+                project,
+                settings.start_sample,
+            )),
+            "end" => result.push_str(&format_render_wildcard_clock(project, settings.end_sample)),
+            "length" => result.push_str(
+                &crate::project_time::format_project_time(length_seconds).replace(':', "-"),
+            ),
+            "startbeats" => {
+                result.push_str(&format_render_wildcard_beat_position(project, start_tick));
+            }
+            "endbeats" => {
+                result.push_str(&format_render_wildcard_beat_position(project, end_tick));
+            }
+            "lengthbeats" => result.push_str(&format_render_wildcard_beat_length(
+                project, start_tick, end_tick,
+            )),
+            "starttc" => {
+                result.push_str(&format_render_wildcard_timecode(
+                    project,
+                    settings.start_sample,
+                ));
+            }
+            "endtc" => {
+                result.push_str(&format_render_wildcard_timecode(
+                    project,
+                    settings.end_sample,
+                ));
+            }
+            "startframes" => {
+                result.push_str(&format_render_wildcard_frames(start_seconds, frame_rate))
+            }
+            "endframes" => {
+                result.push_str(&format_render_wildcard_frames(end_seconds, frame_rate));
+            }
+            "lengthframes" => {
+                result.push_str(&format_render_wildcard_frames(length_seconds, frame_rate));
+            }
+            "startseconds" => result.push_str(&format_render_wildcard_seconds(start_seconds)),
+            "endseconds" => result.push_str(&format_render_wildcard_seconds(end_seconds)),
+            "lengthseconds" => {
+                result.push_str(&format_render_wildcard_seconds(length_seconds));
+            }
+            "lenhh" => result.push_str(&length_components[0]),
+            "lenmm" => result.push_str(&length_components[1]),
+            "lenss" => result.push_str(&length_components[2]),
+            "lentt" => result.push_str(&length_components[3]),
             "tempo" => result.push_str(&bpm_text),
             "timesignature" => result.push_str(&time_signature_text),
             "timesignum" => result.push_str(&time_signature.numerator().to_string()),
@@ -2564,6 +2770,24 @@ mod tests {
                 "$marker",
                 "$markernumber",
                 "$item",
+                "$start",
+                "$end",
+                "$length",
+                "$startbeats",
+                "$endbeats",
+                "$lengthbeats",
+                "$starttc",
+                "$endtc",
+                "$startframes",
+                "$endframes",
+                "$lengthframes",
+                "$startseconds",
+                "$endseconds",
+                "$lengthseconds",
+                "$lenhh",
+                "$lenmm",
+                "$lenss",
+                "$lentt",
             ]
         );
 
@@ -2584,6 +2808,53 @@ mod tests {
         assert_eq!(
             app.render_dialog.filename_pattern,
             "$project-$track$project"
+        );
+    }
+
+    #[test]
+    fn render_filename_position_and_length_wildcards_match_native_formats() {
+        let mut project = Project::default();
+        project
+            .apply(DawAction::CreateTrack {
+                index: 0,
+                name: "Position fixture".to_owned(),
+            })
+            .expect("position fixture track should be created");
+        let track_id = project.tracks()[0].id();
+        project
+            .apply(DawAction::InsertAudioItem {
+                track_id,
+                media_ref: "position-fixture.wav".to_owned(),
+                start_sample: 102_000,
+                source_offset_samples: 0,
+                length_samples: 59_232,
+            })
+            .expect("fractional position fixture item should be inserted");
+        let item_id = project.audio_items()[0].id();
+        let settings = aaadaw_app::ProjectWavRenderSettings {
+            master_ceiling: aaadaw_engine::MasterOutputCeiling::default(),
+            export_options: aaadaw_app::WavExportOptions::default(),
+            output_sample_rate: 48_000,
+            output_channels: WavChannelCount::Stereo,
+            source: aaadaw_app::ProjectWavRenderSource::SelectedAudioItem(item_id),
+            start_sample: 102_000,
+            end_sample: 161_232,
+            tail_milliseconds: 0,
+            normalize_peak: false,
+            normalize_peak_target_centi_dbfs: 0,
+        };
+        let output = apply_render_filename_pattern(
+            vec![(settings, Path::new("/renders/base.wav").to_owned())],
+            "$start-$end-$length-$startbeats-$endbeats-$lengthbeats-$starttc-$endtc-$startframes-$endframes-$lengthframes-$startseconds-$endseconds-$lengthseconds-$lenhh-$lenmm-$lenss-$lentt",
+            &project,
+            Path::new("/projects/position.aaadaw"),
+        )
+        .expect("position and length wildcard values should expand");
+        assert_eq!(
+            output[0].1,
+            Path::new(
+                "/renders/0-02.125-0-03.359-0-01.234-2.1.25-2.3.72-0.2.47-00.00.02.03-00.00.03.10-63-100-37-2.125-3.359-1.234-0-0-1-234.wav"
+            )
         );
     }
 

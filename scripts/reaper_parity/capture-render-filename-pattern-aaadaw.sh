@@ -129,6 +129,24 @@ if [[ -n "$insert_wildcard" ]]; then
     marker) wildcard_x=381; wildcard_y=455 ;;
     markernumber) wildcard_x=497; wildcard_y=455 ;;
     item) wildcard_x=117; wildcard_y=490 ;;
+    start) wildcard_x=126; wildcard_y=525 ;;
+    end) wildcard_x=214; wildcard_y=525 ;;
+    length) wildcard_x=307; wildcard_y=525 ;;
+    startbeats) wildcard_x=115; wildcard_y=560 ;;
+    endbeats) wildcard_x=220; wildcard_y=560 ;;
+    lengthbeats) wildcard_x=335; wildcard_y=560 ;;
+    starttc) wildcard_x=125; wildcard_y=595 ;;
+    endtc) wildcard_x=218; wildcard_y=595 ;;
+    startframes) wildcard_x=122; wildcard_y=630 ;;
+    endframes) wildcard_x=238; wildcard_y=630 ;;
+    lengthframes) wildcard_x=360; wildcard_y=630 ;;
+    startseconds) wildcard_x=122; wildcard_y=665 ;;
+    endseconds) wildcard_x=238; wildcard_y=665 ;;
+    lengthseconds) wildcard_x=360; wildcard_y=665 ;;
+    lenhh) wildcard_x=156; wildcard_y=700 ;;
+    lenmm) wildcard_x=230; wildcard_y=700 ;;
+    lenss) wildcard_x=304; wildcard_y=700 ;;
+    lentt) wildcard_x=376; wildcard_y=700 ;;
     *) printf 'Unknown AAADAW_INSERT_WILDCARD token: %s\n' "$insert_wildcard" >&2; exit 2 ;;
   esac
   "$xdotool" mousemove --sync "$wildcard_x" "$wildcard_y" click 1

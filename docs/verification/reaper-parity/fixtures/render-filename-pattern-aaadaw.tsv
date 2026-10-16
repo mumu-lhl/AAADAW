@@ -1,6 +1,6 @@
 key	value
 reference	Linux REAPER 7.82 / Default 7 / Linux desktop
-native_reference	images/render-selected-items-native.png; render-selected-items-native.tsv; region-render-matrix-render-native.tsv; render-wildcards-context-native.png; render-wildcards-marker-native.png; render-wildcards-metadata-native.png; render-wildcards-unnamed-track-native.png
+native_reference	images/render-selected-items-native.png; render-selected-items-native.tsv; region-render-matrix-render-native.tsv; render-wildcards-context-native.png; render-wildcards-marker-native.png; render-wildcards-metadata-native.png; render-wildcards-unnamed-track-native.png; render-wildcards-clock-native.png; render-wildcards-beats-native.png; render-wildcards-timecode-native.png; render-wildcards-frames-native.png; render-wildcards-length-native.png
 native_selected_item_pattern	$region-$item
 native_selected_item_output	bounds-ui-Region 2-item_02.wav
 native_matrix_pattern	$region-$track
@@ -21,29 +21,49 @@ native_unnamed_track_output	Track 01.wav
 native_unnamed_track_evidence	Native Render preview after setting the fixture track name to an empty string
 native_unnamed_track_screenshot	render-wildcards-unnamed-track-native.png
 native_unnamed_track_screenshot_sha256	fc28dbf10f433746a70ce20d9460c0d71c5da17d736dcb362fd757e2e09bf58f
-native_pattern_override	AAADAW_REAPER_WILDCARD_PATTERN overrides the selected-item and marker probe patterns; both native UI probes were launched with overrides
-aaadaw_tokens	$project; $title; $author; $projectnotes; $bpm; $tempo; $timesignature; $timesignum; $timesigdenom; $track; $tracknumber; $tracknameornumber; $region; $regionnumber; $marker; $markernumber; $item
-aaadaw_wildcard_picker_tokens	$project; $title; $author; $projectnotes; $bpm; $tempo; $timesignature; $timesignum; $timesigdenom; $track; $tracknumber; $tracknameornumber; $region; $regionnumber; $marker; $markernumber; $item
-aaadaw_wildcard_picker_behavior	Grouped by project information, tempo, time signature, tracks, regions/markers, and media items; selecting a token appends it to the pattern end and closes the picker
+native_pattern_override	AAADAW_REAPER_WILDCARD_PATTERN overrides the selected-item and marker probe patterns; the selected-item probe also accepts title/author/notes, track-name, item-start, and item-length inputs
+aaadaw_tokens	$project; $title; $author; $projectnotes; $bpm; $tempo; $timesignature; $timesignum; $timesigdenom; $track; $tracknumber; $tracknameornumber; $region; $regionnumber; $marker; $markernumber; $item; $start; $end; $length; $startbeats; $endbeats; $lengthbeats; $starttc; $endtc; $startframes; $endframes; $lengthframes; $startseconds; $endseconds; $lengthseconds; $lenhh; $lenmm; $lenss; $lentt
+aaadaw_wildcard_picker_tokens	$project; $title; $author; $projectnotes; $bpm; $tempo; $timesignature; $timesignum; $timesigdenom; $track; $tracknumber; $tracknameornumber; $region; $regionnumber; $marker; $markernumber; $item; $start; $end; $length; $startbeats; $endbeats; $lengthbeats; $starttc; $endtc; $startframes; $endframes; $lengthframes; $startseconds; $endseconds; $lengthseconds; $lenhh; $lenmm; $lenss; $lentt
+aaadaw_wildcard_picker_behavior	Grouped by project information, tempo, time signature, tracks, regions/markers, media items, and Position/Length; selecting a token appends it to the pattern end and closes the picker
 aaadaw_fallback	Blank pattern preserves pre-existing generated destination names
 aaadaw_path_behavior	Selected destination supplies output directory and extension; expanded name is sanitized as one filename component
 aaadaw_duplicate_behavior	Duplicate resolved names fail before jobs are queued
-aaadaw_regressions	app::audio_export::tests::render_wildcard_picker_lists_and_inserts_supported_tokens; app::audio_export::tests::render_filename_patterns_expand_native_wildcard_contexts_safely; app::audio_export::tests::render_filename_patterns_preserve_unknown_tokens_and_reject_duplicate_targets; app::audio_export::tests::queued_selected_track_stems_freeze_track_order_and_output_names; app::audio_export::tests::region_render_matrix_wavs_match_native_target_count_ranges_and_samples
+aaadaw_regressions	app::audio_export::tests::render_wildcard_picker_lists_and_inserts_supported_tokens; app::audio_export::tests::render_filename_patterns_expand_native_wildcard_contexts_safely; app::audio_export::tests::render_filename_patterns_preserve_unknown_tokens_and_reject_duplicate_targets; app::audio_export::tests::queued_selected_track_stems_freeze_track_order_and_output_names; app::audio_export::tests::region_render_matrix_wavs_match_native_target_count_ranges_and_samples; app::audio_export::tests::render_filename_position_and_length_wildcards_match_native_formats
 aaadaw_matrix_audio_comparison	Four outputs; 96,000 frames each; PCM24 stereo data chunks equal native REAPER fixtures byte-for-byte
-aaadaw_window_build_id	f7b52d89ab0bef6d18aa5258b1b530a0c308c944
-aaadaw_window_binary_sha256	2e621a6cb7ae19350bf56560c5a025285e914f3403c49a663f4c496ee49aea6a
+aaadaw_window_build_id	e87616caa9eaeeece5108c1ee126b55983742dfb
+aaadaw_window_binary_sha256	ff474c1d4c1d701f0dbd51853f8de43aaa5f4959aff02048b4ea0308cf4db6e9
 aaadaw_window_screenshot	render-filename-pattern-aaadaw.png
 aaadaw_window_screenshot_sha256	9f65520a38e85e85b7c9cc9e97a499583f222fe11b943a9c4e5a14799bcd316d
 aaadaw_wildcard_picker_screenshot	render-filename-pattern-wildcards-aaadaw.png
-aaadaw_wildcard_picker_screenshot_sha256	cbcdd09758888f1f373307b83dc9e9be25410d44c6bcc3924bcc1441ff4c62ed
+aaadaw_wildcard_picker_screenshot_sha256	251566e22fba401c28e1c65f0b54f0d174e82f4ac2ba4f893e7810a7dbc30f27
 aaadaw_wildcard_insert_screenshot	render-filename-pattern-wildcard-insert-aaadaw.png
-aaadaw_wildcard_insert_screenshot_sha256	172ca5533f786c88724309e36560db60c3352dabcf9a9768fa2112a2086883f2
-aaadaw_wildcard_insert_interaction	X11 click on visible $tracknumber picker button inserts $tracknumber and closes the picker
+aaadaw_wildcard_insert_screenshot_sha256	92662fcb4f1a785f53ae56ef9c7b4b8180fa7285a485835a15fc8030372974b4
+aaadaw_wildcard_insert_interaction	X11 click on the bottom-row $lentt picker button inserts $lentt into the filename field and closes the picker
 aaadaw_window_geometry	1280x800 desktop display; Render project to WAV window 640x720
 native_context_screenshot	render-wildcards-context-native.png
 native_context_screenshot_sha256	2f7cec40f5f8b096717580f3f50357077d2c6a35337a0cc7df338ae3cfeb5364
 native_marker_screenshot	render-wildcards-marker-native.png
 native_marker_screenshot_sha256	7b83336bcd8cfdb0394738ac75d6e91ac96e502d3efb2212379f9047b2215764
 native_window_geometry	1280x800 desktop display; native Render to File dialog
-verification	App nextest 663/663; strict all-target App Clippy -D warnings; stripped-debug desktop build; AAADAW screenshots recaptured from Build ID f7b52d89ab0bef6d18aa5258b1b530a0c308c944; actual X11 click inserts $tracknumber and closes the picker; native selected-item and marker probes accept pattern/title/author/notes/track-name overrides; rustfmt, diff check, 102-row parity CSV and all seven screenshot SHA-256 checks passed
-remaining_differences	14 implemented tokens are only a subset of REAPER's full set; insertion is at pattern end with no caret/selection support; full token set, expressions and ordering/escaping rules, presets or cross-launch persistence, native collision prompts, and full source/range coverage remain open
+native_position_clock_pattern	$start-$end-$length
+native_position_clock_output	0-02.125-0-03.359-0-01.234
+native_position_beats_pattern	$startbeats-$endbeats-$lengthbeats
+native_position_beats_output	2.1.25-2.3.72-0.2.47
+native_position_timecode_pattern	$starttc-$endtc
+native_position_timecode_output	00.00.02.03-00.00.03.10
+native_position_frames_pattern	$startseconds-$endseconds-$lengthseconds-$startframes-$endframes-$lengthframes
+native_position_frames_output	2.125-3.359-1.234-63-100-37
+native_position_length_pattern	$lenhh-$lenmm-$lenss-$lentt
+native_position_length_output	0-0-1-234
+native_position_screenshot_clock	render-wildcards-clock-native.png
+native_position_screenshot_clock_sha256	04bd72eff8e36dcb124b02b097369caa37603fa4c597486b9e8b1b24c5c7390e
+native_position_screenshot_beats	render-wildcards-beats-native.png
+native_position_screenshot_beats_sha256	ff6cd05b6e049b53c2d2141e982ceadfbbf5249aa8af3b4bc07b05f413ef43b7
+native_position_screenshot_timecode	render-wildcards-timecode-native.png
+native_position_screenshot_timecode_sha256	7793f8277c0974fcd1a3436fdcc092b4cd7625c659da5c0a1f5dad6a05a02b9f
+native_position_screenshot_frames	render-wildcards-frames-native.png
+native_position_screenshot_frames_sha256	c7a3ae74c3ba3db4cf26cd1055e57520f641a9884a8dbfdb4155f5f4b0ab0114
+native_position_screenshot_length	render-wildcards-length-native.png
+native_position_screenshot_length_sha256	5eefbd0bd9b4f6478adb09ca410a8bbe982f379123ab16c80688f62a4873ddf3
+verification	App nextest 664/664; strict all-target App Clippy -D warnings; stripped-debug desktop build; AAADAW screenshots recaptured from Build ID e87616caa9eaeeece5108c1ee126b55983742dfb; actual X11 click inserts bottom-row $lentt and closes the picker; native selected-item and marker probes accept pattern/title/author/notes/track-name/item-start/item-length overrides; rustfmt, diff check, 102-row parity CSV and all twelve screenshot SHA-256 checks passed
+remaining_differences	35 implemented tokens are only a subset of REAPER's full set; insertion is at pattern end with no caret/selection support; full token set, expressions and ordering/escaping rules, presets or cross-launch persistence, native collision prompts, and time-offset, meter-change, non-30-fps, drop-frame and tail-boundary position behavior plus full source/range coverage remain open

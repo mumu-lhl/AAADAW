@@ -3,7 +3,8 @@
 -- Opens the real Render dialog with one selected item, plus time/region/Razor bounds to compare.
 -- AAADAW_REAPER_WILDCARD_PATTERN can override its default pattern; optional project title/author/
 -- notes are set from AAADAW_REAPER_PROJECT_TITLE, AAADAW_REAPER_PROJECT_AUTHOR, and
--- AAADAW_REAPER_PROJECT_NOTES; AAADAW_REAPER_TRACK_NAME can set the fixture track name.
+-- AAADAW_REAPER_PROJECT_NOTES; AAADAW_REAPER_TRACK_NAME and
+-- AAADAW_REAPER_SELECTED_ITEM_START/LENGTH can customize the selected media item.
 local root = assert(os.getenv("AAADAW_REAPER_PROBE_DIR")) .. "/"
 assert(reaper.GetAppVersion() == "7.82/linux-x86_64")
 assert(reaper.GetLastColorThemeFile():match("Default_7%.0%.ReaperThemeZip$"))
@@ -31,12 +32,14 @@ if track_name == nil then
   track_name = "Render fixture"
 end
 reaper.GetSetMediaTrackInfo_String(track, "P_NAME", track_name, true)
-for index, start in ipairs({ 0, 2, 4 }) do
+local selected_item_start = tonumber(os.getenv("AAADAW_REAPER_SELECTED_ITEM_START")) or 2
+local selected_item_length = tonumber(os.getenv("AAADAW_REAPER_SELECTED_ITEM_LENGTH")) or 1
+for index, start in ipairs({ 0, selected_item_start, 4 }) do
   local item = reaper.AddMediaItemToTrack(track)
   local take = reaper.AddTakeToMediaItem(item)
   assert(reaper.SetMediaItemTake_Source(take, reaper.PCM_Source_CreateFromFile(root .. "source.wav")))
   reaper.SetMediaItemInfo_Value(item, "D_POSITION", start)
-  reaper.SetMediaItemInfo_Value(item, "D_LENGTH", 1)
+  reaper.SetMediaItemInfo_Value(item, "D_LENGTH", index == 2 and selected_item_length or 1)
   reaper.SetMediaItemInfo_Value(item, "D_FADEINLEN", 0)
   reaper.SetMediaItemInfo_Value(item, "D_FADEOUTLEN", 0)
   reaper.SetMediaItemSelected(item, index == 2)

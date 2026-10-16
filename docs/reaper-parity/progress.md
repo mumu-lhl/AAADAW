@@ -26,7 +26,7 @@
 | P7 | 未开始 | MIDI |
 | P8 | 未开始 | 自动化 |
 | P9 | 未开始 | 插件 |
-| P10 | 进行中 | 工程帧率/时间码、Notes 与 General 起始速度/拍号/采样率/有符号 Start measure/BPM basis/标尺间隔锚点/Project start time 显示偏移/已实现字段的默认工程设置保存；媒体默认已有 64pt playback/192pt render sinc，Render 支持 Entire project/Time selection/Custom time range/All project regions/All project markers、默认关闭且整数毫秒输入的 Tail、Project/常用预设输出采样率转换、Mono/Stereo WAV、PCM8/16/24/32、Float32/64、4-bit IMA ADPCM、2-bit cADPCM 与 8-bit u-Law、可调 sample-peak、Selected tracks (stems)/pre-fader/via master、Master mix and stems，以及 Region Render Matrix 的 All/Selected Regions 批量任务构造、一组 4 文件原厂 PCM24 对照和 17 个常用 Wildcard token；$region-$track 原厂文件名与完整 PCM 已一致，完整 Wildcards chooser/规则/跨启动保存及其他路由行为仍待验收；cADPCM 编码尚未逐字节一致、Selected regions/markers、其他 Bounds、多声道、其他归一化/限制后处理和完整原厂对照仍缺 |
+| P10 | 进行中 | 工程帧率/时间码、Notes 与 General 起始速度/拍号/采样率/有符号 Start measure/BPM basis/标尺间隔锚点/Project start time 显示偏移/已实现字段的默认工程设置保存；媒体默认已有 64pt playback/192pt render sinc，Render 支持 Entire project/Time selection/Custom time range/All project regions/All project markers、默认关闭且整数毫秒输入的 Tail、Project/常用预设输出采样率转换、Mono/Stereo WAV、PCM8/16/24/32、Float32/64、4-bit IMA ADPCM、2-bit cADPCM 与 8-bit u-Law、可调 sample-peak、Selected tracks (stems)/pre-fader/via master、Master mix and stems，以及 Region Render Matrix 的 All/Selected Regions 批量任务构造、一组 4 文件原厂 PCM24 对照和 35 个常用 Wildcard token（其中新增 18 个 Position/Length 项并与 REAPER 7.82 实窗输出比对）；$region-$track 原厂文件名与完整 PCM 已一致，完整 Wildcards chooser/规则/跨启动保存及其他路由行为仍待验收；cADPCM 编码尚未逐字节一致、Selected regions/markers、其他 Bounds、多声道、其他归一化/限制后处理和完整原厂对照仍缺 |
 | P11 | 未开始 | 其他原厂界面 |
 | P12 | 未开始 | 全量验收 |
 
@@ -1568,3 +1568,10 @@ Render 窗口新增可选文件名模式字段及分组的 `Wildcards…` 插入
 ### 2026-10-16 Render filename Project Information wildcards
 
 在已有 Project Notes 模型上新增 `$title`、`$author`、`$projectnotes`，同时修正无名轨道的 `$tracknameornumber`：REAPER 7.82 输出 `Track NN`，AAADAW 现在复现相同形式。原厂 ReaScript 用 `PROJECT_TITLE`、`PROJECT_AUTHOR` 与 `GetSetProjectNotes` API 设置 `Wildcard Session`、`Render Author`、`Mix notes`，实窗预览生成 `Wildcard Session-Render Author-Mix notes.wav`；空名轨道的原厂预览为 `Track 01.wav`。新增的组合上下文回归覆盖 Notes 元数据，并对第二条空名轨道验证 `Track 02.wav`；App nextest 663/663 与 strict all-target App Clippy `-D warnings` 通过。17-token 面板、实际 X11 `$tracknumber` 插入和 metadata/空名轨道 REAPER 对照截图、Build ID 与 SHA-256 记录在 [Wildcard 验证](../verification/reaper-parity/render-filename-patterns.md)；rustfmt、diff、102 行唯一验收矩阵及七张截图 hash 校验通过。REAPER 的 `$projectnotes(name)` named-note 解析、项目目录变体、完整文件名交互和其余 wildcard 类别保持未完成，验收项继续 `in_progress`。
+
+
+## 2026-10-16 Render Position/Length wildcards
+
+Render filename picker 新增 `$start`、`$end`、`$length`、beat、timecode、frame、seconds 与 length-component 共 18 个 Position/Length tokens，picker 扩展到 35 项并按功能分组。REAPER 7.82 默认设置下，用 2.125–3.359 秒选中 Item 验证时钟、4/4 拍位置、30 fps timecode/frame、秒与毫秒长度输出；原厂截图及预期值已入 fixture。修复 Media items 行误收全部后续按钮造成的横向溢出；更新后的 640×720 Render 窗口完整展示各组按钮，并通过 X11 实点最底部 `$lentt` 按钮，确认写入字段后关闭 picker。
+
+App nextest 664/664、strict all-target App Clippy `-D warnings`、stripped-debug 桌面构建通过；默认界面、全量 picker、实际 token 插入截图来自同一 Build ID，并记录在 [Wildcard 验证](../verification/reaper-parity/render-filename-patterns.md) 与 fixture manifest。格式、diff 检查、102 行唯一 ID 矩阵与全部 12 张登记截图 SHA-256 通过。项目时间偏移、跨拍号范围、非 30 fps、drop-frame、Tail 交互及 REAPER 完整 wildcard 清单仍待原厂比对，`RENDER-WILDCARDS-001`/P10 持续 `in_progress`。
