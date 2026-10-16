@@ -285,6 +285,51 @@ fn reaper_782_type_one_export_matches_native_track_and_event_bytes() {
 }
 
 #[test]
+fn reaper_782_type_one_marker_export_matches_native_bytes() {
+    let project = native_midi_marker_fixture_project();
+    let mut options = MidiExportOptions::for_project(&project);
+    options.export_markers = true;
+    let actual = encode_standard_midi_with_conductor_track_name(
+        &project,
+        options,
+        "midi-markers-native-20261016",
+    )
+    .unwrap();
+    let native = include_bytes!(
+        "../../../docs/verification/reaper-parity/fixtures/menu-export-midi-native-markers.mid"
+    );
+
+    assert_eq!(
+        actual, native,
+        "Type 1 marker metadata and MIDI tracks match REAPER 7.82"
+    );
+}
+
+#[test]
+fn reaper_782_type_one_cue_export_matches_native_bytes() {
+    let project = native_midi_marker_fixture_project();
+    let options = MidiExportOptions {
+        export_markers: true,
+        marker_type: MidiMarkerType::Cues,
+        ..MidiExportOptions::for_project(&project)
+    };
+    let actual = encode_standard_midi_with_conductor_track_name(
+        &project,
+        options,
+        "midi-cues-native-20261016",
+    )
+    .unwrap();
+    let native = include_bytes!(
+        "../../../docs/verification/reaper-parity/fixtures/menu-export-midi-native-cues.mid"
+    );
+
+    assert_eq!(
+        actual, native,
+        "Type 1 cue metadata and MIDI tracks match REAPER 7.82"
+    );
+}
+
+#[test]
 fn reaper_782_type_one_smpte_offset_matches_native_bytes() {
     let project = native_midi_fixture_project();
     let mut options = MidiExportOptions::for_project(&project);
@@ -394,6 +439,23 @@ fn reaper_782_type_one_linear_tempo_ramp_matches_native_bytes() {
 
 fn native_midi_fixture_project() -> Project {
     native_midi_fixture_project_with_length(1920)
+}
+
+fn native_midi_marker_fixture_project() -> Project {
+    let mut project = native_midi_fixture_project();
+    project
+        .apply(DawAction::InsertProjectMarker {
+            position_ticks: 0,
+            name: "#Intro".to_owned(),
+        })
+        .unwrap();
+    project
+        .apply(DawAction::InsertProjectMarker {
+            position_ticks: 960,
+            name: "Verse".to_owned(),
+        })
+        .unwrap();
+    project
 }
 
 fn native_midi_fixture_project_with_length(item_length_ticks: u64) -> Project {

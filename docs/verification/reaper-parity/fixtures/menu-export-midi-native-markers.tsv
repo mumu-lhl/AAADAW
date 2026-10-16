@@ -1,0 +1,22 @@
+version	7.82/linux-x86_64
+theme	Default_7.0.ReaperThemeZip
+fixture	track Piano; item 0.25-1.25 seconds; C4 note, CC1, pitch bend; visible markers #Intro at tick 0 and Verse at tick 960
+export_action	40849
+export_mode	Multitrack MIDI file (type 1 MIDI file)
+export_ppqn	960
+export_tempo_meter_changes	unchecked
+export_smpte_offset	unchecked
+export_markers	checked
+export_marker_type	markers
+export_marker_filter	unchecked
+export_hidden_markers	unchecked
+native_conductor_events	name at tick 0; 4/4, 120 BPM, and #Intro marker at tick 0; Verse marker and End-of-Track at tick 960
+native_event_order	track name; time signature; tempo; marker at tick 0
+native_midi_track_events	Piano note-on tick 480, CC1 tick 720, pitch bend tick 840, note-off and End-of-Track tick 1440
+native_export_path	/tmp/midi-markers-native-20261016.mid
+native_export_bytes	133
+native_export_sha256	82a0f94b16250a06c49580eddfcfd13eadb248a74254dcc375518f19b6efaedd
+native_dialog_screenshot	fixtures/menu-export-midi-native-markers-dialog.png
+native_dialog_screenshot_sha256	0c1905f0f30cd5280467ec38dfe4ec0371c52dd4df63ede0afac06475472b705
+native_binary_fixture	fixtures/menu-export-midi-native-markers.mid
+native_probe	scripts/reaper_parity/probe-midi-export-markers.lua

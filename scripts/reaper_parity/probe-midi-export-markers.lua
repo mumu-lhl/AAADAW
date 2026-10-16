@@ -1,0 +1,47 @@
+-- Run only in an isolated, unsaved Linux REAPER 7.82 / Default 7 project.
+-- Builds the standard MIDI export fixture plus two project markers, then opens
+-- Main action 40849 for a manual Save-path entry and Marker/Cue selection.
+local root = assert(os.getenv("AAADAW_REAPER_PROBE_DIR"), "Set AAADAW_REAPER_PROBE_DIR") .. "/"
+local marker_mode = assert(os.getenv("AAADAW_REAPER_MARKER_MODE"), "Set AAADAW_REAPER_MARKER_MODE")
+assert(marker_mode == "markers" or marker_mode == "cues")
+assert(reaper.GetAppVersion() == "7.82/linux-x86_64")
+assert(reaper.GetLastColorThemeFile():match("Default_7%.0%.ReaperThemeZip$"))
+assert(reaper.GetPlayStateEx(0) == 0)
+local _, project_path = reaper.EnumProjects(-1, "")
+assert(project_path == "", "Run this probe in a fresh, unsaved project")
+assert(reaper.CountTracks(0) == 0, "Run this probe in an empty project")
+
+assert(reaper.AddProjectMarker2(0, false, 0.0, 0.0, "#Intro", -1, 0) >= 0)
+assert(reaper.AddProjectMarker2(0, false, 0.5, 0.5, "Verse", -1, 0) >= 0)
+reaper.InsertTrackAtIndex(0, true)
+local track = reaper.GetTrack(0, 0)
+reaper.GetSetMediaTrackInfo_String(track, "P_NAME", "Piano", true)
+local item_start, item_end = 0.25, 1.25
+local item = assert(reaper.CreateNewMIDIItemInProj(track, item_start, item_end, false))
+local take = assert(reaper.GetActiveTake(item))
+local start_qn = reaper.TimeMap2_timeToQN(0, item_start)
+local start_ppq = reaper.MIDI_GetPPQPosFromProjQN(take, start_qn)
+local note_end_ppq = reaper.MIDI_GetPPQPosFromProjQN(take, start_qn + 1.0)
+local cc_ppq = reaper.MIDI_GetPPQPosFromProjQN(take, start_qn + 0.25)
+local bend_ppq = reaper.MIDI_GetPPQPosFromProjQN(take, start_qn + 0.375)
+assert(reaper.MIDI_InsertNote(take, false, false, start_ppq, note_end_ppq, 0, 60, 100, false))
+assert(reaper.MIDI_InsertCC(take, false, false, cc_ppq, 0xB0, 0, 1, 64))
+assert(reaper.MIDI_InsertCC(take, false, false, bend_ppq, 0xE0, 0, 0, 96))
+reaper.MIDI_Sort(take)
+
+local meta = assert(io.open(root .. "midi-export-markers-native-meta.tsv", "w"))
+meta:write("version\t", reaper.GetAppVersion(), "\n")
+meta:write("theme\tDefault_7.0.ReaperThemeZip\n")
+meta:write("fixture\ttrack Piano; item 0.25-1.25 seconds; C4 note, CC1, pitch bend; markers #Intro and Verse\n")
+meta:write("marker_0\t#Intro at project time 0.000000 seconds / tick 0\n")
+meta:write("marker_1\tVerse at project time 0.500000 seconds / tick 960\n")
+meta:write("export_action\t40849\n")
+meta:write("export_mode\tType 1; PPQN 960\n")
+meta:write("export_metadata\ttempo/meter/SMPTE unchecked; markers checked; ", marker_mode, "\n")
+meta:write("export_path_stem\tmidi-", marker_mode, "-native-20261016\n")
+meta:close()
+
+reaper.Main_OnCommand(40849, 0)
+local ready = assert(io.open(root .. "midi-export-markers-ready", "w"))
+ready:write("Set an unused .mid path, enable marker export, select ", marker_mode, ", then click OK\n")
+ready:close()
