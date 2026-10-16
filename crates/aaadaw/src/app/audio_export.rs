@@ -47,6 +47,7 @@ pub(crate) enum RenderFilenameWildcard {
     Title,
     Author,
     ProjectNotes,
+    ProjectNotesNamed,
     Tempo,
     TimeSignature,
     TimeSigNum,
@@ -87,11 +88,12 @@ pub(crate) enum RenderFilenameWildcard {
 }
 
 impl RenderFilenameWildcard {
-    pub(crate) const ALL: [Self; 41] = [
+    pub(crate) const ALL: [Self; 42] = [
         Self::Project,
         Self::Title,
         Self::Author,
         Self::ProjectNotes,
+        Self::ProjectNotesNamed,
         Self::Bpm,
         Self::Tempo,
         Self::TimeSignature,
@@ -137,6 +139,7 @@ impl RenderFilenameWildcard {
             Self::Title => "$title",
             Self::Author => "$author",
             Self::ProjectNotes => "$projectnotes",
+            Self::ProjectNotesNamed => "$projectnotes(name)",
             Self::Tempo => "$tempo",
             Self::TimeSignature => "$timesignature",
             Self::TimeSigNum => "$timesignum",
@@ -1019,6 +1022,16 @@ fn is_render_filename_wildcard_separator(character: char) -> bool {
     matches!(character, ' ' | '-' | '_' | '.')
 }
 
+fn project_note_named_value(notes: &str, name: &str) -> String {
+    notes
+        .lines()
+        .find_map(|line| {
+            let (key, value) = line.split_once('=')?;
+            (key == name).then(|| value.to_owned())
+        })
+        .unwrap_or_default()
+}
+
 fn expand_render_filename_pattern(
     pattern: &str,
     fallback: &str,
@@ -1164,20 +1177,42 @@ fn expand_render_filename_pattern(
             .iter()
             .collect::<String>();
         let token = token_original.to_ascii_lowercase();
-        let known_token = RenderFilenameWildcard::ALL
-            .iter()
-            .any(|wildcard| wildcard.token().trim_start_matches('$') == token);
+        let known_token = RenderFilenameWildcard::ALL.iter().any(|wildcard| {
+            wildcard.token().trim_start_matches('$').split('(').next() == Some(token.as_str())
+        });
+        let (expression_end, project_note_name) =
+            if token == "projectnotes" && characters.get(token_end) == Some(&'(') {
+                let expression_start = token_end + 1;
+                characters[expression_start..]
+                    .iter()
+                    .position(|character| *character == ')')
+                    .map(|relative_end| {
+                        let expression_end = expression_start + relative_end + 1;
+                        let name = characters[expression_start..expression_end - 1]
+                            .iter()
+                            .collect::<String>();
+                        (expression_end, Some(name))
+                    })
+                    .unwrap_or((token_end, None))
+            } else {
+                (token_end, None)
+            };
         let (wildcard_end, modifiers) = if known_token {
-            parse_render_filename_wildcard_modifiers(&characters, token_end)
+            parse_render_filename_wildcard_modifiers(&characters, expression_end)
         } else {
-            (token_end, Vec::new())
+            (expression_end, Vec::new())
         };
         let expansion_start = result.len();
         match token.as_str() {
             "project" => result.push_str(project_name),
             "title" => result.push_str(&project.project_notes().title),
             "author" => result.push_str(&project.project_notes().author),
-            "projectnotes" => result.push_str(&project.project_notes().text),
+            "projectnotes" => result.push_str(
+                &project_note_name
+                    .as_deref()
+                    .map(|name| project_note_named_value(&project.project_notes().text, name))
+                    .unwrap_or_else(|| project.project_notes().text.clone()),
+            ),
             "start" => result.push_str(&format_render_wildcard_clock(
                 project,
                 settings.start_sample,
@@ -2979,6 +3014,7 @@ mod tests {
                 "$title",
                 "$author",
                 "$projectnotes",
+                "$projectnotes(name)",
                 "$bpm",
                 "$tempo",
                 "$timesignature",
@@ -3037,6 +3073,46 @@ mod tests {
             app.render_dialog.filename_pattern,
             "$project-$track$project"
         );
+        let _ = app.update(Message::InsertRenderFilenameWildcard(
+            RenderFilenameWildcard::ProjectNotesNamed,
+        ));
+        assert_eq!(
+            app.render_dialog.filename_pattern,
+            "$project-$track$project$projectnotes(name)"
+        );
+    }
+
+    #[test]
+    fn render_filename_named_project_notes_match_native_name_value_rules() {
+        let mut project = Project::default();
+        project
+            .apply(DawAction::SetProjectNotes {
+                notes: ProjectNotes {
+                    text: "first=john\nlast=doe".to_owned(),
+                    ..ProjectNotes::default()
+                },
+            })
+            .expect("named project notes fixture should be set");
+        let settings = aaadaw_app::ProjectWavRenderSettings {
+            master_ceiling: aaadaw_engine::MasterOutputCeiling::default(),
+            export_options: aaadaw_app::WavExportOptions::default(),
+            output_sample_rate: 48_000,
+            output_channels: WavChannelCount::Stereo,
+            source: aaadaw_app::ProjectWavRenderSource::MasterMix,
+            start_sample: 0,
+            end_sample: 48_000,
+            tail_milliseconds: 0,
+            normalize_peak: false,
+            normalize_peak_target_centi_dbfs: 0,
+        };
+        let output = apply_render_filename_pattern(
+            vec![(settings, Path::new("/renders/base.wav").to_owned())],
+            "$projectnotes(first)-$projectnotes(last)-$projectnotes(missing)",
+            &project,
+            Path::new("/projects/named-notes.aaadaw"),
+        )
+        .expect("named project note values should expand");
+        assert_eq!(output[0].1, Path::new("/renders/john-doe.wav"));
     }
 
     #[test]

@@ -26,7 +26,7 @@
 | P7 | 未开始 | MIDI |
 | P8 | 未开始 | 自动化 |
 | P9 | 未开始 | 插件 |
-| P10 | 进行中 | 工程帧率/时间码、Notes 与 General 起始速度/拍号/采样率/有符号 Start measure/BPM basis/标尺间隔锚点/Project start time 显示偏移/已实现字段的默认工程设置保存；媒体默认已有 64pt playback/192pt render sinc，Render 支持 Entire project/Time selection/Custom time range/All project regions/All project markers、默认关闭且整数毫秒输入的 Tail、Project/常用预设输出采样率转换、Mono/Stereo WAV、PCM8/16/24/32、Float32/64、4-bit IMA ADPCM、2-bit cADPCM 与 8-bit u-Law、可调 sample-peak、Selected tracks (stems)/pre-fader/via master、Master mix and stems，以及 Region Render Matrix 的 All/Selected Regions 批量任务构造、一组 4 文件原厂 PCM24 对照和 41 个常用 Wildcard token（其中 18 个 Position/Length 项及 5 个输出格式/通道值与 REAPER 7.82 实窗输出比对；原厂大小写、字符替换/删除、[<N] 截取和空值分隔符规则已接入）；$region-$track 原厂文件名与完整 PCM 已一致，完整 Wildcards chooser/规则/跨启动保存及其他路由行为仍待验收；cADPCM 编码尚未逐字节一致、Selected regions/markers、其他 Bounds、多声道、其他归一化/限制后处理和完整原厂对照仍缺 |
+| P10 | 进行中 | 工程帧率/时间码、Notes 与 General 起始速度/拍号/采样率/有符号 Start measure/BPM basis/标尺间隔锚点/Project start time 显示偏移/已实现字段的默认工程设置保存；媒体默认已有 64pt playback/192pt render sinc，Render 支持 Entire project/Time selection/Custom time range/All project regions/All project markers、默认关闭且整数毫秒输入的 Tail、Project/常用预设输出采样率转换、Mono/Stereo WAV、PCM8/16/24/32、Float32/64、4-bit IMA ADPCM、2-bit cADPCM 与 8-bit u-Law、可调 sample-peak、Selected tracks (stems)/pre-fader/via master、Master mix and stems，以及 Region Render Matrix 的 All/Selected Regions 批量任务构造、一组 4 文件原厂 PCM24 对照和 42 个常用 Wildcard token（其中 18 个 Position/Length 项及 5 个输出格式/通道值与 REAPER 7.82 实窗输出比对；原厂大小写、字符替换/删除、[<N] 截取和空值分隔符与 named project-note 规则已接入）；$region-$track 原厂文件名与完整 PCM 已一致，完整 Wildcards chooser/规则/跨启动保存及其他路由行为仍待验收；cADPCM 编码尚未逐字节一致、Selected regions/markers、其他 Bounds、多声道、其他归一化/限制后处理和完整原厂对照仍缺 |
 | P11 | 未开始 | 其他原厂界面 |
 | P12 | 未开始 | 全量验收 |
 
@@ -1594,3 +1594,8 @@ App nextest 664/664、strict all-target App Clippy `-D warnings`、stripped-debu
 ## 2026-10-16 Media item number wildcard
 
 补齐原厂 Media Items 菜单中的 `$itemnumber`。其值来自当前选中音频 Item 在工程 Item 序列中的一基序号，并按两位数输出；与已有 `$item` 共享同一身份索引。回归以第二个工程 Item 验证 `$item-$itemnumber` 为 `item_02-02`，与已存档的原厂第二个选中 Item `$item` 预览 `item_02` 一致。Picker 增至 41 项，Media items 组同列显示 `$item` / `$itemnumber`；X11 实点第二个按钮后正确插入 `$itemnumber` 并关闭 picker。App nextest 668/668 与 strict all-target App Clippy `-D warnings` 通过；Build ID `8d0c0fdde9a40e520786848ba56c265ab2d1a705` 的 Render、完整 picker、滚动 picker 和实点插入截图已登记。直接 `$itemnumber` 原厂输出预览及其他原厂 Media Items 项仍开放。
+
+
+## 2026-10-16 Named project-note wildcard
+
+实现原厂 Media/Project Information 菜单中的 `$projectnotes(name)`，按原厂 help 的 `name=value` 行精确取值；缺失名称为空，并复用空值相邻分隔符清理。使用原厂帮助页示例 `first=john`、`last=doe` 新增回归，模式 `$projectnotes(first)-$projectnotes(last)-$projectnotes(missing)` 得到 `john-doe`。picker 将 Project notes 拆为普通备注与 named-value 两个按钮，插入坐标脚本同步更新。Picker 扩展到 42 项；App nextest 669/669 与 strict all-target App Clippy `-D warnings` 通过。Build ID `32409702f28800989b39000cedcd7387752a9249` 的 Render、picker、滚动 picker、named-note、itemnumber 和 sampleratek 实点截图已登记；区域/标记/Item/Take marker 命名值及其余原厂 wildcard 仍开放。

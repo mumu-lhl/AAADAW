@@ -205,59 +205,63 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
             column![
                 wildcard_group_row(
                     "Project information:",
-                    RenderFilenameWildcard::ALL.into_iter().take(4),
+                    RenderFilenameWildcard::ALL.into_iter().take(3),
+                ),
+                wildcard_group_row(
+                    "Project notes:",
+                    RenderFilenameWildcard::ALL.into_iter().skip(3).take(2),
                 ),
                 wildcard_group_row(
                     "Tempo:",
-                    RenderFilenameWildcard::ALL.into_iter().skip(4).take(2),
+                    RenderFilenameWildcard::ALL.into_iter().skip(5).take(2),
                 ),
                 wildcard_group_row(
                     "Time signature:",
-                    RenderFilenameWildcard::ALL.into_iter().skip(6).take(3),
+                    RenderFilenameWildcard::ALL.into_iter().skip(7).take(3),
                 ),
                 wildcard_group_row(
                     "Tracks:",
-                    RenderFilenameWildcard::ALL.into_iter().skip(9).take(3),
+                    RenderFilenameWildcard::ALL.into_iter().skip(10).take(3),
                 ),
                 wildcard_group_row(
                     "Regions / markers:",
-                    RenderFilenameWildcard::ALL.into_iter().skip(12).take(4),
+                    RenderFilenameWildcard::ALL.into_iter().skip(13).take(4),
                 ),
                 wildcard_group_row(
                     "Media items:",
-                    RenderFilenameWildcard::ALL.into_iter().skip(16).take(2),
+                    RenderFilenameWildcard::ALL.into_iter().skip(17).take(2),
                 ),
                 wildcard_group_row(
                     "Position:",
-                    RenderFilenameWildcard::ALL.into_iter().skip(18).take(3),
+                    RenderFilenameWildcard::ALL.into_iter().skip(19).take(3),
                 ),
                 wildcard_group_row(
                     "Beats:",
-                    RenderFilenameWildcard::ALL.into_iter().skip(21).take(3),
+                    RenderFilenameWildcard::ALL.into_iter().skip(22).take(3),
                 ),
                 wildcard_group_row(
                     "Timecode:",
-                    RenderFilenameWildcard::ALL.into_iter().skip(24).take(2),
+                    RenderFilenameWildcard::ALL.into_iter().skip(25).take(2),
                 ),
                 wildcard_group_row(
                     "Frames:",
-                    RenderFilenameWildcard::ALL.into_iter().skip(26).take(3),
+                    RenderFilenameWildcard::ALL.into_iter().skip(27).take(3),
                 ),
                 wildcard_group_row(
                     "Seconds:",
-                    RenderFilenameWildcard::ALL.into_iter().skip(29).take(3),
+                    RenderFilenameWildcard::ALL.into_iter().skip(30).take(3),
                 ),
                 wildcard_group_row(
                     "Length components:",
-                    RenderFilenameWildcard::ALL.into_iter().skip(32).take(4),
+                    RenderFilenameWildcard::ALL.into_iter().skip(33).take(4),
                 ),
                 wildcard_group_row(
                     "Output format:",
-                    RenderFilenameWildcard::ALL.into_iter().skip(36).take(4),
+                    RenderFilenameWildcard::ALL.into_iter().skip(37).take(4),
                 ),
                 wildcard_group_row(
                     "Channels:",
-                    RenderFilenameWildcard::ALL.into_iter().skip(40).take(1),
+                    RenderFilenameWildcard::ALL.into_iter().skip(41).take(1),
                 ),
             ]
             .spacing(tokens::SPACING_XS)
