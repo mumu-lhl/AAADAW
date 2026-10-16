@@ -15790,7 +15790,7 @@ fn unselect_all_items_action_clears_item_selection_and_preserves_other_view_stat
 }
 
 #[test]
-fn select_item_under_mouse_action_uses_current_hover_and_replaces_selection() {
+fn select_item_under_mouse_action_selects_item_clears_empty_lane_and_noops_outside_arrange() {
     let mut app = App::default();
     let _ = app.update(Message::AddTrack);
     let _ = app.update(Message::AddTrack);
@@ -15814,7 +15814,14 @@ fn select_item_under_mouse_action_uses_current_hover_and_replaces_selection() {
     app.timeline.rebuild(&app.project);
     app.timeline
         .select_items(vec![(previously_selected_id, tracks[1])]);
-    app.timeline.hovered_item = Some(hovered_id);
+    app.timeline.pixels_per_tick = 0.1;
+    let row = app.timeline.row_layout(0).expect("first track has a row");
+    app.timeline
+        .handle(TimelineEvent::PointerMoved(iced::Point::new(
+            27.0,
+            row.top + 20.0,
+        )));
+    assert_eq!(app.timeline.hovered_item, Some(hovered_id));
 
     let command = CommandId::SelectItemUnderMouseCursor;
     assert!(commands::is_enabled(&app, command));
@@ -15833,6 +15840,10 @@ fn select_item_under_mouse_action_uses_current_hover_and_replaces_selection() {
         .into_iter()
         .find(|entry| entry.id == command)
         .expect("under-mouse action is searchable");
+    assert!(
+        entry.enabled,
+        "the native Action List Run remains available"
+    );
     assert!(entry.shortcut.is_none());
     app.action_list.select("item.select-under-mouse".to_owned());
     let revision_before = app.revision;
@@ -15848,8 +15859,32 @@ fn select_item_under_mouse_action_uses_current_hover_and_replaces_selection() {
     assert_eq!(app.project.can_undo(), can_undo_before);
     assert_eq!(app.project.can_redo(), can_redo_before);
 
-    app.timeline.hovered_item = None;
-    assert!(!commands::is_enabled(&app, command));
+    app.timeline
+        .handle(TimelineEvent::PointerMoved(iced::Point::new(
+            140.0,
+            row.top + 20.0,
+        )));
+    assert_eq!(app.timeline.hovered_item, None);
+    assert!(commands::is_enabled(&app, command));
+    let _ = app.update(Message::ActionListRun(false));
+    assert!(app.timeline.selected_items.is_empty());
+    assert_eq!(app.timeline.selected_item, None);
+    assert_eq!(app.revision, revision_before);
+    assert_eq!(app.project.can_undo(), can_undo_before);
+    assert_eq!(app.project.can_redo(), can_redo_before);
+
+    let _ = app.update(Message::Undo);
+    assert_eq!(app.timeline.selected_items, HashSet::from([hovered_id]));
+    assert_eq!(app.timeline.selected_item, Some(hovered_id));
+
+    app.timeline.handle(TimelineEvent::SetHoveredItem(None));
+    assert!(commands::is_enabled(&app, command));
+    let _ = app.update(Message::ActionListRun(false));
+    assert_eq!(app.timeline.selected_items, HashSet::from([hovered_id]));
+    assert_eq!(app.timeline.selected_item, Some(hovered_id));
+    assert_eq!(app.revision, revision_before);
+    assert_eq!(app.project.can_undo(), can_undo_before);
+    assert_eq!(app.project.can_redo(), can_redo_before);
 }
 
 #[test]

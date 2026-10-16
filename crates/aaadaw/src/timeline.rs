@@ -1665,6 +1665,12 @@ impl TimelineState {
         self.cache.item_at(track_index, tick).map(|item| item.id)
     }
 
+    pub(crate) fn pointer_is_over_item_lane(&self) -> bool {
+        self.hovered_item_position
+            .and_then(|position| row_at_y(&self.row_layout, position.y))
+            .is_some_and(|(_, row_y)| row_y < TIMELINE_ROW_HEIGHT)
+    }
+
     fn refresh_hovered_item(&mut self) {
         self.hovered_item = self
             .hovered_item_position
@@ -1829,6 +1835,13 @@ impl TimelineState {
                         HoveredItemSelectionMode::Toggle => (true, false),
                     };
                     self.select_item(Some(item_id), additive, false, preserve_existing_for_drag);
+                } else if mode == HoveredItemSelectionMode::Replace
+                    && self.pointer_is_over_item_lane()
+                {
+                    self.delete_focus = DeleteFocusTarget::Arrange;
+                    self.selected_volume_automation_point = None;
+                    self.selected_fx_automation_point = None;
+                    self.select_item(None, false, false, false);
                 }
             }
             TimelineEvent::SelectItemsInMarquee {

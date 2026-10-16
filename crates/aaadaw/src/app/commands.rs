@@ -3225,7 +3225,7 @@ fn command_enabled(app: &App, kind: CommandKind, track: Option<TrackState>) -> b
         | CommandKind::SnapSelectedItemsToNearestPoint => {
             !project_edit_busy(app) && !app.timeline.selected_items.is_empty()
         }
-        CommandKind::SelectItemUnderMouseCursor => app.timeline.hovered_item.is_some(),
+        CommandKind::SelectItemUnderMouseCursor => true,
         CommandKind::AddItemUnderMouseToSelection => app.timeline.hovered_item.is_some(),
         CommandKind::ToggleSelectionOfItemUnderMouse => app.timeline.hovered_item.is_some(),
         CommandKind::SplitSelectedItemsAtCursor => !project_edit_busy(app),

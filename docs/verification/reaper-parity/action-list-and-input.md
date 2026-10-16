@@ -62,17 +62,19 @@ nightly+Cranelift Action List/Settings/映射回归 6/6 通过（496 项过滤�
 
 `unselect_all_items_action_clears_item_selection_and_preserves_other_view_state` 覆盖 Action List Run 和时间线状态边界；`no_op_item_selection_does_not_discard_redo_history` 与 `changed_item_selection_discards_project_redo_history` 覆盖 redo 语义。原厂 automation point、命令禁用状态、内容保存/脏标记仍未探测；AAADAW 的 automation point 交互尚无实窗对比，`ITEM-SELECT-005` 保持 `in_progress`。
 
-## 2026-10-13 Main action 40528：Select item under mouse cursor
+## 2026-10-16 Main action 40528：Select item under mouse cursor
 
-默认目录确认 Main Section 有 40528 `Item: Select item under mouse cursor`，无默认快捷键。Arrange 当前在鼠标移动进入 item 区域时更新悬停 item，离开 item/时间线、载入不同工程或改变视图布局时清除目标；Action List Run 选择该目标并替换此前 item 选择，不修改工程修订或 Undo/Redo。视图平移/缩放后需要鼠标再次移动来重新命中；没有有效悬停 item 时动作禁用。
+默认目录确认 Main Section 有 40528 `Item: Select item under mouse cursor`，无默认快捷键。隔离 Linux REAPER 7.82 / Default 7 原生探针确认：指针在 MIDI item A1 上运行会替换选择并选中 A1；指针在空白 item lane 上运行会清空已有 item 选择；指针在 Action List 窗口上运行时没有 Arrangement item target，选择保持不变。Action List 选中 action 后 Run 按钮仍可用；因此 Main action 不按当前 hover 是否命中 item 来禁用，空白轨道 item lane 和 Action List 外的无效 target 分别执行清空与 no-op。
 
-`arrange_cursor_motion_tracks_and_clears_the_hovered_item` 从真实 timeline shader 鼠标事件验证悬停命中/清除；`select_item_under_mouse_action_uses_current_hover_and_replaces_selection` 验证 Action List 搜索/Run 和工程历史不变。REAPER 原厂对 Action List 焦点、视图变换后悬停目标及实窗界面的行为尚无运行探针，`ITEM-SELECT-006` 保持 `in_progress`。
+原厂 probe 在 40529 上还确认 Add 对 B1 的二次执行不改变选择；40530 会移除已选 B1，但指针在空白 lane 时 no-op。完整逐次选择、project state/Undo 和指针坐标见 [原厂 TSV](fixtures/item-hover-actions-native.tsv)，可复现 ReaScript 为 [probe-item-hover-actions.lua](../../../scripts/reaper_parity/probe-item-hover-actions.lua)。[Action List 原厂截图](fixtures/item-hover-actions-action-list-native.png)显示 40528 已选中且 Run 可用；[运行后的 Arrange 截图](fixtures/item-hover-actions-action-list-run-native.png)对应 Action List 覆盖指针时选择保持不变。
 
-## 2026-10-13 Main actions 40529/40530：添加或切换鼠标下的 item 选择
+AAADAW 的 40528 现在保持可运行：在真实 track item lane 上命中 item 时替换选择，在同一 lane 的空白处清空 item 选择，在 ruler、TCP 或离开 Arrange 后无效 target 时 no-op。清空和选择都进入应用级 item-selection Undo 历史，不改工程内容修订或 Project Undo 栈。`arrange_cursor_motion_tracks_and_clears_the_hovered_item` 验证真实 timeline shader 鼠标事件；`select_item_under_mouse_action_selects_item_clears_empty_lane_and_noops_outside_arrange` 覆盖 Action List Run、item 命中、空 lane 清空、Undo 恢复及 Arrange 外 no-op。平移、缩放和滚动后的 stationary-pointer 重命中由相邻 timeline regressions 覆盖。AAADAW 新桌面二进制的实窗验收通过 Action List 选中 40528、将鼠标停在 MIDI item 上并按 Enter 完成；截图及构建 ID/哈希在[AAADAW 运行 fixture](fixtures/item-hover-actions-aaadaw.tsv)和[实窗截图](fixtures/item-hover-actions-aaadaw.png)。`ITEM-SELECT-006` 保持 `in_progress`，因为 40529/40530 的原厂焦点/活动项语义和其他 item-selection 行为尚未全部验收。
 
-默认动作目录列出 40529 `Item: Select item under mouse cursor (leaving other items selected)` 和 40530 `Item: Toggle selection of item under mouse cursor`，均无默认快捷键。AAADAW 注册稳定 ID `item.add-under-mouse-to-selection` 与 `item.toggle-under-mouse-selection`。40529 添加悬停 item 且不会因为它已选中而移除；40530 会在选择集合中增删悬停 item。两者不修改工程或 Undo/Redo；必须先命中有效 Arrangement item 才启用。
+## 2026-10-16 Main actions 40529/40530：添加或切换鼠标下的 item 选择
 
-`select_item_under_mouse_leaving_other_items_selected_adds_without_toggling` 验证添加和对已选 target 的保留；`toggle_selection_of_item_under_mouse_adds_and_removes_the_hovered_item` 验证 toggle 两个方向。原厂对多选后活动 item/anchor、Action List 焦点和视图变换后 hover 的运行时行为尚未核实；这两项及 40528 一样保持 `in_progress`。
+默认动作目录列出 40529 `Item: Select item under mouse cursor (leaving other items selected)` 和 40530 `Item: Toggle selection of item under mouse cursor`，均无默认快捷键。REAPER 原生探针确认 40529 会添加悬停 B1，重复运行保持选择集合不变；40530 会移除已选 B1，空白 item lane 上 no-op。AAADAW 注册稳定 ID `item.add-under-mouse-to-selection` 与 `item.toggle-under-mouse-selection`，并覆盖这两类选择变化。当前 AAADAW 仅在命中 item 时启用这两项；原厂 Action List 在空目标状态下这两项的实际 Run 可用性尚待探测。
+
+`select_item_under_mouse_leaving_other_items_selected_adds_without_toggling` 验证添加和对已选 target 的保留；`toggle_selection_of_item_under_mouse_adds_and_removes_the_hovered_item` 验证 toggle 两个方向。多选后的活动 item/anchor 和这两项的 Action List 无目标启用状态尚未核实，`ITEM-SELECT-007/008` 保持 `in_progress`。
 
 随后发现 AAADAW 的 Arrangement 横向平移或缩放会清除 hover 缓存，导致指针停在原处时 Action List 动作失去目标。现在 Arrangement 保留视口内的指针坐标，并在滚轮/中键平移或缩放、垂直滚动及轨道行布局重建后重新命中该坐标下的 item；`stationary_arrange_pointer_retargets_items_after_pan_and_zoom` 覆盖从一个 item 移入另一个 item，以及缩放后指针落入空隙的情况，`stationary_arrange_pointer_retargets_items_after_vertical_scroll` 覆盖滚动后切换到另一轨道下的 item。该修复覆盖 AAADAW 视图变化后的 stale target；原厂 Action List 焦点、active item/anchor 和无目标启用状态仍未验证，相关矩阵保持 `in_progress`。
 

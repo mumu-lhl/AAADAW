@@ -1,0 +1,12 @@
+key	value
+captured_at_utc	2026-10-16
+platform	Linux x86_64; Xvfb :581; X11
+screen_size	Xvfb root 1280x1024; AAADAW main window 1280x800; screenshot cropped to the main-window viewport
+project_fixture	Disposable copy of target/reaper782/item-split-cursor-demo.aaadaw; two MIDI tracks and MIDI items; prelaunch SHA-256 6973827a4f000976555744884a13a2c5dcd4f365ec5e9accedbc58451f72cb69
+binary	target/debug/aaadaw
+binary_sha256	11f771ed65a292f642de500d222352a550e8c1a3c9d248e2e61763b5a7c726b2
+binary_build_id	539e59063075287e32c116db4093aa10c664db38
+action	Main 40528; selected in Action List; Run invoked with Enter while the pointer remained over the first track's MIDI item
+pointer_xy	900,200
+result	The first MIDI item is selected; Action List retains the selected 40528 row and shows Run available
+screenshot	item-hover-actions-aaadaw.png; 1280x800; SHA-256 82e9f639b92d200dd41fd4f7121c51fe92036ec5f46a6f0ef206faeab9fd55ea

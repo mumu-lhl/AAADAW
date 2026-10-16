@@ -1756,3 +1756,11 @@ AAADAW Paste 现在计算缺少的目标轨道数，使用 Core 暴露的下一�
 提交 `fb83d68` 修复 Main actions 40528/40529/40530 的 Arrangement hover target 在视图变化后失效：AAADAW 记录鼠标在 timeline 内容坐标中的位置，在滚轮/中键水平 pan、缩放、同步垂直滚动及轨道行布局重建后重新命中 item。新增两个回归验证水平 pan 后命中相邻 item、zoom 后进入空隙，以及垂直滚动后从一轨目标切换到另一轨目标。
 
 `cargo test --quiet -p aaadaw --bin aaadaw` 通过 674/674；Core/App all-target Clippy `-D warnings`、`cargo fmt --all -- --check`、`git diff --check` 和 parity CSV 结构校验通过。重建桌面二进制 Build ID `3a3392dad282d4b91056360ba95627f8cf7d1e61` 在隔离 Xvfb :96 渲染实际 1280×800 窗口；启动图与已跟踪基线像素完全相同。该截图只是启动/render smoke，不是 hover 功能状态截图；功能行为由 App timeline regressions 验证。`ITEM-SELECT-006/007/008` 继续 `in_progress`，因为 REAPER 原厂 Action List 焦点、无目标启用条件及 active item/anchor 语义尚未实测。
+
+### 2026-10-16 Main action 40528 empty-lane and Action List target behavior
+
+REAPER 7.82 / Default 7 原生指针探针补齐 40528 的无目标语义：A1 上运行选择 A1，空白 item lane 上运行清空已有 item 选择；Action List 覆盖指针时 Run 仍可用，但运行 40528 不改变选择。40529 对 B1 重复执行不改变选择，40530 切换 B1 后保留 A1，而两项对空白 lane 都 no-op。原厂 7.82/Linux 与 Default 7 记录、每次指针坐标及窗口截图见 [item-hover native fixtures](../verification/reaper-parity/fixtures/item-hover-actions-native.tsv)；ReaScript 在 `scripts/reaper_parity/probe-item-hover-actions.lua`。
+
+AAADAW 40528 现在保持可运行，在 track item lane 的空白处清空选择；没有有效 item lane target 时 no-op。空白清除通过应用级 item-selection history 可撤销，且不改变工程内容修订或 Project Undo 栈。真实桌面回归选中 Main 40528 后把鼠标停在第一条 MIDI item 并按 Enter，屏幕显示 item 高亮且 Action List Run 可用；当前二进制 Build ID `539e59063075287e32c116db4093aa10c664db38`、SHA-256 和 1280×800 截图记录在 [AAADAW fixture](../verification/reaper-parity/fixtures/item-hover-actions-aaadaw.tsv)。
+
+定向回归 1/1、AAADAW 主测试套件 674/674、`cargo clippy -p aaadaw -p aaadaw-app --all-targets -- -D warnings`、fmt、diff 和 parity CSV（102 项、15 列、唯一 ID）校验通过。`ITEM-SELECT-006` 继续 `in_progress`：40528 以外的多选 anchor/active item 细节和 40529/40530 的完整 Action List 焦点行为仍需原厂探测；其余 parity matrix 状态不变。
