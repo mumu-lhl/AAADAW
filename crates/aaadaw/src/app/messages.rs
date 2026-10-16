@@ -579,6 +579,7 @@ pub(crate) enum Message {
     SetRenderPeakTarget(String),
     SetRenderTailEnabled(bool),
     SetRenderTailDuration(String),
+    SetRenderFilenamePattern(String),
     FreezeTrack(TrackId),
     FreezeTrackFinished(Result<FreezeTrackResult, String>),
     UnfreezeTrack(TrackId),

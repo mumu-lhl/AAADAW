@@ -16,8 +16,8 @@ native_output_count	4; only assigned region/target combinations produced files
 audio_device_note	An initial missing-device prompt was dismissed; no hardware audio behavior is inferred
 aaadaw_test	app::audio_export::tests::region_render_matrix_wavs_match_native_target_count_ranges_and_samples
 aaadaw_comparison	Four outputs; 96,000 frames each; every PCM24 stereo sample equals the matching native file payload
-aaadaw_naming	Uses the chosen filename prefix plus region and target; Master output appends -Master
-open_parity_gap	AAADAW target suffixes match the tested $region-$track pattern, but there is no render-pattern editor or general wildcard/name parity
+aaadaw_naming	The optional $region-$track field emits exactly the four native filenames; an empty field retains generated prefix naming
+open_parity_gap	The Wildcards chooser, full token/escaping rules, filename-pattern presets/persistence, and remaining source/range combinations are not verified
 
 output	region_target	filename	frames	rate	channels	format	first_left_pcm24	first_right_pcm24	pcm_sha256	file_sha256
 1	Intro_Master	Intro-Master.wav	96000	48000	2	PCM24	6291456	6291456	55987919336b141527a836d35bb71c8ce5e967e7662540d84fcb2ef37dfcb6e9	66b6fa6b0cf7eaa0cd6276f095d3d53af952202a0f42fbfb4ecfac828646e2e9

@@ -3542,6 +3542,9 @@ impl App {
             Message::SetRenderTailDuration(value) => {
                 self.render_dialog.tail_duration_text = value;
             }
+            Message::SetRenderFilenamePattern(value) => {
+                self.render_dialog.filename_pattern = value;
+            }
             Message::RecordingOffsetTextChanged(value) => {
                 self.audio_recording_offset_query = Some(value);
             }

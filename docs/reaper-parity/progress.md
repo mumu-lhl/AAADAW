@@ -26,7 +26,7 @@
 | P7 | 未开始 | MIDI |
 | P8 | 未开始 | 自动化 |
 | P9 | 未开始 | 插件 |
-| P10 | 进行中 | 工程帧率/时间码、Notes 与 General 起始速度/拍号/采样率/有符号 Start measure/BPM basis/标尺间隔锚点/Project start time 显示偏移/已实现字段的默认工程设置保存；媒体默认已有 64pt playback/192pt render sinc，Render 支持 Entire project/Time selection/Custom time range/All project regions/All project markers、默认关闭且整数毫秒输入的 Tail、Project/常用预设输出采样率转换、Mono/Stereo WAV、PCM8/16/24/32、Float32/64、4-bit IMA ADPCM、2-bit cADPCM 与 8-bit u-Law、可调 sample-peak、Selected tracks (stems)/pre-fader/via master、Master mix and stems，以及 Region Render Matrix 的 All/Selected Regions 批量任务构造和一组 4 文件原厂 PCM24 对照；命名模式及其他路由行为仍待验收；cADPCM 编码尚未逐字节一致、Selected regions/markers、其他 Bounds、多声道、其他归一化/限制后处理和完整原厂对照仍缺 |
+| P10 | 进行中 | 工程帧率/时间码、Notes 与 General 起始速度/拍号/采样率/有符号 Start measure/BPM basis/标尺间隔锚点/Project start time 显示偏移/已实现字段的默认工程设置保存；媒体默认已有 64pt playback/192pt render sinc，Render 支持 Entire project/Time selection/Custom time range/All project regions/All project markers、默认关闭且整数毫秒输入的 Tail、Project/常用预设输出采样率转换、Mono/Stereo WAV、PCM8/16/24/32、Float32/64、4-bit IMA ADPCM、2-bit cADPCM 与 8-bit u-Law、可调 sample-peak、Selected tracks (stems)/pre-fader/via master、Master mix and stems，以及 Region Render Matrix 的 All/Selected Regions 批量任务构造、一组 4 文件原厂 PCM24 对照和 6 个常用 Wildcard token；$region-$track 原厂文件名与完整 PCM 已一致，完整 Wildcards chooser/规则/跨启动保存及其他路由行为仍待验收；cADPCM 编码尚未逐字节一致、Selected regions/markers、其他 Bounds、多声道、其他归一化/限制后处理和完整原厂对照仍缺 |
 | P11 | 未开始 | 其他原厂界面 |
 | P12 | 未开始 | 全量验收 |
 
@@ -1559,3 +1559,8 @@ Core + Storage nextest 241/241、桌面 App nextest 638/638、受影响 crates �
 新增 App 回归创建同一素材/工程、构建矩阵批次并运行正式离线 WAV renderer；它断言四个目标/范围/文件名候选，并比较每个结果 WAV 的 RIFF `fmt` 和完整 `data` chunk。四个 PCM payload 与原厂 WAV 逐字节一致，等价于这组常量场景下全部 96,000 个 stereo frame 每个 sample 一致。矩阵 Master 输出现追加 `-Master` 目标后缀，与 native `$region-$track` 的目标标签相符；AAADAW 当前按用户选择的文件名前缀输出，通用命名 UI/通配符仍需实现。该 fixture 只验证无 FX/发送的直连轨道和 Master sum；fader/automation、folder/send、FX 及更广边界场景仍未覆盖，两个验收原子继续 `in_progress`。
 
 当前桌面 App nextest 639/639、AAADAW all-target strict Clippy `-D warnings`、fmt 和 diff 检查通过。完整 workspace `cargo xtest` 仍受本机 overlay 链接空间限制，不能据此宣称 workspace 测试通过。
+
+
+### 2026-10-16 Render filename Wildcards 基础
+
+Render 窗口新增可选文件名模式字段，支持 `$project`、`$region`、`$marker`、`$track`、`$item`、`$bpm`；空模式保留现有命名，输出路径沿用所选目录和扩展名，危险文件名字符会替换，多个任务生成重名时在入队前拒绝。REAPER 原厂截图与 Selected media items 的 `$region-$item` 实际解析值来自既有原厂 fixture；矩阵原厂 `$region-$track` 模式的 Intro Master/Drums/Guitar 与 Verse Bass 文件名现在与 AAADAW 一致，四个 96,000-frame PCM24 stereo data chunk 全部逐字节一致。AAADAW 新 Render 输入框实窗截图、构建 ID、hash 和复现脚本见 [Wildcard 验证](../verification/reaper-parity/render-filename-patterns.md)。App nextest 662/662 在最后矩阵测试改动前通过，改动后的原厂矩阵 PCM 回归与 Render 消息到 stem 队列展开/重复名拒绝回归各 1/1 通过；strict all-target App Clippy、strip-debug 桌面构建和 rustfmt 通过。完整 Wildcards chooser/token 集/escaping/preset/跨启动持久化和更多 source/range 对照仍未完成；`RENDER-WILDCARDS-001`、`RENDER-SOURCE-001`、`UI-028` 保持 `in_progress`。

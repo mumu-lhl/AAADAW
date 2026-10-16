@@ -165,6 +165,26 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
         .spacing(tokens::SPACING_SM)
         .align_y(Alignment::Center),
         bounds_control,
+        row![
+            column![
+                text("Filename pattern").size(13),
+                text(
+                    "Optional; omit ext. Tokens: $project, $region, $marker, $track, $item, $bpm."
+                )
+                .size(11),
+            ]
+            .spacing(2),
+            text_input(
+                "$project-$region-$track",
+                &app.render_dialog.filename_pattern
+            )
+            .on_input(Message::SetRenderFilenamePattern)
+            .size(13)
+            .padding([4, 8])
+            .width(Length::Fill),
+        ]
+        .spacing(tokens::SPACING_SM)
+        .align_y(Alignment::Center),
         {
             let fields: Element<'_, Message> =
                 if !selected_media_items && bounds == RenderBounds::CustomTimeRange {

@@ -559,6 +559,190 @@ fn safe_stem_component(name: &str) -> String {
         .to_owned()
 }
 
+fn apply_render_filename_pattern(
+    outputs: Vec<(aaadaw_app::ProjectWavRenderSettings, PathBuf)>,
+    pattern: &str,
+    project: &Project,
+    project_path: &Path,
+) -> Result<Vec<(aaadaw_app::ProjectWavRenderSettings, PathBuf)>, String> {
+    let pattern = pattern.trim();
+    if pattern.is_empty() {
+        return Ok(outputs);
+    }
+
+    let mut used_names = HashSet::with_capacity(outputs.len());
+    outputs
+        .into_iter()
+        .map(|(settings, path)| {
+            let fallback = path
+                .file_stem()
+                .and_then(|stem| stem.to_str())
+                .filter(|stem| !stem.is_empty())
+                .unwrap_or("render");
+            let expanded = expand_render_filename_pattern(pattern, fallback, project, project_path, settings);
+            let name = safe_stem_component(&expanded);
+            if name.is_empty() {
+                return Err("Filename pattern must produce a non-empty file name".to_owned());
+            }
+            if !used_names.insert(name.to_lowercase()) {
+                return Err(format!(
+                    "Filename pattern creates duplicate output names ({name}); include a wildcard such as $region, $track, or $item"
+                ));
+            }
+            let parent = path
+                .parent()
+                .filter(|parent| !parent.as_os_str().is_empty())
+                .unwrap_or_else(|| Path::new("."));
+            let extension = path
+                .extension()
+                .and_then(|extension| extension.to_str())
+                .filter(|extension| !extension.is_empty())
+                .unwrap_or("wav");
+            Ok((settings, parent.join(format!("{name}.{extension}"))))
+        })
+        .collect()
+}
+
+fn apply_stem_filename_pattern(
+    outputs: Vec<(aaadaw_app::ProjectWavRenderSource, PathBuf)>,
+    settings: aaadaw_app::ProjectWavRenderSettings,
+    pattern: &str,
+    project: &Project,
+    project_path: &Path,
+) -> Result<Vec<(aaadaw_app::ProjectWavRenderSource, PathBuf)>, String> {
+    apply_render_filename_pattern(
+        outputs
+            .into_iter()
+            .map(|(source, path)| {
+                let mut settings = settings;
+                settings.source = source;
+                (settings, path)
+            })
+            .collect(),
+        pattern,
+        project,
+        project_path,
+    )
+    .map(|outputs| {
+        outputs
+            .into_iter()
+            .map(|(settings, path)| (settings.source, path))
+            .collect()
+    })
+}
+
+fn expand_render_filename_pattern(
+    pattern: &str,
+    fallback: &str,
+    project: &Project,
+    project_path: &Path,
+    settings: aaadaw_app::ProjectWavRenderSettings,
+) -> String {
+    let project_name = project_path
+        .file_stem()
+        .and_then(|name| name.to_str())
+        .filter(|name| !name.is_empty())
+        .unwrap_or(fallback);
+    let track_id = match settings.source {
+        aaadaw_app::ProjectWavRenderSource::SelectedTrackStem(track_id)
+        | aaadaw_app::ProjectWavRenderSource::SelectedTrackStemPreFader(track_id)
+        | aaadaw_app::ProjectWavRenderSource::SelectedTrackViaMaster(track_id) => Some(track_id),
+        aaadaw_app::ProjectWavRenderSource::SelectedAudioItem(item_id) => project
+            .audio_items()
+            .iter()
+            .find(|item| item.id() == item_id)
+            .map(|item| item.track_id()),
+        aaadaw_app::ProjectWavRenderSource::MasterMix => None,
+    };
+    let track_name = track_id
+        .and_then(|track_id| project.tracks().iter().find(|track| track.id() == track_id))
+        .map(|track| track.name())
+        .unwrap_or_else(|| {
+            if settings.source == aaadaw_app::ProjectWavRenderSource::MasterMix {
+                "Master"
+            } else {
+                ""
+            }
+        });
+    let item_name = match settings.source {
+        aaadaw_app::ProjectWavRenderSource::SelectedAudioItem(item_id) => project
+            .audio_items()
+            .iter()
+            .position(|item| item.id() == item_id)
+            .map(|index| format!("item_{:02}", index + 1))
+            .unwrap_or_default(),
+        _ => String::new(),
+    };
+    let region = project.regions().iter().find(|region| {
+        project.sample_at_tick(region.start_ticks()).ok() == Some(settings.start_sample)
+            && project.sample_at_tick(region.end_ticks()).ok() == Some(settings.end_sample)
+    });
+    let marker = project
+        .markers()
+        .iter()
+        .enumerate()
+        .find(|(index, marker)| {
+            let Ok(start) = project.sample_at_tick(marker.position_ticks()) else {
+                return false;
+            };
+            let end = project
+                .markers()
+                .get(index + 1)
+                .and_then(|next| project.sample_at_tick(next.position_ticks()).ok())
+                .or_else(|| aaadaw_app::project_content_end_sample(project).ok());
+            start == settings.start_sample && end == Some(settings.end_sample)
+        });
+    let bpm = project
+        .tick_at_sample(settings.start_sample)
+        .ok()
+        .map(|tick| project.tempo_at_tick(tick))
+        .unwrap_or_else(|| project.settings().initial_tempo_bpm());
+    let bpm_text = if bpm.fract().abs() < f64::EPSILON {
+        format!("{bpm:.0}")
+    } else {
+        bpm.to_string()
+    };
+
+    let mut result = String::with_capacity(pattern.len());
+    let characters = pattern.chars().collect::<Vec<_>>();
+    let mut index = 0;
+    while index < characters.len() {
+        if characters[index] != '$' {
+            result.push(characters[index]);
+            index += 1;
+            continue;
+        }
+        let token_start = index + 1;
+        let mut token_end = token_start;
+        while token_end < characters.len() && characters[token_end].is_ascii_alphabetic() {
+            token_end += 1;
+        }
+        if token_end == token_start {
+            result.push('$');
+            index += 1;
+            continue;
+        }
+        let token = characters[token_start..token_end]
+            .iter()
+            .collect::<String>()
+            .to_ascii_lowercase();
+        match token.as_str() {
+            "project" => result.push_str(project_name),
+            "track" => result.push_str(track_name),
+            "region" => result.push_str(region.map_or("", |region| region.name())),
+            "marker" => result.push_str(marker.map_or("", |(_, marker)| marker.name())),
+            "item" => result.push_str(&item_name),
+            "bpm" => result.push_str(&bpm_text),
+            _ => {
+                result.push('$');
+                result.extend(&characters[token_start..token_end]);
+            }
+        }
+        index = token_end;
+    }
+    result
+}
+
 impl RenderSampleRate {
     pub(crate) const ALL: [Self; 12] = [
         Self::Project,
@@ -627,6 +811,7 @@ pub(super) struct RenderDialogState {
     pub(super) tail_enabled: bool,
     pub(super) tail_duration_text: String,
     pub(super) stems_pre_fader: bool,
+    pub(super) filename_pattern: String,
 }
 
 #[derive(Debug)]
@@ -654,6 +839,7 @@ impl Default for RenderDialogState {
             tail_enabled: false,
             tail_duration_text: "1000".to_owned(),
             stems_pre_fader: false,
+            filename_pattern: String::new(),
         }
     }
 }
@@ -782,6 +968,11 @@ impl App {
             self.status = "Choose a WAV destination separate from the project file".to_owned();
             return Task::none();
         }
+        let filename_pattern = self.render_dialog.filename_pattern.clone();
+        let naming_project_path = self
+            .project_path
+            .clone()
+            .unwrap_or_else(|| project_path.clone());
         let ResolvedRenderSettings {
             start_sample,
             end_sample,
@@ -850,6 +1041,18 @@ impl App {
                 vec![(outputs[0].0, destination.clone())]
             } else {
                 outputs
+            };
+            let outputs = match apply_render_filename_pattern(
+                outputs,
+                &filename_pattern,
+                &self.project,
+                &naming_project_path,
+            ) {
+                Ok(outputs) => outputs,
+                Err(error) => {
+                    self.status = error;
+                    return Task::none();
+                }
             };
             if let Some((_, existing)) =
                 outputs
@@ -942,6 +1145,18 @@ impl App {
                 _ => unreachable!("only region and marker bounds create render batches"),
             };
             let outputs = match output_result {
+                Ok(outputs) => outputs,
+                Err(error) => {
+                    self.status = error;
+                    return Task::none();
+                }
+            };
+            let outputs = match apply_render_filename_pattern(
+                outputs,
+                &filename_pattern,
+                &self.project,
+                &naming_project_path,
+            ) {
                 Ok(outputs) => outputs,
                 Err(error) => {
                     self.status = error;
@@ -1061,6 +1276,19 @@ impl App {
                     return Task::none();
                 }
             };
+            let outputs = match apply_stem_filename_pattern(
+                outputs,
+                settings,
+                &filename_pattern,
+                &self.project,
+                &naming_project_path,
+            ) {
+                Ok(outputs) => outputs,
+                Err(error) => {
+                    self.status = error;
+                    return Task::none();
+                }
+            };
             if outputs.iter().any(|(_, path)| path == &project_path) {
                 self.status = "Choose stem output names separate from the project file".to_owned();
                 return Task::none();
@@ -1077,6 +1305,25 @@ impl App {
                 },
             )
         } else {
+            let mut outputs = match apply_render_filename_pattern(
+                vec![(settings, destination.clone())],
+                &filename_pattern,
+                &self.project,
+                &naming_project_path,
+            ) {
+                Ok(outputs) => outputs,
+                Err(error) => {
+                    self.status = error;
+                    return Task::none();
+                }
+            };
+            let (settings, destination) = outputs
+                .pop()
+                .expect("single output pattern expansion preserves its job");
+            if destination == project_path {
+                self.status = "Choose a WAV destination separate from the project file".to_owned();
+                return Task::none();
+            }
             (
                 OfflineRenderKind::ProjectWav {
                     destination,
@@ -2066,6 +2313,134 @@ mod tests {
     use super::*;
     use aaadaw_core::DawAction;
 
+    #[test]
+    fn render_filename_patterns_expand_native_wildcard_contexts_safely() {
+        let mut project = Project::default();
+        project
+            .apply(DawAction::CreateTrack {
+                index: 0,
+                name: "Drums/Kit".to_owned(),
+            })
+            .expect("filename fixture track should be created");
+        let track_id = project.tracks()[0].id();
+        project
+            .apply(DawAction::InsertAudioItem {
+                track_id,
+                media_ref: "fixture.wav".to_owned(),
+                start_sample: 0,
+                source_offset_samples: 0,
+                length_samples: 96_000,
+            })
+            .expect("filename fixture item should be inserted");
+        project
+            .apply(DawAction::InsertProjectRegion {
+                start_ticks: 0,
+                end_ticks: 3_840,
+                name: "Intro".to_owned(),
+            })
+            .expect("filename fixture region should be inserted");
+        project
+            .apply(DawAction::InsertProjectMarker {
+                position_ticks: 0,
+                name: "Start".to_owned(),
+            })
+            .expect("filename fixture marker should be inserted");
+        let settings = |source| aaadaw_app::ProjectWavRenderSettings {
+            master_ceiling: aaadaw_engine::MasterOutputCeiling::default(),
+            export_options: aaadaw_app::WavExportOptions::default(),
+            output_sample_rate: 48_000,
+            output_channels: WavChannelCount::Stereo,
+            source,
+            start_sample: 0,
+            end_sample: 96_000,
+            tail_milliseconds: 0,
+            normalize_peak: false,
+            normalize_peak_target_centi_dbfs: 0,
+        };
+        let project_path = Path::new("/projects/session.aaadaw");
+        let output = Path::new("/renders/base.wav").to_owned();
+        let track_output = apply_render_filename_pattern(
+            vec![(
+                settings(aaadaw_app::ProjectWavRenderSource::SelectedTrackViaMaster(
+                    track_id,
+                )),
+                output.clone(),
+            )],
+            "$project-$region-$marker-$track-$bpm",
+            &project,
+            project_path,
+        )
+        .expect("track/region/marker tokens should resolve");
+        assert_eq!(
+            track_output[0].1,
+            Path::new("/renders/session-Intro-Start-Drums_Kit-120.wav")
+        );
+
+        let item_id = project.audio_items()[0].id();
+        let item_output = apply_render_filename_pattern(
+            vec![(
+                settings(aaadaw_app::ProjectWavRenderSource::SelectedAudioItem(
+                    item_id,
+                )),
+                output,
+            )],
+            "$region-$item",
+            &project,
+            project_path,
+        )
+        .expect("region and item tokens should resolve");
+        assert_eq!(item_output[0].1, Path::new("/renders/Intro-item_01.wav"));
+    }
+
+    #[test]
+    fn render_filename_patterns_preserve_unknown_tokens_and_reject_duplicate_targets() {
+        let project = Project::default();
+        let settings = aaadaw_app::ProjectWavRenderSettings {
+            master_ceiling: aaadaw_engine::MasterOutputCeiling::default(),
+            export_options: aaadaw_app::WavExportOptions::default(),
+            output_sample_rate: 48_000,
+            output_channels: WavChannelCount::Stereo,
+            source: aaadaw_app::ProjectWavRenderSource::MasterMix,
+            start_sample: 0,
+            end_sample: 48_000,
+            tail_milliseconds: 0,
+            normalize_peak: false,
+            normalize_peak_target_centi_dbfs: 0,
+        };
+        let project_path = Path::new("session.aaadaw");
+        let first = PathBuf::from("renders/first.wav");
+        let second = PathBuf::from("renders/second.wav");
+        let unchanged = apply_render_filename_pattern(
+            vec![(settings, first.clone())],
+            "  ",
+            &project,
+            project_path,
+        )
+        .expect("blank pattern should preserve generated destinations");
+        assert_eq!(unchanged[0].1, first);
+
+        let unknown = apply_render_filename_pattern(
+            vec![(settings, second)],
+            "$project-$unknown",
+            &project,
+            project_path,
+        )
+        .expect("unknown wildcard text should remain visible");
+        assert_eq!(unknown[0].1, Path::new("renders/session-$unknown.wav"));
+
+        let duplicate = apply_render_filename_pattern(
+            vec![
+                (settings, PathBuf::from("renders/first.wav")),
+                (settings, PathBuf::from("renders/second.wav")),
+            ],
+            "$project",
+            &project,
+            project_path,
+        )
+        .expect_err("duplicate wildcard output paths must be rejected");
+        assert!(duplicate.contains("duplicate output names"));
+    }
+
     fn wav_job(label: &str, destination: &str) -> OfflineRenderJob {
         OfflineRenderJob {
             kind: OfflineRenderKind::ProjectWav {
@@ -2926,16 +3301,23 @@ mod tests {
             None,
         )
         .expect("assigned matrix targets should produce render jobs");
+        let outputs = apply_render_filename_pattern(
+            outputs,
+            "$region-$track",
+            &project,
+            Path::new("matrix-prefix.aaadaw"),
+        )
+        .expect("REAPER-style region/track wildcards should name matrix outputs");
         assert_eq!(
             outputs
                 .iter()
                 .map(|(_, path)| path.file_name().unwrap().to_string_lossy().into_owned())
                 .collect::<Vec<_>>(),
             [
-                "matrix-prefix-Intro-Master.wav",
-                "matrix-prefix-Intro-Drums.wav",
-                "matrix-prefix-Intro-Guitar.wav",
-                "matrix-prefix-Verse-Bass.wav",
+                "Intro-Master.wav",
+                "Intro-Drums.wav",
+                "Intro-Guitar.wav",
+                "Verse-Bass.wav",
             ]
         );
         assert_eq!(
@@ -2958,25 +3340,10 @@ mod tests {
         let native_fixtures = Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../../docs/verification/reaper-parity/fixtures/region-render-matrix-render");
         for (name, native_name, left, right) in [
-            (
-                "matrix-prefix-Intro-Master.wav",
-                "Intro-Master.wav",
-                0.75_f64,
-                0.75_f64,
-            ),
-            (
-                "matrix-prefix-Intro-Drums.wav",
-                "Intro-Drums.wav",
-                0.125,
-                0.125,
-            ),
-            (
-                "matrix-prefix-Intro-Guitar.wav",
-                "Intro-Guitar.wav",
-                0.375,
-                0.375,
-            ),
-            ("matrix-prefix-Verse-Bass.wav", "Verse-Bass.wav", 0.25, 0.25),
+            ("Intro-Master.wav", "Intro-Master.wav", 0.75_f64, 0.75_f64),
+            ("Intro-Drums.wav", "Intro-Drums.wav", 0.125, 0.125),
+            ("Intro-Guitar.wav", "Intro-Guitar.wav", 0.375, 0.375),
+            ("Verse-Bass.wav", "Verse-Bass.wav", 0.25, 0.25),
         ] {
             let bytes = std::fs::read(directory.path().join(name))
                 .expect("matrix output should be readable");
@@ -3652,6 +4019,9 @@ mod tests {
             start_tick: 0,
             end_tick: 960,
         });
+        let _ = app.update(Message::SetRenderFilenamePattern(
+            "$project-$track".to_owned(),
+        ));
 
         let _task = app.start_offline_render(std::env::temp_dir().join("selected-stems.wav"));
         assert_eq!(app.offline_job_queue.len(), 1);
@@ -3668,11 +4038,11 @@ mod tests {
                     [
                         (
                             aaadaw_app::ProjectWavRenderSource::SelectedTrackViaMaster(first),
-                            std::env::temp_dir().join("selected-stems-Drums.wav")
+                            std::env::temp_dir().join("aaadaw-render-stems-snapshot-Drums.wav")
                         ),
                         (
                             aaadaw_app::ProjectWavRenderSource::SelectedTrackViaMaster(second),
-                            std::env::temp_dir().join("selected-stems-Bass.wav")
+                            std::env::temp_dir().join("aaadaw-render-stems-snapshot-Bass.wav")
                         ),
                     ]
                 );
@@ -3694,6 +4064,12 @@ mod tests {
 
         app.timeline.selected_track = Some(first);
         app.timeline.selected_tracks.extend([first, second]);
+        app.render_dialog.filename_pattern = "$project".to_owned();
+        let _task = app.start_offline_render(std::env::temp_dir().join("duplicate-stems.wav"));
+        assert!(app.offline_job_queue.is_empty());
+        assert!(app.status.contains("duplicate output names"));
+        app.render_dialog.filename_pattern.clear();
+
         let prefix = std::env::temp_dir().join(format!(
             "aaadaw-existing-stem-prefix-{}.wav",
             std::process::id()

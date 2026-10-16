@@ -1,0 +1,20 @@
+key	value
+reference	Linux REAPER 7.82 / Default 7 / Linux desktop
+native_reference	images/render-selected-items-native.png; render-selected-items-native.tsv; region-render-matrix-render-native.tsv
+native_selected_item_pattern	$region-$item
+native_selected_item_output	bounds-ui-Region 2-item_02.wav
+native_matrix_pattern	$region-$track
+native_matrix_outputs	Intro-Master.wav; Intro-Drums.wav; Intro-Guitar.wav; Verse-Bass.wav
+aaadaw_tokens	$project; $region; $marker; $track; $item; $bpm
+aaadaw_fallback	Blank pattern preserves pre-existing generated destination names
+aaadaw_path_behavior	Selected destination supplies output directory and extension; expanded name is sanitized as one filename component
+aaadaw_duplicate_behavior	Duplicate resolved names fail before jobs are queued
+aaadaw_regressions	app::audio_export::tests::render_filename_patterns_expand_native_wildcard_contexts_safely; app::audio_export::tests::render_filename_patterns_preserve_unknown_tokens_and_reject_duplicate_targets; app::audio_export::tests::queued_selected_track_stems_freeze_track_order_and_output_names; app::audio_export::tests::region_render_matrix_wavs_match_native_target_count_ranges_and_samples
+aaadaw_matrix_audio_comparison	Four outputs; 96,000 frames each; PCM24 stereo data chunks equal native REAPER fixtures byte-for-byte
+aaadaw_window_build_id	1f92198bb6bc4e01c9c82556cd6b62946f0bf8e6
+aaadaw_window_binary_sha256	783687912dac3df073d4d79a5ef9a5cabf024f74bef5560224690911934b2954
+aaadaw_window_screenshot	render-filename-pattern-aaadaw.png
+aaadaw_window_screenshot_sha256	c67263a252028b492e847d5765fe8e3143c5b043e786edae1b938c0cf4497fb9
+aaadaw_window_geometry	1280x800 desktop display; Render project to WAV window 640x720
+verification	App nextest 662/662 before final targeted reruns; changed native matrix test rerun 1/1; changed queue-pattern test rerun 1/1; strict all-target App Clippy; stripped-debug desktop build; rustfmt
+remaining_differences	No Wildcards chooser/preset UI or cross-launch persistence; other native tokens, escapes, ordering, collision prompts, and full source/range coverage remain open
