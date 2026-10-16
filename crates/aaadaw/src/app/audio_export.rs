@@ -1059,17 +1059,11 @@ fn is_render_filename_wildcard_separator(character: char) -> bool {
     matches!(character, ' ' | '-' | '_' | '.')
 }
 
-fn project_note_named_value(notes: &str, name: &str, separator: Option<char>) -> String {
-    notes
-        .lines()
-        .find_map(|line| {
-            let (key, value) = line.split_once('=')?;
-            (key == name).then(|| {
-                separator
-                    .and_then(|separator| value.split(separator).next())
-                    .unwrap_or(value)
-                    .to_owned()
-            })
+fn render_filename_named_value(text: &str, name: &str, separator: Option<char>) -> String {
+    text.split(|character| character == '\n' || character == '\r' || separator == Some(character))
+        .find_map(|entry| {
+            let (key, value) = entry.split_once('=')?;
+            (key == name).then(|| value.to_owned())
         })
         .unwrap_or_default()
 }
@@ -1283,7 +1277,9 @@ fn expand_render_filename_pattern(
             "projectnotes" => result.push_str(
                 &named_value_key
                     .as_deref()
-                    .map(|name| project_note_named_value(&project.project_notes().text, name, None))
+                    .map(|name| {
+                        render_filename_named_value(&project.project_notes().text, name, None)
+                    })
                     .unwrap_or_else(|| project.project_notes().text.clone()),
             ),
             "region" if named_value_key.is_some() => result.push_str(
@@ -1291,7 +1287,7 @@ fn expand_render_filename_pattern(
                     .as_deref()
                     .map(|name| {
                         region.map_or_else(String::new, |region| {
-                            project_note_named_value(region.name(), name, named_value_separator)
+                            render_filename_named_value(region.name(), name, named_value_separator)
                         })
                     })
                     .unwrap_or_default(),
@@ -1301,7 +1297,7 @@ fn expand_render_filename_pattern(
                     .as_deref()
                     .map(|name| {
                         marker.map_or_else(String::new, |(_, marker)| {
-                            project_note_named_value(marker.name(), name, named_value_separator)
+                            render_filename_named_value(marker.name(), name, named_value_separator)
                         })
                     })
                     .unwrap_or_default(),
@@ -3447,6 +3443,10 @@ mod tests {
                 "Verse_alternate=Intro-Start_alternate=Downbeat.wav",
             ),
             ("$region(role)[|]-$marker(role)[|]", "Verse-Start.wav"),
+            (
+                "$region(alternate)[|]-$marker(alternate)[|]",
+                "Intro-Downbeat.wav",
+            ),
         ] {
             let output = apply_render_filename_pattern(
                 vec![(settings, Path::new("/renders/base.wav").to_owned())],
@@ -3541,6 +3541,23 @@ mod tests {
         )
         .expect("named project note values should expand");
         assert_eq!(output[0].1, Path::new("/renders/john-doe.wav"));
+
+        project
+            .apply(DawAction::SetProjectNotes {
+                notes: ProjectNotes {
+                    text: "first=john;last=doe".to_owned(),
+                    ..ProjectNotes::default()
+                },
+            })
+            .expect("delimiter-separated project notes fixture should be set");
+        let output = apply_render_filename_pattern(
+            vec![(settings, Path::new("/renders/base.wav").to_owned())],
+            "$projectnotes(last)[;]",
+            &project,
+            Path::new("/projects/named-notes.aaadaw"),
+        )
+        .expect("unsupported project-note separator suffix should remain literal");
+        assert_eq!(output[0].1, Path::new("/renders/[;].wav"));
     }
 
     #[test]

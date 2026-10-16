@@ -20,4 +20,4 @@ native_finished_screenshot	render-wildcards-region-named-values-finished-native.
 native_finished_screenshot_sha256	d8fba55baab2097ff27dc5f2caa540e3cb780013fcce21fdea420b9700ef4ccc
 native_unsplit_screenshot	render-wildcards-region-named-values-unsplit-native.png
 native_unsplit_screenshot_sha256	3346188184a0b1e1752bdc8b0ad6409344bb288d996216b587428b16f29d31ec
-native_observation	$region(name) and $marker(name) return the value after name=; the optional [s] form stops the value at the separator character s. Without [|], the example includes the following |role=value segment; with [|], output names are Verse-Start.wav and Chorus-Next.wav.
+native_observation	$region(name) and $marker(name) return the value after name=; optional [s] splits name=value entries on s and finds the requested key in a later entry. Without [|], the first value includes the following |role=value text; with [|], the first role values resolve to Verse-Start.wav and Chorus-Next.wav.

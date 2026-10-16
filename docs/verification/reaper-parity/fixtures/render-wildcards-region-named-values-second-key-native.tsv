@@ -1,0 +1,19 @@
+key	value
+reference	Linux REAPER 7.82 / Default 7 / Linux desktop
+captured_at_utc	2026-10-16
+probe_script	../../../../scripts/reaper_parity/probe-render-empty-name-wildcards.lua
+configuration	Isolated REAPER profile copied from render-wildcards-native; Default_7.0.ReaperThemeZip asserted by probe
+named_objects	Regions first=Verse;last=Intro and first=Chorus;last=Main; markers first=Start;last=Downbeat, first=Next;last=Midpoint, and first=End;last=Outro
+wildcard_pattern	$region(last)[;]-$marker(last)[;]
+wildcard_outputs	Intro-Downbeat.wav; Main-Midpoint.wav
+bounds	All project regions
+render_preview	2 files; first output path ends in Intro-Downbeat.wav
+render_format	WAV; 24-bit PCM; 48,000 Hz; 2 channels
+render_lengths_frames	96,000; 96,000
+render_file_sizes_bytes	576,690; 576,690
+render_file_sha256	47280b3702aa46bfaf25e3dd631fc8307b8770a31dc5597510993769d8395bab; dde743bce73e9645950ff8fed1b9be12523f82323ac66ded50cd8f0a84d4b55d
+native_preview_screenshot	render-wildcards-region-named-values-second-key-preview-native.png
+native_preview_screenshot_sha256	26fdad11eca891d992ba544ca2557a7eedcc234642891f4ceacfb8288c323861
+native_finished_screenshot	render-wildcards-region-named-values-second-key-finished-native.png
+native_finished_screenshot_sha256	436e3a1ad28e447c8aa284d56916bac008b8add4df863457fd060939e083484e
+native_observation	The [;] form splits name=value entries at semicolons and resolves a key after the first entry; the native help page 2 shows the same behavior for marker values.

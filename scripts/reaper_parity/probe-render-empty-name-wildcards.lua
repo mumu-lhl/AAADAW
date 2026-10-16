@@ -3,6 +3,7 @@
 -- The Render dialog opens with two regions and boundary markers, unnamed by default.
 -- Set AAADAW_REAPER_WILDCARD_NAMED_OBJECTS=1 to name them for name-only probes.
 -- Set AAADAW_REAPER_WILDCARD_VALUE_NAMES=delimiter to add pipe-separated role=value names.
+-- Set AAADAW_REAPER_WILDCARD_VALUE_NAMES=semicolon to test a second named value after a delimiter.
 -- Select All project regions and inspect the configured wildcard substitutions.
 local root = assert(os.getenv("AAADAW_REAPER_PROBE_DIR")) .. "/"
 assert(reaper.GetAppVersion() == "7.82/linux-x86_64")
@@ -34,6 +35,8 @@ for index, position in ipairs({ 0, 2, 4 }) do
     name = "role=" .. marker_names[index] .. "\nrole=" .. marker_alternate_names[index]
   elseif value_name_mode == "delimiter" then
     name = "role=" .. marker_names[index] .. "|role=" .. marker_alternate_names[index]
+  elseif value_name_mode == "semicolon" then
+    name = "first=" .. marker_names[index] .. ";last=" .. marker_alternate_names[index]
   elseif value_name_mode == "1" then
     name = "role=" .. marker_names[index]
   elseif os.getenv("AAADAW_REAPER_WILDCARD_NAMED_OBJECTS") == "1" then
@@ -50,6 +53,8 @@ for index, bounds in ipairs({ { 0, 2 }, { 2, 4 } }) do
     name = "role=" .. region_names[index] .. "\nrole=" .. region_alternate_names[index]
   elseif value_name_mode == "delimiter" then
     name = "role=" .. region_names[index] .. "|role=" .. region_alternate_names[index]
+  elseif value_name_mode == "semicolon" then
+    name = "first=" .. region_names[index] .. ";last=" .. region_alternate_names[index]
   elseif value_name_mode == "1" then
     name = "role=" .. region_names[index]
   elseif os.getenv("AAADAW_REAPER_WILDCARD_NAMED_OBJECTS") == "1" then
