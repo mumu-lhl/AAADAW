@@ -40,6 +40,7 @@ fn parallel_sends_keep_ids_parameters_order_and_main_output_through_history_and_
         muted: true,
         phase_inverted: true,
         tap: aaadaw_core::AudioSendTap::PreFx,
+        midi_enabled: false,
     };
     project
         .apply(DawAction::UpdateAudioSend {
@@ -59,6 +60,7 @@ fn parallel_sends_keep_ids_parameters_order_and_main_output_through_history_and_
     let restored = Project::from_snapshot(snapshot.clone()).unwrap();
     assert_eq!(restored.snapshot(), snapshot);
     assert_eq!(restored.tracks()[0].sends()[0].parameters(), parameters);
+    assert!(!restored.tracks()[0].sends()[0].parameters().midi_enabled);
     project
         .apply(DawAction::DeleteAudioSend {
             track_id: source,

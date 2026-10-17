@@ -24,13 +24,28 @@ pub enum AudioSendTap {
 }
 
 /// Independent audio send controls.
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct AudioSendParameters {
     pub tap: AudioSendTap,
     pub volume_db: f32,
     pub pan: f32,
     pub muted: bool,
     pub phase_inverted: bool,
+    /// Forward the source track's MIDI events through this send.
+    pub midi_enabled: bool,
+}
+impl Default for AudioSendParameters {
+    fn default() -> Self {
+        Self {
+            tap: AudioSendTap::default(),
+            volume_db: 0.0,
+            pan: 0.0,
+            muted: false,
+            phase_inverted: false,
+            // REAPER creates ordinary sends with MIDI set to All -> All.
+            midi_enabled: true,
+        }
+    }
 }
 impl AudioSendParameters {
     pub(crate) fn is_valid(self) -> bool {

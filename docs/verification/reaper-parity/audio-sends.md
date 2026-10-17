@@ -19,7 +19,7 @@ schema 19 增加 tracks.main_send_enabled（旧工程默认开启）及有 ID/�
 - 完整 `cargo xtest --no-fail-fast`：756 passed / 0 skipped；默认 Clippy `-D warnings`、默认构建、格式检查通过。
 - JACK/PipeWire combined all-targets check 通过，仍有此前已有的两条 feature warnings。
 - 回归覆盖重复目标、主输出独立开关、参数/环路/删除/ID 原子性、schema 18→19、反相/静音/声像、逆显示顺序、并行路径 Solo、mono/stereo、fader ramp/meter 单次推进及回调零分配。
-- 合成 isolated instrument 与 MIDI schedule 回归证明接收 Solo 不丢失上游事件；事件仍归属原轨道，不实现 MIDI 复制发送。
+- 合成 isolated instrument 与 MIDI schedule 回归证明接收 Solo 不丢失上游事件；后续 MIDI Send 实现和验证见 [MIDI Send](midi-sends.md)。
 - GUI：添加两条到 Audio 2 的发送，第一条设 -6 dB / Pan 0.5 / 反相，关闭主输出。进程重启后通过 unsaved-session recovery 恢复，ID、参数、主输出开关及两条 Receive 保持。TCP/MCP 头部 IO 入口可用，避免默认 Mixer 高度裁掉底部入口。
 
 ![独立音频发送](images/audio-sends.png)
@@ -30,4 +30,4 @@ schema 19 增加 tracks.main_send_enabled（旧工程默认开启）及有 ID/�
 
 ## 剩余差异
 
-MIDI Send、通道映射/多通道、硬件输出、文件夹 Parent Send、反馈/PDC、Routing Matrix/Wiring、完整路由窗口布局与操作仍待实现。该切片的内部 MIDI 动态恢复缺口已由[后续回归](midi-live-audibility.md)修复；MIDI 路由与外部追赶仍待开发。P3 与全量对齐未完成。
+通道映射/多通道、硬件输出、文件夹 Parent Send、反馈/PDC、Routing Matrix/Wiring、完整路由窗口布局与操作仍待实现。MIDI Send 的 All→All 垂直切片已实现；动态恢复与边界见[MIDI Send 验证](midi-sends.md)和[内部 MIDI 动态恢复回归](midi-live-audibility.md)。P3 与全量对齐未完成。

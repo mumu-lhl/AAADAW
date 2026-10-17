@@ -1,0 +1,11 @@
+key	value
+reference	AAADAW Linux desktop; live X11 window; Audio 1 has one send to Receiver
+build_backend	nightly Cranelift
+binary_build_id	7f756aec8fb01b77b1ea9ae58d24f5e75709afe0
+binary_sha256	16853573e5cb0e26d892c873488b312da9eacd2eb7ed9d0ab300dc582656eeac
+display	Xvfb :1881; 1280x800; WGPU_BACKEND=gl
+routing_window	Routing for Audio 1; 760x560
+default	Send MIDI · All → All checked; screenshot images/midi-sends-aaadaw-all.png; SHA-256 456145824fca8c54bc269ab23422b3014ff75f503b7ba41aa27e51be55d2389f
+toggle_off	Clicked checkbox; it became unchecked and project title showed unsaved marker; screenshot images/midi-sends-aaadaw-off.png; SHA-256 22da81965262b4ba95f214dcc443ea38fd6b1753e72b79db1a316adc847e597c
+receive_state	Receiver shows Audio 1 as MIDI Off and Audio 2 as MIDI All -> All; screenshot images/midi-sends-aaadaw-receives.png; SHA-256 ffdb484422a061660757ed52e4b5c931cd52a85fafd47277b7336bb0459d2b2e
+scope	Live UI toggle and state evidence; no pixel comparison; database persistence is covered by storage round-trip and migration regressions

@@ -164,6 +164,19 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
             ]
             .spacing(tokens::ROW_GAP),
             row![
+                checkbox(parameters.midi_enabled)
+                    .label("Send MIDI · All → All")
+                    .on_toggle(move |midi_enabled| Message::RoutingChange(
+                        DawAction::UpdateAudioSend {
+                            track_id: source,
+                            send_id: id,
+                            destination,
+                            parameters: AudioSendParameters {
+                                midi_enabled,
+                                ..parameters
+                            },
+                        }
+                    )),
                 checkbox(parameters.muted)
                     .label("Mute")
                     .on_toggle(
@@ -228,10 +241,15 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
                         ]
                         .spacing(tokens::ROW_GAP),
                         text(format!(
-                            "{} · {} dB · Pan {}",
+                            "{} · {} dB · Pan {} · MIDI {}",
                             Tap(parameters.tap),
                             parameters.volume_db,
-                            parameters.pan
+                            parameters.pan,
+                            if parameters.midi_enabled {
+                                "All → All"
+                            } else {
+                                "Off"
+                            }
                         ))
                         .size(11),
                         text(format!(

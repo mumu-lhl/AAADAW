@@ -1123,7 +1123,7 @@ fn soloed_bus_keeps_midi_events_on_tracks_routed_into_it() {
 }
 
 #[test]
-fn soloed_audio_send_receiver_keeps_source_instrument_events_without_copying_midi() {
+fn soloed_audio_send_receiver_routes_midi_to_source_and_destination_tracks() {
     let mut project = Project::with_settings(
         aaadaw_core::ProjectSettings::default()
             .with_pan_mode(aaadaw_core::PanMode::LegacyMonoStereo),
@@ -1176,15 +1176,78 @@ fn soloed_audio_send_receiver_keeps_source_instrument_events_without_copying_mid
         .unwrap();
 
     let plan = MidiEventPlan::compile(&project).unwrap();
-    assert_eq!(plan.len(), 2);
-    let mut events = [None; 2];
-    assert_eq!(plan.events_for_block(0, 1, &mut events).unwrap(), 1);
-    assert_eq!(events[0].unwrap().track_id, source);
+    assert_eq!(plan.len(), 4);
+    let mut events = [None; 4];
+    assert_eq!(plan.events_for_block(0, 1, &mut events).unwrap(), 2);
+    let tracks: std::collections::HashSet<_> = events[..2]
+        .iter()
+        .map(|event| event.unwrap().track_id)
+        .collect();
+    assert_eq!(tracks, [source, bus].into_iter().collect());
+    let mut active = [None; 2];
+    assert_eq!(plan.active_notes_at(1, &mut active).unwrap(), 2);
+    let active_tracks: std::collections::HashSet<_> =
+        active.iter().map(|event| event.unwrap().track_id).collect();
+    assert_eq!(active_tracks, [source, bus].into_iter().collect());
 }
 
 #[test]
-fn midi_source_audibility_follows_nested_unmuted_audio_sends_without_copying_events() {
-    for muted in [false, true] {
+fn parallel_midi_sends_keep_distinct_note_ids_through_attack_release_and_chase() {
+    let (mut project, source) = project_with_note(60, 0, 240);
+    project
+        .apply(DawAction::CreateTrack {
+            index: 1,
+            name: "Instrument".to_owned(),
+        })
+        .unwrap();
+    let destination = project.tracks()[1].id();
+    for _ in 0..2 {
+        project
+            .apply(DawAction::CreateAudioSend {
+                track_id: source,
+                destination,
+                parameters: aaadaw_core::AudioSendParameters::default(),
+            })
+            .unwrap();
+    }
+    let source_note_id = project.midi_items()[0].notes()[0].id();
+    let plan = MidiEventPlan::compile(&project).unwrap();
+    let mut attacks = [None; 3];
+    assert_eq!(plan.events_for_block(0, 1, &mut attacks).unwrap(), 3);
+    let routed_attack_ids: std::collections::HashSet<_> = attacks
+        .iter()
+        .map(|event| event.unwrap())
+        .filter(|event| event.track_id == destination)
+        .map(|event| event.note_id.unwrap())
+        .collect();
+    assert_eq!(routed_attack_ids.len(), 2);
+    assert!(!routed_attack_ids.contains(&source_note_id));
+    assert!(routed_attack_ids.iter().all(|id| id.value() < 1 << 30));
+
+    let mut chased = [None; 3];
+    assert_eq!(plan.active_notes_at(1, &mut chased).unwrap(), 3);
+    let chased_route_ids: std::collections::HashSet<_> = chased
+        .iter()
+        .map(|event| event.unwrap())
+        .filter(|event| event.track_id == destination)
+        .map(|event| event.note_id.unwrap())
+        .collect();
+    assert_eq!(chased_route_ids, routed_attack_ids);
+
+    let mut releases = [None; 3];
+    assert_eq!(plan.events_for_block(6_000, 1, &mut releases).unwrap(), 3);
+    let released_route_ids: std::collections::HashSet<_> = releases
+        .iter()
+        .map(|event| event.unwrap())
+        .filter(|event| event.track_id == destination)
+        .map(|event| event.note_id.unwrap())
+        .collect();
+    assert_eq!(released_route_ids, routed_attack_ids);
+}
+
+#[test]
+fn midi_send_routes_notes_controls_and_bends_over_nested_paths() {
+    for (muted, midi_enabled) in [(false, true), (true, true), (false, false)] {
         let (mut project, source) = project_with_note(60, 0, 240);
         for (index, name) in [(1, "Intermediate"), (2, "Solo receiver")] {
             project
@@ -1202,6 +1265,7 @@ fn midi_source_audibility_follows_nested_unmuted_audio_sends_without_copying_eve
                 destination: mid,
                 parameters: aaadaw_core::AudioSendParameters {
                     muted,
+                    midi_enabled,
                     ..Default::default()
                 },
             })
@@ -1240,14 +1304,57 @@ fn midi_source_audibility_follows_nested_unmuted_audio_sends_without_copying_eve
             })
             .unwrap();
         let plan = MidiEventPlan::compile(&project).unwrap();
-        let mut events = [None; 4];
+        let mut events = [None; 9];
         let count = plan.events_for_block(0, 1, &mut events).unwrap();
-        assert_eq!(count, if muted { 0 } else { 3 });
-        assert!(
-            events[..count]
+        assert_eq!(count, if muted || !midi_enabled { 0 } else { 9 });
+        if count > 0 {
+            let tracks: std::collections::HashSet<_> = events[..count]
                 .iter()
-                .all(|event| event.unwrap().track_id == source)
-        );
+                .map(|event| event.unwrap().track_id)
+                .collect();
+            assert_eq!(tracks, [source, mid, receiver].into_iter().collect());
+            for track_id in tracks {
+                let forwarded: Vec<_> = events[..count]
+                    .iter()
+                    .filter_map(|event| event.filter(|event| event.track_id == track_id))
+                    .collect();
+                assert_eq!(forwarded.len(), 3);
+                assert!(
+                    forwarded
+                        .iter()
+                        .any(|event| event.kind == MidiEventKind::NoteOn)
+                );
+                assert!(forwarded.iter().any(|event| {
+                    event.kind == MidiEventKind::ControllerChange && event.controller == Some(64)
+                }));
+                assert!(
+                    forwarded
+                        .iter()
+                        .any(|event| event.kind == MidiEventKind::PitchBend)
+                );
+            }
+            let mut chased_controllers = [None; 3];
+            assert_eq!(
+                plan.active_controllers_at(1, &mut chased_controllers)
+                    .unwrap(),
+                3
+            );
+            let controller_tracks: std::collections::HashSet<_> = chased_controllers
+                .iter()
+                .map(|event| event.unwrap().track_id)
+                .collect();
+            assert_eq!(
+                controller_tracks,
+                [source, mid, receiver].into_iter().collect()
+            );
+            let mut chased_bends = [None; 3];
+            assert_eq!(plan.active_pitch_bends_at(1, &mut chased_bends).unwrap(), 3);
+            let bend_tracks: std::collections::HashSet<_> = chased_bends
+                .iter()
+                .map(|event| event.unwrap().track_id)
+                .collect();
+            assert_eq!(bend_tracks, [source, mid, receiver].into_iter().collect());
+        }
     }
 }
 

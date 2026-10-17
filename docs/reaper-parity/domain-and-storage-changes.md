@@ -143,3 +143,9 @@ SQLite 不给新列加引用 `loop_source` 的 CHECK，因为早期 schema 迁�
 Schema 50 及更早工程默认迁移为 loop source 开启；源长推断为可见 item 长度与存储事件结束位置中的较大者。旧模型没有保留被 trim 后的原始空源长度，因此空 MIDI item 的历史循环长度无法精确恢复。循环 source length 必须大于零，SQLite boolean 只接受 0/1；未来切换 loop source 的 Action 仍需在 Core 校验状态与长度。
 
 重复事件在 Core 的无分配 tick iterator 上贯穿事件计划、Arrangement preview 和标准 MIDI 导出。播放 callback 不做循环枚举、分配、锁或 I/O；事件计划/导出在离线编译阶段限制为最多 1,000,000 个 MIDI 事件，超限返回错误。回滚使用升级前工程备份并由旧版本拒绝未来 schema，不手工改 `user_version`。
+
+## schema 58 — Audio Send MIDI forwarding
+
+`track_sends.midi_enabled` 是每条 Audio Send 独立的 MIDI 转发开关，严格限制为 0/1；新建 Send 默认开启，以匹配 Linux REAPER 7.82 / Default 7 的 `I_MIDIFLAGS=0`（MIDI All→All）。schema 57 及更早的 Send 迁移时默认开启，避免旧工程打开后丢失原厂默认 MIDI 路径。Snapshot、Undo/Redo 与保存事务共同保留此字段。
+
+目前 MIDI note、CC 与 pitch-bend 事件是无通道字段的工程模型；本切片只实现 All→All 转发，不能表达源/目标通道重映射。事件计划在控制线程按未静音的 Send 路径生成目标轨道事件与 seek/chase 状态；回调读取预编译列表，不枚举路由、不分配、不锁、不做 I/O。通道过滤/映射、MIDI Bus 与硬件端口仍是 P3 后续工作。

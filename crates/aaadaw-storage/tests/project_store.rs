@@ -899,6 +899,48 @@ fn readonly_project_load_rejects_older_schema_without_migrating_it() {
 }
 
 #[test]
+fn schema_57_audio_sends_migrate_with_native_all_midi_default() {
+    let path = project_path();
+    let mut project = Project::new();
+    for (index, name) in ["Source", "Destination"].into_iter().enumerate() {
+        project
+            .apply(DawAction::CreateTrack {
+                index,
+                name: name.into(),
+            })
+            .unwrap();
+    }
+    project
+        .apply(DawAction::CreateAudioSend {
+            track_id: project.tracks()[0].id(),
+            destination: project.tracks()[1].id(),
+            parameters: aaadaw_core::AudioSendParameters {
+                midi_enabled: false,
+                ..Default::default()
+            },
+        })
+        .unwrap();
+    let mut store = ProjectStore::open(&path).unwrap();
+    store.save(&project).unwrap();
+    store.close().unwrap();
+
+    let connection = Connection::open(&path).unwrap();
+    connection
+        .execute_batch(
+            "ALTER TABLE track_sends DROP COLUMN midi_enabled; PRAGMA user_version = 57;",
+        )
+        .unwrap();
+    drop(connection);
+
+    let store = ProjectStore::open(&path).unwrap();
+    assert_eq!(store.schema_version().unwrap(), CURRENT_SCHEMA_VERSION);
+    let restored = store.load().unwrap();
+    assert!(restored.tracks()[0].sends()[0].parameters().midi_enabled);
+    store.close().unwrap();
+    remove_database(&path);
+}
+
+#[test]
 fn schema_thirteen_migrates_with_compatible_empty_arrangement_view_state() {
     let path = project_path();
     let mut project = Project::with_settings(
@@ -2464,9 +2506,9 @@ fn audio_sends_round_trip_with_duplicate_targets_order_ids_and_foreign_keys() {
     }
     let source = project.tracks()[0].id();
     let destination = project.tracks()[1].id();
-    for (volume_db, tap) in [
-        (-6.0, aaadaw_core::AudioSendTap::PreFx),
-        (-12.0, aaadaw_core::AudioSendTap::PreFader),
+    for (volume_db, tap, midi_enabled) in [
+        (-6.0, aaadaw_core::AudioSendTap::PreFx, true),
+        (-12.0, aaadaw_core::AudioSendTap::PreFader, false),
     ] {
         project
             .apply(DawAction::CreateAudioSend {
@@ -2477,6 +2519,7 @@ fn audio_sends_round_trip_with_duplicate_targets_order_ids_and_foreign_keys() {
                     tap,
                     pan: 0.5,
                     phase_inverted: true,
+                    midi_enabled,
                     ..Default::default()
                 },
             })

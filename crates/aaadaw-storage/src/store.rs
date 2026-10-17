@@ -25,7 +25,7 @@ use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 /// Latest database schema version understood by this release.
-pub const CURRENT_SCHEMA_VERSION: u32 = 57;
+pub const CURRENT_SCHEMA_VERSION: u32 = 58;
 
 const MIGRATION_29: &str = "ALTER TABLE project_meta ADD COLUMN start_measure INTEGER NOT NULL DEFAULT 1 CHECK(start_measure BETWEEN -2147483648 AND 2147483647);";
 const MIGRATION_30: &str = "ALTER TABLE project_meta ADD COLUMN bpm_basis INTEGER NOT NULL DEFAULT 1 CHECK(bpm_basis BETWEEN 0 AND 5);";
@@ -3452,6 +3452,15 @@ fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
                     )?;
                 }
             }
+            58 => {
+                if table_exists(&transaction, "track_sends")?
+                    && !table_has_column(&transaction, "track_sends", "midi_enabled")?
+                {
+                    transaction.execute_batch(
+                        "ALTER TABLE track_sends ADD COLUMN midi_enabled INTEGER NOT NULL DEFAULT 1 CHECK(midi_enabled IN (0, 1));",
+                    )?;
+                }
+            }
             missing => return Err(StorageError::MissingMigration(missing - 1)),
         }
         transaction.pragma_update(None, "user_version", next_version)?;
@@ -3556,11 +3565,12 @@ fn write_snapshot(
 
     for track in &snapshot.tracks {
         for (position, send) in track.sends.iter().enumerate() {
-            transaction.execute("INSERT INTO track_sends(id, source_track_id, position, destination_track_id, volume_db, pan, muted, phase_inverted, tap) VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)", params![
+            transaction.execute("INSERT INTO track_sends(id, source_track_id, position, destination_track_id, volume_db, pan, muted, phase_inverted, tap, midi_enabled) VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)", params![
                 to_sql_integer(send.id)?, to_sql_integer(track.id)?, usize_to_sql(position)?,
                 to_sql_integer(send.destination_track_id)?, f64::from(send.parameters.volume_db),
                 f64::from(send.parameters.pan), send.parameters.muted, send.parameters.phase_inverted,
                 match send.parameters.tap { aaadaw_core::AudioSendTap::PostFader => 0, aaadaw_core::AudioSendTap::PreFx => 1, aaadaw_core::AudioSendTap::PreFader => 3 },
+                send.parameters.midi_enabled,
             ])?;
         }
         for (position, point) in track.volume_automation.iter().enumerate() {
@@ -5579,7 +5589,7 @@ mod loop_source_storage_tests {
 fn read_audio_sends(
     connection: &Connection,
 ) -> Result<HashMap<i64, Vec<aaadaw_core::AudioSendSnapshot>>, StorageError> {
-    let mut statement = connection.prepare("SELECT id, source_track_id, destination_track_id, volume_db, pan, muted, phase_inverted, tap FROM track_sends ORDER BY source_track_id, position")?;
+    let mut statement = connection.prepare("SELECT id, source_track_id, destination_track_id, volume_db, pan, muted, phase_inverted, tap, midi_enabled FROM track_sends ORDER BY source_track_id, position")?;
     let mut rows = statement.query([])?;
     let mut sends: HashMap<i64, Vec<aaadaw_core::AudioSendSnapshot>> = HashMap::new();
     while let Some(row) = rows.next()? {
@@ -5594,6 +5604,7 @@ fn read_audio_sends(
                     pan: row.get::<_, f64>(4)? as f32,
                     muted: row.get(5)?,
                     phase_inverted: row.get(6)?,
+                    midi_enabled: row.get(8)?,
                     tap: match row.get::<_, i64>(7)? {
                         0 => aaadaw_core::AudioSendTap::PostFader,
                         1 => aaadaw_core::AudioSendTap::PreFx,
