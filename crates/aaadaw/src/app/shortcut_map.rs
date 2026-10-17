@@ -9,7 +9,10 @@ const MAX_FILE_BYTES: u64 = 1024 * 1024;
 /// Linux REAPER 7.82 Main-section actions with an exact AAADAW action counterpart.
 /// Other REAPER actions are rejected instead of being silently discarded.
 const REAPER_ACTIONS: &[(&str, u32, &str)] = &[
+    ("actions.show-list", 40605, "Show action list"),
     ("file.quit", 40004, "File: Quit REAPER"),
+    ("file.close-project", 40860, "Close current project tab"),
+    ("file.close-all-projects", 40886, "File: Close all projects"),
     ("item.delete-selected", 40006, "Item: Remove items"),
     (
         "item.split-at-cursor",
@@ -23,6 +26,11 @@ const REAPER_ACTIONS: &[(&str, u32, &str)] = &[
     ),
     ("audio.export-wav", 40015, "File: Render project to disk..."),
     ("file.settings", 40016, "Options: Preferences..."),
+    (
+        "grid.snap-settings",
+        40071,
+        "Options: Show snap/grid settings",
+    ),
     ("file.project-settings", 40021, "File: Project settings..."),
     ("file.save-project-as", 40022, "File: Save project as..."),
     ("file.new-project", 40023, "File: New project"),
@@ -39,6 +47,29 @@ const REAPER_ACTIONS: &[(&str, u32, &str)] = &[
     ("transport.toggle-playback", 40073, "Transport: Play/pause"),
     ("view.toggle-mixer", 40078, "View: Toggle mixer visible"),
     ("transport.toggle-repeat", 1068, "Transport: Toggle repeat"),
+    ("track.add", 40001, "Track: Insert new track"),
+    (
+        "track.cycle-folder-compact",
+        1042,
+        "Track: Cycle folder collapsed state",
+    ),
+    ("track.delete", 40005, "Track: Remove tracks"),
+    (
+        "track.toggle-mute",
+        6,
+        "Track: Toggle mute for selected tracks",
+    ),
+    (
+        "track.toggle-record-arm",
+        9,
+        "Track: Toggle record arm for selected tracks",
+    ),
+    (
+        "track.toggle-solo",
+        7,
+        "Track: Toggle solo for selected tracks",
+    ),
+    ("transport.stop-playback", 1016, "Transport: Stop"),
 ];
 
 pub(super) fn read(path: &Path) -> Result<ShortcutBindings, String> {
@@ -332,6 +363,41 @@ mod tests {
             bindings["edit.undo"],
             "Mod+Alt+Shift+F12; Alt+F11; Shift+F11; Mod+F11; Super+F11"
         );
+        assert_eq!(serialize_reaper(&bindings).unwrap(), contents);
+    }
+
+    #[test]
+    fn reaper_main_catalog_maps_additional_exact_actions() {
+        let contents = concat!(
+            "KEY 1 113 40605 0\t\t # Main : F2 : Show action list\n",
+            "KEY 1 115 40886 0\t\t # Main : F4 : File: Close all projects\n",
+            "KEY 1 114 40860 0\t\t # Main : F3 : Close current project tab\n",
+            "KEY 1 116 40071 0\t\t # Main : F5 : Options: Show snap/grid settings\n",
+            "KEY 1 117 40001 0\t\t # Main : F6 : Track: Insert new track\n",
+            "KEY 1 118 1042 0\t\t # Main : F7 : Track: Cycle folder collapsed state\n",
+            "KEY 1 119 40005 0\t\t # Main : F8 : Track: Remove tracks\n",
+            "KEY 1 77 6 0\t\t # Main : M : Track: Toggle mute for selected tracks\n",
+            "KEY 1 82 9 0\t\t # Main : R : Track: Toggle record arm for selected tracks\n",
+            "KEY 1 83 7 0\t\t # Main : S : Track: Toggle solo for selected tracks\n",
+            "KEY 1 120 1016 0\t\t # Main : F9 : Transport: Stop\n",
+        );
+        let bindings = parse_reaper(contents).unwrap();
+        assert_eq!(bindings.len(), 11);
+        for (action, key) in [
+            ("actions.show-list", "F2"),
+            ("file.close-project", "F3"),
+            ("file.close-all-projects", "F4"),
+            ("grid.snap-settings", "F5"),
+            ("track.add", "F6"),
+            ("track.cycle-folder-compact", "F7"),
+            ("track.delete", "F8"),
+            ("track.toggle-mute", "M"),
+            ("track.toggle-record-arm", "R"),
+            ("track.toggle-solo", "S"),
+            ("transport.stop-playback", "F9"),
+        ] {
+            assert_eq!(bindings[action], key, "{action}");
+        }
         assert_eq!(serialize_reaper(&bindings).unwrap(), contents);
     }
 
