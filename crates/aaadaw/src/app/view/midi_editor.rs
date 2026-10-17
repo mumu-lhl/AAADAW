@@ -228,7 +228,7 @@ struct MidiSnap {
 impl Default for MidiSnap {
     fn default() -> Self {
         Self {
-            grid: SnapGrid::Sixteenth,
+            grid: SnapGrid::ThirtySecond,
             enabled: true,
             swing_amount_percent: 0,
             cursor_tick: 0,
@@ -329,6 +329,14 @@ fn view_with_profile(app: &App, touch_targets: bool) -> Element<'_, Message> {
                 .on_press_maybe(
                     (!app.midi_editor_selected_notes.is_empty())
                         .then_some(Message::DuplicateMidiNotes(item_id)),
+                )
+                .padding([SPACING_XS / 2.0, SPACING_XS]),
+            button("Quantize")
+                .style(iced::widget::button::secondary)
+                .on_press_maybe(
+                    (!app.midi_editor_selected_notes.is_empty()
+                        && app.timeline.midi_editor_has_snap_grid())
+                    .then_some(Message::QuantizeSelectedMidiNotes(item_id)),
                 )
                 .padding([SPACING_XS / 2.0, SPACING_XS]),
             button("Delete notes")
@@ -3789,7 +3797,8 @@ mod tests {
             },
         );
         let selected = HashSet::new();
-        let draw_roll = piano_roll_for_test(&project, item_id, &selected, MidiEditorTool::Draw);
+        let mut draw_roll = piano_roll_for_test(&project, item_id, &selected, MidiEditorTool::Draw);
+        draw_roll.snap.grid = SnapGrid::Sixteenth;
         let bounds = Rectangle::new(Point::ORIGIN, Size::new(640.0, 600.0));
         let blank_note = Point::new(KEY_WIDTH + 48.0, HEADER_HEIGHT + NOTE_ROW_HEIGHT / 2.0);
         let press = Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left));
@@ -4790,7 +4799,10 @@ mod tests {
             origin_tick: 0,
             pixels_per_beat: 96.0,
             ticks_per_beat: 480,
-            snap: MidiSnap::default(),
+            snap: MidiSnap {
+                grid: SnapGrid::Sixteenth,
+                ..MidiSnap::default()
+            },
             high_pitch: 60,
         };
         assert_eq!(mapping.tick_at_x(24.0), 120);

@@ -38,7 +38,7 @@ impl Default for ArrangementViewState {
             repeat_enabled: false,
             snap_enabled: true,
             snap_grid: GridDivision::Quarter,
-            midi_editor_snap_grid: GridDivision::Sixteenth,
+            midi_editor_snap_grid: GridDivision::ThirtySecond,
             swing_grid_enabled: false,
             swing_amount_percent: 50,
         }

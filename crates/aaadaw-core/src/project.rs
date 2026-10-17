@@ -15,6 +15,51 @@ use crate::{
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
+fn quantized_midi_note_changes(
+    item: &MidiItem,
+    selected_note_ids: Option<&HashSet<NoteId>>,
+    grid: crate::GridFraction,
+    strength: f32,
+    ppq: u32,
+) -> Result<Vec<(NoteId, u64, u64)>, ActionError> {
+    if !strength.is_finite() || !(0.0..=1.0).contains(&strength) {
+        return Err(ActionError::InvalidQuantizeStrength);
+    }
+    let grid_ticks = grid
+        .ticks(ppq)
+        .map_err(|_| ActionError::InvalidQuantizeGrid)?;
+    let mut changes = Vec::new();
+    for note in item.notes.iter() {
+        if selected_note_ids.is_some_and(|selected| !selected.contains(&note.id)) {
+            continue;
+        }
+        let absolute_tick = item
+            .project_tick_at_content_tick(note.data.tick)
+            .ok_or(ActionError::InvalidMidiNote)?;
+        let lower = absolute_tick / grid_ticks * grid_ticks;
+        let remainder = absolute_tick - lower;
+        let round_up_threshold = grid_ticks / 2 + grid_ticks % 2;
+        let nearest = if remainder >= round_up_threshold {
+            lower.checked_add(grid_ticks).unwrap_or(lower)
+        } else {
+            lower
+        };
+        let distance = nearest as i128 - absolute_tick as i128;
+        let adjustment = (distance as f64 * f64::from(strength)).round() as i128;
+        let quantized_absolute = u64::try_from(absolute_tick as i128 + adjustment)
+            .map_err(|_| ActionError::InvalidMidiNote)?;
+        let tick = midi_source_tick_at_project_tick(item, quantized_absolute)
+            .ok_or(ActionError::InvalidMidiNote)?;
+        if !valid_midi_note_source_range(item, tick, note.data.duration) {
+            return Err(ActionError::InvalidMidiNote);
+        }
+        if tick != note.data.tick {
+            changes.push((note.id, note.data.tick, tick));
+        }
+    }
+    Ok(changes)
+}
+
 fn valid_audio_source_offset(
     source_offset_samples: i64,
     loop_source: bool,
@@ -4452,43 +4497,39 @@ impl Project {
                 grid,
                 strength,
             } => {
-                if !strength.is_finite() || !(0.0..=1.0).contains(&strength) {
-                    return Err(ActionError::InvalidQuantizeStrength);
-                }
-                let grid_ticks = grid
-                    .ticks(state.tempo_map.settings().ppq())
-                    .map_err(|_| ActionError::InvalidQuantizeGrid)?;
                 let item = state
                     .midi_items
                     .iter()
                     .find(|item| item.id == item_id)
                     .ok_or(ActionError::MidiItemNotFound { item_id })?;
-                let mut changes = Vec::new();
-                for note in item.notes.iter() {
-                    let absolute_tick = item
-                        .project_tick_at_content_tick(note.data.tick)
-                        .ok_or(ActionError::InvalidMidiNote)?;
-                    let lower = absolute_tick / grid_ticks * grid_ticks;
-                    let remainder = absolute_tick - lower;
-                    let round_up_threshold = grid_ticks / 2 + grid_ticks % 2;
-                    let nearest = if remainder >= round_up_threshold {
-                        lower.checked_add(grid_ticks).unwrap_or(lower)
-                    } else {
-                        lower
-                    };
-                    let distance = nearest as i128 - absolute_tick as i128;
-                    let adjustment = (distance as f64 * f64::from(strength)).round() as i128;
-                    let quantized_absolute = u64::try_from(absolute_tick as i128 + adjustment)
-                        .map_err(|_| ActionError::InvalidMidiNote)?;
-                    let tick = midi_source_tick_at_project_tick(item, quantized_absolute)
-                        .ok_or(ActionError::InvalidMidiNote)?;
-                    if !valid_midi_note_source_range(item, tick, note.data.duration) {
-                        return Err(ActionError::InvalidMidiNote);
-                    }
-                    if tick != note.data.tick {
-                        changes.push((note.id, note.data.tick, tick));
-                    }
-                }
+                let changes = quantized_midi_note_changes(
+                    item,
+                    None,
+                    grid,
+                    strength,
+                    state.tempo_map.settings().ppq(),
+                )?;
+                ProjectEvent::MidiNotesQuantized { item_id, changes }
+            }
+            DawAction::QuantizeMidiNotes {
+                item_id,
+                note_ids,
+                grid,
+                strength,
+            } => {
+                let selected_note_ids = note_ids.into_iter().collect::<HashSet<_>>();
+                let item = state
+                    .midi_items
+                    .iter()
+                    .find(|item| item.id == item_id)
+                    .ok_or(ActionError::MidiItemNotFound { item_id })?;
+                let changes = quantized_midi_note_changes(
+                    item,
+                    Some(&selected_note_ids),
+                    grid,
+                    strength,
+                    state.tempo_map.settings().ppq(),
+                )?;
                 ProjectEvent::MidiNotesQuantized { item_id, changes }
             }
             DawAction::DeleteTrack { track_id } => {
@@ -5594,7 +5635,8 @@ fn source_track_for_action(state: &ProjectState, action: &DawAction) -> Option<T
         | DawAction::DeleteMidiNotes { item_id, .. }
         | DawAction::SetMidiControllers { item_id, .. }
         | DawAction::SetMidiPitchBends { item_id, .. }
-        | DawAction::QuantizeItem { item_id, .. } => state
+        | DawAction::QuantizeItem { item_id, .. }
+        | DawAction::QuantizeMidiNotes { item_id, .. } => state
             .midi_items
             .iter()
             .find(|item| item.id == *item_id)

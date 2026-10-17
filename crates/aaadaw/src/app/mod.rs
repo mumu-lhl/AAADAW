@@ -16,8 +16,9 @@ use aaadaw_app::{
 #[cfg(feature = "audio-device")]
 use aaadaw_core::ProjectSnapshot;
 use aaadaw_core::{
-    AudioItem, DawAction, FxParameterChange, ItemId, MarkerId, MeterPointSnapshot, MidiItem,
-    MidiItemPosition, Project, RazorEditArea, RegionId, TempoCurve, TimeSignature, TrackId,
+    AudioItem, DawAction, FxParameterChange, GridFraction, ItemId, MarkerId, MeterPointSnapshot,
+    MidiItem, MidiItemPosition, Project, RazorEditArea, RegionId, TempoCurve, TimeSignature,
+    TrackId,
 };
 #[cfg(feature = "audio-device")]
 use aaadaw_engine::{
@@ -42,6 +43,27 @@ use std::time::{Duration, Instant};
 
 pub(super) const MIDI_EDITOR_KEY_WIDTH: f32 = 84.0;
 pub(super) const MIDI_EDITOR_CONTENT_WIDTH_INSET: f32 = MIDI_EDITOR_KEY_WIDTH + 32.0;
+
+fn midi_editor_grid_fraction(grid: timeline::SnapGrid) -> GridFraction {
+    let (numerator, denominator) = match grid {
+        timeline::SnapGrid::Whole => (1, 1),
+        timeline::SnapGrid::Half => (1, 2),
+        timeline::SnapGrid::Quarter => (1, 4),
+        timeline::SnapGrid::Eighth => (1, 8),
+        timeline::SnapGrid::Sixteenth => (1, 16),
+        timeline::SnapGrid::ThirtySecond => (1, 32),
+        timeline::SnapGrid::DottedHalf => (3, 4),
+        timeline::SnapGrid::DottedQuarter => (3, 8),
+        timeline::SnapGrid::DottedEighth => (3, 16),
+        timeline::SnapGrid::DottedSixteenth => (3, 32),
+        timeline::SnapGrid::HalfTriplet => (1, 3),
+        timeline::SnapGrid::QuarterTriplet => (1, 6),
+        timeline::SnapGrid::EighthTriplet => (1, 12),
+        timeline::SnapGrid::SixteenthTriplet => (1, 24),
+        timeline::SnapGrid::ThirtySecondTriplet => (1, 48),
+    };
+    GridFraction::new(numerator, denominator).expect("snap grid maps to a positive fraction")
+}
 
 mod action_list;
 mod action_macros;
@@ -5130,6 +5152,15 @@ impl App {
             Message::QuantizeMidiItem(item_id) => {
                 let action = quantize_midi_item_to_sixteenth(item_id);
                 self.apply_edit(action, "MIDI item quantized to 1/16");
+            }
+            Message::QuantizeSelectedMidiNotes(item_id) => {
+                let action = DawAction::QuantizeMidiNotes {
+                    item_id,
+                    note_ids: self.midi_editor_selected_notes.iter().copied().collect(),
+                    grid: midi_editor_grid_fraction(self.timeline.midi_editor_snap_grid),
+                    strength: 1.0,
+                };
+                self.apply_action(action, "Selected MIDI notes quantized to editor grid");
             }
             Message::DeleteTrack(track_id) => self.delete_track(track_id),
             Message::DeleteByFocus => task = self.delete_by_focus(false),

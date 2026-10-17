@@ -3484,7 +3484,7 @@ fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
                     ),
                     (
                         "midi_editor_snap_grid",
-                        "ALTER TABLE arrangement_view_meta ADD COLUMN midi_editor_snap_grid INTEGER NOT NULL DEFAULT 4 CHECK(midi_editor_snap_grid BETWEEN 0 AND 14);",
+                        "ALTER TABLE arrangement_view_meta ADD COLUMN midi_editor_snap_grid INTEGER NOT NULL DEFAULT 5 CHECK(midi_editor_snap_grid BETWEEN 0 AND 14);",
                     ),
                     (
                         "swing_grid_enabled",

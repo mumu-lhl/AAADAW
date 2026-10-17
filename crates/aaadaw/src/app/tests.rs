@@ -12070,6 +12070,134 @@ fn midi_item_creation_and_note_editing_use_undoable_actions() {
 }
 
 #[test]
+fn midi_editor_quantize_moves_only_selected_notes_on_the_default_editor_grid() {
+    let mut app = App::default();
+    let _ = app.update(Message::AddTrack);
+    let track_id = app.project.tracks()[0].id();
+    app.project
+        .apply(DawAction::InsertMidiItem {
+            track_id,
+            start_tick: 0,
+            length_ticks: 3_840,
+        })
+        .expect("test MIDI item should be inserted");
+    let item_id = app.project.midi_items()[0].id();
+    app.project
+        .apply(DawAction::AddMidiNotes {
+            item_id,
+            notes: vec![
+                MidiNoteData {
+                    channel: 0,
+                    pitch: 60,
+                    tick: 20,
+                    duration: 120,
+                    velocity: 96,
+                },
+                MidiNoteData {
+                    channel: 2,
+                    pitch: 64,
+                    tick: 170,
+                    duration: 90,
+                    velocity: 100,
+                },
+                MidiNoteData {
+                    channel: 0,
+                    pitch: 67,
+                    tick: 350,
+                    duration: 80,
+                    velocity: 80,
+                },
+            ],
+        })
+        .expect("test notes should be inserted");
+    let selected_id = app.project.midi_items()[0].notes()[1].id();
+    app.midi_editor_selected_notes = HashSet::from([selected_id]);
+    assert_eq!(
+        app.timeline.midi_editor_snap_grid,
+        crate::timeline::SnapGrid::ThirtySecond
+    );
+
+    let _ = app.update(Message::QuantizeSelectedMidiNotes(item_id));
+
+    let notes = app.project.midi_items()[0].notes();
+    assert_eq!(notes[0].tick(), 20);
+    assert_eq!(notes[1].tick(), 120);
+    assert_eq!(notes[1].duration(), 90);
+    assert_eq!(notes[1].channel(), 2);
+    assert_eq!(notes[2].tick(), 350);
+    let _ = app.update(Message::Undo);
+    assert_eq!(app.project.midi_items()[0].notes()[1].tick(), 170);
+    let _ = app.update(Message::Redo);
+    assert_eq!(app.project.midi_items()[0].notes()[1].tick(), 120);
+}
+
+#[test]
+fn midi_editor_quantize_grid_conversion_matches_every_musical_division() {
+    let mut project = Project::new();
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Piano".to_owned(),
+        })
+        .expect("test track should be created");
+    let track_id = project.tracks()[0].id();
+    project
+        .apply(DawAction::InsertMidiItem {
+            track_id,
+            start_tick: 0,
+            length_ticks: 20_000,
+        })
+        .expect("test MIDI item should be inserted");
+    let item_id = project.midi_items()[0].id();
+    project
+        .apply(DawAction::AddMidiNotes {
+            item_id,
+            notes: vec![MidiNoteData {
+                channel: 0,
+                pitch: 60,
+                tick: 0,
+                duration: 10,
+                velocity: 96,
+            }],
+        })
+        .expect("test MIDI note should be inserted");
+    let note_id = project.midi_items()[0].notes()[0].id();
+    let ppq = project.settings().ppq();
+
+    for grid in SnapGrid::ALL {
+        let interval = grid
+            .tick_interval(ppq)
+            .expect("supported project PPQ has an interval for every grid");
+        project
+            .apply(DawAction::EditMidiNote {
+                item_id,
+                note_id,
+                data: MidiNoteData {
+                    channel: 0,
+                    pitch: 60,
+                    tick: interval + 1,
+                    duration: 10,
+                    velocity: 96,
+                },
+            })
+            .expect("moving the test note off-grid should succeed");
+        project
+            .apply(DawAction::QuantizeMidiNotes {
+                item_id,
+                note_ids: vec![note_id],
+                grid: super::midi_editor_grid_fraction(grid),
+                strength: 1.0,
+            })
+            .expect("quantizing with the selected MIDI grid should succeed");
+        assert_eq!(
+            project.midi_items()[0].notes()[0].tick(),
+            interval,
+            "grid conversion should preserve {grid} interval {interval}"
+        );
+    }
+}
+
+#[test]
 fn piano_roll_copy_drag_adds_fresh_notes_and_undoes_as_one_action() {
     let mut app = App::default();
     let _ = app.update(Message::AddTrack);
@@ -12272,6 +12400,7 @@ fn piano_roll_copy_paste_and_velocity_edits_are_grouped_undoable_actions() {
 #[test]
 fn piano_roll_copying_a_late_phrase_pastes_after_it_instead_of_near_item_start() {
     let mut app = App::default();
+    app.timeline.midi_editor_snap_grid = SnapGrid::Sixteenth;
     let _ = app.update(Message::AddTrack);
     let _ = app.update(Message::AddMidiItem);
     let item_id = app.project.midi_items()[0].id();
@@ -12299,6 +12428,7 @@ fn piano_roll_copying_a_late_phrase_pastes_after_it_instead_of_near_item_start()
 #[test]
 fn piano_roll_paste_uses_the_caret_and_duplicate_does_not_replace_the_clipboard() {
     let mut app = App::default();
+    app.timeline.midi_editor_snap_grid = SnapGrid::Sixteenth;
     let _ = app.update(Message::AddTrack);
     let _ = app.update(Message::AddMidiItem);
     let item_id = app.project.midi_items()[0].id();
@@ -12334,6 +12464,7 @@ fn piano_roll_paste_uses_the_caret_and_duplicate_does_not_replace_the_clipboard(
 #[test]
 fn piano_roll_cross_item_paste_uses_the_copied_phrase_position_when_no_caret_is_set() {
     let mut app = App::default();
+    app.timeline.midi_editor_snap_grid = SnapGrid::Sixteenth;
     let _ = app.update(Message::AddTrack);
     let _ = app.update(Message::AddMidiItem);
     let source_item_id = app.project.midi_items()[0].id();
@@ -16362,11 +16493,11 @@ fn snap_grid_settings_command_is_reusable_and_clamps_swing_amount() {
     assert_eq!(app.timeline.snap_grid, crate::timeline::SnapGrid::Eighth);
     assert_eq!(app.revision, initial_revision + 3);
     let _ = app.update(Message::Timeline(TimelineEvent::SetMidiEditorSnapGrid(
-        crate::timeline::SnapGrid::ThirtySecond,
+        crate::timeline::SnapGrid::Sixteenth,
     )));
     assert_eq!(
         app.timeline.midi_editor_snap_grid,
-        crate::timeline::SnapGrid::ThirtySecond
+        crate::timeline::SnapGrid::Sixteenth
     );
     assert_eq!(app.revision, initial_revision + 4);
     let _ = app.update(Message::Timeline(TimelineEvent::ToggleSnap));

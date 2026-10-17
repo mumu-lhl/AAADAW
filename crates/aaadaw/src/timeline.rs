@@ -1110,7 +1110,7 @@ impl Default for TimelineState {
             audio_waveforms: HashMap::new(),
             snap_enabled: true,
             snap_grid: SnapGrid::Quarter,
-            midi_editor_snap_grid: SnapGrid::Sixteenth,
+            midi_editor_snap_grid: SnapGrid::ThirtySecond,
             edit_cursor_tick: 0,
             edit_cursor_position: None,
             origin_tick: 0,
@@ -1201,7 +1201,7 @@ impl TimelineState {
         self.snap_enabled = view_state.is_none_or(|state| state.snap_enabled);
         self.snap_grid = view_state.map_or(SnapGrid::Quarter, |state| state.snap_grid);
         self.midi_editor_snap_grid =
-            view_state.map_or(SnapGrid::Sixteenth, |state| state.midi_editor_snap_grid);
+            view_state.map_or(SnapGrid::ThirtySecond, |state| state.midi_editor_snap_grid);
         self.cache.swing_grid =
             view_state.map_or_else(SwingGridSettings::default, |state| SwingGridSettings {
                 enabled: state.swing_grid_enabled,
@@ -8452,7 +8452,7 @@ mod tests {
         assert_eq!(reopened.loop_points, None);
         assert!(reopened.snap_enabled);
         assert_eq!(reopened.snap_grid, SnapGrid::Quarter);
-        assert_eq!(reopened.midi_editor_snap_grid, SnapGrid::Sixteenth);
+        assert_eq!(reopened.midi_editor_snap_grid, SnapGrid::ThirtySecond);
         assert!(!reopened.snap_swing_enabled());
         assert_eq!(reopened.snap_swing_amount_percent(), 50);
         assert_eq!(reopened.row_layout(0).unwrap().height, TIMELINE_ROW_HEIGHT);
@@ -9579,7 +9579,7 @@ mod tests {
     fn arrange_and_midi_snap_grids_match_defaults_and_change_independently() {
         let timeline = TimelineState::default();
         assert_eq!(timeline.snap_grid, SnapGrid::Quarter);
-        assert_eq!(timeline.midi_editor_snap_grid, SnapGrid::Sixteenth);
+        assert_eq!(timeline.midi_editor_snap_grid, SnapGrid::ThirtySecond);
         assert!(timeline.has_snap_grid());
         assert!(timeline.midi_editor_has_snap_grid());
         assert!(timeline.snap_enabled);

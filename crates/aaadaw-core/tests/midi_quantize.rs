@@ -68,3 +68,80 @@ fn midi_quantize_moves_note_starts_to_the_grid_and_is_undoable() {
     assert_eq!(notes[0].tick(), 0);
     assert_eq!(notes[1].tick(), 480);
 }
+
+#[test]
+fn midi_quantize_can_limit_changes_to_the_selected_note_ids() {
+    let mut project = Project::new();
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Piano".to_owned(),
+        })
+        .expect("creating a track should succeed");
+    let track_id = project.tracks()[0].id();
+    project
+        .apply(DawAction::InsertMidiItem {
+            track_id,
+            start_tick: 0,
+            length_ticks: 3_840,
+        })
+        .expect("inserting a MIDI item should succeed");
+    let item_id = project.midi_items()[0].id();
+    project
+        .apply(DawAction::AddMidiNotes {
+            item_id,
+            notes: vec![
+                MidiNoteData {
+                    channel: 0,
+                    pitch: 60,
+                    tick: 110,
+                    duration: 120,
+                    velocity: 100,
+                },
+                MidiNoteData {
+                    channel: 2,
+                    pitch: 64,
+                    tick: 510,
+                    duration: 180,
+                    velocity: 90,
+                },
+                MidiNoteData {
+                    channel: 0,
+                    pitch: 67,
+                    tick: 730,
+                    duration: 240,
+                    velocity: 80,
+                },
+            ],
+        })
+        .expect("adding notes should succeed");
+    let selected_note_id = project.midi_items()[0].notes()[1].id();
+
+    project
+        .apply(DawAction::QuantizeMidiNotes {
+            item_id,
+            note_ids: vec![selected_note_id],
+            grid: GridFraction::new(1, 16).expect("1/16 is a valid grid"),
+            strength: 1.0,
+        })
+        .expect("quantizing selected notes should succeed");
+
+    let notes = project.midi_items()[0].notes();
+    assert_eq!(notes[0].tick(), 110);
+    assert_eq!(notes[1].tick(), 480);
+    assert_eq!(notes[1].duration(), 180);
+    assert_eq!(notes[1].channel(), 2);
+    assert_eq!(notes[2].tick(), 730);
+    assert!(
+        project
+            .undo()
+            .expect("selected quantize should be undoable")
+    );
+    assert_eq!(project.midi_items()[0].notes()[1].tick(), 510);
+    assert!(
+        project
+            .redo()
+            .expect("selected quantize should be redoable")
+    );
+    assert_eq!(project.midi_items()[0].notes()[1].tick(), 480);
+}

@@ -532,6 +532,7 @@ pub(crate) enum Message {
     AdjustMidiNoteVelocity(ItemId, NoteId, i8),
     DeleteMidiNote(ItemId, NoteId),
     QuantizeMidiItem(ItemId),
+    QuantizeSelectedMidiNotes(ItemId),
     DeleteTrack(TrackId),
     DeleteByFocus,
     DeleteByFocusNoPrompting,
