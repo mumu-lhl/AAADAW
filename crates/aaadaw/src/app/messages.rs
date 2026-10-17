@@ -225,11 +225,17 @@ pub(crate) enum MidiQuantizeScope {
     #[default]
     SelectedNotes,
     AllNotes,
+    SelectedEvents,
     AllEvents,
 }
 
 impl MidiQuantizeScope {
-    pub(crate) const OPTIONS: [Self; 3] = [Self::AllNotes, Self::SelectedNotes, Self::AllEvents];
+    pub(crate) const OPTIONS: [Self; 4] = [
+        Self::AllNotes,
+        Self::SelectedNotes,
+        Self::AllEvents,
+        Self::SelectedEvents,
+    ];
 }
 
 impl std::fmt::Display for MidiQuantizeScope {
@@ -237,6 +243,7 @@ impl std::fmt::Display for MidiQuantizeScope {
         formatter.write_str(match self {
             Self::AllNotes => "All notes",
             Self::SelectedNotes => "Selected notes",
+            Self::SelectedEvents => "Selected events",
             Self::AllEvents => "All events",
         })
     }
@@ -466,6 +473,8 @@ pub(crate) enum Message {
     CloseMidiEditorFilter,
     MidiEditorFeedback(String),
     SelectMidiNotes(HashSet<NoteId>),
+    SelectMidiControllerEvent(ItemId, MidiControllerData, bool),
+    SelectMidiPitchBendEvent(ItemId, MidiPitchBendData, bool),
     CopyMidiNotes(ItemId, Vec<NoteId>),
     PasteMidiNotes(ItemId),
     DuplicateMidiNotes(ItemId),

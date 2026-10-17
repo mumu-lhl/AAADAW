@@ -122,7 +122,7 @@ pub struct MidiNoteData {
 }
 
 /// Input data for a MIDI control-change event; `tick` is relative to its item.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct MidiControllerData {
     pub controller: u8,
     /// Zero-based MIDI channel in the inclusive range `0..16`.
@@ -133,7 +133,7 @@ pub struct MidiControllerData {
 
 /// Input data for a MIDI 14-bit pitch-bend event; `tick` is relative to its item.
 /// The neutral pitch-bend value is 8192.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct MidiPitchBendData {
     /// Zero-based MIDI channel in the inclusive range `0..16`.
     pub channel: u8,

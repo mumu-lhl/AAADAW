@@ -707,19 +707,26 @@ fn view_with_profile(app: &App, touch_targets: bool) -> Element<'_, Message> {
     if app.midi_quantize_dialog.is_some() {
         let dialog = midi_quantize_dialog(app, touch_targets);
         let backdrop = mouse_area(
-            container(dialog)
-                .width(Length::Fill)
-                .height(Length::Fill)
-                .center(Length::Fill)
-                .style(|_| iced::widget::container::Style {
-                    background: Some(iced::Background::Color(iced::Color::from_rgba8(
-                        0, 0, 0, 0.66,
-                    ))),
-                    ..iced::widget::container::Style::default()
-                }),
+            container(
+                iced::widget::Space::new()
+                    .width(Length::Fill)
+                    .height(Length::Fill),
+            )
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .style(|_| iced::widget::container::Style {
+                background: Some(iced::Background::Color(iced::Color::from_rgba8(
+                    0, 0, 0, 0.66,
+                ))),
+                ..iced::widget::container::Style::default()
+            }),
         )
         .on_press(Message::CancelMidiQuantize);
-        stack![content, backdrop]
+        let dialog = container(dialog)
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .center(Length::Fill);
+        stack![content, backdrop, dialog]
             .width(Length::Fill)
             .height(Length::Fill)
             .into()
@@ -959,12 +966,13 @@ fn controller_lane<'a>(
     controller: u8,
     label: &'a str,
     lane_height: f32,
-    app: &App,
+    app: &'a App,
     ticks_per_beat: u64,
 ) -> Element<'a, Message> {
     let canvas = canvas_widget::Canvas::new(ControllerLane {
         item,
         item_id,
+        selected: &app.midi_editor_selected_controllers,
         controller,
         lane_height,
         origin_tick: app.midi_editor_origin_tick,
@@ -982,12 +990,13 @@ fn pitch_bend_lane<'a>(
     item: &'a MidiItem,
     item_id: ItemId,
     lane_height: f32,
-    app: &App,
+    app: &'a App,
     ticks_per_beat: u64,
 ) -> Element<'a, Message> {
     let canvas = canvas_widget::Canvas::new(PitchBendLane {
         item,
         item_id,
+        selected: &app.midi_editor_selected_pitch_bends,
         lane_height,
         origin_tick: app.midi_editor_origin_tick,
         pixels_per_beat: app.midi_editor_pixels_per_beat,
@@ -1003,6 +1012,7 @@ fn pitch_bend_lane<'a>(
 struct ControllerLane<'a> {
     item: &'a MidiItem,
     item_id: ItemId,
+    selected: &'a HashSet<MidiControllerData>,
     controller: u8,
     lane_height: f32,
     origin_tick: u64,
@@ -1228,6 +1238,17 @@ impl canvas::Program<Message> for ControllerLane<'_> {
                 let controllers = self.item.controllers().to_vec();
                 if let Some((index, display_tick)) = self.closest_point(point) {
                     let original = controllers[index];
+                    let additive = state.modifiers.command() || state.modifiers.control();
+                    if additive {
+                        return Some(
+                            canvas::Action::publish(Message::SelectMidiControllerEvent(
+                                self.item_id,
+                                original,
+                                true,
+                            ))
+                            .and_capture(),
+                        );
+                    }
                     state.drag = Some(ControllerDrag {
                         controllers,
                         index: Some(index),
@@ -1235,6 +1256,14 @@ impl canvas::Program<Message> for ControllerLane<'_> {
                         current: original,
                         display_tick,
                     });
+                    return Some(
+                        canvas::Action::publish(Message::SelectMidiControllerEvent(
+                            self.item_id,
+                            original,
+                            false,
+                        ))
+                        .and_capture(),
+                    );
                 } else {
                     let (current, display_tick) =
                         self.point_data(point, state.modifiers.shift(), self.snap.draw_channel);
@@ -1391,11 +1420,11 @@ impl canvas::Program<Message> for ControllerLane<'_> {
                     mapping.origin_tick,
                     end_tick.saturating_add(1).min(item_end),
                 )
-                .map(move |tick| (tick, controller.value))
+                .map(move |tick| (tick, controller.value, *controller))
             })
             .collect::<Vec<_>>();
-        visible_events.sort_unstable_by_key(|(tick, _)| *tick);
-        for (event_tick, event_value) in visible_events {
+        visible_events.sort_unstable_by_key(|(tick, _, _)| *tick);
+        for (event_tick, event_value, event) in visible_events {
             let x = mapping.x_at_tick(event_tick).clamp(0.0, bounds.width);
             let old_y = controller_y(value, bounds.height);
             let new_y = controller_y(event_value, bounds.height);
@@ -1415,10 +1444,16 @@ impl canvas::Program<Message> for ControllerLane<'_> {
                         .with_color(Color::from_rgb8(111, 190, 150)),
                 );
             }
+            let selected = self.selected.contains(&event);
+            let point_size = if selected { 11.0 } else { 8.0 };
             frame.fill_rectangle(
-                Point::new(x - 4.0, new_y - 4.0),
-                Size::new(8.0, 8.0),
-                Color::from_rgb8(175, 225, 196),
+                Point::new(x - point_size / 2.0, new_y - point_size / 2.0),
+                Size::new(point_size, point_size),
+                if selected {
+                    Color::from_rgb8(255, 199, 105)
+                } else {
+                    Color::from_rgb8(175, 225, 196)
+                },
             );
             segment_start = x;
             value = event_value;
@@ -1519,6 +1554,7 @@ impl canvas::Program<Message> for ControllerLane<'_> {
 struct PitchBendLane<'a> {
     item: &'a MidiItem,
     item_id: ItemId,
+    selected: &'a HashSet<MidiPitchBendData>,
     lane_height: f32,
     origin_tick: u64,
     pixels_per_beat: f32,
@@ -1666,6 +1702,17 @@ impl canvas::Program<Message> for PitchBendLane<'_> {
                 let bends = self.item.pitch_bends().to_vec();
                 if let Some((index, display_tick)) = self.closest_point(point) {
                     let original = bends[index];
+                    let additive = state.modifiers.command() || state.modifiers.control();
+                    if additive {
+                        return Some(
+                            canvas::Action::publish(Message::SelectMidiPitchBendEvent(
+                                self.item_id,
+                                original,
+                                true,
+                            ))
+                            .and_capture(),
+                        );
+                    }
                     state.drag = Some(PitchBendDrag {
                         bends,
                         index: Some(index),
@@ -1673,6 +1720,14 @@ impl canvas::Program<Message> for PitchBendLane<'_> {
                         current: original,
                         display_tick,
                     });
+                    return Some(
+                        canvas::Action::publish(Message::SelectMidiPitchBendEvent(
+                            self.item_id,
+                            original,
+                            false,
+                        ))
+                        .and_capture(),
+                    );
                 } else {
                     let (current, display_tick) =
                         self.point_data(point, state.modifiers.shift(), self.snap.draw_channel);
@@ -1838,11 +1893,11 @@ impl canvas::Program<Message> for PitchBendLane<'_> {
                     mapping.origin_tick,
                     end_tick.saturating_add(1).min(item_end),
                 )
-                .map(move |tick| (tick, bend.value))
+                .map(move |tick| (tick, bend.value, *bend))
             })
             .collect::<Vec<_>>();
-        visible_events.sort_unstable_by_key(|(tick, _)| *tick);
-        for (event_tick, event_value) in visible_events {
+        visible_events.sort_unstable_by_key(|(tick, _, _)| *tick);
+        for (event_tick, event_value, event) in visible_events {
             let x = mapping.x_at_tick(event_tick).clamp(0.0, bounds.width);
             let old_y = pitch_bend_y(value, bounds.height);
             let new_y = pitch_bend_y(event_value, bounds.height);
@@ -1860,10 +1915,16 @@ impl canvas::Program<Message> for PitchBendLane<'_> {
                     .with_width(2.0)
                     .with_color(Color::from_rgb8(128, 165, 226)),
             );
+            let selected = self.selected.contains(&event);
+            let point_size = if selected { 11.0 } else { 8.0 };
             frame.fill_rectangle(
-                Point::new(x - 4.0, new_y - 4.0),
-                Size::new(8.0, 8.0),
-                Color::from_rgb8(177, 201, 245),
+                Point::new(x - point_size / 2.0, new_y - point_size / 2.0),
+                Size::new(point_size, point_size),
+                if selected {
+                    Color::from_rgb8(255, 199, 105)
+                } else {
+                    Color::from_rgb8(177, 201, 245)
+                },
             );
             segment_start = x;
             value = event_value;
@@ -3720,6 +3781,7 @@ mod tests {
         let controller_lane = ControllerLane {
             item,
             item_id,
+            selected: &HashSet::new(),
             controller: 1,
             lane_height: 72.0,
             origin_tick: 0,
@@ -3743,6 +3805,7 @@ mod tests {
         let pitch_bend_lane = PitchBendLane {
             item,
             item_id,
+            selected: &HashSet::new(),
             lane_height: 72.0,
             origin_tick: 0,
             pixels_per_beat: 96.0,
@@ -3849,6 +3912,7 @@ mod tests {
         let controller_lane = ControllerLane {
             item,
             item_id,
+            selected: &HashSet::new(),
             controller: 1,
             lane_height: 72.0,
             origin_tick: 0,
@@ -3868,6 +3932,7 @@ mod tests {
         let pitch_bend_lane = PitchBendLane {
             item,
             item_id,
+            selected: &HashSet::new(),
             lane_height: 72.0,
             origin_tick: 0,
             pixels_per_beat: 96.0,
@@ -4429,6 +4494,7 @@ mod tests {
         let lane = ControllerLane {
             item,
             item_id,
+            selected: &HashSet::new(),
             controller: 1,
             lane_height: MODULATION_LANE_HEIGHT,
             origin_tick: 0,
@@ -4467,6 +4533,7 @@ mod tests {
         let bend_lane = PitchBendLane {
             item,
             item_id,
+            selected: &HashSet::new(),
             lane_height: PITCH_BEND_LANE_HEIGHT,
             origin_tick: 0,
             pixels_per_beat: 96.0,
@@ -4590,6 +4657,7 @@ mod tests {
         let controller_lane = ControllerLane {
             item,
             item_id,
+            selected: &HashSet::new(),
             controller: 1,
             lane_height: 72.0,
             origin_tick: 0,
@@ -4630,6 +4698,7 @@ mod tests {
         let bend_lane = PitchBendLane {
             item,
             item_id,
+            selected: &HashSet::new(),
             lane_height: 72.0,
             origin_tick: 0,
             pixels_per_beat: 96.0,
@@ -4748,6 +4817,7 @@ mod tests {
         let bounds = Rectangle::new(Point::ORIGIN, Size::new(400.0, PITCH_BEND_LANE_HEIGHT));
         let mut interaction = PitchBendLaneInteraction::default();
         let lane = PitchBendLane {
+            selected: &HashSet::new(),
             item: &project.midi_items()[0],
             item_id,
             lane_height: PITCH_BEND_LANE_HEIGHT,
@@ -4795,6 +4865,7 @@ mod tests {
             .unwrap();
 
         let lane = PitchBendLane {
+            selected: &HashSet::new(),
             item: &project.midi_items()[0],
             item_id,
             lane_height: PITCH_BEND_LANE_HEIGHT,
@@ -4848,6 +4919,7 @@ mod tests {
             })
             .unwrap();
         let lane = PitchBendLane {
+            selected: &HashSet::new(),
             item: &project.midi_items()[0],
             item_id,
             lane_height: PITCH_BEND_LANE_HEIGHT,
@@ -5429,6 +5501,7 @@ mod tests {
         let controller = ControllerLane {
             item,
             item_id,
+            selected: &HashSet::new(),
             controller: 7,
             lane_height: VOLUME_LANE_HEIGHT,
             origin_tick: 0,
@@ -5474,6 +5547,7 @@ mod tests {
         let pitch_bend = PitchBendLane {
             item,
             item_id,
+            selected: &HashSet::new(),
             lane_height: PITCH_BEND_LANE_HEIGHT,
             origin_tick: 0,
             pixels_per_beat: 96.0,
@@ -5535,6 +5609,7 @@ mod tests {
         let item_id = project.midi_items()[0].id();
         let bounds = Rectangle::new(Point::ORIGIN, Size::new(400.0, SUSTAIN_LANE_HEIGHT));
         let lane = ControllerLane {
+            selected: &HashSet::new(),
             item: &project.midi_items()[0],
             item_id,
             controller: 64,
@@ -5579,6 +5654,7 @@ mod tests {
             .unwrap();
 
         let lane = ControllerLane {
+            selected: &HashSet::new(),
             item: &project.midi_items()[0],
             item_id,
             controller: 64,
@@ -5636,6 +5712,7 @@ mod tests {
             .unwrap();
 
         let lane = ControllerLane {
+            selected: &HashSet::new(),
             item: &project.midi_items()[0],
             item_id,
             controller: 64,
@@ -5692,6 +5769,7 @@ mod tests {
             .unwrap();
         let item_id = project.midi_items()[0].id();
         let lane = ControllerLane {
+            selected: &HashSet::new(),
             item: &project.midi_items()[0],
             item_id,
             controller: 1,
@@ -5751,6 +5829,7 @@ mod tests {
             .unwrap();
 
         let lane = ControllerLane {
+            selected: &HashSet::new(),
             item: &project.midi_items()[0],
             item_id,
             controller: 1,
@@ -5808,6 +5887,7 @@ mod tests {
             .unwrap();
 
         let lane = ControllerLane {
+            selected: &HashSet::new(),
             item: &project.midi_items()[0],
             item_id,
             controller: 1,
@@ -5893,6 +5973,7 @@ mod tests {
             })
             .unwrap();
         let lane = ControllerLane {
+            selected: &HashSet::new(),
             item: &project.midi_items()[0],
             item_id,
             controller: 11,
@@ -5993,6 +6074,7 @@ mod tests {
             })
             .unwrap();
         let lane = ControllerLane {
+            selected: &HashSet::new(),
             item: &project.midi_items()[0],
             item_id,
             controller: 7,
@@ -6096,6 +6178,7 @@ mod tests {
 
         let bounds = Rectangle::new(Point::ORIGIN, Size::new(400.0, PAN_LANE_HEIGHT));
         let lane = ControllerLane {
+            selected: &HashSet::new(),
             item: &project.midi_items()[0],
             item_id,
             controller: 10,
@@ -6148,6 +6231,7 @@ mod tests {
             .unwrap();
 
         let lane = ControllerLane {
+            selected: &HashSet::new(),
             item: &project.midi_items()[0],
             item_id,
             controller: 10,
@@ -6213,6 +6297,7 @@ mod tests {
         assert_eq!(project.midi_items()[0].controllers(), moved);
 
         let lane = ControllerLane {
+            selected: &HashSet::new(),
             item: &project.midi_items()[0],
             item_id,
             controller: 10,

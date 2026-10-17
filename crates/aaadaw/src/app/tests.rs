@@ -12848,6 +12848,184 @@ fn midi_quantize_dialog_all_events_quantizes_notes_controllers_and_pitch_bends_t
 }
 
 #[test]
+fn midi_quantize_dialog_selected_events_preserves_unselected_events_and_selection() {
+    let mut app = App::default();
+    let _ = app.update(Message::AddTrack);
+    let track_id = app.project.tracks()[0].id();
+    app.project
+        .apply(DawAction::InsertMidiItem {
+            track_id,
+            start_tick: 0,
+            length_ticks: 4_000,
+        })
+        .expect("test MIDI item should be inserted");
+    let item_id = app.project.midi_items()[0].id();
+    app.project
+        .apply(DawAction::AddMidiNotes {
+            item_id,
+            notes: vec![
+                MidiNoteData {
+                    channel: 0,
+                    pitch: 60,
+                    tick: 170,
+                    duration: 80,
+                    velocity: 96,
+                },
+                MidiNoteData {
+                    channel: 0,
+                    pitch: 62,
+                    tick: 350,
+                    duration: 80,
+                    velocity: 96,
+                },
+                MidiNoteData {
+                    channel: 0,
+                    pitch: 64,
+                    tick: 550,
+                    duration: 80,
+                    velocity: 96,
+                },
+            ],
+        })
+        .expect("test notes should be inserted");
+    let selected_note_id = app.project.midi_items()[0].notes()[0].id();
+    let selected_controller = MidiControllerData {
+        controller: 1,
+        channel: 0,
+        tick: 475,
+        value: 64,
+    };
+    let colliding_unselected_controller = MidiControllerData {
+        tick: 480,
+        value: 65,
+        ..selected_controller
+    };
+    let untouched_controller = MidiControllerData {
+        controller: 7,
+        channel: 1,
+        tick: 730,
+        value: 96,
+    };
+    app.project
+        .apply(DawAction::SetMidiControllers {
+            item_id,
+            controllers: vec![
+                selected_controller,
+                colliding_unselected_controller,
+                untouched_controller,
+            ],
+        })
+        .expect("test controllers should be inserted");
+    let selected_pitch_bend = MidiPitchBendData {
+        channel: 0,
+        tick: 835,
+        value: 8_000,
+    };
+    let colliding_unselected_pitch_bend = MidiPitchBendData {
+        tick: 840,
+        value: 8_192,
+        ..selected_pitch_bend
+    };
+    app.project
+        .apply(DawAction::SetMidiPitchBends {
+            item_id,
+            pitch_bends: vec![selected_pitch_bend, colliding_unselected_pitch_bend],
+        })
+        .expect("test pitch bends should be inserted");
+
+    app.midi_editor_item_id = Some(item_id);
+    let _ = app.update(Message::SelectMidiNotes(HashSet::from([selected_note_id])));
+    let _ = app.update(Message::SelectMidiControllerEvent(
+        item_id,
+        selected_controller,
+        true,
+    ));
+    let _ = app.update(Message::SelectMidiPitchBendEvent(
+        item_id,
+        selected_pitch_bend,
+        true,
+    ));
+    let _ = app.update(Message::OpenMidiQuantizeDialog(item_id));
+    let _ = app.update(Message::SetMidiQuantizeScope(
+        MidiQuantizeScope::SelectedEvents,
+    ));
+    let _ = app.update(Message::AcceptMidiQuantize);
+
+    let item = &app.project.midi_items()[0];
+    assert_eq!(
+        item.notes()
+            .iter()
+            .map(|note| note.tick())
+            .collect::<Vec<_>>(),
+        [120, 350, 550]
+    );
+    assert_eq!(
+        item.controllers(),
+        [
+            MidiControllerData {
+                tick: 480,
+                ..selected_controller
+            },
+            untouched_controller,
+        ]
+    );
+    assert_eq!(
+        item.pitch_bends(),
+        [MidiPitchBendData {
+            tick: 840,
+            ..selected_pitch_bend
+        }]
+    );
+    assert_eq!(
+        app.midi_editor_selected_controllers,
+        HashSet::from([MidiControllerData {
+            tick: 480,
+            ..selected_controller
+        }])
+    );
+    assert_eq!(
+        app.midi_editor_selected_pitch_bends,
+        HashSet::from([MidiPitchBendData {
+            tick: 840,
+            ..selected_pitch_bend
+        }])
+    );
+
+    let _ = app.update(Message::Undo);
+    let item = &app.project.midi_items()[0];
+    assert_eq!(item.notes()[0].tick(), 170);
+    assert_eq!(
+        item.controllers(),
+        [
+            selected_controller,
+            colliding_unselected_controller,
+            untouched_controller,
+        ]
+    );
+    assert_eq!(
+        item.pitch_bends(),
+        [selected_pitch_bend, colliding_unselected_pitch_bend]
+    );
+}
+
+#[test]
+fn midi_quantize_scope_options_follow_reaper_menu_order() {
+    assert_eq!(
+        MidiQuantizeScope::OPTIONS,
+        [
+            MidiQuantizeScope::AllNotes,
+            MidiQuantizeScope::SelectedNotes,
+            MidiQuantizeScope::AllEvents,
+            MidiQuantizeScope::SelectedEvents,
+        ]
+    );
+    assert_eq!(
+        MidiQuantizeScope::SelectedEvents.to_string(),
+        "Selected events"
+    );
+}
+
+#[test]
 fn midi_editor_quantize_grid_conversion_matches_every_musical_division() {
     let mut project = Project::new();
     project

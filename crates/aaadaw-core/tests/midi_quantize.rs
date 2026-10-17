@@ -905,3 +905,165 @@ fn midi_quantize_all_events_matches_reaper_and_undoes_as_one_edit() {
     assert_eq!(project.midi_items()[0].pitch_bends().len(), 1);
     assert_eq!(project.midi_items()[0].pitch_bends()[0].value, 8_192);
 }
+
+#[test]
+fn midi_quantize_selected_events_only_changes_the_selected_note_cc_and_pitch_bend() {
+    let mut project = Project::new();
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Piano".to_owned(),
+        })
+        .expect("test track should be created");
+    let track_id = project.tracks()[0].id();
+    project
+        .apply(DawAction::InsertMidiItem {
+            track_id,
+            start_tick: 0,
+            length_ticks: 4_000,
+        })
+        .expect("test MIDI item should be inserted");
+    let item_id = project.midi_items()[0].id();
+    project
+        .apply(DawAction::AddMidiNotes {
+            item_id,
+            notes: vec![
+                MidiNoteData {
+                    channel: 0,
+                    pitch: 60,
+                    tick: 170,
+                    duration: 80,
+                    velocity: 96,
+                },
+                MidiNoteData {
+                    channel: 0,
+                    pitch: 62,
+                    tick: 350,
+                    duration: 80,
+                    velocity: 96,
+                },
+                MidiNoteData {
+                    channel: 0,
+                    pitch: 64,
+                    tick: 550,
+                    duration: 80,
+                    velocity: 96,
+                },
+            ],
+        })
+        .expect("test notes should be inserted");
+    let selected_note_id = project.midi_items()[0].notes()[0].id();
+    let selected_controller = MidiControllerData {
+        controller: 1,
+        channel: 0,
+        tick: 475,
+        value: 64,
+    };
+    let colliding_unselected_controller = MidiControllerData {
+        tick: 480,
+        value: 65,
+        ..selected_controller
+    };
+    let untouched_controller = MidiControllerData {
+        controller: 7,
+        channel: 1,
+        tick: 730,
+        value: 96,
+    };
+    project
+        .apply(DawAction::SetMidiControllers {
+            item_id,
+            controllers: vec![
+                selected_controller,
+                colliding_unselected_controller,
+                untouched_controller,
+            ],
+        })
+        .expect("test controllers should be inserted");
+    let selected_pitch_bend = MidiPitchBendData {
+        channel: 0,
+        tick: 835,
+        value: 8_000,
+    };
+    let colliding_unselected_pitch_bend = MidiPitchBendData {
+        tick: 870,
+        value: 8_192,
+        ..selected_pitch_bend
+    };
+    project
+        .apply(DawAction::SetMidiPitchBends {
+            item_id,
+            pitch_bends: vec![selected_pitch_bend, colliding_unselected_pitch_bend],
+        })
+        .expect("test pitch bends should be inserted");
+    let before_notes = project.midi_items()[0]
+        .notes()
+        .iter()
+        .map(|note| note.tick())
+        .collect::<Vec<_>>();
+
+    project
+        .apply(DawAction::QuantizeSelectedMidiEventsWithOperation {
+            item_id,
+            note_ids: vec![selected_note_id],
+            controllers: vec![selected_controller],
+            pitch_bends: vec![selected_pitch_bend],
+            grid: GridFraction::new(1, 32).expect("1/32 is a valid grid"),
+            strength: 1.0,
+            operation: MidiNoteQuantizeOperation::Position,
+            swing_amount_percent: 50,
+            fix_overlaps: false,
+        })
+        .expect("selected MIDI events should quantize");
+
+    let item = &project.midi_items()[0];
+    assert_eq!(
+        item.notes()
+            .iter()
+            .map(|note| note.tick())
+            .collect::<Vec<_>>(),
+        [150, before_notes[1], before_notes[2]]
+    );
+    assert_eq!(
+        item.controllers(),
+        [
+            MidiControllerData {
+                tick: 480,
+                ..selected_controller
+            },
+            untouched_controller,
+        ]
+    );
+    assert_eq!(
+        item.pitch_bends(),
+        [MidiPitchBendData {
+            tick: 870,
+            ..selected_pitch_bend
+        }]
+    );
+
+    assert!(project.undo().expect("selected quantize should undo"));
+    let item = &project.midi_items()[0];
+    assert_eq!(
+        item.notes()
+            .iter()
+            .map(|note| note.tick())
+            .collect::<Vec<_>>(),
+        before_notes
+    );
+    assert_eq!(
+        item.controllers(),
+        [
+            selected_controller,
+            colliding_unselected_controller,
+            untouched_controller,
+        ]
+    );
+    assert_eq!(
+        item.pitch_bends(),
+        [selected_pitch_bend, colliding_unselected_pitch_bend]
+    );
+    assert!(project.redo().expect("selected quantize should redo"));
+    assert_eq!(project.midi_items()[0].controllers()[0].tick, 480);
+    assert_eq!(project.midi_items()[0].pitch_bends()[0].tick, 870);
+}

@@ -332,6 +332,122 @@ fn quantized_midi_event_tick(
     midi_source_tick_at_project_tick(item, quantized_absolute).ok_or(ActionError::InvalidMidiNote)
 }
 
+#[allow(clippy::too_many_arguments)]
+fn quantize_midi_events(
+    item: &MidiItem,
+    selected_note_ids: Option<&HashSet<NoteId>>,
+    selected_controllers: Option<&HashSet<MidiControllerData>>,
+    selected_pitch_bends: Option<&HashSet<MidiPitchBendData>>,
+    item_id: ItemId,
+    grid: crate::GridFraction,
+    strength: f32,
+    operation: MidiNoteQuantizeOperation,
+    swing_amount_percent: i16,
+    fix_overlaps: bool,
+    ppq: u32,
+) -> Result<ProjectEvent, ActionError> {
+    let note_changes = quantized_midi_note_changes(
+        item,
+        selected_note_ids,
+        MidiQuantizeSettings {
+            grid,
+            strength,
+            ppq,
+            operation,
+            swing_amount_percent,
+            fix_overlaps,
+        },
+    )?;
+    let mut events = Vec::with_capacity(3);
+    if !note_changes.is_empty() {
+        events.push(ProjectEvent::MidiNotesQuantized {
+            item_id,
+            changes: note_changes,
+        });
+    }
+    if midi_quantize_includes_note_position(operation) {
+        let grid_ticks = grid
+            .ticks(ppq)
+            .map_err(|_| ActionError::InvalidQuantizeGrid)?;
+        let mut controllers = item.controllers.as_ref().clone();
+        for controller in &mut controllers {
+            if selected_controllers.is_none_or(|selected| selected.contains(controller)) {
+                controller.tick = quantized_midi_event_tick(
+                    item,
+                    controller.tick,
+                    grid_ticks,
+                    strength,
+                    swing_amount_percent,
+                )?;
+            }
+        }
+        if let Some(selected) = selected_controllers {
+            coalesce_selected_midi_controllers_at_same_tick(
+                &mut controllers,
+                item.controllers.as_ref(),
+                selected,
+            );
+        } else {
+            // Keep the later original event when all events share a destination tick.
+            coalesce_midi_controllers_at_same_tick(&mut controllers);
+        }
+        if !valid_midi_controllers(&controllers) {
+            return Err(ActionError::InvalidMidiController);
+        }
+        if controllers.as_slice() != item.controllers.as_ref() {
+            events.push(ProjectEvent::MidiControllersChanged {
+                item_id,
+                before: item.controllers.as_ref().clone(),
+                after: controllers,
+            });
+        }
+
+        let mut pitch_bends = item.pitch_bends.as_ref().clone();
+        for bend in &mut pitch_bends {
+            if selected_pitch_bends.is_none_or(|selected| selected.contains(bend)) {
+                bend.tick = quantized_midi_event_tick(
+                    item,
+                    bend.tick,
+                    grid_ticks,
+                    strength,
+                    swing_amount_percent,
+                )?;
+            }
+        }
+        if let Some(selected) = selected_pitch_bends {
+            coalesce_selected_midi_pitch_bends_at_same_tick(
+                &mut pitch_bends,
+                item.pitch_bends.as_ref(),
+                selected,
+            );
+        } else {
+            coalesce_midi_pitch_bends_at_same_tick(&mut pitch_bends);
+        }
+        if !valid_midi_pitch_bends(&pitch_bends) {
+            return Err(ActionError::InvalidMidiPitchBend);
+        }
+        if pitch_bends.as_slice() != item.pitch_bends.as_ref() {
+            events.push(ProjectEvent::MidiPitchBendsChanged {
+                item_id,
+                before: item.pitch_bends.as_ref().clone(),
+                after: pitch_bends,
+            });
+        }
+    }
+
+    Ok(if events.is_empty() {
+        ProjectEvent::MidiNotesQuantized {
+            item_id,
+            changes: Vec::new(),
+        }
+    } else {
+        ProjectEvent::Transaction {
+            tx_id: item_id.value(),
+            events,
+        }
+    })
+}
+
 fn valid_audio_source_offset(
     source_offset_samples: i64,
     loop_source: bool,
@@ -4898,86 +5014,52 @@ impl Project {
                     .iter()
                     .find(|item| item.id == item_id)
                     .ok_or(ActionError::MidiItemNotFound { item_id })?;
-                let ppq = state.tempo_map.settings().ppq();
-                let note_changes = quantized_midi_note_changes(
+                quantize_midi_events(
                     item,
                     None,
-                    MidiQuantizeSettings {
-                        grid,
-                        strength,
-                        ppq,
-                        operation,
-                        swing_amount_percent,
-                        fix_overlaps,
-                    },
-                )?;
-                let mut events = Vec::with_capacity(3);
-                if !note_changes.is_empty() {
-                    events.push(ProjectEvent::MidiNotesQuantized {
-                        item_id,
-                        changes: note_changes,
-                    });
-                }
-                if midi_quantize_includes_note_position(operation) {
-                    let grid_ticks = grid
-                        .ticks(ppq)
-                        .map_err(|_| ActionError::InvalidQuantizeGrid)?;
-                    let mut controllers = item.controllers.as_ref().clone();
-                    for controller in &mut controllers {
-                        controller.tick = quantized_midi_event_tick(
-                            item,
-                            controller.tick,
-                            grid_ticks,
-                            strength,
-                            swing_amount_percent,
-                        )?;
-                    }
-                    // The source list is tick-ordered; replacing a destination key keeps
-                    // REAPER's later-original-event winner when quantized positions collide.
-                    coalesce_midi_controllers_at_same_tick(&mut controllers);
-                    if !valid_midi_controllers(&controllers) {
-                        return Err(ActionError::InvalidMidiController);
-                    }
-                    if controllers.as_slice() != item.controllers.as_ref() {
-                        events.push(ProjectEvent::MidiControllersChanged {
-                            item_id,
-                            before: item.controllers.as_ref().clone(),
-                            after: controllers,
-                        });
-                    }
-                    let mut pitch_bends = item.pitch_bends.as_ref().clone();
-                    for bend in &mut pitch_bends {
-                        bend.tick = quantized_midi_event_tick(
-                            item,
-                            bend.tick,
-                            grid_ticks,
-                            strength,
-                            swing_amount_percent,
-                        )?;
-                    }
-                    coalesce_midi_pitch_bends_at_same_tick(&mut pitch_bends);
-                    if !valid_midi_pitch_bends(&pitch_bends) {
-                        return Err(ActionError::InvalidMidiPitchBend);
-                    }
-                    if pitch_bends.as_slice() != item.pitch_bends.as_ref() {
-                        events.push(ProjectEvent::MidiPitchBendsChanged {
-                            item_id,
-                            before: item.pitch_bends.as_ref().clone(),
-                            after: pitch_bends,
-                        });
-                    }
-                }
-                if events.is_empty() {
-                    ProjectEvent::MidiNotesQuantized {
-                        item_id,
-                        changes: Vec::new(),
-                    }
-                } else {
-                    ProjectEvent::Transaction {
-                        tx_id: item_id.value(),
-                        events,
-                    }
-                }
+                    None,
+                    None,
+                    item_id,
+                    grid,
+                    strength,
+                    operation,
+                    swing_amount_percent,
+                    fix_overlaps,
+                    state.tempo_map.settings().ppq(),
+                )?
+            }
+            DawAction::QuantizeSelectedMidiEventsWithOperation {
+                item_id,
+                note_ids,
+                controllers,
+                pitch_bends,
+                grid,
+                strength,
+                operation,
+                swing_amount_percent,
+                fix_overlaps,
+            } => {
+                let item = state
+                    .midi_items
+                    .iter()
+                    .find(|item| item.id == item_id)
+                    .ok_or(ActionError::MidiItemNotFound { item_id })?;
+                let selected_notes = note_ids.into_iter().collect::<HashSet<_>>();
+                let selected_controllers = controllers.into_iter().collect::<HashSet<_>>();
+                let selected_pitch_bends = pitch_bends.into_iter().collect::<HashSet<_>>();
+                quantize_midi_events(
+                    item,
+                    Some(&selected_notes),
+                    Some(&selected_controllers),
+                    Some(&selected_pitch_bends),
+                    item_id,
+                    grid,
+                    strength,
+                    operation,
+                    swing_amount_percent,
+                    fix_overlaps,
+                    state.tempo_map.settings().ppq(),
+                )?
             }
             DawAction::DeleteTrack { track_id } => {
                 let index = state
@@ -6088,7 +6170,8 @@ fn source_track_for_action(state: &ProjectState, action: &DawAction) -> Option<T
         | DawAction::QuantizeMidiNotes { item_id, .. }
         | DawAction::QuantizeMidiNotesAndEnds { item_id, .. }
         | DawAction::QuantizeMidiNotesWithOperation { item_id, .. }
-        | DawAction::QuantizeMidiEventsWithOperation { item_id, .. } => state
+        | DawAction::QuantizeMidiEventsWithOperation { item_id, .. }
+        | DawAction::QuantizeSelectedMidiEventsWithOperation { item_id, .. } => state
             .midi_items
             .iter()
             .find(|item| item.id == *item_id)
@@ -6121,6 +6204,33 @@ fn coalesce_midi_controllers_at_same_tick(controllers: &mut Vec<MidiControllerDa
         );
     }
     controllers.extend(latest_by_position.into_values());
+    controllers.sort_unstable_by_key(|controller| {
+        (controller.tick, controller.channel, controller.controller)
+    });
+}
+
+fn coalesce_selected_midi_controllers_at_same_tick(
+    controllers: &mut Vec<MidiControllerData>,
+    original: &[MidiControllerData],
+    selected: &HashSet<MidiControllerData>,
+) {
+    let mut event_by_position = HashMap::with_capacity(controllers.len());
+    for (index, controller) in controllers.drain(..).enumerate() {
+        let was_selected = selected.contains(&original[index]);
+        let original_tick = original[index].tick;
+        let position = (controller.channel, controller.controller, controller.tick);
+        let replace = event_by_position.get(&position).is_none_or(
+            |(_, current_selected, current_original_tick): &(MidiControllerData, bool, u64)| {
+                (was_selected && !current_selected)
+                    || (was_selected == *current_selected
+                        && original_tick >= *current_original_tick)
+            },
+        );
+        if replace {
+            event_by_position.insert(position, (controller, was_selected, original_tick));
+        }
+    }
+    controllers.extend(event_by_position.into_values().map(|(event, _, _)| event));
     controllers.sort_unstable_by_key(|controller| {
         (controller.tick, controller.channel, controller.controller)
     });
@@ -6173,6 +6283,31 @@ fn coalesce_midi_pitch_bends_at_same_tick(pitch_bends: &mut Vec<MidiPitchBendDat
         latest_by_position.insert((bend.channel, bend.tick), bend);
     }
     pitch_bends.extend(latest_by_position.into_values());
+    pitch_bends.sort_unstable_by_key(|bend| (bend.tick, bend.channel));
+}
+
+fn coalesce_selected_midi_pitch_bends_at_same_tick(
+    pitch_bends: &mut Vec<MidiPitchBendData>,
+    original: &[MidiPitchBendData],
+    selected: &HashSet<MidiPitchBendData>,
+) {
+    let mut event_by_position = HashMap::with_capacity(pitch_bends.len());
+    for (index, bend) in pitch_bends.drain(..).enumerate() {
+        let was_selected = selected.contains(&original[index]);
+        let original_tick = original[index].tick;
+        let position = (bend.channel, bend.tick);
+        let replace = event_by_position.get(&position).is_none_or(
+            |(_, current_selected, current_original_tick): &(MidiPitchBendData, bool, u64)| {
+                (was_selected && !current_selected)
+                    || (was_selected == *current_selected
+                        && original_tick >= *current_original_tick)
+            },
+        );
+        if replace {
+            event_by_position.insert(position, (bend, was_selected, original_tick));
+        }
+    }
+    pitch_bends.extend(event_by_position.into_values().map(|(event, _, _)| event));
     pitch_bends.sort_unstable_by_key(|bend| (bend.tick, bend.channel));
 }
 

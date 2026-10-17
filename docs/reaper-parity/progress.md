@@ -2126,3 +2126,12 @@ REAPER 7.82 / Default 7 以 1/32、PPQ 960、50% Swing 实测所有五种音符�
 Core 将 Swing 百分比纳入量化设置，覆盖五种操作、正/负 Swing、strength、All events 与 Undo；App 将当前活动 Swing 网格传入 note/event action。新增回归直接比较原厂 tick。当前源码以 nightly Rust 1.101.0 + Cranelift 构建，Build ID `da8e46fd6e54e648d6039ce219883c4e9934c1c0`，SHA-256 `295e44501858a44c488deb9482c7b97dfba7024bfb3a3e2331a094d69e67bace`；在 Xvfb :260 实际打开 MIDI 项目、启用 Swing 50%、选择 All notes → Position 并应用。Swing 设置、Quantize 对话框和应用后状态见 [AAADAW 实窗 fixture](../verification/reaper-parity/fixtures/midi-quantize-swing-aaadaw.tsv)。workspace Nextest **1423 tests / 74 binaries，0 skipped**，严格 workspace all-target Clippy (`-D warnings`)、fmt、diff、106 ID/15 列 parity matrix 与 22 张量化截图哈希通过。
 
 `MIDI-QUANTIZE-DIALOG-001`、UI-019 与 P7 仍为 `in_progress`：Selected events、Program Change/channel pressure/SysEx 等未建模类型、selected-scope 关闭 Fix overlaps 的复杂 note-length 链，以及已记忆对话框设置仍待覆盖。
+
+
+### 2026-10-17 MIDI Quantize Selected events 范围
+
+Linux REAPER 7.82 / Default 7 实测 Selected events：只量化已选音符、CC 与 Pitch Bend；选中 CC/Pitch Bend 与未选事件落到同一 tick 时，原厂保留选中事件，即便未选事件原始 tick 更晚，且量化后保留选择标记。原厂逐事件前后读数、对话框截图和 ReaScript probe 已归档。
+
+AAADAW 新增 Selected events 范围及 MIDI CC/Pitch Bend 点击选择、Ctrl/Command-click 增减选择和琥珀色选中态；scope 顺序对齐原厂。实机发现对话框外展开的下拉项会被模态遮罩误收为取消，已拆分遮罩与对话框叠层。最新 Cranelift Build ID `6dde40f577b548aa1b9aa2bfc6d37588b0e19f94`、SHA-256 `9377421daf09fdbc47cc18134d7f0328106c14a2a580873f2e4e909de97b113e` 下，Xvfb 实窗完成离网格 CC1 点量化：所选点吸附并保留选择，未选 CC 点不移动；对话框、编辑器和应用结果截图哈希见 [fixture manifest](../verification/reaper-parity/fixtures/midi-quantize-dialog-ui.tsv)。
+
+Workspace Nextest **1426 tests / 74 binaries，0 skipped**（`cargo xtest --no-default-features`，Xorg dummy display :286）；Core MIDI quantize 9/9、App Quantize 11/11、严格 Core/App all-target Clippy (`-D warnings`)、fmt、diff 检查、106 行/15 列唯一 ID parity matrix 和本切片截图 SHA-256 检查全部通过。Selected events 已实现，但 MIDI Program Change/channel pressure/SysEx 等未建模事件、Fix overlaps 关闭时更长/混合选择的同音高重叠链，以及已记忆对话框设置仍未覆盖；`MIDI-QUANTIZE-DIALOG-001`、UI-019 与 P7 保持 `in_progress`。

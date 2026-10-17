@@ -17,8 +17,8 @@ use aaadaw_app::{
 use aaadaw_core::ProjectSnapshot;
 use aaadaw_core::{
     AudioItem, DawAction, FxParameterChange, GridFraction, ItemId, MarkerId, MeterPointSnapshot,
-    MidiItem, MidiItemPosition, Project, RazorEditArea, RegionId, TempoCurve, TimeSignature,
-    TrackId,
+    MidiControllerData, MidiItem, MidiItemPosition, MidiPitchBendData, Project, RazorEditArea,
+    RegionId, TempoCurve, TimeSignature, TrackId,
 };
 #[cfg(feature = "audio-device")]
 use aaadaw_engine::{
@@ -469,6 +469,8 @@ struct App {
     midi_editor_item_id: Option<ItemId>,
     midi_editor_feedback: Option<String>,
     midi_editor_selected_notes: HashSet<aaadaw_core::NoteId>,
+    midi_editor_selected_controllers: HashSet<MidiControllerData>,
+    midi_editor_selected_pitch_bends: HashSet<MidiPitchBendData>,
     midi_quantize_dialog: Option<MidiQuantizeDialogState>,
     midi_editor_lane: MidiEditorLane,
     midi_editor_tool: MidiEditorTool,
@@ -1479,6 +1481,58 @@ impl App {
             .retain(|note_id| visible.contains(note_id));
     }
 
+    fn remap_selected_controller_events(
+        selected: &HashSet<MidiControllerData>,
+        after: &[MidiControllerData],
+    ) -> HashSet<MidiControllerData> {
+        let mut remaining = after.to_vec();
+        let mut remapped = HashSet::new();
+        for event in selected {
+            if remaining.contains(event) {
+                remapped.insert(*event);
+                remaining.retain(|candidate| candidate != event);
+            } else if let Some((index, candidate)) = remaining
+                .iter()
+                .enumerate()
+                .filter(|(_, candidate)| {
+                    candidate.channel == event.channel
+                        && candidate.controller == event.controller
+                        && candidate.value == event.value
+                })
+                .min_by_key(|(_, candidate)| candidate.tick.abs_diff(event.tick))
+            {
+                remapped.insert(*candidate);
+                remaining.remove(index);
+            }
+        }
+        remapped
+    }
+
+    fn remap_selected_pitch_bend_events(
+        selected: &HashSet<MidiPitchBendData>,
+        after: &[MidiPitchBendData],
+    ) -> HashSet<MidiPitchBendData> {
+        let mut remaining = after.to_vec();
+        let mut remapped = HashSet::new();
+        for event in selected {
+            if remaining.contains(event) {
+                remapped.insert(*event);
+                remaining.retain(|candidate| candidate != event);
+            } else if let Some((index, candidate)) = remaining
+                .iter()
+                .enumerate()
+                .filter(|(_, candidate)| {
+                    candidate.channel == event.channel && candidate.value == event.value
+                })
+                .min_by_key(|(_, candidate)| candidate.tick.abs_diff(event.tick))
+            {
+                remapped.insert(*candidate);
+                remaining.remove(index);
+            }
+        }
+        remapped
+    }
+
     fn is_mobile_main_window(&self) -> bool {
         self.shell_profile == ShellProfile::Touch
     }
@@ -1502,6 +1556,8 @@ impl App {
             self.midi_editor_item_id = None;
             self.midi_editor_feedback = None;
             self.midi_editor_selected_notes.clear();
+            self.midi_editor_selected_controllers.clear();
+            self.midi_editor_selected_pitch_bends.clear();
             self.midi_editor_edit_cursor_tick = None;
         }
         self.cancel_shortcut_capture();
@@ -1902,10 +1958,18 @@ impl App {
             MidiQuantizeScope::SelectedNotes => {
                 self.midi_editor_selected_notes.iter().copied().collect()
             }
+            MidiQuantizeScope::SelectedEvents => {
+                self.midi_editor_selected_notes.iter().copied().collect()
+            }
             MidiQuantizeScope::AllNotes => item.notes().iter().map(|note| note.id()).collect(),
             MidiQuantizeScope::AllEvents => Vec::new(),
         };
-        if dialog.scope != MidiQuantizeScope::AllEvents && note_ids.is_empty() {
+        if dialog.scope != MidiQuantizeScope::AllEvents
+            && note_ids.is_empty()
+            && (dialog.scope != MidiQuantizeScope::SelectedEvents
+                || (self.midi_editor_selected_controllers.is_empty()
+                    && self.midi_editor_selected_pitch_bends.is_empty()))
+        {
             return;
         }
         let grid = midi_editor_grid_fraction(self.timeline.midi_editor_snap_grid);
@@ -1941,6 +2005,27 @@ impl App {
                 swing_amount_percent: self.timeline.active_snap_swing_amount_percent(),
                 fix_overlaps: dialog.fix_overlaps,
             },
+            MidiQuantizeScope::SelectedEvents => {
+                DawAction::QuantizeSelectedMidiEventsWithOperation {
+                    item_id: dialog.item_id,
+                    note_ids,
+                    controllers: self
+                        .midi_editor_selected_controllers
+                        .iter()
+                        .copied()
+                        .collect(),
+                    pitch_bends: self
+                        .midi_editor_selected_pitch_bends
+                        .iter()
+                        .copied()
+                        .collect(),
+                    grid,
+                    strength,
+                    operation,
+                    swing_amount_percent: self.timeline.active_snap_swing_amount_percent(),
+                    fix_overlaps: dialog.fix_overlaps,
+                }
+            }
             MidiQuantizeScope::AllNotes | MidiQuantizeScope::SelectedNotes => {
                 DawAction::QuantizeMidiNotesWithOperation {
                     item_id: dialog.item_id,
@@ -1953,12 +2038,30 @@ impl App {
                 }
             }
         };
-        let label = if dialog.scope == MidiQuantizeScope::AllEvents {
+        let label = if matches!(
+            dialog.scope,
+            MidiQuantizeScope::AllEvents | MidiQuantizeScope::SelectedEvents
+        ) {
             "MIDI notes and events quantized to editor grid"
         } else {
             label
         };
+        let selected_controllers = self.midi_editor_selected_controllers.clone();
+        let selected_pitch_bends = self.midi_editor_selected_pitch_bends.clone();
+        let previous_revision = self.revision;
         self.apply_action(action, label);
+        if self.revision != previous_revision
+            && let Some(item) = self
+                .project
+                .midi_items()
+                .iter()
+                .find(|item| item.id() == dialog.item_id)
+        {
+            self.midi_editor_selected_controllers =
+                Self::remap_selected_controller_events(&selected_controllers, item.controllers());
+            self.midi_editor_selected_pitch_bends =
+                Self::remap_selected_pitch_bend_events(&selected_pitch_bends, item.pitch_bends());
+        }
     }
 
     fn update(&mut self, message: Message) -> Task<Message> {
@@ -3344,6 +3447,8 @@ impl App {
                     self.midi_editor_item_id = None;
                     self.midi_editor_feedback = None;
                     self.midi_editor_selected_notes.clear();
+                    self.midi_editor_selected_controllers.clear();
+                    self.midi_editor_selected_pitch_bends.clear();
                 } else if self.main_window_id == Some(window_id) {
                     #[cfg(target_os = "android")]
                     tracing::warn!(?window_id, "Android main window closed");
@@ -3376,6 +3481,8 @@ impl App {
                     self.midi_editor_item_id = None;
                     self.midi_editor_feedback = None;
                     self.midi_editor_selected_notes.clear();
+                    self.midi_editor_selected_controllers.clear();
+                    self.midi_editor_selected_pitch_bends.clear();
                     self.midi_editor_edit_cursor_tick = None;
                     if self.main_window_id == Some(window_id)
                         && self.mobile_panel == MobilePanel::MidiEditor
@@ -3445,12 +3552,43 @@ impl App {
             }
             Message::SelectMidiNotes(note_ids) => {
                 self.midi_editor_feedback = None;
+                if !self.keyboard_modifiers.command() && !self.keyboard_modifiers.control() {
+                    self.midi_editor_selected_controllers.clear();
+                    self.midi_editor_selected_pitch_bends.clear();
+                }
                 let visible_note_ids = self.visible_midi_note_ids();
                 self.midi_editor_selected_notes = note_ids
                     .into_iter()
                     .filter(|note_id| visible_note_ids.contains(note_id))
                     .collect();
             }
+            Message::SelectMidiControllerEvent(item_id, event, additive)
+                if self.midi_editor_item_id == Some(item_id) =>
+            {
+                self.midi_editor_feedback = None;
+                if !additive {
+                    self.midi_editor_selected_notes.clear();
+                    self.midi_editor_selected_controllers.clear();
+                    self.midi_editor_selected_pitch_bends.clear();
+                    self.midi_editor_selected_controllers.insert(event);
+                } else if !self.midi_editor_selected_controllers.remove(&event) {
+                    self.midi_editor_selected_controllers.insert(event);
+                }
+            }
+            Message::SelectMidiPitchBendEvent(item_id, event, additive)
+                if self.midi_editor_item_id == Some(item_id) =>
+            {
+                self.midi_editor_feedback = None;
+                if !additive {
+                    self.midi_editor_selected_notes.clear();
+                    self.midi_editor_selected_controllers.clear();
+                    self.midi_editor_selected_pitch_bends.clear();
+                    self.midi_editor_selected_pitch_bends.insert(event);
+                } else if !self.midi_editor_selected_pitch_bends.remove(&event) {
+                    self.midi_editor_selected_pitch_bends.insert(event);
+                }
+            }
+            Message::SelectMidiControllerEvent(..) | Message::SelectMidiPitchBendEvent(..) => {}
             Message::CopyMidiNotes(item_id, note_ids) => {
                 if let Some(item) = self
                     .project
@@ -3692,6 +3830,23 @@ impl App {
             }
             Message::SetMidiControllers(item_id, controllers) => {
                 self.midi_editor_feedback = None;
+                let before = self
+                    .project
+                    .midi_items()
+                    .iter()
+                    .find(|item| item.id() == item_id)
+                    .map(|item| item.controllers().to_vec())
+                    .unwrap_or_default();
+                let mut selected = self.midi_editor_selected_controllers.clone();
+                if before.len() == controllers.len() {
+                    for (old, new) in before.iter().zip(&controllers) {
+                        if old != new && selected.remove(old) {
+                            selected.insert(*new);
+                        }
+                    }
+                }
+                selected.retain(|event| controllers.contains(event));
+                let previous_revision = self.revision;
                 self.apply_action(
                     DawAction::SetMidiControllers {
                         item_id,
@@ -3699,9 +3854,29 @@ impl App {
                     },
                     "MIDI controller lane edited",
                 );
+                if self.revision != previous_revision && self.midi_editor_item_id == Some(item_id) {
+                    self.midi_editor_selected_controllers = selected;
+                }
             }
             Message::SetMidiPitchBends(item_id, pitch_bends) => {
                 self.midi_editor_feedback = None;
+                let before = self
+                    .project
+                    .midi_items()
+                    .iter()
+                    .find(|item| item.id() == item_id)
+                    .map(|item| item.pitch_bends().to_vec())
+                    .unwrap_or_default();
+                let mut selected = self.midi_editor_selected_pitch_bends.clone();
+                if before.len() == pitch_bends.len() {
+                    for (old, new) in before.iter().zip(&pitch_bends) {
+                        if old != new && selected.remove(old) {
+                            selected.insert(*new);
+                        }
+                    }
+                }
+                selected.retain(|event| pitch_bends.contains(event));
+                let previous_revision = self.revision;
                 self.apply_action(
                     DawAction::SetMidiPitchBends {
                         item_id,
@@ -3709,6 +3884,9 @@ impl App {
                     },
                     "MIDI pitch-bend lane edited",
                 );
+                if self.revision != previous_revision && self.midi_editor_item_id == Some(item_id) {
+                    self.midi_editor_selected_pitch_bends = selected;
+                }
             }
             Message::PianoRollPan(beats) => {
                 let delta = i128::from(beats) * i128::from(self.project.settings().ppq());
@@ -7431,6 +7609,8 @@ impl App {
                 .unwrap_or(iced::Size::new(420.0, 640.0));
             self.midi_editor_feedback = None;
             self.midi_editor_selected_notes.clear();
+            self.midi_editor_selected_controllers.clear();
+            self.midi_editor_selected_pitch_bends.clear();
             if item_changed {
                 self.fit_midi_editor_to_item(item_id);
             }
@@ -7450,6 +7630,8 @@ impl App {
             }
             self.midi_editor_feedback = None;
             self.midi_editor_selected_notes.clear();
+            self.midi_editor_selected_controllers.clear();
+            self.midi_editor_selected_pitch_bends.clear();
             return iced::window::gain_focus(window_id);
         }
         let (window_id, task) = iced::window::open(iced::window::Settings {
@@ -7462,6 +7644,8 @@ impl App {
         self.midi_editor_item_id = Some(item_id);
         self.midi_editor_feedback = None;
         self.midi_editor_selected_notes.clear();
+        self.midi_editor_selected_controllers.clear();
+        self.midi_editor_selected_pitch_bends.clear();
         self.midi_editor_origin_tick = 0;
         self.midi_editor_edit_cursor_tick = None;
         self.midi_editor_high_pitch = 84;

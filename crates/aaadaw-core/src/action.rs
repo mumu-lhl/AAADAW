@@ -534,6 +534,21 @@ pub enum DawAction {
         /// Shorten notes that overlap the next note with the same channel and pitch.
         fix_overlaps: bool,
     },
+    /// Quantize selected MIDI notes, controller events, and pitch bends as one edit.
+    /// Controller and pitch-bend selections identify the source events by their current data.
+    QuantizeSelectedMidiEventsWithOperation {
+        item_id: ItemId,
+        note_ids: Vec<crate::NoteId>,
+        controllers: Vec<MidiControllerData>,
+        pitch_bends: Vec<crate::MidiPitchBendData>,
+        grid: GridFraction,
+        strength: f32,
+        operation: MidiNoteQuantizeOperation,
+        /// Swing amount of the MIDI editor grid, clamped to -100..=100 percent.
+        swing_amount_percent: i16,
+        /// Shorten notes that overlap the next note with the same channel and pitch.
+        fix_overlaps: bool,
+    },
     /// Delete a track from the project.
     DeleteTrack {
         track_id: TrackId,
