@@ -13,12 +13,48 @@ use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 const MAX_UPSAMPLE_RATIO: f64 = 64.0;
+// Keep Take-rate conversion fractional without introducing floating-point phase drift.  Rates
+// are stored as integer microhertz ticks throughout the decoder worker and resampler.
+const RATE_TICKS_PER_HZ: u64 = 1_000_000;
 const PLAYBACK_SINC_TAPS: usize = 64;
 const RENDER_SINC_TAPS: usize = 192;
 const SINC_PHASES: usize = 1024;
 // Cache short sections to avoid decoder reopen work on every loop; the bound keeps workers small.
 const MAX_CACHED_LOOP_SECTION_BYTES: usize = 1_048_576;
 type WorkerStartupResult = Result<(), (Option<io::ErrorKind>, String)>;
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+struct PreciseSampleRate(u64);
+
+impl PreciseSampleRate {
+    fn from_hz(sample_rate: u32) -> Option<Self> {
+        if sample_rate == 0 {
+            return None;
+        }
+        Some(Self(u64::from(sample_rate) * RATE_TICKS_PER_HZ))
+    }
+
+    fn with_playback_rate(sample_rate: u32, playback_rate: f64) -> Option<Self> {
+        if sample_rate == 0 || !playback_rate.is_finite() || playback_rate <= 0.0 {
+            return None;
+        }
+        let scaled = f64::from(sample_rate) * playback_rate * RATE_TICKS_PER_HZ as f64;
+        if !scaled.is_finite() || scaled < RATE_TICKS_PER_HZ as f64 || scaled > u64::MAX as f64 {
+            return None;
+        }
+        Some(Self(scaled.round() as u64))
+    }
+
+    fn as_hz(self) -> f64 {
+        self.0 as f64 / RATE_TICKS_PER_HZ as f64
+    }
+
+    fn rounded_hz(self) -> Option<u32> {
+        let whole_hz = self.0 / RATE_TICKS_PER_HZ;
+        let rounded_hz = whole_hz + u64::from(self.0 % RATE_TICKS_PER_HZ >= RATE_TICKS_PER_HZ / 2);
+        u32::try_from(rounded_hz).ok()
+    }
+}
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum ResamplingQuality {
@@ -979,8 +1015,8 @@ struct WorkerConfig {
 
 #[derive(Clone, Copy)]
 struct ResampledLoopPrefixConfig {
-    output_sample_rate: u32,
-    source_sample_rate: u32,
+    output_sample_rate: PreciseSampleRate,
+    source_sample_rate: PreciseSampleRate,
     playback_rate: f64,
     source_channels: usize,
     quality: ResamplingQuality,
@@ -1128,6 +1164,8 @@ fn run_worker<P: FeedProducer>(
         source_loop_section,
         timeline_loop_range,
     } = config;
+    let output_sample_rate = PreciseSampleRate::from_hz(output_sample_rate)
+        .ok_or(MediaError::InvalidOutputSampleRate)?;
     let (negative_source_offset_frames, mut source_offset_remaining) =
         if source_offset_remaining < 0 {
             (source_offset_remaining.unsigned_abs(), 0)
@@ -1362,7 +1400,7 @@ fn run_worker<P: FeedProducer>(
     let mut initial_loop_pass = true;
     let mut output_timeline_sample = position.requested_sample();
     let mut resampler = match effective_sample_rate {
-        Some(sample_rate) => match StreamingResampler::<P::Frame>::new_with_quality(
+        Some(sample_rate) => match StreamingResampler::<P::Frame>::new_with_precise_rates(
             sample_rate,
             output_sample_rate,
             quality,
@@ -1519,7 +1557,7 @@ fn run_worker<P: FeedProducer>(
                     }
                     Some(resampler) => resampler,
                     None => {
-                        resampler = Some(StreamingResampler::<P::Frame>::new_with_quality(
+                        resampler = Some(StreamingResampler::<P::Frame>::new_with_precise_rates(
                             chunk_sample_rate,
                             output_sample_rate,
                             quality,
@@ -1688,7 +1726,7 @@ fn run_worker_with_resampled_loop_prefix<P: FeedProducer>(
     } = config;
     let loop_frame_capacity =
         usize::try_from(loop_source_frames).map_err(|_| MediaError::AudioTooLong)?;
-    let mut prefix_resampler = match StreamingResampler::<P::Frame>::new_with_quality(
+    let mut prefix_resampler = match StreamingResampler::<P::Frame>::new_with_precise_rates(
         source_sample_rate,
         output_sample_rate,
         quality,
@@ -1699,7 +1737,7 @@ fn run_worker_with_resampled_loop_prefix<P: FeedProducer>(
             return Err(error);
         }
     };
-    let loop_resampler = match StreamingResampler::<P::Frame>::new_with_quality(
+    let loop_resampler = match StreamingResampler::<P::Frame>::new_with_precise_rates(
         source_sample_rate,
         output_sample_rate,
         quality,
@@ -1804,7 +1842,7 @@ fn run_worker_with_resampled_loop_prefix<P: FeedProducer>(
         &loop_frames,
         usize::try_from(loop_resampler.left_taps).map_err(|_| MediaError::InvalidTimelineLoop)?,
     );
-    let mut loop_resampler = StreamingResampler::new_with_loop_history(
+    let mut loop_resampler = StreamingResampler::new_with_precise_loop_history(
         source_sample_rate,
         output_sample_rate,
         quality,
@@ -1856,7 +1894,7 @@ fn run_worker_with_streamed_resampled_loop_prefix<P: FeedProducer>(
             return Err(error);
         }
     };
-    let mut prefix_resampler = match StreamingResampler::<P::Frame>::new_with_quality(
+    let mut prefix_resampler = match StreamingResampler::<P::Frame>::new_with_precise_rates(
         source_sample_rate,
         output_sample_rate,
         quality,
@@ -1867,7 +1905,7 @@ fn run_worker_with_streamed_resampled_loop_prefix<P: FeedProducer>(
             return Err(error);
         }
     };
-    let loop_resampler = match StreamingResampler::<P::Frame>::new_with_quality(
+    let loop_resampler = match StreamingResampler::<P::Frame>::new_with_precise_rates(
         source_sample_rate,
         output_sample_rate,
         quality,
@@ -1925,7 +1963,7 @@ fn run_worker_with_streamed_resampled_loop_prefix<P: FeedProducer>(
             return Err(error);
         }
     };
-    let mut loop_resampler = match StreamingResampler::new_with_loop_history(
+    let mut loop_resampler = match StreamingResampler::new_with_precise_loop_history(
         source_sample_rate,
         output_sample_rate,
         quality,
@@ -2069,7 +2107,7 @@ fn read_source_frames_at<P: FeedProducer>(
     start_frame: u64,
     frame_count: usize,
     expected_channels: usize,
-    expected_sample_rate: u32,
+    expected_sample_rate: PreciseSampleRate,
     playback_rate: f64,
     cancelled: &AtomicBool,
 ) -> Result<Option<Vec<P::Frame>>, MediaError> {
@@ -2225,8 +2263,8 @@ fn worker_startup_error(error: &MediaError) -> (Option<io::ErrorKind>, String) {
 
 fn resolve_project_loop_source_section(
     section: SourceLoopSection,
-    decoded_sample_rate: Option<u32>,
-    output_sample_rate: u32,
+    decoded_sample_rate: Option<PreciseSampleRate>,
+    output_sample_rate: PreciseSampleRate,
 ) -> Result<SourceLoopSection, MediaError> {
     let Some(mapping) = section.project_mapping else {
         return Ok(section);
@@ -2310,31 +2348,29 @@ fn resolve_project_loop_source_section(
     })
 }
 
-fn scale_frames_rounded(frames: u64, input_rate: u32, output_rate: u32) -> Option<u64> {
+fn scale_frames_rounded(
+    frames: u64,
+    input_rate: PreciseSampleRate,
+    output_rate: PreciseSampleRate,
+) -> Option<u64> {
     u64::try_from(
-        (u128::from(frames) * u128::from(output_rate) + u128::from(input_rate) / 2)
-            / u128::from(input_rate),
+        (u128::from(frames) * u128::from(output_rate.0) + u128::from(input_rate.0) / 2)
+            / u128::from(input_rate.0),
     )
     .ok()
 }
 
-fn scale_sample_rate(sample_rate: u32, playback_rate: f64) -> Option<u32> {
-    if sample_rate == 0 || !playback_rate.is_finite() || playback_rate <= 0.0 {
-        return None;
-    }
-    let scaled = f64::from(sample_rate) * playback_rate;
-    if !scaled.is_finite() || !(1.0..=f64::from(u32::MAX)).contains(&scaled) {
-        return None;
-    }
-    Some(scaled.round() as u32)
+fn scale_sample_rate(sample_rate: u32, playback_rate: f64) -> Option<PreciseSampleRate> {
+    PreciseSampleRate::with_playback_rate(sample_rate, playback_rate)
 }
 
-fn scale_frames_exact(frames: u64, input_rate: u32, output_rate: u32) -> Option<u64> {
-    if input_rate == 0 || output_rate == 0 {
-        return None;
-    }
-    let numerator = u128::from(frames).checked_mul(u128::from(output_rate))?;
-    let input_rate = u128::from(input_rate);
+fn scale_frames_exact(
+    frames: u64,
+    input_rate: PreciseSampleRate,
+    output_rate: PreciseSampleRate,
+) -> Option<u64> {
+    let numerator = u128::from(frames).checked_mul(u128::from(output_rate.0))?;
+    let input_rate = u128::from(input_rate.0);
     if numerator % input_rate != 0 {
         return None;
     }
@@ -2466,8 +2502,8 @@ fn push_worker_output<P: FeedProducer>(
 }
 
 struct StreamingResampler<F> {
-    input_sample_rate: u32,
-    output_sample_rate: u32,
+    input_sample_rate: PreciseSampleRate,
+    output_sample_rate: PreciseSampleRate,
     filter_taps: usize,
     left_taps: i32,
     right_taps: i32,
@@ -2484,16 +2520,24 @@ impl<F: FeedFrame> StreamingResampler<F> {
         output_sample_rate: u32,
         quality: ResamplingQuality,
     ) -> Result<Self, MediaError> {
-        if input_sample_rate == 0 {
-            return Err(MediaError::InvalidDecodedAudioSpec);
-        }
-        if output_sample_rate == 0 {
-            return Err(MediaError::InvalidOutputSampleRate);
-        }
-        if output_sample_rate as f64 / input_sample_rate as f64 > MAX_UPSAMPLE_RATIO {
+        Self::new_with_precise_rates(
+            PreciseSampleRate::from_hz(input_sample_rate)
+                .ok_or(MediaError::InvalidDecodedAudioSpec)?,
+            PreciseSampleRate::from_hz(output_sample_rate)
+                .ok_or(MediaError::InvalidOutputSampleRate)?,
+            quality,
+        )
+    }
+
+    fn new_with_precise_rates(
+        input_sample_rate: PreciseSampleRate,
+        output_sample_rate: PreciseSampleRate,
+        quality: ResamplingQuality,
+    ) -> Result<Self, MediaError> {
+        if output_sample_rate.as_hz() / input_sample_rate.as_hz() > MAX_UPSAMPLE_RATIO {
             return Err(MediaError::ResampleRatioTooLarge {
-                input: input_sample_rate,
-                output: output_sample_rate,
+                input: input_sample_rate.rounded_hz().unwrap_or(u32::MAX),
+                output: output_sample_rate.rounded_hz().unwrap_or(u32::MAX),
             });
         }
         let filter_taps = quality.taps();
@@ -2518,13 +2562,14 @@ impl<F: FeedFrame> StreamingResampler<F> {
         })
     }
 
-    fn new_with_loop_history(
-        input_sample_rate: u32,
-        output_sample_rate: u32,
+    fn new_with_precise_loop_history(
+        input_sample_rate: PreciseSampleRate,
+        output_sample_rate: PreciseSampleRate,
         quality: ResamplingQuality,
         loop_history: &[F],
     ) -> Result<Self, MediaError> {
-        let mut resampler = Self::new_with_quality(input_sample_rate, output_sample_rate, quality)?;
+        let mut resampler =
+            Self::new_with_precise_rates(input_sample_rate, output_sample_rate, quality)?;
         if loop_history.len() != resampler.left_taps as usize {
             return Err(MediaError::InvalidTimelineLoop);
         }
@@ -2534,11 +2579,11 @@ impl<F: FeedFrame> StreamingResampler<F> {
         resampler.pending_start_frame = 0;
         resampler.pending_frames.extend_from_slice(loop_history);
         resampler.next_position_numerator =
-            u128::from(history_frames) * u128::from(output_sample_rate);
+            u128::from(history_frames) * u128::from(output_sample_rate.0);
         Ok(resampler)
     }
 
-    fn input_sample_rate(&self) -> u32 {
+    fn input_sample_rate(&self) -> PreciseSampleRate {
         self.input_sample_rate
     }
 
@@ -2560,7 +2605,7 @@ impl<F: FeedFrame> StreamingResampler<F> {
         if self.input_frames == 0 {
             return output;
         }
-        let denominator = self.output_sample_rate as u128;
+        let denominator = u128::from(self.output_sample_rate.0);
         let input_end = self.input_frames as u128 * denominator;
 
         while self.next_position_numerator < input_end {
@@ -2569,7 +2614,7 @@ impl<F: FeedFrame> StreamingResampler<F> {
                 let sample =
                     self.pending_frames[(center_frame - self.pending_start_frame) as usize];
                 output.push(sample);
-                self.next_position_numerator += self.input_sample_rate as u128;
+                self.next_position_numerator += u128::from(self.input_sample_rate.0);
                 continue;
             }
             let last_required_frame = center_frame.saturating_add(self.right_taps as u64);
@@ -2577,11 +2622,11 @@ impl<F: FeedFrame> StreamingResampler<F> {
                 break;
             }
 
-            let phase_numerator = (self.next_position_numerator % denominator) as u64;
-            let phase_position = phase_numerator * SINC_PHASES as u64;
-            let phase = (phase_position / self.output_sample_rate as u64) as usize;
-            let phase_remainder = phase_position % self.output_sample_rate as u64;
-            let phase_fraction = phase_remainder as f32 / self.output_sample_rate as f32;
+            let phase_numerator = self.next_position_numerator % denominator;
+            let phase_position = phase_numerator * SINC_PHASES as u128;
+            let phase = (phase_position / denominator) as usize;
+            let phase_remainder = phase_position % denominator;
+            let phase_fraction = (phase_remainder as f64 / denominator as f64) as f32;
             let first_coefficients_start = phase * self.filter_taps;
             let second_coefficients_start = (phase + 1) * self.filter_taps;
             let mut frame = F::zero();
@@ -2602,7 +2647,7 @@ impl<F: FeedFrame> StreamingResampler<F> {
                 frame.add_scaled(sample, coefficient);
             }
             output.push(frame);
-            self.next_position_numerator += self.input_sample_rate as u128;
+            self.next_position_numerator += u128::from(self.input_sample_rate.0);
         }
 
         let next_center = (self.next_position_numerator / denominator) as u64;
@@ -2623,11 +2668,12 @@ impl<F: FeedFrame> StreamingResampler<F> {
 }
 
 fn cached_sinc_coefficients(
-    input_sample_rate: u32,
-    output_sample_rate: u32,
+    input_sample_rate: PreciseSampleRate,
+    output_sample_rate: PreciseSampleRate,
     quality: ResamplingQuality,
 ) -> Arc<[f32]> {
-    type CoefficientCache = HashMap<(u32, u32, ResamplingQuality), Weak<[f32]>>;
+    type CoefficientCache =
+        HashMap<(PreciseSampleRate, PreciseSampleRate, ResamplingQuality), Weak<[f32]>>;
     static CACHE: OnceLock<Mutex<CoefficientCache>> = OnceLock::new();
     let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
     let mut cache = cache
@@ -2651,11 +2697,11 @@ fn cached_sinc_coefficients(
 }
 
 fn build_sinc_coefficients(
-    input_sample_rate: u32,
-    output_sample_rate: u32,
+    input_sample_rate: PreciseSampleRate,
+    output_sample_rate: PreciseSampleRate,
     quality: ResamplingQuality,
 ) -> Vec<f32> {
-    let cutoff = (output_sample_rate as f64 / input_sample_rate as f64).min(1.0);
+    let cutoff = (output_sample_rate.as_hz() / input_sample_rate.as_hz()).min(1.0);
     let filter_taps = quality.taps();
     let left_taps = (filter_taps / 2) as i32 - 1;
     let mut table = Vec::with_capacity((SINC_PHASES + 1) * filter_taps);
@@ -2730,12 +2776,17 @@ impl DecodedAudioChunk {
 mod tests {
     use super::{
         AudioStreamPosition, DecoderInput, FeedProducer, MAX_CACHED_LOOP_SECTION_BYTES,
-        ResamplingQuality, SourceLoopPrefix, SourceLoopSection, StreamingResampler, WorkerConfig,
-        WorkerStartupResult, cyclic_loop_history, run_worker,
+        PreciseSampleRate, ResamplingQuality, SourceLoopPrefix, SourceLoopSection,
+        StreamingResampler, WorkerConfig, WorkerStartupResult, cyclic_loop_history, run_worker,
+        scale_sample_rate,
     };
     use aaadaw_engine::TransportLoopRange;
     use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
     use std::sync::{Arc, Mutex};
+
+    fn rate(sample_rate: u32) -> PreciseSampleRate {
+        PreciseSampleRate::from_hz(sample_rate).expect("test sample rate should be positive")
+    }
 
     struct CollectingStereoProducer {
         frames: Arc<Mutex<Vec<[f32; 2]>>>,
@@ -2802,15 +2853,46 @@ mod tests {
     }
 
     #[test]
+    fn take_rate_resampling_preserves_fractional_hertz_and_duration() {
+        let effective_rate =
+            scale_sample_rate(48_000, 1.000_01).expect("a valid fractional Take rate should scale");
+        assert_eq!(effective_rate.0, 48_000_480_000);
+        assert_ne!(effective_rate, rate(48_000));
+
+        let effective_rate =
+            scale_sample_rate(48_000, 1.000_1).expect("a valid fractional Take rate should scale");
+        let output_rate = rate(48_000);
+        let input_frames = 480_000_u64;
+        let expected_output_frames = (u128::from(input_frames) * u128::from(output_rate.0)
+            + u128::from(effective_rate.0)
+            - 1)
+            / u128::from(effective_rate.0);
+        let rounded_hertz_output_frames = (u128::from(input_frames) * 48_000).div_ceil(48_005);
+        let mut resampler = StreamingResampler::<f32>::new_with_precise_rates(
+            effective_rate,
+            output_rate,
+            ResamplingQuality::Sinc64,
+        )
+        .expect("fractional effective rate should create a converter");
+        let input = vec![0.25_f32; input_frames as usize];
+        let mut output = resampler.push(&input).expect("input should convert");
+        output.extend(resampler.finish());
+
+        assert_eq!(output.len() as u128, expected_output_frames);
+        assert_ne!(expected_output_frames, rounded_hertz_output_frames);
+        assert!(output.iter().all(|sample| (*sample - 0.25).abs() < 1e-5));
+    }
+
+    #[test]
     fn seeded_short_loop_history_produces_identical_first_and_later_cycles() {
         let source_cycle = [0.0_f32, 0.1, 0.3, -0.2, 0.4, 0.05, -0.3, -0.15];
         let template =
             StreamingResampler::<f32>::new_with_quality(24_000, 48_000, ResamplingQuality::Sinc64)
                 .expect("valid sample rates should create a resampler");
         let history = cyclic_loop_history(&source_cycle, template.left_taps as usize);
-        let mut resampler = StreamingResampler::new_with_loop_history(
-            24_000,
-            48_000,
+        let mut resampler = StreamingResampler::new_with_precise_loop_history(
+            rate(24_000),
+            rate(48_000),
             ResamplingQuality::Sinc64,
             &history,
         )
@@ -3122,9 +3204,9 @@ mod tests {
         )
         .expect("reference converter should initialize");
         let history = cyclic_loop_history(&loop_source, reference_template.left_taps as usize);
-        let mut reference_resampler = StreamingResampler::new_with_loop_history(
-            24_000,
-            48_000,
+        let mut reference_resampler = StreamingResampler::new_with_precise_loop_history(
+            rate(24_000),
+            rate(48_000),
             ResamplingQuality::Sinc64,
             &history,
         )

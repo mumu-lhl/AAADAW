@@ -1879,7 +1879,13 @@ AAADAW 主测试目标 678/678 passed；`cargo clippy --locked -p aaadaw -p aaad
 
 Copy loop clipboard 保留 Take rate。原厂探针的 1.25x 示例在 AAADAW 回归中验证：3–7 秒时间选区仍粘贴为 4 秒，但源区段位置和长度按 1.25x 映射为 3.75–8.75 秒；Paste、Undo、Redo 保留速率。媒体端到端回归以 1 kHz WAV 验证 1.25x feeder 输出约 1.25 kHz。最新 Cranelift 二进制在 Linux Xvfb 中实际打开 Audio Item Properties，窗口显示加载的 1.25 Take rate；[截图、窗口大小和精确二进制 hashes](../verification/reaper-parity/fixtures/audio-take-rate-properties-aaadaw.tsv)。Apply/Undo/Redo 与音频输出活动时拒绝速率修改另由 App 回归验证。属性窗从 526×500 调整为 526×526，截图确认 Apply 按钮完整可见。这张图只验 AAADAW 界面，不是 REAPER 原厂对照。
 
-Cranelift 1.101 workspace Nextest 全量 1306/1306、0 skipped 通过，X11 测试运行于 Xvfb :335；Stable 五 crate audio-device all-target Clippy `-D warnings`、fmt 和 diff 检查通过。两个 parity 条目保持 `in_progress`：重采样以整数 Hz 表示有效输入采样率，任意小数播放率存在轻微量化；Preserve pitch 模式、原厂速率范围、完整媒体边界组合和 UI 原厂窗口对照仍未覆盖。还没有新增 REAPER 原厂截图，也没有把属性窗口或 Copy loop 目标标记为完成。
+Cranelift 1.101 workspace Nextest 全量 1306/1306、0 skipped 通过，X11 测试运行于 Xvfb :335；Stable 五 crate audio-device all-target Clippy `-D warnings`、fmt 和 diff 检查通过。两个 parity 条目保持 `in_progress`：Preserve pitch 模式、原厂速率范围、完整媒体边界组合和 UI 原厂窗口对照仍未覆盖；有效输入采样率的整数 Hz 量化已由下文工作修复。还没有新增 REAPER 原厂截图，也没有把属性窗口或 Copy loop 目标标记为完成。
+
+### 2026-10-17 Audio Take rate：保留小数采样率
+
+修复 Take rate feeder 将有效输入采样率四舍五入到整 Hz 的偏差。解码 worker、循环源帧映射与流式 sinc 重采样器现在用整数微 Hz 定点值表示速率，避免浮点相位累积，同时让小数 Take rate 参与滤波 cutoff、插值相位和持续时间。普通整数速率的公开重采样 API 仍以 Hz 接受参数。
+
+新增 `take_rate_resampling_preserves_fractional_hertz_and_duration`：48 kHz、1.00001 倍速保持 48,000.48 Hz；1.0001 倍速下对 480,000 个源帧实测输出帧数与旧整 Hz 量化算法不同，常量信号幅值保持。Cranelift 定向回归通过。`ITEM-PROPERTIES-001` 与 `ITEM-AUDIO-COPYLOOP-001` 仍为 `in_progress`：REAPER Preserve pitch、原厂字段/窗口比较及更广的 loop 边界组合仍未覆盖。
 
 ### 2026-10-17 Action List 快捷键：Named key 往返
 
