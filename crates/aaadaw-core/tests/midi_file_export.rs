@@ -1,7 +1,8 @@
 use aaadaw_core::{
-    DawAction, FrameRate, MidiControllerData, MidiExportOptions, MidiFileType, MidiItemPosition,
-    MidiMarkerType, MidiNoteData, MidiPitchBendData, Project, TempoCurve, TimeSignature,
-    encode_standard_midi, encode_standard_midi_with_conductor_track_name,
+    DawAction, FrameRate, MidiControllerData, MidiExportItemScope, MidiExportOptions,
+    MidiExportSelection, MidiExportTimeScope, MidiFileType, MidiItemPosition, MidiMarkerType,
+    MidiNoteData, MidiPitchBendData, Project, TempoCurve, TimeSignature, encode_standard_midi,
+    encode_standard_midi_with_conductor_track_name, encode_standard_midi_with_selection,
 };
 
 #[test]
@@ -445,6 +446,139 @@ fn reaper_782_type_one_127_byte_ascii_track_name_uses_single_byte_vlq_length() {
     assert_eq!(
         actual, native,
         "REAPER encodes a 127-byte text-event length as the one-byte VLQ 7F"
+    );
+}
+
+#[test]
+fn reaper_782_midi_export_all_items_matches_native_consolidation() {
+    let (project, selection) = native_midi_consolidation_fixture_project();
+    let actual = encode_standard_midi_with_selection(
+        &project,
+        MidiExportOptions::for_project(&project),
+        "aaadaw-consolidate-all",
+        &selection,
+    )
+    .unwrap();
+    let native = include_bytes!(
+        "../../../docs/verification/reaper-parity/fixtures/menu-export-midi-native-consolidation-all.mid"
+    );
+
+    assert_eq!(actual, native, "All exports all project MIDI items");
+}
+
+#[test]
+fn reaper_782_midi_export_selected_tracks_matches_native_consolidation() {
+    let (project, selection) = native_midi_consolidation_fixture_project();
+    let options = MidiExportOptions {
+        item_scope: MidiExportItemScope::SelectedTracksOnly,
+        ..MidiExportOptions::for_project(&project)
+    };
+    let actual = encode_standard_midi_with_selection(
+        &project,
+        options,
+        "aaadaw-consolidate-selected-tracks",
+        &selection,
+    )
+    .unwrap();
+    let native = include_bytes!(
+        "../../../docs/verification/reaper-parity/fixtures/menu-export-midi-native-consolidation-selected-tracks.mid"
+    );
+
+    assert_eq!(actual, native, "selected-track mode exports Track B only");
+}
+
+#[test]
+fn reaper_782_midi_export_selected_items_matches_native_consolidation() {
+    let (project, selection) = native_midi_consolidation_fixture_project();
+    let options = MidiExportOptions {
+        item_scope: MidiExportItemScope::SelectedItemsOnly,
+        ..MidiExportOptions::for_project(&project)
+    };
+    let actual = encode_standard_midi_with_selection(
+        &project,
+        options,
+        "aaadaw-consolidate-selected-items",
+        &selection,
+    )
+    .unwrap();
+    let native = include_bytes!(
+        "../../../docs/verification/reaper-parity/fixtures/menu-export-midi-native-consolidation-selected-items.mid"
+    );
+
+    assert_eq!(
+        actual, native,
+        "selected-item mode exports the selected C4 only"
+    );
+}
+
+#[test]
+fn reaper_782_midi_export_time_selection_matches_native_consolidation() {
+    let (project, selection) = native_midi_consolidation_fixture_project();
+    let options = MidiExportOptions {
+        time_scope: MidiExportTimeScope::TimeSelectionOnly,
+        ..MidiExportOptions::for_project(&project)
+    };
+    let actual = encode_standard_midi_with_selection(
+        &project,
+        options,
+        "aaadaw-consolidate-time-selection",
+        &selection,
+    )
+    .unwrap();
+    let native = include_bytes!(
+        "../../../docs/verification/reaper-parity/fixtures/menu-export-midi-native-consolidation-time-selection.mid"
+    );
+
+    assert_eq!(
+        actual, native,
+        "time-selection mode exports overlapping items and rebases their project ticks"
+    );
+}
+
+#[test]
+fn reaper_782_midi_export_time_selection_clips_notes_at_selection_start() {
+    let project = native_midi_time_selection_boundary_fixture_project();
+    let options = MidiExportOptions {
+        time_scope: MidiExportTimeScope::TimeSelectionOnly,
+        ..MidiExportOptions::for_project(&project)
+    };
+    let selection = MidiExportSelection {
+        time_selection_ticks: Some((1920, 3840)),
+        ..MidiExportSelection::default()
+    };
+    let actual = encode_standard_midi_with_selection(
+        &project,
+        options,
+        "aaadaw-time-selection-boundaries",
+        &selection,
+    )
+    .unwrap();
+    let native = include_bytes!(
+        "../../../docs/verification/reaper-parity/fixtures/menu-export-midi-native-time-selection-boundaries.mid"
+    );
+
+    assert_eq!(
+        actual, native,
+        "overlapping notes are clipped at selection start and events at/after its end are omitted"
+    );
+}
+
+#[test]
+fn midi_export_time_selection_requires_a_nonempty_project_selection() {
+    let project = Project::new();
+    let options = MidiExportOptions {
+        time_scope: MidiExportTimeScope::TimeSelectionOnly,
+        ..MidiExportOptions::for_project(&project)
+    };
+
+    assert_eq!(
+        encode_standard_midi_with_selection(
+            &project,
+            options,
+            "midi_export",
+            &MidiExportSelection::default(),
+        ),
+        Err("time-selection export requires an active time selection".to_owned())
     );
 }
 
@@ -1269,6 +1403,113 @@ fn native_midi_marker_ruler_and_individually_hidden_fixture_project() -> Project
     let mut project = native_midi_marker_filter_fixture_project();
     project
         .apply(DawAction::SetProjectMarkersVisibleOnRuler { visible: false })
+        .unwrap();
+    project
+}
+
+fn native_midi_consolidation_fixture_project() -> (Project, MidiExportSelection) {
+    let mut project = Project::new();
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Track A".to_owned(),
+        })
+        .unwrap();
+    project
+        .apply(DawAction::CreateTrack {
+            index: 1,
+            name: "Track B".to_owned(),
+        })
+        .unwrap();
+    let track_a = project.tracks()[0].id();
+    let track_b = project.tracks()[1].id();
+    let item_a_selected = add_native_consolidation_item(&mut project, track_a, 480, 60);
+    add_native_consolidation_item(&mut project, track_a, 2400, 61);
+    add_native_consolidation_item(&mut project, track_b, 4320, 62);
+
+    let selection = MidiExportSelection {
+        selected_track_ids: vec![track_b],
+        selected_item_ids: vec![item_a_selected],
+        time_selection_ticks: Some((1920, 3840)),
+    };
+    (project, selection)
+}
+
+fn add_native_consolidation_item(
+    project: &mut Project,
+    track_id: aaadaw_core::TrackId,
+    start_tick: u64,
+    pitch: u8,
+) -> aaadaw_core::ItemId {
+    project
+        .apply(DawAction::InsertMidiItem {
+            track_id,
+            start_tick,
+            length_ticks: 960,
+        })
+        .unwrap();
+    let item_id = project.midi_items().last().unwrap().id();
+    project
+        .apply(DawAction::AddMidiNotes {
+            item_id,
+            notes: vec![MidiNoteData {
+                pitch,
+                tick: 0,
+                duration: 240,
+                velocity: 100,
+            }],
+        })
+        .unwrap();
+    item_id
+}
+
+fn native_midi_time_selection_boundary_fixture_project() -> Project {
+    let mut project = Project::new();
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Wide".to_owned(),
+        })
+        .unwrap();
+    let track_id = project.tracks()[0].id();
+    project
+        .apply(DawAction::InsertMidiItem {
+            track_id,
+            start_tick: 480,
+            length_ticks: 4800,
+        })
+        .unwrap();
+    let item_id = project.midi_items()[0].id();
+    project
+        .apply(DawAction::AddMidiNotes {
+            item_id,
+            notes: vec![
+                MidiNoteData {
+                    pitch: 60,
+                    tick: 0,
+                    duration: 960,
+                    velocity: 100,
+                },
+                MidiNoteData {
+                    pitch: 61,
+                    tick: 960,
+                    duration: 1920,
+                    velocity: 100,
+                },
+                MidiNoteData {
+                    pitch: 62,
+                    tick: 3000,
+                    duration: 1080,
+                    velocity: 100,
+                },
+                MidiNoteData {
+                    pitch: 63,
+                    tick: 3360,
+                    duration: 480,
+                    velocity: 100,
+                },
+            ],
+        })
         .unwrap();
     project
 }

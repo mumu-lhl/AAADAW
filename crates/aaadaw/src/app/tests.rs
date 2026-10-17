@@ -10118,8 +10118,30 @@ fn native_export_project_midi_action_opens_the_export_settings_window() {
     let _ = app.update(Message::ExecuteCommand(CommandId::ExportProjectMidi));
     assert!(app.midi_export_window_id.is_some());
     assert!(app.midi_export_dialog.is_some());
+    let dialog = app.midi_export_dialog.as_ref().unwrap();
+    assert_eq!(
+        dialog.time_scope,
+        aaadaw_core::MidiExportTimeScope::EntireProject
+    );
+    assert_eq!(dialog.item_scope, aaadaw_core::MidiExportItemScope::All);
     assert!(!app.path_picker_busy);
     assert_eq!(app.active_menu, None);
+
+    let _ = app.update(Message::MidiExportTimeScopeChanged(
+        aaadaw_core::MidiExportTimeScope::TimeSelectionOnly,
+    ));
+    let _ = app.update(Message::MidiExportItemScopeChanged(
+        aaadaw_core::MidiExportItemScope::SelectedItemsOnly,
+    ));
+    let dialog = app.midi_export_dialog.as_ref().unwrap();
+    assert_eq!(
+        dialog.time_scope,
+        aaadaw_core::MidiExportTimeScope::TimeSelectionOnly
+    );
+    assert_eq!(
+        dialog.item_scope,
+        aaadaw_core::MidiExportItemScope::SelectedItemsOnly
+    );
 
     let _ = app.update(Message::Escape);
     assert!(app.midi_export_window_id.is_none());

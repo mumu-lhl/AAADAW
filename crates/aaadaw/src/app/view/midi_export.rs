@@ -1,5 +1,5 @@
 use super::super::{App, Message};
-use aaadaw_core::{MidiFileType, MidiMarkerType};
+use aaadaw_core::{MidiExportItemScope, MidiExportTimeScope, MidiFileType, MidiMarkerType};
 use iced::widget::{button, checkbox, column, container, radio, row, rule, text, text_input};
 use iced::{Alignment, Element, Length};
 
@@ -19,6 +19,57 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
     let destination_valid = !draft.destination.trim().is_empty();
 
     let content = column![
+        container(
+            column![
+                text("Input").size(12),
+                row![
+                    column![
+                        text("Consolidate time:").size(13),
+                        radio(
+                            "Entire project",
+                            MidiExportTimeScope::EntireProject,
+                            Some(draft.time_scope),
+                            Message::MidiExportTimeScopeChanged,
+                        ),
+                        radio(
+                            "Time selection only",
+                            MidiExportTimeScope::TimeSelectionOnly,
+                            Some(draft.time_scope),
+                            Message::MidiExportTimeScopeChanged,
+                        ),
+                    ]
+                    .spacing(1),
+                    column![
+                        text("Consolidate MIDI items:").size(13),
+                        radio(
+                            "All",
+                            MidiExportItemScope::All,
+                            Some(draft.item_scope),
+                            Message::MidiExportItemScopeChanged,
+                        ),
+                        radio(
+                            "Selected tracks only",
+                            MidiExportItemScope::SelectedTracksOnly,
+                            Some(draft.item_scope),
+                            Message::MidiExportItemScopeChanged,
+                        ),
+                        radio(
+                            "Selected items only",
+                            MidiExportItemScope::SelectedItemsOnly,
+                            Some(draft.item_scope),
+                            Message::MidiExportItemScopeChanged,
+                        ),
+                    ]
+                    .spacing(1),
+                ]
+                .spacing(16)
+                .align_y(Alignment::Start),
+            ]
+            .spacing(2)
+        )
+        .padding(8)
+        .style(container::bordered_box),
+        text("Output").size(12),
         text("Export to MIDI file:").size(14),
         row![
             text_input("midi_export.mid", &draft.destination)
@@ -91,6 +142,7 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
             .on_toggle_maybe(
                 marker_options_enabled.then_some(Message::MidiExportHiddenMarkersChanged),
             ),
+        iced::widget::Space::new().height(Length::Fill),
         rule::horizontal(1),
         row![
             iced::widget::Space::new().width(Length::Fill),
@@ -103,7 +155,8 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
         .align_y(Alignment::Center),
     ]
     .spacing(2)
-    .padding(10);
+    .padding(10)
+    .height(Length::Fill);
 
     container(content)
         .width(Length::Fill)

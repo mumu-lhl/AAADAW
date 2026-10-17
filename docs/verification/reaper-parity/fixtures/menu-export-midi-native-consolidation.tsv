@@ -1,0 +1,26 @@
+version	7.82/linux-x86_64
+theme	Default_7.0.ReaperThemeZip
+selected_track	Track B only
+selected_item	A selected on Track A only
+time_selection	1.000000-2.000000 seconds; project ticks 1920-3840
+fixture	Track A: C4 item at tick 480, C#4 item at 2400; Track B: D4 item at 4320; each note source ticks 0-240
+native_project_fixture	fixtures/menu-export-midi-native-consolidation.rpp
+native_project_sha256	46b6994ad08d3f5d582198b45176ee27f0a07dda3affd35af934641760851173
+export_action	40849
+export_type	Type 1; PPQN 960; tempo/meter/SMPTE/markers unchecked
+all_mode	Entire project; all MIDI items; tracks A and B with three items total
+all_export	fixtures/menu-export-midi-native-consolidation-all.mid; 143 bytes; SHA-256 3192356cebbc548fefbcb3128103fb6b4528637b21b518b651ce7e8b3222527c
+all_dialog	fixtures/menu-export-midi-native-consolidation-all-dialog.png; SHA-256 abbf83d50ad420c818bc8af9491136e770c0269d664e3e566d8c166171d34b1e
+all_observed	3 tracks total in file: conductor, Track A (C4/C#4), Track B (D4)
+selected-tracks_export	fixtures/menu-export-midi-native-consolidation-selected-tracks.mid; 112 bytes; SHA-256 0bdcfc0310b81fba8c4fef6defeb682942d031e43aee57151ed2e8a54095bcd9
+selected-tracks_dialog	fixtures/menu-export-midi-native-consolidation-selected-tracks-dialog.png; SHA-256 1247bc6161599e5442b8feb022379cfb0f55b7d1b0c4f241f42cb3709d94733b
+selected-tracks_observed	Track B only with D4 at tick 4320
+selected-items_export	fixtures/menu-export-midi-native-consolidation-selected-items.mid; 111 bytes; SHA-256 1dadc972001f99bf74f6707569014392d96a945da41e38a74989e51d2f5223e5
+selected-items_dialog	fixtures/menu-export-midi-native-consolidation-selected-items-dialog.png; SHA-256 c8513d4adaad6b1c87870006d3d2a39f11db13c0b5158dbb02fbbd2bb2efc622
+selected-items_observed	Track A only with selected C4 at tick 480
+time-selection_export	fixtures/menu-export-midi-native-consolidation-time-selection.mid; 111 bytes; SHA-256 242e5d1b671a113cc2e57eab01afb141fe0b26f6afa2f68ae5c05003c406fdfd
+time-selection_dialog	fixtures/menu-export-midi-native-consolidation-time-selection-dialog.png; SHA-256 43ed244d5140151e0e99e57cf4742aa20c40a2a654c594a47d50e0af73fa8913
+time-selection_observed	Track A only with C#4 at tick 480 after rebasing 1920 ticks to zero
+native_probe	scripts/reaper_parity/probe-midi-export-consolidation.lua
+reaper_binary_build_id	fb9ade2f211bc91a3ee6193630ef17bcf5f6528b
+reaper_binary_sha256	9976f5608068b7a58518969001b00b527fb0de6ed7459e0e5dda6f29878ee254

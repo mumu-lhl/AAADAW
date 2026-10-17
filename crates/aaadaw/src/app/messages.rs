@@ -216,6 +216,8 @@ pub(crate) enum Message {
     ConfirmMidiExport,
     MidiExportDestinationChanged(String),
     MidiExportFileTypeChanged(aaadaw_core::MidiFileType),
+    MidiExportTimeScopeChanged(aaadaw_core::MidiExportTimeScope),
+    MidiExportItemScopeChanged(aaadaw_core::MidiExportItemScope),
     MidiExportPpqChanged(String),
     MidiExportEmbedTempoChanged(bool),
     MidiExportEmbedSmpteChanged(bool),

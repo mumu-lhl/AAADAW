@@ -1,5 +1,6 @@
-use crate::{FrameRate, Project, TempoCurve};
-use std::collections::HashMap;
+use crate::{FrameRate, MidiNote, Project, TempoCurve};
+use crate::{ItemId, TrackId};
+use std::collections::{HashMap, HashSet};
 
 const MAX_MIDI_FILE_EVENTS: usize = 1_000_000;
 
@@ -38,11 +39,46 @@ pub enum MidiMarkerType {
     Cues,
 }
 
+/// Which project time range is consolidated into the MIDI file.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum MidiExportTimeScope {
+    /// Export all MIDI events in the project.
+    #[default]
+    EntireProject,
+    /// Export events intersecting the active project time selection, rebased to tick zero.
+    TimeSelectionOnly,
+}
+
+/// Which MIDI items are consolidated into the MIDI file.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum MidiExportItemScope {
+    /// Export MIDI items on every project track.
+    #[default]
+    All,
+    /// Export MIDI items on selected project tracks.
+    SelectedTracksOnly,
+    /// Export selected MIDI items only.
+    SelectedItemsOnly,
+}
+
+/// The live editor selection used by MIDI export's selected-item and time scopes.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct MidiExportSelection {
+    /// IDs of selected project tracks at export time.
+    pub selected_track_ids: Vec<TrackId>,
+    /// IDs of selected media items at export time.
+    pub selected_item_ids: Vec<ItemId>,
+    /// Active project time selection in project ticks, if any.
+    pub time_selection_ticks: Option<(u64, u64)>,
+}
+
 /// Options used when encoding a project as a Standard MIDI File.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct MidiExportOptions {
     pub file_type: MidiFileType,
     pub ppq: u16,
+    pub time_scope: MidiExportTimeScope,
+    pub item_scope: MidiExportItemScope,
     pub embed_tempo_and_time_signature: bool,
     pub embed_smpte_offset: bool,
     pub export_markers: bool,
@@ -58,6 +94,8 @@ impl Default for MidiExportOptions {
         Self {
             file_type: MidiFileType::Type1,
             ppq: 960,
+            time_scope: MidiExportTimeScope::EntireProject,
+            item_scope: MidiExportItemScope::All,
             embed_tempo_and_time_signature: false,
             embed_smpte_offset: false,
             export_markers: false,
@@ -101,6 +139,21 @@ pub fn encode_standard_midi_with_conductor_track_name(
     options: MidiExportOptions,
     conductor_track_name: &str,
 ) -> Result<Vec<u8>, String> {
+    encode_standard_midi_with_selection(
+        project,
+        options,
+        conductor_track_name,
+        &MidiExportSelection::default(),
+    )
+}
+
+/// Encodes selected MIDI items and/or the selected project time range when requested.
+pub fn encode_standard_midi_with_selection(
+    project: &Project,
+    options: MidiExportOptions,
+    conductor_track_name: &str,
+    selection: &MidiExportSelection,
+) -> Result<Vec<u8>, String> {
     let project_ppq = project.settings().ppq();
     if options.ppq == 0 || options.ppq > 0x7fff {
         return Err(format!(
@@ -110,18 +163,79 @@ pub fn encode_standard_midi_with_conductor_track_name(
     }
     let ppq = u64::from(options.ppq);
 
-    let track_indices: HashMap<_, _> = project
+    let time_selection = match options.time_scope {
+        MidiExportTimeScope::EntireProject => None,
+        MidiExportTimeScope::TimeSelectionOnly => {
+            let Some((start_tick, end_tick)) = selection.time_selection_ticks else {
+                return Err("time-selection export requires an active time selection".to_owned());
+            };
+            if end_tick <= start_tick {
+                return Err("time selection must have a positive length".to_owned());
+            }
+            Some((start_tick as f64, end_tick as f64))
+        }
+    };
+
+    let selected_track_ids = selection
+        .selected_track_ids
+        .iter()
+        .copied()
+        .collect::<HashSet<_>>();
+    let selected_item_ids = selection
+        .selected_item_ids
+        .iter()
+        .copied()
+        .collect::<HashSet<_>>();
+    let included_midi_items = project
+        .midi_items()
+        .iter()
+        .filter(|item| match options.item_scope {
+            MidiExportItemScope::All => true,
+            MidiExportItemScope::SelectedTracksOnly => {
+                selected_track_ids.contains(&item.track_id())
+            }
+            MidiExportItemScope::SelectedItemsOnly => selected_item_ids.contains(&item.id()),
+        })
+        .filter(|item| {
+            let Some((selection_start, selection_end)) = time_selection else {
+                return true;
+            };
+            let item_start = item.start_position().as_ticks_f64();
+            let Some(item_end) = item.start_position().checked_add_ticks(item.length_ticks())
+            else {
+                return false;
+            };
+            item_end.as_ticks_f64() > selection_start && item_start < selection_end
+        })
+        .collect::<Vec<_>>();
+
+    let export_tracks = project
         .tracks()
+        .iter()
+        .filter(|track| match options.item_scope {
+            MidiExportItemScope::All if time_selection.is_none() => true,
+            MidiExportItemScope::SelectedTracksOnly if time_selection.is_none() => {
+                selected_track_ids.contains(&track.id())
+            }
+            MidiExportItemScope::All
+            | MidiExportItemScope::SelectedTracksOnly
+            | MidiExportItemScope::SelectedItemsOnly => included_midi_items
+                .iter()
+                .any(|item| item.track_id() == track.id()),
+        })
+        .collect::<Vec<_>>();
+
+    let track_indices: HashMap<_, _> = export_tracks
         .iter()
         .enumerate()
         .map(|(index, track)| (track.id().value(), index))
         .collect();
-    let mut events_by_track = (0..project.tracks().len())
+    let mut events_by_track = (0..export_tracks.len())
         .map(|_| Vec::new())
         .collect::<Vec<Vec<Event>>>();
     let mut midi_event_count = 0_usize;
 
-    for item in project.midi_items() {
+    for item in included_midi_items {
         let Some(&track_index) = track_indices.get(&item.track_id().value()) else {
             return Err(format!(
                 "MIDI item {} refers to a missing track",
@@ -139,20 +253,20 @@ pub fn encode_standard_midi_with_conductor_track_name(
                 .ok_or_else(|| "MIDI note extends beyond the supported timeline".to_owned())?;
             if item.is_loop_source() {
                 for project_start in item.project_positions_at_content_tick(note.tick()) {
-                    ensure_midi_event_capacity(&mut midi_event_count, 2)?;
                     let project_end = project_start
                         .checked_add_ticks(note.duration())
                         .ok_or_else(|| "MIDI note ends beyond the supported timeline".to_owned())?
                         .min(item_end);
-                    push_midi_note_events(
+                    let added = push_midi_note_events_in_time_selection(
                         &mut events_by_track[track_index],
                         project_midi_item_event_tick(project, item, project_start)?,
                         project_midi_item_event_tick(project, item, project_end)?,
                         project_ppq,
                         options.ppq,
-                        note.pitch(),
-                        note.velocity(),
+                        note,
+                        time_selection,
                     )?;
+                    ensure_midi_event_capacity(&mut midi_event_count, added)?;
                 }
             } else {
                 let visible_content_end = item
@@ -166,7 +280,6 @@ pub fn encode_standard_midi_with_conductor_track_name(
                 if visible_end <= visible_start {
                     continue;
                 }
-                ensure_midi_event_capacity(&mut midi_event_count, 2)?;
                 let project_start_position = item
                     .start_position()
                     .checked_add_ticks(visible_start - item.source_offset_ticks())
@@ -175,27 +288,30 @@ pub fn encode_standard_midi_with_conductor_track_name(
                     .start_position()
                     .checked_add_ticks(visible_end - item.source_offset_ticks())
                     .ok_or_else(|| "MIDI note ends beyond the supported timeline".to_owned())?;
-                push_midi_note_events(
+                let added = push_midi_note_events_in_time_selection(
                     &mut events_by_track[track_index],
                     project_midi_item_event_tick(project, item, project_start_position)?,
                     project_midi_item_event_tick(project, item, project_end_position)?,
                     project_ppq,
                     options.ppq,
-                    note.pitch(),
-                    note.velocity(),
+                    note,
+                    time_selection,
                 )?;
+                ensure_midi_event_capacity(&mut midi_event_count, added)?;
             }
         }
 
         for controller in item.controllers() {
             if item.is_loop_source() {
                 for project_position in item.project_positions_at_content_tick(controller.tick) {
+                    let project_tick =
+                        project_midi_item_event_tick(project, item, project_position)?;
+                    let Some(project_tick) = time_selection_tick(project_tick, time_selection)
+                    else {
+                        continue;
+                    };
                     ensure_midi_event_capacity(&mut midi_event_count, 1)?;
-                    let tick = scale_tick_position(
-                        project_midi_item_event_tick(project, item, project_position)?,
-                        project_ppq,
-                        options.ppq,
-                    )?;
+                    let tick = scale_tick_position(project_tick, project_ppq, options.ppq)?;
                     events_by_track[track_index].push(Event {
                         tick,
                         order: 1,
@@ -212,17 +328,19 @@ pub fn encode_standard_midi_with_conductor_track_name(
                 if controller.tick >= item.source_offset_ticks()
                     && controller.tick < visible_content_end
                 {
-                    ensure_midi_event_capacity(&mut midi_event_count, 1)?;
                     let project_position = item
                         .project_position_at_content_tick(controller.tick)
                         .ok_or_else(|| {
                         "MIDI controller is beyond the supported timeline".to_owned()
                     })?;
-                    let tick = scale_tick_position(
-                        project_midi_item_event_tick(project, item, project_position)?,
-                        project_ppq,
-                        options.ppq,
-                    )?;
+                    let project_tick =
+                        project_midi_item_event_tick(project, item, project_position)?;
+                    let Some(project_tick) = time_selection_tick(project_tick, time_selection)
+                    else {
+                        continue;
+                    };
+                    ensure_midi_event_capacity(&mut midi_event_count, 1)?;
+                    let tick = scale_tick_position(project_tick, project_ppq, options.ppq)?;
                     events_by_track[track_index].push(Event {
                         tick,
                         order: 1,
@@ -235,12 +353,14 @@ pub fn encode_standard_midi_with_conductor_track_name(
         for bend in item.pitch_bends() {
             if item.is_loop_source() {
                 for project_position in item.project_positions_at_content_tick(bend.tick) {
+                    let project_tick =
+                        project_midi_item_event_tick(project, item, project_position)?;
+                    let Some(project_tick) = time_selection_tick(project_tick, time_selection)
+                    else {
+                        continue;
+                    };
                     ensure_midi_event_capacity(&mut midi_event_count, 1)?;
-                    let tick = scale_tick_position(
-                        project_midi_item_event_tick(project, item, project_position)?,
-                        project_ppq,
-                        options.ppq,
-                    )?;
+                    let tick = scale_tick_position(project_tick, project_ppq, options.ppq)?;
                     events_by_track[track_index].push(Event {
                         tick,
                         order: 1,
@@ -259,17 +379,19 @@ pub fn encode_standard_midi_with_conductor_track_name(
                         "trimmed MIDI item extends beyond the supported timeline".to_owned()
                     })?;
                 if bend.tick >= item.source_offset_ticks() && bend.tick < visible_content_end {
-                    ensure_midi_event_capacity(&mut midi_event_count, 1)?;
                     let project_position = item
                         .project_position_at_content_tick(bend.tick)
                         .ok_or_else(|| {
                             "MIDI pitch bend is beyond the supported timeline".to_owned()
                         })?;
-                    let tick = scale_tick_position(
-                        project_midi_item_event_tick(project, item, project_position)?,
-                        project_ppq,
-                        options.ppq,
-                    )?;
+                    let project_tick =
+                        project_midi_item_event_tick(project, item, project_position)?;
+                    let Some(project_tick) = time_selection_tick(project_tick, time_selection)
+                    else {
+                        continue;
+                    };
+                    ensure_midi_event_capacity(&mut midi_event_count, 1)?;
+                    let tick = scale_tick_position(project_tick, project_ppq, options.ppq)?;
                     events_by_track[track_index].push(Event {
                         tick,
                         order: 1,
@@ -287,7 +409,8 @@ pub fn encode_standard_midi_with_conductor_track_name(
     let mut tracks = Vec::new();
     let smf_type = match options.file_type {
         MidiFileType::Type0 => {
-            let mut events = conductor_events(project, options, project_ppq, None, false)?;
+            let mut events =
+                conductor_events(project, options, project_ppq, None, false, time_selection)?;
             for track_events in &mut events_by_track {
                 events.append(track_events);
             }
@@ -301,9 +424,10 @@ pub fn encode_standard_midi_with_conductor_track_name(
                 project_ppq,
                 Some(conductor_track_name.as_bytes()),
                 true,
+                time_selection,
             )?;
             tracks.push(encode_track(conductor, 0)?);
-            for (index, track) in project.tracks().iter().enumerate() {
+            for (index, track) in export_tracks.iter().enumerate() {
                 let mut events = vec![Event {
                     tick: 0,
                     order: 0,
@@ -407,6 +531,86 @@ fn push_midi_note_events(
     Ok(())
 }
 
+fn push_midi_note_events_in_time_selection(
+    events: &mut Vec<Event>,
+    project_start_tick: f64,
+    project_end_tick: f64,
+    project_ppq: u32,
+    export_ppq: u16,
+    note: &MidiNote,
+    time_selection: Option<(f64, f64)>,
+) -> Result<usize, String> {
+    let Some((selection_start, selection_end)) = time_selection else {
+        push_midi_note_events(
+            events,
+            project_start_tick,
+            project_end_tick,
+            project_ppq,
+            export_ppq,
+            note.pitch(),
+            note.velocity(),
+        )?;
+        return Ok(2);
+    };
+    if project_end_tick <= selection_start || project_start_tick >= selection_end {
+        return Ok(0);
+    }
+
+    let start_tick = scale_tick_position(
+        project_start_tick.max(selection_start) - selection_start,
+        project_ppq,
+        export_ppq,
+    )?;
+    events.push(Event {
+        tick: start_tick,
+        order: 2,
+        bytes: vec![0x90, note.pitch(), note.velocity()],
+    });
+    if project_end_tick < selection_end {
+        let mut end_tick =
+            scale_tick_position(project_end_tick - selection_start, project_ppq, export_ppq)?;
+        if end_tick <= start_tick {
+            end_tick = start_tick
+                .checked_add(1)
+                .ok_or_else(|| "MIDI note ends beyond the supported timeline".to_owned())?;
+        }
+        events.push(Event {
+            tick: end_tick,
+            order: 0,
+            bytes: vec![0x80, note.pitch(), 0],
+        });
+        Ok(2)
+    } else {
+        Ok(1)
+    }
+}
+
+fn time_selection_tick(project_tick: f64, time_selection: Option<(f64, f64)>) -> Option<f64> {
+    let Some((selection_start, selection_end)) = time_selection else {
+        return Some(project_tick);
+    };
+    (project_tick >= selection_start && project_tick < selection_end)
+        .then_some(project_tick - selection_start)
+}
+
+fn time_selection_output_tick(
+    project_tick: u64,
+    time_selection: Option<(f64, f64)>,
+    keep_initial_metadata: bool,
+) -> Option<u64> {
+    let Some((selection_start, selection_end)) = time_selection else {
+        return Some(project_tick);
+    };
+    let project_tick_f64 = project_tick as f64;
+    if project_tick_f64 >= selection_start && project_tick_f64 < selection_end {
+        Some((project_tick_f64 - selection_start) as u64)
+    } else if keep_initial_metadata && project_tick == 0 {
+        Some(0)
+    } else {
+        None
+    }
+}
+
 /// REAPER replaces each non-ASCII character in exported track names with `_`.
 fn reaper_midi_track_name(name: &str) -> Vec<u8> {
     name.chars()
@@ -426,6 +630,7 @@ fn conductor_events(
     project_ppq: u32,
     track_name: Option<&[u8]>,
     include_base_tempo_and_time_signature: bool,
+    time_selection: Option<(f64, f64)>,
 ) -> Result<Vec<Event>, String> {
     let mut events = Vec::new();
     if let Some(track_name) = track_name {
@@ -560,8 +765,15 @@ fn conductor_events(
             ));
         }
         let value = microseconds_per_quarter as u32;
+        let Some(tick) = time_selection_output_tick(
+            tempo_event.tick,
+            time_selection,
+            include_base_tempo_and_time_signature && tempo_event.tick == 0,
+        ) else {
+            continue;
+        };
         events.push(Event {
-            tick: scale_tick(tempo_event.tick, project_ppq, options.ppq)?,
+            tick: scale_tick(tick, project_ppq, options.ppq)?,
             order: tempo_event.order,
             bytes: vec![
                 0xff,
@@ -586,6 +798,13 @@ fn conductor_events(
         if !denominator.is_power_of_two() {
             return Err("MIDI files require a power-of-two time-signature denominator".to_owned());
         }
+        let Some(tick) = time_selection_output_tick(
+            tick,
+            time_selection,
+            include_base_tempo_and_time_signature && index == 0,
+        ) else {
+            continue;
+        };
         events.push(Event {
             tick: scale_tick(tick, project_ppq, options.ppq)?,
             order: 1 + smpte_order_offset,
@@ -631,8 +850,13 @@ fn conductor_events(
             if options.only_markers_starting_with_hash && !marker.name().starts_with('#') {
                 continue;
             }
+            let Some(tick) =
+                time_selection_output_tick(marker.position_ticks(), time_selection, false)
+            else {
+                continue;
+            };
             events.push(Event {
-                tick: scale_tick(marker.position_ticks(), project_ppq, options.ppq)?,
+                tick: scale_tick(tick, project_ppq, options.ppq)?,
                 order: ramp_tempo_order + 1,
                 bytes: meta_event(marker_kind, marker.name().as_bytes())?,
             });

@@ -2108,6 +2108,8 @@ impl App {
                     | Message::ConfirmMidiExport
                     | Message::MidiExportDestinationChanged(_)
                     | Message::MidiExportFileTypeChanged(_)
+                    | Message::MidiExportTimeScopeChanged(_)
+                    | Message::MidiExportItemScopeChanged(_)
                     | Message::MidiExportPpqChanged(_)
                     | Message::MidiExportEmbedTempoChanged(_)
                     | Message::MidiExportEmbedSmpteChanged(_)
@@ -2756,6 +2758,16 @@ impl App {
             Message::MidiExportFileTypeChanged(file_type) => {
                 if let Some(dialog) = &mut self.midi_export_dialog {
                     dialog.file_type = file_type;
+                }
+            }
+            Message::MidiExportTimeScopeChanged(time_scope) => {
+                if let Some(dialog) = &mut self.midi_export_dialog {
+                    dialog.time_scope = time_scope;
+                }
+            }
+            Message::MidiExportItemScopeChanged(item_scope) => {
+                if let Some(dialog) = &mut self.midi_export_dialog {
+                    dialog.item_scope = item_scope;
                 }
             }
             Message::MidiExportPpqChanged(value) => {

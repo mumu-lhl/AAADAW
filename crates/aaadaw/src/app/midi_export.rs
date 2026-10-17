@@ -1,7 +1,7 @@
 use super::{App, Message, PathPickerTarget, run_blocking};
 use aaadaw_core::{
-    MidiExportOptions, MidiFileType, MidiMarkerType, Project, ProjectSnapshot,
-    encode_standard_midi_with_conductor_track_name,
+    MidiExportItemScope, MidiExportOptions, MidiExportSelection, MidiExportTimeScope, MidiFileType,
+    MidiMarkerType, Project, ProjectSnapshot, encode_standard_midi_with_selection,
 };
 use iced::Task;
 use std::path::{Path, PathBuf};
@@ -10,6 +10,8 @@ use std::path::{Path, PathBuf};
 pub(super) struct MidiExportDialogState {
     pub(super) destination: String,
     pub(super) file_type: MidiFileType,
+    pub(super) time_scope: MidiExportTimeScope,
+    pub(super) item_scope: MidiExportItemScope,
     pub(super) ppq: String,
     pub(super) embed_tempo_and_time_signature: bool,
     pub(super) embed_smpte_offset: bool,
@@ -25,6 +27,8 @@ impl MidiExportDialogState {
         Self {
             destination: "midi_export.mid".to_owned(),
             file_type: options.file_type,
+            time_scope: options.time_scope,
+            item_scope: options.item_scope,
             ppq: options.ppq.to_string(),
             embed_tempo_and_time_signature: options.embed_tempo_and_time_signature,
             embed_smpte_offset: options.embed_smpte_offset,
@@ -47,6 +51,8 @@ impl MidiExportDialogState {
         Ok(MidiExportOptions {
             file_type: self.file_type,
             ppq,
+            time_scope: self.time_scope,
+            item_scope: self.item_scope,
             embed_tempo_and_time_signature: self.embed_tempo_and_time_signature,
             embed_smpte_offset: self.embed_smpte_offset,
             export_markers: self.export_markers,
@@ -64,8 +70,8 @@ impl App {
         }
         self.midi_export_dialog = Some(MidiExportDialogState::for_project(&self.project));
         let (window_id, task) = iced::window::open(iced::window::Settings {
-            size: iced::Size::new(520.0, 298.0),
-            min_size: Some(iced::Size::new(500.0, 298.0)),
+            size: iced::Size::new(520.0, 452.0),
+            min_size: Some(iced::Size::new(500.0, 420.0)),
             ..iced::window::Settings::default()
         });
         self.midi_export_window_id = Some(window_id);
@@ -101,10 +107,18 @@ impl App {
         let path = with_midi_extension(PathBuf::from(dialog.destination.trim()));
         let output = path.clone();
         let snapshot = self.project.snapshot();
+        let selection = MidiExportSelection {
+            selected_track_ids: self.timeline.selected_tracks.iter().copied().collect(),
+            selected_item_ids: self.timeline.selected_items.iter().copied().collect(),
+            time_selection_ticks: self
+                .timeline
+                .time_selection
+                .map(|selection| (selection.start_tick, selection.end_tick)),
+        };
         self.status = format!("Exporting project MIDI to {}…", path.display());
         let export = Task::perform(
             run_blocking("aaadaw-midi-export", move || {
-                let result = write_project_midi(&output, snapshot, options);
+                let result = write_project_midi(&output, snapshot, options, selection);
                 #[cfg(target_os = "android")]
                 if result.is_ok() {
                     crate::android_platform::sync_saf_document(&output)?;
@@ -128,6 +142,7 @@ fn write_project_midi(
     path: &Path,
     snapshot: ProjectSnapshot,
     options: MidiExportOptions,
+    selection: MidiExportSelection,
 ) -> Result<(), String> {
     let project = Project::from_snapshot(snapshot).map_err(|error| error.to_string())?;
     let conductor_track_name = path
@@ -136,7 +151,7 @@ fn write_project_midi(
         .filter(|stem| !stem.is_empty())
         .unwrap_or_else(|| "midi_export".to_owned());
     let bytes =
-        encode_standard_midi_with_conductor_track_name(&project, options, &conductor_track_name)?;
+        encode_standard_midi_with_selection(&project, options, &conductor_track_name, &selection)?;
     super::config_paths::write_atomic(path, &bytes)
         .map_err(|error| format!("could not write {}: {error}", path.display()))
 }
@@ -156,6 +171,7 @@ mod tests {
             &path,
             project.snapshot(),
             MidiExportOptions::for_project(&project),
+            MidiExportSelection::default(),
         )
         .unwrap();
 

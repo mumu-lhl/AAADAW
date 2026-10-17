@@ -32,8 +32,9 @@ pub use midi::{
     MidiNoteData, MidiPitchBendData, NoteId,
 };
 pub use midi_file::{
-    MidiExportOptions, MidiFileType, MidiMarkerType, encode_standard_midi,
-    encode_standard_midi_with_conductor_track_name,
+    MidiExportItemScope, MidiExportOptions, MidiExportSelection, MidiExportTimeScope, MidiFileType,
+    MidiMarkerType, encode_standard_midi, encode_standard_midi_with_conductor_track_name,
+    encode_standard_midi_with_selection,
 };
 pub use project::{FxParameterChange, MAX_FX_PARAMETER_AUTOMATION_POINTS, Project};
 pub use project_notes::ProjectNotes;
