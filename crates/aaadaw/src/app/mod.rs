@@ -5162,6 +5162,18 @@ impl App {
                 };
                 self.apply_action(action, "Selected MIDI notes quantized to editor grid");
             }
+            Message::QuantizeSelectedMidiNotesAndEnds(item_id) => {
+                let action = DawAction::QuantizeMidiNotesAndEnds {
+                    item_id,
+                    note_ids: self.midi_editor_selected_notes.iter().copied().collect(),
+                    grid: midi_editor_grid_fraction(self.timeline.midi_editor_snap_grid),
+                    strength: 1.0,
+                };
+                self.apply_action(
+                    action,
+                    "Selected MIDI note positions and ends quantized to editor grid",
+                );
+            }
             Message::DeleteTrack(track_id) => self.delete_track(track_id),
             Message::DeleteByFocus => task = self.delete_by_focus(false),
             Message::DeleteByFocusNoPrompting => task = self.delete_by_focus(true),

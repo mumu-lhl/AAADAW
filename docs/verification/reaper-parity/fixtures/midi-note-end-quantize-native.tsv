@@ -1,0 +1,9 @@
+version	7.82/linux-x86_64
+theme	Default_7.0.ReaperThemeZip
+project_ppq	960
+midi_grid_quarter_notes	0.125000
+midi_grid_ticks	120
+swing	0.000000
+before_selected_muted_channel_pitch_start_end_velocity	1,0,1,60,100,220,96;1,0,3,62,350,430,80;0,0,1,64,550,670,72;1,0,16,65,900,970,110
+after_selected_muted_channel_pitch_start_end_velocity	1,0,1,60,120,240,96;1,0,3,62,360,480,80;0,0,1,64,550,670,72;1,0,16,65,960,1080,110
+action	40729 Quantize notes position and end to grid

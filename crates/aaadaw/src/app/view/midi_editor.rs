@@ -339,6 +339,14 @@ fn view_with_profile(app: &App, touch_targets: bool) -> Element<'_, Message> {
                     .then_some(Message::QuantizeSelectedMidiNotes(item_id)),
                 )
                 .padding([SPACING_XS / 2.0, SPACING_XS]),
+            button("Q pos+end")
+                .style(iced::widget::button::secondary)
+                .on_press_maybe(
+                    (!app.midi_editor_selected_notes.is_empty()
+                        && app.timeline.midi_editor_has_snap_grid())
+                    .then_some(Message::QuantizeSelectedMidiNotesAndEnds(item_id)),
+                )
+                .padding([SPACING_XS / 2.0, SPACING_XS]),
             button("Delete notes")
                 .style(iced::widget::button::danger)
                 .on_press_maybe((!app.midi_editor_selected_notes.is_empty()).then_some(

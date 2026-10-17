@@ -15,27 +15,30 @@ use crate::{
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct QuantizedMidiNoteChange {
+    note_id: NoteId,
+    before_tick: u64,
+    before_duration: u64,
+    after_tick: u64,
+    after_duration: u64,
+}
+
 fn quantized_midi_note_changes(
     item: &MidiItem,
     selected_note_ids: Option<&HashSet<NoteId>>,
     grid: crate::GridFraction,
     strength: f32,
     ppq: u32,
-) -> Result<Vec<(NoteId, u64, u64)>, ActionError> {
+    quantize_ends: bool,
+) -> Result<Vec<QuantizedMidiNoteChange>, ActionError> {
     if !strength.is_finite() || !(0.0..=1.0).contains(&strength) {
         return Err(ActionError::InvalidQuantizeStrength);
     }
     let grid_ticks = grid
         .ticks(ppq)
         .map_err(|_| ActionError::InvalidQuantizeGrid)?;
-    let mut changes = Vec::new();
-    for note in item.notes.iter() {
-        if selected_note_ids.is_some_and(|selected| !selected.contains(&note.id)) {
-            continue;
-        }
-        let absolute_tick = item
-            .project_tick_at_content_tick(note.data.tick)
-            .ok_or(ActionError::InvalidMidiNote)?;
+    let quantize_absolute_tick = |absolute_tick: u64| {
         let lower = absolute_tick / grid_ticks * grid_ticks;
         let remainder = absolute_tick - lower;
         let round_up_threshold = grid_ticks / 2 + grid_ticks % 2;
@@ -46,15 +49,44 @@ fn quantized_midi_note_changes(
         };
         let distance = nearest as i128 - absolute_tick as i128;
         let adjustment = (distance as f64 * f64::from(strength)).round() as i128;
-        let quantized_absolute = u64::try_from(absolute_tick as i128 + adjustment)
-            .map_err(|_| ActionError::InvalidMidiNote)?;
+        u64::try_from(absolute_tick as i128 + adjustment).map_err(|_| ActionError::InvalidMidiNote)
+    };
+    let mut changes = Vec::new();
+    for note in item.notes.iter() {
+        if selected_note_ids.is_some_and(|selected| !selected.contains(&note.id)) {
+            continue;
+        }
+        let absolute_tick = item
+            .project_tick_at_content_tick(note.data.tick)
+            .ok_or(ActionError::InvalidMidiNote)?;
+        let quantized_absolute = quantize_absolute_tick(absolute_tick)?;
         let tick = midi_source_tick_at_project_tick(item, quantized_absolute)
             .ok_or(ActionError::InvalidMidiNote)?;
-        if !valid_midi_note_source_range(item, tick, note.data.duration) {
+        let duration = if quantize_ends {
+            let absolute_end = absolute_tick
+                .checked_add(note.data.duration)
+                .ok_or(ActionError::InvalidMidiNote)?;
+            let mut quantized_end = quantize_absolute_tick(absolute_end)?;
+            if quantized_end <= quantized_absolute {
+                quantized_end = quantized_absolute
+                    .checked_add(grid_ticks)
+                    .ok_or(ActionError::InvalidMidiNote)?;
+            }
+            quantized_end - quantized_absolute
+        } else {
+            note.data.duration
+        };
+        if !valid_midi_note_source_range(item, tick, duration) {
             return Err(ActionError::InvalidMidiNote);
         }
-        if tick != note.data.tick {
-            changes.push((note.id, note.data.tick, tick));
+        if tick != note.data.tick || duration != note.data.duration {
+            changes.push(QuantizedMidiNoteChange {
+                note_id: note.id,
+                before_tick: note.data.tick,
+                before_duration: note.data.duration,
+                after_tick: tick,
+                after_duration: duration,
+            });
         }
     }
     Ok(changes)
@@ -814,7 +846,7 @@ enum ProjectEvent {
     },
     MidiNotesQuantized {
         item_id: ItemId,
-        changes: Vec<(NoteId, u64, u64)>,
+        changes: Vec<QuantizedMidiNoteChange>,
     },
     Transaction {
         tx_id: u64,
@@ -1237,7 +1269,13 @@ impl ProjectEvent {
                 item_id: *item_id,
                 changes: changes
                     .iter()
-                    .map(|(note_id, before, after)| (*note_id, *after, *before))
+                    .map(|change| QuantizedMidiNoteChange {
+                        note_id: change.note_id,
+                        before_tick: change.after_tick,
+                        before_duration: change.after_duration,
+                        after_tick: change.before_tick,
+                        after_duration: change.before_duration,
+                    })
                     .collect(),
             },
             Self::Transaction { tx_id, events } => Self::Transaction {
@@ -4508,6 +4546,7 @@ impl Project {
                     grid,
                     strength,
                     state.tempo_map.settings().ppq(),
+                    false,
                 )?;
                 ProjectEvent::MidiNotesQuantized { item_id, changes }
             }
@@ -4529,6 +4568,29 @@ impl Project {
                     grid,
                     strength,
                     state.tempo_map.settings().ppq(),
+                    false,
+                )?;
+                ProjectEvent::MidiNotesQuantized { item_id, changes }
+            }
+            DawAction::QuantizeMidiNotesAndEnds {
+                item_id,
+                note_ids,
+                grid,
+                strength,
+            } => {
+                let selected_note_ids = note_ids.into_iter().collect::<HashSet<_>>();
+                let item = state
+                    .midi_items
+                    .iter()
+                    .find(|item| item.id == item_id)
+                    .ok_or(ActionError::MidiItemNotFound { item_id })?;
+                let changes = quantized_midi_note_changes(
+                    item,
+                    Some(&selected_note_ids),
+                    grid,
+                    strength,
+                    state.tempo_map.settings().ppq(),
+                    true,
                 )?;
                 ProjectEvent::MidiNotesQuantized { item_id, changes }
             }
@@ -5532,21 +5594,23 @@ impl Project {
                     .ok_or(ActionError::HistoryInvariantViolation)?;
                 let source_bounds = midi_item_source_tick_bounds(item);
                 let current_notes = Arc::make_mut(&mut item.notes);
-                for (note_id, before, after) in changes {
+                for change in changes {
                     let note = current_notes
                         .iter_mut()
-                        .find(|note| note.id == *note_id)
+                        .find(|note| note.id == change.note_id)
                         .ok_or(ActionError::HistoryInvariantViolation)?;
-                    if note.data.tick != *before
+                    if note.data.tick != change.before_tick
+                        || note.data.duration != change.before_duration
                         || !valid_midi_note_range_in_bounds(
                             source_bounds,
-                            *after,
-                            note.data.duration,
+                            change.after_tick,
+                            change.after_duration,
                         )
                     {
                         return Err(ActionError::HistoryInvariantViolation);
                     }
-                    note.data.tick = *after;
+                    note.data.tick = change.after_tick;
+                    note.data.duration = change.after_duration;
                 }
             }
             ProjectEvent::Transaction { events, .. } => {
@@ -5636,7 +5700,8 @@ fn source_track_for_action(state: &ProjectState, action: &DawAction) -> Option<T
         | DawAction::SetMidiControllers { item_id, .. }
         | DawAction::SetMidiPitchBends { item_id, .. }
         | DawAction::QuantizeItem { item_id, .. }
-        | DawAction::QuantizeMidiNotes { item_id, .. } => state
+        | DawAction::QuantizeMidiNotes { item_id, .. }
+        | DawAction::QuantizeMidiNotesAndEnds { item_id, .. } => state
             .midi_items
             .iter()
             .find(|item| item.id == *item_id)

@@ -145,3 +145,105 @@ fn midi_quantize_can_limit_changes_to_the_selected_note_ids() {
     );
     assert_eq!(project.midi_items()[0].notes()[1].tick(), 480);
 }
+
+#[test]
+fn midi_quantize_selected_positions_and_ends_match_reaper_and_are_undoable() {
+    let mut project = Project::new();
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Piano".to_owned(),
+        })
+        .expect("test track should be created");
+    let track_id = project.tracks()[0].id();
+    project
+        .apply(DawAction::InsertMidiItem {
+            track_id,
+            start_tick: 0,
+            length_ticks: 4_000,
+        })
+        .expect("test MIDI item should be inserted");
+    let item_id = project.midi_items()[0].id();
+    project
+        .apply(DawAction::AddMidiNotes {
+            item_id,
+            notes: vec![
+                MidiNoteData {
+                    channel: 0,
+                    pitch: 60,
+                    tick: 100,
+                    duration: 120,
+                    velocity: 96,
+                },
+                MidiNoteData {
+                    channel: 2,
+                    pitch: 62,
+                    tick: 350,
+                    duration: 80,
+                    velocity: 80,
+                },
+                MidiNoteData {
+                    channel: 0,
+                    pitch: 64,
+                    tick: 550,
+                    duration: 120,
+                    velocity: 72,
+                },
+                MidiNoteData {
+                    channel: 15,
+                    pitch: 65,
+                    tick: 900,
+                    duration: 70,
+                    velocity: 110,
+                },
+            ],
+        })
+        .expect("test notes should be inserted");
+    let note_ids = project.midi_items()[0]
+        .notes()
+        .iter()
+        .enumerate()
+        .filter_map(|(index, note)| (index != 2).then_some(note.id()))
+        .collect::<Vec<_>>();
+
+    project
+        .apply(DawAction::QuantizeMidiNotesAndEnds {
+            item_id,
+            note_ids,
+            grid: GridFraction::new(1, 32).expect("1/32 is a valid grid"),
+            strength: 1.0,
+        })
+        .expect("selected note positions and ends should quantize");
+
+    let notes = project.midi_items()[0].notes();
+    assert_eq!((notes[0].tick(), notes[0].duration()), (120, 120));
+    assert_eq!(
+        (
+            notes[1].tick(),
+            notes[1].duration(),
+            notes[1].channel(),
+            notes[1].velocity()
+        ),
+        (360, 120, 2, 80)
+    );
+    assert_eq!((notes[2].tick(), notes[2].duration()), (550, 120));
+    // REAPER keeps a positive note when its start/end would otherwise collapse to one grid line.
+    assert_eq!(
+        (
+            notes[3].tick(),
+            notes[3].duration(),
+            notes[3].channel(),
+            notes[3].velocity()
+        ),
+        (960, 120, 15, 110)
+    );
+
+    assert!(project.undo().expect("quantize should be undoable"));
+    let notes = project.midi_items()[0].notes();
+    assert_eq!((notes[1].tick(), notes[1].duration()), (350, 80));
+    assert_eq!((notes[3].tick(), notes[3].duration()), (900, 70));
+    assert!(project.redo().expect("quantize should be redoable"));
+    let notes = project.midi_items()[0].notes();
+    assert_eq!((notes[1].tick(), notes[1].duration()), (360, 120));
+    assert_eq!((notes[3].tick(), notes[3].duration()), (960, 120));
+}

@@ -12132,6 +12132,77 @@ fn midi_editor_quantize_moves_only_selected_notes_on_the_default_editor_grid() {
 }
 
 #[test]
+fn midi_editor_quantize_positions_and_ends_changes_only_selected_notes() {
+    let mut app = App::default();
+    let _ = app.update(Message::AddTrack);
+    let track_id = app.project.tracks()[0].id();
+    app.project
+        .apply(DawAction::InsertMidiItem {
+            track_id,
+            start_tick: 0,
+            length_ticks: 3_840,
+        })
+        .expect("test MIDI item should be inserted");
+    let item_id = app.project.midi_items()[0].id();
+    app.project
+        .apply(DawAction::AddMidiNotes {
+            item_id,
+            notes: vec![
+                MidiNoteData {
+                    channel: 0,
+                    pitch: 60,
+                    tick: 20,
+                    duration: 40,
+                    velocity: 96,
+                },
+                MidiNoteData {
+                    channel: 2,
+                    pitch: 64,
+                    tick: 170,
+                    duration: 90,
+                    velocity: 100,
+                },
+                MidiNoteData {
+                    channel: 0,
+                    pitch: 67,
+                    tick: 350,
+                    duration: 40,
+                    velocity: 80,
+                },
+            ],
+        })
+        .expect("test notes should be inserted");
+    let selected_id = app.project.midi_items()[0].notes()[1].id();
+    app.midi_editor_selected_notes = HashSet::from([selected_id]);
+
+    let _ = app.update(Message::QuantizeSelectedMidiNotesAndEnds(item_id));
+
+    let notes = app.project.midi_items()[0].notes();
+    assert_eq!((notes[0].tick(), notes[0].duration()), (20, 40));
+    assert_eq!(
+        (notes[1].tick(), notes[1].duration(), notes[1].channel()),
+        (120, 120, 2)
+    );
+    assert_eq!((notes[2].tick(), notes[2].duration()), (350, 40));
+    let _ = app.update(Message::Undo);
+    assert_eq!(
+        (
+            app.project.midi_items()[0].notes()[1].tick(),
+            app.project.midi_items()[0].notes()[1].duration()
+        ),
+        (170, 90)
+    );
+    let _ = app.update(Message::Redo);
+    assert_eq!(
+        (
+            app.project.midi_items()[0].notes()[1].tick(),
+            app.project.midi_items()[0].notes()[1].duration()
+        ),
+        (120, 120)
+    );
+}
+
+#[test]
 fn midi_editor_quantize_grid_conversion_matches_every_musical_division() {
     let mut project = Project::new();
     project

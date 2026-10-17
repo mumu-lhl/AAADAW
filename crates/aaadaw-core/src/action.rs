@@ -494,6 +494,13 @@ pub enum DawAction {
         grid: GridFraction,
         strength: f32,
     },
+    /// Move selected note starts and ends to the nearest musical grid position.
+    QuantizeMidiNotesAndEnds {
+        item_id: ItemId,
+        note_ids: Vec<crate::NoteId>,
+        grid: GridFraction,
+        strength: f32,
+    },
     /// Delete a track from the project.
     DeleteTrack {
         track_id: TrackId,
