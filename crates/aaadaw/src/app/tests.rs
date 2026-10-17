@@ -10189,6 +10189,19 @@ fn empty_midi_export_warning_matches_native_project_and_scoped_prompts() {
         324.0
     );
 
+    let type_zero = aaadaw_core::MidiExportOptions {
+        file_type: aaadaw_core::MidiFileType::Type0,
+        ..project
+    };
+    assert_eq!(
+        super::midi_export::empty_export_warning(type_zero),
+        "MIDI export failed!\nNo unmuted tracks containing MIDI items were found"
+    );
+    assert_eq!(
+        super::midi_export::empty_export_warning_width(type_zero),
+        324.0
+    );
+
     let scoped = aaadaw_core::MidiExportOptions {
         item_scope: aaadaw_core::MidiExportItemScope::SelectedItemsOnly,
         time_scope: aaadaw_core::MidiExportTimeScope::TimeSelectionOnly,
@@ -10269,6 +10282,47 @@ fn confirming_header_only_midi_export_starts_the_pending_export() {
         app.status
             .starts_with("Exporting project MIDI to midi_export.mid")
     );
+}
+
+#[test]
+fn confirming_empty_type_zero_midi_export_reports_native_failure_without_writing() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("empty-type0.mid");
+    let mut app = App::default();
+    let _ = app.update(Message::OpenMidiExportDialog);
+    app.midi_export_dialog.as_mut().unwrap().destination = path.display().to_string();
+    let _ = app.update(Message::MidiExportFileTypeChanged(
+        aaadaw_core::MidiFileType::Type0,
+    ));
+
+    let _ = app.update(Message::ConfirmMidiExport);
+    assert!(app.pending_empty_midi_export.is_some());
+    assert_eq!(
+        super::midi_export::empty_export_warning(
+            app.pending_empty_midi_export.as_ref().unwrap().options
+        ),
+        "MIDI export failed!\nNo unmuted tracks containing MIDI items were found"
+    );
+
+    let _ = app.update(Message::ConfirmEmptyMidiExport);
+    assert!(app.pending_empty_midi_export.is_none());
+    assert_eq!(app.status, "MIDI export failed!");
+    assert!(!path.exists(), "REAPER rejects an empty Type 0 export");
+}
+
+#[test]
+fn escaping_empty_type_zero_midi_error_dismisses_it_as_a_failure() {
+    let mut app = App::default();
+    let _ = app.update(Message::OpenMidiExportDialog);
+    let _ = app.update(Message::MidiExportFileTypeChanged(
+        aaadaw_core::MidiFileType::Type0,
+    ));
+    let _ = app.update(Message::ConfirmMidiExport);
+    assert!(app.pending_empty_midi_export.is_some());
+
+    let _ = app.update(Message::Escape);
+    assert!(app.pending_empty_midi_export.is_none());
+    assert_eq!(app.status, "MIDI export failed!");
 }
 
 #[test]

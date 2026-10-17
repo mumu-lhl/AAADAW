@@ -361,23 +361,31 @@ fn desktop_view(app: &App) -> Element<'_, Message> {
                 ..button::Style::default()
             }
         };
+        let confirm = button(text("OK"))
+            .style(button_style)
+            .padding([1.0, 3.0])
+            .on_press(Message::ConfirmEmptyMidiExport);
+        let buttons = if pending.options.file_type == aaadaw_core::MidiFileType::Type0 {
+            row![confirm]
+        } else {
+            row![
+                confirm,
+                button(text("Cancel"))
+                    .style(button_style)
+                    .padding([1.0, 3.0])
+                    .on_press(Message::CancelEmptyMidiExport),
+            ]
+        }
+        .spacing(10)
+        .align_y(Alignment::Center);
         let dialog = container(
             column![
                 text(super::midi_export::empty_export_warning(pending.options))
                     .size(12)
                     .width(Length::Fill),
-                row![
-                    button(text("OK"))
-                        .style(button_style)
-                        .padding([2.0, 6.0])
-                        .on_press(Message::ConfirmEmptyMidiExport),
-                    button(text("Cancel"))
-                        .style(button_style)
-                        .padding([2.0, 6.0])
-                        .on_press(Message::CancelEmptyMidiExport),
-                ]
-                .spacing(8)
-                .align_y(Alignment::Center),
+                container(buttons)
+                    .width(Length::Fill)
+                    .center_x(Length::Fill),
             ]
             .spacing(8)
             .padding(0),
@@ -401,7 +409,7 @@ fn desktop_view(app: &App) -> Element<'_, Message> {
                 .center(Length::Fill)
                 .style(|_| iced::widget::container::Style {
                     background: Some(iced::Background::Color(iced::Color::from_rgba8(
-                        0, 0, 0, 0.66,
+                        0, 0, 0, 0.0,
                     ))),
                     ..iced::widget::container::Style::default()
                 }),

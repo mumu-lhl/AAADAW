@@ -44,20 +44,33 @@ folder_muted_result_capture	fixtures/menu-export-midi-native-folder-muted-result
 folder_muted_native_behavior	A muted folder does not suppress export of MIDI items on its unmuted child; REAPER writes the MIDI track without the empty-scope warning
 folder_muted_core_regression	crates/aaadaw-core/tests/midi_file_export.rs::reaper_782_export_keeps_midi_items_on_unmuted_tracks_inside_muted_folders; full-file byte comparison passed
 folder_muted_probe	scripts/reaper_parity/probe-midi-export-muted-folder.lua; REAPER Build ID fb9ade2f211bc91a3ee6193630ef17bcf5f6528b; SHA-256 9976f5608068b7a58518969001b00b527fb0de6ed7459e0e5dda6f29878ee254
-native_probe	scripts/reaper_parity/probe-midi-export-scope-intersections.lua; scripts/reaper_parity/probe-midi-export-muted-items.lua; scripts/reaper_parity/probe-midi-export-muted-folder.lua; scripts/reaper_parity/probe-midi-export-empty-scopes.lua; scripts/reaper_parity/probe-midi-export-empty-selected-track-time.lua
+type0_empty_project	fixtures/menu-export-midi-native-empty-type0.rpp; no tracks/items; SHA-256 a94bb6758322b78eaef5f0dfef37a6408cf5c7b4c799750f714f38e9c0748b27
+type0_empty_probe	fixtures/menu-export-midi-native-empty-type0.tsv; Linux REAPER 7.82 / Default 7; Main action 40849; All / Entire project; Type 0 / Merge to single MIDI track; PPQN 960; optional metadata unchecked
+type0_empty_error	fixtures/menu-export-midi-native-empty-type0-error.png; 324x81; `MIDI export failed!` / `No unmuted tracks containing MIDI items were found`; SHA-256 d3955ac606fc9131cefa9621a035687516d0c3e563f16e3e4f8380541f7547fc
+type0_empty_error_full	fixtures/menu-export-midi-native-empty-type0-error-full.png; 1280x800; centered native error modal; SHA-256 f18db619b69bfe7b50467c903c14c772702b2f04a56081d98574c34eead6096a
+type0_empty_output	No MIDI output file was created in the isolated probe project/output directory after dismissing the error
+type0_empty_probe_script	scripts/reaper_parity/probe-midi-export-empty-type0.lua; SHA-256 26d08502332599673047112427ec87578814ca51b78b6c610a90889626cf5989
+native_probe	scripts/reaper_parity/probe-midi-export-scope-intersections.lua; scripts/reaper_parity/probe-midi-export-muted-items.lua; scripts/reaper_parity/probe-midi-export-muted-folder.lua; scripts/reaper_parity/probe-midi-export-empty-scopes.lua; scripts/reaper_parity/probe-midi-export-empty-selected-track-time.lua; scripts/reaper_parity/probe-midi-export-empty-type0.lua
 reaper_binary_build_id	fb9ade2f211bc91a3ee6193630ef17bcf5f6528b
 reaper_binary_sha256	9976f5608068b7a58518969001b00b527fb0de6ed7459e0e5dda6f29878ee254
-aaadaw_build_id	76c5a13da11f391ea5e6c69c459b3a3381c58136
-aaadaw_binary_sha256	7f41a1e165072622023b13ffe77604f5f19ec09619919130705602150a67cebb
+aaadaw_build_id	8a0f205fa560aae417ba98e06659668c91bb974c
+aaadaw_binary_sha256	a04ab02abecae07e1217f1e834d9bf08e961f8f9e9f813c16662605f1cf8c1d9
 aaadaw_empty_warning_full_screenshot	fixtures/menu-export-midi-aaadaw-empty-export-warning-full.png; 1280x800; SHA-256 7407d24b98dd06a26c4fca4b6513f0fce7c44b657a8c4687107f71b970b05081
 aaadaw_empty_warning_crop	fixtures/menu-export-midi-aaadaw-empty-export-warning.png; 324x81; SHA-256 59b9c25eafc5d4769b82a62773c4d59f7163deebd570fbf46d14216f57b2d2eb
 aaadaw_selected_tracks_warning_full	fixtures/menu-export-midi-aaadaw-selected-tracks-empty-warning-full.png; 1280x800; SHA-256 c3a4d625581aa74cbbe2561d32e437a722a67564c3d0faba2f0bf40c2110cb18
 aaadaw_selected_tracks_warning_crop	fixtures/menu-export-midi-aaadaw-selected-tracks-empty-warning.png; 377x81; exact selected-track warning; SHA-256 67a2211443b94406c0ec65b2e8a55db33aacd0c72fff9736b7215d0e05d6859e
 aaadaw_selected_items_warning_full	fixtures/menu-export-midi-aaadaw-selected-items-empty-warning-full.png; 1280x800; SHA-256 278036ad497e87cffe913ae734fa8c7fbed735609aa6a9229b26b8f3248f6408
 aaadaw_selected_items_warning_crop	fixtures/menu-export-midi-aaadaw-selected-items-empty-warning.png; 377x81; exact selected-item warning; SHA-256 7f5e1533b8571e6b4734d90f18df64e11b34032dac3144676dfb592b6b2d35c2
+aaadaw_type0_error_full	fixtures/menu-export-midi-aaadaw-empty-type0-error-full.png; Build ID 8a0f205fa560aae417ba98e06659668c91bb974c; SHA-256 bec10a8dc264ed2880767797e39f6e6ed343902f581cfab631894bdeaf87b05f
+aaadaw_type0_error_crop	fixtures/menu-export-midi-aaadaw-empty-type0-error.png; 324x81; text/button placement matches the REAPER Type 0 error crop; SHA-256 b2e02a08d208f00ddcebf6dfe47e8a7ef1565089000653b35318dab9a38d85cf
+aaadaw_type0_confirmed_no_file	fixtures/menu-export-midi-aaadaw-empty-type0-confirmed-no-file.png; 1280x800; after OK, status says `MIDI export failed!`; no MIDI file created; SHA-256 0a8d13e8c8e8e962b619ec382f6521a57689f1bb10087b2bebb50d87e1c9d942
+aaadaw_type1_empty_warning_full	fixtures/menu-export-midi-aaadaw-empty-type1-warning-full.png; Build ID 8a0f205fa560aae417ba98e06659668c91bb974c; SHA-256 e1d397a46d97a588956c6fed04a4fa3774c42e8564a1076853115e4533194bb6
+aaadaw_type1_empty_warning_crop	fixtures/menu-export-midi-aaadaw-empty-type1-warning.png; 324x81; OK/Cancel prompt remains centered; SHA-256 12a031949c5918ca78890c4c32db10ab39cd70f0d798199b9dfa814b14b12421
+aaadaw_type1_confirmed	fixtures/menu-export-midi-aaadaw-empty-type1-confirmed.png; confirming writes the existing 68-byte Type 1 / 2-track header, SHA-256 5a8e0a82bb7c528a890ae1d9b7c91e4f126b391c25af0abfe881e8773fb9d583; screenshot SHA-256 e369c9a26ce8f618fe0761e2c4ff4113a5bc2e5316e1d923c080963560431dcd
+aaadaw_type0_type1_desktop_validation	Fresh isolated Xvfb :1773 on the actual rebuilt binary; Type 0 error dismisses without output; Type 1 confirmation still writes valid header-only output; temporary Type 1 file was removed after hash/format verification
 aaadaw_cancel_screenshot	fixtures/menu-export-midi-aaadaw-empty-export-cancelled.png; 1280x800; MIDI export cancelled; no file created; SHA-256 ef0e405189bb5ca5fec361ab2311335e5c8b1c5e3c0c82be8e1039821dd2eb6e
 aaadaw_confirm_screenshot	fixtures/menu-export-midi-aaadaw-empty-export-confirmed.png; 1280x800; export completion status; SHA-256 0877277d7c6f6c79a1fbd1d884caa4ec936d9dc66e17729fcd4d46baa262b42e
 aaadaw_confirmed_export	fixtures/menu-export-midi-aaadaw-empty-export.mid; 68 bytes; Type 1; 2 tracks; PPQN 960; SHA-256 5a8e0a82bb7c528a890ae1d9b7c91e4f126b391c25af0abfe881e8773fb9d583
 aaadaw_desktop_validation	Xvfb :1710; All/Entire project, Selected Tracks, and Selected Items empty-scope prompts captured; Cancel created no file; OK wrote a valid Standard MIDI file
-test_results	AAADAW 740 passed; Core 192 passed; combined Nextest 932/932 across 45 binaries; strict all-target Clippy with -D warnings; cargo fmt check; CRLF-aware diff check; production desktop build
-open_gaps	Other time-scope/item-scope intersections, metadata combinations with scopes, exact full-window and keyboard-focus parity remain open
+test_results	AAADAW Nextest 742 passed; Core Nextest 192 passed; combined Nextest 934/934 across 45 binaries; strict all-target Clippy -D warnings; cargo fmt --all -- --check; CRLF-aware git diff --check; desktop build Build ID 8a0f205fa560aae417ba98e06659668c91bb974c SHA-256 a04ab02abecae07e1217f1e834d9bf08e961f8f9e9f813c16662605f1cf8c1d9; actual Type 0 and Type 1 modal/output validation on isolated Xvfb :1773
+open_gaps	Other Type 0 scope intersections, remaining time/item-scope combinations, metadata combined with scopes, exact full-window styling outside these modals, keyboard/focus parity, and full File menu order remain open

@@ -2765,11 +2765,7 @@ impl App {
             }
             Message::ConfirmMidiExport => task = self.confirm_midi_export(),
             Message::ConfirmEmptyMidiExport => task = self.confirm_empty_midi_export(),
-            Message::CancelEmptyMidiExport => {
-                if self.pending_empty_midi_export.take().is_some() {
-                    self.status = "MIDI export cancelled".to_owned();
-                }
-            }
+            Message::CancelEmptyMidiExport => self.dismiss_empty_midi_export(),
             Message::MidiExportDestinationChanged(value) => {
                 if let Some(dialog) = &mut self.midi_export_dialog {
                     dialog.destination = value;
@@ -4378,8 +4374,8 @@ impl App {
                 self.transport_details_open = !self.transport_details_open;
             }
             Message::Escape => {
-                if self.pending_empty_midi_export.take().is_some() {
-                    self.status = "MIDI export cancelled".to_owned();
+                if self.pending_empty_midi_export.is_some() {
+                    self.dismiss_empty_midi_export();
                     return Task::none();
                 }
                 if self.pending_project_template_overwrite.take().is_some() {

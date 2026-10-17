@@ -16,21 +16,23 @@ pub(super) struct PendingEmptyMidiExport {
 }
 
 pub(super) fn empty_export_warning(options: MidiExportOptions) -> String {
-    let mut message = String::from("No unmuted ");
+    let mut detail = String::from("No unmuted ");
     match options.item_scope {
-        MidiExportItemScope::All => message.push_str("tracks containing MIDI items"),
+        MidiExportItemScope::All => detail.push_str("tracks containing MIDI items"),
         MidiExportItemScope::SelectedTracksOnly => {
-            message.push_str("selected tracks containing MIDI items");
+            detail.push_str("selected tracks containing MIDI items");
         }
         MidiExportItemScope::SelectedItemsOnly => {
-            message.push_str("tracks containing selected MIDI items");
+            detail.push_str("tracks containing selected MIDI items");
         }
     }
     if options.time_scope == MidiExportTimeScope::TimeSelectionOnly {
-        message.push_str(" within the time selection");
+        detail.push_str(" within the time selection");
     }
-    message.push_str(" were found. Write MIDI file header anyway?");
-    message
+    match options.file_type {
+        MidiFileType::Type0 => format!("MIDI export failed!\n{detail} were found"),
+        MidiFileType::Type1 => format!("{detail} were found. Write MIDI file header anyway?"),
+    }
 }
 
 pub(super) fn empty_export_warning_width(options: MidiExportOptions) -> f32 {
@@ -178,11 +180,24 @@ impl App {
     }
 
     pub(super) fn confirm_empty_midi_export(&mut self) -> Task<Message> {
-        self.pending_empty_midi_export
-            .take()
-            .map_or_else(Task::none, |pending| {
-                self.start_project_midi_export(pending)
-            })
+        let Some(pending) = self.pending_empty_midi_export.take() else {
+            return Task::none();
+        };
+        if pending.options.file_type == MidiFileType::Type0 {
+            self.status = "MIDI export failed!".to_owned();
+            return Task::none();
+        }
+        self.start_project_midi_export(pending)
+    }
+
+    pub(super) fn dismiss_empty_midi_export(&mut self) {
+        if let Some(pending) = self.pending_empty_midi_export.take() {
+            self.status = if pending.options.file_type == MidiFileType::Type0 {
+                "MIDI export failed!".to_owned()
+            } else {
+                "MIDI export cancelled".to_owned()
+            };
+        }
     }
 
     fn start_project_midi_export(&mut self, pending: PendingEmptyMidiExport) -> Task<Message> {
