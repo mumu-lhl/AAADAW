@@ -34,7 +34,7 @@ pub use midi::{
 pub use midi_file::{
     MidiExportItemScope, MidiExportOptions, MidiExportSelection, MidiExportTimeScope, MidiFileType,
     MidiMarkerType, encode_standard_midi, encode_standard_midi_with_conductor_track_name,
-    encode_standard_midi_with_selection,
+    encode_standard_midi_with_selection, midi_export_has_items_in_scope,
 };
 pub use project::{FxParameterChange, MAX_FX_PARAMETER_AUTOMATION_POINTS, Project};
 pub use project_notes::ProjectNotes;

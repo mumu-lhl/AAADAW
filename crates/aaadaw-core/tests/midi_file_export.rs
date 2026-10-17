@@ -3,6 +3,7 @@ use aaadaw_core::{
     MidiExportSelection, MidiExportTimeScope, MidiFileType, MidiItemPosition, MidiMarkerType,
     MidiNoteData, MidiPitchBendData, Project, TempoCurve, TimeSignature, encode_standard_midi,
     encode_standard_midi_with_conductor_track_name, encode_standard_midi_with_selection,
+    midi_export_has_items_in_scope,
 };
 
 #[test]
@@ -353,8 +354,8 @@ fn default_export_always_includes_the_native_start_tempo_and_time_signature() {
     assert_eq!(&bytes[8..10], &[0, 1], "REAPER defaults to SMF type 1");
     assert_eq!(
         &bytes[10..12],
-        &[0, 1],
-        "empty project still has one conductor track"
+        &[0, 2],
+        "empty project has the conductor and REAPER's empty MIDI track"
     );
     assert_eq!(&bytes[12..14], &[0x03, 0xc0], "REAPER default PPQN is 960");
     assert!(
@@ -367,6 +368,57 @@ fn default_export_always_includes_the_native_start_tempo_and_time_signature() {
             .windows(7)
             .any(|window| window == [0xff, 0x58, 0x04, 4, 2, 24, 8])
     );
+}
+
+#[test]
+fn reaper_782_empty_project_export_matches_native_two_track_header() {
+    let project = Project::new();
+    let actual = encode_standard_midi_with_conductor_track_name(
+        &project,
+        MidiExportOptions::for_project(&project),
+        "midi-export-empty-project-all",
+    )
+    .unwrap();
+    let native = include_bytes!(
+        "../../../docs/verification/reaper-parity/fixtures/menu-export-midi-native-empty-project-all.mid"
+    );
+
+    assert_eq!(actual, native);
+}
+
+#[test]
+fn reaper_782_export_skips_midi_items_on_muted_tracks() {
+    let project = native_midi_muted_scope_fixture(true, false);
+    let options = MidiExportOptions::for_project(&project);
+    assert!(
+        !midi_export_has_items_in_scope(&project, options, &MidiExportSelection::default())
+            .unwrap()
+    );
+    let actual =
+        encode_standard_midi_with_conductor_track_name(&project, options, "midi_export").unwrap();
+    let native = include_bytes!(
+        "../../../docs/verification/reaper-parity/fixtures/menu-export-midi-native-track-muted-all.mid"
+    );
+
+    assert_eq!(actual, native);
+}
+
+#[test]
+fn reaper_782_export_skips_muted_midi_items() {
+    let project = native_midi_muted_scope_fixture(false, true);
+    let options = MidiExportOptions::for_project(&project);
+    assert!(
+        !midi_export_has_items_in_scope(&project, options, &MidiExportSelection::default())
+            .unwrap()
+    );
+    let actual =
+        encode_standard_midi_with_conductor_track_name(&project, options, "item-muted-midi-export")
+            .unwrap();
+    let native = include_bytes!(
+        "../../../docs/verification/reaper-parity/fixtures/menu-export-midi-native-item-muted-all.mid"
+    );
+
+    assert_eq!(actual, native);
 }
 
 #[test]
@@ -533,6 +585,76 @@ fn reaper_782_midi_export_time_selection_matches_native_consolidation() {
         actual, native,
         "time-selection mode exports overlapping items and rebases their project ticks"
     );
+}
+
+#[test]
+fn reaper_782_midi_export_selected_track_and_time_selection_match_native() {
+    let (project, selection, _) = native_midi_scope_intersection_fixture_project();
+    let options = MidiExportOptions {
+        item_scope: MidiExportItemScope::SelectedTracksOnly,
+        time_scope: MidiExportTimeScope::TimeSelectionOnly,
+        ..MidiExportOptions::for_project(&project)
+    };
+    let actual = encode_standard_midi_with_selection(
+        &project,
+        options,
+        "midi-export-scope-selected-tracks-time",
+        &selection,
+    )
+    .unwrap();
+    let native = include_bytes!(
+        "../../../docs/verification/reaper-parity/fixtures/menu-export-midi-native-scope-selected-tracks-time.mid"
+    );
+
+    assert_eq!(actual, native);
+}
+
+#[test]
+fn reaper_782_midi_export_selected_item_outside_time_selection_matches_native_empty_track() {
+    let (project, selection, _) = native_midi_scope_intersection_fixture_project();
+    let options = MidiExportOptions {
+        item_scope: MidiExportItemScope::SelectedItemsOnly,
+        time_scope: MidiExportTimeScope::TimeSelectionOnly,
+        ..MidiExportOptions::for_project(&project)
+    };
+    assert!(!midi_export_has_items_in_scope(&project, options, &selection).unwrap());
+    let actual = encode_standard_midi_with_selection(
+        &project,
+        options,
+        "midi-export-scope-selected-items-outside-time",
+        &selection,
+    )
+    .unwrap();
+    let native = include_bytes!(
+        "../../../docs/verification/reaper-parity/fixtures/menu-export-midi-native-scope-selected-items-outside-time.mid"
+    );
+
+    assert_eq!(actual, native);
+}
+
+#[test]
+fn reaper_782_midi_export_selected_item_inside_time_selection_matches_native() {
+    let (project, mut selection, in_range_item_id) =
+        native_midi_scope_intersection_fixture_project();
+    selection.selected_item_ids = vec![in_range_item_id];
+    let options = MidiExportOptions {
+        item_scope: MidiExportItemScope::SelectedItemsOnly,
+        time_scope: MidiExportTimeScope::TimeSelectionOnly,
+        ..MidiExportOptions::for_project(&project)
+    };
+    assert!(midi_export_has_items_in_scope(&project, options, &selection).unwrap());
+    let actual = encode_standard_midi_with_selection(
+        &project,
+        options,
+        "midi-export-scope-selected-items-inside-time",
+        &selection,
+    )
+    .unwrap();
+    let native = include_bytes!(
+        "../../../docs/verification/reaper-parity/fixtures/menu-export-midi-native-scope-selected-items-inside-time.mid"
+    );
+
+    assert_eq!(actual, native);
 }
 
 #[test]
@@ -1433,6 +1555,85 @@ fn native_midi_consolidation_fixture_project() -> (Project, MidiExportSelection)
         time_selection_ticks: Some((1920, 3840)),
     };
     (project, selection)
+}
+
+fn native_midi_scope_intersection_fixture_project()
+-> (Project, MidiExportSelection, aaadaw_core::ItemId) {
+    let mut project = Project::new();
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Track A".to_owned(),
+        })
+        .unwrap();
+    project
+        .apply(DawAction::CreateTrack {
+            index: 1,
+            name: "Track B".to_owned(),
+        })
+        .unwrap();
+    let track_a = project.tracks()[0].id();
+    let track_b = project.tracks()[1].id();
+    let selected_outside_item = add_native_consolidation_item(&mut project, track_a, 480, 60);
+    let in_range_item = add_native_consolidation_item(&mut project, track_a, 2400, 61);
+    add_native_consolidation_item(&mut project, track_b, 4320, 62);
+    let selection = MidiExportSelection {
+        selected_track_ids: vec![track_a],
+        selected_item_ids: vec![selected_outside_item],
+        time_selection_ticks: Some((1920, 3840)),
+    };
+    (project, selection, in_range_item)
+}
+
+fn native_midi_muted_scope_fixture(track_muted: bool, item_muted: bool) -> Project {
+    let mut project = Project::new();
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: if track_muted {
+                "Muted Track".to_owned()
+            } else {
+                "Unmuted Track".to_owned()
+            },
+        })
+        .unwrap();
+    let track_id = project.tracks()[0].id();
+    project
+        .apply(DawAction::InsertMidiItem {
+            track_id,
+            start_tick: 0,
+            length_ticks: 960,
+        })
+        .unwrap();
+    let item_id = project.midi_items()[0].id();
+    project
+        .apply(DawAction::AddMidiNotes {
+            item_id,
+            notes: vec![MidiNoteData {
+                pitch: 60,
+                tick: 0,
+                duration: 240,
+                velocity: 100,
+            }],
+        })
+        .unwrap();
+    if item_muted {
+        project
+            .apply(DawAction::SetMidiItemMute {
+                item_id,
+                muted: true,
+            })
+            .unwrap();
+    }
+    if track_muted {
+        project
+            .apply(DawAction::SetTrackMute {
+                track_id,
+                muted: true,
+            })
+            .unwrap();
+    }
+    project
 }
 
 fn add_native_consolidation_item(

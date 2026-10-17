@@ -1,5 +1,4 @@
-use crate::{FrameRate, MidiNote, Project, TempoCurve};
-use crate::{ItemId, TrackId};
+use crate::{FrameRate, ItemId, MidiItem, MidiNote, Project, TempoCurve, TrackId};
 use std::collections::{HashMap, HashSet};
 
 const MAX_MIDI_FILE_EVENTS: usize = 1_000_000;
@@ -116,6 +115,102 @@ impl MidiExportOptions {
     }
 }
 
+struct MidiExportScope<'a> {
+    included_midi_items: Vec<&'a MidiItem>,
+    time_selection: Option<(f64, f64)>,
+}
+
+fn midi_export_scope<'a>(
+    project: &'a Project,
+    options: MidiExportOptions,
+    selection: &MidiExportSelection,
+) -> Result<MidiExportScope<'a>, String> {
+    let time_selection = match options.time_scope {
+        MidiExportTimeScope::EntireProject => None,
+        MidiExportTimeScope::TimeSelectionOnly => {
+            let Some((start_tick, end_tick)) = selection.time_selection_ticks else {
+                return Err("time-selection export requires an active time selection".to_owned());
+            };
+            if end_tick <= start_tick {
+                return Err("time selection must have a positive length".to_owned());
+            }
+            Some((start_tick as f64, end_tick as f64))
+        }
+    };
+    let selected_track_ids = selection
+        .selected_track_ids
+        .iter()
+        .copied()
+        .collect::<HashSet<_>>();
+    let selected_item_ids = selection
+        .selected_item_ids
+        .iter()
+        .copied()
+        .collect::<HashSet<_>>();
+    let tracks_by_id = project
+        .tracks()
+        .iter()
+        .map(|track| (track.id(), track))
+        .collect::<HashMap<_, _>>();
+    let muted_track_ids = project
+        .tracks()
+        .iter()
+        .filter_map(|track| {
+            let mut ancestor = Some(track);
+            while let Some(current) = ancestor {
+                if current.is_muted() {
+                    return Some(track.id());
+                }
+                ancestor = current
+                    .parent_track()
+                    .and_then(|parent_id| tracks_by_id.get(&parent_id).copied());
+            }
+            None
+        })
+        .collect::<HashSet<_>>();
+    let included_midi_items = project
+        .midi_items()
+        .iter()
+        .filter(|item| match options.item_scope {
+            MidiExportItemScope::All => true,
+            MidiExportItemScope::SelectedTracksOnly => {
+                selected_track_ids.contains(&item.track_id())
+            }
+            MidiExportItemScope::SelectedItemsOnly => selected_item_ids.contains(&item.id()),
+        })
+        .filter(|item| !item.is_muted() && !muted_track_ids.contains(&item.track_id()))
+        .filter(|item| {
+            let Some((selection_start, selection_end)) = time_selection else {
+                return true;
+            };
+            let item_start = item.start_position().as_ticks_f64();
+            let Some(item_end) = item.start_position().checked_add_ticks(item.length_ticks())
+            else {
+                return false;
+            };
+            item_end.as_ticks_f64() > selection_start && item_start < selection_end
+        })
+        .collect::<Vec<_>>();
+
+    Ok(MidiExportScope {
+        included_midi_items,
+        time_selection,
+    })
+}
+
+/// Returns whether any MIDI items match the current item and time export scopes.
+///
+/// The desktop export dialog uses this lightweight check to ask before writing a header-only file.
+pub fn midi_export_has_items_in_scope(
+    project: &Project,
+    options: MidiExportOptions,
+    selection: &MidiExportSelection,
+) -> Result<bool, String> {
+    Ok(!midi_export_scope(project, options, selection)?
+        .included_midi_items
+        .is_empty())
+}
+
 /// Encodes a project as a Standard MIDI File using the selected export options.
 ///
 /// Project tracks, notes, controllers, pitch bends, and selected tempo, meter, SMPTE, and marker
@@ -163,65 +258,17 @@ pub fn encode_standard_midi_with_selection(
     }
     let ppq = u64::from(options.ppq);
 
-    let time_selection = match options.time_scope {
-        MidiExportTimeScope::EntireProject => None,
-        MidiExportTimeScope::TimeSelectionOnly => {
-            let Some((start_tick, end_tick)) = selection.time_selection_ticks else {
-                return Err("time-selection export requires an active time selection".to_owned());
-            };
-            if end_tick <= start_tick {
-                return Err("time selection must have a positive length".to_owned());
-            }
-            Some((start_tick as f64, end_tick as f64))
-        }
-    };
-
-    let selected_track_ids = selection
-        .selected_track_ids
-        .iter()
-        .copied()
-        .collect::<HashSet<_>>();
-    let selected_item_ids = selection
-        .selected_item_ids
-        .iter()
-        .copied()
-        .collect::<HashSet<_>>();
-    let included_midi_items = project
-        .midi_items()
-        .iter()
-        .filter(|item| match options.item_scope {
-            MidiExportItemScope::All => true,
-            MidiExportItemScope::SelectedTracksOnly => {
-                selected_track_ids.contains(&item.track_id())
-            }
-            MidiExportItemScope::SelectedItemsOnly => selected_item_ids.contains(&item.id()),
-        })
-        .filter(|item| {
-            let Some((selection_start, selection_end)) = time_selection else {
-                return true;
-            };
-            let item_start = item.start_position().as_ticks_f64();
-            let Some(item_end) = item.start_position().checked_add_ticks(item.length_ticks())
-            else {
-                return false;
-            };
-            item_end.as_ticks_f64() > selection_start && item_start < selection_end
-        })
-        .collect::<Vec<_>>();
+    let scope = midi_export_scope(project, options, selection)?;
+    let time_selection = scope.time_selection;
+    let included_midi_items = scope.included_midi_items;
 
     let export_tracks = project
         .tracks()
         .iter()
-        .filter(|track| match options.item_scope {
-            MidiExportItemScope::All if time_selection.is_none() => true,
-            MidiExportItemScope::SelectedTracksOnly if time_selection.is_none() => {
-                selected_track_ids.contains(&track.id())
-            }
-            MidiExportItemScope::All
-            | MidiExportItemScope::SelectedTracksOnly
-            | MidiExportItemScope::SelectedItemsOnly => included_midi_items
+        .filter(|track| {
+            included_midi_items
                 .iter()
-                .any(|item| item.track_id() == track.id()),
+                .any(|item| item.track_id() == track.id())
         })
         .collect::<Vec<_>>();
 
@@ -427,6 +474,11 @@ pub fn encode_standard_midi_with_selection(
                 time_selection,
             )?;
             tracks.push(encode_track(conductor, 0)?);
+            if export_tracks.is_empty() {
+                // REAPER writes a blank MIDI track after the conductor when there are no
+                // unmuted MIDI items in the selected item/time scope.
+                tracks.push(encode_track(Vec::new(), 0)?);
+            }
             for (index, track) in export_tracks.iter().enumerate() {
                 let mut events = vec![Event {
                     tick: 0,

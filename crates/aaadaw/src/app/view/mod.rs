@@ -342,6 +342,75 @@ fn desktop_view(app: &App) -> Element<'_, Message> {
             .height(Length::Fill)
             .into();
     }
+    if let Some(pending) = &app.pending_empty_midi_export {
+        let width = super::midi_export::empty_export_warning_width(pending.options);
+        let button_style = |_: &iced::Theme, status| {
+            let background = match status {
+                button::Status::Pressed => iced::Color::from_rgb8(170, 170, 170),
+                button::Status::Hovered => iced::Color::from_rgb8(232, 232, 232),
+                _ => iced::Color::from_rgb8(220, 220, 220),
+            };
+            button::Style {
+                background: Some(background.into()),
+                text_color: iced::Color::BLACK,
+                border: iced::Border {
+                    color: iced::Color::from_rgb8(128, 128, 128),
+                    width: 1.0,
+                    radius: 0.0.into(),
+                },
+                ..button::Style::default()
+            }
+        };
+        let dialog = container(
+            column![
+                text(super::midi_export::empty_export_warning(pending.options))
+                    .size(12)
+                    .width(Length::Fill),
+                row![
+                    button(text("OK"))
+                        .style(button_style)
+                        .padding([2.0, 6.0])
+                        .on_press(Message::ConfirmEmptyMidiExport),
+                    button(text("Cancel"))
+                        .style(button_style)
+                        .padding([2.0, 6.0])
+                        .on_press(Message::CancelEmptyMidiExport),
+                ]
+                .spacing(8)
+                .align_y(Alignment::Center),
+            ]
+            .spacing(8)
+            .padding(0),
+        )
+        .width(Length::Fixed(width))
+        .padding(8)
+        .style(|_| iced::widget::container::Style {
+            text_color: Some(iced::Color::BLACK),
+            background: Some(iced::Color::from_rgb8(192, 192, 192).into()),
+            border: iced::Border {
+                color: iced::Color::from_rgb8(128, 128, 128),
+                width: 1.0,
+                radius: 0.0.into(),
+            },
+            ..iced::widget::container::Style::default()
+        });
+        let backdrop = mouse_area(
+            container(dialog)
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .center(Length::Fill)
+                .style(|_| iced::widget::container::Style {
+                    background: Some(iced::Background::Color(iced::Color::from_rgba8(
+                        0, 0, 0, 0.66,
+                    ))),
+                    ..iced::widget::container::Style::default()
+                }),
+        );
+        return stack![layered, backdrop]
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .into();
+    }
     if let Some(transition) = app.pending_project_transition {
         let description = match transition {
             super::PendingProjectTransition::NewProject => {

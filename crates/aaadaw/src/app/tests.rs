@@ -10149,6 +10149,129 @@ fn native_export_project_midi_action_opens_the_export_settings_window() {
 }
 
 #[test]
+fn midi_export_warns_before_writing_a_header_only_file_and_escape_cancels() {
+    let mut app = App::default();
+    let _ = app.update(Message::OpenMidiExportDialog);
+    app.midi_export_dialog.as_mut().unwrap().destination = "empty-scope.mid".to_owned();
+
+    let _ = app.update(Message::ConfirmMidiExport);
+    let pending = app
+        .pending_empty_midi_export
+        .as_ref()
+        .expect("empty project export asks before writing a header-only MIDI file");
+    assert_eq!(pending.path, std::path::PathBuf::from("empty-scope.mid"));
+    assert!(app.midi_export_window_id.is_none());
+    assert!(app.midi_export_dialog.is_none());
+    assert_eq!(
+        super::midi_export::empty_export_warning(pending.options),
+        "No unmuted tracks containing MIDI items were found. Write MIDI file header anyway?"
+    );
+
+    let _ = app.update(Message::AddTrack);
+    assert!(
+        app.project.tracks().is_empty(),
+        "the warning locks project edits"
+    );
+    let _ = app.update(Message::Escape);
+    assert!(app.pending_empty_midi_export.is_none());
+    assert_eq!(app.status, "MIDI export cancelled");
+}
+
+#[test]
+fn empty_midi_export_warning_matches_native_project_and_scoped_prompts() {
+    let project = aaadaw_core::MidiExportOptions::default();
+    assert_eq!(
+        super::midi_export::empty_export_warning(project),
+        "No unmuted tracks containing MIDI items were found. Write MIDI file header anyway?"
+    );
+    assert_eq!(
+        super::midi_export::empty_export_warning_width(project),
+        324.0
+    );
+
+    let scoped = aaadaw_core::MidiExportOptions {
+        item_scope: aaadaw_core::MidiExportItemScope::SelectedItemsOnly,
+        time_scope: aaadaw_core::MidiExportTimeScope::TimeSelectionOnly,
+        ..project
+    };
+    assert_eq!(
+        super::midi_export::empty_export_warning(scoped),
+        "No unmuted tracks containing selected MIDI items within the time selection were found. Write MIDI file header anyway?"
+    );
+    assert_eq!(
+        super::midi_export::empty_export_warning_width(scoped),
+        521.0
+    );
+
+    let selected_items = aaadaw_core::MidiExportOptions {
+        item_scope: aaadaw_core::MidiExportItemScope::SelectedItemsOnly,
+        ..project
+    };
+    assert_eq!(
+        super::midi_export::empty_export_warning(selected_items),
+        "No unmuted tracks containing selected MIDI items were found. Write MIDI file header anyway?"
+    );
+    assert_eq!(
+        super::midi_export::empty_export_warning_width(selected_items),
+        377.0
+    );
+
+    let selected_tracks = aaadaw_core::MidiExportOptions {
+        item_scope: aaadaw_core::MidiExportItemScope::SelectedTracksOnly,
+        ..project
+    };
+    assert_eq!(
+        super::midi_export::empty_export_warning(selected_tracks),
+        "No unmuted selected tracks containing MIDI items were found. Write MIDI file header anyway?"
+    );
+    assert_eq!(
+        super::midi_export::empty_export_warning_width(selected_tracks),
+        377.0
+    );
+
+    let selected_tracks_time = aaadaw_core::MidiExportOptions {
+        time_scope: aaadaw_core::MidiExportTimeScope::TimeSelectionOnly,
+        ..selected_tracks
+    };
+    assert_eq!(
+        super::midi_export::empty_export_warning(selected_tracks_time),
+        "No unmuted selected tracks containing MIDI items within the time selection were found. Write MIDI file header anyway?"
+    );
+    assert_eq!(
+        super::midi_export::empty_export_warning_width(selected_tracks_time),
+        521.0
+    );
+
+    let all_time = aaadaw_core::MidiExportOptions {
+        time_scope: aaadaw_core::MidiExportTimeScope::TimeSelectionOnly,
+        ..project
+    };
+    assert_eq!(
+        super::midi_export::empty_export_warning(all_time),
+        "No unmuted tracks containing MIDI items within the time selection were found. Write MIDI file header anyway?"
+    );
+    assert_eq!(
+        super::midi_export::empty_export_warning_width(all_time),
+        468.0
+    );
+}
+
+#[test]
+fn confirming_header_only_midi_export_starts_the_pending_export() {
+    let mut app = App::default();
+    let _ = app.update(Message::OpenMidiExportDialog);
+    let _ = app.update(Message::ConfirmMidiExport);
+    assert!(app.pending_empty_midi_export.is_some());
+
+    let _ = app.update(Message::ConfirmEmptyMidiExport);
+    assert!(app.pending_empty_midi_export.is_none());
+    assert!(
+        app.status
+            .starts_with("Exporting project MIDI to midi_export.mid")
+    );
+}
+
+#[test]
 fn midi_export_marker_options_are_inert_for_an_empty_project() {
     let mut app = App::default();
     let _ = app.update(Message::OpenMidiExportDialog);

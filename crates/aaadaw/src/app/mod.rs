@@ -347,6 +347,7 @@ struct App {
     project_template_paths: Vec<PathBuf>,
     project_templates_menu_open: bool,
     pending_project_template_overwrite: Option<PathBuf>,
+    pending_empty_midi_export: Option<midi_export::PendingEmptyMidiExport>,
     pending_project_path_to_open: Option<PathBuf>,
     pending_project_template_source: Option<PathBuf>,
     pending_project_template_working_copy: Option<project_templates::WorkingCopy>,
@@ -1859,6 +1860,19 @@ impl App {
         {
             return Task::none();
         }
+        if self.pending_empty_midi_export.is_some()
+            && !matches!(
+                &message,
+                Message::ConfirmEmptyMidiExport
+                    | Message::CancelEmptyMidiExport
+                    | Message::Escape
+                    | Message::RuntimeKeyboardEvent(..)
+                    | Message::BackgroundTick
+                    | Message::MeterTick
+            )
+        {
+            return Task::none();
+        }
         let revision_before_message = self.revision;
         let preserves_master_gesture = matches!(
             &message,
@@ -2750,6 +2764,12 @@ impl App {
                 task = self.browse_midi_export_destination();
             }
             Message::ConfirmMidiExport => task = self.confirm_midi_export(),
+            Message::ConfirmEmptyMidiExport => task = self.confirm_empty_midi_export(),
+            Message::CancelEmptyMidiExport => {
+                if self.pending_empty_midi_export.take().is_some() {
+                    self.status = "MIDI export cancelled".to_owned();
+                }
+            }
             Message::MidiExportDestinationChanged(value) => {
                 if let Some(dialog) = &mut self.midi_export_dialog {
                     dialog.destination = value;
@@ -4358,6 +4378,10 @@ impl App {
                 self.transport_details_open = !self.transport_details_open;
             }
             Message::Escape => {
+                if self.pending_empty_midi_export.take().is_some() {
+                    self.status = "MIDI export cancelled".to_owned();
+                    return Task::none();
+                }
                 if self.pending_project_template_overwrite.take().is_some() {
                     self.status = "Project template overwrite cancelled".to_owned();
                     return Task::none();

@@ -2,9 +2,51 @@ use super::{App, Message, PathPickerTarget, run_blocking};
 use aaadaw_core::{
     MidiExportItemScope, MidiExportOptions, MidiExportSelection, MidiExportTimeScope, MidiFileType,
     MidiMarkerType, Project, ProjectSnapshot, encode_standard_midi_with_selection,
+    midi_export_has_items_in_scope,
 };
 use iced::Task;
 use std::path::{Path, PathBuf};
+
+#[derive(Debug, Clone)]
+pub(super) struct PendingEmptyMidiExport {
+    pub(super) path: PathBuf,
+    pub(super) snapshot: ProjectSnapshot,
+    pub(super) options: MidiExportOptions,
+    pub(super) selection: MidiExportSelection,
+}
+
+pub(super) fn empty_export_warning(options: MidiExportOptions) -> String {
+    let mut message = String::from("No unmuted ");
+    match options.item_scope {
+        MidiExportItemScope::All => message.push_str("tracks containing MIDI items"),
+        MidiExportItemScope::SelectedTracksOnly => {
+            message.push_str("selected tracks containing MIDI items");
+        }
+        MidiExportItemScope::SelectedItemsOnly => {
+            message.push_str("tracks containing selected MIDI items");
+        }
+    }
+    if options.time_scope == MidiExportTimeScope::TimeSelectionOnly {
+        message.push_str(" within the time selection");
+    }
+    message.push_str(" were found. Write MIDI file header anyway?");
+    message
+}
+
+pub(super) fn empty_export_warning_width(options: MidiExportOptions) -> f32 {
+    match (options.item_scope, options.time_scope) {
+        (MidiExportItemScope::All, MidiExportTimeScope::EntireProject) => 324.0,
+        (_, MidiExportTimeScope::TimeSelectionOnly)
+            if options.item_scope != MidiExportItemScope::All =>
+        {
+            521.0
+        }
+        (MidiExportItemScope::SelectedTracksOnly | MidiExportItemScope::SelectedItemsOnly, _) => {
+            377.0
+        }
+        (MidiExportItemScope::All, MidiExportTimeScope::TimeSelectionOnly) => 468.0,
+    }
+}
 
 #[derive(Debug, Clone)]
 pub(super) struct MidiExportDialogState {
@@ -105,8 +147,6 @@ impl App {
             }
         };
         let path = with_midi_extension(PathBuf::from(dialog.destination.trim()));
-        let output = path.clone();
-        let snapshot = self.project.snapshot();
         let selection = MidiExportSelection {
             selected_track_ids: self.timeline.selected_tracks.iter().copied().collect(),
             selected_item_ids: self.timeline.selected_items.iter().copied().collect(),
@@ -115,8 +155,46 @@ impl App {
                 .time_selection
                 .map(|selection| (selection.start_tick, selection.end_tick)),
         };
+        let has_midi_items =
+            match midi_export_has_items_in_scope(&self.project, options, &selection) {
+                Ok(has_midi_items) => has_midi_items,
+                Err(error) => {
+                    self.status = error;
+                    return Task::none();
+                }
+            };
+        let pending = PendingEmptyMidiExport {
+            path,
+            snapshot: self.project.snapshot(),
+            options,
+            selection,
+        };
+        if !has_midi_items {
+            self.pending_empty_midi_export = Some(pending);
+            return self.close_midi_export_dialog();
+        }
+        let export = self.start_project_midi_export(pending);
+        Task::batch([export, self.close_midi_export_dialog()])
+    }
+
+    pub(super) fn confirm_empty_midi_export(&mut self) -> Task<Message> {
+        self.pending_empty_midi_export
+            .take()
+            .map_or_else(Task::none, |pending| {
+                self.start_project_midi_export(pending)
+            })
+    }
+
+    fn start_project_midi_export(&mut self, pending: PendingEmptyMidiExport) -> Task<Message> {
+        let PendingEmptyMidiExport {
+            path,
+            snapshot,
+            options,
+            selection,
+        } = pending;
+        let output = path.clone();
         self.status = format!("Exporting project MIDI to {}…", path.display());
-        let export = Task::perform(
+        Task::perform(
             run_blocking("aaadaw-midi-export", move || {
                 let result = write_project_midi(&output, snapshot, options, selection);
                 #[cfg(target_os = "android")]
@@ -126,8 +204,7 @@ impl App {
                 result
             }),
             move |result| Message::ProjectMidiExported(path, result),
-        );
-        Task::batch([export, self.close_midi_export_dialog()])
+        )
     }
 }
 

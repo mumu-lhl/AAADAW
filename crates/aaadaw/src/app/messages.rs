@@ -214,6 +214,8 @@ pub(crate) enum Message {
     CloseMidiExportDialog,
     BrowseMidiExportDestination,
     ConfirmMidiExport,
+    ConfirmEmptyMidiExport,
+    CancelEmptyMidiExport,
     MidiExportDestinationChanged(String),
     MidiExportFileTypeChanged(aaadaw_core::MidiFileType),
     MidiExportTimeScopeChanged(aaadaw_core::MidiExportTimeScope),
