@@ -1,0 +1,11 @@
+desc:AAADAW Folder Parent MIDI Probe
+options:gmem=aaadaw_folder_parent_midi_probe
+
+@block
+while (midirecv(offset, message, data)) (
+  status = message & 240;
+  velocity = (data >> 8) & 255;
+  status == 144 && velocity > 0 ? gmem[0] += 1;
+  status == 128 || (status == 144 && velocity == 0) ? gmem[1] += 1;
+  midisend(offset, message, data);
+);

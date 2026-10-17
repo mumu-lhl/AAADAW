@@ -20,6 +20,6 @@
 
 迁移为单事务加列，失败不推进 user_version；关闭数据库后保存 v17 副本可回滚。旧程序不能读取 v18；恢复 v17 副本会失去迁移后的编辑，不提供伪无损降级。只读入口继续拒绝旧版本且不改文件，写入入口完成迁移。测试保留备份并校验字节未变。
 
-后续切片已实现并行 Send/Receive、三种 Audio Send Tap、MIDI Send All→All 与 Folder Parent MIDI 主输出传播，分别见 [Audio Sends](audio-sends.md)、[Audio Send Taps](audio-send-taps.md)、[MIDI Send](midi-sends.md) 和 [文件夹验证](folder-parent-routing.md)。仍未完成：Parent/Master 双路径的完整目标行为、通道映射、硬件路由、原厂 Folder Parent MIDI 专项探针、可编辑 Pan Law/Width/Dual Pan、Routing Matrix/Wiring、PDC/反馈。此单输出能力不代表 REAPER 全量 Routing 通过。
+后续切片已实现并行 Send/Receive、三种 Audio Send Tap、MIDI Send All→All 与 Folder Parent MIDI 主输出传播，分别见 [Audio Sends](audio-sends.md)、[Audio Send Taps](audio-send-taps.md)、[MIDI Send](midi-sends.md) 和 [文件夹验证](folder-parent-routing.md)。REAPER 7.82 的 Folder Parent MIDI 原厂计数 probe 见 [Folder Parent MIDI](folder-parent-midi.md)。仍未完成：Parent/Master 双路径的完整目标行为、通道映射、硬件路由、可编辑 Pan Law/Width/Dual Pan、Routing Matrix/Wiring、PDC/反馈。此单输出能力不代表 REAPER 全量 Routing 通过。
 
 验证结果：742 项 workspace 测试全部通过，0 skipped；Clippy warnings denied 通过，默认构建通过。聚焦审查确认新旧策略与路由兼容，已消除并发 Solo 切换时陈旧自身掩码的问题。

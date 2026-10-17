@@ -20,4 +20,4 @@ SQLite schema 58 增加 `track_sends.midi_enabled`，旧 Send 默认迁移为 tr
 
 ## 剩余差异
 
-MIDI 通道字段、通道筛选/重映射和 MIDI Bus 仍未建模。MIDI 事件现会跟随启用的 Folder Parent 主输出并逐层传播，关闭任一层的主发送会截断后续路由；嵌套与开关回归见[文件夹验证](folder-parent-routing.md)。这项路径尚未有单独的 REAPER MIDI 接收录音探针。硬件 MIDI I/O、Feedback、PDC、Routing Matrix/Wiring 和完整 Send/Receive 操作布局也未完成。原厂 Undo 历史与主题像素差异没有在本切片验证。`ROUTE-SEND-001`、P3 和全量 REAPER 对齐继续保持未完成。
+MIDI 通道字段、通道筛选/重映射和 MIDI Bus 仍未建模。MIDI 事件现会跟随启用的 Folder Parent 主输出并逐层传播，关闭任一层的主发送会截断后续路由；AAADAW 引擎回归见[文件夹验证](folder-parent-routing.md)，REAPER 原厂事件计数见[Folder Parent MIDI fixture](folder-parent-midi.md)。硬件 MIDI I/O、Feedback、PDC、Routing Matrix/Wiring 和完整 Send/Receive 操作布局也未完成。原厂 Undo 历史与主题像素差异没有在本切片验证。`ROUTE-SEND-001`、P3 和全量 REAPER 对齐继续保持未完成。
