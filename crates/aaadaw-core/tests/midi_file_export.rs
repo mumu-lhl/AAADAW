@@ -777,6 +777,32 @@ fn reaper_782_midi_export_selected_track_and_time_selection_match_native() {
 }
 
 #[test]
+fn reaper_782_type_zero_midi_export_selected_track_and_time_selection_match_native() {
+    let (project, selection, _) = native_midi_scope_intersection_fixture_project();
+    let options = MidiExportOptions {
+        file_type: MidiFileType::Type0,
+        item_scope: MidiExportItemScope::SelectedTracksOnly,
+        time_scope: MidiExportTimeScope::TimeSelectionOnly,
+        ..MidiExportOptions::for_project(&project)
+    };
+    let actual = encode_standard_midi_with_selection(
+        &project,
+        options,
+        "menu-export-midi-native-scope-intersections",
+        &selection,
+    )
+    .unwrap();
+    let native = include_bytes!(
+        "../../../docs/verification/reaper-parity/fixtures/menu-export-midi-native-scope-selected-tracks-time-type0.mid"
+    );
+
+    assert_eq!(
+        actual, native,
+        "Type 0 selected-track + time-selection output matches REAPER's merged event track"
+    );
+}
+
+#[test]
 fn reaper_782_midi_export_selected_item_outside_time_selection_matches_native_empty_track() {
     let (project, selection, _) = native_midi_scope_intersection_fixture_project();
     let options = MidiExportOptions {
