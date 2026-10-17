@@ -900,6 +900,35 @@ fn reaper_782_type_zero_midi_export_selected_item_and_time_selection_match_nativ
 }
 
 #[test]
+fn reaper_782_type_zero_selected_item_time_selection_keeps_start_tempo_and_meter() {
+    let (project, mut selection, in_range_item_id) =
+        native_midi_scope_intersection_fixture_project();
+    selection.selected_item_ids = vec![in_range_item_id];
+    let options = MidiExportOptions {
+        file_type: MidiFileType::Type0,
+        item_scope: MidiExportItemScope::SelectedItemsOnly,
+        time_scope: MidiExportTimeScope::TimeSelectionOnly,
+        embed_tempo_and_time_signature: true,
+        ..MidiExportOptions::for_project(&project)
+    };
+    let actual = encode_standard_midi_with_selection(
+        &project,
+        options,
+        "type0-selected-items-time-tempo",
+        &selection,
+    )
+    .unwrap();
+    let native = include_bytes!(
+        "../../../docs/verification/reaper-parity/fixtures/menu-export-midi-native-scope-selected-items-time-type0-tempo.mid"
+    );
+
+    assert_eq!(
+        actual, native,
+        "Type 0 time-selection export retains REAPER's start tempo and meter events"
+    );
+}
+
+#[test]
 fn reaper_782_midi_export_time_selection_clips_notes_at_selection_start() {
     let project = native_midi_time_selection_boundary_fixture_project();
     let options = MidiExportOptions {

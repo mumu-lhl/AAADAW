@@ -441,8 +441,14 @@ pub fn encode_standard_midi_with_selection(
     let mut tracks = Vec::new();
     let smf_type = match options.file_type {
         MidiFileType::Type0 => {
-            let mut events =
-                conductor_events(project, options, project_ppq, None, false, time_selection)?;
+            let mut events = conductor_events(
+                project,
+                options,
+                project_ppq,
+                None,
+                options.embed_tempo_and_time_signature,
+                time_selection,
+            )?;
             for track_events in &mut events_by_track {
                 events.append(track_events);
             }
