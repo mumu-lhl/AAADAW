@@ -260,6 +260,7 @@ pub(crate) enum Message {
     ItemPropertiesUnitChanged(super::item_properties::TimeUnit),
     ItemPropertyFieldChanged(super::item_properties::ItemPropertyField, String),
     ItemPropertyNameChanged(String),
+    ItemPropertyTakeRateChanged(String),
     ItemPropertyLoopSourceChanged(bool),
     ItemPropertyMuteChanged(bool),
     BatchItemPropertyMuteChanged(bool),

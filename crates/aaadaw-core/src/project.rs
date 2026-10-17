@@ -718,6 +718,11 @@ enum ProjectEvent {
         before: (f32, f32),
         after: (f32, f32),
     },
+    AudioItemTakePlaybackRateChanged {
+        item_id: ItemId,
+        before: f64,
+        after: f64,
+    },
     AudioItemChanged {
         before: AudioItem,
         after: AudioItem,
@@ -1110,6 +1115,15 @@ impl ProjectEvent {
                 before,
                 after,
             } => Self::AudioItemTakeMixChanged {
+                item_id: *item_id,
+                before: *after,
+                after: *before,
+            },
+            Self::AudioItemTakePlaybackRateChanged {
+                item_id,
+                before,
+                after,
+            } => Self::AudioItemTakePlaybackRateChanged {
                 item_id: *item_id,
                 before: *after,
                 after: *before,
@@ -1911,6 +1925,7 @@ impl Project {
                     volume: item.volume,
                     take_volume: item.take_volume,
                     take_pan: item.take_pan,
+                    take_playback_rate: item.take_playback_rate,
                     id: item.id.value(),
                     track_id: item.track_id.value(),
                     media_ref: item.media_ref.clone(),
@@ -2226,6 +2241,8 @@ impl Project {
                 || !(0.0..=crate::MAX_AUDIO_ITEM_TAKE_VOLUME).contains(&item.take_volume)
                 || !item.take_pan.is_finite()
                 || !(-1.0..=1.0).contains(&item.take_pan)
+                || !item.take_playback_rate.is_finite()
+                || item.take_playback_rate <= 0.0
                 || item.length_samples == 0
                 || item.start_sample.checked_add(item.length_samples).is_none()
                 || !valid_audio_source_offset(
@@ -2243,6 +2260,7 @@ impl Project {
                 volume: item.volume,
                 take_volume: item.take_volume,
                 take_pan: item.take_pan,
+                take_playback_rate: item.take_playback_rate,
                 id: ItemId::from_raw(item.id),
                 track_id: TrackId::from_raw(item.track_id),
                 media_ref: item.media_ref,
@@ -2402,6 +2420,7 @@ impl Project {
                 volume,
                 take_volume,
                 take_pan,
+                take_playback_rate,
             } => {
                 let item_id = ItemId::from_raw(ids.next_item_id);
                 let tx_id = ids.next_item_id;
@@ -2428,6 +2447,10 @@ impl Project {
                                 item_id,
                                 volume: take_volume,
                                 pan: take_pan,
+                            },
+                            DawAction::SetAudioItemTakePlaybackRate {
+                                item_id,
+                                rate: take_playback_rate,
                             },
                         ],
                     },
@@ -3226,6 +3249,7 @@ impl Project {
                     volume: 1.0,
                     take_volume: 1.0,
                     take_pan: 0.0,
+                    take_playback_rate: 1.0,
                     id: ItemId::from_raw(ids.next_item_id),
                     track_id,
                     media_ref,
@@ -3448,6 +3472,7 @@ impl Project {
                     volume: 1.0,
                     take_volume: 1.0,
                     take_pan: 0.0,
+                    take_playback_rate: 1.0,
                     id: ItemId::from_raw(ids.next_item_id),
                     track_id,
                     media_ref,
@@ -3518,6 +3543,7 @@ impl Project {
                     volume: 1.0,
                     take_volume: 1.0,
                     take_pan: 0.0,
+                    take_playback_rate: 1.0,
                     id: ItemId::from_raw(ids.next_item_id),
                     track_id,
                     media_ref,
@@ -3653,6 +3679,24 @@ impl Project {
                     item_id,
                     before: (item.take_volume, item.take_pan),
                     after: (volume, pan),
+                }
+            }
+            DawAction::SetAudioItemTakePlaybackRate { item_id, rate } => {
+                if !rate.is_finite() || rate <= 0.0 {
+                    return Err(ActionError::InvalidAudioItemTakePlaybackRate);
+                }
+                let item = state
+                    .audio_items
+                    .iter()
+                    .find(|item| item.id == item_id)
+                    .ok_or(ActionError::AudioItemNotFound { item_id })?;
+                if is_frozen_render(state, item_id) {
+                    return Err(ActionError::FrozenRenderCannotBeEdited { item_id });
+                }
+                ProjectEvent::AudioItemTakePlaybackRateChanged {
+                    item_id,
+                    before: item.take_playback_rate,
+                    after: rate,
                 }
             }
             DawAction::DuplicateAudioItemAt {
@@ -5189,6 +5233,21 @@ impl Project {
                 item.take_volume = after.0;
                 item.take_pan = after.1;
             }
+            ProjectEvent::AudioItemTakePlaybackRateChanged {
+                item_id,
+                before,
+                after,
+            } => {
+                let item = state
+                    .audio_items
+                    .iter_mut()
+                    .find(|item| item.id == *item_id)
+                    .ok_or(ActionError::HistoryInvariantViolation)?;
+                if item.take_playback_rate != *before || !after.is_finite() || *after <= 0.0 {
+                    return Err(ActionError::HistoryInvariantViolation);
+                }
+                item.take_playback_rate = *after;
+            }
             ProjectEvent::AudioItemChanged { before, after } => {
                 let index = state
                     .audio_items
@@ -5484,6 +5543,8 @@ fn valid_audio_item(item: &AudioItem) -> bool {
         && (0.0..=crate::MAX_AUDIO_ITEM_TAKE_VOLUME).contains(&item.take_volume)
         && item.take_pan.is_finite()
         && (-1.0..=1.0).contains(&item.take_pan)
+        && item.take_playback_rate.is_finite()
+        && item.take_playback_rate > 0.0
         && item.length_samples > 0
         && item.start_sample.checked_add(item.length_samples).is_some()
         && valid_audio_source_offset(

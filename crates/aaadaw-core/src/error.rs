@@ -108,6 +108,8 @@ pub enum ActionError {
     InvalidAudioItemTakeVolume,
     /// An audio item's active take pan must be finite and between full left and full right.
     InvalidAudioItemTakePan,
+    /// An audio item's active take playback rate must be finite and greater than zero.
+    InvalidAudioItemTakePlaybackRate,
     /// An audio item's project start and duration exceed the sample range.
     InvalidAudioItemPosition,
     /// The requested audio item does not exist in the project.
@@ -294,6 +296,9 @@ impl fmt::Display for ActionError {
             ),
             Self::InvalidAudioItemTakePan => {
                 formatter.write_str("active take pan must be finite and between -1 and 1")
+            }
+            Self::InvalidAudioItemTakePlaybackRate => {
+                formatter.write_str("active take playback rate must be finite and greater than zero")
             }
             Self::InvalidAudioItemLength => {
                 formatter.write_str("audio item length must be positive")

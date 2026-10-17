@@ -12468,6 +12468,12 @@ fn copy_loop_of_selected_audio_area_pastes_source_sections_on_one_undo_step() {
     let partial_id = app.project.audio_items()[2].id();
     let midi_id = app.project.midi_items()[0].id();
     app.project
+        .apply(DawAction::SetAudioItemTakePlaybackRate {
+            item_id: full_first_id,
+            rate: 1.25,
+        })
+        .unwrap();
+    app.project
         .apply(DawAction::SetAudioItemMute {
             item_id: full_first_id,
             muted: true,
@@ -12529,10 +12535,18 @@ fn copy_loop_of_selected_audio_area_pastes_source_sections_on_one_undo_step() {
     });
     let selected_before = app.timeline.selected_items.clone();
     let revision_before = app.revision;
-    let source_delta = u64::try_from(
-        (u128::from(app.project.sample_at_tick(5_760).unwrap()) * 48_000
-            + u128::from(app.project.settings().sample_rate()) / 2)
-            / u128::from(app.project.settings().sample_rate()),
+    let selection_start_sample = app.project.sample_at_tick(5_760).unwrap();
+    let source_delta = super::rescale_samples_at_take_rate(
+        selection_start_sample,
+        app.project.settings().sample_rate(),
+        48_000,
+        1.25,
+    )
+    .unwrap();
+    let unity_source_delta = super::rescale_samples(
+        selection_start_sample,
+        app.project.settings().sample_rate(),
+        48_000,
     )
     .unwrap();
     let selection_length =
@@ -12555,7 +12569,7 @@ fn copy_loop_of_selected_audio_area_pastes_source_sections_on_one_undo_step() {
     assert_eq!(clipboard.items[1].source_offset_samples, 0);
     assert_eq!(
         clipboard.items[1].source_section_start_samples,
-        256 + source_delta
+        256 + unity_source_delta
     );
     assert!(clipboard.items[0].muted);
     assert!(!clipboard.items[1].muted);
@@ -12564,15 +12578,21 @@ fn copy_loop_of_selected_audio_area_pastes_source_sections_on_one_undo_step() {
     assert_eq!(clipboard.items[0].volume, 0.6);
     assert_eq!(clipboard.items[0].take_volume, 1.25);
     assert_eq!(clipboard.items[0].take_pan, -0.3);
+    assert_eq!(clipboard.items[0].take_playback_rate, 1.25);
     assert_eq!(clipboard.items[0].name, "Lead phrase loop");
     assert_eq!(clipboard.items[1].volume, 0.8);
     assert_eq!(clipboard.items[1].take_volume, 0.65);
     assert_eq!(clipboard.items[1].take_pan, 0.45);
+    assert_eq!(clipboard.items[1].take_playback_rate, 1.0);
     assert_eq!(clipboard.items[1].name, "Bass loop");
     assert_eq!(clipboard.items[0].length_samples, selection_length);
     assert_eq!(
         clipboard.items[0].source_section_length_samples,
-        u64::try_from((u128::from(selection_length) * 48_000 + 44_100 / 2) / 44_100).unwrap()
+        super::rescale_samples_at_take_rate(selection_length, 44_100, 48_000, 1.25).unwrap()
+    );
+    assert_eq!(
+        clipboard.items[1].source_section_length_samples,
+        super::rescale_samples(selection_length, 44_100, 48_000).unwrap()
     );
     assert_eq!(clipboard.span_samples, selection_length);
     assert_eq!(clipboard.project_sample_rate, 44_100);
@@ -12614,10 +12634,12 @@ fn copy_loop_of_selected_audio_area_pastes_source_sections_on_one_undo_step() {
     assert_eq!(pasted[0].volume(), clipboard.items[0].volume);
     assert_eq!(pasted[0].take_volume(), clipboard.items[0].take_volume);
     assert_eq!(pasted[0].take_pan(), clipboard.items[0].take_pan);
+    assert_eq!(pasted[0].take_playback_rate(), 1.25);
     assert_eq!(pasted[0].name(), clipboard.items[0].name);
     assert_eq!(pasted[1].volume(), clipboard.items[1].volume);
     assert_eq!(pasted[1].take_volume(), clipboard.items[1].take_volume);
     assert_eq!(pasted[1].take_pan(), clipboard.items[1].take_pan);
+    assert_eq!(pasted[1].take_playback_rate(), 1.0);
     assert_eq!(pasted[1].name(), clipboard.items[1].name);
     assert!(pasted.iter().all(|item| item.is_loop_source()));
     assert_eq!(
@@ -12655,6 +12677,7 @@ fn copy_loop_of_selected_audio_area_pastes_source_sections_on_one_undo_step() {
         clipboard.items[0].take_volume
     );
     assert_eq!(restored_paste[0].take_pan(), clipboard.items[0].take_pan);
+    assert_eq!(restored_paste[0].take_playback_rate(), 1.25);
     assert_eq!(restored_paste[0].name(), clipboard.items[0].name);
     assert_eq!(restored_paste[1].volume(), clipboard.items[1].volume);
     assert_eq!(
@@ -18937,6 +18960,7 @@ fn item_properties_stage_fades_preserve_precision_and_apply_one_history_entry() 
         ItemPropertyField::TakePan,
         "25%L".into(),
     ));
+    let _ = app.update(Message::ItemPropertyTakeRateChanged("1.25".into()));
     assert_eq!(app.project.audio_items()[0].fades(), original);
     let _ = app.update(Message::ApplyItemProperties(false));
     let applied = app.project.audio_items()[0].fades();
@@ -18949,14 +18973,17 @@ fn item_properties_stage_fades_preserve_precision_and_apply_one_history_entry() 
     assert_eq!(app.project.audio_items()[0].volume(), 1.0);
     assert!((app.project.audio_items()[0].take_volume() - 0.5).abs() < 0.001);
     assert_eq!(app.project.audio_items()[0].take_pan(), -0.25);
+    assert_eq!(app.project.audio_items()[0].take_playback_rate(), 1.25);
     let _ = app.update(Message::Undo);
     assert_eq!(app.project.audio_items()[0].fades(), original);
     assert_eq!(app.project.audio_items()[0].take_volume(), 1.0);
     assert_eq!(app.project.audio_items()[0].take_pan(), 0.0);
+    assert_eq!(app.project.audio_items()[0].take_playback_rate(), 1.0);
     let _ = app.update(Message::Redo);
     assert_eq!(app.project.audio_items()[0].fades(), applied);
     assert!((app.project.audio_items()[0].take_volume() - 0.5).abs() < 0.001);
     assert_eq!(app.project.audio_items()[0].take_pan(), -0.25);
+    assert_eq!(app.project.audio_items()[0].take_playback_rate(), 1.25);
     let _ = app.update(Message::ItemPropertyFieldChanged(
         ItemPropertyField::InLength,
         "NaN".into(),
@@ -18985,6 +19012,45 @@ fn item_properties_stage_fades_preserve_precision_and_apply_one_history_entry() 
     let adjusted = draft.fades(both, 48000, 48000).unwrap();
     assert_eq!(adjusted.fade_in.length_samples(), 19200.0);
     assert_eq!(adjusted.fade_out.length_samples(), 28800.0);
+}
+
+#[test]
+fn item_properties_refuse_take_rate_changes_while_audio_output_is_active() {
+    use super::item_properties::{ItemProperties, TimeUnit};
+
+    let mut app = App::default();
+    app.project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Audio".into(),
+        })
+        .unwrap();
+    app.project
+        .apply(DawAction::InsertAudioItem {
+            track_id: app.project.tracks()[0].id(),
+            media_ref: "asset://active-output-take-rate".into(),
+            start_sample: 0,
+            source_offset_samples: 0,
+            length_samples: 48_000,
+        })
+        .unwrap();
+    let item = &app.project.audio_items()[0];
+    let mut draft = ItemProperties::from_item(item, 48_000, TimeUnit::Time);
+    draft.set_take_rate("1.25".into());
+    app.item_properties = Some(draft);
+    app.item_properties_generation = app.project_generation;
+    let before = app.project.snapshot();
+    let revision = app.revision;
+
+    let _ = app.apply_item_properties_with_playback(false, true);
+
+    assert_eq!(app.project.snapshot(), before);
+    assert_eq!(app.revision, revision);
+    assert_eq!(app.project.audio_items()[0].take_playback_rate(), 1.0);
+    assert_eq!(
+        app.item_properties.as_ref().unwrap().error.as_deref(),
+        Some("Close audio output before editing item placement, source looping, or Take rate")
+    );
 }
 
 #[test]

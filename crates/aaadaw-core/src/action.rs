@@ -308,6 +308,7 @@ pub enum DawAction {
         volume: f32,
         take_volume: f32,
         take_pan: f32,
+        take_playback_rate: f64,
     },
     /// Enable or disable looping for an audio item's current source section.
     SetAudioItemLoopSource {
@@ -339,6 +340,11 @@ pub enum DawAction {
         item_id: ItemId,
         volume: f32,
         pan: f32,
+    },
+    /// Set the active audio take's playback rate; 1.0 is normal speed.
+    SetAudioItemTakePlaybackRate {
+        item_id: ItemId,
+        rate: f64,
     },
     /// Duplicate the complete audio Item at a new track and position.
     DuplicateAudioItemAt {

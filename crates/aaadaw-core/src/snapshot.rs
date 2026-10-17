@@ -175,6 +175,7 @@ pub struct AudioItemSnapshot {
     pub volume: f32,
     pub take_volume: f32,
     pub take_pan: f32,
+    pub take_playback_rate: f64,
     pub id: u64,
     pub track_id: u64,
     pub media_ref: String,

@@ -25,7 +25,7 @@ use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 /// Latest database schema version understood by this release.
-pub const CURRENT_SCHEMA_VERSION: u32 = 56;
+pub const CURRENT_SCHEMA_VERSION: u32 = 57;
 
 const MIGRATION_29: &str = "ALTER TABLE project_meta ADD COLUMN start_measure INTEGER NOT NULL DEFAULT 1 CHECK(start_measure BETWEEN -2147483648 AND 2147483647);";
 const MIGRATION_30: &str = "ALTER TABLE project_meta ADD COLUMN bpm_basis INTEGER NOT NULL DEFAULT 1 CHECK(bpm_basis BETWEEN 0 AND 5);";
@@ -425,6 +425,7 @@ CREATE TABLE IF NOT EXISTS audio_items (
     volume REAL NOT NULL DEFAULT 1.0 CHECK (volume >= 0.0 AND volume <= 16.0),
     take_volume REAL NOT NULL DEFAULT 1.0 CHECK (take_volume >= 0.0 AND take_volume <= 16.0),
     take_pan REAL NOT NULL DEFAULT 0.0 CHECK (take_pan >= -1.0 AND take_pan <= 1.0),
+    take_playback_rate REAL NOT NULL DEFAULT 1.0 CHECK (take_playback_rate > 0.0),
     muted INTEGER NOT NULL DEFAULT 0 CHECK (muted IN (0, 1)),
     phase_inverted INTEGER NOT NULL DEFAULT 0 CHECK (phase_inverted IN (0, 1)),
     UNIQUE (track_id, position)
@@ -3442,6 +3443,15 @@ fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
                     transaction.execute_batch(MIGRATION_56)?;
                 }
             }
+            57 => {
+                if table_exists(&transaction, "audio_items")?
+                    && !table_has_column(&transaction, "audio_items", "take_playback_rate")?
+                {
+                    transaction.execute_batch(
+                        "ALTER TABLE audio_items ADD COLUMN take_playback_rate REAL NOT NULL DEFAULT 1.0 CHECK (take_playback_rate > 0.0);",
+                    )?;
+                }
+            }
             missing => return Err(StorageError::MissingMigration(missing - 1)),
         }
         transaction.pragma_update(None, "user_version", next_version)?;
@@ -3633,9 +3643,9 @@ fn write_snapshot(
     for (position, item) in snapshot.audio_items.iter().enumerate() {
         transaction.execute(
             "INSERT INTO audio_items(id, track_id, position, media_ref, name, start_sample, \
-             source_offset_samples, signed_source_offset_samples, length_samples, volume, take_volume, take_pan, muted, phase_inverted, loop_source, \
+             source_offset_samples, signed_source_offset_samples, length_samples, volume, take_volume, take_pan, take_playback_rate, muted, phase_inverted, loop_source, \
              source_section_start_samples, source_section_length_samples) \
-             VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
+             VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)",
             params![
                 to_sql_integer(item.id)?,
                 to_sql_integer(item.track_id)?,
@@ -3649,6 +3659,7 @@ fn write_snapshot(
                 f64::from(item.volume),
                 f64::from(item.take_volume),
                 f64::from(item.take_pan),
+                item.take_playback_rate,
                 item.muted,
                 item.phase_inverted,
                 item.loop_source,
@@ -4333,7 +4344,7 @@ fn read_audio_items(connection: &Connection) -> Result<Vec<AudioItemSnapshot>, S
     }
     let mut statement = connection.prepare(
         "SELECT id, track_id, position, media_ref, name, start_sample, signed_source_offset_samples, \
-         length_samples, volume, take_volume, take_pan, muted, phase_inverted, loop_source, \
+         length_samples, volume, take_volume, take_pan, take_playback_rate, muted, phase_inverted, loop_source, \
          source_section_start_samples, source_section_length_samples \
          FROM audio_items ORDER BY position",
     )?;
@@ -4351,11 +4362,12 @@ fn read_audio_items(connection: &Connection) -> Result<Vec<AudioItemSnapshot>, S
                 row.get::<_, f64>(8)?,
                 row.get::<_, f64>(9)?,
                 row.get::<_, f64>(10)?,
-                row.get::<_, i64>(11)?,
+                row.get::<_, f64>(11)?,
                 row.get::<_, i64>(12)?,
                 row.get::<_, i64>(13)?,
-                row.get::<_, Option<i64>>(14)?,
+                row.get::<_, i64>(14)?,
                 row.get::<_, Option<i64>>(15)?,
+                row.get::<_, Option<i64>>(16)?,
             ))
         })?
         .collect::<Result<Vec<_>, _>>()?;
@@ -4374,6 +4386,7 @@ fn read_audio_items(connection: &Connection) -> Result<Vec<AudioItemSnapshot>, S
                 volume,
                 take_volume,
                 take_pan,
+                take_playback_rate,
                 muted,
                 phase_inverted_value,
                 loop_source,
@@ -4388,6 +4401,8 @@ fn read_audio_items(connection: &Connection) -> Result<Vec<AudioItemSnapshot>, S
                     || !(0.0..=16.0).contains(&take_volume)
                     || !take_pan.is_finite()
                     || !(-1.0..=1.0).contains(&take_pan)
+                    || !take_playback_rate.is_finite()
+                    || take_playback_rate <= 0.0
                 {
                     return Err(StorageError::Snapshot(SnapshotError::InvalidProjectData));
                 }
@@ -4419,6 +4434,7 @@ fn read_audio_items(connection: &Connection) -> Result<Vec<AudioItemSnapshot>, S
                     volume: volume as f32,
                     take_volume: take_volume as f32,
                     take_pan: take_pan as f32,
+                    take_playback_rate,
                     id: from_sql_u64(id)?,
                     track_id: from_sql_u64(track_id)?,
                     media_ref,
@@ -4929,6 +4945,59 @@ mod loop_source_storage_tests {
             super::CURRENT_SCHEMA_VERSION
         );
         assert_eq!(store.load().unwrap().audio_items()[0].name(), "");
+    }
+
+    #[test]
+    fn audio_take_playback_rate_round_trips_and_schema_56_migrates_to_unity() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("audio-take-rate.aaadaw");
+        let mut project = Project::new();
+        project
+            .apply(DawAction::CreateTrack {
+                index: 0,
+                name: "Audio".to_owned(),
+            })
+            .unwrap();
+        project
+            .apply(DawAction::InsertAudioItem {
+                track_id: project.tracks()[0].id(),
+                media_ref: "asset://source.wav".to_owned(),
+                start_sample: 0,
+                source_offset_samples: 0,
+                length_samples: 48_000,
+            })
+            .unwrap();
+        let item_id = project.audio_items()[0].id();
+        project
+            .apply(DawAction::SetAudioItemTakePlaybackRate {
+                item_id,
+                rate: 1.25,
+            })
+            .unwrap();
+
+        let mut store = ProjectStore::open(&path).unwrap();
+        store.save(&project).unwrap();
+        assert_eq!(
+            store.load().unwrap().audio_items()[0].take_playback_rate(),
+            1.25
+        );
+        store
+            .connection
+            .execute_batch(
+                "ALTER TABLE audio_items DROP COLUMN take_playback_rate; PRAGMA user_version=56;",
+            )
+            .unwrap();
+        store.close().unwrap();
+
+        let store = ProjectStore::open(&path).unwrap();
+        assert_eq!(
+            store.schema_version().unwrap(),
+            super::CURRENT_SCHEMA_VERSION
+        );
+        assert_eq!(
+            store.load().unwrap().audio_items()[0].take_playback_rate(),
+            1.0
+        );
     }
 
     #[test]

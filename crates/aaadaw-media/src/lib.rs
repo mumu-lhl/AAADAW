@@ -179,6 +179,7 @@ pub enum MediaError {
     InvalidOutputSampleRate,
     InvalidWaveformBinSize,
     InvalidAudioItemLength,
+    InvalidAudioTakePlaybackRate,
     InvalidAudioItemSeek {
         requested: u64,
         start_sample: u64,
@@ -228,6 +229,9 @@ impl fmt::Display for MediaError {
             }
             Self::InvalidAudioItemLength => {
                 formatter.write_str("audio item output length must be positive")
+            }
+            Self::InvalidAudioTakePlaybackRate => {
+                formatter.write_str("audio take playback rate must be finite and positive")
             }
             Self::InvalidAudioItemSeek {
                 requested,

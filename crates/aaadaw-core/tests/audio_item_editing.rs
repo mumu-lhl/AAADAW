@@ -58,6 +58,49 @@ fn audio_items_can_be_inserted_edited_deleted_and_restored() {
 }
 
 #[test]
+fn audio_take_playback_rate_is_validated_snapshot_safe_and_undoable() {
+    let (mut project, track_id) = project_with_track();
+    project
+        .apply(DawAction::InsertAudioItem {
+            track_id,
+            media_ref: "asset://take-rate".to_owned(),
+            start_sample: 0,
+            source_offset_samples: 0,
+            length_samples: 48_000,
+        })
+        .expect("audio item insertion should succeed");
+    let item_id = project.audio_items()[0].id();
+    assert_eq!(project.audio_items()[0].take_playback_rate(), 1.0);
+
+    project
+        .apply(DawAction::SetAudioItemTakePlaybackRate {
+            item_id,
+            rate: 1.25,
+        })
+        .expect("positive finite take rate should apply");
+    assert_eq!(project.audio_items()[0].take_playback_rate(), 1.25);
+    assert_eq!(
+        Project::from_snapshot(project.snapshot())
+            .expect("take rate should be part of project snapshots")
+            .audio_items()[0]
+            .take_playback_rate(),
+        1.25
+    );
+
+    assert!(project.undo().expect("take rate edit should undo"));
+    assert_eq!(project.audio_items()[0].take_playback_rate(), 1.0);
+    assert!(project.redo().expect("take rate edit should redo"));
+    assert_eq!(project.audio_items()[0].take_playback_rate(), 1.25);
+
+    let before = project.snapshot();
+    assert!(matches!(
+        project.apply(DawAction::SetAudioItemTakePlaybackRate { item_id, rate: 0.0 }),
+        Err(aaadaw_core::ActionError::InvalidAudioItemTakePlaybackRate)
+    ));
+    assert_eq!(project.snapshot(), before);
+}
+
+#[test]
 fn bounded_source_loop_can_be_disabled_and_undo_restores_its_flag() {
     let (mut project, track_id) = project_with_track();
     project

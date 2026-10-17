@@ -233,6 +233,7 @@ struct AudioItemClipboardEntry {
     volume: f32,
     take_volume: f32,
     take_pan: f32,
+    take_playback_rate: f64,
     muted: bool,
     phase_inverted: bool,
     track_offset: usize,
@@ -897,6 +898,7 @@ fn action_rebuilds_playback_graph(action: &DawAction) -> bool {
         | DawAction::SetMidiItemContents { .. }
         | DawAction::SetMidiItemLoopSource { .. }
         | DawAction::SetMidiItemMute { .. }
+        | DawAction::SetAudioItemTakePlaybackRate { .. }
         | DawAction::FreezeTrack { .. }
         | DawAction::UnfreezeTrack { .. } => true,
         DawAction::BatchTransaction { actions, .. } => {
@@ -2100,6 +2102,7 @@ impl App {
                     | Message::ItemPropertiesUnitChanged(_)
                     | Message::ItemPropertyFieldChanged(..)
                     | Message::ItemPropertyNameChanged(_)
+                    | Message::ItemPropertyTakeRateChanged(_)
                     | Message::ItemPropertyLoopSourceChanged(_)
                     | Message::ItemPropertyMuteChanged(_)
                     | Message::BatchItemPropertyMuteChanged(_)
@@ -2807,6 +2810,11 @@ impl App {
             Message::ItemPropertyNameChanged(name) => {
                 if let Some(draft) = &mut self.item_properties {
                     draft.set_name(name);
+                }
+            }
+            Message::ItemPropertyTakeRateChanged(rate) => {
+                if let Some(draft) = &mut self.item_properties {
+                    draft.set_take_rate(rate);
                 }
             }
             Message::ItemPropertyLoopSourceChanged(enabled) => {
@@ -11951,18 +11959,22 @@ impl App {
             let Some(track_index) = track_indices.get(&item.track_id()).copied() else {
                 continue;
             };
-            let Some(source_delta) = rescale_samples(
+            let Some(source_delta) = rescale_samples_at_take_rate(
                 selection_start_sample - item.start_sample(),
                 project_sample_rate,
                 source_sample_rate,
+                item.take_playback_rate(),
             ) else {
                 self.status =
                     "Could not copy loop of selected area: source offset is too large".to_owned();
                 return;
             };
-            let Some(source_section_length_samples) =
-                rescale_samples(span_samples, project_sample_rate, source_sample_rate)
-            else {
+            let Some(source_section_length_samples) = rescale_samples_at_take_rate(
+                span_samples,
+                project_sample_rate,
+                source_sample_rate,
+                item.take_playback_rate(),
+            ) else {
                 self.status =
                     "Could not copy loop of selected area: source section is too large".to_owned();
                 return;
@@ -12063,6 +12075,7 @@ impl App {
                 volume: item.volume(),
                 take_volume: item.take_volume(),
                 take_pan: item.take_pan(),
+                take_playback_rate: item.take_playback_rate(),
                 muted: item.is_muted(),
                 phase_inverted: item.is_phase_inverted(),
                 track_offset: track_index - first_track_index,
@@ -12297,6 +12310,7 @@ impl App {
                 volume: item.volume,
                 take_volume: item.take_volume,
                 take_pan: item.take_pan,
+                take_playback_rate: item.take_playback_rate,
             })
         }));
         if actions.is_empty() {
@@ -12561,6 +12575,28 @@ fn rescale_samples(samples: u64, from_sample_rate: u32, to_sample_rate: u32) -> 
             / u128::from(from_sample_rate),
     )
     .ok()
+}
+
+fn rescale_samples_at_take_rate(
+    samples: u64,
+    project_sample_rate: u32,
+    source_sample_rate: u32,
+    take_rate: f64,
+) -> Option<u64> {
+    if project_sample_rate == 0
+        || source_sample_rate == 0
+        || !take_rate.is_finite()
+        || take_rate <= 0.0
+        || samples > (1_u64 << 53) - 1
+    {
+        return None;
+    }
+    let source_frames = (samples as f64) * f64::from(source_sample_rate) * take_rate
+        / f64::from(project_sample_rate);
+    if !source_frames.is_finite() || source_frames < 0.0 || source_frames >= u64::MAX as f64 {
+        return None;
+    }
+    Some(source_frames.round() as u64)
 }
 
 fn split_audio_item_actions(

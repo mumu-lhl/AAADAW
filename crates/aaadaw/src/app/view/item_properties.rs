@@ -74,6 +74,15 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
         ]
         .spacing(6),
         row![
+            text("Take rate:").width(120),
+            text_input("", &draft.take_rate)
+                .on_input(Message::ItemPropertyTakeRateChanged)
+                .on_submit(Message::ApplyItemProperties(true))
+                .width(130),
+            text("×")
+        ]
+        .spacing(6),
+        row![
             text("Volume/pan:").width(120),
             field(ItemPropertyField::TakeVolume, 90),
             field(ItemPropertyField::TakePan, 90)

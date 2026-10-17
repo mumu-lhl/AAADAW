@@ -250,7 +250,7 @@ impl App {
         self.timeline.context_item = None;
         self.timeline.context_fade = None;
         let window_height = if self.item_properties.is_some() {
-            500.0
+            526.0
         } else {
             390.0
         };
@@ -273,6 +273,15 @@ impl App {
     }
 
     pub(super) fn apply_item_properties(&mut self, close: bool) -> Task<Message> {
+        let playback_active = self.playback_active();
+        self.apply_item_properties_with_playback(close, playback_active)
+    }
+
+    pub(super) fn apply_item_properties_with_playback(
+        &mut self,
+        close: bool,
+        playback_active: bool,
+    ) -> Task<Message> {
         if self.batch_item_properties.is_some() {
             return self.apply_batch_item_properties(close);
         }
@@ -307,6 +316,18 @@ impl App {
         };
         let current_take_volume = item.take_volume();
         let current_take_pan = item.take_pan();
+        let current_take_rate = item.take_playback_rate();
+        let target_take_rate = if draft.take_rate_changed {
+            match parse_take_rate(&draft.take_rate) {
+                Ok(rate) => rate,
+                Err(error) => {
+                    self.item_properties.as_mut().expect("open draft").error = Some(error);
+                    return Task::none();
+                }
+            }
+        } else {
+            current_take_rate
+        };
         let sample_rate = self.project.settings().sample_rate();
         let placement = match draft.placement_in_project(item, &self.project) {
             Ok(placement) => placement,
@@ -326,9 +347,11 @@ impl App {
         let current_phase = item.is_phase_inverted();
         let target_phase = draft.phase_inverted;
         let changes_phase = draft.phase_changed && target_phase != current_phase;
-        if (changes_placement || changes_loop_source) && self.playback_active() {
+        let changes_take_rate = target_take_rate != current_take_rate;
+        if (changes_placement || changes_loop_source || changes_take_rate) && playback_active {
             let error =
-                "Close audio output before editing item placement or source looping".to_owned();
+                "Close audio output before editing item placement, source looping, or Take rate"
+                    .to_owned();
             self.status = error.clone();
             self.item_properties.as_mut().expect("open draft").error = Some(error);
             return Task::none();
@@ -407,6 +430,12 @@ impl App {
                 pan: take_pan,
             });
         }
+        if changes_take_rate {
+            actions.push(aaadaw_core::DawAction::SetAudioItemTakePlaybackRate {
+                item_id: id,
+                rate: target_take_rate,
+            });
+        }
         if !actions.is_empty() {
             let action = if actions.len() == 1 {
                 actions.pop().expect("one action")
@@ -423,6 +452,7 @@ impl App {
                     && item.fades() == fades
                     && item.take_volume() == take_volume
                     && item.take_pan() == take_pan
+                    && item.take_playback_rate() == target_take_rate
                     && ItemPlacement::from_item(item) == placement
                     && item.is_loop_source()
                         == if changes_loop_source {
@@ -894,6 +924,8 @@ pub(crate) struct ItemProperties {
     pub(crate) item_id: ItemId,
     pub(crate) name: String,
     name_changed: bool,
+    pub(crate) take_rate: String,
+    take_rate_changed: bool,
     pub(crate) fields: [String; 11],
     pub(crate) loop_source: bool,
     pub(crate) muted: bool,
@@ -1057,6 +1089,7 @@ impl ItemProperties {
         );
         draft.unit = unit;
         draft.name = item.name().to_owned();
+        draft.take_rate = format_take_rate(item.take_playback_rate());
         for (index, samples) in [item.start_sample(), item.length_samples()]
             .into_iter()
             .enumerate()
@@ -1081,6 +1114,7 @@ impl ItemProperties {
 
     pub(crate) fn has_changes(&self) -> bool {
         self.name_changed
+            || self.take_rate_changed
             || self.loop_source_changed
             || self.mute_changed
             || self.phase_changed
@@ -1148,6 +1182,8 @@ impl ItemProperties {
             item_id,
             name: String::new(),
             name_changed: false,
+            take_rate: format_take_rate(1.0),
+            take_rate_changed: false,
             fields: [
                 format_time(fades.fade_in.length_samples() / f64::from(sample_rate)),
                 format!("{:.2}", input.curvature()),
@@ -1183,6 +1219,12 @@ impl ItemProperties {
     pub(crate) fn set_name(&mut self, name: String) {
         self.name = name;
         self.name_changed = true;
+        self.error = None;
+    }
+
+    pub(crate) fn set_take_rate(&mut self, rate: String) {
+        self.take_rate = rate;
+        self.take_rate_changed = true;
         self.error = None;
     }
 
@@ -1335,6 +1377,23 @@ fn format_take_volume_db(volume: f32) -> String {
     } else {
         format!("{:.2}dB", 20.0 * volume.log10())
     }
+}
+
+fn format_take_rate(rate: f64) -> String {
+    rate.to_string()
+}
+
+fn parse_take_rate(text: &str) -> Result<f64, String> {
+    let rate = text
+        .trim()
+        .trim_end_matches('×')
+        .trim()
+        .parse::<f64>()
+        .map_err(|_| "Enter a positive finite Take rate".to_owned())?;
+    if !rate.is_finite() || rate <= 0.0 || rate > 64.0 {
+        return Err("Take rate must be greater than 0 and no more than 64".to_owned());
+    }
+    Ok(rate)
 }
 
 fn parse_take_volume_db(text: &str) -> Result<f32, String> {
@@ -1849,6 +1908,15 @@ mod tests {
     fn take_volume_db_rejects_invalid_and_out_of_range_values() {
         for text in ["", "quiet", "NaN", "inf", "-150.01", "24.01"] {
             assert!(parse_take_volume_db(text).is_err(), "accepted {text:?}");
+        }
+    }
+
+    #[test]
+    fn take_rate_parses_a_positive_finite_multiplier_and_rejects_invalid_values() {
+        assert_eq!(parse_take_rate("1.25"), Ok(1.25));
+        assert_eq!(parse_take_rate("1.25×"), Ok(1.25));
+        for text in ["", "fast", "0", "-1", "NaN", "inf", "64.01"] {
+            assert!(parse_take_rate(text).is_err(), "accepted {text:?}");
         }
     }
 

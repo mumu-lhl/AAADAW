@@ -99,6 +99,7 @@ pub fn spawn_mono_stream(
         0,
         AudioStreamPosition::new(0),
         producer,
+        1.0,
         None,
     )
 }
@@ -122,6 +123,7 @@ pub fn spawn_audio_item_stream(
         0,
         AudioStreamPosition::new(item.start_sample()),
         producer,
+        item.take_playback_rate(),
         source_loop_section(item),
     )
 }
@@ -162,6 +164,7 @@ pub fn spawn_stereo_audio_item_stream_with_quality(
         AudioStreamPosition::new(item.start_sample()),
         producer,
         quality,
+        item.take_playback_rate(),
         source_loop_section(item),
         None,
     )
@@ -218,6 +221,7 @@ pub fn spawn_stereo_audio_item_stream_for_transport_loop_at(
         AudioStreamPosition::new(feeder_sample),
         producer,
         ResamplingQuality::Sinc64,
+        item.take_playback_rate(),
         Some(source_section),
         Some(item_loop_range),
     )
@@ -253,6 +257,7 @@ where
         AudioStreamPosition::new(feeder_sample),
         producer,
         ResamplingQuality::Sinc64,
+        item.take_playback_rate(),
         Some(source_section),
         Some(item_loop_range),
     )
@@ -356,6 +361,7 @@ pub fn spawn_audio_item_stream_at(
         samples_to_skip,
         AudioStreamPosition::new(timeline_sample),
         producer,
+        item.take_playback_rate(),
         source_loop_section(item),
     )
 }
@@ -397,6 +403,7 @@ pub fn spawn_stereo_audio_item_stream_at_with_quality(
         AudioStreamPosition::new(timeline_sample),
         producer,
         quality,
+        item.take_playback_rate(),
         source_loop_section(item),
         None,
     )
@@ -446,6 +453,7 @@ pub fn spawn_cached_stereo_audio_item_stream_with_quality(
         AudioStreamPosition::new(item.start_sample() + samples_to_skip),
         producer,
         quality,
+        item.take_playback_rate(),
         source_loop_section(item),
         None,
     )
@@ -481,6 +489,7 @@ where
         0,
         AudioStreamPosition::new(item.start_sample()),
         producer,
+        item.take_playback_rate(),
         source_loop_section(item),
     )
 }
@@ -537,6 +546,7 @@ where
         AudioStreamPosition::new(item.start_sample()),
         producer,
         quality,
+        item.take_playback_rate(),
         source_loop_section(item),
         None,
     )
@@ -569,6 +579,7 @@ where
         samples_to_skip,
         AudioStreamPosition::new(timeline_sample),
         producer,
+        item.take_playback_rate(),
         source_loop_section(item),
     )
 }
@@ -627,6 +638,7 @@ where
         AudioStreamPosition::new(timeline_sample),
         producer,
         quality,
+        item.take_playback_rate(),
         source_loop_section(item),
         None,
     )
@@ -641,6 +653,7 @@ fn spawn_stream(
     output_samples_to_skip: u64,
     position: AudioStreamPosition,
     producer: PcmStreamProducer,
+    playback_rate: f64,
     source_loop_section: Option<SourceLoopSection>,
 ) -> Result<AudioFeedWorker, MediaError> {
     if output_sample_rate == 0 {
@@ -655,6 +668,7 @@ fn spawn_stream(
         output_samples_remaining: output_length_samples,
         output_samples_to_skip,
         quality: ResamplingQuality::Sinc64,
+        playback_rate,
         source_loop_section,
         timeline_loop_range: None,
     };
@@ -691,6 +705,7 @@ fn spawn_stereo_stream(
     position: AudioStreamPosition,
     producer: StereoPcmStreamProducer,
     quality: ResamplingQuality,
+    playback_rate: f64,
     source_loop_section: Option<SourceLoopSection>,
     timeline_loop_range: Option<TransportLoopRange>,
 ) -> Result<AudioFeedWorker, MediaError> {
@@ -706,6 +721,7 @@ fn spawn_stereo_stream(
         output_samples_remaining: output_length_samples,
         output_samples_to_skip,
         quality,
+        playback_rate,
         source_loop_section,
         timeline_loop_range,
     };
@@ -952,6 +968,7 @@ impl WorkerDecoder {
 
 struct WorkerConfig {
     output_sample_rate: u32,
+    playback_rate: f64,
     source_offset_remaining: i64,
     output_samples_remaining: Option<u64>,
     output_samples_to_skip: u64,
@@ -964,6 +981,7 @@ struct WorkerConfig {
 struct ResampledLoopPrefixConfig {
     output_sample_rate: u32,
     source_sample_rate: u32,
+    playback_rate: f64,
     source_channels: usize,
     quality: ResamplingQuality,
     loop_source_frames: u64,
@@ -995,6 +1013,13 @@ struct SourceLoopSection {
     looping: bool,
     prefix: Option<SourceLoopPrefix>,
     project_mapping: Option<ProjectLoopSourceMapping>,
+}
+
+#[derive(Clone, Copy)]
+struct LoopRestartConfig {
+    base_source_offset: Option<u64>,
+    section_length: Option<u64>,
+    playback_rate: f64,
 }
 
 fn source_loop_section(item: &AudioItem) -> Option<SourceLoopSection> {
@@ -1095,6 +1120,7 @@ fn run_worker<P: FeedProducer>(
 ) -> Result<(), MediaError> {
     let WorkerConfig {
         output_sample_rate,
+        playback_rate,
         source_offset_remaining,
         mut output_samples_remaining,
         mut output_samples_to_skip,
@@ -1123,10 +1149,31 @@ fn run_worker<P: FeedProducer>(
             return Err(error);
         }
     };
+    if !playback_rate.is_finite() || playback_rate <= 0.0 {
+        let error = MediaError::InvalidAudioTakePlaybackRate;
+        let _ = startup.send(Err(worker_startup_error(&error)));
+        return Err(error);
+    }
+    let effective_sample_rate = match initial_sample_rate {
+        Some(sample_rate) => match scale_sample_rate(sample_rate, playback_rate) {
+            Some(sample_rate) => Some(sample_rate),
+            None => {
+                let error = MediaError::InvalidAudioTakePlaybackRate;
+                let _ = startup.send(Err(worker_startup_error(&error)));
+                return Err(error);
+            }
+        },
+        None if playback_rate == 1.0 => None,
+        None => {
+            let error = MediaError::InvalidAudioTakePlaybackRate;
+            let _ = startup.send(Err(worker_startup_error(&error)));
+            return Err(error);
+        }
+    };
     let source_loop_section = match source_loop_section {
         Some(section) => match resolve_project_loop_source_section(
             section,
-            initial_sample_rate,
+            effective_sample_rate,
             output_sample_rate,
         ) {
             Ok(section) => Some(section),
@@ -1226,8 +1273,13 @@ fn run_worker<P: FeedProducer>(
             }
             None => (None, None, None, false),
         };
+    let loop_restart_config = LoopRestartConfig {
+        base_source_offset: loop_base_source_offset,
+        section_length: loop_section_length,
+        playback_rate,
+    };
     if let Some(timeline_loop_range) = timeline_loop_range
-        && !initial_sample_rate.is_some_and(|source_rate| {
+        && !effective_sample_rate.is_some_and(|source_rate| {
             source_loop_section.is_some_and(|section| {
                 section.looping
                     && section.length_frames.and_then(|length| {
@@ -1243,7 +1295,7 @@ fn run_worker<P: FeedProducer>(
     if let (Some(range), Some(section), Some(source_rate)) = (
         timeline_loop_range,
         source_loop_section,
-        initial_sample_rate,
+        effective_sample_rate,
     ) && source_rate != output_sample_rate
         && let Some(prefix) = section.prefix
     {
@@ -1274,6 +1326,7 @@ fn run_worker<P: FeedProducer>(
                 ResampledLoopPrefixConfig {
                     output_sample_rate,
                     source_sample_rate: source_rate,
+                    playback_rate,
                     source_channels: initial_channels,
                     quality,
                     loop_source_frames,
@@ -1293,6 +1346,7 @@ fn run_worker<P: FeedProducer>(
             ResampledLoopPrefixConfig {
                 output_sample_rate,
                 source_sample_rate: source_rate,
+                playback_rate,
                 source_channels: initial_channels,
                 quality,
                 loop_source_frames,
@@ -1307,7 +1361,7 @@ fn run_worker<P: FeedProducer>(
     let mut source_frames_in_current_cycle = 0_u64;
     let mut initial_loop_pass = true;
     let mut output_timeline_sample = position.requested_sample();
-    let mut resampler = match initial_sample_rate {
+    let mut resampler = match effective_sample_rate {
         Some(sample_rate) => match StreamingResampler::<P::Frame>::new_with_quality(
             sample_rate,
             output_sample_rate,
@@ -1323,7 +1377,7 @@ fn run_worker<P: FeedProducer>(
     };
     let mut leading_silence_samples = 0_u64;
     if negative_source_offset_frames > 0 {
-        let Some(source_sample_rate) = initial_sample_rate else {
+        let Some(source_sample_rate) = effective_sample_rate else {
             let error = MediaError::InvalidDecodedAudioSpec;
             let _ = startup.send(Err(worker_startup_error(&error)));
             return Err(error);
@@ -1342,7 +1396,7 @@ fn run_worker<P: FeedProducer>(
     }
     if looping
         && let (Some(source_rate), Some(loop_frames), Some(initial_frames)) = (
-            initial_sample_rate,
+            effective_sample_rate,
             loop_section_length,
             initial_loop_source_frames,
         )
@@ -1361,9 +1415,9 @@ fn run_worker<P: FeedProducer>(
     }
     if timeline_loop_range.is_some()
         && source_loop_section.is_none_or(|section| section.prefix.is_none())
-        && initial_sample_rate.is_some_and(|source_rate| source_rate != output_sample_rate)
+        && effective_sample_rate.is_some_and(|source_rate| source_rate != output_sample_rate)
     {
-        let Some(source_rate) = initial_sample_rate else {
+        let Some(source_rate) = effective_sample_rate else {
             unreachable!("sample-rate inequality requires a decoded rate")
         };
         let Some(loop_source_frames) = loop_section_length.filter(|frames| *frames > 0) else {
@@ -1457,14 +1511,16 @@ fn run_worker<P: FeedProducer>(
                 }
                 source_channels = Some(chunk.channels());
                 producer.set_source_channels(chunk.channels());
+                let chunk_sample_rate = scale_sample_rate(chunk.sample_rate(), playback_rate)
+                    .ok_or(MediaError::InvalidAudioTakePlaybackRate)?;
                 let current = match &mut resampler {
-                    Some(resampler) if resampler.input_sample_rate() != chunk.sample_rate() => {
+                    Some(resampler) if resampler.input_sample_rate() != chunk_sample_rate => {
                         return Err(MediaError::ChangedAudioSampleRate);
                     }
                     Some(resampler) => resampler,
                     None => {
                         resampler = Some(StreamingResampler::<P::Frame>::new_with_quality(
-                            chunk.sample_rate(),
+                            chunk_sample_rate,
                             output_sample_rate,
                             quality,
                         )?);
@@ -1542,10 +1598,9 @@ fn run_worker<P: FeedProducer>(
                             &mut decoder,
                             &mut source_offset_remaining,
                             &mut loop_source_frames_remaining,
-                            loop_base_source_offset,
-                            loop_section_length,
                             source_channels,
                             &resampler,
+                            loop_restart_config,
                         )?;
                         source_frames_in_current_cycle = 0;
                     } else if loop_buffer.is_some() {
@@ -1556,10 +1611,9 @@ fn run_worker<P: FeedProducer>(
                             &mut decoder,
                             &mut source_offset_remaining,
                             &mut loop_source_frames_remaining,
-                            loop_base_source_offset,
-                            loop_section_length,
                             source_channels,
                             &resampler,
+                            loop_restart_config,
                         )?;
                         source_frames_in_current_cycle = 0;
                     }
@@ -1577,10 +1631,9 @@ fn run_worker<P: FeedProducer>(
                         &mut decoder,
                         &mut source_offset_remaining,
                         &mut loop_source_frames_remaining,
-                        loop_base_source_offset,
-                        loop_section_length,
                         source_channels,
                         &resampler,
+                        loop_restart_config,
                     )?;
                     source_frames_in_current_cycle = 0;
                     initial_loop_pass = false;
@@ -1624,6 +1677,7 @@ fn run_worker_with_resampled_loop_prefix<P: FeedProducer>(
     let ResampledLoopPrefixConfig {
         output_sample_rate,
         source_sample_rate,
+        playback_rate,
         source_channels,
         quality,
         loop_source_frames,
@@ -1688,7 +1742,9 @@ fn run_worker_with_resampled_loop_prefix<P: FeedProducer>(
         let Some(chunk) = decoder.next_chunk()? else {
             return Err(MediaError::AudioLoopSectionExceedsSource);
         };
-        if chunk.channels() != source_channels || chunk.sample_rate() != source_sample_rate {
+        if chunk.channels() != source_channels
+            || scale_sample_rate(chunk.sample_rate(), playback_rate) != Some(source_sample_rate)
+        {
             return Err(MediaError::InvalidDecodedAudioSpec);
         }
         decoded_frames.clear();
@@ -1783,6 +1839,7 @@ fn run_worker_with_streamed_resampled_loop_prefix<P: FeedProducer>(
     let ResampledLoopPrefixConfig {
         output_sample_rate,
         source_sample_rate,
+        playback_rate,
         source_channels,
         quality,
         loop_source_frames,
@@ -1855,6 +1912,7 @@ fn run_worker_with_streamed_resampled_loop_prefix<P: FeedProducer>(
         left_taps,
         source_channels,
         source_sample_rate,
+        playback_rate,
         &cancelled,
     ) {
         Ok(Some(history)) => history,
@@ -1886,7 +1944,10 @@ fn run_worker_with_streamed_resampled_loop_prefix<P: FeedProducer>(
             return Err(error);
         }
     };
-    if channels != source_channels || sample_rate != Some(source_sample_rate) {
+    if channels != source_channels
+        || sample_rate.and_then(|rate| scale_sample_rate(rate, playback_rate))
+            != Some(source_sample_rate)
+    {
         let error = MediaError::InvalidDecodedAudioSpec;
         let _ = startup.send(Err(worker_startup_error(&error)));
         return Err(error);
@@ -1916,7 +1977,9 @@ fn run_worker_with_streamed_resampled_loop_prefix<P: FeedProducer>(
         let Some(chunk) = decoder.next_chunk()? else {
             return Err(MediaError::AudioLoopSectionExceedsSource);
         };
-        if chunk.channels() != source_channels || chunk.sample_rate() != source_sample_rate {
+        if chunk.channels() != source_channels
+            || scale_sample_rate(chunk.sample_rate(), playback_rate) != Some(source_sample_rate)
+        {
             return Err(MediaError::InvalidDecodedAudioSpec);
         }
         P::Frame::copy_from_chunk(&chunk, &mut decoded_frames);
@@ -1954,7 +2017,10 @@ fn run_worker_with_streamed_resampled_loop_prefix<P: FeedProducer>(
     }
 
     let (channels, sample_rate) = decoder.restart()?;
-    if channels != source_channels || sample_rate != Some(source_sample_rate) {
+    if channels != source_channels
+        || sample_rate.and_then(|rate| scale_sample_rate(rate, playback_rate))
+            != Some(source_sample_rate)
+    {
         return Err(MediaError::InvalidDecodedAudioSpec);
     }
     source_frames_to_skip = loop_source_start;
@@ -1966,7 +2032,9 @@ fn run_worker_with_streamed_resampled_loop_prefix<P: FeedProducer>(
         let Some(chunk) = decoder.next_chunk()? else {
             return Err(MediaError::AudioLoopSectionExceedsSource);
         };
-        if chunk.channels() != source_channels || chunk.sample_rate() != source_sample_rate {
+        if chunk.channels() != source_channels
+            || scale_sample_rate(chunk.sample_rate(), playback_rate) != Some(source_sample_rate)
+        {
             return Err(MediaError::InvalidDecodedAudioSpec);
         }
         P::Frame::copy_from_chunk(&chunk, &mut decoded_frames);
@@ -1984,7 +2052,10 @@ fn run_worker_with_streamed_resampled_loop_prefix<P: FeedProducer>(
         }
         if loop_frames_remaining == 0 {
             let (channels, sample_rate) = decoder.restart()?;
-            if channels != source_channels || sample_rate != Some(source_sample_rate) {
+            if channels != source_channels
+                || sample_rate.and_then(|rate| scale_sample_rate(rate, playback_rate))
+                    != Some(source_sample_rate)
+            {
                 return Err(MediaError::InvalidDecodedAudioSpec);
             }
             source_frames_to_skip = loop_source_start;
@@ -1999,13 +2070,17 @@ fn read_source_frames_at<P: FeedProducer>(
     frame_count: usize,
     expected_channels: usize,
     expected_sample_rate: u32,
+    playback_rate: f64,
     cancelled: &AtomicBool,
 ) -> Result<Option<Vec<P::Frame>>, MediaError> {
     if cancelled.load(Ordering::Acquire) {
         return Ok(None);
     }
     let (channels, sample_rate) = decoder.restart()?;
-    if channels != expected_channels || sample_rate != Some(expected_sample_rate) {
+    if channels != expected_channels
+        || sample_rate.and_then(|rate| scale_sample_rate(rate, playback_rate))
+            != Some(expected_sample_rate)
+    {
         return Err(MediaError::InvalidDecodedAudioSpec);
     }
     let mut source_frames_to_skip = start_frame;
@@ -2018,7 +2093,9 @@ fn read_source_frames_at<P: FeedProducer>(
         let Some(chunk) = decoder.next_chunk()? else {
             return Err(MediaError::AudioLoopSectionExceedsSource);
         };
-        if chunk.channels() != expected_channels || chunk.sample_rate() != expected_sample_rate {
+        if chunk.channels() != expected_channels
+            || scale_sample_rate(chunk.sample_rate(), playback_rate) != Some(expected_sample_rate)
+        {
             return Err(MediaError::InvalidDecodedAudioSpec);
         }
         P::Frame::copy_from_chunk(&chunk, &mut decoded_frames);
@@ -2241,6 +2318,17 @@ fn scale_frames_rounded(frames: u64, input_rate: u32, output_rate: u32) -> Optio
     .ok()
 }
 
+fn scale_sample_rate(sample_rate: u32, playback_rate: f64) -> Option<u32> {
+    if sample_rate == 0 || !playback_rate.is_finite() || playback_rate <= 0.0 {
+        return None;
+    }
+    let scaled = f64::from(sample_rate) * playback_rate;
+    if !scaled.is_finite() || !(1.0..=f64::from(u32::MAX)).contains(&scaled) {
+        return None;
+    }
+    Some(scaled.round() as u32)
+}
+
 fn scale_frames_exact(frames: u64, input_rate: u32, output_rate: u32) -> Option<u64> {
     if input_rate == 0 || output_rate == 0 {
         return None;
@@ -2257,12 +2345,16 @@ fn restart_loop_decoder<P: FeedProducer>(
     decoder: &mut WorkerDecoder,
     source_offset_remaining: &mut u64,
     loop_source_frames_remaining: &mut Option<u64>,
-    loop_base_source_offset: Option<u64>,
-    loop_section_length: Option<u64>,
     source_channels: Option<usize>,
     resampler: &Option<StreamingResampler<P::Frame>>,
+    config: LoopRestartConfig,
 ) -> Result<(), MediaError> {
-    let Some(base) = loop_base_source_offset else {
+    let LoopRestartConfig {
+        base_source_offset,
+        section_length,
+        playback_rate,
+    } = config;
+    let Some(base) = base_source_offset else {
         return Err(MediaError::InvalidAudioLoopSection);
     };
     let (channels, sample_rate) = decoder.restart()?;
@@ -2270,14 +2362,16 @@ fn restart_loop_decoder<P: FeedProducer>(
         return Err(MediaError::InvalidDecodedAudioSpec);
     }
     if sample_rate.is_some_and(|sample_rate| {
-        resampler
-            .as_ref()
-            .is_some_and(|resampler| resampler.input_sample_rate() != sample_rate)
+        scale_sample_rate(sample_rate, playback_rate).is_none_or(|sample_rate| {
+            resampler
+                .as_ref()
+                .is_some_and(|resampler| resampler.input_sample_rate() != sample_rate)
+        })
     }) {
         return Err(MediaError::ChangedAudioSampleRate);
     }
     *source_offset_remaining = base;
-    *loop_source_frames_remaining = loop_section_length;
+    *loop_source_frames_remaining = section_length;
     Ok(())
 }
 
@@ -2972,6 +3066,7 @@ mod tests {
         };
         let config = WorkerConfig {
             output_sample_rate: 48_000,
+            playback_rate: 1.0,
             source_offset_remaining: 0,
             output_samples_remaining: None,
             output_samples_to_skip: 0,

@@ -211,6 +211,60 @@ fn decodes_wav_packets_as_interleaved_f32() {
 }
 
 #[test]
+fn audio_item_take_rate_changes_playback_speed() {
+    let path = wav_path();
+    let source = (0..48_000)
+        .map(|frame| {
+            (std::f64::consts::TAU * 1_000.0 * f64::from(frame) / 48_000.0)
+                .sin()
+                .mul_add(30_000.0, 0.0) as i16
+        })
+        .collect::<Vec<_>>();
+    std::fs::write(&path, pcm_wav(&source, 48_000)).expect("test WAV should be written");
+
+    let mut project = Project::new();
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Rate test".to_owned(),
+        })
+        .expect("audio track should be created");
+    project
+        .apply(DawAction::InsertAudioItem {
+            track_id: project.tracks()[0].id(),
+            media_ref: "asset://take-rate-test".to_owned(),
+            start_sample: 0,
+            source_offset_samples: 0,
+            length_samples: 38_400,
+        })
+        .expect("audio item should be inserted");
+    let item_id = project.audio_items()[0].id();
+    project
+        .apply(DawAction::SetAudioItemTakePlaybackRate {
+            item_id,
+            rate: 1.25,
+        })
+        .expect("non-unity Take rate should be stored");
+    let item = project.audio_items()[0].clone();
+    let (producer, mut consumer) = pcm_stream(40_000).expect("stream capacity should be positive");
+    let worker = spawn_audio_item_stream(&item, &path, 48_000, producer)
+        .expect("audio item worker should start");
+    worker.join().expect("Take-rate stream should finish");
+
+    let mut samples = vec![0.0; 38_400];
+    assert_eq!(consumer.read_into(&mut samples), 0);
+    let positive_zero_crossings = samples
+        .windows(2)
+        .filter(|pair| pair[0] <= 0.0 && pair[1] > 0.0)
+        .count();
+    assert!(
+        (995..=1_005).contains(&positive_zero_crossings),
+        "1.25x playback of a 1 kHz source should produce about 1,000 positive crossings, got {positive_zero_crossings}"
+    );
+    std::fs::remove_file(path).expect("test file should be removed");
+}
+
+#[test]
 fn waveform_peaks_keep_bin_boundaries_across_decoder_packets() {
     let samples = [vec![-16_384; 4_096], vec![16_384; 4_096], vec![0]].concat();
     let bytes = pcm_wav(&samples, 48_000);

@@ -1871,3 +1871,12 @@ AAADAW 主测试目标 678/678 passed；`cargo clippy --locked -p aaadaw -p aaad
 使用与 41173 相同的 off-grid Audio template、Build ID `501a2645dcc0be1bc0b878cef77851f433e9afe8`，在 Xorg :112 / 1280×800 中实际打开 Main Action List 并运行 41174。Transport 到达 `0:05.000`，Audio item 仍选中，Inspector 仍报告起始 sample `192012`；Action List Run 后结果保持选中，滚动 Arrange 后可见 item 末端。运行前后截图和 hashes 见 [41174 AAADAW fixture](../verification/reaper-parity/fixtures/item-cursor-end-aaadaw.tsv)。
 
 随后清空 item 选择并在 Transport `0:06.000` 时从 Action List 再运行 41174：结果仍可选，Run 按钮仍启用，运行前后 Transport 保持 `0:06.000`、Inspector 显示无选择项。这补齐 AAADAW 侧空选择可用状态和 no-op 的真实窗口证据；REAPER 原厂 no-selection no-op 仍见 [item navigation fixture](../verification/reaper-parity/fixtures/item-navigation-native.tsv)，其 Action List 按钮状态尚无独立窗口截图。截图、Build ID、binary SHA 和操作步骤见 [empty-selection AAADAW fixture](../verification/reaper-parity/fixtures/item-cursor-empty-selection-aaadaw.tsv)。完整 Action List 焦点和整体 Arrange UI parity 仍开放，`ITEM-SELECT-016/017` 保持 `in_progress`。
+
+
+### 2026-10-17 Audio Take playback rate：模型、Properties、播放与 Copy loop
+
+按 Linux REAPER 7.82 / Default 7 原厂属性探针实现 Audio Take playback rate。Audio item 默认 1.0；Core action 可验证、撤销和重做，snapshot 与 SQLite schema 57 持久化，旧 schema 56 项目迁移为 1.0。Audio Item Properties 增加 Take rate 文本字段，并与其他改动作为一次 Apply/Undo 事务；速率改动要求先关闭音频输出，避免打开的 playback graph 使用旧 feeder。所有 Audio item 文件/reader realtime 与 offline feeds 现在将 Take rate 交给非 realtime 解码/重采样 worker。
+
+Copy loop clipboard 保留 Take rate。原厂探针的 1.25x 示例在 AAADAW 回归中验证：3–7 秒时间选区仍粘贴为 4 秒，但源区段位置和长度按 1.25x 映射为 3.75–8.75 秒；Paste、Undo、Redo 保留速率。媒体端到端回归以 1 kHz WAV 验证 1.25x feeder 输出约 1.25 kHz。最新 Cranelift 二进制在 Linux Xvfb 中实际打开 Audio Item Properties，窗口显示加载的 1.25 Take rate；[截图、窗口大小和精确二进制 hashes](../verification/reaper-parity/fixtures/audio-take-rate-properties-aaadaw.tsv)。Apply/Undo/Redo 与音频输出活动时拒绝速率修改另由 App 回归验证。属性窗从 526×500 调整为 526×526，截图确认 Apply 按钮完整可见。这张图只验 AAADAW 界面，不是 REAPER 原厂对照。
+
+Cranelift 1.101 workspace Nextest 全量 1306/1306、0 skipped 通过，X11 测试运行于 Xvfb :335；Stable 五 crate audio-device all-target Clippy `-D warnings`、fmt 和 diff 检查通过。两个 parity 条目保持 `in_progress`：重采样以整数 Hz 表示有效输入采样率，任意小数播放率存在轻微量化；Preserve pitch 模式、原厂速率范围、完整媒体边界组合和 UI 原厂窗口对照仍未覆盖。还没有新增 REAPER 原厂截图，也没有把属性窗口或 Copy loop 目标标记为完成。

@@ -30,6 +30,7 @@ pub struct AudioItem {
     pub(crate) volume: f32,
     pub(crate) take_volume: f32,
     pub(crate) take_pan: f32,
+    pub(crate) take_playback_rate: f64,
 }
 
 impl AudioItem {
@@ -112,6 +113,11 @@ impl AudioItem {
     /// Returns the active take's stereo balance in the inclusive range -1..=1.
     pub fn take_pan(&self) -> f32 {
         self.take_pan
+    }
+
+    /// Returns the active Take's source playback rate, where `1.0` is normal speed.
+    pub fn take_playback_rate(&self) -> f64 {
+        self.take_playback_rate
     }
 
     /// Returns the exclusive end position in project samples.
