@@ -388,6 +388,67 @@ fn reaper_782_type_one_export_matches_native_track_and_event_bytes() {
 }
 
 #[test]
+fn reaper_782_type_one_non_ascii_track_name_uses_ascii_replacement() {
+    let track_name = format!("轨{}", "A".repeat(125));
+    assert_eq!(track_name.len(), 128, "fixture should cross the byte limit");
+    let project = native_midi_fixture_project_with_track_name(1920, &track_name);
+    let actual = encode_standard_midi_with_conductor_track_name(
+        &project,
+        MidiExportOptions::for_project(&project),
+        "aaadaw-midi-long-utf8-track",
+    )
+    .unwrap();
+    let native = include_bytes!(
+        "../../../docs/verification/reaper-parity/fixtures/menu-export-midi-native-track-name-unicode.mid"
+    );
+
+    assert_eq!(
+        actual, native,
+        "REAPER replaces each non-ASCII track-name character with one underscore"
+    );
+}
+
+#[test]
+fn reaper_782_type_one_128_byte_ascii_track_name_uses_multibyte_vlq_length() {
+    let track_name = "A".repeat(128);
+    let project = native_midi_fixture_project_with_track_name(1920, &track_name);
+    let actual = encode_standard_midi_with_conductor_track_name(
+        &project,
+        MidiExportOptions::for_project(&project),
+        "aaadaw-midi-long-ascii-track",
+    )
+    .unwrap();
+    let native = include_bytes!(
+        "../../../docs/verification/reaper-parity/fixtures/menu-export-midi-native-track-name-long-ascii.mid"
+    );
+
+    assert_eq!(
+        actual, native,
+        "REAPER preserves 128 ASCII bytes and encodes the event length as VLQ 81 00"
+    );
+}
+
+#[test]
+fn reaper_782_type_one_127_byte_ascii_track_name_uses_single_byte_vlq_length() {
+    let track_name = "A".repeat(127);
+    let project = native_midi_fixture_project_with_track_name(1920, &track_name);
+    let actual = encode_standard_midi_with_conductor_track_name(
+        &project,
+        MidiExportOptions::for_project(&project),
+        "aaadaw-midi-127-ascii-track",
+    )
+    .unwrap();
+    let native = include_bytes!(
+        "../../../docs/verification/reaper-parity/fixtures/menu-export-midi-native-track-name-127-ascii.mid"
+    );
+
+    assert_eq!(
+        actual, native,
+        "REAPER encodes a 127-byte text-event length as the one-byte VLQ 7F"
+    );
+}
+
+#[test]
 fn reaper_782_type_one_marker_export_matches_native_bytes() {
     let project = native_midi_marker_fixture_project();
     let mut options = MidiExportOptions::for_project(&project);
@@ -1213,11 +1274,18 @@ fn native_midi_marker_ruler_and_individually_hidden_fixture_project() -> Project
 }
 
 fn native_midi_fixture_project_with_length(item_length_ticks: u64) -> Project {
+    native_midi_fixture_project_with_track_name(item_length_ticks, "Piano")
+}
+
+fn native_midi_fixture_project_with_track_name(
+    item_length_ticks: u64,
+    track_name: &str,
+) -> Project {
     let mut project = Project::new();
     project
         .apply(DawAction::CreateTrack {
             index: 0,
-            name: "Piano".to_owned(),
+            name: track_name.to_owned(),
         })
         .unwrap();
     let track_id = project.tracks()[0].id();

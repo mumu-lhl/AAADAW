@@ -8,9 +8,12 @@ local _, project_path = reaper.EnumProjects(-1, "")
 assert(project_path == "", "Run this probe in a fresh, unsaved project")
 assert(reaper.CountTracks(0) == 0, "Run this probe in an empty project")
 
+local track_name = os.getenv("AAADAW_REAPER_TRACK_NAME") or "Piano"
 reaper.InsertTrackAtIndex(0, true)
 local track = reaper.GetTrack(0, 0)
-reaper.GetSetMediaTrackInfo_String(track, "P_NAME", "Piano", true)
+reaper.GetSetMediaTrackInfo_String(track, "P_NAME", track_name, true)
+local _, actual_track_name = reaper.GetSetMediaTrackInfo_String(track, "P_NAME", "", false)
+assert(actual_track_name == track_name, "REAPER did not retain the requested track name")
 local item_start, item_end = 0.25, 1.25
 local item = assert(reaper.CreateNewMIDIItemInProj(track, item_start, item_end, false))
 local take = assert(reaper.GetActiveTake(item))
@@ -29,10 +32,16 @@ assert(reaper.MIDI_InsertCC(take, false, false, cc_ppq, 0xB0, 0, 1, 64))
 assert(reaper.MIDI_InsertCC(take, false, false, bend_ppq, 0xE0, 0, 0, 96))
 reaper.MIDI_Sort(take)
 
+local save_project = os.getenv("AAADAW_REAPER_SAVE_PROJECT")
+if save_project then
+  reaper.Main_SaveProjectEx(0, save_project, 0)
+end
+
 local meta = assert(io.open(root .. "midi-export-content-native-meta.tsv", "w"))
 meta:write("version\t", reaper.GetAppVersion(), "\n")
 meta:write("theme\tDefault_7.0.ReaperThemeZip\n")
-meta:write("fixture\ttrack Piano; item 0.25-1.25 seconds; C4 note, CC1, pitch bend\n")
+meta:write("fixture\ttrack ", track_name, "; item 0.25-1.25 seconds; C4 note, CC1, pitch bend\n")
+meta:write("track_name_utf8_bytes\t", #track_name, "\n")
 meta:write("take_ppq_at_item_start\t", string.format("%.6f", start_ppq), "\n")
 meta:write("take_ppq_at_note_end\t", string.format("%.6f", note_end_ppq), "\n")
 meta:write("take_ppq_at_cc\t", string.format("%.6f", cc_ppq), "\n")

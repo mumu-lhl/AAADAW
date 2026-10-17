@@ -307,7 +307,7 @@ pub fn encode_standard_midi_with_conductor_track_name(
                 let mut events = vec![Event {
                     tick: 0,
                     order: 0,
-                    bytes: meta_event(0x03, track.name().as_bytes())?,
+                    bytes: meta_event(0x03, &reaper_midi_track_name(track.name()))?,
                 }];
                 events.append(&mut events_by_track[index]);
                 tracks.push(encode_track(events, 0)?);
@@ -405,6 +405,19 @@ fn push_midi_note_events(
         bytes: vec![0x90, pitch, velocity],
     });
     Ok(())
+}
+
+/// REAPER replaces each non-ASCII character in exported track names with `_`.
+fn reaper_midi_track_name(name: &str) -> Vec<u8> {
+    name.chars()
+        .map(|character| {
+            if character.is_ascii() {
+                character as u8
+            } else {
+                b'_'
+            }
+        })
+        .collect()
 }
 
 fn conductor_events(
