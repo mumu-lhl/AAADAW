@@ -8,7 +8,7 @@ empty_project_warning	fixtures/menu-export-midi-native-empty-warning.png; 324x81
 all_time_empty_warning	fixtures/menu-export-midi-native-scope-all-time-empty-warning.png; 468x81; "No unmuted tracks containing MIDI items within the time selection were found. Write MIDI file header anyway?"; SHA-256 ea59885dd48fd12437425af25a61b3acd3d53c18f690535ed8e02e40916140e1
 selected_items_empty_warning	fixtures/menu-export-midi-native-scope-selected-items-empty-warning.png; 377x81; "No unmuted tracks containing selected MIDI items were found. Write MIDI file header anyway?"; SHA-256 a04202591f060850b950dadb3544111647cd2ca2f1d75596d93d2035a864ed57
 selected_tracks_empty_warning	fixtures/menu-export-midi-native-scope-selected-tracks-empty-warning.png; 377x81; "No unmuted selected tracks containing MIDI items were found. Write MIDI file header anyway?"; SHA-256 db3e49e65ae554dce4b1a43217c04fb4cbd0fc740516b1c6dc3833fdcb144725
-selected_tracks_time_empty_warning	fixtures/menu-export-midi-native-scope-selected-tracks-time-empty-warning.png; 521x81; "No unmuted selected tracks containing MIDI items within the time selection were found. Write MIDI file header anyway?"; SHA-256 753ba9c5a56526f9f2fb13f6044e07809b8724b269b8627acb8eef1dc5ddff84
+selected_tracks_time_empty_warning	fixtures/menu-export-midi-native-scope-selected-tracks-time-empty-warning.png; 521x81; "No unmuted selected tracks containing MIDI items within the time selection were found. Write MIDI file header anyway?"; SHA-256 6b667fc5195d2a55b44a502ae5197ac52c3e704c593c25dcd1d55b01eeeb9060
 scope_intersections_project	fixtures/menu-export-midi-native-scope-intersections.rpp; SHA-256 757f9b51133718bad340aad4392404b1be3fb1c902c561583d1d51b2a5a7ff59
 scope_fixture	Track A selected; C4 item at 0.25-0.75 sec selected outside range; C#4 item at 1.25-1.75 sec unselected inside range; Track B unselected with D4 at 2.25-2.75 sec; time selection 1-2 sec
 selected_track_time	fixtures/menu-export-midi-native-scope-selected-tracks-time.mid; 116 bytes; Track A C#4 only, rebased to tick 480; SHA-256 406cd8bd61877ae98283d15bc49bf51db1190974931a1cd065dd7fbeacaf988f
@@ -24,6 +24,13 @@ muted_track_confirmed_export	fixtures/menu-export-midi-native-track-muted-all.mi
 muted_item_project	fixtures/menu-export-midi-native-item-muted.rpp; one muted note item on one unmuted track; SHA-256 3a8156f11637992ea71144ba77daac107223f520264cf528ec18368cd5cec613
 muted_item_warning	fixtures/menu-export-midi-native-item-muted-warning.png; 324x81; same unmuted-track warning as empty project; SHA-256 c9d63696aabde1b6dd91582a960a663c78e167cc4c8ad05298f6e9fb57659e11
 muted_item_confirmed_export	fixtures/menu-export-midi-native-item-muted-all.mid; 79 bytes; Type 1; 2 tracks; no MIDI note events; conductor name follows destination stem; SHA-256 9fcaa17624759b449adb5219395bb0b9d68ecf34ab5943099a66162131745988
+selected_track_time_empty_project	fixtures/menu-export-midi-native-scope-selected-tracks-time-empty.rpp; selected track, unselected MIDI item at 0-0.5 sec, time selection 1-2 sec; SHA-256 d1ffa472466de9c6a47c41c9759a4c07d13d2e7aa998faf9f80b377103062e05
+selected_track_time_empty_dialog	fixtures/menu-export-midi-native-scope-selected-tracks-time-empty-dialog.png; 1280x800; Selected tracks + Time selection only; SHA-256 dd61ed8c5f6c64f1bfc4f58d133030925c520d6bb60f5123a66461062367e732
+selected_track_time_empty_warning	fixtures/menu-export-midi-native-scope-selected-tracks-time-empty-warning.png; 521x81; exact native Selected Tracks + Time Selection warning; SHA-256 6b667fc5195d2a55b44a502ae5197ac52c3e704c593c25dcd1d55b01eeeb9060
+selected_track_time_empty_warning_full	fixtures/menu-export-midi-native-scope-selected-tracks-time-empty-warning-full.png; 1280x800; SHA-256 19987947fb434779cb26841f83baf34c19c8aec12aae81e61c985d9a4b1c780c
+selected_track_time_empty_export	fixtures/menu-export-midi-native-scope-selected-tracks-time-empty.mid; 68 bytes; Type 1; 2 tracks; no note events; SHA-256 5a8e0a82bb7c528a890ae1d9b7c91e4f126b391c25af0abfe881e8773fb9d583
+selected_track_time_empty_result	fixtures/menu-export-midi-native-scope-selected-tracks-time-empty-result.png; 1280x800; REAPER reports Wrote MIDI header to; SHA-256 bf841eb8b430a83709008ca4be1bfa62f2d192cf0fd787fcbad63e72631d1a62
+selected_track_time_empty_core_regression	crates/aaadaw-core/tests/midi_file_export.rs::reaper_782_selected_track_time_scope_without_overlap_exports_empty_header; full-file comparison passed
 folder_muted_project	fixtures/menu-export-midi-native-folder-muted.rpp; muted folder parent, unmuted child track, unmuted/unselected C4 item; SHA-256 79a7faffd92d25f22984916eb9b1e6031cf753a5a83aa6fc8501e76074665f89
 folder_muted_export_scope	All / Entire project; isolated config midiexport=0; no tracks or items selected
 folder_muted_export	fixtures/menu-export-midi-native-folder-muted-all.mid; 91 bytes; Type 1; 2 tracks; MIDI Child contains C4; SHA-256 d9dbba18e770c5734008a6afd6a721a44097445f3b99b505bc5387787c964bac
@@ -31,7 +38,7 @@ folder_muted_result_capture	fixtures/menu-export-midi-native-folder-muted-result
 folder_muted_native_behavior	A muted folder does not suppress export of MIDI items on its unmuted child; REAPER writes the MIDI track without the empty-scope warning
 folder_muted_core_regression	crates/aaadaw-core/tests/midi_file_export.rs::reaper_782_export_keeps_midi_items_on_unmuted_tracks_inside_muted_folders; full-file byte comparison passed
 folder_muted_probe	scripts/reaper_parity/probe-midi-export-muted-folder.lua; REAPER Build ID fb9ade2f211bc91a3ee6193630ef17bcf5f6528b; SHA-256 9976f5608068b7a58518969001b00b527fb0de6ed7459e0e5dda6f29878ee254
-native_probe	scripts/reaper_parity/probe-midi-export-scope-intersections.lua; scripts/reaper_parity/probe-midi-export-muted-items.lua; scripts/reaper_parity/probe-midi-export-muted-folder.lua; scripts/reaper_parity/probe-midi-export-empty-scopes.lua
+native_probe	scripts/reaper_parity/probe-midi-export-scope-intersections.lua; scripts/reaper_parity/probe-midi-export-muted-items.lua; scripts/reaper_parity/probe-midi-export-muted-folder.lua; scripts/reaper_parity/probe-midi-export-empty-scopes.lua; scripts/reaper_parity/probe-midi-export-empty-selected-track-time.lua
 reaper_binary_build_id	fb9ade2f211bc91a3ee6193630ef17bcf5f6528b
 reaper_binary_sha256	9976f5608068b7a58518969001b00b527fb0de6ed7459e0e5dda6f29878ee254
 aaadaw_build_id	76c5a13da11f391ea5e6c69c459b3a3381c58136
@@ -46,5 +53,5 @@ aaadaw_cancel_screenshot	fixtures/menu-export-midi-aaadaw-empty-export-cancelled
 aaadaw_confirm_screenshot	fixtures/menu-export-midi-aaadaw-empty-export-confirmed.png; 1280x800; export completion status; SHA-256 0877277d7c6f6c79a1fbd1d884caa4ec936d9dc66e17729fcd4d46baa262b42e
 aaadaw_confirmed_export	fixtures/menu-export-midi-aaadaw-empty-export.mid; 68 bytes; Type 1; 2 tracks; PPQN 960; SHA-256 5a8e0a82bb7c528a890ae1d9b7c91e4f126b391c25af0abfe881e8773fb9d583
 aaadaw_desktop_validation	Xvfb :1710; All/Entire project, Selected Tracks, and Selected Items empty-scope prompts captured; Cancel created no file; OK wrote a valid Standard MIDI file
-test_results	AAADAW 740 passed; Core 190 passed; combined Nextest 930/930 across 45 binaries; strict all-target Clippy with -D warnings; cargo fmt check; CRLF-aware diff check; production desktop build
+test_results	AAADAW 740 passed; Core 191 passed; combined Nextest 931/931 across 45 binaries; strict all-target Clippy with -D warnings; cargo fmt check; CRLF-aware diff check; production desktop build
 open_gaps	Other time-scope/item-scope intersections, metadata combinations with scopes, exact full-window and keyboard-focus parity remain open

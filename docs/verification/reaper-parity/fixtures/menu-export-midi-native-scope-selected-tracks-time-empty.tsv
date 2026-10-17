@@ -1,0 +1,7 @@
+version	7.82/linux-x86_64
+theme	Default_7.0.ReaperThemeZip
+track_selected	true
+item_selected	false
+item_range_seconds	0-0.5
+time_selection_seconds	1-2
+export_scope	Selected tracks only / Time selection only
