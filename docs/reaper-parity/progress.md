@@ -2111,5 +2111,9 @@ Linux REAPER 7.82 / Default 7 action 40009 的实窗截图确认默认设置，�
 AAADAW 对话框现提供 Selected/All notes、全部五种原厂音符操作、0–100% strength 与 Commit/OK/Cancel/Escape；原有快速 `Q pos`、`Q pos+end` 仍保留。Core 通过一个量化操作动作记录位置和长度变化，所有五种模式的选中范围、tick 结果及 Undo/Redo 均有回归。
 
 后续原厂 action 40009 probe 确认 All events 的 Position 操作会移动已选/未选音符、CC 与 Pitch Bend 的位置并保留值、通道、选中状态和音符长度。AAADAW 新增跨现有三种事件数据的单次可撤销编辑。第二次原厂 probe 进一步确认：CC1 在 475/485 tick 量化到 480 后保留 value 65；Pitch Bend 在 835/850 tick 量化到 840 后保留 value 8192。也就是说，同通道同 CC 参数的冲突、以及同通道 Pitch Bend 冲突都会保留原始 tick 较晚者；Core/App 按同一规则合并，Undo 会恢复被合并事件。第三次原厂 probe 确认 All events 下勾选 Bypass 后按 OK，已选/未选音符、CC 与 Pitch Bend 的 tick 和数值全部不变。AAADAW 新增默认关闭的 Bypass 复选框；Commit 不执行编辑且保持对话框，OK 不执行编辑并关闭。Nightly Cranelift 二进制 Build ID `95aa3786a7a68c31f780d6c8723d2d0d0742fc6e`、SHA-256 `415de83dd850be9bbbffe1e4fa23f223fdcefc6147a1c1b98a2dafba49e50231`；原厂读数、两端实窗截图和哈希见[对话框验证资料](../verification/reaper-parity/midi-note-quantize-dialog.md)。Workspace Nextest **1417 tests，74 binaries** 全部通过，包含 Core 五种音符模式/All events tick 与 Undo/Redo、App Bypass/Commit/OK 和对话框路径；严格 workspace all-target Clippy (`-D warnings`)、fmt、diff 检查、106 ID/15 列 matrix 和 13 个量化截图哈希均通过。
+第四次原厂 probe 对比 Fix overlaps 勾选/未勾选：Position and note length、1/32、100% 下，勾选会把首个量化音符截短到下一个同通道同音高音符的起点；关闭后保留重叠。AAADAW 对话框现按原厂默认勾选并接入 Core，撤销/重做仍为一个事件。实测还确认正强度 Note length 量化将舍入为零的短音符提升到至少一格；0% 仍保持原始时值。原厂勾选/未勾选读数与截图、Cranelift 桌面新截图和哈希均记录在[对话框验证资料](../verification/reaper-parity/midi-note-quantize-dialog.md)。
+Selected notes 的额外探针确认，勾选 Fix overlaps 时即使仅选中后一个音符，也会截短前一个未选中同音符；该前置音符变化纳入一次撤销。关闭选项时，REAPER 在这组重叠输入中保留所选音符原始 end，AAADAW 当前关闭路径仍未匹配这一交互，故明确列入剩余差异。
 
-`MIDI-QUANTIZE-DIALOG-001`、UI-019 与 P7 仍为 `in_progress`：Selected events、Program Change/channel pressure/SysEx 等未建模 MIDI 事件、Fix overlaps 行为、Swing 交集与已记忆对话框设置尚未覆盖。
+本次最终 workspace Nextest **1420 tests / 74 binaries，0 skipped**，Core MIDI quantize 7/7、App quantize 7/7；严格 workspace all-target Clippy (`-D warnings`)、fmt、diff 检查及 17 个量化截图哈希通过。对话框 UI、菜单和应用结果已在新 Cranelift 桌面二进制实窗复核。
+
+`MIDI-QUANTIZE-DIALOG-001`、UI-019 与 P7 仍为 `in_progress`：Selected events、Program Change/channel pressure/SysEx 等未建模 MIDI 事件、selected-scope 关闭 Fix overlaps 时的 note-length 交互、Swing 交集与已记忆对话框设置尚未覆盖。

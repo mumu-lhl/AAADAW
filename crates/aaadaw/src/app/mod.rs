@@ -693,6 +693,7 @@ struct MidiQuantizeDialogState {
     operation: MidiQuantizeOperation,
     strength_percent: u8,
     bypass: bool,
+    fix_overlaps: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -1937,6 +1938,7 @@ impl App {
                 grid,
                 strength,
                 operation,
+                fix_overlaps: dialog.fix_overlaps,
             },
             MidiQuantizeScope::AllNotes | MidiQuantizeScope::SelectedNotes => {
                 DawAction::QuantizeMidiNotesWithOperation {
@@ -1945,6 +1947,7 @@ impl App {
                     grid,
                     strength,
                     operation,
+                    fix_overlaps: dialog.fix_overlaps,
                 }
             }
         };
@@ -1967,6 +1970,7 @@ impl App {
                     | Message::SetMidiQuantizeOperation(_)
                     | Message::SetMidiQuantizeStrength(_)
                     | Message::SetMidiQuantizeBypass(_)
+                    | Message::SetMidiQuantizeFixOverlaps(_)
                     | Message::Escape
                     | Message::RuntimeKeyboardEvent(..)
                     | Message::BackgroundTick
@@ -5302,6 +5306,7 @@ impl App {
                         operation: MidiQuantizeOperation::Position,
                         strength_percent: 100,
                         bypass: false,
+                        fix_overlaps: true,
                     });
                 }
             }
@@ -5323,6 +5328,11 @@ impl App {
             Message::SetMidiQuantizeBypass(bypass) => {
                 if let Some(dialog) = self.midi_quantize_dialog.as_mut() {
                     dialog.bypass = bypass;
+                }
+            }
+            Message::SetMidiQuantizeFixOverlaps(fix_overlaps) => {
+                if let Some(dialog) = self.midi_quantize_dialog.as_mut() {
+                    dialog.fix_overlaps = fix_overlaps;
                 }
             }
             Message::CommitMidiQuantize => self.commit_midi_quantize_dialog(false),

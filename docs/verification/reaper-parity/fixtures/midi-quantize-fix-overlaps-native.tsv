@@ -1,0 +1,24 @@
+reference	Linux REAPER 7.82 / Default 7, MIDI Editor action 40009
+native_version	7.82/linux-x86_64
+scope	All events
+operation	Position and note length
+grid	1/32; 120 PPQ ticks
+strength	100%
+bypass	unchecked
+probe_script	scripts/reaper_parity/probe-midi-quantize-dialog-fix-overlaps.lua; AAADAW_REAPER_PROBE_CASE=checked|unchecked selects the output fixture
+probe_inserted_notes	channel 1, pitch 60: 100-300; 180-350; 330-480
+editor_loaded_before_readback	channel 1, pitch 60: 100-300; 180-300; 330-350; REAPER shortens overlapping notes when the MIDI editor loads
+checked_fix_overlaps	checked (native default)
+checked_after	channel 1, pitch 60: 120-240; 240-360; 360-480
+checked_capture	midi-quantize-fix-overlaps-checked-reaper-native.png; 1280x800; SHA-256 2e54105dae5a35b6fb39b2c0160a5c09b54ee57d49886f01b8ac3cdd386e833e
+unchecked_fix_overlaps	unchecked
+unchecked_after	channel 1, pitch 60: 120-360; 240-360; 360-480
+unchecked_capture	midi-quantize-fix-overlaps-unchecked-reaper-native.png; 1280x800; SHA-256 9cbdaf1ea98dcddcc9a2dda9b76f976ab0bf7dedb9f947c89abfe5d6fd48d432
+observed_behavior	With Fix overlaps checked, REAPER shortens each note to the next same-channel, same-pitch note start; unchecked leaves the quantized overlap intact.
+selected_scope_probe	Selected notes; only note 2 selected; same operation and grid; sample contains only two same-channel, same-pitch notes
+selected_scope_before	channel 1, pitch 60: note 1 unselected 100-300; note 2 selected 180-300
+selected_scope_checked_after	channel 1, pitch 60: note 1 unselected 100-240; note 2 selected 240-360
+selected_scope_checked_capture	midi-quantize-fix-overlaps-selected-checked-reaper-native.png; 1280x800; SHA-256 236f4e6699022d902598c2d6c7d82be5c95733cd3126294d1fa16442ed9047ca
+selected_scope_unchecked_after	channel 1, pitch 60: note 1 unselected 100-300; note 2 selected 240-300
+selected_scope_unchecked_capture	midi-quantize-fix-overlaps-selected-unchecked-reaper-native.png; 1280x800; SHA-256 8cc217c4840d061afa2a3159c39a736c399f3a630343434e0a8440d4bebefd56
+selected_scope_note	In selected-note scope, checked Fix overlaps trims an unselected preceding note. With Fix overlaps off, REAPER retains the selected note's original end in this overlapping case; exact selected-scope length behavior remains under investigation.

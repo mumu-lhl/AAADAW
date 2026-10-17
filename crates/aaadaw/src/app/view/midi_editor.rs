@@ -759,7 +759,11 @@ fn midi_quantize_dialog(app: &App, touch_targets: bool) -> Element<'_, Message> 
     let bypass = checkbox(state.bypass)
         .label("Bypass")
         .on_toggle(Message::SetMidiQuantizeBypass);
+    let fix_overlaps = checkbox(state.fix_overlaps)
+        .label("Fix overlaps")
+        .on_toggle(Message::SetMidiQuantizeFixOverlaps);
     let action_buttons = row![
+        fix_overlaps,
         iced::widget::Space::new().width(Length::Fill),
         button("Commit")
             .style(iced::widget::button::secondary)

@@ -593,6 +593,7 @@ pub(crate) enum Message {
     SetMidiQuantizeOperation(MidiQuantizeOperation),
     SetMidiQuantizeStrength(u8),
     SetMidiQuantizeBypass(bool),
+    SetMidiQuantizeFixOverlaps(bool),
     CommitMidiQuantize,
     AcceptMidiQuantize,
     CancelMidiQuantize,

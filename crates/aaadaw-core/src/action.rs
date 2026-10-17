@@ -518,6 +518,8 @@ pub enum DawAction {
         grid: GridFraction,
         strength: f32,
         operation: MidiNoteQuantizeOperation,
+        /// Shorten notes that overlap the next note with the same channel and pitch.
+        fix_overlaps: bool,
     },
     /// Quantize every MIDI note, controller, and pitch-bend event in an item as one edit.
     QuantizeMidiEventsWithOperation {
@@ -525,6 +527,8 @@ pub enum DawAction {
         grid: GridFraction,
         strength: f32,
         operation: MidiNoteQuantizeOperation,
+        /// Shorten notes that overlap the next note with the same channel and pitch.
+        fix_overlaps: bool,
     },
     /// Delete a track from the project.
     DeleteTrack {

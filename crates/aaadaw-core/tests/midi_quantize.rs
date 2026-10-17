@@ -343,6 +343,7 @@ fn midi_quantize_dialog_operations_match_reaper_ticks_and_round_trip_history() {
                 grid,
                 strength: 1.0,
                 operation,
+                fix_overlaps: false,
             })
             .expect("dialog operation should quantize selected notes");
         let actual = project.midi_items()[0]
@@ -367,6 +368,188 @@ fn midi_quantize_dialog_operations_match_reaper_ticks_and_round_trip_history() {
             .collect::<Vec<_>>();
         assert_eq!(redone, expected, "redo failed for {operation:?}");
     }
+}
+
+#[test]
+fn midi_quantize_fix_overlaps_matches_reaper_for_same_channel_and_pitch() {
+    let mut project = Project::new();
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Piano".to_owned(),
+        })
+        .expect("test track should be created");
+    let track_id = project.tracks()[0].id();
+    project
+        .apply(DawAction::InsertMidiItem {
+            track_id,
+            start_tick: 0,
+            length_ticks: 4_000,
+        })
+        .expect("test MIDI item should be inserted");
+    let item_id = project.midi_items()[0].id();
+    project
+        .apply(DawAction::AddMidiNotes {
+            item_id,
+            notes: vec![
+                MidiNoteData {
+                    channel: 0,
+                    pitch: 60,
+                    tick: 100,
+                    duration: 200,
+                    velocity: 96,
+                },
+                MidiNoteData {
+                    channel: 0,
+                    pitch: 60,
+                    tick: 180,
+                    duration: 120,
+                    velocity: 96,
+                },
+                MidiNoteData {
+                    channel: 0,
+                    pitch: 60,
+                    tick: 330,
+                    duration: 20,
+                    velocity: 96,
+                },
+            ],
+        })
+        .expect("overlapping notes should be inserted");
+    let note_ids = project.midi_items()[0]
+        .notes()
+        .iter()
+        .map(|note| note.id())
+        .collect::<Vec<_>>();
+    let grid = GridFraction::new(1, 32).expect("1/32 is a valid grid");
+    let original = [(100, 200), (180, 120), (330, 20)];
+    let apply_quantize = |project: &mut Project, fix_overlaps| {
+        project
+            .apply(DawAction::QuantizeMidiNotesWithOperation {
+                item_id,
+                note_ids: note_ids.clone(),
+                grid,
+                strength: 1.0,
+                operation: MidiNoteQuantizeOperation::PositionAndNoteLength,
+                fix_overlaps,
+            })
+            .expect("quantize should succeed");
+    };
+    let note_positions = |project: &Project| {
+        project.midi_items()[0]
+            .notes()
+            .iter()
+            .map(|note| (note.tick(), note.duration()))
+            .collect::<Vec<_>>()
+    };
+
+    project
+        .apply(DawAction::QuantizeMidiNotesWithOperation {
+            item_id,
+            note_ids: note_ids.clone(),
+            grid,
+            strength: 0.0,
+            operation: MidiNoteQuantizeOperation::PositionAndNoteLength,
+            fix_overlaps: false,
+        })
+        .expect("zero-strength note-length quantize should be valid");
+    assert_eq!(note_positions(&project), original);
+
+    apply_quantize(&mut project, true);
+    let fixed = [(120, 120), (240, 120), (360, 120)];
+    assert_eq!(note_positions(&project), fixed);
+    assert!(project.undo().expect("Fix overlaps should be undoable"));
+    assert_eq!(note_positions(&project), original);
+    assert!(project.redo().expect("Fix overlaps should be redoable"));
+    assert_eq!(note_positions(&project), fixed);
+    assert!(project.undo().expect("restore input before unchecked case"));
+
+    apply_quantize(&mut project, false);
+    let overlapping = [(120, 240), (240, 120), (360, 120)];
+    assert_eq!(note_positions(&project), overlapping);
+    assert!(
+        project
+            .undo()
+            .expect("unchecked quantize should be undoable")
+    );
+    assert_eq!(note_positions(&project), original);
+    assert!(
+        project
+            .redo()
+            .expect("unchecked quantize should be redoable")
+    );
+    assert_eq!(note_positions(&project), overlapping);
+}
+
+#[test]
+fn midi_quantize_fix_overlaps_trims_unselected_predecessor_in_selected_scope() {
+    let mut project = Project::new();
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Piano".to_owned(),
+        })
+        .expect("test track should be created");
+    let track_id = project.tracks()[0].id();
+    project
+        .apply(DawAction::InsertMidiItem {
+            track_id,
+            start_tick: 0,
+            length_ticks: 4_000,
+        })
+        .expect("test MIDI item should be inserted");
+    let item_id = project.midi_items()[0].id();
+    project
+        .apply(DawAction::AddMidiNotes {
+            item_id,
+            notes: vec![
+                MidiNoteData {
+                    channel: 0,
+                    pitch: 60,
+                    tick: 100,
+                    duration: 200,
+                    velocity: 96,
+                },
+                MidiNoteData {
+                    channel: 0,
+                    pitch: 60,
+                    tick: 180,
+                    duration: 120,
+                    velocity: 96,
+                },
+            ],
+        })
+        .expect("overlapping notes should be inserted");
+    let selected_note_id = project.midi_items()[0].notes()[1].id();
+
+    project
+        .apply(DawAction::QuantizeMidiNotesWithOperation {
+            item_id,
+            note_ids: vec![selected_note_id],
+            grid: GridFraction::new(1, 32).expect("1/32 is a valid grid"),
+            strength: 1.0,
+            operation: MidiNoteQuantizeOperation::PositionAndNoteLength,
+            fix_overlaps: true,
+        })
+        .expect("selected note should quantize and fix its overlap");
+
+    let item = &project.midi_items()[0];
+    assert_eq!(
+        item.notes()
+            .iter()
+            .map(|note| (note.tick(), note.duration()))
+            .collect::<Vec<_>>(),
+        [(100, 140), (240, 120)]
+    );
+    assert!(project.undo().expect("overlap fix should be undoable"));
+    assert_eq!(
+        project.midi_items()[0]
+            .notes()
+            .iter()
+            .map(|note| (note.tick(), note.duration()))
+            .collect::<Vec<_>>(),
+        [(100, 200), (180, 120)]
+    );
 }
 
 #[test]
@@ -464,6 +647,7 @@ fn midi_quantize_all_events_matches_reaper_and_undoes_as_one_edit() {
             grid: GridFraction::new(1, 32).expect("1/32 is a valid grid"),
             strength: 1.0,
             operation: MidiNoteQuantizeOperation::Position,
+            fix_overlaps: false,
         })
         .expect("all MIDI event positions should be quantized");
 

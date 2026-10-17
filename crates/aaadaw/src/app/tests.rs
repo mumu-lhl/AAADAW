@@ -12248,6 +12248,7 @@ fn midi_quantize_dialog_commits_selected_notes_with_strength_and_cancel_discards
     assert_eq!(dialog.operation, MidiQuantizeOperation::Position);
     assert_eq!(dialog.strength_percent, 100);
     assert!(!dialog.bypass);
+    assert!(dialog.fix_overlaps);
     let _ = app.update(Message::CancelMidiQuantize);
     assert_eq!(app.project.midi_items()[0].notes()[0].tick(), 170);
 
@@ -12368,6 +12369,102 @@ fn midi_quantize_dialog_applies_all_notes_and_note_ends_as_one_undoable_edit() {
     let notes = app.project.midi_items()[0].notes();
     assert_eq!((notes[0].tick(), notes[0].duration()), (120, 120));
     assert_eq!((notes[1].tick(), notes[1].duration()), (360, 120));
+}
+
+#[test]
+fn midi_quantize_dialog_fix_overlaps_defaults_on_and_can_be_disabled() {
+    let mut app = App::default();
+    let _ = app.update(Message::AddTrack);
+    let track_id = app.project.tracks()[0].id();
+    app.project
+        .apply(DawAction::InsertMidiItem {
+            track_id,
+            start_tick: 0,
+            length_ticks: 4_000,
+        })
+        .expect("test MIDI item should be inserted");
+    let item_id = app.project.midi_items()[0].id();
+    app.project
+        .apply(DawAction::AddMidiNotes {
+            item_id,
+            notes: vec![
+                MidiNoteData {
+                    channel: 0,
+                    pitch: 60,
+                    tick: 100,
+                    duration: 200,
+                    velocity: 96,
+                },
+                MidiNoteData {
+                    channel: 0,
+                    pitch: 60,
+                    tick: 180,
+                    duration: 120,
+                    velocity: 96,
+                },
+                MidiNoteData {
+                    channel: 0,
+                    pitch: 60,
+                    tick: 330,
+                    duration: 20,
+                    velocity: 96,
+                },
+            ],
+        })
+        .expect("overlapping notes should be inserted");
+
+    let _ = app.update(Message::OpenMidiQuantizeDialog(item_id));
+    assert!(
+        app.midi_quantize_dialog
+            .expect("dialog should open")
+            .fix_overlaps
+    );
+    let _ = app.update(Message::SetMidiQuantizeScope(MidiQuantizeScope::AllNotes));
+    let _ = app.update(Message::SetMidiQuantizeOperation(
+        MidiQuantizeOperation::PositionAndNoteLength,
+    ));
+    let _ = app.update(Message::AcceptMidiQuantize);
+    assert_eq!(
+        app.project.midi_items()[0]
+            .notes()
+            .iter()
+            .map(|note| (note.tick(), note.duration()))
+            .collect::<Vec<_>>(),
+        [(120, 120), (240, 120), (360, 120)]
+    );
+    let _ = app.update(Message::Undo);
+    assert_eq!(
+        app.project.midi_items()[0]
+            .notes()
+            .iter()
+            .map(|note| (note.tick(), note.duration()))
+            .collect::<Vec<_>>(),
+        [(100, 200), (180, 120), (330, 20)]
+    );
+
+    let _ = app.update(Message::OpenMidiQuantizeDialog(item_id));
+    let _ = app.update(Message::SetMidiQuantizeScope(MidiQuantizeScope::AllNotes));
+    let _ = app.update(Message::SetMidiQuantizeOperation(
+        MidiQuantizeOperation::PositionAndNoteLength,
+    ));
+    let _ = app.update(Message::SetMidiQuantizeFixOverlaps(false));
+    let _ = app.update(Message::AcceptMidiQuantize);
+    assert_eq!(
+        app.project.midi_items()[0]
+            .notes()
+            .iter()
+            .map(|note| (note.tick(), note.duration()))
+            .collect::<Vec<_>>(),
+        [(120, 240), (240, 120), (360, 120)]
+    );
+    let _ = app.update(Message::Undo);
+    assert!(
+        app.project.midi_items()[0]
+            .notes()
+            .iter()
+            .zip([(100, 200), (180, 120), (330, 20)])
+            .all(|(note, expected)| (note.tick(), note.duration()) == expected)
+    );
 }
 
 #[test]

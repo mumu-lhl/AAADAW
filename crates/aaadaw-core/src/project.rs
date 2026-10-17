@@ -32,6 +32,7 @@ fn quantized_midi_note_changes(
     strength: f32,
     ppq: u32,
     operation: MidiNoteQuantizeOperation,
+    fix_overlaps: bool,
 ) -> Result<Vec<QuantizedMidiNoteChange>, ActionError> {
     if !strength.is_finite() || !(0.0..=1.0).contains(&strength) {
         return Err(ActionError::InvalidQuantizeStrength);
@@ -78,7 +79,11 @@ fn quantized_midi_note_changes(
             quantized_end - quantized_absolute
         } else if quantize_length {
             let duration = quantize_absolute_tick(note.data.duration)?;
-            duration.max(1)
+            if strength == 0.0 {
+                duration.max(1)
+            } else {
+                duration.max(grid_ticks)
+            }
         } else {
             note.data.duration
         };
@@ -95,7 +100,72 @@ fn quantized_midi_note_changes(
             });
         }
     }
+    if fix_overlaps {
+        fix_quantized_midi_note_overlaps(item, &mut changes);
+    }
     Ok(changes)
+}
+
+fn fix_quantized_midi_note_overlaps(item: &MidiItem, changes: &mut Vec<QuantizedMidiNoteChange>) {
+    if changes.is_empty() {
+        return;
+    }
+
+    let change_index_by_note_id = changes
+        .iter()
+        .enumerate()
+        .map(|(index, change)| (change.note_id, index))
+        .collect::<HashMap<_, _>>();
+    let mut notes = item
+        .notes
+        .iter()
+        .enumerate()
+        .map(|(order, note)| {
+            let (tick, duration) = change_index_by_note_id
+                .get(&note.id)
+                .map(|index| {
+                    let change = &changes[*index];
+                    (change.after_tick, change.after_duration)
+                })
+                .unwrap_or((note.data.tick, note.data.duration));
+            (
+                note.data.channel,
+                note.data.pitch,
+                tick,
+                duration,
+                order,
+                note.id,
+            )
+        })
+        .collect::<Vec<_>>();
+    notes.sort_by_key(|(channel, pitch, tick, _, order, _)| (*channel, *pitch, *tick, *order));
+
+    for pair in notes.windows(2) {
+        let (channel, pitch, tick, duration, _, note_id) = pair[0];
+        let (next_channel, next_pitch, next_tick, _, _, _) = pair[1];
+        if channel != next_channel
+            || pitch != next_pitch
+            || next_tick >= tick.saturating_add(duration)
+        {
+            continue;
+        }
+        let shortened_duration = next_tick.saturating_sub(tick).max(1);
+        if let Some(change_index) = change_index_by_note_id.get(&note_id).copied() {
+            changes[change_index].after_duration =
+                changes[change_index].after_duration.min(shortened_duration);
+        } else {
+            changes.push(QuantizedMidiNoteChange {
+                note_id,
+                before_tick: tick,
+                before_duration: duration,
+                after_tick: tick,
+                after_duration: shortened_duration,
+            });
+        }
+    }
+    changes.retain(|change| {
+        change.before_tick != change.after_tick || change.before_duration != change.after_duration
+    });
 }
 
 fn quantize_tick(tick: u64, grid_ticks: u64, strength: f32) -> Result<u64, ActionError> {
@@ -4589,6 +4659,7 @@ impl Project {
                     strength,
                     state.tempo_map.settings().ppq(),
                     MidiNoteQuantizeOperation::Position,
+                    false,
                 )?;
                 ProjectEvent::MidiNotesQuantized { item_id, changes }
             }
@@ -4611,6 +4682,7 @@ impl Project {
                     strength,
                     state.tempo_map.settings().ppq(),
                     MidiNoteQuantizeOperation::Position,
+                    false,
                 )?;
                 ProjectEvent::MidiNotesQuantized { item_id, changes }
             }
@@ -4633,6 +4705,7 @@ impl Project {
                     strength,
                     state.tempo_map.settings().ppq(),
                     MidiNoteQuantizeOperation::PositionAndNoteEnd,
+                    false,
                 )?;
                 ProjectEvent::MidiNotesQuantized { item_id, changes }
             }
@@ -4642,6 +4715,7 @@ impl Project {
                 grid,
                 strength,
                 operation,
+                fix_overlaps,
             } => {
                 let selected_note_ids = note_ids.into_iter().collect::<HashSet<_>>();
                 let item = state
@@ -4656,6 +4730,7 @@ impl Project {
                     strength,
                     state.tempo_map.settings().ppq(),
                     operation,
+                    fix_overlaps,
                 )?;
                 ProjectEvent::MidiNotesQuantized { item_id, changes }
             }
@@ -4664,6 +4739,7 @@ impl Project {
                 grid,
                 strength,
                 operation,
+                fix_overlaps,
             } => {
                 let item = state
                     .midi_items
@@ -4671,8 +4747,15 @@ impl Project {
                     .find(|item| item.id == item_id)
                     .ok_or(ActionError::MidiItemNotFound { item_id })?;
                 let ppq = state.tempo_map.settings().ppq();
-                let note_changes =
-                    quantized_midi_note_changes(item, None, grid, strength, ppq, operation)?;
+                let note_changes = quantized_midi_note_changes(
+                    item,
+                    None,
+                    grid,
+                    strength,
+                    ppq,
+                    operation,
+                    fix_overlaps,
+                )?;
                 let mut events = Vec::with_capacity(3);
                 if !note_changes.is_empty() {
                     events.push(ProjectEvent::MidiNotesQuantized {
