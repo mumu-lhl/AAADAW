@@ -51,6 +51,22 @@ with bias using project PPQ; those curves are provisional. The native
 distribution, edge behavior, and New random seed sequence are not yet matched.
 Treat this row as `in_progress`; it does not count as completed parity coverage.
 
+## Remembered dialog settings
+
+On Linux REAPER 7.82 / Default 7, accepting All notes with Timing 37%, Velocity
+61%, and Timing bias −42% wrote `humanall=1`, `humantiming=37`, `humanvel=61`,
+and `humanbias=-42` to `reaper.ini`. A new REAPER process using that same
+profile reopened the dialog with those values. Changing the scope and values to
+Selected notes / 12% / 23% / 0% and clicking Cancel left the last accepted
+settings intact.
+
+AAADAW now loads the same four values from a versioned global
+`midi-humanize-preferences.json`. It atomically saves only after OK, flushes the
+debounced write before application exit, and discards changed dialog values on
+Cancel or Escape. Invalid versions and out-of-range saved values are rejected
+without replacing the existing file. The native settings readback, UI captures,
+and the current AAADAW restart-load screenshot are included in the fixtures.
+
 ## Verification artifacts
 
 - `fixtures/midi-humanize-reaper-native-dialog.png`: native default dialog.
@@ -63,6 +79,9 @@ Treat this row as `in_progress`; it does not count as completed parity coverage.
   0% Velocity, 100% Timing bias dialog during the boundary probe.
 - `fixtures/midi-humanize-reaper-native-applied.png`: native MIDI editor after
   the explicitly re-seeded action.
+- `fixtures/midi-humanize-settings-native.tsv` and the three
+  `fixtures/midi-humanize-settings-native-*.png` captures: native OK, restart,
+  and Cancel persistence behavior.
 - `fixtures/midi-humanize-before.rpp` and `fixtures/midi-humanize-after.rpp`:
   native project before and after the confirmed dialog action.
 - `fixtures/midi-humanize-aaadaw-dialog.png` and
@@ -71,19 +90,23 @@ Treat this row as `in_progress`; it does not count as completed parity coverage.
   `9c3ab6f1bcbb98ccaa375fda51ad4aa5fbc5880f`.
 - `fixtures/midi-humanize-aaadaw-applied.png`: live editor after the All notes
   action, captured from the same current build.
+- `fixtures/midi-humanize-aaadaw-settings-reopened.png`: current desktop build
+  reopening with the stored All notes / 37% / 61% / −42% settings.
 - `scripts/reaper_parity/probe-midi-humanize-notes.lua`: creates the native
   fixture and waits for a manual dialog confirmation before recording output.
 
 Core tests cover deterministic replay, selected-note isolation, timing and
 velocity bounds, unchanged durations, invalid settings, and Undo/Redo. App
 tests cover dialog defaults, selected/all scope, seed changes, apply, and
-Undo/Redo. Random output is deliberately checked by invariants rather than exact
-values.
+Undo/Redo. Preference tests cover persisted values, rejected invalid files,
+OK-only updates, reopening the dialog, and Cancel preserving the prior values.
+Random output is deliberately checked by invariants rather than exact values.
 
 ## Evidence hashes
 
-The screenshots below were captured from the current Cranelift build in the
-live Xorg dummy desktop (`:289`):
+The first three AAADAW screenshots were captured from Cranelift build
+`9c3ab6f1bcbb98ccaa375fda51ad4aa5fbc5880f` in the live Xorg dummy desktop
+(`:289`):
 
 | Artifact | SHA-256 |
 | --- | --- |
@@ -91,7 +114,21 @@ live Xorg dummy desktop (`:289`):
 | `fixtures/midi-humanize-aaadaw-configured.png` | `7c00115b9d54d76f76c9f846a901d2649e9c6670e42f999e12ec4402dfa34bca` |
 | `fixtures/midi-humanize-aaadaw-applied.png` | `665fef4335a75c95d61567c12d60461fac9162f67e9022735700ed9111f76ae1` |
 
-Cranelift desktop executable SHA-256:
+The new persistence screenshots were captured from Cranelift build
+`d8ab03b30c7e342bbe69412b51f092b31cf42ccd`:
+
+| Artifact | SHA-256 |
+| --- | --- |
+| `fixtures/midi-humanize-settings-native-configured.png` | `7f9218af2f36bc00da6cf612492b12f047538a3be07c8513400efbcc78e27cc0` |
+| `fixtures/midi-humanize-settings-native-reopened.png` | `b84faaa07fe041b268aa6af29da64e87467d34ad18fb13584ac30c144365860d` |
+| `fixtures/midi-humanize-settings-native-cancelled.png` | `2917cbdb846d3c6d166e295596f37871869187ba7a5176754ae56ff4cc7c7520` |
+| `fixtures/midi-humanize-aaadaw-settings-reopened.png` | `07ef32b4ca4eed80afd55272dfc4f9aa0d1be40118b3e802beeb9d004668e585` |
+
+The settings TSV SHA-256 is
+`72c164efd091103c373aa72bde6b39bc36db296ff2c1bd46af5fe29222ea622c`.
+The persistence-check desktop executable SHA-256 is
+`71f667150d23eec0363788308b72aa38c74bd80cb30e63c206bd06c1274f323c`.
+The original action-slice executable SHA-256 was
 `64b9aadc2e7ea42bf9f133c19072f9c649ab85023dc5d9f7bb5fe70ef70d0f4d`.
 The two RPP fixtures use LF line endings in the repository; only line endings
 were normalized from REAPER's saved files.

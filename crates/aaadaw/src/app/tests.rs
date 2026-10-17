@@ -12197,6 +12197,26 @@ fn midi_editor_humanize_dialog_defaults_to_selected_notes_and_is_undoable() {
     );
     let _ = app.update(Message::SetMidiHumanizeTiming(100));
     let _ = app.update(Message::SetMidiHumanizeVelocity(100));
+    let _ = app.update(Message::SetMidiHumanizeTimingBias(-42));
+    let _ = app.update(Message::SetMidiHumanizeScope(MidiHumanizeScope::AllNotes));
+    let _ = app.update(Message::CancelMidiHumanize);
+    assert_eq!(
+        app.midi_humanize_preferences,
+        super::midi_humanize_preferences::MidiHumanizePreferences::default()
+    );
+    assert!(app.midi_humanize_preferences_save_at.is_none());
+
+    let _ = app.update(Message::OpenMidiHumanizeDialog(item_id));
+    let dialog = app
+        .midi_humanize_dialog
+        .expect("dialog should reopen with the last accepted values");
+    assert_eq!(dialog.scope, MidiHumanizeScope::SelectedNotes);
+    assert_eq!(dialog.timing_amount_percent, 0);
+    assert_eq!(dialog.velocity_amount_percent, 0);
+    assert_eq!(dialog.timing_bias_percent, 0);
+    let _ = app.update(Message::NewMidiHumanizeSeed);
+    let _ = app.update(Message::SetMidiHumanizeTiming(100));
+    let _ = app.update(Message::SetMidiHumanizeVelocity(100));
     app.midi_humanize_dialog
         .as_mut()
         .expect("dialog stays open")
@@ -12211,6 +12231,15 @@ fn midi_editor_humanize_dialog_defaults_to_selected_notes_and_is_undoable() {
         .collect::<Vec<_>>();
     assert_ne!(after_selected[0], original[0]);
     assert_eq!(&after_selected[1..], &original[1..]);
+    assert_eq!(
+        app.midi_humanize_preferences,
+        super::midi_humanize_preferences::MidiHumanizePreferences {
+            timing_amount_percent: 100,
+            velocity_amount_percent: 100,
+            ..Default::default()
+        }
+    );
+    assert!(app.midi_humanize_preferences_save_at.is_some());
     let _ = app.update(Message::Undo);
     assert_eq!(
         app.project.midi_items()[0]
@@ -12231,6 +12260,13 @@ fn midi_editor_humanize_dialog_defaults_to_selected_notes_and_is_undoable() {
     );
 
     let _ = app.update(Message::OpenMidiHumanizeDialog(item_id));
+    let dialog = app
+        .midi_humanize_dialog
+        .expect("dialog should open with remembered accepted values");
+    assert_eq!(dialog.scope, MidiHumanizeScope::SelectedNotes);
+    assert_eq!(dialog.timing_amount_percent, 100);
+    assert_eq!(dialog.velocity_amount_percent, 100);
+    assert_eq!(dialog.timing_bias_percent, 0);
     let _ = app.update(Message::SetMidiHumanizeScope(MidiHumanizeScope::AllNotes));
     let _ = app.update(Message::SetMidiHumanizeVelocity(100));
     app.midi_humanize_dialog
@@ -12238,6 +12274,7 @@ fn midi_editor_humanize_dialog_defaults_to_selected_notes_and_is_undoable() {
         .expect("dialog stays open")
         .seed = 0x710e_527d_1443_2819;
     let _ = app.update(Message::AcceptMidiHumanize);
+    assert!(app.midi_humanize_preferences.all_notes);
     let after_all = app.project.midi_items()[0]
         .notes()
         .iter()

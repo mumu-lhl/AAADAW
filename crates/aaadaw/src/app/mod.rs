@@ -99,6 +99,7 @@ mod marker_properties;
 mod media;
 mod messages;
 mod midi_export;
+mod midi_humanize_preferences;
 mod offline_job_queue;
 mod project_defaults;
 mod project_io;
@@ -365,6 +366,8 @@ struct App {
     media_panel_dock: MediaPanelDock,
     desktop_layout_save_at: Option<Instant>,
     loop_time_preferences_save_at: Option<Instant>,
+    midi_humanize_preferences_save_at: Option<Instant>,
+    midi_humanize_preferences: midi_humanize_preferences::MidiHumanizePreferences,
     main_workspace: MainWorkspace,
     shell_profile: ShellProfile,
     mobile_panel: MobilePanel,
@@ -1654,6 +1657,12 @@ impl App {
                 app.status = format!("Loop/time selection preferences unavailable: {error}");
             }
         }
+        match midi_humanize_preferences::load() {
+            Ok(preferences) => app.midi_humanize_preferences = preferences,
+            Err(error) => {
+                app.status = format!("MIDI Humanize preferences unavailable: {error}");
+            }
+        }
         match render_wildcard_preferences::load() {
             Ok(preferences) => {
                 app.render_dialog.allow_slash_in_wildcard_substitutions =
@@ -1929,6 +1938,7 @@ impl App {
                 || self.master_mix_gesture.is_some()
                 || self.desktop_layout_save_at.is_some()
                 || self.loop_time_preferences_save_at.is_some()
+                || self.midi_humanize_preferences_save_at.is_some()
                 || self.unsaved_session_snapshot_at.is_some())
         {
             iced::time::every(background_tick_interval).map(|_| Message::BackgroundTick)
@@ -1958,6 +1968,14 @@ impl App {
         let Some(dialog) = self.midi_humanize_dialog.take() else {
             return;
         };
+        self.midi_humanize_preferences = midi_humanize_preferences::MidiHumanizePreferences {
+            all_notes: dialog.scope == MidiHumanizeScope::AllNotes,
+            timing_amount_percent: dialog.timing_amount_percent,
+            velocity_amount_percent: dialog.velocity_amount_percent,
+            timing_bias_percent: dialog.timing_bias_percent,
+            ..Default::default()
+        };
+        self.schedule_midi_humanize_preferences_save();
         let Some(item) = self
             .project
             .midi_items()
@@ -3447,6 +3465,7 @@ impl App {
             Message::WindowClosed(window_id) => {
                 if self.main_window_id == Some(window_id) {
                     self.flush_loop_time_preferences();
+                    self.flush_midi_humanize_preferences();
                 }
                 if self.project_settings_window_id == Some(window_id) {
                     self.project_settings_window_id = None;
@@ -3536,6 +3555,7 @@ impl App {
                 if self.main_window_id == Some(window_id) {
                     self.flush_desktop_layout();
                     self.flush_loop_time_preferences();
+                    self.flush_midi_humanize_preferences();
                 }
                 if self.fx_chain_window_id == Some(window_id) {
                     self.close_fx_editor_resources();
@@ -5576,13 +5596,18 @@ impl App {
                     .iter()
                     .any(|item| item.id() == item_id)
                 {
+                    let preferences = self.midi_humanize_preferences;
                     self.midi_editor_filter_dialog_open = false;
                     self.midi_humanize_dialog = Some(MidiHumanizeDialogState {
                         item_id,
-                        scope: MidiHumanizeScope::SelectedNotes,
-                        timing_amount_percent: 0,
-                        velocity_amount_percent: 0,
-                        timing_bias_percent: 0,
+                        scope: if preferences.all_notes {
+                            MidiHumanizeScope::AllNotes
+                        } else {
+                            MidiHumanizeScope::SelectedNotes
+                        },
+                        timing_amount_percent: preferences.timing_amount_percent,
+                        velocity_amount_percent: preferences.velocity_amount_percent,
+                        timing_bias_percent: preferences.timing_bias_percent,
                         seed: next_midi_humanize_seed(),
                     });
                 }
@@ -6149,6 +6174,7 @@ impl App {
                 self.update_offline_render_progress();
                 self.flush_desktop_layout_if_due();
                 self.flush_loop_time_preferences_if_due();
+                self.flush_midi_humanize_preferences_if_due();
                 #[cfg(all(feature = "audio-device", target_os = "android"))]
                 if self.settings_category == SettingsCategory::Audio {
                     match crate::android_platform::midi_port_counts() {
