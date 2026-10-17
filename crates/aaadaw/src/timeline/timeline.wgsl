@@ -49,6 +49,7 @@ fn vs_main(
     @location(4) item_id: vec2<u32>,
     @location(5) track_index: u32,
     @location(6) kind: u32,
+    @location(7) tick_fractions: vec2<f32>,
 ) -> VertexOutput {
     let corners = array<vec2<f32>, 6>(
         vec2<f32>(0.0, 0.0),
@@ -60,8 +61,8 @@ fn vs_main(
     );
     let corner = corners[vertex_index];
     let origin = uniforms.origin_cursor.xy;
-    let start_x = signed_tick_delta(start_tick, origin) * uniforms.view.z;
-    let end_x = signed_tick_delta(end_tick, origin) * uniforms.view.z;
+    let start_x = (signed_tick_delta(start_tick, origin) + tick_fractions.x) * uniforms.view.z;
+    let end_x = (signed_tick_delta(end_tick, origin) + tick_fractions.y) * uniforms.view.z;
     var x = mix(start_x, end_x, corner.x) * uniforms.view.w;
     var width = (end_x - start_x) * uniforms.view.w;
     if kind == 0u {

@@ -650,6 +650,13 @@ Position Nudge 现在从精确 MIDI PPQ 起点换算连续 sample、应用整数
 
 nightly + Cranelift AAADAW binary suite 690/690 通过；Stable aaadaw all-target Clippy `-D warnings`、fmt 与 diff 检查通过。Xvfb 中以 964.8 PPQ MIDI fixture 打开最新桌面二进制并选中 item，AAADAW 实窗截图确认 Inspector 显示 `Tick 964.8 · length 3840`；[截图和 binary/project hashes](../verification/reaper-parity/fixtures/midi-item-fractional-inspector-aaadaw.tsv)。这张图仅验证 AAADAW 自身渲染，尚未与 REAPER 原厂窗口做像素或逐项截图对比。Item Nudge 的更多 targets/units 及完整原厂交互仍未验收，`ITEM-NUDGE-SET-001` 和相关选择/属性行维持 `in_progress`。
 
+
+#### 2026-10-17：Arrangement GPU 几何保留 MIDI fractional PPQ
+
+修复 Timeline 的 GPU item rectangles 丢失 1/200 PPQ 子刻度的问题：静态 item、选择/移动预览现在将精确起止子刻度作为独立小数顶点属性交给 WGSL，参与相对视口起点的像素换算；普通整 tick 图元和淡化线保持零分数。新增实例回归断言 964.8 PPQ 起点和同样带 0.8 子刻度的末端都进入 GPU 数据。重建后的 WGPU/GL 桌面二进制在 Linux Xvfb 1280×800 实际启动并选中 MIDI item；[实窗截图](../verification/reaper-parity/fixtures/midi-item-fractional-inspector-aaadaw.png)与 binary/project/screenshot hashes 见对应 TSV。它证明当前 AAADAW 窗口和 shader 管线可用，并显示 Inspector 的 `Tick 964.8 · length 3840`；尚不构成 REAPER 对照或亚像素位置验收。
+
+最终 tuple 参数调整后的 nightly + Cranelift AAADAW binary suite 通过 691/691；Stable all-target Clippy `-D warnings`、rustfmt 和 diff 检查通过。`ITEM-PROPERTIES-001` 与相关 Position/Nudge 行仍是 `in_progress`，原厂分数位置桌面对照及更完整交互范围仍待验证。
+
 ### 2026-10-13 Render Bounds：All project regions 批量输出
 
 依照 P10，本切片实现了 Render Bounds 的 `All project regions`：每个工程区域按各自采样边界生成 WAV，采用所选文件名作为前缀、区域名作为文件名部分，并对清理后重名的区域追加稳定序号。多文件输出作为一个离线批次执行，复用私有暂存目录、目标不覆盖和失败回滚；Android 暂不开放多文件边界。没有区域时明确提示且禁止提交。原厂 REAPER 7.82 / Default 7 实窗确认该边界菜单项会输出三个区域文件，实际文件均为 48 kHz、PCM24、立体声、48000 帧；UI 截图、输出测量、探针和逐项对照见 [render bounds verification](../verification/reaper-parity/project-render-range.md)。

@@ -101,6 +101,7 @@ struct GpuRect {
     item_id: [u32; 2],
     track_index: u32,
     kind: u32,
+    tick_fractions: [f32; 2],
 }
 
 struct GpuRectSpec {
@@ -124,7 +125,18 @@ impl GpuRect {
             item_id: split_tick(spec.item_id),
             track_index: spec.track_index,
             kind: spec.kind,
+            tick_fractions: [0.0; 2],
         }
+    }
+
+    fn new_item(spec: GpuRectSpec, start_subtick: u8, end_subtick: u8) -> Self {
+        let scale = f32::from(aaadaw_core::MIDI_ITEM_SUBTICKS_PER_TICK);
+        let mut rect = Self::new(spec);
+        rect.tick_fractions = [
+            f32::from(start_subtick) / scale,
+            f32::from(end_subtick) / scale,
+        ];
+        rect
     }
 }
 
@@ -221,7 +233,8 @@ impl Pipeline for TimelinePipeline {
                         3 => Unorm8x4,
                         4 => Uint32x2,
                         5 => Uint32,
-                        6 => Uint32
+                        6 => Uint32,
+                        7 => Float32x2
                     ],
                 }],
                 compilation_options: wgpu::PipelineCompilationOptions::default(),
@@ -506,8 +519,8 @@ impl Primitive for TimelinePrimitive {
                     + i128::from(preview.track_delta);
                 let track_index = u32::try_from(row).unwrap_or(u32::MAX);
                 let rect = selected_item_rect(
-                    start_tick,
-                    end_tick,
+                    (start_tick, selected.start_tick_subtick),
+                    (end_tick, selected.end_tick_subtick),
                     track_index,
                     selected.item_id.value(),
                     selected.kind,
@@ -531,8 +544,8 @@ impl Primitive for TimelinePrimitive {
                 .find(|(_, item)| item.id == preview.item_id)
         {
             let rect = selected_item_rect(
-                preview.start_tick,
-                preview.end_tick,
+                (preview.start_tick, 0),
+                (preview.end_tick, 0),
                 item.track_index as u32,
                 item.id.value(),
                 item.kind,
@@ -818,6 +831,7 @@ impl Primitive for TimelinePrimitive {
             item_id: [0, 0],
             track_index: u32::MAX,
             kind: FADE_SEGMENT,
+            tick_fractions: [0.0; 2],
         }));
         ensure_capacity(
             device,
@@ -905,21 +919,25 @@ fn item_rect(
     let Some(row) = row_layout.get(item.track_index) else {
         return GpuRect::zeroed();
     };
-    GpuRect::new(GpuRectSpec {
-        start_tick: item.start_tick,
-        end_tick: item.end_tick,
-        y: row.item_geometry(has_volume_automation).0,
-        height: row.item_geometry(has_volume_automation).1,
-        color,
-        item_id: item.id.value(),
-        track_index: item.track_index as u32,
-        kind,
-    })
+    GpuRect::new_item(
+        GpuRectSpec {
+            start_tick: item.start_tick,
+            end_tick: item.end_tick,
+            y: row.item_geometry(has_volume_automation).0,
+            height: row.item_geometry(has_volume_automation).1,
+            color,
+            item_id: item.id.value(),
+            track_index: item.track_index as u32,
+            kind,
+        },
+        item.start_tick_subtick,
+        item.end_tick_subtick,
+    )
 }
 
 fn selected_item_rect(
-    start_tick: u64,
-    end_tick: u64,
+    start: (u64, u8),
+    end: (u64, u8),
     track_index: u32,
     item_id: u64,
     kind: ItemKind,
@@ -936,16 +954,20 @@ fn selected_item_rect(
             base_height: 0.0,
             fx_lane_count: 0,
         });
-    GpuRect::new(GpuRectSpec {
-        start_tick,
-        end_tick,
-        y: row.item_geometry(has_volume_automation).0,
-        height: row.item_geometry(has_volume_automation).1,
-        color,
-        item_id,
-        track_index,
-        kind: item_kind,
-    })
+    GpuRect::new_item(
+        GpuRectSpec {
+            start_tick: start.0,
+            end_tick: end.0,
+            y: row.item_geometry(has_volume_automation).0,
+            height: row.item_geometry(has_volume_automation).1,
+            color,
+            item_id,
+            track_index,
+            kind: item_kind,
+        },
+        start.1,
+        end.1,
+    )
 }
 
 fn waveform_rect(bin: WaveformBinGeometry, row: TrackRowLayout, has_automation: bool) -> GpuRect {
@@ -1008,7 +1030,7 @@ fn ensure_capacity(
 
 #[cfg(test)]
 mod tests {
-    use super::{linearize_srgb, split_tick_position};
+    use super::{GpuRect, GpuRectSpec, linearize_srgb, split_tick_position};
 
     #[test]
     fn gpu_vertex_colors_are_converted_from_srgb_to_linear() {
@@ -1022,5 +1044,24 @@ mod tests {
         let (whole_tick, fractional_tick) = split_tick_position(800.04);
         assert_eq!(whole_tick, 800);
         assert!((fractional_tick - 0.04).abs() < 1.0e-6);
+    }
+
+    #[test]
+    fn item_vertex_rect_keeps_fractional_ppq_endpoints() {
+        let rect = GpuRect::new_item(
+            GpuRectSpec {
+                start_tick: 964,
+                end_tick: 4_804,
+                y: 0.0,
+                height: 32.0,
+                color: [89, 112, 74, 255],
+                item_id: 1,
+                track_index: 0,
+                kind: 2,
+            },
+            160,
+            160,
+        );
+        assert_eq!(rect.tick_fractions, [0.8, 0.8]);
     }
 }

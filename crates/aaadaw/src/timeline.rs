@@ -1065,7 +1065,9 @@ pub(crate) struct SelectedItemGeometry {
     pub(crate) cache_index: usize,
     pub(crate) item_id: ItemId,
     pub(crate) start_tick: u64,
+    pub(crate) start_tick_subtick: u8,
     pub(crate) end_tick: u64,
+    pub(crate) end_tick_subtick: u8,
     pub(crate) track_index: usize,
     pub(crate) kind: ItemKind,
 }
@@ -2673,7 +2675,9 @@ impl TimelineState {
                     cache_index: index,
                     item_id: item.id,
                     start_tick: item.start_tick,
+                    start_tick_subtick: item.start_tick_subtick,
                     end_tick: item.end_tick,
+                    end_tick_subtick: item.end_tick_subtick,
                     track_index: item.track_index,
                     kind: item.kind,
                 })
