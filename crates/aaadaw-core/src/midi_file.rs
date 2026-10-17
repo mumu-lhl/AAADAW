@@ -459,6 +459,10 @@ pub fn encode_standard_midi_with_selection(
     let mut tracks = Vec::new();
     let smf_type = match options.file_type {
         MidiFileType::Type0 => {
+            let last_midi_event_tick = events_by_track
+                .iter()
+                .flat_map(|track_events| track_events.iter().map(|event| event.tick))
+                .max();
             let mut events = conductor_events(
                 project,
                 options,
@@ -467,6 +471,28 @@ pub fn encode_standard_midi_with_selection(
                 options.embed_tempo_and_time_signature,
                 time_selection,
             )?;
+            if let Some(last_conductor_order_at_start) = events
+                .iter()
+                .filter(|event| event.tick == 0)
+                .map(|event| event.order)
+                .max()
+            {
+                let midi_order_offset = last_conductor_order_at_start.saturating_add(1);
+                for event in events_by_track
+                    .iter_mut()
+                    .flat_map(|track_events| track_events.iter_mut())
+                    .filter(|event| event.tick == 0)
+                {
+                    event.order = event.order.saturating_add(midi_order_offset);
+                }
+            }
+            if let Some(last_midi_event_tick) = last_midi_event_tick {
+                // REAPER's merged Type 0 exporter stops writing tempo-map events after
+                // the final MIDI event, while Type 1 keeps the full selected map.
+                events.retain(|event| {
+                    !is_tempo_map_event(event) || event.tick <= last_midi_event_tick
+                });
+            }
             for track_events in &mut events_by_track {
                 events.append(track_events);
             }
@@ -524,6 +550,10 @@ fn ensure_midi_event_capacity(count: &mut usize, additional: usize) -> Result<()
     }
     *count = next;
     Ok(())
+}
+
+fn is_tempo_map_event(event: &Event) -> bool {
+    event.bytes.len() >= 2 && event.bytes[0] == 0xff && matches!(event.bytes[1], 0x01 | 0x51 | 0x58)
 }
 
 fn project_midi_item_event_tick(

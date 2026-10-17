@@ -1,0 +1,22 @@
+version	7.82/linux-x86_64
+theme	Default_7.0.ReaperThemeZip
+time_selection_seconds	0.5-2.5
+time_selection_project_ticks	960-4560
+tempo_meter_change	2 seconds; project tick 3840; output tick 2880; 90 BPM; 3/4
+midi_events	C4 project ticks 480-1440; CC1 tick 720; pitch bend tick 840
+export_action	40849
+base_project	fixtures/menu-export-midi-native-tempo-selection.rpp; SHA-256 077478ae86e970eba90c296674d2a8da4a4d1d090c874d0ad20429b3a9e7f7f5
+type1_midi	fixtures/menu-export-midi-native-tempo-selection-type1.mid; 120 bytes; SHA-256 c7d7f03aff7aeea5f903d22beabf27acb18f33ec41180f9ce51b2b8bd64e38e6
+type1_dialog	fixtures/menu-export-midi-native-tempo-selection-type1-dialog.png; 1280x800; SHA-256 84b74f975dd653fcd031cb8c5bd2fc623613746aabaa4b057676a256f40e33a1
+type1_result	fixtures/menu-export-midi-native-tempo-selection-type1-result.png; 1280x800; SHA-256 6c42ddc04f1e690b2c1287cb73f0d19a87eeea87a9f54ba1affdd5b5b4033fbc
+type0_midi	fixtures/menu-export-midi-native-tempo-selection-type0.mid; 58 bytes; SHA-256 0a4011fe0c6ae83b692fec42e9eb01134573b63cab8004a8c89cf05067a7efd1
+type0_dialog	fixtures/menu-export-midi-native-tempo-selection-type0-dialog.png; 1280x800; SHA-256 a2adbf00a0339634d4cb6cf94a6da681950becd5b0c5efbc819a76cace2ca846
+type0_result	fixtures/menu-export-midi-native-tempo-selection-type0-result.png; 1280x800; SHA-256 86d01e905b3a843769d5dc5782f4a75a7be70285eaf0b45f65a8c626ee7a641c
+spans_change_project	fixtures/menu-export-midi-native-tempo-selection-spans-change.rpp; Type 0 still omits later map events when an item spans the change but has no later MIDI event; SHA-256 3a9d1cb56c98ce94b9d17cf988d9dd3369138564b154599951b6e953b9793c6e
+spans_change_type0_dialog	fixtures/menu-export-midi-native-tempo-selection-spans-change-type0-dialog.png; 1280x800; SHA-256 18477a744c5f7b9a8e636a91e42511a74326de907c1c58d8931434988939202d
+spans_change_type0_result	fixtures/menu-export-midi-native-tempo-selection-spans-change-type0-result.png; 1280x800; SHA-256 64b79855fa2647820e7247e93def4ad106abcca8e849faa1c23eaa508e0a531f
+post_event_project	fixtures/menu-export-midi-native-tempo-selection-post-event.rpp; second D4 item 2.125-2.375 sec; SHA-256 23ad64e731a5d2258704ad1019b9ea8ecdb1195786becdd1a7091b7c7bd19cec
+post_event_type0	fixtures/menu-export-midi-native-tempo-selection-post-event-type0.mid; 84 bytes; SHA-256 766d83d6fe393bcfe5a3de3b3a8f485d3fcce76675118fa6c2aeccfd6e02d091
+post_event_type0_dialog	fixtures/menu-export-midi-native-tempo-selection-post-event-type0-dialog.png; 1280x800; SHA-256 ff7f0870f2a81247dc9270aecac824f38d36bc7157f4a8b3a7af90174b72d59a
+post_event_type0_result	fixtures/menu-export-midi-native-tempo-selection-post-event-type0-result.png; 1280x800; SHA-256 0557ffb02c451e5bd398a558a53a0771b207f8db6e9f67f38f78c3e3bdd76324
+probe_script	scripts/reaper_parity/probe-midi-export-tempo-selection.lua; SHA-256 a88edbb618eaeea44e455ea0dabbfb918545ad7a430f4d0fe4c6480ea7a13758

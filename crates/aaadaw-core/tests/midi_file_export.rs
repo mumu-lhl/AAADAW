@@ -1975,6 +1975,87 @@ fn reaper_782_type_one_tempo_and_meter_changes_match_native_bytes() {
 }
 
 #[test]
+fn reaper_782_type_one_time_selection_preserves_tempo_and_meter_changes() {
+    let project = native_midi_tempo_selection_fixture_project(false);
+    let options = MidiExportOptions {
+        time_scope: MidiExportTimeScope::TimeSelectionOnly,
+        embed_tempo_and_time_signature: true,
+        ..MidiExportOptions::for_project(&project)
+    };
+    let selection = MidiExportSelection {
+        time_selection_ticks: Some((960, 4_560)),
+        ..MidiExportSelection::default()
+    };
+    let actual =
+        encode_standard_midi_with_selection(&project, options, "tempo-selection-type1", &selection)
+            .unwrap();
+    let native = include_bytes!(
+        "../../../docs/verification/reaper-parity/fixtures/menu-export-midi-native-tempo-selection-type1.mid"
+    );
+
+    assert_eq!(
+        actual, native,
+        "Type 1 keeps tempo/meter changes in the time selection even beyond MIDI content"
+    );
+}
+
+#[test]
+fn reaper_782_type_zero_time_selection_stops_tempo_map_after_last_midi_event() {
+    let project = native_midi_tempo_selection_fixture_project(false);
+    let options = MidiExportOptions {
+        file_type: MidiFileType::Type0,
+        time_scope: MidiExportTimeScope::TimeSelectionOnly,
+        embed_tempo_and_time_signature: true,
+        ..MidiExportOptions::for_project(&project)
+    };
+    let selection = MidiExportSelection {
+        time_selection_ticks: Some((960, 4_560)),
+        ..MidiExportSelection::default()
+    };
+    let actual =
+        encode_standard_midi_with_selection(&project, options, "tempo-selection-type0", &selection)
+            .unwrap();
+    let native = include_bytes!(
+        "../../../docs/verification/reaper-parity/fixtures/menu-export-midi-native-tempo-selection-type0.mid"
+    );
+
+    assert_eq!(
+        actual, native,
+        "Type 0 omits later tempo/meter changes beyond the last MIDI event"
+    );
+}
+
+#[test]
+fn reaper_782_type_zero_time_selection_keeps_tempo_map_before_later_midi_events() {
+    let project = native_midi_tempo_selection_fixture_project(true);
+    let options = MidiExportOptions {
+        file_type: MidiFileType::Type0,
+        time_scope: MidiExportTimeScope::TimeSelectionOnly,
+        embed_tempo_and_time_signature: true,
+        ..MidiExportOptions::for_project(&project)
+    };
+    let selection = MidiExportSelection {
+        time_selection_ticks: Some((960, 4_560)),
+        ..MidiExportSelection::default()
+    };
+    let actual = encode_standard_midi_with_selection(
+        &project,
+        options,
+        "tempo-selection-post-event-type0",
+        &selection,
+    )
+    .unwrap();
+    let native = include_bytes!(
+        "../../../docs/verification/reaper-parity/fixtures/menu-export-midi-native-tempo-selection-post-event-type0.mid"
+    );
+
+    assert_eq!(
+        actual, native,
+        "Type 0 retains tempo/meter changes through the last MIDI event"
+    );
+}
+
+#[test]
 fn reaper_782_type_one_linear_tempo_ramp_matches_native_bytes() {
     let mut project = native_midi_fixture_project_with_length(960);
     project
@@ -2314,6 +2395,45 @@ fn native_midi_fixture_project_with_track_name(
             }],
         })
         .unwrap();
+    project
+}
+
+fn native_midi_tempo_selection_fixture_project(include_post_tempo_note: bool) -> Project {
+    let mut project = native_midi_fixture_project();
+    project
+        .apply(DawAction::SetTempo {
+            start_tick: 3_840,
+            bpm: 90.0,
+        })
+        .unwrap();
+    project
+        .apply(DawAction::SetTimeSignature {
+            start_tick: 3_840,
+            signature: TimeSignature::new(3, 4).unwrap(),
+        })
+        .unwrap();
+    if include_post_tempo_note {
+        let track_id = project.tracks()[0].id();
+        project
+            .apply(DawAction::InsertMidiItem {
+                track_id,
+                start_tick: 4_020,
+                length_ticks: 360,
+            })
+            .unwrap();
+        let item_id = project.midi_items()[1].id();
+        project
+            .apply(DawAction::AddMidiNotes {
+                item_id,
+                notes: vec![MidiNoteData {
+                    pitch: 62,
+                    tick: 0,
+                    duration: 360,
+                    velocity: 100,
+                }],
+            })
+            .unwrap();
+    }
     project
 }
 
