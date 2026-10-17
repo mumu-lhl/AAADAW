@@ -26,6 +26,8 @@ schema 21 对旧轨道默认 is_folder=false / parent=NULL，不把历史 Bus �
 
 767 项 workspace 测试通过，Clippy -D warnings 与默认构建通过；覆盖实际汇总、Parent 开关、嵌套 Solo/静音、身份/顺序/Undo/Snapshot、无效父节点/删除/环路、旧 schema 20 Bus 迁移、SQLite 往返、MIDI 上游来源及回调零分配。
 
+后续补齐了 MIDI 主输出沿有效 Parent 路径的事件传播：子轨与每层 Folder 的 `main_send_enabled` 都控制是否继续向上游传递；Note attack/release 与 seek 时的 active-note chase 使用同一目标轨集合。`folder_parent_midi_forwarding_obeys_each_main_send_switch` 覆盖两层嵌套及子轨/中间 Folder 分别关闭主发送；`soloed_folder_keeps_events_on_child_instruments_through_parent_send` 同时确认事件到达子轨和 solo Folder。该路径在 MIDI 计划编译阶段展开，回调仍仅读取预编译事件。新增回归后的 workspace Nextest 通过 **1395/1395、0 skipped**，严格 all-target Clippy (`-D warnings`) 通过；nightly Cranelift 桌面构建 Build ID 为 `2c07e46c0a5b2902ddd65527696a6c0a46d962a3`，SHA-256 `9d52772861108cd0db1ef6ea7f61cd2773e1c53c8f20026f8493f46fa5dc24ad`。此次没有重新采集 REAPER 专项 MIDI 输出录音，原厂文件夹验证仍是本页记录的音频汇总行为。
+
 GUI 已把 Audio 2 标为 Folder，Audio 1 设为其子轨；TCP/MCP 同步重排、层级标识和主输出目标更新。路由窗口可建层级，Track menu/Action List 注册 track.toggle-folder。
 
 ![Parent 编辑](images/folder-parent.png)

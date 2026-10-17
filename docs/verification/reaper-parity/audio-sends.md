@@ -30,4 +30,4 @@ schema 19 增加 tracks.main_send_enabled（旧工程默认开启）及有 ID/�
 
 ## 剩余差异
 
-通道映射/多通道、硬件输出、文件夹 Parent Send、反馈/PDC、Routing Matrix/Wiring、完整路由窗口布局与操作仍待实现。MIDI Send 的 All→All 垂直切片已实现；动态恢复与边界见[MIDI Send 验证](midi-sends.md)和[内部 MIDI 动态恢复回归](midi-live-audibility.md)。P3 与全量对齐未完成。
+通道映射/多通道、硬件输出、Feedback/PDC、Routing Matrix/Wiring、完整路由窗口布局与操作仍待实现。文件夹 Parent 音频与 MIDI 主输出基础见[文件夹验证](folder-parent-routing.md)；独立 MIDI Send 的 All→All 垂直切片、动态恢复与边界见[MIDI Send 验证](midi-sends.md)和[内部 MIDI 动态恢复回归](midi-live-audibility.md)。Folder Parent MIDI 专项原厂探针仍待采集；P3 与全量对齐未完成。

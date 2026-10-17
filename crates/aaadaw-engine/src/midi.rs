@@ -279,6 +279,16 @@ fn midi_route_destinations(
         let Some(track) = project.tracks().iter().find(|track| track.id() == track_id) else {
             continue;
         };
+        if let Some(destination) = track
+            .effective_output_track()
+            .filter(|_| track.main_send_enabled())
+        {
+            if destinations.len() == MAX_COMPILED_MIDI_EVENTS {
+                return Err(MidiScheduleError::EventLimitExceeded);
+            }
+            destinations.push(destination);
+            pending.push(destination);
+        }
         for send in track.sends().iter().rev().filter(|send| {
             let parameters = send.parameters();
             parameters.midi_enabled && !parameters.muted

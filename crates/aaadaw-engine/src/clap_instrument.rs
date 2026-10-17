@@ -3556,7 +3556,7 @@ mod tests {
             .join()
             .expect("render graph thread");
 
-        assert_eq!(stats.midi_event_count, 2);
+        assert_eq!(stats.midi_event_count, 4);
         assert_eq!(stats.underrun_samples, 0);
         assert_eq!(stats.master_guarded_samples, 0);
         let midi_level = 64.0 / 127.0;

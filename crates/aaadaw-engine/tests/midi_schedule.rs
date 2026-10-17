@@ -1116,10 +1116,150 @@ fn soloed_bus_keeps_midi_events_on_tracks_routed_into_it() {
         .unwrap();
 
     let plan = MidiEventPlan::compile(&project).unwrap();
-    assert_eq!(plan.len(), 2);
-    let mut events = [None; 2];
-    assert_eq!(plan.events_for_block(0, 1, &mut events).unwrap(), 1);
-    assert_eq!(events[0].unwrap().track_id, source);
+    assert_eq!(plan.len(), 4);
+    let mut events = [None; 4];
+    assert_eq!(plan.events_for_block(0, 1, &mut events).unwrap(), 2);
+    let event_tracks: std::collections::HashSet<_> = events[..2]
+        .iter()
+        .map(|event| event.unwrap().track_id)
+        .collect();
+    assert_eq!(event_tracks, [source, bus].into_iter().collect());
+
+    let mut active = [None; 2];
+    assert_eq!(plan.active_notes_at(1, &mut active).unwrap(), 2);
+    assert_eq!(
+        active
+            .iter()
+            .map(|event| event.unwrap().track_id)
+            .collect::<std::collections::HashSet<_>>(),
+        [source, bus].into_iter().collect()
+    );
+}
+
+#[test]
+fn folder_parent_midi_forwarding_obeys_each_main_send_switch() {
+    for (disable_child_send, disable_inner_send, expected_tracks) in
+        [(false, false, 3), (true, false, 1), (false, true, 2)]
+    {
+        let mut project = Project::default();
+        for (index, name) in [(0, "Synth"), (1, "Inner"), (2, "Outer")] {
+            project
+                .apply(DawAction::CreateTrack {
+                    index,
+                    name: name.into(),
+                })
+                .unwrap();
+        }
+        let source = project.tracks()[0].id();
+        let inner = project.tracks()[1].id();
+        let outer = project.tracks()[2].id();
+        for folder in [inner, outer] {
+            project
+                .apply(DawAction::SetTrackFolder {
+                    track_id: folder,
+                    enabled: true,
+                })
+                .unwrap();
+        }
+        project
+            .apply(DawAction::SetTrackParent {
+                track_id: source,
+                parent: Some(inner),
+            })
+            .unwrap();
+        project
+            .apply(DawAction::SetTrackParent {
+                track_id: inner,
+                parent: Some(outer),
+            })
+            .unwrap();
+        if disable_child_send {
+            project
+                .apply(DawAction::SetTrackMainSend {
+                    track_id: source,
+                    enabled: false,
+                })
+                .unwrap();
+        }
+        if disable_inner_send {
+            project
+                .apply(DawAction::SetTrackMainSend {
+                    track_id: inner,
+                    enabled: false,
+                })
+                .unwrap();
+        }
+        project
+            .apply(DawAction::InsertMidiItem {
+                track_id: source,
+                start_tick: 0,
+                length_ticks: 960,
+            })
+            .unwrap();
+        let item_id = project.midi_items()[0].id();
+        project
+            .apply(DawAction::AddMidiNotes {
+                item_id,
+                notes: vec![MidiNoteData {
+                    pitch: 60,
+                    tick: 0,
+                    duration: 240,
+                    velocity: 100,
+                }],
+            })
+            .unwrap();
+
+        let plan = MidiEventPlan::compile(&project).unwrap();
+        assert_eq!(plan.len(), expected_tracks * 2);
+        let mut attacks = vec![None; expected_tracks];
+        assert_eq!(
+            plan.events_for_block(0, 1, &mut attacks).unwrap(),
+            expected_tracks
+        );
+        let actual_tracks: std::collections::HashSet<_> = attacks
+            .iter()
+            .map(|event| event.unwrap().track_id)
+            .collect();
+        let expected: std::collections::HashSet<_> = match (disable_child_send, disable_inner_send)
+        {
+            (false, false) => [source, inner, outer].into_iter().collect(),
+            (true, false) => [source].into_iter().collect(),
+            (false, true) => [source, inner].into_iter().collect(),
+            (true, true) => unreachable!(),
+        };
+        assert_eq!(actual_tracks, expected);
+
+        let mut chased = vec![None; expected_tracks];
+        assert_eq!(
+            plan.active_notes_at(1, &mut chased).unwrap(),
+            expected_tracks
+        );
+        assert_eq!(
+            chased
+                .iter()
+                .map(|event| event.unwrap().track_id)
+                .collect::<std::collections::HashSet<_>>(),
+            expected
+        );
+
+        let mut releases = vec![None; expected_tracks];
+        assert_eq!(
+            plan.events_for_block(6_000, 1, &mut releases).unwrap(),
+            expected_tracks
+        );
+        assert!(
+            releases
+                .iter()
+                .all(|event| { event.is_some_and(|event| event.kind == MidiEventKind::NoteOff) })
+        );
+        assert_eq!(
+            releases
+                .iter()
+                .map(|event| event.unwrap().track_id)
+                .collect::<std::collections::HashSet<_>>(),
+            expected
+        );
+    }
 }
 
 #[test]
@@ -1417,8 +1557,14 @@ fn soloed_folder_keeps_events_on_child_instruments_through_parent_send() {
         .unwrap();
 
     let plan = MidiEventPlan::compile(&project).unwrap();
-    assert_eq!(plan.len(), 2);
-    let mut events = [None; 2];
-    assert_eq!(plan.events_for_block(0, 1, &mut events).unwrap(), 1);
-    assert_eq!(events[0].unwrap().track_id, source);
+    assert_eq!(plan.len(), 4);
+    let mut events = [None; 4];
+    assert_eq!(plan.events_for_block(0, 1, &mut events).unwrap(), 2);
+    assert_eq!(
+        events[..2]
+            .iter()
+            .map(|event| event.unwrap().track_id)
+            .collect::<std::collections::HashSet<_>>(),
+        [source, bus].into_iter().collect()
+    );
 }
