@@ -7,6 +7,8 @@ reference_scope_capture	midi-quantize-scope-menu-reaper-native.png; 1280x800; SH
 reference_operation_capture	midi-quantize-operation-menu-reaper-native.png; 1280x800; SHA-256 471b1c1b0de775c97606511c05be1da2cd02a4d820d5e70d709bb468a93a2466
 reference_operation_results	midi-quantize-operations-native.tsv; five native operations sampled at 100% on a 1/32 grid; selected and unselected note ticks recorded
 reference_all_events_results	midi-quantize-all-events-native.tsv; All events at Position and 100% quantizes note, CC, and pitch-bend positions without changing event values or lengths
+reference_all_events_collision_results	midi-quantize-all-events-collisions-native.tsv; same-channel same-controller CC and same-channel pitch-bend collisions retain the latest pre-quantize event and value
+reference_all_events_collision_probe	scripts/reaper_parity/probe-midi-quantize-dialog-all-events-collisions.lua; reproducible REAPER 7.82 event readback probe
 reference_strength_capture	midi-quantize-strength-50-reaper-native.png; 1280x800; SHA-256 681ced3006e0582671c3c87939a7e1d572d240cbd113b7365fcd3e985ad64a18
 reference_strength_behavior	At Strength 50%, REAPER moves selected note starts halfway toward the nearest grid line while preserving lengths; event output is recorded in midi-quantize-strength-native.tsv
 
@@ -25,5 +27,6 @@ aaadaw_interaction	Opened Quantize... from the Piano Roll, selected All notes an
 aaadaw_dialog_default	Selected notes; Position; 100%; current grid displayed as Use grid · 1/32
 aaadaw_strength_test	App regression sets 50% and verifies a selected note at tick 170 moves to 145 while an unselected note stays at 350
 aaadaw_all_events_interaction	Selected All events in the live Quantize Events dialog and verified the label; Core/App regressions cover notes, CC, Pitch Bend and one-step Undo/Redo
+aaadaw_all_events_collision_probe	Quantized distinct CC1 and pitch-bend positions that landed on duplicate ticks; the Core/App path matches REAPER's latest-original-event-wins result and Undo restores both events
 aaadaw_supported_subset	All notes/Selected notes/All events (notes, CC, and pitch bends); Position/Position and note end/Position and note length/Note end only/Note length only for notes; 0–100% strength; Commit, OK, Cancel and Escape
-open_gaps	Selected events; Program Change/channel pressure/SysEx event types; quantize collisions for duplicate same-channel CC/Pitch Bend positions; Bypass; Fix overlaps behavior; swing-grid intersection and remembered dialog settings remain open
+open_gaps	Selected events; Program Change/channel pressure/SysEx event types; Bypass; Fix overlaps behavior; swing-grid intersection and remembered dialog settings remain open

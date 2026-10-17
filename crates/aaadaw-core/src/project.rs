@@ -4689,6 +4689,9 @@ impl Project {
                         controller.tick =
                             quantized_midi_event_tick(item, controller.tick, grid_ticks, strength)?;
                     }
+                    // The source list is tick-ordered; replacing a destination key keeps
+                    // REAPER's later-original-event winner when quantized positions collide.
+                    coalesce_midi_controllers_at_same_tick(&mut controllers);
                     if !valid_midi_controllers(&controllers) {
                         return Err(ActionError::InvalidMidiController);
                     }
@@ -4704,6 +4707,7 @@ impl Project {
                         bend.tick =
                             quantized_midi_event_tick(item, bend.tick, grid_ticks, strength)?;
                     }
+                    coalesce_midi_pitch_bends_at_same_tick(&mut pitch_bends);
                     if !valid_midi_pitch_bends(&pitch_bends) {
                         return Err(ActionError::InvalidMidiPitchBend);
                     }
@@ -5860,6 +5864,20 @@ fn valid_midi_controllers(controllers: &[MidiControllerData]) -> bool {
     })
 }
 
+fn coalesce_midi_controllers_at_same_tick(controllers: &mut Vec<MidiControllerData>) {
+    let mut latest_by_position = HashMap::with_capacity(controllers.len());
+    for controller in controllers.drain(..) {
+        latest_by_position.insert(
+            (controller.channel, controller.controller, controller.tick),
+            controller,
+        );
+    }
+    controllers.extend(latest_by_position.into_values());
+    controllers.sort_unstable_by_key(|controller| {
+        (controller.tick, controller.channel, controller.controller)
+    });
+}
+
 fn midi_item_source_tick_bounds(item: &MidiItem) -> (u64, u64) {
     if item.is_loop_source() {
         (0, item.source_loop_length_ticks())
@@ -5899,6 +5917,15 @@ fn valid_midi_pitch_bends(pitch_bends: &[MidiPitchBendData]) -> bool {
             && bend.value <= 16_383
             && positions.insert((bend.channel, bend.tick))
     })
+}
+
+fn coalesce_midi_pitch_bends_at_same_tick(pitch_bends: &mut Vec<MidiPitchBendData>) {
+    let mut latest_by_position = HashMap::with_capacity(pitch_bends.len());
+    for bend in pitch_bends.drain(..) {
+        latest_by_position.insert((bend.channel, bend.tick), bend);
+    }
+    pitch_bends.extend(latest_by_position.into_values());
+    pitch_bends.sort_unstable_by_key(|bend| (bend.tick, bend.channel));
 }
 
 fn controllers_for_segment(

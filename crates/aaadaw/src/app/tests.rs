@@ -12484,22 +12484,37 @@ fn midi_quantize_dialog_all_events_quantizes_notes_controllers_and_pitch_bends_t
     app.project
         .apply(DawAction::SetMidiControllers {
             item_id,
-            controllers: vec![MidiControllerData {
-                controller: 1,
-                channel: 0,
-                tick: 475,
-                value: 64,
-            }],
+            controllers: vec![
+                MidiControllerData {
+                    controller: 1,
+                    channel: 0,
+                    tick: 475,
+                    value: 64,
+                },
+                MidiControllerData {
+                    controller: 1,
+                    channel: 0,
+                    tick: 485,
+                    value: 65,
+                },
+            ],
         })
         .expect("test controller should be inserted");
     app.project
         .apply(DawAction::SetMidiPitchBends {
             item_id,
-            pitch_bends: vec![MidiPitchBendData {
-                channel: 0,
-                tick: 850,
-                value: 8_192,
-            }],
+            pitch_bends: vec![
+                MidiPitchBendData {
+                    channel: 0,
+                    tick: 835,
+                    value: 8_000,
+                },
+                MidiPitchBendData {
+                    channel: 0,
+                    tick: 850,
+                    value: 8_192,
+                },
+            ],
         })
         .expect("test pitch bend should be inserted");
 
@@ -12515,17 +12530,27 @@ fn midi_quantize_dialog_all_events_quantizes_notes_controllers_and_pitch_bends_t
             .collect::<Vec<_>>(),
         [(120, 180), (360, 80)]
     );
+    assert_eq!(item.controllers().len(), 1);
     assert_eq!(item.controllers()[0].tick, 480);
+    assert_eq!(item.controllers()[0].value, 65);
+    assert_eq!(item.pitch_bends().len(), 1);
     assert_eq!(item.pitch_bends()[0].tick, 840);
+    assert_eq!(item.pitch_bends()[0].value, 8_192);
     let _ = app.update(Message::Undo);
     let item = &app.project.midi_items()[0];
     assert_eq!(item.notes()[0].tick(), 100);
+    assert_eq!(item.controllers().len(), 2);
     assert_eq!(item.controllers()[0].tick, 475);
-    assert_eq!(item.pitch_bends()[0].tick, 850);
+    assert_eq!(item.controllers()[1].tick, 485);
+    assert_eq!(item.pitch_bends().len(), 2);
+    assert_eq!(item.pitch_bends()[0].tick, 835);
+    assert_eq!(item.pitch_bends()[1].tick, 850);
     let _ = app.update(Message::Redo);
     let item = &app.project.midi_items()[0];
     assert_eq!(item.notes()[0].tick(), 120);
+    assert_eq!(item.controllers().len(), 1);
     assert_eq!(item.controllers()[0].tick, 480);
+    assert_eq!(item.pitch_bends().len(), 1);
     assert_eq!(item.pitch_bends()[0].tick, 840);
 }
 

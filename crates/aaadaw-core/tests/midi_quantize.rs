@@ -419,6 +419,12 @@ fn midi_quantize_all_events_matches_reaper_and_undoes_as_one_edit() {
                     value: 64,
                 },
                 MidiControllerData {
+                    controller: 1,
+                    channel: 0,
+                    tick: 485,
+                    value: 65,
+                },
+                MidiControllerData {
                     controller: 7,
                     channel: 1,
                     tick: 730,
@@ -430,11 +436,18 @@ fn midi_quantize_all_events_matches_reaper_and_undoes_as_one_edit() {
     project
         .apply(DawAction::SetMidiPitchBends {
             item_id,
-            pitch_bends: vec![MidiPitchBendData {
-                channel: 0,
-                tick: 850,
-                value: 8_192,
-            }],
+            pitch_bends: vec![
+                MidiPitchBendData {
+                    channel: 0,
+                    tick: 835,
+                    value: 8_000,
+                },
+                MidiPitchBendData {
+                    channel: 0,
+                    tick: 850,
+                    value: 8_192,
+                },
+            ],
         })
         .expect("test pitch bend should be inserted");
     let before_notes = project.midi_items()[0]
@@ -472,7 +485,7 @@ fn midi_quantize_all_events_matches_reaper_and_undoes_as_one_edit() {
                 controller.value
             ))
             .collect::<Vec<_>>(),
-        [(0, 1, 480, 64), (1, 7, 720, 96)]
+        [(0, 1, 480, 65), (1, 7, 720, 96)]
     );
     assert_eq!(
         item.pitch_bends()
@@ -502,6 +515,8 @@ fn midi_quantize_all_events_matches_reaper_and_undoes_as_one_edit() {
             .redo()
             .expect("all-event quantize should be redoable")
     );
-    assert_eq!(project.midi_items()[0].controllers()[0].tick, 480);
-    assert_eq!(project.midi_items()[0].pitch_bends()[0].tick, 840);
+    assert_eq!(project.midi_items()[0].controllers().len(), 2);
+    assert_eq!(project.midi_items()[0].controllers()[0].value, 65);
+    assert_eq!(project.midi_items()[0].pitch_bends().len(), 1);
+    assert_eq!(project.midi_items()[0].pitch_bends()[0].value, 8_192);
 }
