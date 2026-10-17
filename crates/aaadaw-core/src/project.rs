@@ -179,8 +179,8 @@ fn humanized_midi_note_changes(
     let _ = grid
         .ticks(ppq)
         .map_err(|_| ActionError::InvalidQuantizeGrid)?;
-    // Zero-bias REAPER samples support PPQ/8; the linear bias shift remains
-    // provisional because repeated native endpoint samples are inconsistent.
+    // Startup-preloaded REAPER samples at ±50% and ±100% support a linear
+    // PPQ/8 mean shift; the exact native random sequence remains unknown.
     let timing_scale = f64::from(timing_amount_percent) / 100.0;
     let timing_standard_deviation = f64::from(ppq) / 8.0 * timing_scale;
     let timing_bias = f64::from(timing_bias_percent) / 100.0;
@@ -206,10 +206,11 @@ fn humanized_midi_note_changes(
         };
         let after_tick = midi_source_tick_at_project_tick(item, target_absolute_tick)
             .ok_or(ActionError::InvalidMidiNote)?;
-        let velocity_span =
-            (u16::from(note.data.velocity) * u16::from(velocity_amount_percent) / 200) as i16;
-        let velocity_unit = next_midi_humanize_random_unit(&mut random_state) * 2.0 - 1.0;
-        let velocity_offset = (velocity_unit * f64::from(velocity_span)).round() as i16;
+        let velocity_standard_deviation =
+            f64::from(note.data.velocity) * f64::from(velocity_amount_percent) * 0.0023;
+        let velocity_offset = (next_midi_humanize_standard_normal(&mut random_state)
+            * velocity_standard_deviation)
+            .round() as i16;
         let after_velocity = (i16::from(note.data.velocity) + velocity_offset).clamp(1, 127) as u8;
         if !valid_midi_note_source_range(item, after_tick, note.data.duration) {
             return Err(ActionError::InvalidMidiNote);

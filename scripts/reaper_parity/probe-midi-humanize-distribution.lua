@@ -28,7 +28,8 @@ local velocity_text = os.getenv("AAADAW_REAPER_HUMANIZE_VELOCITIES") or "1,2,64,
 local velocities = {}
 for value in velocity_text:gmatch("[^,]+") do
   local velocity = assert(tonumber(value), "invalid velocity in sample list")
-  assert(velocity >= 0 and velocity <= 127 and velocity % 1 == 0)
+  -- MIDI note-on velocity 0 is a note-off, not a humanizable note.
+  assert(velocity >= 1 and velocity <= 127 and velocity % 1 == 0)
   velocities[#velocities + 1] = velocity
 end
 assert(#velocities >= 1 and #velocities <= 64)
@@ -58,6 +59,10 @@ end
 assert(reaper.MIDI_InsertNote(take, false, false, unselected_start_tick,
   unselected_start_tick + 90, 0, 100, 64, false))
 reaper.MIDI_Sort(take)
+local _, actual_note_count = reaper.MIDI_CountEvts(take)
+assert(actual_note_count == note_count + 1,
+  string.format("expected %d selected notes plus one unselected note, got %d",
+    note_count, actual_note_count))
 reaper.SetMediaItemSelected(item, true)
 reaper.SetEditCurPos(0, false, false)
 reaper.Main_OnCommand(40153, 0)
@@ -82,6 +87,7 @@ output:write("midi_grid_quarter_notes\t", string.format("%.6f", grid_qn), "\n")
 output:write("midi_grid_ticks\t", string.format("%.0f", grid_qn * project_ppq), "\n")
 output:write("swing\t", string.format("%.6f", swing), "\n")
 output:write("selected_note_count\t", note_count, "\n")
+output:write("actual_note_count\t", actual_note_count, "\n")
 output:write("selected_start_tick\t", start_tick, "\n")
 output:write("selected_interval_ticks\t", interval_ticks, "\n")
 output:write("item_length_seconds\t", string.format("%.3f", item_length_seconds), "\n")

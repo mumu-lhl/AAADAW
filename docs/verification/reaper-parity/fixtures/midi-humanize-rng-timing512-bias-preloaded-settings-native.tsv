@@ -1,0 +1,21 @@
+version	7.82/linux-x86_64
+theme	Default_7.0.ReaperThemeZip
+display	Xvfb :291
+project_ppq	960
+tempo_bpm	120
+midi_grid_division	0.03125
+project_grid_division	0.03125
+selected_notes	512
+unselected_control_notes	1
+velocity_percent	0
+timing_percent	100
+profile_semantics	Each bias was accepted in reaper.ini before process launch; dialog left unchanged before applying action
+sample_id	bias_percent	raw_tsv	dialog_screenshot
+timing512-bias100-preloaded-r1	100	midi-humanize-rng-timing512-bias100-preloaded-r1-native.tsv	midi-humanize-rng-timing512-bias100-preloaded-r1-dialog.png
+timing512-bias100-preloaded-r2	100	midi-humanize-rng-timing512-bias100-preloaded-r2-native.tsv	midi-humanize-rng-timing512-bias100-preloaded-r2-dialog.png
+timing512-biasminus100-preloaded-r1	-100	midi-humanize-rng-timing512-biasminus100-preloaded-r1-native.tsv	midi-humanize-rng-timing512-biasminus100-preloaded-r1-dialog.png
+timing512-biasminus100-preloaded-r2	-100	midi-humanize-rng-timing512-biasminus100-preloaded-r2-native.tsv	midi-humanize-rng-timing512-biasminus100-preloaded-r2-dialog.png
+timing512-bias50-preloaded	50	midi-humanize-rng-timing512-bias50-preloaded-native.tsv	midi-humanize-rng-timing512-bias50-preloaded-dialog.png
+timing512-biasminus50-preloaded	-50	midi-humanize-rng-timing512-biasminus50-preloaded-native.tsv	midi-humanize-rng-timing512-biasminus50-preloaded-dialog.png
+timing512-biasminus50-preloaded-r2	-50	midi-humanize-rng-timing512-biasminus50-preloaded-r2-native.tsv	midi-humanize-rng-timing512-biasminus50-preloaded-r2-dialog.png
+verification	All samples contain 513 actual notes, preserve the one unselected control note, and were applied without changing the displayed values

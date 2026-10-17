@@ -1,0 +1,7 @@
+sample_id	timing_percent	velocity_percent	bias_percent	selected_note_count	actual_note_count	opening_value_preloaded	dialog_screenshot	readback
+velocity100-first	0	100	0	512	513	yes	midi-humanize-rng-velocity100-dialog.png	midi-humanize-rng-velocity100-first-native.tsv
+velocity100-repeat2	0	100	0	512	513	yes	midi-humanize-rng-velocity100-dialog.png	midi-humanize-rng-velocity100-repeat2-native.tsv
+velocity100-repeat3	0	100	0	512	513	yes	midi-humanize-rng-velocity100-dialog.png	midi-humanize-rng-velocity100-repeat3-native.tsv
+velocity50-first	0	50	0	512	513	yes	midi-humanize-rng-velocity50-dialog.png	midi-humanize-rng-velocity50-first-native.tsv
+velocity50-repeat2	0	50	0	512	513	yes	midi-humanize-rng-velocity50-repeat2-dialog.png	midi-humanize-rng-velocity50-repeat2-native.tsv
+velocity0	0	0	0	512	513	yes	midi-humanize-rng-velocity0-dialog.png	midi-humanize-rng-velocity0-native.tsv

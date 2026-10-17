@@ -2169,3 +2169,15 @@ Core 当前 timing 模型使用标准差 `project PPQ / 8` 的正态抽样、按
 当前代码由 nightly Rust 1.101.0 Cranelift 构建，Build ID `9efbe45b29a0ff959422bd60affe6e86c084bf2f`，SHA-256 `1aa3f584b7916b1f52181c8f0cf39debe878b5ec2c04b264ce6edc9b48075fe8`。Xorg :90 验证新二进制启动；Xorg :290 实际创建 MIDI item 与 note、打开 Humanize、应用 100% Timing / 0% Velocity / 0% bias。启动、默认 dialog、配置与应用后截图及哈希见 [当前 Humanize Cranelift fixtures](../verification/reaper-parity/midi-humanize.md)。Cranelift 报告 `TimelinePipeline: MaybeSync` 的未来兼容递归 trait 警告，构建成功。
 
 Core 全套 **228 tests / 41 binaries** 通过；最后收紧后的 Humanize Core 定向套件 **5/5**；AAADAW App **767/767**；Core/App all-target Clippy (`-D warnings`) 与 `cargo fmt --all -- --check` 通过。`MIDI-HUMANIZE-001`、UI-019 与 P7 仍开放：Bias 原厂语义、velocity 分布/边界、精确 RNG 和 New random seed 行为没有关闭。
+
+### 2026-10-17 MIDI Humanize 偏置预置复测与当前桌面验证
+
+复查先前 bias 样本时发现测量方法问题：在当前 REAPER Humanize 对话框内修改 slider 后，`reaper.ini` 会保存新值供下一次调用，但当前 action 仍可能使用上次确认的值。因此旧的会话内 slider-edit endpoint 截图不能证明该次 action 应用了截图显示的 bias；raw TSV 仍保留，但从 bias 拟合中排除。
+
+随后用 REAPER 7.82 / Default 7、每次启动前独立预置 `reaper.ini` 的方式采集 7 份 512 选中音符样本（每份另带 1 个未选控制音符），打开对话框后不改值并立即应用：bias +100% 两次 pooled 均值 +117.90 tick / SD 119.68，−100% 两次 −119.12 / 120.56；+50% 一次 +63.39 / 118.45，−50% 两次 −52.72 / 122.65。0 bias 的既有 576 音符样本均值 −1.35、SD 122.31。四个正负 bias 中点/端点均值与 `bias% × PPQ/8` 的约线性偏移一致，离散尺度仍接近 PPQ/8；音长、pitch、channel、velocity、selection 和未选控制音符保持不变。各次设置截图、逐音符前后读回、配置 manifest 和 SHA-256 见[Humanize 验证资料](../verification/reaper-parity/midi-humanize.md)。
+
+此前的 velocity 扩展样本也采用启动前预置值：100% 3 次、50% 2 次、0% 1 次，共 3,072 个选中音符读回，支持近似正态尺度 `initial velocity × 0.23 × amount%` 及 MIDI velocity 1–127 clamp；0% 样本全部不变。当前 Core 模型使用相同尺度和 `bias% × PPQ/8 × timing%` 的 timing 均值偏移。原厂精确 RNG、New random seed 序列和 slider 修改后当前 invocation 的完整语义仍未关闭，`MIDI-HUMANIZE-001` 继续为 `in_progress`。
+
+nightly Cranelift 重建后的桌面二进制 Build ID `91ba39a553698e12b82712452d6e44e7b02959d4`、SHA-256 `0443ccf711827af62243b3beb0a5d9f3a8e474f422e007dd036c288c07b83ef8`。Xvfb :291 实际启动该二进制、创建 track/MIDI item/note、打开 Humanize Notes、设为 Timing 100% / Velocity 0% / bias 0%，并在 OK 后返回编辑器；启动、对话框、配置与应用后截图及哈希已纳入验证资料。
+
+Core Nextest **229 tests / 41 binaries** 通过，Humanize Core 定向 **6/6**，AAADAW App **767/767**；Core/App all-target Clippy (`-D warnings`)、`cargo fmt --all -- --check`、`git diff --check` 和 parity matrix **107 项 / 15 列 / 唯一 ID** 校验通过。`MIDI-HUMANIZE-001`、UI-019 与 P7 仍开放，直到精确随机序列、seed 和 invocation 语义达到验收标准。
