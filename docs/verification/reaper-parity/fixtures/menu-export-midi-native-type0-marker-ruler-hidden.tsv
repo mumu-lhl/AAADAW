@@ -1,0 +1,27 @@
+version	7.82/linux-x86_64
+theme	Default_7.0.ReaperThemeZip
+probe	scripts/reaper_parity/probe-midi-export-marker-ruler-hidden.lua
+project	fixtures/menu-export-midi-native-marker-ruler-hidden.rpp
+project_sha256	0a470375d18b1ff838b208f0f43f3cb1a10682fc1fee2aa47b1a8fabf0944d38
+project_fixture	Piano track; C4 note at ticks 480-1440; CC1 at 720; pitch bend at 840; #Intro at tick 0; Verse at tick 960; both markers individually visible; project marker ruler hidden by Main action 43485; RULERLANECFG 4
+export_action	40849 / File: Export project MIDI...
+export_mode	Type 0 / Merge to single MIDI track
+export_ppqn	960
+export_markers	checked
+export_marker_filter	unchecked
+export_tempo_meter	unchecked
+export_smpte_offset	unchecked
+hidden_markers_checkbox	unchecked and checked
+marker_unchecked_dialog	fixtures/menu-export-midi-native-type0-marker-ruler-hidden-excluded-dialog.png; 518x452; SHA-256 1024b9ece4cbce307b65bad23b51cd00475f8813c6c9e1770adb7e7e92a0f4e8
+marker_checked_dialog	fixtures/menu-export-midi-native-type0-marker-ruler-hidden-included-dialog.png; 518x452; SHA-256 6183bd8eabf42ea639023bba976e0c40231049c348e26cdef898f32dd0ac0d00
+marker_unchecked_file	fixtures/menu-export-midi-native-type0-marker-ruler-hidden-excluded.mid; /tmp/aaadaw-type0-ruler-markers-unchecked-confirmed.mid; 45 bytes; SHA-256 ec44e8935ad4d752d123a9f6030f2481e692cf3033eca2d6940b794e0fda72ef
+marker_checked_file	fixtures/menu-export-midi-native-type0-marker-ruler-hidden-included.mid; /tmp/aaadaw-type0-ruler-markers-checked.mid; 64 bytes; SHA-256 bad852e9d322144a0287782ff88d22dcdcc7eb89a58fdd38e64edd82f680fccc
+marker_unchecked_events	One SMF Type 0 track; no marker events; C4 note 480-1440; CC1 tick 720; pitch bend tick 840; End-of-Track tick 1440
+marker_checked_events	One SMF Type 0 track; #Intro marker tick 0; C4 note 480-1440; CC1 tick 720; pitch bend tick 840; Verse marker tick 960; End-of-Track tick 1440
+cue_unchecked_dialog	fixtures/menu-export-midi-native-type0-cue-ruler-hidden-excluded-dialog.png; 518x452; SHA-256 f705756eaf41e815a91bbb89b33fba5465bdf1fb18795d34a1e1aea6295331f1
+cue_checked_dialog	fixtures/menu-export-midi-native-type0-cue-ruler-hidden-included-dialog.png; 518x452; SHA-256 337482832825fa901d1c02fe8121260dbcc4e4e8d1ccb5efde4820ca45aab33a
+cue_unchecked_file	fixtures/menu-export-midi-native-type0-cue-ruler-hidden-excluded.mid; /tmp/aaadaw-type0-ruler-cues-unchecked.mid; 45 bytes; SHA-256 ec44e8935ad4d752d123a9f6030f2481e692cf3033eca2d6940b794e0fda72ef
+cue_checked_file	fixtures/menu-export-midi-native-type0-cue-ruler-hidden-included.mid; /tmp/aaadaw-type0-ruler-cues-checked.mid; 64 bytes; SHA-256 61024b8de96421d3c9a3efc075fae1678ad287e8abac673e1196156cd17798ae
+cue_unchecked_events	One SMF Type 0 track; no cue events; C4 note 480-1440; CC1 tick 720; pitch bend tick 840; End-of-Track tick 1440
+cue_checked_events	One SMF Type 0 track; #Intro cue tick 0; C4 note 480-1440; CC1 tick 720; pitch bend tick 840; Verse cue tick 960; End-of-Track tick 1440
+observation	Export hidden markers includes markers hidden by the entire project ruler in Type 0; individually hidden markers remain omitted in Type 0 even when that option is checked

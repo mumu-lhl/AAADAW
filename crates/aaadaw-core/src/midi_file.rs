@@ -601,12 +601,18 @@ fn conductor_events(
             MidiMarkerType::Markers => 0x06,
             MidiMarkerType::Cues => 0x07,
         };
-        // REAPER 7.82 shows this option for Type 0 but still omits hidden markers.
-        let include_hidden_markers =
+        // REAPER 7.82 Type 0 includes markers hidden by the project ruler when
+        // requested, but ignores the same option for individually hidden markers.
+        let include_ruler_hidden_markers = options.export_hidden_markers;
+        let include_individually_hidden_markers =
             options.export_hidden_markers && options.file_type == MidiFileType::Type1;
         for marker in project.markers() {
-            let hidden = !project.show_project_markers() || !marker.is_visible();
-            if hidden && !include_hidden_markers {
+            let hidden_by_ruler = !project.show_project_markers();
+            let individually_hidden = !marker.is_visible();
+            if hidden_by_ruler && !include_ruler_hidden_markers {
+                continue;
+            }
+            if individually_hidden && !include_individually_hidden_markers {
                 continue;
             }
             if options.only_markers_starting_with_hash && !marker.name().starts_with('#') {

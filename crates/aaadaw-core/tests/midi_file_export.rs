@@ -885,6 +885,86 @@ fn reaper_782_type_zero_hidden_cue_opt_in_matches_native_bytes() {
 }
 
 #[test]
+fn reaper_782_type_zero_hidden_marker_ruler_is_excluded_by_default() {
+    let project = native_midi_marker_ruler_hidden_fixture_project();
+    let options = MidiExportOptions {
+        file_type: MidiFileType::Type0,
+        export_markers: true,
+        ..MidiExportOptions::for_project(&project)
+    };
+    let actual = encode_standard_midi(&project, options).unwrap();
+    let native = include_bytes!(
+        "../../../docs/verification/reaper-parity/fixtures/menu-export-midi-native-type0-marker-ruler-hidden-excluded.mid"
+    );
+
+    assert_eq!(
+        actual, native,
+        "Type 0 export excludes markers hidden by the ruler by default"
+    );
+}
+
+#[test]
+fn reaper_782_type_zero_hidden_marker_ruler_opt_in_matches_native_bytes() {
+    let project = native_midi_marker_ruler_hidden_fixture_project();
+    let options = MidiExportOptions {
+        file_type: MidiFileType::Type0,
+        export_markers: true,
+        export_hidden_markers: true,
+        ..MidiExportOptions::for_project(&project)
+    };
+    let actual = encode_standard_midi(&project, options).unwrap();
+    let native = include_bytes!(
+        "../../../docs/verification/reaper-parity/fixtures/menu-export-midi-native-type0-marker-ruler-hidden-included.mid"
+    );
+
+    assert_eq!(
+        actual, native,
+        "Type 0 hidden-marker opt-in includes markers hidden by the ruler"
+    );
+}
+
+#[test]
+fn reaper_782_type_zero_hidden_cue_ruler_is_excluded_by_default() {
+    let project = native_midi_marker_ruler_hidden_fixture_project();
+    let options = MidiExportOptions {
+        file_type: MidiFileType::Type0,
+        export_markers: true,
+        marker_type: MidiMarkerType::Cues,
+        ..MidiExportOptions::for_project(&project)
+    };
+    let actual = encode_standard_midi(&project, options).unwrap();
+    let native = include_bytes!(
+        "../../../docs/verification/reaper-parity/fixtures/menu-export-midi-native-type0-cue-ruler-hidden-excluded.mid"
+    );
+
+    assert_eq!(
+        actual, native,
+        "Type 0 cue export excludes cues hidden by the ruler by default"
+    );
+}
+
+#[test]
+fn reaper_782_type_zero_hidden_cue_ruler_opt_in_matches_native_bytes() {
+    let project = native_midi_marker_ruler_hidden_fixture_project();
+    let options = MidiExportOptions {
+        file_type: MidiFileType::Type0,
+        export_markers: true,
+        marker_type: MidiMarkerType::Cues,
+        export_hidden_markers: true,
+        ..MidiExportOptions::for_project(&project)
+    };
+    let actual = encode_standard_midi(&project, options).unwrap();
+    let native = include_bytes!(
+        "../../../docs/verification/reaper-parity/fixtures/menu-export-midi-native-type0-cue-ruler-hidden-included.mid"
+    );
+
+    assert_eq!(
+        actual, native,
+        "Type 0 hidden-cue opt-in includes cues hidden by the ruler"
+    );
+}
+
+#[test]
 fn reaper_782_type_one_tempo_and_meter_changes_match_native_bytes() {
     let mut project = native_midi_fixture_project();
     project
