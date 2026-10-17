@@ -1,0 +1,37 @@
+-- Run in an unsaved, stopped Linux REAPER 7.82 / Default 7 project.
+-- Opens the stock Nudge/Set dialog over two selected audio splits and keeps
+-- the disposable REAPER instance alive for screenshot and interaction checks.
+assert(reaper.GetAppVersion() == "7.82/linux-x86_64")
+assert(reaper.GetLastColorThemeFile():match("Default_7%.0%.ReaperThemeZip$"))
+assert(reaper.GetPlayStateEx(0) == 0)
+local _, project_path = reaper.EnumProjects(-1, "")
+assert(project_path == "", "probe must run in an unsaved project")
+assert(reaper.CountTracks(0) == 0, "probe requires an empty project")
+
+local source_path = assert(os.getenv("AAADAW_SPLIT_SOURCE_PATH"))
+local track_index = reaper.CountTracks(0)
+reaper.InsertTrackAtIndex(track_index, true)
+local track = reaper.GetTrack(0, track_index)
+assert(track)
+reaper.GetSetMediaTrackInfo_String(track, "P_NAME", "Nudge dialog probe", true)
+reaper.SetOnlyTrackSelected(track)
+reaper.SetEditCurPos(0, false, false)
+assert(reaper.InsertMedia(source_path, 0) == 1, "could not insert probe audio")
+local item = reaper.GetTrackMediaItem(track, 0)
+assert(item)
+reaper.SetMediaItemSelected(item, true)
+reaper.SetEditCurPos(5, false, false)
+reaper.Main_OnCommand(40012, 0)
+local left = reaper.GetTrackMediaItem(track, 0)
+local right = reaper.GetTrackMediaItem(track, 1)
+assert(left and right, "probe source should produce two split items")
+reaper.SetMediaItemSelected(left, true)
+reaper.SetMediaItemSelected(right, true)
+reaper.UpdateArrange()
+reaper.Main_OnCommand(41226, 0)
+reaper.UpdateArrange()
+
+local function keep_open()
+  reaper.defer(keep_open)
+end
+keep_open()

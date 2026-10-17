@@ -1,12 +1,15 @@
 #[cfg(feature = "audio-device")]
 use super::SharedPreparedPlayback;
-use super::commands::CommandId;
+use super::audio_export::{RenderBounds, RenderFilenameWildcard, RenderSampleRate, RenderSource};
+use super::commands::{CommandId, ShortcutBindings};
 use super::{SharedAudioAssetManagementWorker, SharedAudioImportWorker};
 use crate::timeline::TimelineEvent;
-use aaadaw_app::{AudioAssetManagementOperation, AudioAssetManagementResult, WavSampleFormat};
+use aaadaw_app::{
+    AudioAssetManagementOperation, AudioAssetManagementResult, WavChannelCount, WavSampleFormat,
+};
 use aaadaw_core::{
-    DawAction, ItemId, MidiControllerData, MidiNoteData, MidiPitchBendData, NoteId, Project,
-    TrackId,
+    DawAction, ItemId, MarkerId, MidiControllerData, MidiNoteData, MidiPitchBendData, NoteId,
+    Project, RegionId, TrackId,
 };
 use aaadaw_engine::MasterOutputCeiling;
 use aaadaw_storage::{ArrangementViewState, ProjectSessionLock};
@@ -48,14 +51,18 @@ pub(crate) enum MainMenu {
     Insert,
     Item,
     Track,
+    Options,
     Actions,
+    Help,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum MenuNavigation {
-    Open,
+    OpenMenu(MainMenu),
     NextMenu,
     PreviousMenu,
+    FirstCommand,
+    LastCommand,
     NextCommand,
     PreviousCommand,
     Activate,
@@ -82,6 +89,7 @@ pub(crate) enum MobilePanel {
     TimeMap,
     FxChain,
     PluginPicker,
+    Routing,
 }
 
 impl MobilePanel {
@@ -94,6 +102,7 @@ impl MobilePanel {
             Self::TimeMap => "Time Map",
             Self::FxChain => "Track Effects",
             Self::PluginPicker => "Choose Plugin",
+            Self::Routing => "Track routing",
         }
     }
 }
@@ -102,16 +111,23 @@ impl MobilePanel {
 pub(crate) enum PathPickerTarget {
     OpenProject,
     SaveProject,
+    SaveProjectTemplate,
     ExportWav,
+    ExportMidi,
     ImportAudio,
     ImportAudioToProject,
     RelinkAudio,
     AddClapPluginPath,
+    ImportShortcutMap,
+    ExportShortcutMap,
+    ImportReaperKeyMap,
+    ExportReaperKeyMap,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum PendingProjectTransition {
     NewProject,
+    CloseProject,
     OpenProject,
     CloseMainWindow(iced::window::Id),
 }
@@ -145,6 +161,119 @@ pub(crate) enum MidiEditorTool {
     Erase,
 }
 
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) enum MidiEditorChannelSelection {
+    #[default]
+    AllChannels,
+    Channel(u8),
+    Multichannel,
+}
+
+impl MidiEditorChannelSelection {
+    pub(crate) const OPTIONS: [Self; 18] = [
+        Self::AllChannels,
+        Self::Channel(0),
+        Self::Channel(1),
+        Self::Channel(2),
+        Self::Channel(3),
+        Self::Channel(4),
+        Self::Channel(5),
+        Self::Channel(6),
+        Self::Channel(7),
+        Self::Channel(8),
+        Self::Channel(9),
+        Self::Channel(10),
+        Self::Channel(11),
+        Self::Channel(12),
+        Self::Channel(13),
+        Self::Channel(14),
+        Self::Channel(15),
+        Self::Multichannel,
+    ];
+
+    pub(crate) fn shows_channel(
+        self,
+        channel: u8,
+        filter_enabled: bool,
+        filter_channels: u16,
+    ) -> bool {
+        if !filter_enabled {
+            return true;
+        }
+        match self {
+            Self::AllChannels => true,
+            Self::Channel(selected) => channel == selected,
+            Self::Multichannel => {
+                filter_channels & (1_u16.checked_shl(u32::from(channel)).unwrap_or(0)) != 0
+            }
+        }
+    }
+}
+
+impl std::fmt::Display for MidiEditorChannelSelection {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::AllChannels => formatter.write_str("All channels"),
+            Self::Channel(channel) => write!(formatter, "Channel {}", channel.saturating_add(1)),
+            Self::Multichannel => formatter.write_str("Multichannel"),
+        }
+    }
+}
+
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum MidiQuantizeScope {
+    #[default]
+    SelectedNotes,
+    AllNotes,
+    AllEvents,
+}
+
+impl MidiQuantizeScope {
+    pub(crate) const OPTIONS: [Self; 3] = [Self::AllNotes, Self::SelectedNotes, Self::AllEvents];
+}
+
+impl std::fmt::Display for MidiQuantizeScope {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(match self {
+            Self::AllNotes => "All notes",
+            Self::SelectedNotes => "Selected notes",
+            Self::AllEvents => "All events",
+        })
+    }
+}
+
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum MidiQuantizeOperation {
+    #[default]
+    Position,
+    PositionAndNoteEnd,
+    PositionAndNoteLength,
+    NoteEndOnly,
+    NoteLengthOnly,
+}
+
+impl MidiQuantizeOperation {
+    pub(crate) const OPTIONS: [Self; 5] = [
+        Self::Position,
+        Self::PositionAndNoteEnd,
+        Self::PositionAndNoteLength,
+        Self::NoteEndOnly,
+        Self::NoteLengthOnly,
+    ];
+}
+
+impl std::fmt::Display for MidiQuantizeOperation {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(match self {
+            Self::Position => "Position",
+            Self::PositionAndNoteEnd => "Position and note end",
+            Self::PositionAndNoteLength => "Position and note length",
+            Self::NoteEndOnly => "Note end only",
+            Self::NoteLengthOnly => "Note length only",
+        })
+    }
+}
+
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum TimeMapTab {
     #[default]
@@ -160,14 +289,147 @@ pub(crate) enum Message {
     ToggleOfflineJobsPanel,
     ToggleTransportDetails,
     Escape,
+    ConfirmFocusedTrackDeletion,
+    CancelFocusedTrackDeletion,
     DismissMidiExpressionContextMenus(iced::window::Id),
     NewProject,
+    CloseProject,
     ShowMainWorkspace(MainWorkspace),
     MobileNavigateBack,
     ToggleMediaBrowserPanel,
+    ToggleMixerPanel,
     OpenSettings,
+    OpenAbout,
+    CloseAbout,
+    OpenActionList,
+    OpenActionMacroEditor,
+    CloseActionList,
+    ActionListQueryChanged(String),
+    ActionListResultsScrolled {
+        offset: f32,
+        height: f32,
+    },
+    ActionListFilterSubmitted,
+    ActionListSelect(String),
+    ActionListSelectBinding(usize),
+    ActionListAddBinding,
+    ActionInputSpecialKey,
+    ActionInputConfirm,
+    ActionInputCancel,
+    ActionListDeleteBinding,
+    ActionListFindShortcut,
+    ActionListOptionsToggled,
+    ActionListRun(bool),
     OpenClapPluginSettings,
     OpenRenderWindow,
+    OpenRenderQueue,
+    OpenMidiExportDialog,
+    CloseMidiExportDialog,
+    BrowseMidiExportDestination,
+    ConfirmMidiExport,
+    ConfirmEmptyMidiExport,
+    CancelEmptyMidiExport,
+    MidiExportDestinationChanged(String),
+    MidiExportFileTypeChanged(aaadaw_core::MidiFileType),
+    MidiExportTimeScopeChanged(aaadaw_core::MidiExportTimeScope),
+    MidiExportItemScopeChanged(aaadaw_core::MidiExportItemScope),
+    MidiExportPpqChanged(String),
+    MidiExportEmbedTempoChanged(bool),
+    MidiExportEmbedSmpteChanged(bool),
+    MidiExportMarkersChanged(bool),
+    MidiExportMarkerTypeChanged(aaadaw_core::MidiMarkerType),
+    MidiExportHashOnlyChanged(bool),
+    MidiExportHiddenMarkersChanged(bool),
+    OpenProjectSettings,
+    CloseProjectSettings,
+    OpenSnapGridSettings,
+    CloseSnapGridSettings,
+    SnapSwingGridChanged(bool),
+    SnapSwingAmountChanged(i16),
+    ToggleSnapSwingGrid,
+    ApplyProjectSettings,
+    SaveProjectSettingsAsDefault,
+    ProjectFrameRateChanged(aaadaw_core::FrameRate),
+    ProjectSettingsBpmBasisChanged(aaadaw_core::BpmBasis),
+    ProjectSettingsBaseRulerLabelSpacingChanged(bool),
+    ProjectSettingsStartTimeChanged(String),
+    ProjectStartTimeMenuChanged(bool),
+    ProjectStartTimeCommandChosen(super::project_settings::start_time_menu::StartTimeCommand),
+    ProjectFrameRateMenuChanged(bool),
+    ProjectSettingsTabChanged(super::project_settings::Tab),
+    ProjectSettingsSampleRateChanged(u32),
+    ProjectSettingsForceWholeSamplesChanged(bool),
+    ProjectSettingsTempoChanged(String),
+    ProjectSettingsMeterNumeratorChanged(String),
+    ProjectSettingsMeterDenominatorChanged(String),
+    ProjectSettingsStartMeasureChanged(String),
+    ProjectNotesTitleChanged(String),
+    ProjectNotesAuthorChanged(String),
+    ProjectNotesEdited(iced::widget::text_editor::Action),
+    ProjectNotesShowOnLoadChanged(bool),
+    ProjectNotesWrapChanged(bool),
+    OpenItemProperties,
+    ToggleItemProperties,
+    OpenItemNudge,
+    CloseItemNudge,
+    ItemNudgeModeChanged(super::item_nudge::Mode),
+    ItemNudgeTargetChanged(super::item_nudge::Target),
+    ItemNudgeUnitChanged(super::item_nudge::Unit),
+    ItemNudgeNoteValueChanged(super::item_nudge::NoteValue),
+    ItemNudgeValueChanged(String),
+    ItemNudgeSnapToUnitChanged(bool),
+    ItemNudgeRelativeSetChanged(bool),
+    ItemNudgeGetCursor,
+    ApplyItemNudgeSet,
+    NudgeSelectedItems(i8),
+    ItemPropertiesUnitChanged(super::item_properties::TimeUnit),
+    ItemPropertyFieldChanged(super::item_properties::ItemPropertyField, String),
+    ItemPropertyNameChanged(String),
+    ItemPropertyTakeRateChanged(String),
+    ItemPropertyLoopSourceChanged(bool),
+    ItemPropertyMuteChanged(bool),
+    BatchItemPropertyMuteChanged(bool),
+    ItemPropertyPhaseChanged(bool),
+    MidiItemPropertyNameChanged(String),
+    MidiItemPropertySourceLoopLengthChanged(String),
+    ToggleSelectedItemsMute,
+    ApplyItemProperties(bool),
+    CloseItemProperties,
+    MarkerNameChanged(String),
+    MarkerNumberChanged(String),
+    MarkerPositionChanged(String),
+    ApplyMarkerProperties,
+    CloseMarkerProperties,
+    RegionNameChanged(String),
+    RegionNumberChanged(String),
+    RegionPositionChanged(String),
+    RegionLengthChanged(String),
+    ApplyRegionProperties,
+    CloseRegionProperties,
+    OpenMarkerManager,
+    OpenRegionRenderMatrix,
+    CloseRegionRenderMatrix,
+    SetRegionRenderMatrixMaster(RegionId, bool),
+    SetRegionRenderMatrixTrack(RegionId, TrackId, bool),
+    ToggleProjectMarkersOnRuler,
+    ToggleProjectRegionsOnRuler,
+    ToggleProjectRegionsAndMarkersOnRuler,
+    ToggleSelectedProjectMarkers,
+    ToggleSelectedProjectRegions,
+    ToggleSelectedProjectRegionsAndMarkers,
+    CloseMarkerManager,
+    MarkerManagerFilterChanged(String),
+    MarkerManagerShowRegionsChanged(bool),
+    MarkerManagerShowMarkersChanged(bool),
+    MarkerManagerClearFilter,
+    MarkerManagerSelectMarker(MarkerId, bool),
+    MarkerManagerSetMarkerVisibility(MarkerId, bool),
+    MarkerManagerSetRegionVisibility(RegionId, bool),
+    MarkerManagerEditMarker(MarkerId),
+    MarkerManagerDeleteMarker(MarkerId),
+    MarkerManagerSelectRegion(RegionId, bool),
+    MarkerManagerEditRegion(aaadaw_core::RegionId),
+    MarkerManagerDeleteRegion(aaadaw_core::RegionId),
     OpenTempoMap,
     OpenMeterMap,
     SelectTimeMapTab(TimeMapTab),
@@ -196,6 +458,12 @@ pub(crate) enum Message {
     ReleaseMidiPreview,
     SelectMidiEditorLane(MidiEditorLane),
     SelectMidiEditorTool(MidiEditorTool),
+    SelectMidiEditorChannel(MidiEditorChannelSelection),
+    SetMidiEditorDrawChannel(u8),
+    ToggleMidiEditorChannelFilter,
+    ToggleMidiEditorFilterChannel(u8),
+    SetMidiEditorFilterChannelsAll(bool),
+    CloseMidiEditorFilter,
     MidiEditorFeedback(String),
     SelectMidiNotes(HashSet<NoteId>),
     CopyMidiNotes(ItemId, Vec<NoteId>),
@@ -254,6 +522,7 @@ pub(crate) enum Message {
     WindowCloseRequested(iced::window::Id),
     WindowClosed(iced::window::Id),
     StartShortcutCapture(String),
+    AddShortcutBinding(String),
     ClearShortcutBinding(String),
     RestoreShortcutDefault(String),
     SelectSettingsCategory(SettingsCategory),
@@ -282,10 +551,31 @@ pub(crate) enum Message {
     },
     PickPath(PathPickerTarget),
     PathPicked(PathPickerTarget, Result<Option<PathBuf>, String>),
+    ActionListImportShortcutMap,
+    ActionListExportShortcutMap,
+    ShortcutMapImported(Result<ShortcutBindings, String>),
+    ShortcutMapExported(Result<(), String>),
+    ActionListImportReaperKeyMap,
+    ActionListExportReaperKeyMap,
+    ReaperKeyMapImported(Result<ShortcutBindings, String>),
+    ReaperKeyMapExported(Result<(), String>),
     AddTrack,
     AddBusTrack,
     SetTrackOutput(TrackId, Option<TrackId>),
+    OpenTrackRouting(TrackId),
+    CloseTrackRouting,
+    RoutingChange(DawAction),
+    RoutingSendDraft(aaadaw_core::SendId, bool, String),
+    CommitRoutingSend(aaadaw_core::SendId),
     AddMidiItem,
+    AddProjectMarker,
+    InsertRegionFromTimeSelection,
+    DeleteProjectRegionNearCursor,
+    EditProjectRegionNearCursor,
+    PreviousProjectMarker,
+    NextProjectMarker,
+    DeleteProjectMarkerNearCursor,
+    MoveProjectMarkerSlot(u8),
     AddMidiNote(ItemId),
     DeleteMidiItem(ItemId),
     MidiItemNameChanged(ItemId, String),
@@ -296,17 +586,36 @@ pub(crate) enum Message {
     AdjustMidiNoteVelocity(ItemId, NoteId, i8),
     DeleteMidiNote(ItemId, NoteId),
     QuantizeMidiItem(ItemId),
+    QuantizeSelectedMidiNotes(ItemId),
+    QuantizeSelectedMidiNotesAndEnds(ItemId),
+    OpenMidiQuantizeDialog(ItemId),
+    SetMidiQuantizeScope(MidiQuantizeScope),
+    SetMidiQuantizeOperation(MidiQuantizeOperation),
+    SetMidiQuantizeStrength(u8),
+    SetMidiQuantizeBypass(bool),
+    CommitMidiQuantize,
+    AcceptMidiQuantize,
+    CancelMidiQuantize,
     DeleteTrack(TrackId),
+    DeleteByFocus,
+    DeleteByFocusNoPrompting,
     MoveTrack(TrackId, i8),
     BeginTrackNameEdit(TrackId),
     TrackNameChanged(TrackId, String),
     CommitTrackName(TrackId),
     ToggleMute(TrackId),
+    TogglePhase(TrackId),
     ToggleSolo(TrackId),
     ToggleRecordArm(TrackId),
     #[cfg(feature = "audio-device")]
     ToggleInputMonitor(TrackId),
     PreviewTrackVolume(TrackId, f32),
+    PreviewMasterVolume(f32),
+    PreviewMasterPan(f32),
+    CommitMasterMix,
+    CancelMasterMix,
+    ResetMasterVolume,
+    ResetMasterPan,
     CancelTrackMixGesture,
     CommitTrackVolume(TrackId),
     PreviewTrackPan(TrackId, f32),
@@ -326,11 +635,30 @@ pub(crate) enum Message {
     CancelAudioItemStartSampleEdit(ItemId),
     DeleteAudioItem(ItemId),
     DeleteSelectedItems,
+    TrimItemsToSelectedArea,
+    CopyLoopOfSelectedArea,
+    EncloseMediaItemsInRazorEdit,
+    PasteItems,
+    SelectAllItems,
+    SelectAllItemsInTrack,
+    SelectAllItemsInTimeSelection,
+    SelectAllItemsOnSelectedTracksInTimeSelection,
+    UnselectAllItems,
+    InvertItemSelection,
+    SelectNextAdjacentItem,
+    SelectPreviousAdjacentItem,
+    SelectItemOnAdjacentTrack(bool),
+    MoveEditCursorToNearestItemEdge(bool),
+    MoveEditCursorToSelectedItemsBoundary(bool),
+    SnapSelectedItemsLeft,
+    SnapSelectedItemsRight,
+    SnapSelectedItemsToNearestPoint,
     DuplicateSelectedItems,
     DuplicateAudioItem(ItemId),
     DuplicateMidiItem(ItemId),
     SplitSelectedItemsAtCursor,
     SplitSelectedItemsAtTimeSelection,
+    HealSplitsInItems,
     Undo,
     Redo,
     ActionQueryChanged(String),
@@ -344,13 +672,22 @@ pub(crate) enum Message {
     EditActionMacro(u64),
     SaveActionMacro,
     DeleteActionMacro(u64),
-    ShortcutPressed(String, iced::keyboard::Modifiers),
+    ShortcutPressed(super::shortcut::ShortcutInput),
     SaveShortcutBindings,
     ResetShortcutBindings,
     RunActionQuery,
     ExecuteCommand(CommandId),
+    ToggleRecentProjectsMenu,
+    OpenRecentProject(PathBuf),
+    ToggleProjectTemplatesMenu,
+    OpenProjectTemplate(PathBuf),
+    ProjectTemplateCopied(PathBuf, Result<(PathBuf, PathBuf), String>),
+    ProjectTemplateSaved(PathBuf, Result<(), String>),
+    ConfirmProjectTemplateOverwrite,
+    CancelProjectTemplateOverwrite,
     OpenProject,
     SaveProject,
+    SaveProjectNewVersion,
     SaveBeforeProjectTransition,
     DiscardProjectChanges,
     CancelProjectTransition,
@@ -377,6 +714,7 @@ pub(crate) enum Message {
         Option<String>,
         SharedProjectSessionLock,
     ),
+    ProjectMidiExported(PathBuf, Result<(), String>),
     UnsavedSessionRecoveryScanned(Result<Vec<PathBuf>, String>),
     RecoverUnsavedSession(PathBuf),
     DiscardUnsavedSession(PathBuf),
@@ -388,6 +726,21 @@ pub(crate) enum Message {
     OfflineRenderFinished(Result<PathBuf, String>),
     SetWavSampleFormat(WavSampleFormat),
     SetWavDither(bool),
+    SetRenderBounds(RenderBounds),
+    SetRenderCustomStart(String),
+    SetRenderCustomEnd(String),
+    SetRenderSampleRate(RenderSampleRate),
+    SetRenderSource(RenderSource),
+    SetRenderStemsPreFader(bool),
+    SetRenderChannels(WavChannelCount),
+    SetRenderPeakNormalization(bool),
+    SetRenderPeakTarget(String),
+    SetRenderTailEnabled(bool),
+    SetRenderTailDuration(String),
+    SetRenderFilenamePattern(String),
+    SetRenderWildcardAllowSlash(bool),
+    ToggleRenderWildcardMenu,
+    InsertRenderFilenameWildcard(RenderFilenameWildcard),
     FreezeTrack(TrackId),
     FreezeTrackFinished(Result<FreezeTrackResult, String>),
     UnfreezeTrack(TrackId),
@@ -402,6 +755,10 @@ pub(crate) enum Message {
     RecordingRecoveryCleaned(Result<Vec<PathBuf>, String>),
     #[cfg(feature = "audio-device")]
     TogglePlayback,
+    #[cfg(feature = "audio-device")]
+    ToggleRepeat,
+    #[cfg(feature = "audio-device")]
+    TogglePlayStop,
     #[cfg(feature = "audio-device")]
     StartPlayback,
     #[cfg(feature = "audio-device")]
@@ -500,4 +857,40 @@ pub(crate) struct FreezeTrackResult {
     pub media_ref: String,
     pub start_sample: u64,
     pub length_samples: u64,
+}
+
+#[cfg(test)]
+mod midi_channel_selection_tests {
+    use super::MidiEditorChannelSelection;
+
+    #[test]
+    fn channel_filter_matches_all_single_and_multiple_channel_modes() {
+        assert!(MidiEditorChannelSelection::AllChannels.shows_channel(15, true, 0));
+        assert!(!MidiEditorChannelSelection::Channel(2).shows_channel(1, true, u16::MAX));
+        assert!(MidiEditorChannelSelection::Channel(2).shows_channel(2, true, 0));
+        assert!(!MidiEditorChannelSelection::Multichannel.shows_channel(1, true, 0b0101));
+        assert!(MidiEditorChannelSelection::Multichannel.shows_channel(2, true, 0b0100));
+        assert!(MidiEditorChannelSelection::Multichannel.shows_channel(15, false, 0));
+    }
+
+    #[test]
+    fn midi_channel_choices_cover_reaper_channel_menu() {
+        assert_eq!(MidiEditorChannelSelection::OPTIONS.len(), 18);
+        assert_eq!(
+            MidiEditorChannelSelection::OPTIONS[0].to_string(),
+            "All channels"
+        );
+        assert_eq!(
+            MidiEditorChannelSelection::OPTIONS[1].to_string(),
+            "Channel 1"
+        );
+        assert_eq!(
+            MidiEditorChannelSelection::OPTIONS[16].to_string(),
+            "Channel 16"
+        );
+        assert_eq!(
+            MidiEditorChannelSelection::OPTIONS[17].to_string(),
+            "Multichannel"
+        );
+    }
 }

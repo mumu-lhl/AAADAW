@@ -1,0 +1,6 @@
+KEY 1 113 40605 0		 # Main : F2 : Show action list
+KEY 1 116 40071 0		 # Main : F5 : Options: Show snap/grid settings
+KEY 1 117 40001 0		 # Main : F6 : Track: Insert new track
+KEY 1 77 6 0		 # Main : M : Track: Toggle mute for selected tracks
+KEY 1 82 9 0		 # Main : R : Track: Toggle record arm for selected tracks
+KEY 1 83 7 0		 # Main : S : Track: Toggle solo for selected tracks

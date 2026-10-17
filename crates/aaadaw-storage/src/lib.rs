@@ -8,7 +8,8 @@ mod project_lock;
 mod store;
 
 pub use arrangement_view::{
-    ArrangementViewState, FxAutomationLaneViewState, VolumeAutomationLaneViewState,
+    ArrangementTimeRangeState, ArrangementViewState, FolderCompactViewState,
+    FxAutomationLaneViewState, GridDivision, VolumeAutomationLaneViewState,
 };
 pub use project_lock::ProjectSessionLock;
 

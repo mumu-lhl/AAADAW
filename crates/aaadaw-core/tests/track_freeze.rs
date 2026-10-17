@@ -27,6 +27,7 @@ fn project_with_instrument_midi() -> (Project, aaadaw_core::TrackId) {
         .apply(DawAction::AddMidiNotes {
             item_id,
             notes: vec![MidiNoteData {
+                channel: 0,
                 pitch: 60,
                 tick: 0,
                 duration: 480,
@@ -58,6 +59,18 @@ fn freezing_is_one_undoable_source_preserving_action() {
     assert_eq!(project.midi_items().len(), 1);
 
     let frozen = project.snapshot();
+    assert!(
+        project
+            .apply(DawAction::SetTrackFolder {
+                track_id,
+                enabled: true
+            })
+            .is_err()
+    );
+    assert_eq!(project.snapshot(), frozen);
+    let mut invalid_folder = frozen.clone();
+    invalid_folder.tracks[0].is_folder = true;
+    assert!(Project::from_snapshot(invalid_folder).is_err());
     assert_eq!(
         Project::from_snapshot(frozen.clone()).unwrap().snapshot(),
         frozen
@@ -128,6 +141,7 @@ fn failed_freeze_and_frozen_source_edits_leave_the_project_unchanged() {
             .apply(DawAction::AddMidiNotes {
                 item_id: midi_item_id,
                 notes: vec![MidiNoteData {
+                    channel: 0,
                     pitch: 64,
                     tick: 0,
                     duration: 120,

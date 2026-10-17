@@ -1,0 +1,6 @@
+version	7.82/linux-x86_64
+theme	Default_7.0.ReaperThemeZip
+project	/workspace/AAADAW/target/type0-hidden-ruler-intersection/intersection.rpp
+marker	1	#Intro	0
+marker	2	Verse	0.5
+marker	3	#Hidden	1

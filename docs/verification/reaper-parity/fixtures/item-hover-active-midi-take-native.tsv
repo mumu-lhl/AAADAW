@@ -1,0 +1,16 @@
+captured_at_utc	2026-10-16
+version	7.82/linux-x86_64
+theme	Default_7.0.ReaperThemeZip
+platform	Linux x86_64; isolated Xvfb :349; X11; 1280x800x24
+configuration	Fresh -cfgfile profiles copied from the clean Default 7 profile; no custom keymap, mouse map, or third-party extensions
+probe_script	scripts/reaper_parity/probe-item-hover-active-midi-take.lua
+fixture	Track A has MIDI items/takes A1 (pitch 60) and A2 (pitch 62); Track B has B1 (pitch 64) and B2 (pitch 65).
+procedure	Real X11 clicks set item selections. Then REAPER Main action 40153 opens the built-in MIDI editor. The probe records MIDIEditor_GetTake and its owning item.
+case	action_id	pointer_xy	hovered_item	selection_before	selection_api_order_before	selection_after	selection_api_order_after	active_take	active_item	active_note_pitch
+open_editor_baseline	0	800,140	A2	A1,B1	A1,B1	A1,B1	A1,B1	A1	A1	60
+add_A2_then_open_editor	40529	800,140	A2	A1,B1	A1,B1	A1,A2,B1	A1,A2,B1	A1	A1	60
+toggle_A1_off_then_open_editor	40530	500,140	A1	A1,A2,B1	A1,A2,B1	A2,B1	A2,B1	A2	A2	62
+observation	GetSelectedMediaItem enumeration follows project order. With A1/B1 selected and B1 clicked last, MIDIEditor_GetTake is A1. Adding hovered A2 with 40529 leaves the active editor take at A1. After 40530 removes A1 from A1/A2/B1, the editor take becomes A2, the first remaining item in project order. This is editor-specific take selection; it does not expose a separate Arrange-level active item.
+screenshot_baseline	item-hover-active-midi-take-baseline-native.png; SHA-256 2d0b3d33f0c82b14b4f73d995d2a199a81cafa0a7e9e562996708faa39ed3ca0
+screenshot_40529	item-hover-active-midi-take-40529-native.png; SHA-256 71242cddc973dcbc9b84064f9f7879ed0660a843227399551aae5013339e54a2
+screenshot_40530	item-hover-active-midi-take-40530-native.png; SHA-256 4774f73a0445e5578204c98f2641bf357ab5266c17d5e462450e4800d77d63fd

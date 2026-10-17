@@ -1,0 +1,49 @@
+version	7.82/linux-x86_64
+theme	Default_7.0.ReaperThemeZip
+action	40548	Item: Heal splits in items
+split_setup_action	40012	Item: Split items at edit or play cursor (select right)
+transport	stopped
+right_only_state_change_delta	0
+right_only	0	2
+right_only_item	0	0	0.000000000	5.000000000	0.000000000	unselected
+right_only_item	0	1	5.000000000	10.000000000	0.000000000	selected
+left_only_state_change_delta	0
+left_only	0	2
+left_only_item	0	0	0.000000000	5.000000000	0.000000000	selected
+left_only_item	0	1	5.000000000	10.000000000	0.000000000	unselected
+both_selected_state_change_delta	0
+both_selected	0	2
+both_selected_item	0	0	0.000000000	5.000000000	0.000000000	selected
+both_selected_item	0	1	5.000000000	10.000000000	0.000000000	selected
+no_selection_state_change_delta	0
+no_selection	0	2
+no_selection_item	0	0	0.000000000	5.000000000	0.000000000	unselected
+no_selection_item	0	1	5.000000000	10.000000000	0.000000000	unselected
+right_with_gap_state_change_delta	0
+right_with_gap	0	2
+right_with_gap_item	0	0	5.000000000	10.000000000	0.000000000	selected
+right_with_gap_item	0	1	5.500000000	10.500000000	0.000000000	selected
+audio_right_only_state_change_delta	0
+audio_right_only	0	2
+audio_right_only_item	0	0	0.000000000	5.000000000	0.000000000	unselected
+audio_right_only_item	0	1	5.000000000	10.000000000	5.000000000	selected
+audio_both_selected_state_change_delta	1
+audio_both_selected	0	1
+audio_both_selected_item	0	0	0.000000000	10.000000000	0.000000000	selected
+audio_no_selection_state_change_delta	0
+audio_no_selection	0	2
+audio_no_selection_item	0	0	0.000000000	5.000000000	0.000000000	unselected
+audio_no_selection_item	0	1	5.000000000	10.000000000	5.000000000	unselected
+audio_right_with_gap_state_change_delta	0
+audio_right_with_gap	0	2
+audio_right_with_gap_item	0	0	0.000000000	5.000000000	0.000000000	selected
+audio_right_with_gap_item	0	1	5.500000000	10.500000000	5.000000000	selected
+audio_source_discontinuity_state_change_delta	0
+audio_source_discontinuity	0	2
+audio_source_discontinuity_item	0	0	0.000000000	5.000000000	0.000000000	selected
+audio_source_discontinuity_item	0	1	5.000000000	10.000000000	4.500000000	selected
+audio_three_segments_state_change_delta	1
+audio_three_segments	0	1
+audio_three_segments_item	0	0	0.000000000	10.000000000	0.000000000	selected
+heal_before_project	item-heal-splits-before.rpp
+heal_after_project	item-heal-splits-after.rpp

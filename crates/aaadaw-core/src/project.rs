@@ -7,14 +7,160 @@ use crate::snapshot::{
 use crate::timebase::{MeterMap, TempoMap};
 use crate::{
     ActionError, AudioItem, DawAction, FxParameterAutomationLane, FxParameterAutomationPoint,
-    ItemId, MAX_TRACK_FX_PARAMETER_AUTOMATION_LANES, MidiControllerData, MidiItem, MidiNote,
-    MidiPitchBendData, MusicalPosition, NoteId, ProjectSettings, TempoCurve, TimeSignature,
-    TimebaseError, Track, TrackFxPlugin, TrackId, TrackInstrument,
+    ItemId, MAX_TRACK_FX_PARAMETER_AUTOMATION_LANES, MarkerId, MidiControllerData, MidiItem,
+    MidiNote, MidiNoteQuantizeOperation, MidiPitchBendData, MusicalPosition, NoteId, ProjectMarker,
+    ProjectMarkerSnapshot, ProjectRegion, ProjectRegionSnapshot, ProjectSettings, RazorEditArea,
+    RegionId, TempoCurve, TimeSignature, TimebaseError, Track, TrackFxPlugin, TrackId,
+    TrackInstrument,
 };
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct QuantizedMidiNoteChange {
+    note_id: NoteId,
+    before_tick: u64,
+    before_duration: u64,
+    after_tick: u64,
+    after_duration: u64,
+}
+
+fn quantized_midi_note_changes(
+    item: &MidiItem,
+    selected_note_ids: Option<&HashSet<NoteId>>,
+    grid: crate::GridFraction,
+    strength: f32,
+    ppq: u32,
+    operation: MidiNoteQuantizeOperation,
+) -> Result<Vec<QuantizedMidiNoteChange>, ActionError> {
+    if !strength.is_finite() || !(0.0..=1.0).contains(&strength) {
+        return Err(ActionError::InvalidQuantizeStrength);
+    }
+    let grid_ticks = grid
+        .ticks(ppq)
+        .map_err(|_| ActionError::InvalidQuantizeGrid)?;
+    let quantize_absolute_tick = |absolute_tick| quantize_tick(absolute_tick, grid_ticks, strength);
+    let mut changes = Vec::new();
+    let quantize_position = midi_quantize_includes_note_position(operation);
+    let quantize_end = matches!(
+        operation,
+        MidiNoteQuantizeOperation::PositionAndNoteEnd | MidiNoteQuantizeOperation::NoteEndOnly
+    );
+    let quantize_length = matches!(
+        operation,
+        MidiNoteQuantizeOperation::PositionAndNoteLength
+            | MidiNoteQuantizeOperation::NoteLengthOnly
+    );
+    for note in item.notes.iter() {
+        if selected_note_ids.is_some_and(|selected| !selected.contains(&note.id)) {
+            continue;
+        }
+        let absolute_tick = item
+            .project_tick_at_content_tick(note.data.tick)
+            .ok_or(ActionError::InvalidMidiNote)?;
+        let quantized_absolute = if quantize_position {
+            quantize_absolute_tick(absolute_tick)?
+        } else {
+            absolute_tick
+        };
+        let tick = midi_source_tick_at_project_tick(item, quantized_absolute)
+            .ok_or(ActionError::InvalidMidiNote)?;
+        let duration = if quantize_end {
+            let absolute_end = absolute_tick
+                .checked_add(note.data.duration)
+                .ok_or(ActionError::InvalidMidiNote)?;
+            let mut quantized_end = quantize_absolute_tick(absolute_end)?;
+            if quantized_end <= quantized_absolute {
+                quantized_end = quantized_absolute
+                    .checked_add(grid_ticks)
+                    .ok_or(ActionError::InvalidMidiNote)?;
+            }
+            quantized_end - quantized_absolute
+        } else if quantize_length {
+            let duration = quantize_absolute_tick(note.data.duration)?;
+            duration.max(1)
+        } else {
+            note.data.duration
+        };
+        if !valid_midi_note_source_range(item, tick, duration) {
+            return Err(ActionError::InvalidMidiNote);
+        }
+        if tick != note.data.tick || duration != note.data.duration {
+            changes.push(QuantizedMidiNoteChange {
+                note_id: note.id,
+                before_tick: note.data.tick,
+                before_duration: note.data.duration,
+                after_tick: tick,
+                after_duration: duration,
+            });
+        }
+    }
+    Ok(changes)
+}
+
+fn quantize_tick(tick: u64, grid_ticks: u64, strength: f32) -> Result<u64, ActionError> {
+    let lower = tick / grid_ticks * grid_ticks;
+    let remainder = tick - lower;
+    let round_up_threshold = grid_ticks / 2 + grid_ticks % 2;
+    let nearest = if remainder >= round_up_threshold {
+        lower.checked_add(grid_ticks).unwrap_or(lower)
+    } else {
+        lower
+    };
+    let distance = nearest as i128 - tick as i128;
+    let adjustment = (distance as f64 * f64::from(strength)).round() as i128;
+    u64::try_from(tick as i128 + adjustment).map_err(|_| ActionError::InvalidMidiNote)
+}
+
+fn midi_quantize_includes_note_position(operation: MidiNoteQuantizeOperation) -> bool {
+    matches!(
+        operation,
+        MidiNoteQuantizeOperation::Position
+            | MidiNoteQuantizeOperation::PositionAndNoteEnd
+            | MidiNoteQuantizeOperation::PositionAndNoteLength
+    )
+}
+
+fn quantized_midi_event_tick(
+    item: &MidiItem,
+    tick: u64,
+    grid_ticks: u64,
+    strength: f32,
+) -> Result<u64, ActionError> {
+    let absolute_tick = item
+        .project_tick_at_content_tick(tick)
+        .ok_or(ActionError::InvalidMidiNote)?;
+    let quantized_absolute = quantize_tick(absolute_tick, grid_ticks, strength)?;
+    midi_source_tick_at_project_tick(item, quantized_absolute).ok_or(ActionError::InvalidMidiNote)
+}
+
+fn valid_audio_source_offset(
+    source_offset_samples: i64,
+    loop_source: bool,
+    section_start_samples: Option<u64>,
+    section_length_samples: Option<u64>,
+) -> bool {
+    if loop_source && source_offset_samples < 0 {
+        return false;
+    }
+    match (section_start_samples, section_length_samples) {
+        (None, None) => true,
+        (Some(start), Some(length)) => {
+            if start.checked_add(length).is_none() || length == 0 {
+                return false;
+            }
+            if loop_source {
+                u64::try_from(source_offset_samples).is_ok_and(|offset| offset < length)
+            } else {
+                true
+            }
+        }
+        _ => false,
+    }
+}
+
 const MAX_VOLUME_AUTOMATION_POINTS: usize = 65_536;
+const MAX_RAZOR_EDIT_AREAS_PER_TRACK: usize = 65_536;
 pub const MAX_FX_PARAMETER_AUTOMATION_POINTS: usize = 65_536;
 
 fn valid_volume_automation(points: &[crate::VolumeAutomationPoint]) -> bool {
@@ -27,6 +173,17 @@ fn valid_volume_automation(points: &[crate::VolumeAutomationPoint]) -> bool {
             .all(|pair| pair[0].sample() < pair[1].sample())
 }
 
+fn valid_razor_edit_areas(areas: &[RazorEditArea]) -> bool {
+    areas.len() <= MAX_RAZOR_EDIT_AREAS_PER_TRACK
+        && areas
+            .iter()
+            .all(|area| area.start_sample() < area.end_sample())
+        && areas.windows(2).all(|pair| {
+            pair[0].start_sample() < pair[1].start_sample()
+                && pair[0].end_sample() <= pair[1].start_sample()
+        })
+}
+
 fn valid_fx_parameter_automation(points: &[FxParameterAutomationPoint]) -> bool {
     points.len() <= MAX_FX_PARAMETER_AUTOMATION_POINTS
         && points.iter().all(|point| point.value().is_finite())
@@ -35,25 +192,360 @@ fn valid_fx_parameter_automation(points: &[FxParameterAutomationPoint]) -> bool 
             .all(|pair| pair[0].sample() < pair[1].sample())
 }
 
-fn valid_track_routing(tracks: &[crate::Track]) -> bool {
+fn valid_project_markers(markers: &[ProjectMarker]) -> bool {
+    let mut ids = HashSet::with_capacity(markers.len());
+    markers.iter().all(|marker| {
+        marker.position_ticks <= crate::timebase::MAX_EXACT_FLOAT_POSITION
+            && (1..=crate::MAX_PROJECT_MARKER_NUMBER).contains(&marker.number)
+            && crate::markers::valid_marker_name(&marker.name)
+            && ids.insert(marker.id)
+    }) && markers.windows(2).all(|pair| {
+        (pair[0].position_ticks, pair[0].id.value()) <= (pair[1].position_ticks, pair[1].id.value())
+    })
+}
+
+fn lowest_available_marker_number(markers: &[ProjectMarker]) -> Option<u32> {
+    let used: HashSet<_> = markers.iter().map(ProjectMarker::number).collect();
+    let mut candidate = 1;
+    while used.contains(&candidate) {
+        candidate = candidate.checked_add(1)?;
+        if candidate > crate::MAX_PROJECT_MARKER_NUMBER {
+            return None;
+        }
+    }
+    Some(candidate)
+}
+
+fn valid_project_regions(regions: &[ProjectRegion]) -> bool {
+    let mut ids = HashSet::with_capacity(regions.len());
+    regions.iter().all(|region| {
+        let mut render_track_ids = HashSet::with_capacity(region.render_track_ids.len());
+        region.start_ticks < region.end_ticks
+            && region.end_ticks <= crate::MAX_PROJECT_REGION_TICKS
+            && (1..=crate::MAX_PROJECT_REGION_NUMBER).contains(&region.number)
+            && crate::markers::valid_marker_name(&region.name)
+            && region
+                .render_track_ids
+                .iter()
+                .all(|track_id| render_track_ids.insert(*track_id))
+            && ids.insert(region.id)
+    }) && regions.windows(2).all(|pair| {
+        (pair[0].start_ticks, pair[0].id.value()) <= (pair[1].start_ticks, pair[1].id.value())
+    })
+}
+
+fn lowest_available_region_number(regions: &[ProjectRegion]) -> Option<u32> {
+    let used: HashSet<_> = regions.iter().map(ProjectRegion::number).collect();
+    let mut candidate = 1;
+    while used.contains(&candidate) {
+        candidate = candidate.checked_add(1)?;
+        if candidate > crate::MAX_PROJECT_REGION_NUMBER {
+            return None;
+        }
+    }
+    Some(candidate)
+}
+
+type TrackStructure = Vec<(TrackId, Option<TrackId>, bool)>;
+
+#[derive(Clone, Debug, PartialEq)]
+struct TrackSampleClockSnapshot {
+    track_id: TrackId,
+    volume_automation: Vec<crate::VolumeAutomationPoint>,
+    fx_parameter_automation: Vec<Vec<FxParameterAutomationLane>>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+struct ProjectSampleClockSnapshot {
+    tempo_map: TempoMap,
+    audio_items: Vec<AudioItem>,
+    tracks: Vec<TrackSampleClockSnapshot>,
+}
+
+impl ProjectSampleClockSnapshot {
+    fn capture(state: &ProjectState) -> Self {
+        Self {
+            tempo_map: state.tempo_map.clone(),
+            audio_items: state.audio_items.clone(),
+            tracks: state
+                .tracks
+                .iter()
+                .map(|track| TrackSampleClockSnapshot {
+                    track_id: track.id,
+                    volume_automation: track.volume_automation.clone(),
+                    fx_parameter_automation: track
+                        .fx_chain
+                        .iter()
+                        .map(|plugin| plugin.parameter_automation().to_vec())
+                        .collect(),
+                })
+                .collect(),
+        }
+    }
+
+    fn rescale(&mut self, sample_rate: u32) -> Result<(), ActionError> {
+        let old_sample_rate = self.tempo_map.settings().sample_rate();
+        if sample_rate == 0 {
+            return Err(ActionError::InvalidProjectSampleRate);
+        }
+        if sample_rate == old_sample_rate {
+            return Ok(());
+        }
+        let scale = |sample| rescale_project_sample(sample, old_sample_rate, sample_rate);
+
+        self.tempo_map
+            .set_sample_rate(sample_rate)
+            .map_err(|error| match error {
+                TimebaseError::InvalidSampleRate => ActionError::InvalidProjectSampleRate,
+                TimebaseError::InvalidTempo => ActionError::InvalidTempoBpm,
+                _ => ActionError::TempoMapOutOfRange,
+            })?;
+
+        for item in &mut self.audio_items {
+            item.start_sample = scale(item.start_sample)?;
+            item.length_samples = scale(item.length_samples)?.max(1);
+            if item.start_sample.checked_add(item.length_samples).is_none()
+                || item.start_sample + item.length_samples
+                    > crate::timebase::MAX_EXACT_FLOAT_POSITION
+            {
+                return Err(ActionError::ProjectSampleClockOutOfRange);
+            }
+            let ratio = f64::from(sample_rate) / f64::from(old_sample_rate);
+            let scale_fade = |fade: crate::AudioFade| {
+                crate::AudioFade::with_curve(fade.length_samples() * ratio, fade.curve())
+            };
+            item.fades = crate::AudioItemFades {
+                fade_in: scale_fade(item.fades.fade_in)?,
+                fade_out: scale_fade(item.fades.fade_out)?,
+            };
+        }
+
+        for track in &mut self.tracks {
+            for point in &mut track.volume_automation {
+                let sample = scale(point.sample())?;
+                *point = crate::VolumeAutomationPoint::new(sample, point.gain_db())
+                    .ok_or(ActionError::InvalidVolumeAutomation)?;
+            }
+            if track
+                .volume_automation
+                .windows(2)
+                .any(|pair| pair[0].sample() >= pair[1].sample())
+            {
+                return Err(ActionError::ProjectSampleRateAutomationCollision);
+            }
+            for lanes in &mut track.fx_parameter_automation {
+                for lane in lanes {
+                    let points = lane
+                        .points()
+                        .iter()
+                        .map(|point| {
+                            FxParameterAutomationPoint::new(scale(point.sample())?, point.value())
+                                .ok_or(ActionError::InvalidTrackFxParameterAutomation)
+                        })
+                        .collect::<Result<Vec<_>, _>>()?;
+                    if points
+                        .windows(2)
+                        .any(|pair| pair[0].sample() >= pair[1].sample())
+                    {
+                        return Err(ActionError::ProjectSampleRateAutomationCollision);
+                    }
+                    *lane = FxParameterAutomationLane::new(lane.parameter_id(), points)
+                        .ok_or(ActionError::InvalidTrackFxParameterAutomation)?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn matches(&self, state: &ProjectState) -> bool {
+        Self::capture(state) == *self
+    }
+
+    fn restore(&self, state: &mut ProjectState) -> Result<(), ActionError> {
+        if state.tracks.len() != self.tracks.len()
+            || state
+                .tracks
+                .iter()
+                .zip(&self.tracks)
+                .any(|(track, snapshot)| {
+                    track.id != snapshot.track_id
+                        || track.fx_chain.len() != snapshot.fx_parameter_automation.len()
+                })
+        {
+            return Err(ActionError::HistoryInvariantViolation);
+        }
+        state.tempo_map = self.tempo_map.clone();
+        state.audio_items = self.audio_items.clone();
+        for (track, snapshot) in state.tracks.iter_mut().zip(&self.tracks) {
+            track.volume_automation = snapshot.volume_automation.clone();
+            for (plugin, lanes) in track
+                .fx_chain
+                .iter_mut()
+                .zip(&snapshot.fx_parameter_automation)
+            {
+                let old_ids: Vec<_> = plugin
+                    .parameter_automation()
+                    .iter()
+                    .map(FxParameterAutomationLane::parameter_id)
+                    .collect();
+                let mut restored = plugin.clone();
+                for parameter_id in old_ids {
+                    restored = restored.with_parameter_automation(parameter_id, None);
+                }
+                for lane in lanes {
+                    restored =
+                        restored.with_parameter_automation(lane.parameter_id(), Some(lane.clone()));
+                }
+                *plugin = restored;
+            }
+        }
+        Ok(())
+    }
+}
+
+fn rescale_project_sample(sample: u64, old_rate: u32, new_rate: u32) -> Result<u64, ActionError> {
+    if old_rate == 0 || new_rate == 0 {
+        return Err(ActionError::InvalidProjectSampleRate);
+    }
+    let numerator = u128::from(sample) * u128::from(new_rate);
+    let denominator = u128::from(old_rate);
+    let quotient = numerator / denominator;
+    let remainder = numerator % denominator;
+    let rounded = quotient + u128::from(remainder * 2 >= denominator);
+    let scaled = u64::try_from(rounded).map_err(|_| ActionError::ProjectSampleClockOutOfRange)?;
+    if scaled > crate::timebase::MAX_EXACT_FLOAT_POSITION {
+        return Err(ActionError::ProjectSampleClockOutOfRange);
+    }
+    Ok(scaled)
+}
+
+fn track_structure(tracks: &[Track]) -> TrackStructure {
+    tracks
+        .iter()
+        .map(|track| (track.id, track.parent_track, track.is_folder))
+        .collect()
+}
+
+fn valid_track_hierarchy(tracks: &[Track]) -> bool {
+    let mut ancestors = Vec::new();
+    for track in tracks {
+        match track.parent_track {
+            None => ancestors.clear(),
+            Some(parent) => {
+                let Some(index) = ancestors.iter().position(|id| *id == parent) else {
+                    return false;
+                };
+                ancestors.truncate(index + 1);
+            }
+        }
+        if track.is_folder {
+            ancestors.push(track.id);
+        }
+    }
+    true
+}
+
+fn is_descendant(tracks: &[Track], id: TrackId, ancestor: TrackId) -> bool {
+    let mut parent = tracks
+        .iter()
+        .find(|track| track.id == id)
+        .and_then(|track| track.parent_track);
+    for _ in 0..tracks.len() {
+        let Some(id) = parent else {
+            return false;
+        };
+        if id == ancestor {
+            return true;
+        }
+        parent = tracks
+            .iter()
+            .find(|track| track.id == id)
+            .and_then(|track| track.parent_track);
+    }
+    false
+}
+
+fn reparent_tracks(
+    tracks: &[Track],
+    source: TrackId,
+    parent: Option<TrackId>,
+) -> Result<Vec<Track>, ActionError> {
+    if !tracks.iter().any(|track| track.id == source) {
+        return Err(ActionError::TrackNotFound { track_id: source });
+    }
+    if parent.is_some_and(|id| {
+        id == source
+            || is_descendant(tracks, id, source)
+            || !tracks.iter().any(|track| track.id == id && track.is_folder)
+    }) {
+        return Err(ActionError::InvalidTrackHierarchy);
+    }
+    if tracks
+        .iter()
+        .find(|track| track.id == source)
+        .unwrap()
+        .parent_track
+        == parent
+    {
+        return Ok(tracks.to_vec());
+    }
+    let (mut group, mut remaining): (Vec<_>, Vec<_>) = tracks
+        .iter()
+        .cloned()
+        .partition(|track| track.id == source || is_descendant(tracks, track.id, source));
+    group[0].parent_track = parent;
+    let index = match parent {
+        None => remaining.len(),
+        Some(id) => {
+            remaining.iter().position(|track| track.id == id).unwrap()
+                + 1
+                + remaining
+                    .iter()
+                    .filter(|track| is_descendant(&remaining, track.id, id))
+                    .count()
+        }
+    };
+    remaining.splice(index..index, group);
+    Ok(remaining)
+}
+
+fn structure_change(before: &[Track], after: &[Track]) -> Result<ProjectEvent, ActionError> {
+    if !valid_track_hierarchy(after) {
+        return Err(ActionError::InvalidTrackHierarchy);
+    }
+    if !valid_track_routing(after) {
+        return Err(ActionError::TrackRoutingCycle);
+    }
+    Ok(ProjectEvent::TrackStructureChanged {
+        before: track_structure(before),
+        after: track_structure(after),
+    })
+}
+
+fn routing_destinations(track: &Track) -> impl Iterator<Item = TrackId> + '_ {
+    // Dormant connections remain part of validation so toggling mute/main send
+    // cannot introduce a cycle that was hidden while the route was disabled.
+    track
+        .effective_output_track()
+        .into_iter()
+        .chain(track.sends.iter().map(|send| send.destination))
+}
+
+fn valid_track_routing(tracks: &[Track]) -> bool {
     for source in tracks {
-        let mut next = source.output_track;
-        let mut visited = 0;
-        while let Some(target_id) = next {
+        let mut pending: Vec<_> = routing_destinations(source).collect();
+        let mut visited = HashSet::new();
+        while let Some(target_id) = pending.pop() {
             if target_id == source.id {
                 return false;
             }
-            let Some(target) = tracks
-                .iter()
-                .find(|track| track.id == target_id && track.is_bus)
-            else {
+            if !visited.insert(target_id) {
+                continue;
+            }
+            let Some(target) = tracks.iter().find(|track| track.id == target_id) else {
                 return false;
             };
-            visited += 1;
-            if visited > tracks.len() {
-                return false;
-            }
-            next = target.output_track;
+            pending.extend(routing_destinations(target));
         }
     }
     true
@@ -78,24 +570,131 @@ pub struct FxParameterChange {
     pub value: f64,
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 struct ProjectState {
+    notes: crate::ProjectNotes,
+    master_mix: crate::MasterMix,
+    pan_mode: crate::PanMode,
+    frame_rate: crate::FrameRate,
+    base_ruler_label_spacing_on_measure: bool,
+    project_start_time_offset_seconds: f64,
+    project_start_time_fractional_frame_offset_allowed: bool,
     tracks: Vec<Track>,
     audio_items: Vec<AudioItem>,
     midi_items: Vec<MidiItem>,
+    markers: Vec<ProjectMarker>,
+    show_project_markers: bool,
+    show_project_regions: bool,
+    regions: Vec<ProjectRegion>,
     tempo_map: TempoMap,
     meter_map: MeterMap,
+}
+
+impl Default for ProjectState {
+    fn default() -> Self {
+        Self {
+            notes: crate::ProjectNotes::default(),
+            master_mix: crate::MasterMix::default(),
+            pan_mode: crate::PanMode::default(),
+            frame_rate: crate::FrameRate::default(),
+            base_ruler_label_spacing_on_measure: true,
+            project_start_time_offset_seconds: 0.0,
+            project_start_time_fractional_frame_offset_allowed: false,
+            tracks: Vec::new(),
+            audio_items: Vec::new(),
+            midi_items: Vec::new(),
+            markers: Vec::new(),
+            show_project_markers: true,
+            show_project_regions: true,
+            regions: Vec::new(),
+            tempo_map: TempoMap::default(),
+            meter_map: MeterMap::default(),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Default)]
 struct IdAllocator {
     next_track_id: u64,
+    next_send_id: u64,
     next_item_id: u64,
     next_note_id: u64,
+    next_marker_id: u64,
+    next_region_id: u64,
 }
 
 #[derive(Clone, Debug, PartialEq)]
 enum ProjectEvent {
+    ProjectNotesChanged {
+        before: crate::ProjectNotes,
+        after: crate::ProjectNotes,
+    },
+    FrameRateChanged {
+        before: crate::FrameRate,
+        after: crate::FrameRate,
+    },
+    ProjectSampleRateChanged {
+        before: ProjectSampleClockSnapshot,
+        after: ProjectSampleClockSnapshot,
+    },
+    ForceTempoChangesToWholeSamplesChanged {
+        before: bool,
+        after: bool,
+    },
+    BpmBasisChanged {
+        before: crate::BpmBasis,
+        after: crate::BpmBasis,
+    },
+    BaseRulerLabelSpacingChanged {
+        before: bool,
+        after: bool,
+    },
+    ProjectStartTimeOffsetChanged {
+        before: f64,
+        after: f64,
+    },
+    ProjectStartTimeFractionalFrameOffsetAllowedChanged {
+        before: bool,
+        after: bool,
+    },
+    ProjectStartMeasureChanged {
+        before: i32,
+        after: i32,
+    },
+    ProjectMarkersChanged {
+        before: Vec<ProjectMarker>,
+        after: Vec<ProjectMarker>,
+    },
+    ProjectMarkerLaneVisibilityChanged {
+        before: bool,
+        after: bool,
+    },
+    ProjectRegionLaneVisibilityChanged {
+        before: bool,
+        after: bool,
+    },
+    ProjectRegionsChanged {
+        before: Vec<ProjectRegion>,
+        after: Vec<ProjectRegion>,
+    },
+    MasterMixChanged {
+        before: crate::MasterMix,
+        after: crate::MasterMix,
+    },
+    TrackStructureChanged {
+        before: TrackStructure,
+        after: TrackStructure,
+    },
+    TrackMainSendChanged {
+        track_id: TrackId,
+        before: bool,
+        after: bool,
+    },
+    TrackSendsChanged {
+        track_id: TrackId,
+        before: Vec<crate::AudioSend>,
+        after: Vec<crate::AudioSend>,
+    },
     TrackCreated {
         index: usize,
         track: Track,
@@ -105,12 +704,14 @@ enum ProjectEvent {
         track: Track,
         audio_items: Vec<(usize, AudioItem)>,
         midi_items: Vec<(usize, MidiItem)>,
+        region_render_assignments: Vec<(RegionId, Vec<TrackId>)>,
     },
     TrackRestored {
         index: usize,
         track: Track,
         audio_items: Vec<(usize, AudioItem)>,
         midi_items: Vec<(usize, MidiItem)>,
+        region_render_assignments: Vec<(RegionId, Vec<TrackId>)>,
     },
     TrackVolumeChanged {
         track_id: TrackId,
@@ -122,10 +723,19 @@ enum ProjectEvent {
         before: Vec<crate::VolumeAutomationPoint>,
         after: Vec<crate::VolumeAutomationPoint>,
     },
+    TrackRazorEditAreasChanged {
+        before: Vec<(TrackId, Vec<RazorEditArea>)>,
+        after: Vec<(TrackId, Vec<RazorEditArea>)>,
+    },
     TrackPanChanged {
         track_id: TrackId,
         before: f32,
         after: f32,
+    },
+    TrackPhaseChanged {
+        track_id: TrackId,
+        before: bool,
+        after: bool,
     },
     TrackMuteChanged {
         track_id: TrackId,
@@ -185,11 +795,6 @@ enum ProjectEvent {
         before: Option<TrackId>,
         after: Option<TrackId>,
     },
-    TrackMoved {
-        track_id: TrackId,
-        from: usize,
-        to: usize,
-    },
     TempoChanged {
         start_tick: u64,
         before: Option<f64>,
@@ -216,6 +821,26 @@ enum ProjectEvent {
     AudioItemRemoved {
         index: usize,
         item: AudioItem,
+    },
+    AudioItemFadesChanged {
+        item_id: ItemId,
+        before: crate::AudioItemFades,
+        after: crate::AudioItemFades,
+    },
+    AudioItemVolumeChanged {
+        item_id: ItemId,
+        before: f32,
+        after: f32,
+    },
+    AudioItemTakeMixChanged {
+        item_id: ItemId,
+        before: (f32, f32),
+        after: (f32, f32),
+    },
+    AudioItemTakePlaybackRateChanged {
+        item_id: ItemId,
+        before: f64,
+        after: f64,
     },
     AudioItemChanged {
         before: AudioItem,
@@ -263,7 +888,7 @@ enum ProjectEvent {
     },
     MidiNotesQuantized {
         item_id: ItemId,
-        changes: Vec<(NoteId, u64, u64)>,
+        changes: Vec<QuantizedMidiNoteChange>,
     },
     Transaction {
         tx_id: u64,
@@ -274,33 +899,130 @@ enum ProjectEvent {
 impl ProjectEvent {
     fn inverse(&self) -> Self {
         match self {
+            Self::ProjectNotesChanged { before, after } => Self::ProjectNotesChanged {
+                before: after.clone(),
+                after: before.clone(),
+            },
+            Self::FrameRateChanged { before, after } => Self::FrameRateChanged {
+                before: *after,
+                after: *before,
+            },
+            Self::ProjectSampleRateChanged { before, after } => Self::ProjectSampleRateChanged {
+                before: after.clone(),
+                after: before.clone(),
+            },
+            Self::ForceTempoChangesToWholeSamplesChanged { before, after } => {
+                Self::ForceTempoChangesToWholeSamplesChanged {
+                    before: *after,
+                    after: *before,
+                }
+            }
+            Self::BpmBasisChanged { before, after } => Self::BpmBasisChanged {
+                before: *after,
+                after: *before,
+            },
+            Self::BaseRulerLabelSpacingChanged { before, after } => {
+                Self::BaseRulerLabelSpacingChanged {
+                    before: *after,
+                    after: *before,
+                }
+            }
+            Self::ProjectStartTimeOffsetChanged { before, after } => {
+                Self::ProjectStartTimeOffsetChanged {
+                    before: *after,
+                    after: *before,
+                }
+            }
+            Self::ProjectStartTimeFractionalFrameOffsetAllowedChanged { before, after } => {
+                Self::ProjectStartTimeFractionalFrameOffsetAllowedChanged {
+                    before: *after,
+                    after: *before,
+                }
+            }
+            Self::ProjectStartMeasureChanged { before, after } => {
+                Self::ProjectStartMeasureChanged {
+                    before: *after,
+                    after: *before,
+                }
+            }
+            Self::ProjectMarkersChanged { before, after } => Self::ProjectMarkersChanged {
+                before: after.clone(),
+                after: before.clone(),
+            },
+            Self::ProjectMarkerLaneVisibilityChanged { before, after } => {
+                Self::ProjectMarkerLaneVisibilityChanged {
+                    before: *after,
+                    after: *before,
+                }
+            }
+            Self::ProjectRegionLaneVisibilityChanged { before, after } => {
+                Self::ProjectRegionLaneVisibilityChanged {
+                    before: *after,
+                    after: *before,
+                }
+            }
+            Self::ProjectRegionsChanged { before, after } => Self::ProjectRegionsChanged {
+                before: after.clone(),
+                after: before.clone(),
+            },
+            Self::MasterMixChanged { before, after } => Self::MasterMixChanged {
+                before: *after,
+                after: *before,
+            },
+            Self::TrackStructureChanged { before, after } => Self::TrackStructureChanged {
+                before: after.clone(),
+                after: before.clone(),
+            },
             Self::TrackCreated { index, track } => Self::TrackDeleted {
                 index: *index,
                 track: track.clone(),
                 audio_items: Vec::new(),
                 midi_items: Vec::new(),
+                region_render_assignments: Vec::new(),
             },
             Self::TrackDeleted {
                 index,
                 track,
                 audio_items,
                 midi_items,
+                region_render_assignments,
             } => Self::TrackRestored {
                 index: *index,
                 track: track.clone(),
                 audio_items: audio_items.clone(),
                 midi_items: midi_items.clone(),
+                region_render_assignments: region_render_assignments.clone(),
             },
             Self::TrackRestored {
                 index,
                 track,
                 audio_items,
                 midi_items,
+                region_render_assignments,
             } => Self::TrackDeleted {
                 index: *index,
                 track: track.clone(),
                 audio_items: audio_items.clone(),
                 midi_items: midi_items.clone(),
+                region_render_assignments: region_render_assignments.clone(),
+            },
+            Self::TrackMainSendChanged {
+                track_id,
+                before,
+                after,
+            } => Self::TrackMainSendChanged {
+                track_id: *track_id,
+                before: *after,
+                after: *before,
+            },
+            Self::TrackSendsChanged {
+                track_id,
+                before,
+                after,
+            } => Self::TrackSendsChanged {
+                track_id: *track_id,
+                before: after.clone(),
+                after: before.clone(),
             },
             Self::TrackVolumeChanged {
                 track_id,
@@ -320,11 +1042,26 @@ impl ProjectEvent {
                 before: after.clone(),
                 after: before.clone(),
             },
+            Self::TrackRazorEditAreasChanged { before, after } => {
+                Self::TrackRazorEditAreasChanged {
+                    before: after.clone(),
+                    after: before.clone(),
+                }
+            }
             Self::TrackPanChanged {
                 track_id,
                 before,
                 after,
             } => Self::TrackPanChanged {
+                track_id: *track_id,
+                before: *after,
+                after: *before,
+            },
+            Self::TrackPhaseChanged {
+                track_id,
+                before,
+                after,
+            } => Self::TrackPhaseChanged {
                 track_id: *track_id,
                 before: *after,
                 after: *before,
@@ -435,11 +1172,6 @@ impl ProjectEvent {
                 before: *after,
                 after: *before,
             },
-            Self::TrackMoved { track_id, from, to } => Self::TrackMoved {
-                track_id: *track_id,
-                from: *to,
-                to: *from,
-            },
             Self::TempoChanged {
                 start_tick,
                 before,
@@ -478,6 +1210,42 @@ impl ProjectEvent {
             Self::AudioItemRemoved { index, item } => Self::AudioItemInserted {
                 index: *index,
                 item: item.clone(),
+            },
+            Self::AudioItemFadesChanged {
+                item_id,
+                before,
+                after,
+            } => Self::AudioItemFadesChanged {
+                item_id: *item_id,
+                before: *after,
+                after: *before,
+            },
+            Self::AudioItemVolumeChanged {
+                item_id,
+                before,
+                after,
+            } => Self::AudioItemVolumeChanged {
+                item_id: *item_id,
+                before: *after,
+                after: *before,
+            },
+            Self::AudioItemTakeMixChanged {
+                item_id,
+                before,
+                after,
+            } => Self::AudioItemTakeMixChanged {
+                item_id: *item_id,
+                before: *after,
+                after: *before,
+            },
+            Self::AudioItemTakePlaybackRateChanged {
+                item_id,
+                before,
+                after,
+            } => Self::AudioItemTakePlaybackRateChanged {
+                item_id: *item_id,
+                before: *after,
+                after: *before,
             },
             Self::AudioItemChanged { before, after } => Self::AudioItemChanged {
                 before: after.clone(),
@@ -543,7 +1311,13 @@ impl ProjectEvent {
                 item_id: *item_id,
                 changes: changes
                     .iter()
-                    .map(|(note_id, before, after)| (*note_id, *after, *before))
+                    .map(|change| QuantizedMidiNoteChange {
+                        note_id: change.note_id,
+                        before_tick: change.after_tick,
+                        before_duration: change.after_duration,
+                        after_tick: change.before_tick,
+                        after_duration: change.before_duration,
+                    })
                     .collect(),
             },
             Self::Transaction { tx_id, events } => Self::Transaction {
@@ -587,7 +1361,14 @@ fn duplicate_midi_item_at(
         .find(|item| item.id == item_id)
         .ok_or(ActionError::MidiItemNotFound { item_id })?
         .track_id;
-    duplicate_midi_item_to_track(state, ids, item_id, track_id, start_tick)
+    duplicate_midi_item_to_track_at_position(
+        state,
+        ids,
+        item_id,
+        track_id,
+        crate::MidiItemPosition::new(start_tick, 0)
+            .expect("zero fractional PPQ is a valid item position"),
+    )
 }
 
 fn duplicate_midi_item_to_track(
@@ -596,6 +1377,23 @@ fn duplicate_midi_item_to_track(
     item_id: ItemId,
     track_id: TrackId,
     start_tick: u64,
+) -> Result<ProjectEvent, ActionError> {
+    duplicate_midi_item_to_track_at_position(
+        state,
+        ids,
+        item_id,
+        track_id,
+        crate::MidiItemPosition::new(start_tick, 0)
+            .expect("zero fractional PPQ is a valid item position"),
+    )
+}
+
+fn duplicate_midi_item_to_track_at_position(
+    state: &mut ProjectState,
+    ids: &mut IdAllocator,
+    item_id: ItemId,
+    track_id: TrackId,
+    start_position: crate::MidiItemPosition,
 ) -> Result<ProjectEvent, ActionError> {
     let original = state
         .midi_items
@@ -610,8 +1408,8 @@ fn duplicate_midi_item_to_track(
     if target_track.is_frozen() {
         return Err(ActionError::CannotEditFrozenTrackSource { track_id });
     }
-    let item_end = start_tick
-        .checked_add(original.length_ticks)
+    start_position
+        .checked_add_ticks(original.length_ticks)
         .ok_or(ActionError::InvalidMidiItemPosition)?;
     let next_item_id = ids
         .next_item_id
@@ -633,9 +1431,13 @@ fn duplicate_midi_item_to_track(
         id: ItemId::from_raw(ids.next_item_id),
         track_id,
         name: original.name.clone(),
-        start_tick,
+        start_tick: start_position.tick(),
+        start_tick_subtick: start_position.subtick(),
         source_offset_ticks: original.source_offset_ticks,
-        length_ticks: item_end - start_tick,
+        loop_source: original.loop_source,
+        source_loop_length_ticks: original.source_loop_length_ticks,
+        length_ticks: original.length_ticks,
+        muted: original.muted,
         notes: Arc::new(notes),
         controllers: Arc::clone(&original.controllers),
         pitch_bends: Arc::clone(&original.pitch_bends),
@@ -649,6 +1451,10 @@ fn duplicate_midi_item_to_track(
 }
 
 impl Project {
+    /// Current stereo Master controls, separate from ordinary track IDs.
+    pub fn master_mix(&self) -> crate::MasterMix {
+        self.state.master_mix
+    }
     /// Creates an empty project with 48 kHz, 960 PPQ and 120 BPM defaults.
     pub fn new() -> Self {
         Self::with_settings(ProjectSettings::default())
@@ -656,19 +1462,117 @@ impl Project {
 
     /// Creates an empty project with explicit timebase settings.
     pub fn with_settings(settings: ProjectSettings) -> Self {
-        Self {
+        Self::with_settings_and_initial_time_signature(
+            settings,
+            TimeSignature::new(4, 4).expect("4/4 is a valid time signature"),
+        )
+        .expect("the default time signature is valid for every supported PPQ")
+    }
+
+    /// Creates an empty project with explicit timebase settings and starting meter.
+    pub fn with_settings_and_initial_time_signature(
+        settings: ProjectSettings,
+        initial_time_signature: TimeSignature,
+    ) -> Result<Self, TimebaseError> {
+        let mut meter_map = MeterMap::new(settings.ppq(), settings.start_measure());
+        meter_map.replace_points(&[(0, initial_time_signature)])?;
+        Ok(Self {
             state: ProjectState {
+                pan_mode: settings.pan_mode(),
+                frame_rate: settings.frame_rate(),
+                base_ruler_label_spacing_on_measure: settings.base_ruler_label_spacing_on_measure(),
+                project_start_time_offset_seconds: settings.project_start_time_offset_seconds(),
+                project_start_time_fractional_frame_offset_allowed: settings
+                    .project_start_time_fractional_frame_offset_allowed(),
                 tempo_map: TempoMap::new(settings),
-                meter_map: MeterMap::new(settings.ppq()),
+                meter_map,
                 ..ProjectState::default()
             },
             ..Self::default()
+        })
+    }
+
+    /// Whether a folder can own this track and its complete subtree.
+    pub fn can_parent_to(&self, source: TrackId, parent: TrackId) -> bool {
+        reparent_tracks(&self.state.tracks, source, Some(parent))
+            .is_ok_and(|tracks| valid_track_hierarchy(&tracks) && valid_track_routing(&tracks))
+    }
+
+    pub fn folder_depth(&self, track_id: TrackId) -> usize {
+        let mut depth = 0;
+        let mut parent = self
+            .state
+            .tracks
+            .iter()
+            .find(|track| track.id == track_id)
+            .and_then(|track| track.parent_track);
+        while let Some(id) = parent {
+            depth += 1;
+            parent = self
+                .state
+                .tracks
+                .iter()
+                .find(|track| track.id == id)
+                .and_then(|track| track.parent_track);
         }
+        depth
+    }
+
+    pub fn track_subtree_len(&self, track_id: TrackId) -> usize {
+        usize::from(self.state.tracks.iter().any(|track| track.id == track_id))
+            + self
+                .state
+                .tracks
+                .iter()
+                .filter(|track| is_descendant(&self.state.tracks, track.id, track_id))
+                .count()
+    }
+
+    /// Whether adding a connection between two tracks keeps the graph acyclic.
+    pub fn can_route_to(&self, source: TrackId, destination: TrackId) -> bool {
+        if source == destination
+            || !self.state.tracks.iter().any(|track| track.id == source)
+            || !self
+                .state
+                .tracks
+                .iter()
+                .any(|track| track.id == destination)
+        {
+            return false;
+        }
+        let mut pending = vec![destination];
+        let mut visited = HashSet::new();
+        while let Some(id) = pending.pop() {
+            if id == source {
+                return false;
+            }
+            if !visited.insert(id) {
+                continue;
+            }
+            if let Some(track) = self.state.tracks.iter().find(|track| track.id == id) {
+                pending.extend(routing_destinations(track));
+            }
+        }
+        true
     }
 
     /// Returns the project's immutable sample-rate and PPQ settings.
     pub fn settings(&self) -> ProjectSettings {
-        self.state.tempo_map.settings()
+        self.state
+            .tempo_map
+            .settings()
+            .with_pan_mode(self.state.pan_mode)
+            .with_frame_rate(self.state.frame_rate)
+            .with_start_measure(self.state.meter_map.start_measure())
+            .with_base_ruler_label_spacing_on_measure(
+                self.state.base_ruler_label_spacing_on_measure,
+            )
+            .with_project_start_time_offset_seconds(self.state.project_start_time_offset_seconds)
+            .expect("project start time offset is validated when actions are applied")
+            .with_project_start_time_fractional_frame_offset_allowed(
+                self.state
+                    .project_start_time_fractional_frame_offset_allowed,
+            )
     }
 
     /// Converts a PPQ tick position to the nearest sample index.
@@ -681,9 +1585,153 @@ impl Project {
         self.state.tempo_map.tick_at_sample(sample)
     }
 
-    /// Returns the tempo active at a PPQ tick position.
+    /// Converts a project sample position to its displayed clock time.
+    pub fn project_time_at_sample(&self, sample: u64) -> Result<f64, TimebaseError> {
+        if sample > 1_u64 << 53 {
+            return Err(TimebaseError::PositionOutOfRange);
+        }
+        let settings = self.settings();
+        let seconds = settings.project_start_time_offset_seconds()
+            + sample as f64 / f64::from(settings.sample_rate());
+        seconds
+            .is_finite()
+            .then_some(seconds)
+            .ok_or(TimebaseError::PositionOutOfRange)
+    }
+
+    /// Converts a displayed clock time back to a project sample position.
+    pub fn sample_at_project_time(&self, seconds: f64) -> Result<u64, TimebaseError> {
+        if !seconds.is_finite() {
+            return Err(TimebaseError::PositionOutOfRange);
+        }
+        let settings = self.settings();
+        let sample = (seconds - settings.project_start_time_offset_seconds())
+            * f64::from(settings.sample_rate());
+        if !sample.is_finite() || !(0.0..=((1_u64 << 53) - 1) as f64).contains(&sample) {
+            return Err(TimebaseError::PositionOutOfRange);
+        }
+        Ok(sample.round() as u64)
+    }
+
+    /// Converts a continuous PPQ position without quantizing to ticks or samples.
+    /// Intended for gestures and geometry; render block clocks remain integral.
+    pub fn sample_at_tick_position(&self, tick: f64) -> Result<f64, TimebaseError> {
+        self.state.tempo_map.sample_at_tick_position(tick)
+    }
+
+    /// Converts a continuous sample position without rounding the PPQ result.
+    pub fn tick_at_sample_position(&self, sample: f64) -> Result<f64, TimebaseError> {
+        self.state.tempo_map.tick_at_sample_position(sample)
+    }
+
+    /// Converts a MIDI source PPQ phase into the project-sample offset used by a take.
+    /// The offset is measured backward from the item start through the project Tempo Map.
+    pub fn midi_source_offset_samples(
+        &self,
+        item_start_tick: u64,
+        source_phase_ticks: u64,
+    ) -> Result<f64, TimebaseError> {
+        const MAX_EXACT: f64 = (1_u64 << 53) as f64;
+        if item_start_tick > (1_u64 << 53) || source_phase_ticks > (1_u64 << 53) {
+            return Err(TimebaseError::PositionOutOfRange);
+        }
+        let item_start_tick = item_start_tick as f64;
+        let item_start_sample = self.sample_at_tick_position(item_start_tick)?;
+        let source_tick = item_start_tick - source_phase_ticks as f64;
+        let source_sample = self.sample_at_signed_tick_position(source_tick)?;
+        let offset_samples = item_start_sample - source_sample;
+        if !offset_samples.is_finite() || !(0.0..=MAX_EXACT).contains(&offset_samples) {
+            return Err(TimebaseError::PositionOutOfRange);
+        }
+        Ok(offset_samples)
+    }
+
+    /// Converts a take's source-time offset back to its wrapped MIDI source PPQ phase.
+    pub fn midi_source_phase_at_offset_samples(
+        &self,
+        item_start_tick: u64,
+        source_loop_length_ticks: u64,
+        source_offset_samples: f64,
+    ) -> Result<u64, TimebaseError> {
+        if source_loop_length_ticks == 0 || source_loop_length_ticks > (1_u64 << 53) {
+            return Err(TimebaseError::PositionOutOfRange);
+        }
+        Ok(
+            self.midi_source_offset_ticks_at_samples(item_start_tick, source_offset_samples)?
+                % source_loop_length_ticks,
+        )
+    }
+
+    /// Converts a take's source-time offset to its unwrapped MIDI source PPQ offset.
+    /// Unlike [`Self::midi_source_phase_at_offset_samples`], this preserves offsets beyond a
+    /// loop boundary for non-looping MIDI sources.
+    pub fn midi_source_offset_ticks_at_samples(
+        &self,
+        item_start_tick: u64,
+        source_offset_samples: f64,
+    ) -> Result<u64, TimebaseError> {
+        const MAX_EXACT: f64 = (1_u64 << 53) as f64;
+        if item_start_tick > (1_u64 << 53)
+            || !source_offset_samples.is_finite()
+            || !(0.0..=MAX_EXACT).contains(&source_offset_samples)
+        {
+            return Err(TimebaseError::PositionOutOfRange);
+        }
+        let item_start_tick = item_start_tick as f64;
+        let item_start_sample = self.sample_at_tick_position(item_start_tick)?;
+        let source_sample = item_start_sample - source_offset_samples;
+        let source_tick = self.tick_at_signed_sample_position(source_sample)?;
+        let offset_ticks = (item_start_tick - source_tick).round();
+        if !offset_ticks.is_finite() || !(0.0..=MAX_EXACT).contains(&offset_ticks) {
+            return Err(TimebaseError::PositionOutOfRange);
+        }
+        Ok(offset_ticks as u64)
+    }
+
+    fn sample_at_signed_tick_position(&self, tick: f64) -> Result<f64, TimebaseError> {
+        const MAX_EXACT: f64 = (1_u64 << 53) as f64;
+        if !tick.is_finite() || tick.abs() > MAX_EXACT {
+            return Err(TimebaseError::PositionOutOfRange);
+        }
+        if tick >= 0.0 {
+            return self.sample_at_tick_position(tick);
+        }
+        let settings = self.settings();
+        let sample = tick * f64::from(settings.sample_rate()) * 60.0
+            / (f64::from(settings.ppq())
+                * self.tempo_at_tick(0)
+                * settings.bpm_basis().quarter_notes_per_beat());
+        (sample.is_finite() && sample.abs() <= MAX_EXACT)
+            .then_some(sample)
+            .ok_or(TimebaseError::PositionOutOfRange)
+    }
+
+    fn tick_at_signed_sample_position(&self, sample: f64) -> Result<f64, TimebaseError> {
+        const MAX_EXACT: f64 = (1_u64 << 53) as f64;
+        if !sample.is_finite() || sample.abs() > MAX_EXACT {
+            return Err(TimebaseError::PositionOutOfRange);
+        }
+        if sample >= 0.0 {
+            return self.tick_at_sample_position(sample);
+        }
+        let settings = self.settings();
+        let tick = sample
+            * f64::from(settings.ppq())
+            * self.tempo_at_tick(0)
+            * settings.bpm_basis().quarter_notes_per_beat()
+            / (60.0 * f64::from(settings.sample_rate()));
+        (tick.is_finite() && tick.abs() <= MAX_EXACT)
+            .then_some(tick)
+            .ok_or(TimebaseError::PositionOutOfRange)
+    }
+
+    /// Returns the displayed BPM active at a PPQ tick position in the project's selected basis.
     pub fn tempo_at_tick(&self, tick: u64) -> f64 {
         self.state.tempo_map.tempo_at_tick(tick)
+    }
+
+    pub(crate) fn tempo_at_tick_position(&self, tick: f64) -> f64 {
+        self.state.tempo_map.tempo_at_tick_position(tick)
     }
 
     /// Returns the ordered tempo points as `(start_tick, bpm, curve_to_next)` tuples.
@@ -691,9 +1739,22 @@ impl Project {
         self.state.tempo_map.points()
     }
 
-    /// Converts a tick to a one-based measure/beat and an in-beat tick offset.
+    /// Converts a tick to a signed measure/beat and an in-beat tick offset.
     pub fn musical_position_at_tick(&self, tick: u64) -> Result<MusicalPosition, TimebaseError> {
         self.state.meter_map.position_at_tick(tick)
+    }
+
+    /// Converts a signed displayed measure/beat and fractional in-beat tick offset.
+    /// Rejects positions outside the active meter instead of carrying into another bar.
+    pub fn tick_at_musical_position(
+        &self,
+        measure: i64,
+        beat: u32,
+        tick_in_beat: f64,
+    ) -> Result<f64, TimebaseError> {
+        self.state
+            .meter_map
+            .tick_at_position(measure, beat, tick_in_beat)
     }
 
     /// Returns the time signature active at a PPQ tick position.
@@ -719,7 +1780,28 @@ impl Project {
             .collect()
     }
 
-    /// Returns whether the next undo changes only a track's volume or pan.
+    /// Returns whether a committed action is available to undo.
+    pub fn can_undo(&self) -> bool {
+        self.history_cursor > 0
+    }
+
+    /// Returns whether a committed action is available to redo.
+    pub fn can_redo(&self) -> bool {
+        self.history_cursor < self.history.len()
+    }
+
+    /// Returns the current position in the project's undo history.
+    pub fn history_cursor(&self) -> usize {
+        self.history_cursor
+    }
+
+    /// Discards redoable project actions when an application-level undoable
+    /// view action establishes a new history branch.
+    pub fn discard_redo_history(&mut self) {
+        self.history.truncate(self.history_cursor);
+    }
+
+    /// Returns whether the next undo changes only live mix controls or volume automation.
     pub fn can_undo_track_mix(&self) -> bool {
         matches!(
             self.history_cursor
@@ -727,25 +1809,36 @@ impl Project {
                 .and_then(|index| self.history.get(index)),
             Some(
                 ProjectEvent::TrackVolumeChanged { .. }
+                    | ProjectEvent::MasterMixChanged { .. }
                     | ProjectEvent::TrackVolumeAutomationChanged { .. }
-                    | ProjectEvent::TrackPanChanged { .. },
+                    | ProjectEvent::TrackPanChanged { .. }
+                    | ProjectEvent::TrackPhaseChanged { .. }
+                    | ProjectEvent::AudioItemFadesChanged { .. }
+                    | ProjectEvent::AudioItemVolumeChanged { .. }
+                    | ProjectEvent::AudioItemTakeMixChanged { .. },
             )
         )
     }
 
-    /// Returns whether the next redo changes only a track's volume or pan.
+    /// Returns whether the next redo changes only live mix controls or volume automation.
     pub fn can_redo_track_mix(&self) -> bool {
         matches!(
             self.history.get(self.history_cursor),
             Some(
                 ProjectEvent::TrackVolumeChanged { .. }
+                    | ProjectEvent::MasterMixChanged { .. }
                     | ProjectEvent::TrackVolumeAutomationChanged { .. }
-                    | ProjectEvent::TrackPanChanged { .. },
+                    | ProjectEvent::TrackPanChanged { .. }
+                    | ProjectEvent::TrackPhaseChanged { .. }
+                    | ProjectEvent::AudioItemFadesChanged { .. }
+                    | ProjectEvent::AudioItemVolumeChanged { .. }
+                    | ProjectEvent::AudioItemTakeMixChanged { .. },
             )
         )
     }
 
-    /// Applies an action atomically and records it as one undoable history entry.
+    /// Applies an action atomically. Media edits add one history entry; project
+    /// documentation preserves the existing undo/redo history.
     ///
     /// A failed action, including a failed nested action in a transaction, leaves
     /// project state, identifier allocation, and history unchanged.
@@ -756,12 +1849,30 @@ impl Project {
         if matches!(
             &event,
             ProjectEvent::MidiNotesQuantized { changes, .. } if changes.is_empty()
+        ) || matches!(
+            &event,
+            ProjectEvent::ProjectMarkersChanged { before, after } if before == after
+        ) || matches!(
+            &event,
+            ProjectEvent::ProjectRegionsChanged { before, after } if before == after
+        ) || matches!(
+            &event,
+            ProjectEvent::ProjectMarkerLaneVisibilityChanged { before, after } if before == after
+        ) || matches!(
+            &event,
+            ProjectEvent::ProjectRegionLaneVisibilityChanged { before, after } if before == after
+        ) || matches!(
+            &event,
+            ProjectEvent::TrackRazorEditAreasChanged { before, after } if before == after
         ) {
             return Ok(());
         }
 
         self.state = state;
         self.ids = ids;
+        let Some(event) = undoable_event(event) else {
+            return Ok(());
+        };
         self.history.truncate(self.history_cursor);
         self.history.push(event);
         self.history_cursor += 1;
@@ -810,6 +1921,14 @@ impl Project {
         &self.state.tracks
     }
 
+    /// Returns the next track identity when another track can still be allocated.
+    pub fn next_track_id(&self) -> Option<TrackId> {
+        self.ids
+            .next_track_id
+            .checked_add(1)
+            .and_then(|_| TrackId::from_value(self.ids.next_track_id))
+    }
+
     /// Returns all audio items in project insertion order.
     pub fn audio_items(&self) -> &[AudioItem] {
         &self.state.audio_items
@@ -820,10 +1939,37 @@ impl Project {
         &self.state.midi_items
     }
 
+    /// Returns the project's markers ordered by timeline position and stable identity.
+    pub fn markers(&self) -> &[ProjectMarker] {
+        &self.state.markers
+    }
+
+    /// Whether the project marker lane is visible in the ruler.
+    pub fn show_project_markers(&self) -> bool {
+        self.state.show_project_markers
+    }
+
+    /// Whether the project region lane is visible in the ruler.
+    pub fn show_project_regions(&self) -> bool {
+        self.state.show_project_regions
+    }
+
+    /// Returns the project's regions ordered by timeline start and stable identity.
+    pub fn regions(&self) -> &[ProjectRegion] {
+        &self.state.regions
+    }
+
+    /// Project documentation, independent of media undo/redo history.
+    pub fn project_notes(&self) -> &crate::ProjectNotes {
+        &self.state.notes
+    }
+
     /// Creates a serialization-friendly copy of the current project state.
     pub fn snapshot(&self) -> ProjectSnapshot {
         ProjectSnapshot {
-            settings: self.state.tempo_map.settings(),
+            notes: self.state.notes.clone(),
+            settings: self.settings(),
+            master_mix: self.state.master_mix,
             tracks: self
                 .state
                 .tracks
@@ -832,10 +1978,23 @@ impl Project {
                     id: track.id.value(),
                     name: track.name.clone(),
                     is_bus: track.is_bus,
+                    is_folder: track.is_folder,
+                    parent_track_id: track.parent_track.map(TrackId::value),
                     output_track_id: track.output_track.map(TrackId::value),
+                    main_send_enabled: track.main_send_enabled,
+                    sends: track
+                        .sends
+                        .iter()
+                        .map(|send| crate::AudioSendSnapshot {
+                            id: send.id.value(),
+                            destination_track_id: send.destination.value(),
+                            parameters: send.parameters,
+                        })
+                        .collect(),
                     volume_db: track.volume_db,
                     pan: track.pan,
                     muted: track.muted,
+                    phase_inverted: track.phase_inverted,
                     solo: track.solo,
                     record_armed: track.record_armed,
                     instrument: track.instrument.as_ref().map(|instrument| {
@@ -878,6 +2037,7 @@ impl Project {
                         })
                         .collect(),
                     volume_automation: track.volume_automation.clone(),
+                    razor_edit_areas: track.razor_edit_areas.clone(),
                     frozen_audio_item_id: track.frozen_audio_item_id.map(|id| id.value()),
                 })
                 .collect(),
@@ -886,12 +2046,23 @@ impl Project {
                 .audio_items
                 .iter()
                 .map(|item| AudioItemSnapshot {
+                    fades: item.fades,
+                    volume: item.volume,
+                    take_volume: item.take_volume,
+                    take_pan: item.take_pan,
+                    take_playback_rate: item.take_playback_rate,
                     id: item.id.value(),
                     track_id: item.track_id.value(),
                     media_ref: item.media_ref.clone(),
+                    name: item.name.clone(),
                     start_sample: item.start_sample,
                     source_offset_samples: item.source_offset_samples,
                     length_samples: item.length_samples,
+                    muted: item.muted,
+                    phase_inverted: item.phase_inverted,
+                    loop_source: item.loop_source,
+                    source_section_start_samples: item.source_section_start_samples,
+                    source_section_length_samples: item.source_section_length_samples,
                 })
                 .collect(),
             midi_items: self
@@ -903,8 +2074,12 @@ impl Project {
                     track_id: item.track_id.value(),
                     name: item.name.clone(),
                     start_tick: item.start_tick,
+                    start_tick_subtick: item.start_tick_subtick,
                     source_offset_ticks: item.source_offset_ticks,
+                    loop_source: item.loop_source,
+                    source_loop_length_ticks: item.source_loop_length_ticks,
                     length_ticks: item.length_ticks,
+                    muted: item.muted,
                     notes: item
                         .notes
                         .iter()
@@ -916,6 +2091,20 @@ impl Project {
                     controllers: item.controllers.as_ref().clone(),
                     pitch_bends: item.pitch_bends.as_ref().clone(),
                 })
+                .collect(),
+            markers: self
+                .state
+                .markers
+                .iter()
+                .map(ProjectMarkerSnapshot::from)
+                .collect(),
+            show_project_markers: self.state.show_project_markers,
+            show_project_regions: self.state.show_project_regions,
+            regions: self
+                .state
+                .regions
+                .iter()
+                .map(ProjectRegionSnapshot::from)
                 .collect(),
             tempo_points: self
                 .state
@@ -943,6 +2132,10 @@ impl Project {
     /// Restores project state from a validated snapshot with a fresh undo history.
     pub fn from_snapshot(snapshot: ProjectSnapshot) -> Result<Self, SnapshotError> {
         let settings = snapshot.settings;
+        let show_project_markers = snapshot.show_project_markers;
+        let show_project_regions = snapshot.show_project_regions;
+        let mut send_ids = HashSet::new();
+        let mut max_send_id = None;
         let mut tempo_map = TempoMap::new(settings);
         let first_tempo = snapshot
             .tempo_points
@@ -967,7 +2160,7 @@ impl Project {
                 .map_err(SnapshotError::InvalidTimebase)?;
         }
 
-        let mut meter_map = MeterMap::new(settings.ppq());
+        let mut meter_map = MeterMap::new(settings.ppq(), settings.start_measure());
         let first_meter = snapshot
             .meter_points
             .first()
@@ -992,6 +2185,57 @@ impl Project {
                 .map_err(SnapshotError::InvalidTimebase)?;
             previous_tick = point.start_tick;
         }
+
+        let mut marker_ids = HashSet::with_capacity(snapshot.markers.len());
+        let mut max_marker_id = None;
+        let mut markers = Vec::with_capacity(snapshot.markers.len());
+        for marker in snapshot.markers {
+            if !marker_ids.insert(marker.id) {
+                return Err(SnapshotError::InvalidProjectData);
+            }
+            max_marker_id = Some(max_marker_id.map_or(marker.id, |max: u64| max.max(marker.id)));
+            let mut project_marker = ProjectMarker::new(
+                MarkerId::from_raw(marker.id),
+                marker.number,
+                marker.position_ticks,
+                marker.name,
+            )
+            .ok_or(SnapshotError::InvalidProjectData)?;
+            project_marker.visible = marker.visible;
+            markers.push(project_marker);
+        }
+        markers.sort_unstable_by_key(|marker| (marker.position_ticks, marker.id.value()));
+
+        let mut region_ids = HashSet::with_capacity(snapshot.regions.len());
+        let mut max_region_id = None;
+        let mut regions = Vec::with_capacity(snapshot.regions.len());
+        for region in snapshot.regions {
+            if !region_ids.insert(region.id) {
+                return Err(SnapshotError::InvalidProjectData);
+            }
+            max_region_id = Some(max_region_id.map_or(region.id, |max: u64| max.max(region.id)));
+            let mut project_region = ProjectRegion::new(
+                RegionId::from_raw(region.id),
+                region.number,
+                region.start_ticks,
+                region.end_ticks,
+                region.name,
+            )
+            .ok_or(SnapshotError::InvalidProjectData)?;
+            let mut render_track_ids = HashSet::with_capacity(region.render_track_ids.len());
+            for track_id in region.render_track_ids {
+                if !render_track_ids.insert(track_id) {
+                    return Err(SnapshotError::InvalidProjectData);
+                }
+                project_region
+                    .render_track_ids
+                    .push(TrackId::from_raw(track_id));
+            }
+            project_region.visible = region.visible;
+            project_region.render_master_mix = region.render_master_mix;
+            regions.push(project_region);
+        }
+        regions.sort_unstable_by_key(|region| (region.start_ticks, region.id.value()));
 
         let mut track_ids = HashSet::with_capacity(snapshot.tracks.len());
         let mut tracks = Vec::with_capacity(snapshot.tracks.len());
@@ -1050,27 +2294,55 @@ impl Project {
                 || !track.pan.is_finite()
                 || !(-1.0..=1.0).contains(&track.pan)
                 || !valid_volume_automation(&track.volume_automation)
+                || !valid_razor_edit_areas(&track.razor_edit_areas)
             {
                 return Err(SnapshotError::InvalidProjectData);
             }
             max_track_id = Some(max_track_id.map_or(track.id, |max: u64| max.max(track.id)));
+            let mut sends = Vec::new();
+            for send in track.sends {
+                if !send_ids.insert(send.id) || !send.parameters.is_valid() {
+                    return Err(SnapshotError::InvalidProjectData);
+                }
+                max_send_id = Some(max_send_id.map_or(send.id, |max: u64| max.max(send.id)));
+                sends.push(crate::AudioSend {
+                    id: crate::SendId::from_value(send.id),
+                    destination: TrackId::from_raw(send.destination_track_id),
+                    parameters: send.parameters,
+                });
+            }
             tracks.push(Track {
                 id: TrackId::from_raw(track.id),
                 name: track.name,
                 is_bus: track.is_bus,
+                is_folder: track.is_folder,
+                parent_track: track.parent_track_id.map(TrackId::from_raw),
                 output_track: track.output_track_id.map(TrackId::from_raw),
+                main_send_enabled: track.main_send_enabled,
+                sends,
                 volume_db: track.volume_db,
                 pan: track.pan,
+                pan_mode: settings.pan_mode(),
                 muted: track.muted,
+                phase_inverted: track.phase_inverted,
                 solo: track.solo,
                 record_armed: track.record_armed,
                 instrument,
                 fx_chain,
                 volume_automation: track.volume_automation,
+                razor_edit_areas: track.razor_edit_areas,
                 frozen_audio_item_id: track.frozen_audio_item_id.map(ItemId::from_raw),
             });
         }
-        if !valid_track_routing(&tracks) {
+        if !valid_track_hierarchy(&tracks) || !valid_track_routing(&tracks) {
+            return Err(SnapshotError::InvalidProjectData);
+        }
+        if regions.iter().any(|region| {
+            region
+                .render_track_ids
+                .iter()
+                .any(|track_id| !track_ids.contains(&track_id.value()))
+        }) {
             return Err(SnapshotError::InvalidProjectData);
         }
 
@@ -1087,19 +2359,45 @@ impl Project {
             if !item_ids.insert(item.id)
                 || !track_ids.contains(&item.track_id)
                 || item.media_ref.trim().is_empty()
+                || item.name.chars().count() > 128
+                || !item.volume.is_finite()
+                || !(0.0..=crate::MAX_AUDIO_ITEM_VOLUME).contains(&item.volume)
+                || !item.take_volume.is_finite()
+                || !(0.0..=crate::MAX_AUDIO_ITEM_TAKE_VOLUME).contains(&item.take_volume)
+                || !item.take_pan.is_finite()
+                || !(-1.0..=1.0).contains(&item.take_pan)
+                || !item.take_playback_rate.is_finite()
+                || item.take_playback_rate <= 0.0
                 || item.length_samples == 0
                 || item.start_sample.checked_add(item.length_samples).is_none()
+                || !valid_audio_source_offset(
+                    item.source_offset_samples,
+                    item.loop_source,
+                    item.source_section_start_samples,
+                    item.source_section_length_samples,
+                )
             {
                 return Err(SnapshotError::InvalidProjectData);
             }
             max_item_id = Some(max_item_id.map_or(item.id, |max: u64| max.max(item.id)));
             audio_items.push(AudioItem {
+                fades: item.fades,
+                volume: item.volume,
+                take_volume: item.take_volume,
+                take_pan: item.take_pan,
+                take_playback_rate: item.take_playback_rate,
                 id: ItemId::from_raw(item.id),
                 track_id: TrackId::from_raw(item.track_id),
                 media_ref: item.media_ref,
+                name: item.name,
                 start_sample: item.start_sample,
                 source_offset_samples: item.source_offset_samples,
                 length_samples: item.length_samples,
+                muted: item.muted,
+                phase_inverted: item.phase_inverted,
+                loop_source: item.loop_source,
+                source_section_start_samples: item.source_section_start_samples,
+                source_section_length_samples: item.source_section_length_samples,
             });
         }
         let mut note_ids = HashSet::new();
@@ -1110,6 +2408,8 @@ impl Project {
                 || item.name.trim().is_empty()
                 || item.name.chars().count() > 128
                 || item.length_ticks == 0
+                || item.source_loop_length_ticks == 0
+                || u16::from(item.start_tick_subtick) >= crate::MIDI_ITEM_SUBTICKS_PER_TICK
                 || item.start_tick.checked_add(item.length_ticks).is_none()
                 || item
                     .source_offset_ticks
@@ -1124,6 +2424,7 @@ impl Project {
                 let data = note.data;
                 if !note_ids.insert(note.id)
                     || data.pitch > 127
+                    || data.channel >= crate::MIDI_CHANNEL_COUNT
                     || data.velocity > 127
                     || data.duration == 0
                     || data.tick.checked_add(data.duration).is_none()
@@ -1137,12 +2438,14 @@ impl Project {
                 });
             }
             let mut controllers = item.controllers;
-            controllers.sort_unstable_by_key(|controller| (controller.tick, controller.controller));
+            controllers.sort_unstable_by_key(|controller| {
+                (controller.tick, controller.channel, controller.controller)
+            });
             if !valid_midi_controllers(&controllers) {
                 return Err(SnapshotError::InvalidProjectData);
             }
             let mut pitch_bends = item.pitch_bends;
-            pitch_bends.sort_unstable_by_key(|bend| bend.tick);
+            pitch_bends.sort_unstable_by_key(|bend| (bend.tick, bend.channel));
             if !valid_midi_pitch_bends(&pitch_bends) {
                 return Err(SnapshotError::InvalidProjectData);
             }
@@ -1151,8 +2454,12 @@ impl Project {
                 track_id: TrackId::from_raw(item.track_id),
                 name: item.name,
                 start_tick: item.start_tick,
+                start_tick_subtick: item.start_tick_subtick,
                 source_offset_ticks: item.source_offset_ticks,
+                loop_source: item.loop_source,
+                source_loop_length_ticks: item.source_loop_length_ticks,
                 length_ticks: item.length_ticks,
+                muted: item.muted,
                 notes: Arc::new(notes),
                 controllers: Arc::new(controllers),
                 pitch_bends: Arc::new(pitch_bends),
@@ -1169,6 +2476,7 @@ impl Project {
             };
             if render.track_id != track.id
                 || track.is_bus
+                || track.is_folder
                 || track.instrument.is_none()
                 || !frozen_render_ids.insert(render_id)
                 || !midi_items
@@ -1181,16 +2489,31 @@ impl Project {
 
         Ok(Self {
             state: ProjectState {
+                notes: snapshot.notes,
+                master_mix: snapshot.master_mix,
+                pan_mode: settings.pan_mode(),
+                frame_rate: settings.frame_rate(),
+                base_ruler_label_spacing_on_measure: settings.base_ruler_label_spacing_on_measure(),
+                project_start_time_offset_seconds: settings.project_start_time_offset_seconds(),
+                project_start_time_fractional_frame_offset_allowed: settings
+                    .project_start_time_fractional_frame_offset_allowed(),
                 tracks,
                 audio_items,
                 midi_items,
+                markers,
+                show_project_markers,
+                show_project_regions,
+                regions,
                 tempo_map,
                 meter_map,
             },
             ids: IdAllocator {
                 next_track_id: next_id(max_track_id)?,
+                next_send_id: next_id(max_send_id)?,
                 next_item_id: next_id(max_item_id)?,
                 next_note_id: next_id(max_note_id)?,
+                next_marker_id: next_id(max_marker_id)?,
+                next_region_id: next_id(max_region_id)?,
             },
             history: Vec::new(),
             history_cursor: 0,
@@ -1211,6 +2534,56 @@ impl Project {
                 }
                 return Ok(ProjectEvent::Transaction { tx_id, events });
             }
+            DawAction::InsertLoopedAudioItemWithMix {
+                track_id,
+                media_ref,
+                name,
+                start_sample,
+                source_offset_samples,
+                length_samples,
+                muted,
+                phase_inverted,
+                source_section_start_samples,
+                source_section_length_samples,
+                volume,
+                take_volume,
+                take_pan,
+                take_playback_rate,
+            } => {
+                let item_id = ItemId::from_raw(ids.next_item_id);
+                let tx_id = ids.next_item_id;
+                return Self::apply_action(
+                    state,
+                    ids,
+                    DawAction::BatchTransaction {
+                        tx_id,
+                        actions: vec![
+                            DawAction::InsertLoopedAudioItem {
+                                track_id,
+                                media_ref,
+                                start_sample,
+                                source_offset_samples,
+                                length_samples,
+                                muted,
+                                phase_inverted,
+                                source_section_start_samples,
+                                source_section_length_samples,
+                            },
+                            DawAction::SetAudioItemName { item_id, name },
+                            DawAction::SetAudioItemVolume { item_id, volume },
+                            DawAction::SetAudioItemTakeMix {
+                                item_id,
+                                volume: take_volume,
+                                pan: take_pan,
+                            },
+                            DawAction::SetAudioItemTakePlaybackRate {
+                                item_id,
+                                rate: take_playback_rate,
+                            },
+                        ],
+                    },
+                );
+            }
             action => action,
         };
 
@@ -1224,6 +2597,285 @@ impl Project {
         }
 
         let event = match action {
+            DawAction::SetProjectNotes { notes } => ProjectEvent::ProjectNotesChanged {
+                before: state.notes.clone(),
+                after: notes,
+            },
+            DawAction::SetFrameRate { rate } => ProjectEvent::FrameRateChanged {
+                before: state.frame_rate,
+                after: rate,
+            },
+            DawAction::SetProjectSampleRate { sample_rate } => {
+                let before = ProjectSampleClockSnapshot::capture(state);
+                let mut after = before.clone();
+                after.rescale(sample_rate)?;
+                ProjectEvent::ProjectSampleRateChanged { before, after }
+            }
+            DawAction::SetForceTempoChangesToWholeSamples { enabled } => {
+                ProjectEvent::ForceTempoChangesToWholeSamplesChanged {
+                    before: state
+                        .tempo_map
+                        .settings()
+                        .force_tempo_changes_to_whole_samples(),
+                    after: enabled,
+                }
+            }
+            DawAction::SetProjectBpmBasis { basis } => ProjectEvent::BpmBasisChanged {
+                before: state.tempo_map.settings().bpm_basis(),
+                after: basis,
+            },
+            DawAction::SetBaseRulerLabelSpacingOnMeasure { enabled } => {
+                ProjectEvent::BaseRulerLabelSpacingChanged {
+                    before: state.base_ruler_label_spacing_on_measure,
+                    after: enabled,
+                }
+            }
+            DawAction::SetProjectStartTimeOffsetSeconds { seconds } => {
+                if !seconds.is_finite() {
+                    return Err(ActionError::InvalidProjectTimeOffset);
+                }
+                ProjectEvent::ProjectStartTimeOffsetChanged {
+                    before: state.project_start_time_offset_seconds,
+                    after: seconds,
+                }
+            }
+            DawAction::SetProjectStartTimeFractionalFrameOffsetAllowed { allowed } => {
+                ProjectEvent::ProjectStartTimeFractionalFrameOffsetAllowedChanged {
+                    before: state.project_start_time_fractional_frame_offset_allowed,
+                    after: allowed,
+                }
+            }
+            DawAction::SetProjectStartMeasure { measure } => {
+                ProjectEvent::ProjectStartMeasureChanged {
+                    before: state.meter_map.start_measure(),
+                    after: measure,
+                }
+            }
+            DawAction::SetMasterMix { mix } => ProjectEvent::MasterMixChanged {
+                before: state.master_mix,
+                after: mix,
+            },
+            DawAction::InsertProjectMarker {
+                position_ticks,
+                name,
+            } => {
+                let next_marker_id = ids
+                    .next_marker_id
+                    .checked_add(1)
+                    .ok_or(ActionError::MarkerIdExhausted)?;
+                let number = lowest_available_marker_number(&state.markers)
+                    .ok_or(ActionError::ProjectMarkerNumberExhausted)?;
+                let marker = ProjectMarker::new(
+                    MarkerId::from_raw(ids.next_marker_id),
+                    number,
+                    position_ticks,
+                    name,
+                )
+                .ok_or(ActionError::InvalidProjectMarker)?;
+                let before = state.markers.clone();
+                let mut after = before.clone();
+                after.push(marker);
+                after.sort_unstable_by_key(|marker| (marker.position_ticks, marker.id.value()));
+                ids.next_marker_id = next_marker_id;
+                ProjectEvent::ProjectMarkersChanged { before, after }
+            }
+            DawAction::InsertNumberedProjectMarker {
+                number,
+                position_ticks,
+                name,
+            } => {
+                let next_marker_id = ids
+                    .next_marker_id
+                    .checked_add(1)
+                    .ok_or(ActionError::MarkerIdExhausted)?;
+                let marker = ProjectMarker::new(
+                    MarkerId::from_raw(ids.next_marker_id),
+                    number,
+                    position_ticks,
+                    name,
+                )
+                .ok_or(ActionError::InvalidProjectMarker)?;
+                let before = state.markers.clone();
+                let mut after = before.clone();
+                after.push(marker);
+                after.sort_unstable_by_key(|marker| (marker.position_ticks, marker.id.value()));
+                ids.next_marker_id = next_marker_id;
+                ProjectEvent::ProjectMarkersChanged { before, after }
+            }
+            DawAction::UpdateProjectMarker {
+                marker_id,
+                position_ticks,
+                name,
+            } => {
+                let before = state.markers.clone();
+                let mut after = before.clone();
+                let marker = after
+                    .iter_mut()
+                    .find(|marker| marker.id == marker_id)
+                    .ok_or(ActionError::ProjectMarkerNotFound { marker_id })?;
+                let visible = marker.visible;
+                *marker = ProjectMarker::new(marker_id, marker.number, position_ticks, name)
+                    .ok_or(ActionError::InvalidProjectMarker)?;
+                marker.visible = visible;
+                after.sort_unstable_by_key(|marker| (marker.position_ticks, marker.id.value()));
+                ProjectEvent::ProjectMarkersChanged { before, after }
+            }
+            DawAction::UpdateProjectMarkerProperties {
+                marker_id,
+                number,
+                position_ticks,
+                name,
+            } => {
+                let before = state.markers.clone();
+                let mut after = before.clone();
+                let marker = after
+                    .iter_mut()
+                    .find(|marker| marker.id == marker_id)
+                    .ok_or(ActionError::ProjectMarkerNotFound { marker_id })?;
+                let visible = marker.visible;
+                *marker = ProjectMarker::new(marker_id, number, position_ticks, name)
+                    .ok_or(ActionError::InvalidProjectMarker)?;
+                marker.visible = visible;
+                after.sort_unstable_by_key(|marker| (marker.position_ticks, marker.id.value()));
+                ProjectEvent::ProjectMarkersChanged { before, after }
+            }
+            DawAction::SetProjectMarkerVisibility { marker_id, visible } => {
+                let before = state.markers.clone();
+                let mut after = before.clone();
+                let marker = after
+                    .iter_mut()
+                    .find(|marker| marker.id == marker_id)
+                    .ok_or(ActionError::ProjectMarkerNotFound { marker_id })?;
+                marker.visible = visible;
+                ProjectEvent::ProjectMarkersChanged { before, after }
+            }
+            DawAction::SetProjectMarkersVisibleOnRuler { visible } => {
+                ProjectEvent::ProjectMarkerLaneVisibilityChanged {
+                    before: state.show_project_markers,
+                    after: visible,
+                }
+            }
+            DawAction::SetProjectRegionsVisibleOnRuler { visible } => {
+                ProjectEvent::ProjectRegionLaneVisibilityChanged {
+                    before: state.show_project_regions,
+                    after: visible,
+                }
+            }
+            DawAction::SetProjectRegionVisibility { region_id, visible } => {
+                let before = state.regions.clone();
+                let mut after = before.clone();
+                let region = after
+                    .iter_mut()
+                    .find(|region| region.id == region_id)
+                    .ok_or(ActionError::ProjectRegionNotFound { region_id })?;
+                region.visible = visible;
+                ProjectEvent::ProjectRegionsChanged { before, after }
+            }
+            DawAction::SetProjectRegionRenderMatrix {
+                region_id,
+                render_master_mix,
+                render_track_ids,
+            } => {
+                let mut unique_track_ids = HashSet::with_capacity(render_track_ids.len());
+                for track_id in &render_track_ids {
+                    if !unique_track_ids.insert(*track_id) {
+                        return Err(ActionError::InvalidProjectRegionRenderMatrix);
+                    }
+                    if !state.tracks.iter().any(|track| track.id == *track_id) {
+                        return Err(ActionError::TrackNotFound {
+                            track_id: *track_id,
+                        });
+                    }
+                }
+                let before = state.regions.clone();
+                let mut after = before.clone();
+                let region = after
+                    .iter_mut()
+                    .find(|region| region.id == region_id)
+                    .ok_or(ActionError::ProjectRegionNotFound { region_id })?;
+                region.render_master_mix = render_master_mix;
+                region.render_track_ids = state
+                    .tracks
+                    .iter()
+                    .filter(|track| unique_track_ids.contains(&track.id))
+                    .map(|track| track.id)
+                    .collect();
+                ProjectEvent::ProjectRegionsChanged { before, after }
+            }
+            DawAction::DeleteProjectMarker { marker_id } => {
+                let before = state.markers.clone();
+                if !before.iter().any(|marker| marker.id == marker_id) {
+                    return Err(ActionError::ProjectMarkerNotFound { marker_id });
+                }
+                let after = before
+                    .iter()
+                    .filter(|marker| marker.id != marker_id)
+                    .cloned()
+                    .collect();
+                ProjectEvent::ProjectMarkersChanged { before, after }
+            }
+            DawAction::InsertProjectRegion {
+                start_ticks,
+                end_ticks,
+                name,
+            } => {
+                let next_region_id = ids
+                    .next_region_id
+                    .checked_add(1)
+                    .ok_or(ActionError::RegionIdExhausted)?;
+                let number = lowest_available_region_number(&state.regions)
+                    .ok_or(ActionError::ProjectRegionNumberExhausted)?;
+                let region = ProjectRegion::new(
+                    RegionId::from_raw(ids.next_region_id),
+                    number,
+                    start_ticks,
+                    end_ticks,
+                    name,
+                )
+                .ok_or(ActionError::InvalidProjectRegion)?;
+                let before = state.regions.clone();
+                let mut after = before.clone();
+                after.push(region);
+                after.sort_unstable_by_key(|region| (region.start_ticks, region.id.value()));
+                ids.next_region_id = next_region_id;
+                ProjectEvent::ProjectRegionsChanged { before, after }
+            }
+            DawAction::UpdateProjectRegion {
+                region_id,
+                number,
+                start_ticks,
+                end_ticks,
+                name,
+            } => {
+                let before = state.regions.clone();
+                let mut after = before.clone();
+                let region = after
+                    .iter_mut()
+                    .find(|region| region.id == region_id)
+                    .ok_or(ActionError::ProjectRegionNotFound { region_id })?;
+                let visible = region.visible;
+                let render_master_mix = region.render_master_mix;
+                let render_track_ids = region.render_track_ids.clone();
+                *region = ProjectRegion::new(region_id, number, start_ticks, end_ticks, name)
+                    .ok_or(ActionError::InvalidProjectRegion)?;
+                region.visible = visible;
+                region.render_master_mix = render_master_mix;
+                region.render_track_ids = render_track_ids;
+                after.sort_unstable_by_key(|region| (region.start_ticks, region.id.value()));
+                ProjectEvent::ProjectRegionsChanged { before, after }
+            }
+            DawAction::DeleteProjectRegion { region_id } => {
+                let before = state.regions.clone();
+                if !before.iter().any(|region| region.id == region_id) {
+                    return Err(ActionError::ProjectRegionNotFound { region_id });
+                }
+                let after = before
+                    .iter()
+                    .filter(|region| region.id != region_id)
+                    .cloned()
+                    .collect();
+                ProjectEvent::ProjectRegionsChanged { before, after }
+            }
             DawAction::CreateTrack { index, name } => {
                 if index > state.tracks.len() {
                     return Err(ActionError::TrackIndexOutOfBounds {
@@ -1239,15 +2891,22 @@ impl Project {
                     id: TrackId::from_raw(ids.next_track_id),
                     name,
                     is_bus: false,
+                    is_folder: false,
+                    parent_track: state.tracks.get(index).and_then(|next| next.parent_track),
                     output_track: None,
+                    main_send_enabled: true,
+                    sends: Vec::new(),
                     volume_db: 0.0,
                     pan: 0.0,
+                    pan_mode: state.pan_mode,
                     muted: false,
+                    phase_inverted: false,
                     solo: false,
                     record_armed: false,
                     instrument: None,
                     fx_chain: Vec::new(),
                     volume_automation: Vec::new(),
+                    razor_edit_areas: Vec::new(),
                     frozen_audio_item_id: None,
                 };
                 ids.next_track_id = next_id;
@@ -1268,15 +2927,22 @@ impl Project {
                     id: TrackId::from_raw(ids.next_track_id),
                     name,
                     is_bus: true,
+                    is_folder: false,
+                    parent_track: state.tracks.get(index).and_then(|next| next.parent_track),
                     output_track: None,
+                    main_send_enabled: true,
+                    sends: Vec::new(),
                     volume_db: 0.0,
                     pan: 0.0,
+                    pan_mode: state.pan_mode,
                     muted: false,
+                    phase_inverted: false,
                     solo: false,
                     record_armed: false,
                     instrument: None,
                     fx_chain: Vec::new(),
                     volume_automation: Vec::new(),
+                    razor_edit_areas: Vec::new(),
                     frozen_audio_item_id: None,
                 };
                 ids.next_track_id = next_id;
@@ -1427,6 +3093,110 @@ impl Project {
                     after: points,
                 }
             }
+            DawAction::SetTrackRazorEditAreas { mut track_areas } => {
+                let mut seen = HashSet::with_capacity(track_areas.len());
+                if track_areas.iter().any(|(track_id, areas)| {
+                    !seen.insert(*track_id) || !valid_razor_edit_areas(areas)
+                }) {
+                    return Err(ActionError::InvalidRazorEditAreas);
+                }
+                track_areas.sort_unstable_by_key(|(track_id, _)| track_id.value());
+                let mut before = Vec::with_capacity(track_areas.len());
+                let mut after = Vec::with_capacity(track_areas.len());
+                for (track_id, areas) in track_areas {
+                    let track = state
+                        .tracks
+                        .iter()
+                        .find(|track| track.id == track_id)
+                        .ok_or(ActionError::TrackNotFound { track_id })?;
+                    before.push((track_id, track.razor_edit_areas.clone()));
+                    after.push((track_id, areas));
+                }
+                ProjectEvent::TrackRazorEditAreasChanged { before, after }
+            }
+            DawAction::SetTrackMainSend { track_id, enabled } => {
+                let track = state
+                    .tracks
+                    .iter()
+                    .find(|track| track.id == track_id)
+                    .ok_or(ActionError::TrackNotFound { track_id })?;
+                ProjectEvent::TrackMainSendChanged {
+                    track_id,
+                    before: track.main_send_enabled,
+                    after: enabled,
+                }
+            }
+            DawAction::CreateAudioSend {
+                track_id,
+                destination,
+                parameters,
+            } => {
+                let next = ids
+                    .next_send_id
+                    .checked_add(1)
+                    .ok_or(ActionError::SendIdExhausted)?;
+                let track = state
+                    .tracks
+                    .iter()
+                    .find(|track| track.id == track_id)
+                    .ok_or(ActionError::TrackNotFound { track_id })?;
+                let mut after = track.sends.clone();
+                after.push(crate::AudioSend {
+                    id: crate::SendId::from_value(ids.next_send_id),
+                    destination,
+                    parameters,
+                });
+                validate_send_edit(&state.tracks, track_id, &after)?;
+                ids.next_send_id = next;
+                ProjectEvent::TrackSendsChanged {
+                    track_id,
+                    before: track.sends.clone(),
+                    after,
+                }
+            }
+            DawAction::UpdateAudioSend {
+                track_id,
+                send_id,
+                destination,
+                parameters,
+            } => {
+                let track = state
+                    .tracks
+                    .iter()
+                    .find(|track| track.id == track_id)
+                    .ok_or(ActionError::TrackNotFound { track_id })?;
+                let mut after = track.sends.clone();
+                let send = after
+                    .iter_mut()
+                    .find(|send| send.id == send_id)
+                    .ok_or(ActionError::AudioSendNotFound { send_id })?;
+                send.destination = destination;
+                send.parameters = parameters;
+                validate_send_edit(&state.tracks, track_id, &after)?;
+                ProjectEvent::TrackSendsChanged {
+                    track_id,
+                    before: track.sends.clone(),
+                    after,
+                }
+            }
+            DawAction::DeleteAudioSend { track_id, send_id } => {
+                let track = state
+                    .tracks
+                    .iter()
+                    .find(|track| track.id == track_id)
+                    .ok_or(ActionError::TrackNotFound { track_id })?;
+                let mut after = track.sends.clone();
+                let index = after
+                    .iter()
+                    .position(|send| send.id == send_id)
+                    .ok_or(ActionError::AudioSendNotFound { send_id })?;
+                after.remove(index);
+                ProjectEvent::TrackSendsChanged {
+                    track_id,
+                    before: track.sends.clone(),
+                    after,
+                }
+            }
             DawAction::SetTrackOutput {
                 track_id,
                 output_track,
@@ -1439,23 +3209,41 @@ impl Project {
                 if output_track == Some(track_id) {
                     return Err(ActionError::InvalidTrackOutput);
                 }
-                let mut next = output_track;
-                while let Some(target_id) = next {
-                    if target_id == track_id {
-                        return Err(ActionError::TrackRoutingCycle);
-                    }
-                    let target = state
-                        .tracks
-                        .iter()
-                        .find(|track| track.id == target_id && track.is_bus)
-                        .ok_or(ActionError::InvalidTrackOutput)?;
-                    next = target.output_track;
+                if output_track
+                    .is_some_and(|target| !state.tracks.iter().any(|track| track.id == target))
+                {
+                    return Err(ActionError::InvalidTrackOutput);
+                }
+                let mut candidate = state.tracks.clone();
+                candidate
+                    .iter_mut()
+                    .find(|track| track.id == track_id)
+                    .unwrap()
+                    .output_track = output_track;
+                if !valid_track_routing(&candidate) {
+                    return Err(ActionError::TrackRoutingCycle);
                 }
                 ProjectEvent::TrackOutputChanged {
                     track_id,
                     before: source.output_track,
                     after: output_track,
                 }
+            }
+            DawAction::SetTrackFolder { track_id, enabled } => {
+                let mut after = state.tracks.clone();
+                let track = after
+                    .iter_mut()
+                    .find(|track| track.id == track_id)
+                    .ok_or(ActionError::TrackNotFound { track_id })?;
+                if enabled && track.frozen_audio_item_id.is_some() {
+                    return Err(ActionError::CannotEditFrozenTrackSource { track_id });
+                }
+                track.is_folder = enabled;
+                structure_change(&state.tracks, &after)?
+            }
+            DawAction::SetTrackParent { track_id, parent } => {
+                let after = reparent_tracks(&state.tracks, track_id, parent)?;
+                structure_change(&state.tracks, &after)?
             }
             DawAction::SetTrackPan { track_id, pan } => {
                 if !pan.is_finite() || !(-1.0..=1.0).contains(&pan) {
@@ -1470,6 +3258,21 @@ impl Project {
                     track_id,
                     before: track.pan,
                     after: pan,
+                }
+            }
+            DawAction::SetTrackPhase {
+                track_id,
+                phase_inverted,
+            } => {
+                let track = state
+                    .tracks
+                    .iter()
+                    .find(|track| track.id == track_id)
+                    .ok_or(ActionError::TrackNotFound { track_id })?;
+                ProjectEvent::TrackPhaseChanged {
+                    track_id,
+                    before: track.phase_inverted,
+                    after: phase_inverted,
                 }
             }
             DawAction::SetTrackMute { track_id, muted } => {
@@ -1552,6 +3355,7 @@ impl Project {
                     return Err(ActionError::TrackAlreadyFrozen { track_id });
                 }
                 if track.is_bus
+                    || track.is_folder
                     || track.instrument.is_none()
                     || state
                         .audio_items
@@ -1569,12 +3373,23 @@ impl Project {
                     .checked_add(1)
                     .ok_or(ActionError::ItemIdExhausted)?;
                 let item = AudioItem {
+                    fades: crate::AudioItemFades::default(),
+                    volume: 1.0,
+                    take_volume: 1.0,
+                    take_pan: 0.0,
+                    take_playback_rate: 1.0,
                     id: ItemId::from_raw(ids.next_item_id),
                     track_id,
                     media_ref,
+                    name: String::new(),
                     start_sample,
                     source_offset_samples: 0,
                     length_samples,
+                    muted: false,
+                    phase_inverted: false,
+                    loop_source: false,
+                    source_section_start_samples: None,
+                    source_section_length_samples: None,
                 };
                 ids.next_item_id = next_id;
                 ProjectEvent::TrackFreezeChanged {
@@ -1732,10 +3547,22 @@ impl Project {
                     .iter()
                     .position(|track| track.id == track_id)
                     .ok_or(ActionError::TrackNotFound { track_id })?;
-                ProjectEvent::TrackMoved {
-                    track_id,
-                    from,
-                    to: index,
+                let end = from
+                    + 1
+                    + state
+                        .tracks
+                        .iter()
+                        .filter(|track| is_descendant(&state.tracks, track.id, track_id))
+                        .count();
+                if index == from {
+                    structure_change(&state.tracks, &state.tracks)?
+                } else {
+                    let mut after = state.tracks.clone();
+                    let mut group: Vec<_> = after.drain(from..end).collect();
+                    let target = index.min(after.len());
+                    group[0].parent_track = after.get(target).and_then(|track| track.parent_track);
+                    after.splice(target..target, group);
+                    structure_change(&state.tracks, &after)?
                 }
             }
             DawAction::InsertAudioItem {
@@ -1769,12 +3596,270 @@ impl Project {
                     .checked_add(1)
                     .ok_or(ActionError::ItemIdExhausted)?;
                 let item = AudioItem {
+                    fades: crate::AudioItemFades::default(),
+                    volume: 1.0,
+                    take_volume: 1.0,
+                    take_pan: 0.0,
+                    take_playback_rate: 1.0,
                     id: ItemId::from_raw(ids.next_item_id),
                     track_id,
                     media_ref,
+                    name: String::new(),
                     start_sample,
                     source_offset_samples,
                     length_samples,
+                    muted: false,
+                    phase_inverted: false,
+                    loop_source: source_offset_samples >= 0,
+                    source_section_start_samples: None,
+                    source_section_length_samples: None,
+                };
+                ids.next_item_id = next_id;
+                ProjectEvent::AudioItemInserted {
+                    index: state.audio_items.len(),
+                    item,
+                }
+            }
+            DawAction::InsertLoopedAudioItem {
+                track_id,
+                media_ref,
+                start_sample,
+                source_offset_samples,
+                length_samples,
+                muted,
+                phase_inverted,
+                source_section_start_samples,
+                source_section_length_samples,
+            } => {
+                if !state.tracks.iter().any(|track| track.id == track_id) {
+                    return Err(ActionError::TrackNotFound { track_id });
+                }
+                if state
+                    .tracks
+                    .iter()
+                    .any(|track| track.id == track_id && track.frozen_audio_item_id.is_some())
+                {
+                    return Err(ActionError::CannotEditFrozenTrackSource { track_id });
+                }
+                if media_ref.trim().is_empty() {
+                    return Err(ActionError::InvalidAudioMediaRef);
+                }
+                if length_samples == 0 || source_section_length_samples == 0 {
+                    return Err(ActionError::InvalidAudioItemLength);
+                }
+                if start_sample.checked_add(length_samples).is_none() {
+                    return Err(ActionError::InvalidAudioItemPosition);
+                }
+                if source_section_start_samples
+                    .checked_add(source_section_length_samples)
+                    .is_none()
+                {
+                    return Err(ActionError::InvalidAudioItemPosition);
+                }
+                if source_offset_samples >= source_section_length_samples {
+                    return Err(ActionError::InvalidAudioItemPosition);
+                }
+                let Ok(source_offset_samples_signed) = i64::try_from(source_offset_samples) else {
+                    return Err(ActionError::InvalidAudioItemPosition);
+                };
+                let next_id = ids
+                    .next_item_id
+                    .checked_add(1)
+                    .ok_or(ActionError::ItemIdExhausted)?;
+                let item = AudioItem {
+                    fades: crate::AudioItemFades::default(),
+                    volume: 1.0,
+                    take_volume: 1.0,
+                    take_pan: 0.0,
+                    take_playback_rate: 1.0,
+                    id: ItemId::from_raw(ids.next_item_id),
+                    track_id,
+                    media_ref,
+                    name: String::new(),
+                    start_sample,
+                    source_offset_samples: source_offset_samples_signed,
+                    length_samples,
+                    muted,
+                    phase_inverted,
+                    loop_source: true,
+                    source_section_start_samples: Some(source_section_start_samples),
+                    source_section_length_samples: Some(source_section_length_samples),
+                };
+                ids.next_item_id = next_id;
+                ProjectEvent::AudioItemInserted {
+                    index: state.audio_items.len(),
+                    item,
+                }
+            }
+            DawAction::SetAudioItemLoopSource { item_id, enabled } => {
+                let item = state
+                    .audio_items
+                    .iter()
+                    .find(|item| item.id == item_id)
+                    .ok_or(ActionError::AudioItemNotFound { item_id })?;
+                if is_frozen_render(state, item_id) {
+                    return Err(ActionError::FrozenRenderCannotBeEdited { item_id });
+                }
+                let before = item.clone();
+                if enabled
+                    && !valid_audio_source_offset(
+                        item.source_offset_samples,
+                        true,
+                        item.source_section_start_samples,
+                        item.source_section_length_samples,
+                    )
+                {
+                    return Err(ActionError::InvalidAudioItemPosition);
+                }
+                let after = AudioItem {
+                    loop_source: enabled,
+                    ..before.clone()
+                };
+                ProjectEvent::AudioItemChanged { before, after }
+            }
+            DawAction::SetAudioItemMute { item_id, muted } => {
+                let item = state
+                    .audio_items
+                    .iter()
+                    .find(|item| item.id == item_id)
+                    .ok_or(ActionError::AudioItemNotFound { item_id })?;
+                if is_frozen_render(state, item_id) {
+                    return Err(ActionError::FrozenRenderCannotBeEdited { item_id });
+                }
+                let before = item.clone();
+                let after = AudioItem {
+                    muted,
+                    ..before.clone()
+                };
+                ProjectEvent::AudioItemChanged { before, after }
+            }
+            DawAction::SetAudioItemPhase { item_id, inverted } => {
+                let item = state
+                    .audio_items
+                    .iter()
+                    .find(|item| item.id == item_id)
+                    .ok_or(ActionError::AudioItemNotFound { item_id })?;
+                if is_frozen_render(state, item_id) {
+                    return Err(ActionError::FrozenRenderCannotBeEdited { item_id });
+                }
+                let before = item.clone();
+                let after = AudioItem {
+                    phase_inverted: inverted,
+                    ..before.clone()
+                };
+                ProjectEvent::AudioItemChanged { before, after }
+            }
+            DawAction::SetAudioItemFades { item_id, fades } => {
+                let item = state
+                    .audio_items
+                    .iter()
+                    .find(|item| item.id == item_id)
+                    .ok_or(ActionError::AudioItemNotFound { item_id })?;
+                if is_frozen_render(state, item_id) {
+                    return Err(ActionError::FrozenRenderCannotBeEdited { item_id });
+                }
+                ProjectEvent::AudioItemFadesChanged {
+                    item_id,
+                    before: item.fades,
+                    after: fades,
+                }
+            }
+            DawAction::SetAudioItemVolume { item_id, volume } => {
+                if !volume.is_finite() || !(0.0..=crate::MAX_AUDIO_ITEM_VOLUME).contains(&volume) {
+                    return Err(ActionError::InvalidAudioItemVolume);
+                }
+                let item = state
+                    .audio_items
+                    .iter()
+                    .find(|item| item.id == item_id)
+                    .ok_or(ActionError::AudioItemNotFound { item_id })?;
+                if is_frozen_render(state, item_id) {
+                    return Err(ActionError::FrozenRenderCannotBeEdited { item_id });
+                }
+                ProjectEvent::AudioItemVolumeChanged {
+                    item_id,
+                    before: item.volume,
+                    after: volume,
+                }
+            }
+            DawAction::SetAudioItemTakeMix {
+                item_id,
+                volume,
+                pan,
+            } => {
+                if !volume.is_finite()
+                    || !(0.0..=crate::MAX_AUDIO_ITEM_TAKE_VOLUME).contains(&volume)
+                {
+                    return Err(ActionError::InvalidAudioItemTakeVolume);
+                }
+                if !pan.is_finite() || !(-1.0..=1.0).contains(&pan) {
+                    return Err(ActionError::InvalidAudioItemTakePan);
+                }
+                let item = state
+                    .audio_items
+                    .iter()
+                    .find(|item| item.id == item_id)
+                    .ok_or(ActionError::AudioItemNotFound { item_id })?;
+                if is_frozen_render(state, item_id) {
+                    return Err(ActionError::FrozenRenderCannotBeEdited { item_id });
+                }
+                ProjectEvent::AudioItemTakeMixChanged {
+                    item_id,
+                    before: (item.take_volume, item.take_pan),
+                    after: (volume, pan),
+                }
+            }
+            DawAction::SetAudioItemTakePlaybackRate { item_id, rate } => {
+                if !rate.is_finite() || rate <= 0.0 {
+                    return Err(ActionError::InvalidAudioItemTakePlaybackRate);
+                }
+                let item = state
+                    .audio_items
+                    .iter()
+                    .find(|item| item.id == item_id)
+                    .ok_or(ActionError::AudioItemNotFound { item_id })?;
+                if is_frozen_render(state, item_id) {
+                    return Err(ActionError::FrozenRenderCannotBeEdited { item_id });
+                }
+                ProjectEvent::AudioItemTakePlaybackRateChanged {
+                    item_id,
+                    before: item.take_playback_rate,
+                    after: rate,
+                }
+            }
+            DawAction::DuplicateAudioItemAt {
+                item_id,
+                track_id,
+                start_sample,
+            } => {
+                let source = state
+                    .audio_items
+                    .iter()
+                    .find(|item| item.id == item_id)
+                    .ok_or(ActionError::AudioItemNotFound { item_id })?;
+                if is_frozen_render(state, item_id) {
+                    return Err(ActionError::FrozenRenderCannotBeEdited { item_id });
+                }
+                let target = state
+                    .tracks
+                    .iter()
+                    .find(|track| track.id == track_id)
+                    .ok_or(ActionError::TrackNotFound { track_id })?;
+                if target.frozen_audio_item_id.is_some() {
+                    return Err(ActionError::CannotEditFrozenTrackSource { track_id });
+                }
+                if start_sample.checked_add(source.length_samples).is_none() {
+                    return Err(ActionError::InvalidAudioItemPosition);
+                }
+                let next_id = ids
+                    .next_item_id
+                    .checked_add(1)
+                    .ok_or(ActionError::ItemIdExhausted)?;
+                let item = AudioItem {
+                    id: ItemId::from_raw(ids.next_item_id),
+                    track_id,
+                    start_sample,
+                    ..source.clone()
                 };
                 ids.next_item_id = next_id;
                 ProjectEvent::AudioItemInserted {
@@ -1805,6 +3890,14 @@ impl Project {
                     .ok_or(ActionError::AudioItemNotFound { item_id })?;
                 if is_frozen_render(state, item_id) {
                     return Err(ActionError::FrozenRenderCannotBeEdited { item_id });
+                }
+                if !valid_audio_source_offset(
+                    source_offset_samples,
+                    item.loop_source,
+                    item.source_section_start_samples,
+                    item.source_section_length_samples,
+                ) {
+                    return Err(ActionError::InvalidAudioItemPosition);
                 }
                 let before = item.clone();
                 let after = AudioItem {
@@ -1862,6 +3955,25 @@ impl Project {
                     item: state.audio_items[index].clone(),
                 }
             }
+            DawAction::SetAudioItemName { item_id, name } => {
+                if name.chars().count() > 128 {
+                    return Err(ActionError::InvalidAudioItemName);
+                }
+                let before = state
+                    .audio_items
+                    .iter()
+                    .find(|item| item.id == item_id)
+                    .ok_or(ActionError::AudioItemNotFound { item_id })?
+                    .clone();
+                if is_frozen_render(state, item_id) {
+                    return Err(ActionError::FrozenRenderCannotBeEdited { item_id });
+                }
+                let after = AudioItem {
+                    name,
+                    ..before.clone()
+                };
+                ProjectEvent::AudioItemChanged { before, after }
+            }
             DawAction::InsertMidiItem {
                 track_id,
                 start_tick,
@@ -1885,8 +3997,12 @@ impl Project {
                     track_id,
                     name: "MIDI".to_owned(),
                     start_tick,
+                    start_tick_subtick: 0,
                     source_offset_ticks: 0,
+                    loop_source: true,
+                    source_loop_length_ticks: length_ticks,
                     length_ticks,
+                    muted: false,
                     notes: Arc::new(Vec::new()),
                     controllers: Arc::new(Vec::new()),
                     pitch_bends: Arc::new(Vec::new()),
@@ -1939,6 +4055,164 @@ impl Project {
                 let after = MidiItem {
                     start_tick,
                     length_ticks,
+                    start_tick_subtick: before.start_tick_subtick,
+                    ..before.clone()
+                };
+                ProjectEvent::MidiItemChanged { before, after }
+            }
+            DawAction::SetMidiItemPosition { item_id, position } => {
+                let item = state
+                    .midi_items
+                    .iter()
+                    .find(|item| item.id == item_id)
+                    .ok_or(ActionError::MidiItemNotFound { item_id })?;
+                if position.checked_add_ticks(item.length_ticks).is_none() {
+                    return Err(ActionError::InvalidMidiItemPosition);
+                }
+                let before = item.clone();
+                let after = MidiItem {
+                    start_tick: position.tick(),
+                    start_tick_subtick: position.subtick(),
+                    ..before.clone()
+                };
+                ProjectEvent::MidiItemChanged { before, after }
+            }
+            DawAction::EditMidiItemPlacement {
+                item_id,
+                start_tick,
+                length_ticks,
+                source_offset_ticks,
+            } => {
+                if length_ticks == 0 {
+                    return Err(ActionError::InvalidMidiItemLength);
+                }
+                if start_tick.checked_add(length_ticks).is_none()
+                    || source_offset_ticks.checked_add(length_ticks).is_none()
+                {
+                    return Err(ActionError::InvalidMidiItemPosition);
+                }
+                let item = state
+                    .midi_items
+                    .iter()
+                    .find(|item| item.id == item_id)
+                    .ok_or(ActionError::MidiItemNotFound { item_id })?;
+                if !valid_midi_controllers(&item.controllers) {
+                    return Err(ActionError::InvalidMidiController);
+                }
+                if !valid_midi_pitch_bends(&item.pitch_bends) {
+                    return Err(ActionError::InvalidMidiPitchBend);
+                }
+                let before = item.clone();
+                let after = MidiItem {
+                    start_tick,
+                    length_ticks,
+                    source_offset_ticks,
+                    start_tick_subtick: before.start_tick_subtick,
+                    ..before.clone()
+                };
+                ProjectEvent::MidiItemChanged { before, after }
+            }
+            DawAction::SetMidiItemContents {
+                item_id,
+                source_offset_ticks,
+                source_loop_length_ticks,
+                content_shift_ticks,
+            } => {
+                if source_loop_length_ticks == 0 {
+                    return Err(ActionError::InvalidMidiItemLength);
+                }
+                let item = state
+                    .midi_items
+                    .iter()
+                    .find(|item| item.id == item_id)
+                    .ok_or(ActionError::MidiItemNotFound { item_id })?;
+                if !valid_midi_controllers(&item.controllers) {
+                    return Err(ActionError::InvalidMidiController);
+                }
+                if !valid_midi_pitch_bends(&item.pitch_bends) {
+                    return Err(ActionError::InvalidMidiPitchBend);
+                }
+                if source_offset_ticks.checked_add(item.length_ticks).is_none() {
+                    return Err(ActionError::InvalidMidiItemPosition);
+                }
+
+                let before = item.clone();
+                let notes = before
+                    .notes
+                    .iter()
+                    .map(|note| {
+                        let tick = note
+                            .data
+                            .tick
+                            .checked_add_signed(content_shift_ticks)
+                            .ok_or(ActionError::InvalidMidiItemPosition)?;
+                        if tick.checked_add(note.data.duration).is_none() {
+                            return Err(ActionError::InvalidMidiItemPosition);
+                        }
+                        Ok(MidiNote {
+                            id: note.id,
+                            data: crate::MidiNoteData { tick, ..note.data },
+                        })
+                    })
+                    .collect::<Result<Vec<_>, ActionError>>()?;
+                let controllers = before
+                    .controllers
+                    .iter()
+                    .map(|controller| {
+                        Ok(MidiControllerData {
+                            tick: controller
+                                .tick
+                                .checked_add_signed(content_shift_ticks)
+                                .ok_or(ActionError::InvalidMidiItemPosition)?,
+                            ..*controller
+                        })
+                    })
+                    .collect::<Result<Vec<_>, ActionError>>()?;
+                let pitch_bends = before
+                    .pitch_bends
+                    .iter()
+                    .map(|bend| {
+                        Ok(MidiPitchBendData {
+                            tick: bend
+                                .tick
+                                .checked_add_signed(content_shift_ticks)
+                                .ok_or(ActionError::InvalidMidiItemPosition)?,
+                            ..*bend
+                        })
+                    })
+                    .collect::<Result<Vec<_>, ActionError>>()?;
+                let after = MidiItem {
+                    source_offset_ticks,
+                    source_loop_length_ticks,
+                    notes: Arc::new(notes),
+                    controllers: Arc::new(controllers),
+                    pitch_bends: Arc::new(pitch_bends),
+                    ..before.clone()
+                };
+                ProjectEvent::MidiItemChanged { before, after }
+            }
+            DawAction::SetMidiItemMute { item_id, muted } => {
+                let before = state
+                    .midi_items
+                    .iter()
+                    .find(|item| item.id == item_id)
+                    .ok_or(ActionError::MidiItemNotFound { item_id })?
+                    .clone();
+                let after = MidiItem {
+                    muted,
+                    ..before.clone()
+                };
+                ProjectEvent::MidiItemChanged { before, after }
+            }
+            DawAction::SetMidiItemLoopSource { item_id, enabled } => {
+                let before = state
+                    .midi_items
+                    .iter()
+                    .find(|item| item.id == item_id)
+                    .ok_or(ActionError::MidiItemNotFound { item_id })?
+                    .clone();
+                let after = MidiItem {
+                    loop_source: enabled,
                     ..before.clone()
                 };
                 ProjectEvent::MidiItemChanged { before, after }
@@ -1983,11 +4257,17 @@ impl Project {
                     .iter()
                     .find(|item| item.id == item_id)
                     .ok_or(ActionError::MidiItemNotFound { item_id })?;
-                let start_tick = original
-                    .start_tick
-                    .checked_add(original.length_ticks)
+                let start_position = original
+                    .start_position()
+                    .checked_add_ticks(original.length_ticks)
                     .ok_or(ActionError::InvalidMidiItemPosition)?;
-                duplicate_midi_item_at(state, ids, item_id, start_tick)?
+                duplicate_midi_item_to_track_at_position(
+                    state,
+                    ids,
+                    item_id,
+                    original.track_id,
+                    start_position,
+                )?
             }
             DawAction::DuplicateMidiItemAt {
                 item_id,
@@ -2067,6 +4347,7 @@ impl Project {
                         segment_notes[segment_index].push(MidiNote {
                             id: note_id,
                             data: crate::MidiNoteData {
+                                channel: note.data.channel,
                                 pitch: note.data.pitch,
                                 tick: if segment_index == 0 {
                                     overlap_start
@@ -2100,12 +4381,20 @@ impl Project {
                         track_id: original.track_id,
                         name: original.name.clone(),
                         start_tick: segment_start,
+                        start_tick_subtick: if index == 0 {
+                            original.start_tick_subtick
+                        } else {
+                            0
+                        },
                         source_offset_ticks: if index == 0 {
                             original.source_offset_ticks
                         } else {
                             0
                         },
+                        loop_source: original.loop_source,
+                        source_loop_length_ticks: original.source_loop_length_ticks,
                         length_ticks: segment_end - segment_start,
+                        muted: original.muted,
                         notes: Arc::new(notes),
                         controllers: Arc::new(controllers_for_segment(
                             &original.controllers,
@@ -2150,12 +4439,9 @@ impl Project {
                 let mut next_note_id = ids.next_note_id;
                 for data in notes {
                     if data.pitch > 127
+                        || data.channel >= crate::MIDI_CHANNEL_COUNT
                         || data.velocity > 127
-                        || data.duration == 0
-                        || data.tick < item.source_offset_ticks
-                        || data.tick.checked_add(data.duration).is_none_or(|end| {
-                            end > item.source_offset_ticks.saturating_add(item.length_ticks)
-                        })
+                        || !valid_midi_note_source_range(item, data.tick, data.duration)
                     {
                         return Err(ActionError::InvalidMidiNote);
                     }
@@ -2190,12 +4476,9 @@ impl Project {
                     .find(|item| item.id == item_id)
                     .ok_or(ActionError::MidiItemNotFound { item_id })?;
                 if data.pitch > 127
+                    || data.channel >= crate::MIDI_CHANNEL_COUNT
                     || data.velocity > 127
-                    || data.duration == 0
-                    || data.tick < item.source_offset_ticks
-                    || data.tick.checked_add(data.duration).is_none_or(|end| {
-                        end > item.source_offset_ticks.saturating_add(item.length_ticks)
-                    })
+                    || !valid_midi_note_source_range(item, data.tick, data.duration)
                 {
                     return Err(ActionError::InvalidMidiNote);
                 }
@@ -2246,13 +4529,13 @@ impl Project {
                     .iter()
                     .find(|item| item.id == item_id)
                     .ok_or(ActionError::MidiItemNotFound { item_id })?;
-                controllers
-                    .sort_unstable_by_key(|controller| (controller.tick, controller.controller));
-                let source_end_tick = item.source_offset_ticks.saturating_add(item.length_ticks);
+                controllers.sort_unstable_by_key(|controller| {
+                    (controller.tick, controller.channel, controller.controller)
+                });
+                let (source_start_tick, source_end_tick) = midi_item_source_tick_bounds(item);
                 if !valid_midi_controllers(&controllers)
                     || controllers.iter().any(|controller| {
-                        (controller.tick < item.source_offset_ticks
-                            || controller.tick >= source_end_tick)
+                        (controller.tick < source_start_tick || controller.tick >= source_end_tick)
                             && !item.controllers.contains(controller)
                     })
                 {
@@ -2273,11 +4556,11 @@ impl Project {
                     .iter()
                     .find(|item| item.id == item_id)
                     .ok_or(ActionError::MidiItemNotFound { item_id })?;
-                pitch_bends.sort_unstable_by_key(|bend| bend.tick);
-                let source_end_tick = item.source_offset_ticks.saturating_add(item.length_ticks);
+                pitch_bends.sort_unstable_by_key(|bend| (bend.tick, bend.channel));
+                let (source_start_tick, source_end_tick) = midi_item_source_tick_bounds(item);
                 if !valid_midi_pitch_bends(&pitch_bends)
                     || pitch_bends.iter().any(|bend| {
-                        (bend.tick < item.source_offset_ticks || bend.tick >= source_end_tick)
+                        (bend.tick < source_start_tick || bend.tick >= source_end_tick)
                             && !item.pitch_bends.contains(bend)
                     })
                 {
@@ -2294,48 +4577,159 @@ impl Project {
                 grid,
                 strength,
             } => {
-                if !strength.is_finite() || !(0.0..=1.0).contains(&strength) {
-                    return Err(ActionError::InvalidQuantizeStrength);
-                }
-                let grid_ticks = grid
-                    .ticks(state.tempo_map.settings().ppq())
-                    .map_err(|_| ActionError::InvalidQuantizeGrid)?;
                 let item = state
                     .midi_items
                     .iter()
                     .find(|item| item.id == item_id)
                     .ok_or(ActionError::MidiItemNotFound { item_id })?;
-                let mut changes = Vec::new();
-                for note in item.notes.iter() {
-                    let absolute_tick = item
-                        .project_tick_at_content_tick(note.data.tick)
-                        .ok_or(ActionError::InvalidMidiNote)?;
-                    let lower = absolute_tick / grid_ticks * grid_ticks;
-                    let remainder = absolute_tick - lower;
-                    let round_up_threshold = grid_ticks / 2 + grid_ticks % 2;
-                    let nearest = if remainder >= round_up_threshold {
-                        lower.checked_add(grid_ticks).unwrap_or(lower)
-                    } else {
-                        lower
-                    };
-                    let distance = nearest as i128 - absolute_tick as i128;
-                    let adjustment = (distance as f64 * f64::from(strength)).round() as i128;
-                    let quantized_absolute = u64::try_from(absolute_tick as i128 + adjustment)
-                        .map_err(|_| ActionError::InvalidMidiNote)?;
-                    let tick = quantized_absolute
-                        .saturating_sub(item.start_tick)
-                        .saturating_add(item.source_offset_ticks);
-                    if tick.checked_add(note.data.duration).is_none_or(|end| {
-                        tick < item.source_offset_ticks
-                            || end > item.source_offset_ticks.saturating_add(item.length_ticks)
-                    }) {
-                        return Err(ActionError::InvalidMidiNote);
+                let changes = quantized_midi_note_changes(
+                    item,
+                    None,
+                    grid,
+                    strength,
+                    state.tempo_map.settings().ppq(),
+                    MidiNoteQuantizeOperation::Position,
+                )?;
+                ProjectEvent::MidiNotesQuantized { item_id, changes }
+            }
+            DawAction::QuantizeMidiNotes {
+                item_id,
+                note_ids,
+                grid,
+                strength,
+            } => {
+                let selected_note_ids = note_ids.into_iter().collect::<HashSet<_>>();
+                let item = state
+                    .midi_items
+                    .iter()
+                    .find(|item| item.id == item_id)
+                    .ok_or(ActionError::MidiItemNotFound { item_id })?;
+                let changes = quantized_midi_note_changes(
+                    item,
+                    Some(&selected_note_ids),
+                    grid,
+                    strength,
+                    state.tempo_map.settings().ppq(),
+                    MidiNoteQuantizeOperation::Position,
+                )?;
+                ProjectEvent::MidiNotesQuantized { item_id, changes }
+            }
+            DawAction::QuantizeMidiNotesAndEnds {
+                item_id,
+                note_ids,
+                grid,
+                strength,
+            } => {
+                let selected_note_ids = note_ids.into_iter().collect::<HashSet<_>>();
+                let item = state
+                    .midi_items
+                    .iter()
+                    .find(|item| item.id == item_id)
+                    .ok_or(ActionError::MidiItemNotFound { item_id })?;
+                let changes = quantized_midi_note_changes(
+                    item,
+                    Some(&selected_note_ids),
+                    grid,
+                    strength,
+                    state.tempo_map.settings().ppq(),
+                    MidiNoteQuantizeOperation::PositionAndNoteEnd,
+                )?;
+                ProjectEvent::MidiNotesQuantized { item_id, changes }
+            }
+            DawAction::QuantizeMidiNotesWithOperation {
+                item_id,
+                note_ids,
+                grid,
+                strength,
+                operation,
+            } => {
+                let selected_note_ids = note_ids.into_iter().collect::<HashSet<_>>();
+                let item = state
+                    .midi_items
+                    .iter()
+                    .find(|item| item.id == item_id)
+                    .ok_or(ActionError::MidiItemNotFound { item_id })?;
+                let changes = quantized_midi_note_changes(
+                    item,
+                    Some(&selected_note_ids),
+                    grid,
+                    strength,
+                    state.tempo_map.settings().ppq(),
+                    operation,
+                )?;
+                ProjectEvent::MidiNotesQuantized { item_id, changes }
+            }
+            DawAction::QuantizeMidiEventsWithOperation {
+                item_id,
+                grid,
+                strength,
+                operation,
+            } => {
+                let item = state
+                    .midi_items
+                    .iter()
+                    .find(|item| item.id == item_id)
+                    .ok_or(ActionError::MidiItemNotFound { item_id })?;
+                let ppq = state.tempo_map.settings().ppq();
+                let note_changes =
+                    quantized_midi_note_changes(item, None, grid, strength, ppq, operation)?;
+                let mut events = Vec::with_capacity(3);
+                if !note_changes.is_empty() {
+                    events.push(ProjectEvent::MidiNotesQuantized {
+                        item_id,
+                        changes: note_changes,
+                    });
+                }
+                if midi_quantize_includes_note_position(operation) {
+                    let grid_ticks = grid
+                        .ticks(ppq)
+                        .map_err(|_| ActionError::InvalidQuantizeGrid)?;
+                    let mut controllers = item.controllers.as_ref().clone();
+                    for controller in &mut controllers {
+                        controller.tick =
+                            quantized_midi_event_tick(item, controller.tick, grid_ticks, strength)?;
                     }
-                    if tick != note.data.tick {
-                        changes.push((note.id, note.data.tick, tick));
+                    // The source list is tick-ordered; replacing a destination key keeps
+                    // REAPER's later-original-event winner when quantized positions collide.
+                    coalesce_midi_controllers_at_same_tick(&mut controllers);
+                    if !valid_midi_controllers(&controllers) {
+                        return Err(ActionError::InvalidMidiController);
+                    }
+                    if controllers.as_slice() != item.controllers.as_ref() {
+                        events.push(ProjectEvent::MidiControllersChanged {
+                            item_id,
+                            before: item.controllers.as_ref().clone(),
+                            after: controllers,
+                        });
+                    }
+                    let mut pitch_bends = item.pitch_bends.as_ref().clone();
+                    for bend in &mut pitch_bends {
+                        bend.tick =
+                            quantized_midi_event_tick(item, bend.tick, grid_ticks, strength)?;
+                    }
+                    coalesce_midi_pitch_bends_at_same_tick(&mut pitch_bends);
+                    if !valid_midi_pitch_bends(&pitch_bends) {
+                        return Err(ActionError::InvalidMidiPitchBend);
+                    }
+                    if pitch_bends.as_slice() != item.pitch_bends.as_ref() {
+                        events.push(ProjectEvent::MidiPitchBendsChanged {
+                            item_id,
+                            before: item.pitch_bends.as_ref().clone(),
+                            after: pitch_bends,
+                        });
                     }
                 }
-                ProjectEvent::MidiNotesQuantized { item_id, changes }
+                if events.is_empty() {
+                    ProjectEvent::MidiNotesQuantized {
+                        item_id,
+                        changes: Vec::new(),
+                    }
+                } else {
+                    ProjectEvent::Transaction {
+                        tx_id: item_id.value(),
+                        events,
+                    }
+                }
             }
             DawAction::DeleteTrack { track_id } => {
                 let index = state
@@ -2343,11 +4737,10 @@ impl Project {
                     .iter()
                     .position(|track| track.id == track_id)
                     .ok_or(ActionError::TrackNotFound { track_id })?;
-                if state
-                    .tracks
-                    .iter()
-                    .any(|track| track.output_track == Some(track_id))
-                {
+                if state.tracks.iter().any(|track| {
+                    track.parent_track == Some(track_id)
+                        || routing_destinations(track).any(|destination| destination == track_id)
+                }) {
                     return Err(ActionError::TrackHasRoutingDependents { track_id });
                 }
                 let audio_items = state
@@ -2364,14 +4757,24 @@ impl Project {
                     .filter(|(_, item)| item.track_id == track_id)
                     .map(|(index, item)| (index, item.clone()))
                     .collect();
+                let region_render_assignments = state
+                    .regions
+                    .iter()
+                    .filter(|region| region.render_track_ids.contains(&track_id))
+                    .map(|region| (region.id, region.render_track_ids.clone()))
+                    .collect();
                 ProjectEvent::TrackDeleted {
                     index,
                     track: state.tracks[index].clone(),
                     audio_items,
                     midi_items,
+                    region_render_assignments,
                 }
             }
             DawAction::BatchTransaction { .. } => {
+                return Err(ActionError::HistoryInvariantViolation);
+            }
+            DawAction::InsertLoopedAudioItemWithMix { .. } => {
                 return Err(ActionError::HistoryInvariantViolation);
             }
         };
@@ -2382,6 +4785,163 @@ impl Project {
 
     fn apply_event(state: &mut ProjectState, event: &ProjectEvent) -> Result<(), ActionError> {
         match event {
+            ProjectEvent::ProjectNotesChanged { before, after } => {
+                if state.notes != *before {
+                    return Err(ActionError::HistoryInvariantViolation);
+                }
+                state.notes = after.clone();
+            }
+            ProjectEvent::FrameRateChanged { before, after } => {
+                if state.frame_rate != *before {
+                    return Err(ActionError::HistoryInvariantViolation);
+                }
+                state.frame_rate = *after;
+            }
+            ProjectEvent::ProjectSampleRateChanged { before, after } => {
+                if !before.matches(state) {
+                    return Err(ActionError::HistoryInvariantViolation);
+                }
+                after.restore(state)?;
+            }
+            ProjectEvent::ForceTempoChangesToWholeSamplesChanged { before, after } => {
+                if state
+                    .tempo_map
+                    .settings()
+                    .force_tempo_changes_to_whole_samples()
+                    != *before
+                {
+                    return Err(ActionError::HistoryInvariantViolation);
+                }
+                state
+                    .tempo_map
+                    .set_force_tempo_changes_to_whole_samples(*after)
+                    .map_err(|_| ActionError::TempoMapOutOfRange)?;
+            }
+            ProjectEvent::BpmBasisChanged { before, after } => {
+                if state.tempo_map.settings().bpm_basis() != *before {
+                    return Err(ActionError::HistoryInvariantViolation);
+                }
+                state
+                    .tempo_map
+                    .set_bpm_basis(*after)
+                    .map_err(|error| match error {
+                        TimebaseError::InvalidTempo => ActionError::InvalidTempoBpm,
+                        _ => ActionError::TempoMapOutOfRange,
+                    })?;
+            }
+            ProjectEvent::BaseRulerLabelSpacingChanged { before, after } => {
+                if state.base_ruler_label_spacing_on_measure != *before {
+                    return Err(ActionError::HistoryInvariantViolation);
+                }
+                state.base_ruler_label_spacing_on_measure = *after;
+            }
+            ProjectEvent::ProjectStartTimeOffsetChanged { before, after } => {
+                if !after.is_finite() {
+                    return Err(ActionError::InvalidProjectTimeOffset);
+                }
+                if state.project_start_time_offset_seconds != *before {
+                    return Err(ActionError::HistoryInvariantViolation);
+                }
+                state.project_start_time_offset_seconds = *after;
+            }
+            ProjectEvent::ProjectStartTimeFractionalFrameOffsetAllowedChanged { before, after } => {
+                if state.project_start_time_fractional_frame_offset_allowed != *before {
+                    return Err(ActionError::HistoryInvariantViolation);
+                }
+                state.project_start_time_fractional_frame_offset_allowed = *after;
+            }
+            ProjectEvent::ProjectStartMeasureChanged { before, after } => {
+                if state.meter_map.start_measure() != *before {
+                    return Err(ActionError::HistoryInvariantViolation);
+                }
+                state
+                    .meter_map
+                    .set_start_measure(*after)
+                    .map_err(|_| ActionError::MeterMapOutOfRange)?;
+            }
+            ProjectEvent::ProjectMarkersChanged { before, after } => {
+                if state.markers != *before || !valid_project_markers(after) {
+                    return Err(ActionError::HistoryInvariantViolation);
+                }
+                state.markers = after.clone();
+            }
+            ProjectEvent::ProjectMarkerLaneVisibilityChanged { before, after } => {
+                if state.show_project_markers != *before {
+                    return Err(ActionError::HistoryInvariantViolation);
+                }
+                state.show_project_markers = *after;
+            }
+            ProjectEvent::ProjectRegionLaneVisibilityChanged { before, after } => {
+                if state.show_project_regions != *before {
+                    return Err(ActionError::HistoryInvariantViolation);
+                }
+                state.show_project_regions = *after;
+            }
+            ProjectEvent::ProjectRegionsChanged { before, after } => {
+                if state.regions != *before || !valid_project_regions(after) {
+                    return Err(ActionError::HistoryInvariantViolation);
+                }
+                state.regions = after.clone();
+            }
+            ProjectEvent::MasterMixChanged { before, after } => {
+                if state.master_mix != *before {
+                    return Err(ActionError::HistoryInvariantViolation);
+                }
+                state.master_mix = *after;
+            }
+            ProjectEvent::TrackStructureChanged { before, after } => {
+                if track_structure(&state.tracks) != *before {
+                    return Err(ActionError::HistoryInvariantViolation);
+                }
+                let old = std::mem::take(&mut state.tracks);
+                let mut by_id: HashMap<_, _> =
+                    old.into_iter().map(|track| (track.id, track)).collect();
+                for (id, parent, folder) in after {
+                    let mut track = by_id
+                        .remove(id)
+                        .ok_or(ActionError::HistoryInvariantViolation)?;
+                    track.parent_track = *parent;
+                    track.is_folder = *folder;
+                    state.tracks.push(track);
+                }
+                if !by_id.is_empty()
+                    || !valid_track_hierarchy(&state.tracks)
+                    || !valid_track_routing(&state.tracks)
+                {
+                    return Err(ActionError::HistoryInvariantViolation);
+                }
+            }
+            ProjectEvent::TrackMainSendChanged {
+                track_id,
+                before,
+                after,
+            } => {
+                let track = state
+                    .tracks
+                    .iter_mut()
+                    .find(|track| track.id == *track_id)
+                    .ok_or(ActionError::HistoryInvariantViolation)?;
+                if track.main_send_enabled != *before {
+                    return Err(ActionError::HistoryInvariantViolation);
+                }
+                track.main_send_enabled = *after;
+            }
+            ProjectEvent::TrackSendsChanged {
+                track_id,
+                before,
+                after,
+            } => {
+                let track = state
+                    .tracks
+                    .iter_mut()
+                    .find(|track| track.id == *track_id)
+                    .ok_or(ActionError::HistoryInvariantViolation)?;
+                if track.sends != *before {
+                    return Err(ActionError::HistoryInvariantViolation);
+                }
+                track.sends = after.clone();
+            }
+
             ProjectEvent::TrackCreated { index, track } => {
                 if *index > state.tracks.len()
                     || state.tracks.iter().any(|item| item.id == track.id)
@@ -2395,9 +4955,25 @@ impl Project {
                 track,
                 audio_items,
                 midi_items,
+                region_render_assignments,
             } => {
                 if state.tracks.get(*index).map(|item| item.id) != Some(track.id) {
                     return Err(ActionError::HistoryInvariantViolation);
+                }
+                for (region_id, before_track_ids) in region_render_assignments {
+                    let region = state
+                        .regions
+                        .iter_mut()
+                        .find(|region| region.id == *region_id)
+                        .ok_or(ActionError::HistoryInvariantViolation)?;
+                    if region.render_track_ids != *before_track_ids
+                        || !before_track_ids.contains(&track.id)
+                    {
+                        return Err(ActionError::HistoryInvariantViolation);
+                    }
+                    region
+                        .render_track_ids
+                        .retain(|track_id| *track_id != track.id);
                 }
                 Self::remove_audio_items(state, audio_items)?;
                 Self::remove_midi_items(state, midi_items)?;
@@ -2408,6 +4984,7 @@ impl Project {
                 track,
                 audio_items,
                 midi_items,
+                region_render_assignments,
             } => {
                 if *index > state.tracks.len()
                     || state.tracks.iter().any(|item| item.id == track.id)
@@ -2415,6 +4992,23 @@ impl Project {
                     return Err(ActionError::HistoryInvariantViolation);
                 }
                 state.tracks.insert(*index, track.clone());
+                for (region_id, restore_track_ids) in region_render_assignments {
+                    let region = state
+                        .regions
+                        .iter_mut()
+                        .find(|region| region.id == *region_id)
+                        .ok_or(ActionError::HistoryInvariantViolation)?;
+                    let expected = restore_track_ids
+                        .iter()
+                        .copied()
+                        .filter(|track_id| *track_id != track.id)
+                        .collect::<Vec<_>>();
+                    if region.render_track_ids != expected || !restore_track_ids.contains(&track.id)
+                    {
+                        return Err(ActionError::HistoryInvariantViolation);
+                    }
+                    region.render_track_ids = restore_track_ids.clone();
+                }
                 for (item_index, item) in audio_items {
                     if item.track_id != track.id
                         || *item_index > state.audio_items.len()
@@ -2479,6 +5073,32 @@ impl Project {
                 }
                 track.volume_automation = after.clone();
             }
+            ProjectEvent::TrackRazorEditAreasChanged { before, after } => {
+                if before.len() != after.len()
+                    || before
+                        .iter()
+                        .zip(after)
+                        .any(|((before_id, areas), (after_id, _))| {
+                            before_id != after_id
+                                || !state.tracks.iter().any(|track| {
+                                    track.id == *before_id && track.razor_edit_areas == *areas
+                                })
+                        })
+                {
+                    return Err(ActionError::HistoryInvariantViolation);
+                }
+                for (track_id, areas) in after {
+                    let track = state
+                        .tracks
+                        .iter_mut()
+                        .find(|track| track.id == *track_id)
+                        .ok_or(ActionError::HistoryInvariantViolation)?;
+                    if !valid_razor_edit_areas(areas) {
+                        return Err(ActionError::HistoryInvariantViolation);
+                    }
+                    track.razor_edit_areas = areas.clone();
+                }
+            }
             ProjectEvent::TrackPanChanged {
                 track_id,
                 before,
@@ -2493,6 +5113,21 @@ impl Project {
                     return Err(ActionError::HistoryInvariantViolation);
                 }
                 track.pan = *after;
+            }
+            ProjectEvent::TrackPhaseChanged {
+                track_id,
+                before,
+                after,
+            } => {
+                let track = state
+                    .tracks
+                    .iter_mut()
+                    .find(|track| track.id == *track_id)
+                    .ok_or(ActionError::HistoryInvariantViolation)?;
+                if track.phase_inverted != *before {
+                    return Err(ActionError::HistoryInvariantViolation);
+                }
+                track.phase_inverted = *after;
             }
             ProjectEvent::TrackMuteChanged {
                 track_id,
@@ -2703,15 +5338,6 @@ impl Project {
                 }
                 track.output_track = *after;
             }
-            ProjectEvent::TrackMoved { track_id, from, to } => {
-                if *to >= state.tracks.len()
-                    || state.tracks.get(*from).map(|track| track.id) != Some(*track_id)
-                {
-                    return Err(ActionError::HistoryInvariantViolation);
-                }
-                let track = state.tracks.remove(*from);
-                state.tracks.insert(*to, track);
-            }
             ProjectEvent::TempoChanged {
                 start_tick,
                 before,
@@ -2799,6 +5425,75 @@ impl Project {
                     return Err(ActionError::HistoryInvariantViolation);
                 }
                 state.audio_items.remove(*index);
+            }
+            ProjectEvent::AudioItemFadesChanged {
+                item_id,
+                before,
+                after,
+            } => {
+                let item = state
+                    .audio_items
+                    .iter_mut()
+                    .find(|item| item.id == *item_id)
+                    .ok_or(ActionError::HistoryInvariantViolation)?;
+                if item.fades != *before {
+                    return Err(ActionError::HistoryInvariantViolation);
+                }
+                item.fades = *after;
+            }
+            ProjectEvent::AudioItemVolumeChanged {
+                item_id,
+                before,
+                after,
+            } => {
+                let item = state
+                    .audio_items
+                    .iter_mut()
+                    .find(|item| item.id == *item_id)
+                    .ok_or(ActionError::HistoryInvariantViolation)?;
+                if item.volume != *before
+                    || !after.is_finite()
+                    || !(0.0..=crate::MAX_AUDIO_ITEM_VOLUME).contains(after)
+                {
+                    return Err(ActionError::HistoryInvariantViolation);
+                }
+                item.volume = *after;
+            }
+            ProjectEvent::AudioItemTakeMixChanged {
+                item_id,
+                before,
+                after,
+            } => {
+                let item = state
+                    .audio_items
+                    .iter_mut()
+                    .find(|item| item.id == *item_id)
+                    .ok_or(ActionError::HistoryInvariantViolation)?;
+                if (item.take_volume, item.take_pan) != *before
+                    || !after.0.is_finite()
+                    || !(0.0..=crate::MAX_AUDIO_ITEM_TAKE_VOLUME).contains(&after.0)
+                    || !after.1.is_finite()
+                    || !(-1.0..=1.0).contains(&after.1)
+                {
+                    return Err(ActionError::HistoryInvariantViolation);
+                }
+                item.take_volume = after.0;
+                item.take_pan = after.1;
+            }
+            ProjectEvent::AudioItemTakePlaybackRateChanged {
+                item_id,
+                before,
+                after,
+            } => {
+                let item = state
+                    .audio_items
+                    .iter_mut()
+                    .find(|item| item.id == *item_id)
+                    .ok_or(ActionError::HistoryInvariantViolation)?;
+                if item.take_playback_rate != *before || !after.is_finite() || *after <= 0.0 {
+                    return Err(ActionError::HistoryInvariantViolation);
+                }
+                item.take_playback_rate = *after;
             }
             ProjectEvent::AudioItemChanged { before, after } => {
                 let index = state
@@ -2906,6 +5601,7 @@ impl Project {
                             || !existing_item_ids.insert(item.id)
                             || item.notes.iter().any(|note| {
                                 note.data.pitch > 127
+                                    || note.data.channel >= crate::MIDI_CHANNEL_COUNT
                                     || note.data.velocity > 127
                                     || note.data.duration == 0
                                     || note.data.tick.checked_add(note.data.duration).is_none()
@@ -2923,10 +5619,19 @@ impl Project {
                     .iter_mut()
                     .find(|item| item.id == *item_id)
                     .ok_or(ActionError::HistoryInvariantViolation)?;
+                let source_bounds = midi_item_source_tick_bounds(item);
                 let current_notes = Arc::make_mut(&mut item.notes);
                 for (index, note) in notes {
                     if *index > current_notes.len()
                         || current_notes.iter().any(|existing| existing.id == note.id)
+                        || note.data.pitch > 127
+                        || note.data.channel >= crate::MIDI_CHANNEL_COUNT
+                        || note.data.velocity > 127
+                        || !valid_midi_note_range_in_bounds(
+                            source_bounds,
+                            note.data.tick,
+                            note.data.duration,
+                        )
                     {
                         return Err(ActionError::HistoryInvariantViolation);
                     }
@@ -2959,16 +5664,9 @@ impl Project {
                     .ok_or(ActionError::HistoryInvariantViolation)?;
                 if before.id != after.id
                     || after.data.pitch > 127
+                    || after.data.channel >= crate::MIDI_CHANNEL_COUNT
                     || after.data.velocity > 127
-                    || after.data.duration == 0
-                    || after.data.tick < item.source_offset_ticks
-                    || after
-                        .data
-                        .tick
-                        .checked_add(after.data.duration)
-                        .is_none_or(|end| {
-                            end > item.source_offset_ticks.saturating_add(item.length_ticks)
-                        })
+                    || !valid_midi_note_source_range(item, after.data.tick, after.data.duration)
                 {
                     return Err(ActionError::HistoryInvariantViolation);
                 }
@@ -2991,7 +5689,14 @@ impl Project {
                     .iter_mut()
                     .find(|item| item.id == *item_id)
                     .ok_or(ActionError::HistoryInvariantViolation)?;
-                if item.controllers.as_ref() != before || !valid_midi_controllers(after) {
+                let (source_start, source_end) = midi_item_source_tick_bounds(item);
+                if item.controllers.as_ref() != before
+                    || !valid_midi_controllers(after)
+                    || after.iter().any(|controller| {
+                        (controller.tick < source_start || controller.tick >= source_end)
+                            && !before.contains(controller)
+                    })
+                {
                     return Err(ActionError::HistoryInvariantViolation);
                 }
                 item.controllers = Arc::new(after.clone());
@@ -3006,7 +5711,14 @@ impl Project {
                     .iter_mut()
                     .find(|item| item.id == *item_id)
                     .ok_or(ActionError::HistoryInvariantViolation)?;
-                if item.pitch_bends.as_ref() != before || !valid_midi_pitch_bends(after) {
+                let (source_start, source_end) = midi_item_source_tick_bounds(item);
+                if item.pitch_bends.as_ref() != before
+                    || !valid_midi_pitch_bends(after)
+                    || after.iter().any(|bend| {
+                        (bend.tick < source_start || bend.tick >= source_end)
+                            && !before.contains(bend)
+                    })
+                {
                     return Err(ActionError::HistoryInvariantViolation);
                 }
                 item.pitch_bends = Arc::new(after.clone());
@@ -3017,23 +5729,25 @@ impl Project {
                     .iter_mut()
                     .find(|item| item.id == *item_id)
                     .ok_or(ActionError::HistoryInvariantViolation)?;
-                let source_offset_ticks = item.source_offset_ticks;
-                let source_end_tick = source_offset_ticks.saturating_add(item.length_ticks);
+                let source_bounds = midi_item_source_tick_bounds(item);
                 let current_notes = Arc::make_mut(&mut item.notes);
-                for (note_id, before, after) in changes {
+                for change in changes {
                     let note = current_notes
                         .iter_mut()
-                        .find(|note| note.id == *note_id)
+                        .find(|note| note.id == change.note_id)
                         .ok_or(ActionError::HistoryInvariantViolation)?;
-                    if note.data.tick != *before
-                        || *after < source_offset_ticks
-                        || after
-                            .checked_add(note.data.duration)
-                            .is_none_or(|end| end > source_end_tick)
+                    if note.data.tick != change.before_tick
+                        || note.data.duration != change.before_duration
+                        || !valid_midi_note_range_in_bounds(
+                            source_bounds,
+                            change.after_tick,
+                            change.after_duration,
+                        )
                     {
                         return Err(ActionError::HistoryInvariantViolation);
                     }
-                    note.data.tick = *after;
+                    note.data.tick = change.after_tick;
+                    note.data.duration = change.after_duration;
                 }
             }
             ProjectEvent::Transaction { events, .. } => {
@@ -3074,8 +5788,23 @@ impl Project {
 
 fn valid_audio_item(item: &AudioItem) -> bool {
     !item.media_ref.trim().is_empty()
+        && item.name.chars().count() <= 128
+        && item.volume.is_finite()
+        && (0.0..=crate::MAX_AUDIO_ITEM_VOLUME).contains(&item.volume)
+        && item.take_volume.is_finite()
+        && (0.0..=crate::MAX_AUDIO_ITEM_TAKE_VOLUME).contains(&item.take_volume)
+        && item.take_pan.is_finite()
+        && (-1.0..=1.0).contains(&item.take_pan)
+        && item.take_playback_rate.is_finite()
+        && item.take_playback_rate > 0.0
         && item.length_samples > 0
         && item.start_sample.checked_add(item.length_samples).is_some()
+        && valid_audio_source_offset(
+            item.source_offset_samples,
+            item.loop_source,
+            item.source_section_start_samples,
+            item.source_section_length_samples,
+        )
 }
 
 fn is_frozen_render(state: &ProjectState, item_id: ItemId) -> bool {
@@ -3093,6 +5822,9 @@ fn source_track_for_action(state: &ProjectState, action: &DawAction) -> Option<T
         | DawAction::SetTrackFxParameterAutomation { track_id, .. }
         | DawAction::InsertMidiItem { track_id, .. } => Some(*track_id),
         DawAction::EditMidiItem { item_id, .. }
+        | DawAction::SetMidiItemPosition { item_id, .. }
+        | DawAction::EditMidiItemPlacement { item_id, .. }
+        | DawAction::SetMidiItemContents { item_id, .. }
         | DawAction::TrimMidiItemStart { item_id, .. }
         | DawAction::DuplicateMidiItem { item_id }
         | DawAction::DuplicateMidiItemAt { item_id, .. }
@@ -3104,7 +5836,11 @@ fn source_track_for_action(state: &ProjectState, action: &DawAction) -> Option<T
         | DawAction::DeleteMidiNotes { item_id, .. }
         | DawAction::SetMidiControllers { item_id, .. }
         | DawAction::SetMidiPitchBends { item_id, .. }
-        | DawAction::QuantizeItem { item_id, .. } => state
+        | DawAction::QuantizeItem { item_id, .. }
+        | DawAction::QuantizeMidiNotes { item_id, .. }
+        | DawAction::QuantizeMidiNotesAndEnds { item_id, .. }
+        | DawAction::QuantizeMidiNotesWithOperation { item_id, .. }
+        | DawAction::QuantizeMidiEventsWithOperation { item_id, .. } => state
             .midi_items
             .iter()
             .find(|item| item.id == *item_id)
@@ -3121,17 +5857,75 @@ fn source_track_for_action(state: &ProjectState, action: &DawAction) -> Option<T
 fn valid_midi_controllers(controllers: &[MidiControllerData]) -> bool {
     let mut positions = HashSet::with_capacity(controllers.len());
     controllers.iter().all(|controller| {
-        controller.controller <= 127
+        controller.channel < crate::MIDI_CHANNEL_COUNT
+            && controller.controller <= 127
             && controller.value <= 127
-            && positions.insert((controller.controller, controller.tick))
+            && positions.insert((controller.channel, controller.controller, controller.tick))
     })
+}
+
+fn coalesce_midi_controllers_at_same_tick(controllers: &mut Vec<MidiControllerData>) {
+    let mut latest_by_position = HashMap::with_capacity(controllers.len());
+    for controller in controllers.drain(..) {
+        latest_by_position.insert(
+            (controller.channel, controller.controller, controller.tick),
+            controller,
+        );
+    }
+    controllers.extend(latest_by_position.into_values());
+    controllers.sort_unstable_by_key(|controller| {
+        (controller.tick, controller.channel, controller.controller)
+    });
+}
+
+fn midi_item_source_tick_bounds(item: &MidiItem) -> (u64, u64) {
+    if item.is_loop_source() {
+        (0, item.source_loop_length_ticks())
+    } else {
+        (
+            item.source_offset_ticks(),
+            item.source_offset_ticks()
+                .saturating_add(item.length_ticks()),
+        )
+    }
+}
+
+fn valid_midi_note_source_range(item: &MidiItem, tick: u64, duration: u64) -> bool {
+    valid_midi_note_range_in_bounds(midi_item_source_tick_bounds(item), tick, duration)
+}
+
+fn valid_midi_note_range_in_bounds(
+    (source_start, source_end): (u64, u64),
+    tick: u64,
+    duration: u64,
+) -> bool {
+    duration > 0
+        && tick >= source_start
+        && tick
+            .checked_add(duration)
+            .is_some_and(|end| end <= source_end)
+}
+
+fn midi_source_tick_at_project_tick(item: &MidiItem, project_tick: u64) -> Option<u64> {
+    item.source_tick_at_project_tick(project_tick)
 }
 
 fn valid_midi_pitch_bends(pitch_bends: &[MidiPitchBendData]) -> bool {
     let mut positions = HashSet::with_capacity(pitch_bends.len());
-    pitch_bends
-        .iter()
-        .all(|bend| bend.value <= 16_383 && positions.insert(bend.tick))
+    pitch_bends.iter().all(|bend| {
+        bend.channel < crate::MIDI_CHANNEL_COUNT
+            && bend.value <= 16_383
+            && positions.insert((bend.channel, bend.tick))
+    })
+}
+
+fn coalesce_midi_pitch_bends_at_same_tick(pitch_bends: &mut Vec<MidiPitchBendData>) {
+    let mut latest_by_position = HashMap::with_capacity(pitch_bends.len());
+    for bend in pitch_bends.drain(..) {
+        latest_by_position.insert((bend.channel, bend.tick), bend);
+    }
+    pitch_bends.extend(latest_by_position.into_values());
+    pitch_bends.sort_unstable_by_key(|bend| (bend.tick, bend.channel));
 }
 
 fn controllers_for_segment(
@@ -3150,13 +5944,13 @@ fn controllers_for_segment(
             ..*controller
         })
         .collect::<Vec<_>>();
-    let mut latest_by_controller = std::collections::HashMap::<u8, MidiControllerData>::new();
+    let mut latest_by_controller = std::collections::HashMap::<(u8, u8), MidiControllerData>::new();
     for controller in controllers
         .iter()
         .filter(|controller| controller.tick < start_tick)
     {
         latest_by_controller
-            .entry(controller.controller)
+            .entry((controller.channel, controller.controller))
             .and_modify(|latest| {
                 if latest.tick < controller.tick {
                     *latest = *controller;
@@ -3164,15 +5958,16 @@ fn controllers_for_segment(
             })
             .or_insert(*controller);
     }
-    for (number, latest) in latest_by_controller {
-        if !segment
-            .iter()
-            .any(|controller| controller.controller == number && controller.tick == 0)
-        {
+    for ((channel, number), latest) in latest_by_controller {
+        if !segment.iter().any(|controller| {
+            controller.channel == channel && controller.controller == number && controller.tick == 0
+        }) {
             segment.push(MidiControllerData { tick: 0, ..latest });
         }
     }
-    segment.sort_unstable_by_key(|controller| (controller.tick, controller.controller));
+    segment.sort_unstable_by_key(|controller| {
+        (controller.tick, controller.channel, controller.controller)
+    });
     segment
 }
 
@@ -3183,12 +5978,16 @@ fn pitch_bends_for_segment(
     preserve_tail: bool,
 ) -> Vec<MidiPitchBendData> {
     let mut result = Vec::new();
-    if let Some(latest) = pitch_bends
-        .iter()
-        .filter(|bend| bend.tick <= start_tick)
-        .max_by_key(|bend| bend.tick)
-    {
+    let mut latest_by_channel = [None; crate::MIDI_CHANNEL_COUNT as usize];
+    for bend in pitch_bends.iter().filter(|bend| bend.tick <= start_tick) {
+        let latest = &mut latest_by_channel[usize::from(bend.channel)];
+        if latest.is_none_or(|current: MidiPitchBendData| current.tick < bend.tick) {
+            *latest = Some(*bend);
+        }
+    }
+    for latest in latest_by_channel.into_iter().flatten() {
         result.push(MidiPitchBendData {
+            channel: latest.channel,
             tick: 0,
             value: latest.value,
         });
@@ -3198,6 +5997,7 @@ fn pitch_bends_for_segment(
             .iter()
             .filter(|bend| bend.tick > start_tick && (preserve_tail || bend.tick < end_tick))
             .map(|bend| MidiPitchBendData {
+                channel: bend.channel,
                 tick: bend.tick - start_tick,
                 value: bend.value,
             }),
@@ -3209,4 +6009,46 @@ fn next_id(max_id: Option<u64>) -> Result<u64, SnapshotError> {
     max_id.map_or(Ok(0), |id| {
         id.checked_add(1).ok_or(SnapshotError::IdentifierExhausted)
     })
+}
+
+fn validate_send_edit(
+    tracks: &[Track],
+    source: TrackId,
+    sends: &[crate::AudioSend],
+) -> Result<(), ActionError> {
+    if sends.iter().any(|send| !send.parameters.is_valid()) {
+        return Err(ActionError::InvalidAudioSend);
+    }
+    if sends.iter().any(|send| {
+        send.destination == source || !tracks.iter().any(|track| track.id == send.destination)
+    }) {
+        return Err(ActionError::InvalidTrackOutput);
+    }
+    let mut candidate = tracks.to_vec();
+    candidate
+        .iter_mut()
+        .find(|track| track.id == source)
+        .unwrap()
+        .sends = sends.to_vec();
+    if !valid_track_routing(&candidate) {
+        return Err(ActionError::TrackRoutingCycle);
+    }
+    Ok(())
+}
+
+// Metadata is applied atomically, including in batches, but never rewound by media history.
+fn undoable_event(event: ProjectEvent) -> Option<ProjectEvent> {
+    match event {
+        ProjectEvent::ProjectNotesChanged { .. } => None,
+        ProjectEvent::ProjectSampleRateChanged { before, after } if before == after => None,
+        ProjectEvent::Transaction { tx_id, events } => {
+            let events: Vec<_> = events.into_iter().filter_map(undoable_event).collect();
+            if events.is_empty() {
+                None
+            } else {
+                Some(ProjectEvent::Transaction { tx_id, events })
+            }
+        }
+        event => Some(event),
+    }
 }

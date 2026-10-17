@@ -1,0 +1,7 @@
+version	7.82/linux-x86_64
+theme	Default_7.0.ReaperThemeZip
+item	position=2.000000	length=10.000000	loop_source=1.0	source_offset=4.750000
+source_loop	10.000000 quarter notes	5.000000 seconds at 120 BPM	length_is_qn=true
+source_notes	60,960.0,2880.0;64,4800.0,6720.0
+expected_visible_occurrences	0.750s,2.750s,5.750s,7.750s
+editor_has_probe_take	true

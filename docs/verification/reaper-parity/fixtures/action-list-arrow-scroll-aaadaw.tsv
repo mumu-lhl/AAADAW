@@ -1,0 +1,7 @@
+version	AAADAW Linux X11 working tree
+display	Xvfb :126 1280x1024 with xfwm4; isolated fresh XDG directories
+audio	unavailable in this build; transport remained stopped
+scenario	Open Help > Action list and shortcuts; search for item
+step	input_sequence	selected_result	filter_focus	track_count	project_effect	screenshot	sha256	observation
+long_list_down	Enter; ArrowDown x18	Item: Snap items right	no	0	no action executed	fixtures/action-list-arrow-scroll-aaadaw.png	5b43d96e110eb0b295e99c6b64e542c33cb05d7fa66743209efc50470447cbf8	Repeated ArrowDown keeps the selected result visible near the viewport end and scrolls the list
+reverse_navigation	ArrowUp x8	Item: Select previous adjacent non-overlapping item	no	0	no action executed	fixtures/action-list-arrow-scroll-aaadaw-up.png	ba067f08839e7cb91c0bfd2277c769a86aa7d88f2f74bbd781e34f16364d5984	Repeated ArrowUp scrolls back toward earlier results while keeping the selection visible

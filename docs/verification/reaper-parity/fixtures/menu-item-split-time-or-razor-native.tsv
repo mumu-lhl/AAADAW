@@ -1,0 +1,48 @@
+razor_before	3.00000000000000 7.00000000000000 ""
+version	7.82/linux-x86_64
+theme	Default_7.0.ReaperThemeZip
+action	40061	Item: Split items at time selection or razor edit
+razor_state_change_delta	1
+razor	0	3	(empty)
+razor_item	0	0	0.000000000	3.000000000	unselected
+razor_item	0	1	3.000000000	4.000000000	selected
+razor_item	0	2	7.000000000	3.000000000	unselected
+razor	1	1	(empty)
+razor_item	1	0	0.000000000	10.000000000	unselected
+razor	2	1	(empty)
+razor_item	2	0	0.000000000	10.000000000	unselected
+razor	3	1	(empty)
+razor_item	3	0	0.000000000	10.000000000	unselected
+razor_result_project	item-split-razor-result.rpp
+selected_time_state_change_delta	1
+selected_time	0	3	(empty)
+selected_time_item	0	0	0.000000000	3.000000000	unselected
+selected_time_item	0	1	3.000000000	4.000000000	unselected
+selected_time_item	0	2	7.000000000	3.000000000	unselected
+selected_time	1	3	(empty)
+selected_time_item	1	0	0.000000000	4.000000000	unselected
+selected_time_item	1	1	4.000000000	2.000000000	selected
+selected_time_item	1	2	6.000000000	4.000000000	unselected
+selected_time	2	1	(empty)
+selected_time_item	2	0	0.000000000	10.000000000	unselected
+selected_time	3	1	(empty)
+selected_time_item	3	0	0.000000000	10.000000000	unselected
+unselected_time_state_change_delta	1
+unselected_time	0	5	(empty)
+unselected_time_item	0	0	0.000000000	3.000000000	unselected
+unselected_time_item	0	1	3.000000000	1.000000000	unselected
+unselected_time_item	0	2	4.000000000	2.000000000	selected
+unselected_time_item	0	3	6.000000000	1.000000000	unselected
+unselected_time_item	0	4	7.000000000	3.000000000	unselected
+unselected_time	1	3	(empty)
+unselected_time_item	1	0	0.000000000	4.000000000	unselected
+unselected_time_item	1	1	4.000000000	2.000000000	unselected
+unselected_time_item	1	2	6.000000000	4.000000000	unselected
+unselected_time	2	3	(empty)
+unselected_time_item	2	0	0.000000000	4.000000000	unselected
+unselected_time_item	2	1	4.000000000	2.000000000	selected
+unselected_time_item	2	2	6.000000000	4.000000000	unselected
+unselected_time	3	3	(empty)
+unselected_time_item	3	0	0.000000000	4.000000000	unselected
+unselected_time_item	3	1	4.000000000	2.000000000	selected
+unselected_time_item	3	2	6.000000000	4.000000000	unselected

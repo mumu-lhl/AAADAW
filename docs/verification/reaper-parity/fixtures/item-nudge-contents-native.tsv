@@ -1,0 +1,10 @@
+version	Linux REAPER 7.82/linux-x86_64
+theme	Default_7.0.ReaperThemeZip
+project	unsaved scratch project; stopped transport; one selected 10-second mono audio item
+source	10-second, 48 kHz WAV; source section is the whole file
+dialog	Mode Nudge; Target contents; amount 250 milliseconds; Snap to unit off
+columns	case	action	loop_source	source_offset_before_seconds	source_offset_after_seconds	timeline_position_seconds	item_length_seconds	state_change_delta
+loop_right_at_source_start	41249	1	0.100000000	9.850000000	2.000000000	10.000000000	0
+loop_left_at_source_end	41250	1	9.900000000	0.150000000	2.000000000	10.000000000	0
+nonloop_right_before_source_start	41249	0	0.100000000	-0.150000000	2.000000000	10.000000000	0
+nonloop_left_past_source_end	41250	0	9.900000000	10.150000000	2.000000000	10.000000000	0

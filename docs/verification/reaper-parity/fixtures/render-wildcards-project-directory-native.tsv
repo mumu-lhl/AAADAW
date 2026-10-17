@@ -1,0 +1,32 @@
+key	value
+reference	Linux REAPER 7.82 / Default 7 / default project settings / isolated profile
+probe	scripts/reaper_parity/probe-render-project-directory-wildcards.lua
+source_file_generator	scripts/reaper_parity/probe-render-format-vectors.py
+capture_environment	Probe asserts REAPER 7.82/linux-x86_64 and Default_7.0.ReaperThemeZip; run with a fresh isolated configuration and AAADAW_REAPER_PROBE_DIR containing source.wav
+generated_project_hierarchy	ProjectRoot/Albums/Album01/Session/Directory Session.rpp
+directory_level_1	$projectdirectory and $projectdirectory1 resolve to Session
+directory_level_2	$projectdirectory2 resolves to Album01
+directory_level_3	$projectdirectory3 resolves to Albums
+directory_level_4_to_7	$projectdirectory4-$projectdirectory5-$projectdirectory6-$projectdirectory7 previews as ProjectRoot-capture-render-wildcards-project-directory-reaper782
+positive_level_pattern	$projectdirectory-$projectdirectory1-$projectdirectory2-$projectdirectory3
+positive_level_preview	Session-Session-Album01-Albums.wav
+zero_suffix_pattern	$projectdirectory0-$projectdirectory1-$projectdirectory2
+zero_suffix_preview	Session0-Session-Album01.wav
+placeholder_pattern	$projectdirectoryN
+placeholder_preview	SessionN.wav
+zero_suffix_screenshot	render-wildcards-project-directory-zero-native.png
+zero_suffix_screenshot_sha256	efc71a2e61a6004dcc8f678f7638346584d74690b8ae906de2dccf9570f855e2
+placeholder_screenshot	render-wildcards-project-directory-placeholder-native.png
+placeholder_screenshot_sha256	c408b944421c685e4038974cb8ef0a08d5a2fd1c07cc87e9b43acc7e4dca9a0f
+ancestor_levels_screenshot	render-wildcards-project-directory-ancestors-native.png
+ancestor_levels_screenshot_sha256	4c61f04e0ad8b11ac6ccf37e74178bb65feb9f19ede2058ccc125c0b913febe4
+rendered_pattern	$projectdirectory-$projectdirectory1-$projectdirectory2-$projectdirectory3
+rendered_output	render-wildcards-project-directory-native.wav
+rendered_filename	Session-Session-Album01-Albums.wav
+rendered_output_size_bytes	288690
+rendered_output_sha256	0780a3239a083e85077c29e16c74e4ab44a639f3befc8aa66cf506050090347b
+finished_screenshot	render-wildcards-project-directory-finished-native.png
+finished_screenshot_sha256	ab77d880fde04dae0aca1f97bb6079bd8ca7d7df38bf5e6db0097a4ec3112840
+positive_level_screenshot	render-wildcards-project-directory-preview-native.png
+positive_level_screenshot_sha256	ea32434768b40c270fdc9790ba201b6e65ff7718b257e427125e4b2aa52a6966
+render_format	WAV PCM 24-bit / 48000 Hz / 2 channels / 48000 frames

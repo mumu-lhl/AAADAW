@@ -1,0 +1,6 @@
+KEY 33 122 40029 0		 # Main : Logo+F11 : Edit: Undo
+KEY 5 122 40029 0		 # Main : Shift+F11 : Edit: Undo
+KEY 9 122 40029 0		 # Main : Ctrl+F11 : Edit: Undo
+KEY 17 122 40029 0		 # Main : Alt+F11 : Edit: Undo
+KEY 29 123 40029 0		 # Main : Ctrl+Alt+Shift+F12 : Edit: Undo
+KEY 9 90 40029 0		 # Main : Ctrl+Z : OVERRIDE DEFAULT : Edit: Undo

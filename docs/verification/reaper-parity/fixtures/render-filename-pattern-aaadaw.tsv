@@ -1,0 +1,341 @@
+key	value
+reference	Linux REAPER 7.82 / Default 7 / Linux desktop
+native_reference	images/render-selected-items-native.png; render-selected-items-native.tsv; region-render-matrix-render-native.tsv; render-wildcards-context-native.png; render-wildcards-marker-native.png; render-wildcards-markernumber-all-markers-native.png; render-wildcards-markernumber-all-markers-finished-native.png; render-wildcards-markernumber-all-markers.tsv; render-wildcards-empty-name-all-regions-native.png; render-wildcards-empty-name-finished-native.png; render-wildcards-empty-name-native.tsv; render-wildcards-region-name-all-regions-native.png; render-wildcards-region-name-finished-native.png; render-wildcards-regionname-empty-preview-native.png; render-wildcards-regionname-empty-finished-native.png; render-wildcards-region-name-native.tsv; render-wildcards-itemnumber-native.png; render-wildcards-itemnumber-finished-native.png; render-wildcards-itemnumber-native.tsv; render-wildcards-metadata-native.png; render-wildcards-unnamed-track-native.png; render-wildcards-clock-native.png; render-wildcards-beats-native.png; render-wildcards-timecode-native.png; render-wildcards-frames-native.png; render-wildcards-length-native.png; render-wildcards-menu-native.png; render-wildcards-project-info-native.png; render-wildcards-regions-native.png; render-wildcards-media-native.png; render-wildcards-position-native.png; render-wildcards-recording-native.png; render-wildcards-format-native.png; render-wildcards-channels-native.png; render-wildcards-date-native.png; render-wildcards-computer-native.png; render-wildcards-master-track-native.png; render-wildcards-options-native.png; render-wildcards-help-1-native.png; render-wildcards-help-2-native.png; render-wildcards-help-3-native.png; render-wildcards-help-4-native.png; render-wildcards-help-5-native.png; render-wildcards-format-preview-native.png; render-wildcards-mono-native.png; render-wildcards-samplerate-22050-native.png; render-wildcards-bitdepth-16-native.png; render-wildcards-bitdepth-ima-native.png; render-wildcards-bitdepth-cadpcm-native.png; render-wildcards-region-named-values-native.tsv; render-wildcards-region-named-values-preview-native.png; render-wildcards-region-named-values-finished-native.png; render-wildcards-region-named-values-unsplit-native.png; render-wildcards-region-named-values-second-key-native.tsv; render-wildcards-region-named-values-second-key-preview-native.png; render-wildcards-region-named-values-second-key-finished-native.png; render-wildcards-tracknamenumber-native.tsv; render-wildcards-tracknamenumber-preview-native.png; render-wildcards-tracknamenumber-finished-native.png; render-wildcards-project-directory-native.tsv; render-wildcards-project-directory-preview-native.png; render-wildcards-project-directory-ancestors-native.png; render-wildcards-project-directory-zero-native.png; render-wildcards-project-directory-placeholder-native.png; render-wildcards-project-directory-finished-native.png; render-wildcards-project-directory-native.wav
+native_selected_item_pattern	$region-$item
+native_selected_item_output	bounds-ui-Region 2-item_02.wav
+native_matrix_pattern	$region-$track
+native_matrix_outputs	Intro-Master.wav; Intro-Drums.wav; Intro-Guitar.wav; Verse-Bass.wav
+native_context_pattern	$tracknumber-$tracknameornumber-$regionnumber-$tempo-$timesignature-$timesignum-$timesigdenom
+native_context_output	01-Render fixture-02-120-4-4-4-4.wav
+native_context_evidence	Native selected-media-item render dialog; REAPER output preview shows the context-expanded filename
+native_marker_pattern	$markernumber
+native_marker_output	01.wav
+native_marker_evidence	Native Render dialog; environment override populated the pattern and output preview
+native_metadata_pattern	$title-$author-$projectnotes
+native_metadata_output	Wildcard Session-Render Author-Mix notes.wav
+native_metadata_evidence	Native Project Settings API values set the title, author, and notes before opening the Render dialog
+native_metadata_screenshot	render-wildcards-metadata-native.png
+native_metadata_screenshot_sha256	a7c95e019e4274da6490b4b7a09edbe5e4935ad99e51e3397d59d25984e59165
+native_unnamed_track_pattern	$tracknamenumber
+native_unnamed_track_output	Track 01.wav
+native_unnamed_track_evidence	Native Selected tracks (stems) Render preview and completed render after selecting an unnamed track; exact menu spelling resolves to Track 01.wav
+native_unnamed_track_screenshot	render-wildcards-tracknamenumber-preview-native.png
+native_unnamed_track_screenshot_sha256	e92f205db27b15f00edff4df03730a439becc5fe883093013f1cbc5e44962130
+native_pattern_override	AAADAW_REAPER_WILDCARD_PATTERN overrides the selected-item and marker probe patterns; selected-item probe also accepts title/author/notes, track-name, item-start, and item-length inputs
+aaadaw_fallback	Blank pattern preserves pre-existing generated destination names
+aaadaw_path_behavior	Selected destination supplies output directory and extension; expanded name is sanitized as one filename component
+aaadaw_duplicate_behavior	Duplicate resolved names fail before jobs are queued
+aaadaw_matrix_audio_comparison	Four outputs; 96,000 frames each; PCM24 stereo data chunks equal native REAPER fixtures byte-for-byte
+aaadaw_window_screenshot	render-filename-pattern-aaadaw.png
+aaadaw_window_screenshot_sha256	9f65520a38e85e85b7c9cc9e97a499583f222fe11b943a9c4e5a14799bcd316d
+aaadaw_wildcard_picker_screenshot	render-filename-pattern-wildcards-aaadaw.png
+aaadaw_wildcard_insert_screenshot	render-filename-pattern-wildcard-insert-aaadaw.png
+aaadaw_window_geometry	1280x800 desktop display; Render project to WAV window 640x720
+native_context_screenshot	render-wildcards-context-native.png
+native_context_screenshot_sha256	2f7cec40f5f8b096717580f3f50357077d2c6a35337a0cc7df338ae3cfeb5364
+native_marker_screenshot	render-wildcards-marker-native.png
+native_marker_screenshot_sha256	7b83336bcd8cfdb0394738ac75d6e91ac96e502d3efb2212379f9047b2215764
+native_window_geometry	1280x800 desktop display; native Render to File dialog
+native_position_clock_pattern	$start-$end-$length
+native_position_clock_output	0-02.125-0-03.359-0-01.234
+native_position_beats_pattern	$startbeats-$endbeats-$lengthbeats
+native_position_beats_output	2.1.25-2.3.72-0.2.47
+native_position_timecode_pattern	$starttc-$endtc
+native_position_timecode_output	00.00.02.03-00.00.03.10
+native_position_frames_pattern	$startseconds-$endseconds-$lengthseconds-$startframes-$endframes-$lengthframes
+native_position_frames_output	2.125-3.359-1.234-63-100-37
+native_position_length_pattern	$lenhh-$lenmm-$lenss-$lentt
+native_position_length_output	0-0-1-234
+native_position_screenshot_clock	render-wildcards-clock-native.png
+native_position_screenshot_clock_sha256	04bd72eff8e36dcb124b02b097369caa37603fa4c597486b9e8b1b24c5c7390e
+native_position_screenshot_beats	render-wildcards-beats-native.png
+native_position_screenshot_beats_sha256	ff6cd05b6e049b53c2d2141e982ceadfbbf5249aa8af3b4bc07b05f413ef43b7
+native_position_screenshot_timecode	render-wildcards-timecode-native.png
+native_position_screenshot_timecode_sha256	7793f8277c0974fcd1a3436fdcc092b4cd7625c659da5c0a1f5dad6a05a02b9f
+native_position_screenshot_frames	render-wildcards-frames-native.png
+native_position_screenshot_frames_sha256	c7a3ae74c3ba3db4cf26cd1055e57520f641a9884a8dbfdb4155f5f4b0ab0114
+native_position_screenshot_length	render-wildcards-length-native.png
+native_position_screenshot_length_sha256	5eefbd0bd9b4f6478adb09ca410a8bbe982f379123ab16c80688f62a4873ddf3
+aaadaw_wildcard_picker_scrolled_screenshot	render-filename-pattern-wildcards-scrolled-aaadaw.png
+native_output_format_pattern	$format-$samplerate-$sampleratek-$bitdepth-$channels-$chid
+native_output_format_44100_stereo_output	wav-44100-44.1-24-2.wav
+native_output_format_44100_mono_output	wav-44100-44.1-24-1.wav
+native_output_format_22050_mono_cadpcm_output	wav-22050-22.05-2-1.wav
+native_output_format_44100_mono_pcm16_output	wav-44100-44.1-16-1.wav
+native_output_format_44100_mono_ima_adpcm_output	wav-44100-44.1-4-1.wav
+native_output_format_evidence	REAPER 7.82 preview confirms format/rate/rate-kHz/bit-depth/channel substitution; $chid resolves empty in the current single-file Mono/Stereo source and is excluded until multichannel source/output support is implemented
+native_catalog_token_count	97 visible menu entries across 9 categories
+native_catalog_categories	Project Information; Regions/Markers; Media Items; Position/Length; Recording; Output Format; Channels; Date/Time/Unique ID; Computer Information
+native_catalog_screenshot_menu	render-wildcards-menu-native.png
+native_catalog_screenshot_menu_sha256	19f6321855a4347ad40d06d7e2981d1d3b9c2d329723e56c2678898b37e876e3
+native_catalog_screenshot_project_info	render-wildcards-project-info-native.png
+native_catalog_screenshot_project_info_sha256	1e3cbf039ee5626ade69a9a826b7e44f4ed149d13203b292b2af849d01806632
+native_catalog_screenshot_regions	render-wildcards-regions-native.png
+native_catalog_screenshot_regions_sha256	146e67a66e73192d95889a6ef2d19bf63ab9a4c09db023c9e03233ee8c6187db
+native_catalog_screenshot_media	render-wildcards-media-native.png
+native_catalog_screenshot_media_sha256	e53b607d1c852c8bbf7adadc99f507500c1d21cb00ddba9418caa4ac90b63272
+native_catalog_screenshot_position	render-wildcards-position-native.png
+native_catalog_screenshot_position_sha256	fe90454a046343bbddc43b992b329da894392e7555e96bab14cc22c1545405f2
+native_catalog_screenshot_recording	render-wildcards-recording-native.png
+native_catalog_screenshot_recording_sha256	e7d3ca3ede67e281e019cc1a10fe8a28d21337b8cf9e31435d5cb21a3b6b6d1b
+native_catalog_screenshot_format	render-wildcards-format-native.png
+native_catalog_screenshot_format_sha256	d61a01b9538d6777d6f74d51e019ebd307334951b62a37bae8cb30cc9b62b9c9
+native_catalog_screenshot_channels	render-wildcards-channels-native.png
+native_catalog_screenshot_channels_sha256	fcbf5d9c17de1e4f06e6c2b355f28c5bdae40efddc38e0ead2050a51cbef137b
+native_catalog_screenshot_date_time	render-wildcards-date-native.png
+native_catalog_screenshot_date_time_sha256	43cba2558a163ad7d70a3b882c62c5759d65168282ca9a7eba5fe0564f668737
+native_catalog_screenshot_computer	render-wildcards-computer-native.png
+native_catalog_screenshot_computer_sha256	f850a8ee38325068fa143e25c110a46f4a7696e3f44ac9746d60c2264c014e5a
+native_catalog_screenshot_master_track_substitution	render-wildcards-master-track-native.png
+native_catalog_screenshot_master_track_substitution_sha256	2e547f4278cf731937ab7d38d266081b75cde174c4fdbd0b8d28154fe2b91369
+native_catalog_screenshot_directory_options	render-wildcards-options-native.png
+native_catalog_screenshot_directory_options_sha256	44f91ffe6a3562180cbfd9241e7014bc5c2187e30f467313904a39db48e6cfb3
+native_catalog_screenshot_help_1	render-wildcards-help-1-native.png
+native_catalog_screenshot_help_1_sha256	20ceaf7e937ec0bde354827ffdf4be272b80e5a49b48c0cb0e4bf415b6143b71
+native_catalog_screenshot_help_2	render-wildcards-help-2-native.png
+native_catalog_screenshot_help_2_sha256	c13356a0fa5b6fcfe3035a83043cebe470a1f6c91b163d6e25dd5c296c84173d
+native_catalog_screenshot_help_3	render-wildcards-help-3-native.png
+native_catalog_screenshot_help_3_sha256	2f1a799b61c9f65a9743e698cc8b5c65634b8c2635b3d4eb9ea431dbc86d8fed
+native_catalog_screenshot_help_4	render-wildcards-help-4-native.png
+native_catalog_screenshot_help_4_sha256	e82056c16864e1dae7d619c12a92c2c34af238b2bd8c1f95038ba11bf3632a7b
+native_catalog_screenshot_help_5	render-wildcards-help-5-native.png
+native_catalog_screenshot_help_5_sha256	5f66e4c78045290bf354f5a912982d1901457872f56679e0574a8cf560de3722
+native_catalog_screenshot_format_preview	render-wildcards-format-preview-native.png
+native_catalog_screenshot_format_preview_sha256	5f8ab31e110b19fa10406dacff69f5e5baac29478cadf42858a85769d070e29c
+native_catalog_screenshot_mono_preview	render-wildcards-mono-native.png
+native_catalog_screenshot_mono_preview_sha256	f60cb7d2772fc7a815248958ef1e65e13fa4609b2062d954332b049f6804d5fe
+native_catalog_screenshot_samplerate_22050	render-wildcards-samplerate-22050-native.png
+native_catalog_screenshot_samplerate_22050_sha256	de05ef43cafa40af051ac9d1a8ed7185bb7f095edd9ad8817ba0df4ddc53600c
+native_catalog_screenshot_bitdepth_pcm16	render-wildcards-bitdepth-16-native.png
+native_catalog_screenshot_bitdepth_pcm16_sha256	913bbea269a88d6f038382b89e9c69a96a53ce96d7ef66edc1c1bcfff1d6ea42
+native_catalog_screenshot_bitdepth_ima	render-wildcards-bitdepth-ima-native.png
+native_catalog_screenshot_bitdepth_ima_sha256	6e12f39a3acf4cc15de47f290e1d7283d3133cb0f9eee7380e3c7723936506c8
+native_catalog_screenshot_bitdepth_cadpcm	render-wildcards-bitdepth-cadpcm-native.png
+native_catalog_screenshot_bitdepth_cadpcm_sha256	27bb50f225da9436c27c6573bce74321e67a2ef2d493ca9377aa90e6890619ea
+native_catalog_document	../render-wildcard-catalog.md
+native_catalog_help_semantics	Capitalization modifiers; <X> character removal and <abcdeX> replacement; [N] zero-padded render-order numbering and [<N] prefix slicing; empty adjacent separator removal; / directory creation option; {lane}; name=value named note/marker/item/region/take-marker lookup; region/marker wildcard values fall back to object ID when names are empty; position and recording order semantics
+aaadaw_itemnumber_evidence	REAPER 7.82 Selected media items render directly previews $itemnumber as 02.wav for the second of three project items and renders 02.wav; AAADAW derives the same 02 value from that item order and regression-tests $item-$itemnumber as item_02-02
+aaadaw_tokens	$project; $title; $author; $projectdirectory; $projectdirectoryN; $projectnotes; $projectnotes(name); $bpm; $tempo; $timesignature; $timesignum; $timesigdenom; $track; $tracknumber; $tracknamenumber; $region; $regionnumber; $regionnumber[N]; $regionname; $marker; $markernumber; $markernumber[N]; $markername; $item; $itemnumber; $start; $end; $length; $startbeats; $endbeats; $lengthbeats; $starttc; $endtc; $startframes; $endframes; $lengthframes; $startseconds; $endseconds; $lengthseconds; $lenhh; $lenmm; $lenss; $lentt; $filenumber; $filenumber[N]; $filecount; $note; $note[X]; $natural; $namenumber; $timelineorder; $timelineorder[N]; $timelineorder_track; $timelineorder_track[N]; $format; $samplerate; $sampleratek; $bitdepth; $channels; $region(name); $marker(name); $fx; $fx[X]; $trackslashes; $folders; $folders[X]; $parent; $seltrack; $playrate; $user; $computer; $date; $time; $datetime; $year; $year2; $month; $monthname; $day; $dayname; $hour; $hour12; $ampm; $minute; $second; $localtime; $uniqueid[N]; $tracknameornumber
+aaadaw_wildcard_picker_tokens	$project; $title; $author; $projectdirectory; $projectdirectoryN; $projectnotes; $projectnotes(name); $bpm; $tempo; $timesignature; $timesignum; $timesigdenom; $track; $tracknumber; $tracknamenumber; $region; $regionnumber; $regionnumber[N]; $regionname; $marker; $markernumber; $markernumber[N]; $markername; $item; $itemnumber; $start; $end; $length; $startbeats; $endbeats; $lengthbeats; $starttc; $endtc; $startframes; $endframes; $lengthframes; $startseconds; $endseconds; $lengthseconds; $lenhh; $lenmm; $lenss; $lentt; $filenumber; $filenumber[N]; $filecount; $note; $note[X]; $natural; $namenumber; $timelineorder; $timelineorder[N]; $timelineorder_track; $timelineorder_track[N]; $format; $samplerate; $sampleratek; $bitdepth; $channels; $region(name); $marker(name); $fx; $fx[X]; $trackslashes; $folders; $folders[X]; $parent; $seltrack; $playrate; $user; $computer; $date; $time; $datetime; $year; $year2; $month; $monthname; $day; $dayname; $hour; $hour12; $ampm; $minute; $second; $localtime; $uniqueid[N]
+aaadaw_wildcard_syntax	Native case modifiers; <X> character removal; <abcdeX> character replacement; [<N] prefix truncation; omission of one adjacent space/hyphen/underscore/dot when the resolved value is empty; $region/$marker fall back to two-digit visible object numbers; $regionname/$markername return raw names; [N] start-number modifiers for regionnumber/markernumber; $filenumber starts at 1 with optional zero-padding width and $filecount reports each batch total; $note and $note[X] sequence pitches by rendered file, $natural follows natural notes, and $namenumber counts duplicate Region names when $region is present; duplicate audio Take names are verified for selected render outputs; timelineorder tokens rank regions/items by timeline position and track variants rank items within a track; Allow / directory creation and persistence; project notes and Region/Marker named-value lookups; {lane} and Item/Take named values remain open
+aaadaw_named_project_notes_example	Native help screenshot 2 shows first=john and last=doe; AAADAW pattern $projectnotes(first)-$projectnotes(last)-$projectnotes(missing) resolves to john-doe and omits the separator adjacent to the empty lookup
+aaadaw_regressions	app::audio_export::tests::render_wildcard_picker_lists_and_inserts_supported_tokens; app::audio_export::tests::render_filename_patterns_expand_native_wildcard_contexts_safely; app::audio_export::tests::render_filename_patterns_preserve_unknown_tokens_and_reject_duplicate_targets; app::audio_export::tests::queued_selected_track_stems_freeze_track_order_and_output_names; app::audio_export::tests::region_render_matrix_wavs_match_native_target_count_ranges_and_samples; app::audio_export::tests::render_filename_position_and_length_wildcards_match_native_formats; app::audio_export::tests::render_filename_output_wildcards_match_native_format_and_channel_values; app::audio_export::tests::render_filename_wildcard_case_and_character_rules_match_native_help; app::audio_export::tests::render_filename_empty_wildcards_omit_the_nearest_native_separator; app::audio_export::tests::render_filename_item_number_matches_the_selected_items_project_order; app::audio_export::tests::render_filename_named_project_notes_match_native_name_value_rules; app::audio_export::tests::render_filename_region_and_marker_numbers_match_native_start_number_rules; app::audio_export::tests::render_filename_regionname_and_markername_match_native_name_only_values; app::audio_export::tests::render_filename_unnamed_regions_and_markers_fall_back_to_native_numbers; app::audio_export::tests::render_project_directory_wildcards_match_native_levels_and_suffixes
+aaadaw_wildcard_picker_behavior	87 picker tokens are arranged in grouped rows including Recording, Pitch sequence, Duplicate names, Timeline order, and Timeline order by track; selecting a token appends its exact expression and closes the picker
+aaadaw_wildcard_insert_interaction	X11 click on $projectnotes(name) in the Project notes group inserts the named-note expression into the filename field and closes the picker
+aaadaw_window_build_id	9fd02f7e28e0dbc7f14a023eea700350445947dd
+aaadaw_window_binary_sha256	15e31d74c0b02c9ab88acbaf160d6a5e8e8252bbb4aed806989857f5a75177f0
+aaadaw_wildcard_picker_screenshot_sha256	631b3d5a267d02ecd09954bd3c1e378b992e7976e753b734e32443c01b904948
+aaadaw_wildcard_picker_scrolled_screenshot_sha256	29011b90c772b4f0fd65720ae3056a085d5cc8c9aa6ed88d188bee749878ec45
+aaadaw_wildcard_insert_screenshot_sha256	d1ceaef7f2c18f25c90c6a82813c752a7e433b725b0ca227a278e6d20d494378
+aaadaw_itemnumber_insert_screenshot	render-filename-pattern-wildcard-itemnumber-aaadaw.png
+aaadaw_itemnumber_insert_screenshot_sha256	306dcd42e51d3f4133b51c95339a7aa06cf29cc112cafa27d15cc8ab3c54fc66
+aaadaw_itemnumber_insert_interaction	X11 click on $itemnumber in the Media items group inserts $itemnumber into the filename field and closes the picker
+aaadaw_sampleratek_insert_screenshot	render-filename-pattern-wildcard-sampleratek-aaadaw.png
+aaadaw_sampleratek_insert_screenshot_sha256	e64345d4c1861bc941e494955a1a3b10206856ffaf81c877eed44bb946641297
+aaadaw_sampleratek_insert_interaction	X11 scrolls to the lower groups, clicks $sampleratek, inserts it into the filename field, and closes the picker
+verification	AAADAW workspace nextest 1260/1260 with isolated Xvfb; strict all-target aaadaw Clippy -D warnings passed; cargo fmt --check; git diff --check; screenshot capture script bash -n; final desktop build started and verified through X11; 60-token checkpoint picker, scrolled checkpoint picker, $user and $computer insertions visually checked; 75-token date/time picker and $datetime insertion verified from the current desktop build; native and AAADAW fixture hashes rechecked
+remaining_differences	97 native menu entries cataloged; 87 AAADAW wildcard forms implemented. Direct numbered-region render comparison, Item/Take named-value expressions, non-default $playrate values and adjustable transport-rate control, marker identity and ordering, selected MIDI-item $item/$namenumber behavior, {lane}, presets, cross-launch persistence, caret/selection insertion, native collision prompts, non-WAV formats, per-channel $chid, and remaining source/range/time-format combinations remain open
+aaadaw_region_number_insert_screenshot	render-filename-pattern-wildcard-region-number-aaadaw.png
+aaadaw_region_number_insert_screenshot_sha256	28218dea313ac9eb0b30f80f7d2eb7bffd280d66a553a0b000891d066e9650a2
+aaadaw_region_number_insert_interaction	X11 click on $regionnumber[N] in the Regions group inserts the template into the filename field and closes the picker
+aaadaw_numbered_region_marker_evidence	Native Wildcard help page 3 defines $regionnumber[N]: first region ID uses N and second uses N+1; the captured Regions/Markers native menu lists both numbered forms. REAPER 7.82 All project markers rendering confirms $markernumber[005] => marker-005.wav, marker-006.wav, marker-007.wav. AAADAW regressions verify $regionnumber[001]-$markernumber[005] => 002-006 and [01] => 02-02 for the second region/marker.
+native_markernumber_all_markers_screenshot	render-wildcards-markernumber-all-markers-native.png
+native_markernumber_all_markers_screenshot_sha256	e6c3d06a431e690bc2fb3ac965c1ec59a7d0391b0b3459e5481d80d0f48e58c3
+native_markernumber_finished_screenshot	render-wildcards-markernumber-all-markers-finished-native.png
+native_markernumber_finished_screenshot_sha256	62200482c47e1807fed6b0d76dfc4d7ab13f32008cac3dedf2bb3fcea0ac92a4
+native_markernumber_fixture	render-wildcards-markernumber-all-markers.tsv
+aaadaw_empty_region_marker_fallback_evidence	REAPER 7.82 All project regions with two unnamed regions and unnamed markers renders $region-$marker as 01-01.wav and 02-02.wav; AAADAW regression verifies both ranges, while named names continue to be used
+native_empty_name_all_regions_screenshot	render-wildcards-empty-name-all-regions-native.png
+native_empty_name_all_regions_screenshot_sha256	35a35c805af4f08ec3db295248ed6bca354f13d7d529f0852a75971c5e697e3c
+native_empty_name_finished_screenshot	render-wildcards-empty-name-finished-native.png
+native_empty_name_finished_screenshot_sha256	c537348b7e8bf6bf9b8161b53f7fe847179df285bce7a6f1ead3515d9aa6a22d
+native_empty_name_fixture	render-wildcards-empty-name-native.tsv
+native_itemnumber_fixture	render-wildcards-itemnumber-native.tsv
+native_itemnumber_screenshot	render-wildcards-itemnumber-native.png
+native_itemnumber_screenshot_sha256	88040ccd44b865a60ebb906f512b6ad5a26a87442e8602f17dbea80abbb7d053
+native_itemnumber_finished_screenshot	render-wildcards-itemnumber-finished-native.png
+native_itemnumber_finished_screenshot_sha256	0734eaaf83169578ad203187cca7a19cacefd293916f6bcb6b030632b69bcb5f
+native_itemnumber_evidence	Selected media items source with the second of three items selected; $itemnumber previews and renders as 02.wav
+native_region_marker_name_evidence	$regionname-$markername renders Verse-Start.wav and Chorus-Next.wav; $regionname-$regionnumber with empty names renders 01.wav and 02.wav without a name-number fallback
+native_region_marker_name_fixture	render-wildcards-region-name-native.tsv
+native_region_marker_name_all_regions_screenshot	render-wildcards-region-name-all-regions-native.png
+native_region_marker_name_all_regions_screenshot_sha256	cbddd51215ee52bd644ff0b925cfd9d50a6b0eb803f384c64b08afc6a330ad55
+native_region_marker_name_finished_screenshot	render-wildcards-region-name-finished-native.png
+native_region_marker_name_finished_screenshot_sha256	1ca189fc10662d4edb1e1b424b49f3148a76a76b46f9ba7b4f76be29803f9ff5
+native_region_marker_empty_name_screenshot	render-wildcards-regionname-empty-preview-native.png
+native_region_marker_empty_name_screenshot_sha256	77e84247e5745935f07ad5beb815ee2d2d69533e27a9a1d0508d7e30be724ac8
+native_region_marker_empty_name_finished_screenshot	render-wildcards-regionname-empty-finished-native.png
+native_region_marker_empty_name_finished_screenshot_sha256	76cd89d5a5096bcf848a43f6fba359f90a9941e33d4332866c2563b0b972dd24
+aaadaw_region_marker_name_insert_screenshots	render-filename-pattern-wildcard-regionname-aaadaw.png; render-filename-pattern-wildcard-markername-aaadaw.png
+aaadaw_region_marker_name_insert_interaction	X11 clicks on $regionname and $markername in the Regions/Markers groups insert the raw-name tokens and close the picker
+aaadaw_regionname_insert_screenshot	render-filename-pattern-wildcard-regionname-aaadaw.png
+aaadaw_regionname_insert_screenshot_sha256	4f902b8bd732c399ee9f569661b3d6432ba8437294cd3dc78c8a90ac1d4e9258
+aaadaw_regionname_insert_interaction	X11 click on $regionname in the Regions group inserts the raw-name token and closes the picker
+aaadaw_markername_insert_screenshot	render-filename-pattern-wildcard-markername-aaadaw.png
+aaadaw_markername_insert_screenshot_sha256	2bd931097c206126f5dda9f991eaf51860bd75af4eef51286e59420d822572a5
+aaadaw_markername_insert_interaction	X11 click on $markername in the Markers group inserts the raw-name token and closes the picker
+native_region_marker_named_values_fixture	render-wildcards-region-named-values-native.tsv
+native_region_marker_named_values_pattern	$region(role)[|]-$marker(role)[|]
+native_region_marker_named_values_outputs	Verse-Start.wav; Chorus-Next.wav
+native_region_marker_named_values_evidence	Optional [s] splits name=value entries on the chosen character; the second-key fixture confirms lookup beyond the first entry, while unsuffixed values retain trailing text
+native_region_marker_named_values_preview_screenshot	render-wildcards-region-named-values-preview-native.png
+native_region_marker_named_values_preview_screenshot_sha256	69acd444c35321f3c13d99c56a56b243ba5f31c669963e09bc00f5e1e68c791d
+native_region_marker_named_values_finished_screenshot	render-wildcards-region-named-values-finished-native.png
+native_region_marker_named_values_finished_screenshot_sha256	d8fba55baab2097ff27dc5f2caa540e3cb780013fcce21fdea420b9700ef4ccc
+native_region_marker_named_values_unsplit_screenshot	render-wildcards-region-named-values-unsplit-native.png
+native_region_marker_named_values_unsplit_screenshot_sha256	3346188184a0b1e1752bdc8b0ad6409344bb288d996216b587428b16f29d31ec
+native_region_marker_named_values_second_key_fixture	render-wildcards-region-named-values-second-key-native.tsv
+native_region_marker_named_values_second_key_pattern	$region(last)[;]-$marker(last)[;]
+native_region_marker_named_values_second_key_outputs	Intro-Downbeat.wav; Main-Midpoint.wav
+native_region_marker_named_values_second_key_preview_screenshot	render-wildcards-region-named-values-second-key-preview-native.png
+native_region_marker_named_values_second_key_preview_screenshot_sha256	26fdad11eca891d992ba544ca2557a7eedcc234642891f4ceacfb8288c323861
+native_region_marker_named_values_second_key_finished_screenshot	render-wildcards-region-named-values-second-key-finished-native.png
+native_region_marker_named_values_second_key_finished_screenshot_sha256	436e3a1ad28e447c8aa284d56916bac008b8add4df863457fd060939e083484e
+native_unnamed_track_finished_screenshot	render-wildcards-tracknamenumber-finished-native.png
+native_unnamed_track_finished_screenshot_sha256	8c2a1045a15bde8fd2a0ccac2fc8a980b3697f90e1bcae85aafdff8bff87418a
+aaadaw_tracknamenumber_insert_screenshot	render-filename-pattern-wildcard-tracknamenumber-aaadaw.png
+aaadaw_tracknamenumber_insert_screenshot_sha256	59bf30ecf838991898f9608b01ac97c3b862cd888d5eefbf37180df55fd8467f
+aaadaw_tracknamenumber_insert_build_id	c8737e71c4c13fff201e069c653e602b5b54f20e
+aaadaw_tracknamenumber_insert_binary_sha256	93bb0479cce315090bb9731590ab5f6f7168985eaa3ed3e8192259ab21cd6538
+aaadaw_tracknamenumber_insert_interaction	X11 click on $tracknamenumber in the Tracks group inserts the exact native token into the filename field and closes the picker
+native_project_directory_fixture	render-wildcards-project-directory-native.tsv
+native_project_directory_evidence	Linux REAPER 7.82 Default 7 preview and completed PCM24 render confirm current directory, numbered ancestors, literal zero suffix and uppercase N template behavior
+aaadaw_project_directory_insert_screenshot	render-filename-pattern-wildcard-projectdirectory-aaadaw.png
+aaadaw_project_directory_insert_screenshot_sha256	583cc75921de306e7226acb078062ffd22ad59e5cb63e299408f84f13a93407b
+aaadaw_project_directory_template_insert_screenshot	render-filename-pattern-wildcard-projectdirectoryN-aaadaw.png
+aaadaw_project_directory_template_insert_screenshot_sha256	abe4b36890d230a3ee713919dff55de3f260d00ed28c6bd061cfc9d8d8e45d40
+aaadaw_project_directory_insert_build_id	9fd02f7e28e0dbc7f14a023eea700350445947dd
+aaadaw_project_directory_insert_binary_sha256	15e31d74c0b02c9ab88acbaf160d6a5e8e8252bbb4aed806989857f5a75177f0
+aaadaw_project_directory_insert_interaction	X11 clicks on $projectdirectory and $projectdirectoryN insert the exact token, close the picker, and leave the expanded render options visible
+aaadaw_channels_insert_screenshot	render-filename-pattern-wildcard-channels-aaadaw.png
+aaadaw_channels_insert_screenshot_sha256	a7796e073c0428c9079c13ed5b43300526451ec814399134c63821e3c68ce44e
+aaadaw_channels_insert_build_id	9fd02f7e28e0dbc7f14a023eea700350445947dd
+aaadaw_channels_insert_binary_sha256	15e31d74c0b02c9ab88acbaf160d6a5e8e8252bbb4aed806989857f5a75177f0
+aaadaw_channels_insert_interaction	X11 click on $channels after scrolling the picker inserts the exact token and closes the picker
+aaadaw_fx_picker_tokens	52
+aaadaw_fx_picker_screenshot	render-filename-pattern-wildcards-fx-aaadaw.png
+aaadaw_fx_picker_screenshot_sha256	dc82e7f8923d7d9874f26b05261d9149c3f325e3739cd6900ea5f5d9e1b84037
+aaadaw_fx_picker_scrolled_screenshot	render-filename-pattern-wildcards-fx-scrolled-aaadaw.png
+aaadaw_fx_picker_scrolled_screenshot_sha256	1b086cf821d4a29c8b8f37a6657cc9b4d1190453430eebe54429bed689969b75
+aaadaw_fx_insert_screenshots	render-filename-pattern-wildcard-fx-default-insert-aaadaw.png; render-filename-pattern-wildcard-fx-insert-aaadaw.png
+aaadaw_fx_default_insert_screenshot_sha256	2fe1b7e9a714940eb6cceedccbd5a0632b016d2afaf48cef6c43e60ffca0d84a
+aaadaw_fx_delimited_insert_screenshot_sha256	1bd43cacab1ff15d2e331397aa6997f1118311086e6d586089e5ee05426ac73a
+aaadaw_fx_picker_build_id	608f3ff89c044ea05778efe8cbd43deae3238527
+aaadaw_fx_picker_binary_sha256	2b66dab284c51170d704fd97fdf3bd20c0506da381937b438d74089483a62071
+aaadaw_fx_default_insert_interaction	X11 click on $fx after scrolling inserts the exact token and closes the picker
+aaadaw_fx_delimited_insert_interaction	X11 click on $fx[X] after scrolling inserts the exact token and closes the picker
+aaadaw_fx_validation	AAADAW App nextest 655/655 passed; strict all-target App Clippy -D warnings passed; formatting and diff checks passed
+aaadaw_track_folder_picker_tokens	56
+aaadaw_track_folder_picker_screenshot	render-filename-pattern-wildcards-track-folders-aaadaw.png
+aaadaw_track_folder_picker_screenshot_sha256	7336fb70ded5c5348f558f38ac7b57bb3529c3f57eb31c8c7a65825188590112
+aaadaw_track_folder_picker_scrolled_screenshot	render-filename-pattern-wildcards-track-folders-scrolled-aaadaw.png
+aaadaw_track_folder_picker_scrolled_screenshot_sha256	43122ac2521e7898ab40b5a98289405619ce5e1c2fa798d458f48026d5a43a26
+aaadaw_track_folder_insert_screenshots	render-filename-pattern-wildcard-trackslashes-aaadaw.png; render-filename-pattern-wildcard-folders-aaadaw.png; render-filename-pattern-wildcard-folders-delimited-aaadaw.png; render-filename-pattern-wildcard-parent-aaadaw.png
+aaadaw_trackslashes_insert_screenshot_sha256	3e2a5c6071a741c1867b4ef528af7b40a77a5b85c02f8fa01e37620d7ad75d8b
+aaadaw_folders_insert_screenshot_sha256	47141d3cb64b6f568ae71cd4778a260d6865bbad9a6e89fa69e069ac339db3ec
+aaadaw_folders_delimited_insert_screenshot_sha256	641b9a4206aa5743c1e98a807e219e946842d4d9ddeab9d3bfcfe788dd508e42
+aaadaw_parent_insert_screenshot_sha256	c74e98a727326eeb62b8b6c3fd7d7ef9d14e7e7fa2a907e5f77614d81ff663ed
+aaadaw_track_folder_picker_build_id	4a7f27b4516bc27bc533f60bc2671ed348a06377
+aaadaw_track_folder_picker_binary_sha256	2356db806cad853df4c810dfce6d013b6d58bb401d51c2495ef59a7a4bd70a94
+aaadaw_track_folder_output_directories	Single render and multi-stem batches create wildcard-derived subdirectories; cancellation removes newly created empty directories
+aaadaw_track_folder_validation	AAADAW App nextest 656/656 passed; aaadaw-app nextest 201/201 passed; strict all-target Clippy -D warnings passed; cargo fmt --check, git diff --check and capture script bash -n passed; all track-folder screenshot and WAV hashes verified
+aaadaw_seltrack_picker_tokens	57
+aaadaw_seltrack_picker_screenshot	render-filename-pattern-wildcards-seltrack-aaadaw.png
+aaadaw_seltrack_picker_screenshot_sha256	d4f64146fb90ff53a46baeeef2cd2461487b9a34a3433cc3318e4f52f14bf9bf
+aaadaw_seltrack_insert_screenshot	render-filename-pattern-wildcard-seltrack-aaadaw.png
+aaadaw_seltrack_insert_screenshot_sha256	b82b754a5ff61bbe807a103fb1d467ab77164be405d3031b11bc737a4af83bb9
+aaadaw_seltrack_build_id	7cba54a122ea96c879d7d1d645d7d7c17434a4a8
+aaadaw_seltrack_binary_sha256	d30b5f110c6e491bf81d497ab4e108ba75e002471b14ac18c03d0058ba937dc1
+aaadaw_seltrack_native_semantics	Primary selected project track remains fixed across stem outputs; $track follows each rendered stem; Master mix uses selected track context
+aaadaw_seltrack_resolver_test	app::audio_export::tests::render_selected_track_wildcard_uses_primary_selection_for_each_output
+aaadaw_seltrack_validation	AAADAW workspace nextest 1258/1258 passed with isolated Xvfb; focused resolver regression passed; strict all-target aaadaw Clippy -D warnings passed; cargo fmt --check, git diff --check and capture script bash -n passed; screenshot and native WAV hashes verified
+aaadaw_playrate_current_limit	The token resolves at the current fixed 1x project rate as 1.000; AAADAW does not yet expose or persist an adjustable Master transport rate
+aaadaw_playrate_regression	app::audio_export::tests::render_playrate_wildcard_uses_native_three_decimal_format_at_default_rate
+aaadaw_playrate_native_nondefault	REAPER 7.82 at Master playrate 1.059463094 previews and renders $playrate-$track as 1.059-Master.wav
+aaadaw_playrate_picker_screenshot	render-filename-pattern-wildcards-playrate-aaadaw.png
+aaadaw_playrate_picker_screenshot_sha256	ceadc80d0c4765bdcf03f2ef7eea61d73efb39e783951dc99ba0eb39611e8cb7
+aaadaw_playrate_insert_screenshot	render-filename-pattern-wildcard-playrate-aaadaw.png
+aaadaw_playrate_insert_screenshot_sha256	f908f32102228113cdcc7ae824d96cb5bf7d4e021502d91989050c32e3f4b80d
+aaadaw_playrate_build_id	60ccc8ca9db91d93dbfe7e836ea33429d62e18e5
+aaadaw_playrate_binary_sha256	6792eab78a3cca8a93b4441796bdd98755dc490de899117467debd1a7f7a94b7
+aaadaw_playrate_native_token_capture	58-token picker shows $playrate; clicking the token inserts the exact expression and closes the picker
+aaadaw_playrate_validation	AAADAW workspace nextest 1259/1259 passed with isolated Xvfb; strict all-target aaadaw Clippy -D warnings passed; cargo fmt --check, git diff --check, capture script bash -n, native probe execution, and registered native WAV/screenshot plus AAADAW screenshot SHA-256 checks passed; adjustable transport speed remains open
+aaadaw_system_wildcards	$user resolves USER, LOGNAME, then USERNAME; $computer resolves HOSTNAME or COMPUTERNAME, then /etc/hostname; values pass through standard safe filename expansion
+aaadaw_system_wildcard_native_output	FixtureUser-StudioComputer-Master.wav; native Linux REAPER 7.82 preview and finished render agree
+aaadaw_system_wildcard_fixture	render-wildcards-system-information-native.tsv; native WAV SHA-256 4b09311f1d3ffcc5006961b12d7438ab2381d0be34cfdb5e35313e2bc1a43898; preview screenshot SHA-256 7b1434fb211fa142fc693ac651d123082e2e5af9a9c91dec410aee7dea0a4b36; finished screenshot SHA-256 da75d77d2a961e4a4141db328ffc4b61dba1996ee9aab21a44d91b31cb75cbdc
+aaadaw_system_wildcard_picker_screenshot	render-filename-pattern-wildcards-system-info-aaadaw.png
+aaadaw_system_wildcard_picker_screenshot_sha256	039be9fda96b0395646f73c63721ed59101580e799baeebea261b383b07e467d
+aaadaw_system_wildcard_scrolled_picker_screenshot	render-filename-pattern-wildcards-scrolled-system-info-aaadaw.png
+aaadaw_system_wildcard_scrolled_picker_screenshot_sha256	ce855b9aabecd010e3d67fcd4498d73859ffa87b032cf66275acc5a528e086db
+aaadaw_user_insert_screenshot	render-filename-pattern-wildcard-user-aaadaw.png
+aaadaw_user_insert_screenshot_sha256	150661e6bfca951398160848e8444cc51db6e3bc46bb763a7da6a2709948d65f
+aaadaw_computer_insert_screenshot	render-filename-pattern-wildcard-computer-aaadaw.png
+aaadaw_computer_insert_screenshot_sha256	0be6b6ce7b6f04528c1a774ef4ec2dbcfe0462a0519a0518b0a42a8db57d8069
+aaadaw_system_wildcard_build_id	e4e98a5eb591f05c7bbe72bd2312655eee5e1023
+aaadaw_system_wildcard_binary_sha256	c99bb944f49db61276b9fd224116f532530722a8ac54f06a5c8dade3b3987445
+aaadaw_system_wildcard_resolver_test	app::audio_export::tests::render_filename_system_wildcards_match_native_user_and_computer_values
+aaadaw_system_wildcard_validation	AAADAW workspace nextest 1260/1260 passed with isolated Xvfb; strict all-target aaadaw Clippy -D warnings passed; rustfmt, git diff --check, capture script bash -n, and native/AAADAW fixture SHA-256 checks passed; final desktop build UI and token insertions inspected
+aaadaw_date_time_tokens	$date, $time, $datetime, $year, $year2, $month, $monthname, $day, $dayname, $hour, $hour12, $ampm, $minute, $second, $localtime
+aaadaw_date_time_fixture	render-wildcards-date-time-native.tsv; preview and finished REAPER 7.82 render match the local-time forms, including the UTC-12 24-hour/12-hour distinction; native WAV SHA-256 ff9dbc700ce21fe13303f50fe76742b879775fdb4c5deb74a99ad226ede29ad7; preview screenshot SHA-256 2823c4f6951f23cb60e7160319ad255a4877f64d179b7de8c8fa97b5633155b9; finished screenshot SHA-256 43fa2ec73dc9953101b3e7fb6b7e48390a5cc562687362ca00dc59072309a4af
+aaadaw_date_time_picker_screenshot	render-filename-pattern-aaadaw-date-time.png; SHA-256 6009b769e9222e9fe64f73b0e874205c3d40597213c95e925dd5097660b123f1
+aaadaw_datetime_insert_screenshot	render-filename-pattern-aaadaw-datetime-inserted.png; SHA-256 41ba959cf55c0447b5deb5345bb35adb22d1b2623b8fbc6ad14faa8fff240f24; X11 click inserted `$datetime` into the field from desktop Build ID e2574d1f4909d648b5f49d19ab65c259a759fe2c (binary SHA-256 1612fc3eac3a4f424bb391949201676dfb9ef9030e192d4f679ea6c7723e5879)
+aaadaw_date_time_validation	AAADAW workspace nextest 1260/1260 passed with isolated Xvfb; focused date/time wildcard regression passed; strict all-target aaadaw Clippy -D warnings passed; cargo fmt --check, git diff --check, capture script bash -n, and registered native/AAADAW fixture hashes checked; 75-token picker rows and `$datetime` insertion inspected from the built desktop application
+aaadaw_unique_id_tokens	$uniqueid[N] picker template; bare $uniqueid defaults to 8 lowercase hexadecimal characters; requested lengths clamp to 8–16; literal [N] expands empty and removes an adjacent separator
+aaadaw_unique_id_native_fixture	render-wildcards-uniqueid-native.tsv; 17-ID native output d037396679487c0f06506c65bdb0715f09b87d8e268280ba6136e0cf501a2b07; empty-template output 9572475e97daf449dfd813188cd34d23b1359647a12361a1c9e5e700e0471094; native preview, finished-render, and placeholder screenshots with hashes recorded
+aaadaw_unique_id_picker_screenshot	render-filename-pattern-aaadaw-uniqueid-picker.png; SHA-256 d1e695d9b01076e093e6d02519a6792d8bb06b2a9e88a7840dbbd27ce4e1b50c
+aaadaw_unique_id_insert_screenshot	render-filename-pattern-wildcard-uniqueid-aaadaw.png; SHA-256 d77d974cfcb17e86ac77c02ab538b386a321bffbe133b5f462458531de643974; X11 click inserted $uniqueid[N] and closed the picker
+aaadaw_unique_id_desktop_build	Build ID bf339f42b4f8bfba05d3e3020ed03639859b69b2; binary SHA-256 aa9a2eadd05687306cd65e5bfa50e981bf90e98f50ede940863f3b9c3040fb09
+aaadaw_unique_id_validation	AAADAW workspace nextest 1261/1261 passed with isolated Xvfb; focused unique ID boundary/per-occurrence regression passed; strict all-target aaadaw Clippy -D warnings passed; cargo fmt --check, git diff --check, capture script bash -n, and registered native/AAADAW hashes passed; 76-token picker and insertion inspected from the built desktop application
+aaadaw_allow_slash_option	Default on like a fresh REAPER configuration; unchecking immediately writes render-wildcard-preferences.json atomically; slash values become safe directory components, while $trackslashes and $folders remain forced path separators
+aaadaw_allow_slash_default_screenshot	render-filename-pattern-wildcards-allow-slash-aaadaw.png; SHA-256 f4ad66189266b4103cdcb36d61255e3847a73d3ee0abcbb7ac276ea3b31af8b7
+aaadaw_allow_slash_persisted_unchecked_screenshot	render-filename-pattern-wildcards-allow-slash-persisted-aaadaw.png; SHA-256 03ad6f82aa5f1543152c5db1cae94c17764fa044b1a2f2da5e7a16d99ee03655; screenshot captured after a second application launch using the same XDG configuration directory
+aaadaw_allow_slash_config_after_toggle	{"version":1,"allow_slash_in_substitutions":false}; persisted under XDG_CONFIG_HOME/aaadaw/render-wildcard-preferences.json
+aaadaw_allow_slash_build_id	ff4fbbf05678e018322ca36c044a1b9ca8038e3a
+aaadaw_allow_slash_binary_sha256	4c3fdf55279d7582b8cb10d20d40074e5753eb145b08ae7e807b21e647f8b4aa
+aaadaw_allow_slash_resolver_test	app::audio_export::tests::render_filename_allow_slash_option_creates_directories_but_forced_slashes_stay_active
+aaadaw_allow_slash_preference_tests	app::render_wildcard_preferences::tests::render_wildcard_preferences_default_on_and_round_trip; app::render_wildcard_preferences::tests::unsupported_render_wildcard_preferences_version_fails_closed
+aaadaw_allow_slash_validation	Build completed and desktop Render picker inspected; UI toggle wrote the false preference; second app launch loaded false and screenshot confirmed unchecked state; full workspace nextest 1264/1264 passed; strict all-target Clippy -D warnings, cargo fmt --all -- --check, git diff --check, capture script bash -n, and native/AAADAW fixture SHA-256 checks passed
+
+aaadaw_filenumber_tokens	$filenumber; $filenumber[N] with N zero-padding width; $filecount for the full output batch
+aaadaw_file_counter_native_fixture	render-wildcards-file-counters-native.tsv; $filenumber[01] => 01/02, bare $filenumber => 1/2, $filecount => 2 on both output files; four REAPER 7.82 preview/finished screenshots and PCM24 WAV hashes recorded
+aaadaw_file_counter_picker_screenshot	render-filename-pattern-aaadaw-file-counters.png; SHA-256 86f3887e78dd2c3d74577fb5ea42648d17734c4f2e73703c7fc3ad012fdd09e6; current 87-token desktop picker shows Recording, Pitch sequence, Duplicate names, and Timeline order groups
+aaadaw_filenumber_insert_screenshot	render-filename-pattern-wildcard-filenumberpadded-aaadaw.png; SHA-256 bf0e7324cb1fb2c44b7a9b3ae756233b5763f76706c9d5af115b28119bce4fbf; X11 click inserted $filenumber[N] and closed the picker
+aaadaw_file_counter_build_id	c2784759262e4699dbca9cec2ac9765cea514a79
+aaadaw_file_counter_binary_sha256	f2ad5c466a4d2cf656e37adbae339f8845e6871e0d5cf405b5b95ec61e894ac6
+aaadaw_file_counter_test	app::audio_export::tests::render_filename_file_number_and_file_count_follow_output_batch_order
+aaadaw_file_counter_picker_test	app::audio_export::tests::render_wildcard_picker_lists_and_inserts_supported_tokens
+aaadaw_file_counter_validation	AAADAW workspace nextest 1268/1268; strict all-target aaadaw Clippy -D warnings; cargo fmt --all -- --check; git diff --check; capture script bash -n; registered native/AAADAW screenshot and WAV hashes checked; built desktop picker and insertions visually inspected
+aaadaw_timeline_order_tokens	$timelineorder; $timelineorder[N]; $timelineorder_track; $timelineorder_track[N]
+aaadaw_timeline_order_native_fixture	render-wildcards-timeline-order-native.tsv; preview/finished names file-1-005-01-Verse.wav and file-2-006-02-Chorus.wav; PCM24 WAV and screenshot hashes recorded
+aaadaw_timeline_order_picker_screenshot	render-filename-pattern-aaadaw-timeline-order.png; SHA-256 86f3887e78dd2c3d74577fb5ea42648d17734c4f2e73703c7fc3ad012fdd09e6; 87-token picker shows Recording, Pitch sequence, Duplicate names, and both Timeline order groups
+aaadaw_timeline_order_insert_screenshot	render-filename-pattern-wildcard-timelineordertrack-aaadaw.png; SHA-256 61e6e14f57b07487bc202a6f9f0ae6678a9e181489c4b2c84c61d2729f2846f4; X11 click inserts $timelineorder_track[N] into the filename field
+aaadaw_timeline_order_build_id	c2784759262e4699dbca9cec2ac9765cea514a79
+aaadaw_timeline_order_binary_sha256	f2ad5c466a4d2cf656e37adbae339f8845e6871e0d5cf405b5b95ec61e894ac6
+aaadaw_timeline_order_regressions	app::audio_export::tests::render_filename_timeline_order_uses_regions_time_and_numeric_start_modifiers; app::audio_export::tests::render_filename_timeline_order_counts_selected_items_globally_and_per_track
+aaadaw_timeline_order_validation	AAADAW workspace nextest 1268/1268 with isolated Xvfb; strict all-target aaadaw Clippy -D warnings passed; cargo fmt --all -- --check, git diff --check, capture script bash -n, and native/AAADAW fixture hashes checked; current desktop picker and insertion inspected
+aaadaw_recording_order_tokens	$note; $note[X]; $natural; $namenumber
+aaadaw_recording_order_native_fixture	render-wildcards-recording-order-native.tsv; native All project regions outputs eight chromatic/natural names; dialog screenshot preserves literal $note[X]-$natural-$namenumber and preview shows X empty on output 1 then advances from C-1; $namenumber is empty in the captured pattern without a name wildcard; screenshots and eight PCM24 WAV hashes are archived
+aaadaw_recording_order_picker_screenshot	render-filename-pattern-aaadaw-timeline-order.png; SHA-256 86f3887e78dd2c3d74577fb5ea42648d17734c4f2e73703c7fc3ad012fdd09e6; 87-token picker shows Pitch sequence and Duplicate names groups
+aaadaw_recording_note_placeholder_insert_screenshot	render-filename-pattern-wildcard-note-start-aaadaw.png; SHA-256 31af4dda9d648af27a93d429d144b612e5a53b233c6c64c4c3d9507eea4ce190; X11 click inserts $note[X], which is empty on the first output then follows the default sequence
+aaadaw_recording_note_insert_screenshot	render-filename-pattern-wildcard-note-aaadaw.png; SHA-256 d4b1c52a27ba70870a2b8511789e49a8ce7f213a2070e49d574e18b7e590382b; X11 click inserts $note and closes the picker
+aaadaw_recording_natural_insert_screenshot	render-filename-pattern-wildcard-natural-aaadaw.png; SHA-256 392b0cc4df2c9f23fee1bfa7fed7a6e6daeffad2775a046252f793031194a215; X11 click inserts $natural and closes the picker
+aaadaw_recording_namenumber_insert_screenshot	render-filename-pattern-wildcard-namenumber-aaadaw.png; SHA-256 c45e658ac01dee3c7dd248fa26b73d4156c7ae20661dac91de64e0b03c7157b2; X11 click inserts $namenumber and closes the picker
+aaadaw_recording_order_build_id	c2784759262e4699dbca9cec2ac9765cea514a79
+aaadaw_recording_order_binary_sha256	f2ad5c466a4d2cf656e37adbae339f8845e6871e0d5cf405b5b95ec61e894ac6
+aaadaw_recording_order_regression	app::audio_export::tests::render_filename_recording_notes_and_duplicate_region_names_follow_output_order; covers eight $note[X] template outputs against native preview names and first-output empty behavior
+aaadaw_recording_order_validation	AAADAW workspace nextest 1268/1268 with isolated Xvfb; strict all-target aaadaw Clippy -D warnings passed; cargo fmt --all -- --check, git diff --check, capture script bash -n, and all registered native/AAADAW screenshot and PCM24 WAV hashes checked; desktop picker plus $note[X], $note, $natural, and $namenumber X11 insertions visually inspected; audio Take-name editing and selected-batch $namenumber are covered by audio-item-take-name.md
+aaadaw_recording_order_remaining_gap	Audio active Take names and selected-batch $namenumber are now modeled and verified in audio-item-take-name.md; selected MIDI-item $item/$namenumber, Item/Take notes and markers, and the REAPER Help C0 vs Default 7 C-1 difference remain open
+
+audio_item_take_name_native_fixture	render-item-take-name-native.tsv; three identical active Take names with only the first and third selected resolve to Hit-01.wav and Hit-02.wav
+audio_item_take_name_preview_screenshot	../images/render-item-take-name-preview-native.png; SHA-256 d4ed10b08ee9fd0d1f3bd5a660016ca06344bf390f369daee58b2da69bbd159d
+audio_item_take_name_finished_screenshot	../images/render-item-take-name-finished-native.png; SHA-256 b5b1431ce3b9d09ef2748f68563b1e64b344caddf3f4da55656fb14736981d74
+audio_item_take_name_outputs	render-item-take-name-Hit-01.wav; SHA-256 1d223d3ed84fcb7283f754781ed6b419fbb32d9cc79636083e3558dc4a26a929; render-item-take-name-Hit-02.wav; SHA-256 d8a84f37f9eb8abbfb1b44a3046f0e1669e8c13b7cf8f1dfbd0297ed6db94560
+audio_item_take_name_aaadaw_screenshot	audio-item-properties-take-name-aaadaw.png; SHA-256 935725516c691a21f44b4501b854c993c630cad304b90be31b28edcfc707f0f3
+audio_item_take_name_aaadaw_build_id	f70e20801196e37478f1496753c4c0431a166fc9
+audio_item_take_name_aaadaw_binary_sha256	d5582b892b68e8ef815f4c570898e15f4eba6ade26b522f8465451c6c87f5359
+audio_item_take_name_regressions	core audio_item_name_is_undoable_and_snapshot_round_trips; storage audio_item_name_round_trips_and_schema_53_migrates; app audio_item_properties_rename_and_restore_the_source_label_in_one_undo_step; app render_filename_item_name_and_duplicate_name_number_follow_the_selected_item; mixed $item-$region-$namenumber context binds $namenumber to Region
+audio_item_take_name_remaining_gaps	Audio items model a single active Take; selected MIDI-item names, Take comping, full Item Properties parity, and item/take named values remain open
+audio_item_region_namenumber_context	$item-$region-$namenumber resolves selected items as Hit-Region 1-01.wav and Hit-Region 3-01.wav; Region context takes precedence when both item and region wildcards are present
+audio_item_region_namenumber_preview_screenshot	../images/render-item-region-namenumber-preview-native.png; SHA-256 7fa06e3309a67ba133b353d495156d6ea3f544abf83812506877984c6c16856c
+audio_item_region_namenumber_finished_screenshot	../images/render-item-region-namenumber-finished-native.png; SHA-256 c1d2c3d5aa9bcf7e265cf0e642b1c1a97f722a0c0ac1ef67808c6dd9f2be4fc3
+audio_item_take_name_timeline_screenshot	audio-item-take-name-timeline-aaadaw.png; SHA-256 1d315b88604a2095387e7a0bb0a37de1533b8e0ae8cbce9ae94fda74c2f2d176; current native-style audio timeline visibly labels the waveform Kick close

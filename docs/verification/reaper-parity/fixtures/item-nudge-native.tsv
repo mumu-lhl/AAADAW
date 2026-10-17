@@ -1,0 +1,15 @@
+version	7.82/linux-x86_64
+theme	Default_7.0.ReaperThemeZip
+dialog_action	41226	Item edit: Nudge/Set...
+nudge_right_action	41249	Item edit: Nudge right by last nudge dialog settings
+transport	stopped
+audio_right_default_state_change_delta	0
+audio_right_default_item	0	0.001000000	10.000000000	0.000000000	selected
+audio_right_default_undo_label	Insert media items
+audio_right_default_undo_result	no dedicated nudge undo entry
+midi_right_default_state_change_delta	0
+midi_right_default_item	0	0.001000000	5.000000000	0.000000000	selected
+midi_right_default_undo_label	Insert media items
+midi_right_default_undo_result	no dedicated nudge undo entry
+no_selection_right_default_state_change_delta	0
+no_selection_right_default_item	0	0.000000000	10.000000000	0.000000000	unselected

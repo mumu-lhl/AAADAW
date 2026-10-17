@@ -1,0 +1,10 @@
+key	value
+captured_at_utc	2026-10-16
+platform	Linux x86_64; Xvfb :584; X11
+project	Fresh AAADAW project with zero tracks and zero items
+binary	target/debug/aaadaw
+binary_sha256	2eccb93bd8e1e2ac7f93642999ed1e70d5a0da733f5d07572d937b8d09f76011
+binary_build_id	bc305e2f1716fb332fba908951839471ee10e711
+interaction	Selected Main action in the Action List and clicked Run with the pointer on the Run button; no item target was present, and the project remained empty
+action_40529	item-hover-actions-aaadaw-40529-run.png; SHA-256 26ef2559444ad81cf1d6de2507a82c6d68b2214140bd7de7b9956d4fb32598bd
+action_40530	item-hover-actions-aaadaw-40530-run.png; SHA-256 8f7604c11b511a492dd038fc20f11357b95ac8e4554d79c0687a16d9b97157c9

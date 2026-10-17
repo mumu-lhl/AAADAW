@@ -1,0 +1,11 @@
+version	7.82/linux-x86_64
+theme	Default_7.0.ReaperThemeZip
+display	X11 Xvfb 1280x1024 with xfwm4; isolated fresh XDG configuration
+audio	device closed; transport remained stopped
+section	Main
+filter	undo
+step	input_sequence	selected_result	filter_focus	transport	project_effect	screenshot	sha256	observation
+filter_focused	(type undo; ArrowDown)	(no selected row)	yes	stopped	no action executed	fixtures/action-list-arrow-native-filter-focus.png	99cee9f22f12bb6fe6b41e10985d3ded58cac335855e61fa08e49122f4487f5b	ArrowDown while Filter has focus leaves the result selection unchanged
+result_navigation	Enter; ArrowDown	Edit: Show undo history window	no	stopped	no action executed	fixtures/action-list-arrow-native-down.png	b8c31f1b974eca93a481bedf8b0d141bbb5a16e5ebe45c6ba88cf0be6f84ec1f	Enter transfers focus from Filter to the visible results; ArrowDown selects the next row
+upper_boundary	ArrowUp at first result	Dock/undock currently focused dockable window	no	stopped	no action executed	fixtures/action-list-arrow-native-first-boundary.png	ceb73a99f1688d9a60bf7e732323265a8295dcb9e1b8d17b16559f60c14634ea	selection stays on the first row; navigation does not wrap
+lower_boundary	ArrowDown at last result	Edit: Undo	no	stopped	no action executed	fixtures/action-list-arrow-native-last-boundary.png	985fb7cbafc6988fc5442b7bb60e6499916a441d283351950afa4745d94d71ab	selection stays on the last row; navigation does not wrap

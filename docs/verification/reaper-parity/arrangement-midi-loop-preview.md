@@ -1,0 +1,7 @@
+# Arrangement MIDI loop preview
+
+Arrangement now keeps the MIDI source events and loop metadata in its item cache instead of expanding loop repetitions there and truncating the result to the first 512 events. The draw path maps the current visible tick span directly to source-loop occurrences, clips each note at the visible item end, and limits generated note rectangles to 512. When that limit applies, it samples source-note identities and loop occurrences across the visible range so later notes and the right side of a long clip remain represented.
+
+The focused regressions verify a nonzero source offset near the final occurrence of a 1,000-loop item, a capped preview spanning both source-note identities and the visible horizontal range, trimmed source-note cache data, and the ordinary note-to-rectangle mapping. The full AAADAW desktop test binary passed 581/581; all 79 timeline tests passed; app all-target Clippy with `-D warnings`, rustfmt, and `git diff --check` passed.
+
+The rebuilt desktop executable (Build ID `b8b2910869dbd19460c75f02f1d4a93f59b6f218`, SHA-256 `2354af3d07adc7334d8f07b80e481119ea1f3e00146bcec30d17ba1204d5099a`) launched and drew its actual 1280×800 main window under Xvfb. The new binary's startup screenshot is pixel-identical to the recorded default-window fixture. A feature-state Arrangement screenshot and a corresponding Linux REAPER 7.82 visual comparison remain outstanding, so this rendering slice does not complete Arrangement parity or P4.

@@ -1,0 +1,11 @@
+version	7.82/linux-x86_64
+theme	Default_7.0.ReaperThemeZip
+tempo_map	120 BPM at project start; stepped to 60 BPM at 4.000 seconds
+source	length_qn	5.100000000	length_is_qn	true
+nudge	Mode Set; Target contents; absolute target 4.150 seconds; Snap off
+before	position_s	3.900000000	length_s	5.000000000	loop_source	1	source_offset_s	0.000000000	phase_ppq	0.000	loop_endpoint_ppq	4896.000	notes	0,0,0,960.000,1920.000,0,60,96;1,0,0,2880.000,3840.000,0,64,108	selected	1	state_change_count	2
+after_set	position_s	3.900000000	length_s	5.000000000	loop_source	1	source_offset_s	2.300000000	phase_ppq	4416.000	loop_endpoint_ppq	9312.000	notes	0,0,0,960.000,1920.000,0,60,96;1,0,0,2880.000,3840.000,0,64,108	selected	1	state_change_count	3
+dialog_window	Nudge/Set Items; xwininfo 528x121
+before_screenshot	item-nudge-midi-variable-tempo-set-native-before.png; 1280x1024; SHA-256 741973ee48277ee94efd4fe8becadff6f59673c08da73858c6ec06e5dcaa1bd3
+after_screenshot	item-nudge-midi-variable-tempo-set-native-after.png; 1280x1024; SHA-256 b124d3794144ab0ae7d87e40eef300dd5e55afd295c0c45acf68e047c017d77d
+reproduction_script	../../../../scripts/reaper_parity/probe-item-nudge-midi-variable-tempo-set.lua

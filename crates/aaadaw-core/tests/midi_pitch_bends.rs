@@ -25,14 +25,17 @@ fn pitch_bends_are_14_bit_sorted_undoable_and_snapshot_safe() {
     let (mut project, item_id) = project_with_midi_item();
     let pitch_bends = vec![
         MidiPitchBendData {
+            channel: 0,
             tick: 960,
             value: 16_383,
         },
         MidiPitchBendData {
+            channel: 0,
             tick: 0,
             value: 8192,
         },
         MidiPitchBendData {
+            channel: 0,
             tick: 480,
             value: 0,
         },
@@ -45,14 +48,17 @@ fn pitch_bends_are_14_bit_sorted_undoable_and_snapshot_safe() {
         .expect("valid pitch bends should be accepted");
     let expected = [
         MidiPitchBendData {
+            channel: 0,
             tick: 0,
             value: 8192,
         },
         MidiPitchBendData {
+            channel: 0,
             tick: 480,
             value: 0,
         },
         MidiPitchBendData {
+            channel: 0,
             tick: 960,
             value: 16_383,
         },
@@ -76,13 +82,19 @@ fn pitch_bends_reject_invalid_values_and_duplicates_atomically() {
     let (mut project, item_id) = project_with_midi_item();
     for pitch_bends in [
         vec![
-            MidiPitchBendData { tick: 10, value: 0 },
             MidiPitchBendData {
+                channel: 0,
+                tick: 10,
+                value: 0,
+            },
+            MidiPitchBendData {
+                channel: 0,
                 tick: 10,
                 value: 16_383,
             },
         ],
         vec![MidiPitchBendData {
+            channel: 0,
             tick: 10,
             value: 16_384,
         }],
@@ -107,10 +119,12 @@ fn splitting_a_midi_item_carries_the_active_pitch_bend_forward() {
             item_id,
             pitch_bends: vec![
                 MidiPitchBendData {
+                    channel: 0,
                     tick: 0,
                     value: 8192,
                 },
                 MidiPitchBendData {
+                    channel: 0,
                     tick: 960,
                     value: 12_000,
                 },
@@ -127,10 +141,12 @@ fn splitting_a_midi_item_carries_the_active_pitch_bend_forward() {
         project.midi_items()[1].pitch_bends(),
         &[
             MidiPitchBendData {
+                channel: 0,
                 tick: 0,
                 value: 8192
             },
             MidiPitchBendData {
+                channel: 0,
                 tick: 480,
                 value: 12_000
             },
@@ -150,6 +166,7 @@ fn shrinking_a_midi_item_keeps_hidden_pitch_bend_points_for_expansion() {
         .apply(DawAction::SetMidiPitchBends {
             item_id,
             pitch_bends: vec![MidiPitchBendData {
+                channel: 0,
                 tick: 2_400,
                 value: 10_000,
             }],
@@ -167,6 +184,7 @@ fn shrinking_a_midi_item_keeps_hidden_pitch_bend_points_for_expansion() {
     assert_eq!(
         project.midi_items()[0].pitch_bends(),
         &[MidiPitchBendData {
+            channel: 0,
             tick: 2_400,
             value: 10_000,
         }]

@@ -1,0 +1,28 @@
+version	7.82/linux-x86_64
+theme	Default_7.0.ReaperThemeZip
+project_sample_rate	44100
+dialog_action	41226
+nudge_right_action	41249
+nudge_left_action	41250
+fixture	Audio A: 1.000s / 0.500s; Audio B: 4.000s / 1.000s; MIDI item: 0-8s with 0.250s, 0.250s, and 0.500s notes; time selection 2-5s
+scenario	unit	note_value	selection	snap	operation	state_change_count	undo_label	audio_a_position_s	audio_a_length_s	audio_a_selected	audio_b_position_s	audio_b_length_s	audio_b_selected	midi_position_s	midi_length_s	midi_selected	midi_note_count	midi_notes_ppq
+item_lengths_audio_a	item lengths	—	A	off	baseline	5	Nudge items	1.000000000	0.500000000	1	4.000000000	1.000000000	0	0.000000000	8.000000000	0	3	60:0:0:480
+item_lengths_audio_a	item lengths	—	A	off	Nudge Right	5	Nudge items	1.500000000	0.500000000	1	4.000000000	1.000000000	0	0.000000000	8.000000000	0	3	60:0:0:480
+item_lengths_audio_b	item lengths	—	B	off	baseline	5	Nudge items	1.000000000	0.500000000	0	4.000000000	1.000000000	1	0.000000000	8.000000000	0	3	60:0:0:480
+item_lengths_audio_b	item lengths	—	B	off	Nudge Right	5	Nudge items	1.000000000	0.500000000	0	5.000000000	1.000000000	1	0.000000000	8.000000000	0	3	60:0:0:480
+item_lengths_audio_ab	item lengths	—	AB	off	baseline	5	Nudge items	1.000000000	0.500000000	1	4.000000000	1.000000000	1	0.000000000	8.000000000	0	3	60:0:0:480
+item_lengths_audio_ab	item lengths	—	AB	off	Nudge Right	5	Nudge items	1.500000000	0.500000000	1	4.500000000	1.000000000	1	0.000000000	8.000000000	0	3	60:0:0:480
+item_selections_audio_a	item selections	—	A	off	baseline	6	Nudge items	1.000000000	0.500000000	1	4.000000000	1.000000000	0	0.000000000	8.000000000	0	3	60:0:0:480
+item_selections_audio_a	item selections	—	A	off	Nudge Right	6	Nudge items	1.500000000	0.500000000	1	4.000000000	1.000000000	0	0.000000000	8.000000000	0	3	60:0:0:480
+item_selections_audio_b	item selections	—	B	off	baseline	6	Nudge items	1.000000000	0.500000000	0	4.000000000	1.000000000	1	0.000000000	8.000000000	0	3	60:0:0:480
+item_selections_audio_b	item selections	—	B	off	Nudge Right	6	Nudge items	1.000000000	0.500000000	0	5.000000000	1.000000000	1	0.000000000	8.000000000	0	3	60:0:0:480
+item_selections_audio_ab	item selections	—	AB	off	baseline	6	Nudge items	1.000000000	0.500000000	1	4.000000000	1.000000000	1	0.000000000	8.000000000	0	3	60:0:0:480
+item_selections_audio_ab	item selections	—	AB	off	Nudge Right	6	Nudge items	5.000000000	0.500000000	1	8.000000000	1.000000000	1	0.000000000	8.000000000	0	3	60:0:0:480
+item_selections_midi	item selections	—	M	off	baseline	6	Nudge items	1.000000000	0.500000000	0	4.000000000	1.000000000	0	0.000000000	8.000000000	1	3	60:0:0:480
+item_selections_midi	item selections	—	M	off	Nudge Right	6	Nudge items	1.000000000	0.500000000	0	4.000000000	1.000000000	0	8.000000000	8.000000000	1	3	60:0:0:480
+notes_quarter_midi	notes	1/4	M	off	baseline	7	Nudge items	1.000000000	0.500000000	0	4.000000000	1.000000000	0	0.000000000	8.000000000	1	3	60:0:0:480
+notes_quarter_midi	notes	1/4	M	off	Nudge Right	7	Nudge items	1.000000000	0.500000000	0	4.000000000	1.000000000	0	0.500000000	8.000000000	1	3	60:0:0:480
+notes_quarter_audio	notes	1/4	A	off	baseline	7	Nudge items	1.000000000	0.500000000	1	4.000000000	1.000000000	0	0.000000000	8.000000000	0	3	60:0:0:480
+notes_quarter_audio	notes	1/4	A	off	Nudge Right	7	Nudge items	1.500000000	0.500000000	1	4.000000000	1.000000000	0	0.000000000	8.000000000	0	3	60:0:0:480
+notes_half_audio	notes	1/2	A	off	baseline	8	Nudge items	1.000000000	0.500000000	1	4.000000000	1.000000000	0	0.000000000	8.000000000	0	3	60:0:0:480
+notes_half_audio	notes	1/2	A	off	Nudge Right	8	Nudge items	2.000000000	0.500000000	1	4.000000000	1.000000000	0	0.000000000	8.000000000	0	3	60:0:0:480

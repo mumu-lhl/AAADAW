@@ -1,0 +1,19 @@
+record	value
+reference	Linux REAPER 7.82 / Default 7, official x86_64 archive SHA-256 `a4aa961534f22ae5ae910e4ec0c200dcb4476c9f7556806fe09a9743cd582563`
+executable	target/reaper_linux_x86_64/REAPER/reaper
+configuration	Isolated XDG directories under `target/reaper-template-probe`; no daily REAPER configuration was modified
+window	Xvfb :798, 1280x800x24; REAPER main window 1024x740 at (80,0)
+template_directory	`target/reaper-template-probe/config/ProjectTemplates`
+empty_list	`project-template-cascade-empty-native.png`; SHA-256 `1c3f2c42bc790a84509be53b869a1a06db01be1e5503b9db12fb2f41c34d2a8c`; 311x73 crop
+one_item_list	`project-template-cascade-one-native.png`; one `alpha` template; 311x92 crop; SHA-256 `02255f23138683ecf43b31b8affa8c00b5a85980855b80689ad70f9d2ad1f582`
+populated_list	`project-template-cascade-populated-native.png`; 311x111 crop; SHA-256 `54c38e23c7c765a75f637c3581a00510e6e6a37c0a3068d0bd532cb3712becf8`
+menu_order	`Save project as template...`; `Show project template path in explorer/finder`; separator; disabled `Load project template:`; sorted template names
+empty_state	When no `.RPP` file exists, the disabled `Load project template:` row is followed by `(no project templates)`.
+sort_and_labels	Case-insensitive filename order; `.RPP` extension hidden. The populated fixture shows `alpha`, then `Zeta`.
+save_dialog	`project-template-save-dialog-native.png`; SHA-256 `59332fee8006cb999bbeb01d43f9ef83127d5f2a82e2189e2407bdf035fe2ff5`; 600x400 crop; title `Save project template`; initial directory is `ProjectTemplates`; filter is `REAPER Project files (*.RPP)`.
+save_result	Saving the name `Zeta` creates `Zeta.RPP` in the template directory.
+overwrite_confirmation	`project-template-overwrite-confirm-native.png`; SHA-256 `647f59e41f8537a1adbbf542f256dac58f6fea7f65beb345dee095fa331bf4dd`; 521x126 crop; REAPER displays the existing absolute path and `Overwrite?` with OK/Cancel.
+overwrite_cancel	Cancel preserved the existing `alpha.RPP` SHA-256 `3285ebbf604e27ead2584c242747f71d08775e65c7d539e1f9a8c5ad7a0d5ff4` and the template directory's two entries.
+alpha_template	`alpha.RPP`; SHA-256 `3285ebbf604e27ead2584c242747f71d08775e65c7d539e1f9a8c5ad7a0d5ff4`
+zeta_template	`Zeta.RPP`; SHA-256 `665875e0480878248703db8c5133260a9d2ff5f276b96cc2f97928534ca3e6e2`
+parity_limit	AAADAW uses `.aaadaw` and now offers an overwrite confirmation with atomic replacement after OK; see `project-template-overwrite-aaadaw.tsv` for AAADAW evidence. REAPER's complete template format/default-project behavior remains outside this fixture.

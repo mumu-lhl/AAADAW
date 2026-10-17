@@ -1,0 +1,8 @@
+version	7.82/linux-x86_64
+theme	Default_7.0.ReaperThemeZip
+display	X11 Xvfb 1280x1024 with xfwm4; isolated fresh XDG configuration
+audio	device closed; transport remained stopped
+section	Main
+filter	item
+step	input_sequence	selected_result	filter_focus	transport	project_effect	screenshot	sha256	observation
+long_list_down	Enter; ArrowDown x18	Edit: Delete trailing notes of less than 1/8 note in selected MIDI items	no	stopped	no action executed	fixtures/action-list-arrow-scroll-native.png	5b26fc7be7368900572f9f5299a0db0d8cbcc402d5c62ea226e480b7633e5e30	Repeated ArrowDown moves the selected result to the lower visible rows and scrolls the results list; no action runs

@@ -1,0 +1,14 @@
+version	7.82/linux-x86_64
+theme	Default_7.0.ReaperThemeZip
+folder_muted	true
+child_track_muted	false
+item_muted	false
+item_selected	false
+item_track	MIDI Child inside Muted Folder
+export_scope	All / Entire project (midiexport=0)
+reaper_build_id	fb9ade2f211bc91a3ee6193630ef17bcf5f6528b
+reaper_binary_sha256	9976f5608068b7a58518969001b00b527fb0de6ed7459e0e5dda6f29878ee254
+native_project_sha256	79a7faffd92d25f22984916eb9b1e6031cf753a5a83aa6fc8501e76074665f89
+native_export	menu-export-midi-native-folder-muted-all.mid; 91 bytes; Type 1; 2 tracks; SHA-256 d9dbba18e770c5734008a6afd6a721a44097445f3b99b505bc5387787c964bac
+result_capture	menu-export-midi-native-folder-muted-result.png; 1280x800; SHA-256 9e0272acdb52397476ac8221c9d71d683d028532a678f48ad0459e91be8ff8a9
+probe	scripts/reaper_parity/probe-midi-export-muted-folder.lua

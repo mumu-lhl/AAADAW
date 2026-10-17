@@ -25,16 +25,19 @@ fn controller_changes_are_sorted_undoable_and_snapshot_safe() {
     let (mut project, item_id) = project_with_midi_item();
     let controllers = vec![
         MidiControllerData {
+            channel: 0,
             controller: 64,
             tick: 960,
             value: 0,
         },
         MidiControllerData {
+            channel: 0,
             controller: 1,
             tick: 480,
             value: 64,
         },
         MidiControllerData {
+            channel: 0,
             controller: 64,
             tick: 0,
             value: 127,
@@ -71,17 +74,20 @@ fn controller_changes_reject_duplicate_positions_and_invalid_values_atomically()
     for controllers in [
         vec![
             MidiControllerData {
+                channel: 0,
                 controller: 64,
                 tick: 10,
                 value: 0,
             },
             MidiControllerData {
+                channel: 0,
                 controller: 64,
                 tick: 10,
                 value: 127,
             },
         ],
         vec![MidiControllerData {
+            channel: 0,
             controller: 128,
             tick: 10,
             value: 0,
@@ -103,6 +109,7 @@ fn controller_changes_reject_duplicate_positions_and_invalid_values_atomically()
 fn controller_points_beyond_clip_end_survive_trim_undo_and_snapshot() {
     let (mut project, item_id) = project_with_midi_item();
     let hidden_controller = MidiControllerData {
+        channel: 0,
         controller: 64,
         tick: 3_600,
         value: 127,
@@ -146,11 +153,13 @@ fn splitting_a_midi_item_carries_the_active_controller_state_forward() {
             item_id,
             controllers: vec![
                 MidiControllerData {
+                    channel: 0,
                     controller: 64,
                     tick: 0,
                     value: 127,
                 },
                 MidiControllerData {
+                    channel: 0,
                     controller: 64,
                     tick: 960,
                     value: 0,
@@ -168,11 +177,13 @@ fn splitting_a_midi_item_carries_the_active_controller_state_forward() {
         project.midi_items()[1].controllers(),
         &[
             MidiControllerData {
+                channel: 0,
                 controller: 64,
                 tick: 0,
                 value: 127,
             },
             MidiControllerData {
+                channel: 0,
                 controller: 64,
                 tick: 480,
                 value: 0,

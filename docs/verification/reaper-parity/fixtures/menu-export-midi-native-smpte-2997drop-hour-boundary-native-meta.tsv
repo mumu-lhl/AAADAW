@@ -1,0 +1,9 @@
+version	7.82/linux-x86_64
+theme	Default_7.0.ReaperThemeZip
+fixture	track Piano; item 0.25-1.25 seconds; C4 note, CC1, pitch bend
+project_frame_rate	29.97DF fps; drop-frame=true
+project_time_offset_seconds	3600.000000000
+export_action	40849
+export_mode_dialog	manual confirmation required; capture Type 1 and PPQN 960 state
+export_embed_smpte_offset_dialog	manual confirmation required
+expected_smpte_offset_event	FF 54 05 41 00 00 00 00

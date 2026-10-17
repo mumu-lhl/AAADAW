@@ -1,0 +1,8 @@
+version	7.82/linux-x86_64
+theme	Default_7.0.ReaperThemeZip
+source_path	/workspace/AAADAW/examples/first-project/melody.wav
+columns	label	audio_position_s	audio_length_s	audio_loop_source	audio_offset_s	audio_source_length_s	audio_selection	midi_position_s	midi_length_s	midi_loop_source	midi_offset_s	midi_source_length	midi_length_is_qn	midi_note_count	midi_selection	state_change	undo_label
+before	2.000000000	5.000000000	1.0	0.100000000	4.000000000	selected	2.000000000	5.000000000	1.0	0.000000000	10.000000000	true	2	selected	2	Insert media items
+snapshot	2.000000000	5.000000000	1.0	3.000000000	4.000000000	selected	2.000000000	5.000000000	1.0	4.000000000	10.000000000	true	2	selected	4	Nudge items
+undo	2.000000000	5.000000000	1.0	0.100000000	4.000000000	selected	2.000000000	5.000000000	1.0	0.000000000	10.000000000	true	2	selected	5	Remove loop/time selection
+redo	2.000000000	5.000000000	1.0	3.000000000	4.000000000	selected	2.000000000	5.000000000	1.0	4.000000000	10.000000000	true	2	selected	6	Nudge items

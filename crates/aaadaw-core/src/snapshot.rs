@@ -1,18 +1,77 @@
 use crate::{
     FxParameterAutomationLane, FxParameterAutomationPoint, MidiControllerData, MidiNoteData,
-    MidiPitchBendData, ProjectSettings, TempoCurve, TimebaseError, VolumeAutomationPoint,
+    MidiPitchBendData, ProjectMarker, ProjectRegion, ProjectSettings, RazorEditArea, TempoCurve,
+    TimebaseError, VolumeAutomationPoint,
 };
 use std::fmt;
 
 /// A validated, serialization-friendly copy of project state.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ProjectSnapshot {
+    pub notes: crate::ProjectNotes,
     pub settings: ProjectSettings,
+    pub master_mix: crate::MasterMix,
     pub tracks: Vec<TrackSnapshot>,
     pub audio_items: Vec<AudioItemSnapshot>,
     pub midi_items: Vec<MidiItemSnapshot>,
+    pub markers: Vec<ProjectMarkerSnapshot>,
+    pub show_project_markers: bool,
+    pub show_project_regions: bool,
+    pub regions: Vec<ProjectRegionSnapshot>,
     pub tempo_points: Vec<TempoPointSnapshot>,
     pub meter_points: Vec<MeterPointSnapshot>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ProjectMarkerSnapshot {
+    pub id: u64,
+    pub number: u32,
+    pub position_ticks: u64,
+    pub name: String,
+    pub visible: bool,
+}
+
+impl From<&ProjectMarker> for ProjectMarkerSnapshot {
+    fn from(marker: &ProjectMarker) -> Self {
+        Self {
+            id: marker.id().value(),
+            number: marker.number(),
+            position_ticks: marker.position_ticks(),
+            name: marker.name().to_owned(),
+            visible: marker.is_visible(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ProjectRegionSnapshot {
+    pub id: u64,
+    pub number: u32,
+    pub start_ticks: u64,
+    pub end_ticks: u64,
+    pub name: String,
+    pub visible: bool,
+    pub render_master_mix: bool,
+    pub render_track_ids: Vec<u64>,
+}
+
+impl From<&ProjectRegion> for ProjectRegionSnapshot {
+    fn from(region: &ProjectRegion) -> Self {
+        Self {
+            id: region.id().value(),
+            number: region.number(),
+            start_ticks: region.start_ticks(),
+            end_ticks: region.end_ticks(),
+            name: region.name().to_owned(),
+            visible: region.is_visible(),
+            render_master_mix: region.renders_master_mix(),
+            render_track_ids: region
+                .render_track_ids()
+                .iter()
+                .map(|track_id| track_id.value())
+                .collect(),
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -20,15 +79,21 @@ pub struct TrackSnapshot {
     pub id: u64,
     pub name: String,
     pub is_bus: bool,
+    pub is_folder: bool,
+    pub parent_track_id: Option<u64>,
     pub output_track_id: Option<u64>,
+    pub main_send_enabled: bool,
+    pub sends: Vec<crate::AudioSendSnapshot>,
     pub volume_db: f32,
     pub pan: f32,
     pub muted: bool,
+    pub phase_inverted: bool,
     pub solo: bool,
     pub record_armed: bool,
     pub instrument: Option<TrackInstrumentSnapshot>,
     pub fx_chain: Vec<TrackFxPluginSnapshot>,
     pub volume_automation: Vec<VolumeAutomationPoint>,
+    pub razor_edit_areas: Vec<RazorEditArea>,
     pub frozen_audio_item_id: Option<u64>,
 }
 
@@ -104,14 +169,25 @@ pub struct TrackFxParameterValueSnapshot {
     pub value: f64,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct AudioItemSnapshot {
+    pub fades: crate::AudioItemFades,
+    pub volume: f32,
+    pub take_volume: f32,
+    pub take_pan: f32,
+    pub take_playback_rate: f64,
     pub id: u64,
     pub track_id: u64,
     pub media_ref: String,
+    pub name: String,
     pub start_sample: u64,
-    pub source_offset_samples: u64,
+    pub source_offset_samples: i64,
     pub length_samples: u64,
+    pub muted: bool,
+    pub phase_inverted: bool,
+    pub loop_source: bool,
+    pub source_section_start_samples: Option<u64>,
+    pub source_section_length_samples: Option<u64>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -120,8 +196,12 @@ pub struct MidiItemSnapshot {
     pub track_id: u64,
     pub name: String,
     pub start_tick: u64,
+    pub start_tick_subtick: u8,
     pub source_offset_ticks: u64,
+    pub loop_source: bool,
+    pub source_loop_length_ticks: u64,
     pub length_ticks: u64,
+    pub muted: bool,
     pub notes: Vec<MidiNoteSnapshot>,
     pub controllers: Vec<MidiControllerData>,
     pub pitch_bends: Vec<MidiPitchBendData>,

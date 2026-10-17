@@ -1,0 +1,24 @@
+key	value
+reference	REAPER 7.82/linux-x86_64; Default 7
+actions	40014 Copy loop; 42398 Paste items/tracks
+selection	3.0–7.0 seconds
+source	10 second audio item; item volume 0.5; fades 0.5/0.75 seconds; active Take volume 0.25, pan 0.5, playrate 1.25
+paste_position	12.0 seconds
+pasted_length	4.0 seconds
+item_volume	original=0.500000000; pasted=0.500000000
+fade_in	original=0.500000000; pasted=0.000000000
+fade_out	original=0.750000000; pasted=0.000000000
+take_volume	original=0.250000000; pasted=0.250000000
+take_pan	original=0.500000000; pasted=0.500000000
+take_playrate	original=1.250000000; pasted=1.250000000
+take_start_offset	original=0.000000000; pasted=0.000000000
+loop_source	original=1.000000000; pasted=1.000000000
+pasted_source_section	start=3.750000000; length=5.000000000 seconds
+complete_item_case	item volume=0.5; fades=0/0 seconds; Take volume=0.25; pan=0.5; playrate=1.25
+start_edge_item_case	item volume=0.5; fades=0/0 seconds; Take volume=0.25; pan=0.5; playrate=1.25
+selection_after_paste	1 item selected
+probe	scripts/reaper_parity/probe-item-copy-loop-properties.lua; generated source with scripts/reaper_parity/generate-item-copy-loop-wav.py
+probe_script_sha256	dd866726b8df016a3b2b74b7f29452bb24a1b8849dfcd3e137c8bb79ac5f327b
+source_generator_sha256	f6fce8fe17ba8a79007b186d550c3a3ae42e5c5449b979095de771956dd44e65
+generated_source_sha256	f77653ee4f856b2baf950baa54691fac16bdee8cb6ea321c2177c14ece3680ff
+probe_result_sha256	59b987c9e68e8c00395346e72e580f77637737ab3780331d7ab86207985df7c6

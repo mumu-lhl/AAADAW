@@ -1,0 +1,23 @@
+key	value
+reference	Linux REAPER 7.82 / Default 7 / Linux desktop
+captured_at_utc	2026-10-16
+probe_script	../../../../scripts/reaper_parity/probe-render-empty-name-wildcards.lua
+configuration	Isolated REAPER profile copied from render-wildcards-native; Default_7.0.ReaperThemeZip asserted by probe
+named_objects	Regions role=Verse|role=Intro and role=Chorus|role=Main; markers role=Start|role=Downbeat, role=Next|role=Midpoint, and role=End|role=Outro
+wildcard_pattern_with_separator	$region(role)[|]-$marker(role)[|]
+wildcard_output_with_separator	Verse-Start.wav; Chorus-Next.wav
+wildcard_pattern_without_separator	$region(role)-$marker(role)
+wildcard_output_without_separator	Verse_role=Intro-Start_role=Downbeat.wav; Chorus_role=Main-Next_role=Midpoint.wav
+bounds	All project regions
+render_preview	2 files; first output path ends in Verse-Start.wav
+render_format	WAV; 24-bit PCM; 48,000 Hz; 2 channels
+render_lengths_frames	96,000; 96,000
+render_file_sizes_bytes	576,690; 576,690
+render_file_sha256	d33ffb0793df1bae4b9c1f9b98e19cf12e6c109331d82379fb910e1202df1ec4; 823d8887be9449e89ba041c13fcb440571948660f8bdd859c3780fe3d4af2de4
+native_preview_screenshot	render-wildcards-region-named-values-preview-native.png
+native_preview_screenshot_sha256	69acd444c35321f3c13d99c56a56b243ba5f31c669963e09bc00f5e1e68c791d
+native_finished_screenshot	render-wildcards-region-named-values-finished-native.png
+native_finished_screenshot_sha256	d8fba55baab2097ff27dc5f2caa540e3cb780013fcce21fdea420b9700ef4ccc
+native_unsplit_screenshot	render-wildcards-region-named-values-unsplit-native.png
+native_unsplit_screenshot_sha256	3346188184a0b1e1752bdc8b0ad6409344bb288d996216b587428b16f29d31ec
+native_observation	$region(name) and $marker(name) return the value after name=; optional [s] splits name=value entries on s and finds the requested key in a later entry. Without [|], the first value includes the following |role=value text; with [|], the first role values resolve to Verse-Start.wav and Chorus-Next.wav.

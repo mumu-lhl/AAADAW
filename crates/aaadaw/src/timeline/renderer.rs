@@ -3,9 +3,9 @@ use super::{
     TrackRowLayout, WaveformBinGeometry,
 };
 use bytemuck::{Pod, Zeroable, cast_slice};
-use iced::Rectangle;
 use iced::wgpu;
 use iced::widget::shader::{Pipeline, Primitive, Viewport};
+use iced::{Point, Rectangle};
 use std::num::NonZeroU64;
 use std::sync::Arc;
 
@@ -25,6 +25,15 @@ const AUTOMATION_SEGMENT: u32 = 12;
 const AUTOMATION_POINT: u32 = 13;
 const FX_LANE_DIVIDER: u32 = 14;
 const ITEM_MARQUEE: u32 = 15;
+const FADE_SEGMENT: u32 = 16;
+const RAZOR_EDIT_AREA: u32 = 17;
+
+#[derive(Debug, Clone, Copy)]
+pub(super) struct FadeSegment {
+    pub(super) start: Point,
+    pub(super) end: Point,
+    pub(super) color: [u8; 4],
+}
 
 #[derive(Debug)]
 pub(super) struct AutomationLane {
@@ -54,6 +63,7 @@ pub(super) struct ItemSelectionPreview {
 
 #[derive(Debug)]
 pub(super) struct TimelinePrimitive {
+    pub(super) fade_segments: Vec<FadeSegment>,
     pub(super) generation: u64,
     pub(super) waveform_generation: u64,
     pub(super) waveform_render_generation: u64,
@@ -62,9 +72,10 @@ pub(super) struct TimelinePrimitive {
     pub(super) row_layout: Vec<TrackRowLayout>,
     pub(super) origin_tick: u64,
     pub(super) pixels_per_tick: f32,
-    pub(super) edit_cursor_tick: u64,
+    pub(super) edit_cursor_tick_position: f64,
     pub(super) playhead_tick: Option<u64>,
     pub(super) selected_items: Vec<SelectedItemGeometry>,
+    pub(super) razor_edit_areas: Vec<(u64, u64, u32)>,
     pub(super) waveform_bins: Arc<[WaveformBinGeometry]>,
     pub(super) time_selection: Option<TimeSelection>,
     pub(super) drag_preview: Option<ItemDragPreview>,
@@ -73,6 +84,8 @@ pub(super) struct TimelinePrimitive {
     pub(super) width: f32,
     pub(super) height: f32,
     pub(super) grid_lines: Vec<(u64, bool)>,
+    pub(super) marker_ticks: Vec<u64>,
+    pub(super) region_spans: Vec<(u64, u64)>,
     pub(super) automation_lanes: Vec<AutomationLane>,
     pub(super) automation_point_preview: Option<AutomationPointPreview>,
     pub(super) item_selection_preview: Option<ItemSelectionPreview>,
@@ -88,6 +101,7 @@ struct GpuRect {
     item_id: [u32; 2],
     track_index: u32,
     kind: u32,
+    tick_fractions: [f32; 2],
 }
 
 struct GpuRectSpec {
@@ -111,7 +125,18 @@ impl GpuRect {
             item_id: split_tick(spec.item_id),
             track_index: spec.track_index,
             kind: spec.kind,
+            tick_fractions: [0.0; 2],
         }
+    }
+
+    fn new_item(spec: GpuRectSpec, start_subtick: u8, end_subtick: u8) -> Self {
+        let scale = f32::from(aaadaw_core::MIDI_ITEM_SUBTICKS_PER_TICK);
+        let mut rect = Self::new(spec);
+        rect.tick_fractions = [
+            f32::from(start_subtick) / scale,
+            f32::from(end_subtick) / scale,
+        ];
+        rect
     }
 }
 
@@ -208,7 +233,8 @@ impl Pipeline for TimelinePipeline {
                         3 => Unorm8x4,
                         4 => Uint32x2,
                         5 => Uint32,
-                        6 => Uint32
+                        6 => Uint32,
+                        7 => Float32x2
                     ],
                 }],
                 compilation_options: wgpu::PipelineCompilationOptions::default(),
@@ -328,12 +354,8 @@ impl Primitive for TimelinePrimitive {
                 instances.push(GpuRect::new(GpuRectSpec {
                     start_tick: item.start_tick,
                     end_tick: item.end_tick,
-                    y: row.top + 7.0,
-                    height: if has_automation {
-                        row.base_height - 42.0
-                    } else {
-                        row.base_height - 14.0
-                    },
+                    y: row.item_geometry(has_automation).0,
+                    height: row.item_geometry(has_automation).1,
                     color,
                     item_id: item.id.value(),
                     track_index: item.track_index as u32,
@@ -497,8 +519,8 @@ impl Primitive for TimelinePrimitive {
                     + i128::from(preview.track_delta);
                 let track_index = u32::try_from(row).unwrap_or(u32::MAX);
                 let rect = selected_item_rect(
-                    start_tick,
-                    end_tick,
+                    (start_tick, selected.start_tick_subtick),
+                    (end_tick, selected.end_tick_subtick),
                     track_index,
                     selected.item_id.value(),
                     selected.kind,
@@ -522,8 +544,8 @@ impl Primitive for TimelinePrimitive {
                 .find(|(_, item)| item.id == preview.item_id)
         {
             let rect = selected_item_rect(
-                preview.start_tick,
-                preview.end_tick,
+                (preview.start_tick, 0),
+                (preview.end_tick, 0),
                 item.track_index as u32,
                 item.id.value(),
                 item.kind,
@@ -588,12 +610,27 @@ impl Primitive for TimelinePrimitive {
 
         let mut dynamic = Vec::with_capacity(
             self.grid_lines.len()
+                + self.marker_ticks.len()
+                + self.region_spans.len()
                 + 3
                 + self.selected_items.len()
+                + self.razor_edit_areas.len()
                 + usize::from(self.item_trim_preview.is_some())
                 + usize::from(self.item_selection_preview.is_some())
                 + if self.time_selection.is_some() { 3 } else { 0 },
         );
+        for (start_tick, end_tick) in &self.region_spans {
+            dynamic.push(GpuRect::new(GpuRectSpec {
+                start_tick: *start_tick,
+                end_tick: *end_tick,
+                y: 0.0,
+                height: self.height,
+                color: [96, 125, 76, 30],
+                item_id: 0,
+                track_index: u32::MAX,
+                kind: TIME_SELECTION_FILL,
+            }));
+        }
         if let Some(selection) = self.time_selection {
             dynamic.push(GpuRect::new(GpuRectSpec {
                 start_tick: selection.start_tick,
@@ -617,6 +654,21 @@ impl Primitive for TimelinePrimitive {
                     kind: TIME_SELECTION_EDGE,
                 }));
             }
+        }
+        for (start_tick, end_tick, track_index) in &self.razor_edit_areas {
+            let Some(row) = self.row_layout.get(*track_index as usize) else {
+                continue;
+            };
+            dynamic.push(GpuRect::new(GpuRectSpec {
+                start_tick: *start_tick,
+                end_tick: *end_tick,
+                y: row.top,
+                height: row.height,
+                color: [75, 134, 175, 76],
+                item_id: 0,
+                track_index: *track_index,
+                kind: RAZOR_EDIT_AREA,
+            }));
         }
         if let Some(selection) = self.item_selection_preview {
             dynamic.push(GpuRect::new(GpuRectSpec {
@@ -684,17 +736,14 @@ impl Primitive for TimelinePrimitive {
                 y: self
                     .row_layout
                     .get(track_index as usize)
-                    .map_or(0.0, |row| row.top + 7.0),
+                    .map_or(0.0, |row| {
+                        row.item_geometry(self.has_volume_automation(track_index)).0
+                    }),
                 height: self
                     .row_layout
                     .get(track_index as usize)
                     .map_or(0.0, |row| {
-                        row.base_height
-                            - if self.has_volume_automation(track_index) {
-                                42.0
-                            } else {
-                                14.0
-                            }
+                        row.item_geometry(self.has_volume_automation(track_index)).1
                     }),
                 color: if trim.is_some_and(|trim| !trim.valid) {
                     [218, 80, 71, 255]
@@ -724,6 +773,18 @@ impl Primitive for TimelinePrimitive {
                 kind: if *is_measure { BAR_LINE } else { BEAT_LINE },
             }));
         }
+        for tick in &self.marker_ticks {
+            dynamic.push(GpuRect::new(GpuRectSpec {
+                start_tick: *tick,
+                end_tick: *tick,
+                y: 0.0,
+                height: self.height,
+                color: [224, 91, 76, 205],
+                item_id: 0,
+                track_index: u32::MAX,
+                kind: BAR_LINE,
+            }));
+        }
         if let Some(preview) = self.automation_point_preview
             && let Some(row) = self.row_layout.get(preview.track_index as usize)
         {
@@ -738,10 +799,12 @@ impl Primitive for TimelinePrimitive {
                 kind: AUTOMATION_POINT,
             }));
         }
+        let (edit_cursor_tick, edit_cursor_sub_tick) =
+            split_tick_position(self.edit_cursor_tick_position);
         dynamic.push(GpuRect::new(GpuRectSpec {
-            start_tick: self.edit_cursor_tick,
-            end_tick: self.edit_cursor_tick,
-            y: 0.0,
+            start_tick: edit_cursor_tick,
+            end_tick: edit_cursor_tick,
+            y: edit_cursor_sub_tick,
             height: self.height,
             color: [231, 184, 101, 255],
             item_id: 0,
@@ -760,6 +823,16 @@ impl Primitive for TimelinePrimitive {
                 kind: PLAYHEAD,
             }));
         }
+        dynamic.extend(self.fade_segments.iter().map(|segment| GpuRect {
+            start_tick: [segment.start.x.to_bits(), 0],
+            end_tick: [segment.end.x.to_bits(), 0],
+            y_height: [segment.start.y, segment.end.y],
+            color: segment.color.map(linearize_srgb),
+            item_id: [0, 0],
+            track_index: u32::MAX,
+            kind: FADE_SEGMENT,
+            tick_fractions: [0.0; 2],
+        }));
         ensure_capacity(
             device,
             &mut pipeline.dynamic_buffer,
@@ -783,8 +856,8 @@ impl Primitive for TimelinePrimitive {
             origin_cursor: [
                 (self.origin_tick >> 32) as u32,
                 self.origin_tick as u32,
-                (self.edit_cursor_tick >> 32) as u32,
-                self.edit_cursor_tick as u32,
+                (edit_cursor_tick >> 32) as u32,
+                edit_cursor_tick as u32,
             ],
             playhead_selection: [playhead[0], playhead[1], u32::MAX, u32::MAX],
             state: [self.selected_track_index, 0, 0, 0],
@@ -815,6 +888,17 @@ fn split_tick(value: u64) -> [u32; 2] {
     [(value >> 32) as u32, value as u32]
 }
 
+fn split_tick_position(value: f64) -> (u64, f32) {
+    if !value.is_finite() || value <= 0.0 {
+        return (0, 0.0);
+    }
+    let whole = value.floor();
+    if whole >= u64::MAX as f64 {
+        return (u64::MAX, 0.0);
+    }
+    (whole as u64, (value - whole) as f32)
+}
+
 fn shift_tick(tick: u64, delta: i128) -> Option<u64> {
     u64::try_from(i128::from(tick) + delta).ok()
 }
@@ -835,21 +919,25 @@ fn item_rect(
     let Some(row) = row_layout.get(item.track_index) else {
         return GpuRect::zeroed();
     };
-    GpuRect::new(GpuRectSpec {
-        start_tick: item.start_tick,
-        end_tick: item.end_tick,
-        y: row.top + 7.0,
-        height: row.base_height - if has_volume_automation { 42.0 } else { 14.0 },
-        color,
-        item_id: item.id.value(),
-        track_index: item.track_index as u32,
-        kind,
-    })
+    GpuRect::new_item(
+        GpuRectSpec {
+            start_tick: item.start_tick,
+            end_tick: item.end_tick,
+            y: row.item_geometry(has_volume_automation).0,
+            height: row.item_geometry(has_volume_automation).1,
+            color,
+            item_id: item.id.value(),
+            track_index: item.track_index as u32,
+            kind,
+        },
+        item.start_tick_subtick,
+        item.end_tick_subtick,
+    )
 }
 
 fn selected_item_rect(
-    start_tick: u64,
-    end_tick: u64,
+    start: (u64, u8),
+    end: (u64, u8),
     track_index: u32,
     item_id: u64,
     kind: ItemKind,
@@ -866,16 +954,20 @@ fn selected_item_rect(
             base_height: 0.0,
             fx_lane_count: 0,
         });
-    GpuRect::new(GpuRectSpec {
-        start_tick,
-        end_tick,
-        y: row.top + 7.0,
-        height: row.base_height - if has_volume_automation { 42.0 } else { 14.0 },
-        color,
-        item_id,
-        track_index,
-        kind: item_kind,
-    })
+    GpuRect::new_item(
+        GpuRectSpec {
+            start_tick: start.0,
+            end_tick: end.0,
+            y: row.item_geometry(has_volume_automation).0,
+            height: row.item_geometry(has_volume_automation).1,
+            color,
+            item_id,
+            track_index,
+            kind: item_kind,
+        },
+        start.1,
+        end.1,
+    )
 }
 
 fn waveform_rect(bin: WaveformBinGeometry, row: TrackRowLayout, has_automation: bool) -> GpuRect {
@@ -938,12 +1030,38 @@ fn ensure_capacity(
 
 #[cfg(test)]
 mod tests {
-    use super::linearize_srgb;
+    use super::{GpuRect, GpuRectSpec, linearize_srgb, split_tick_position};
 
     #[test]
     fn gpu_vertex_colors_are_converted_from_srgb_to_linear() {
         assert_eq!(linearize_srgb(0), 0);
         assert_eq!(linearize_srgb(128), 55);
         assert_eq!(linearize_srgb(255), 255);
+    }
+
+    #[test]
+    fn edit_cursor_fractional_tick_is_kept_for_exact_sample_positions() {
+        let (whole_tick, fractional_tick) = split_tick_position(800.04);
+        assert_eq!(whole_tick, 800);
+        assert!((fractional_tick - 0.04).abs() < 1.0e-6);
+    }
+
+    #[test]
+    fn item_vertex_rect_keeps_fractional_ppq_endpoints() {
+        let rect = GpuRect::new_item(
+            GpuRectSpec {
+                start_tick: 964,
+                end_tick: 4_804,
+                y: 0.0,
+                height: 32.0,
+                color: [89, 112, 74, 255],
+                item_id: 1,
+                track_index: 0,
+                kind: 2,
+            },
+            160,
+            160,
+        );
+        assert_eq!(rect.tick_fractions, [0.8, 0.8]);
     }
 }

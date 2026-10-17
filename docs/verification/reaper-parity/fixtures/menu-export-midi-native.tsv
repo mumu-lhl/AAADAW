@@ -1,0 +1,30 @@
+reference	Linux REAPER 7.82 / Default 7
+main_action	40849
+action_list_name	File: Export project MIDI...
+file_menu_label	Export project MIDI...
+shortcut	none
+dialog_default_file_type	Multitrack MIDI file (type 1 MIDI file)
+dialog_default_ppqn	960
+dialog_embed_tempo_meter	unchecked
+dialog_embed_smpte_offset	unchecked
+dialog_export_markers	unchecked
+dialog_marker_mode	markers
+dialog_filter_controls	Disabled with no project markers
+screenshot	menu-export-midi-native-dialog.png
+screenshot_sha256	359310cf9f6c88fd4415ceffc3e512176c9892f30b5d35e1f903e92ed3f426d1
+probe	Isolated cfgfile profile; ReaScript Main_OnCommand(40849, 0); no project edits saved
+aaadaw_build	cargo +stable build -p aaadaw --bin aaadaw; succeeded with local pkg-config/linker entries under ignored target/ pointing to existing system GLib/GObject runtime libraries
+aaadaw_runtime_display	Xvfb :124, 1280x1024x24; WGPU_BACKEND=gl; isolated XDG_CONFIG_HOME/DATA_HOME/STATE_HOME/CACHE_HOME and XDG_RUNTIME_DIR under ignored target/aaadaw-visual
+aaadaw_menu_screenshot	menu-export-midi-aaadaw-menu.png
+aaadaw_menu_screenshot_sha256	c7418cff325aa3ccb746a6c34785c90452605db5cc941e0b66ef519b7b41b138
+aaadaw_dialog_screenshot	menu-export-midi-aaadaw-dialog.png
+aaadaw_dialog_window_geometry	520x298, measured with xdotool on the live Xvfb window
+aaadaw_dialog_screenshot_sha256	5ecf7c84230a7a4573d3d754c850dc852018bfa06335048346277f57dc65d90a
+aaadaw_exported_status_screenshot	menu-export-midi-aaadaw-exported.png
+aaadaw_exported_status_screenshot_sha256	abc8a049ad25f96ef69a7202b96c99c1b41e71fde9540fe1feb922d0aeac5310
+aaadaw_dialog_defaults	Type 1 selected; PPQN 960; tempo/meter, SMPTE, markers unchecked
+aaadaw_ui_export_result	Standard MIDI format 1; 1 track; PPQN 960; 39 bytes; SHA-256 f3011188d5dd0cdd35277d9ee97955f28d350d6dbb290eb0b17d50f2854d6120
+aaadaw_binary_build_id	29ea51bd3ded79a7f939d10f95383602d05e119f
+aaadaw_binary_sha256	80a029ae7d7c21acb14aeb674963b87504a5e53832e8c042c83de4830ece7d2b
+aaadaw_app_regression_test	PKG_CONFIG_PATH=target/runtime-pkgconfig CARGO_INCREMENTAL=0 CARGO_BUILD_JOBS=2 cargo +stable test -p aaadaw --bin aaadaw export; 34 passed, including both MIDI UI tests
+aaadaw_static_checks	cargo +stable fmt --all -- --check; cargo +stable clippy -p aaadaw --bin aaadaw --tests -- -D warnings; git diff --check; all passed

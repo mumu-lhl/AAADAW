@@ -1,0 +1,21 @@
+key	value
+reference	Linux REAPER 7.82 / Default 7 / isolated configuration
+probe_script	../../../../scripts/reaper_parity/probe-render-playrate-wildcard.lua
+project	Unsaved disposable project; deterministic one-second 48 kHz stereo PCM24 source
+transport_rate_setup	Reset with action 40521 (Transport: Set playrate to 1.0), then one action 40522 semitone increment
+master_playrate	1.059463094
+pattern	$playrate-$track
+source	Master mix
+native_preview	1.059-Master.wav
+native_finished_output	1.059-Master.wav
+render_format	WAV; 24-bit PCM; 48,000 Hz; 2 channels
+render_frames	45306
+render_duration_seconds	0.943875
+output_file_size_bytes	272526
+output_sha256	7be1178c825d087bc4edaaf5fb26d14d6f1e10d422dbe50be3ab995401bd4ea3
+preview_screenshot	render-wildcards-playrate-preview-native.png
+preview_screenshot_sha256	dd6a78d0618636d9c46d6318a1bcc948510b4f0cfe32e48b33d2afb4082ddae9
+finished_screenshot	render-wildcards-playrate-finished-native.png
+finished_screenshot_sha256	9ac2581b10114425b2cae012849c35b7e60d84d8e801dcd9ca50ac731616daa6
+native_observation	$playrate is formatted to three decimals; the non-default transport rate also changes rendered duration
+probe_script_sha256	ec5eb5766bd7a25ad95b381f3ecfd50d5492c886b7ab2bb1077b858c5112becc

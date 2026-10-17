@@ -63,8 +63,8 @@ pub struct StereoPcmStreamConsumer {
 
 /// Shared sample-clock resume point between the render callback and a feeder worker.
 ///
-/// The callback only publishes monotonically increasing samples with an atomic max;
-/// the worker reads the latest value and discards decoded frames that have fallen behind.
+/// The callback publishes the earliest useful sample. Linear streams advance monotonically;
+/// explicitly loop-tagged streams may reset this point at a transport wrap.
 #[derive(Clone, Debug)]
 pub struct AudioStreamPosition(Arc<AtomicU64>);
 
@@ -77,6 +77,13 @@ impl AudioStreamPosition {
     /// Publishes a later sample as the earliest useful sample for this stream.
     pub fn resume_from(&self, sample: u64) {
         self.0.fetch_max(sample, Ordering::Relaxed);
+    }
+
+    /// Resets the useful sample at a declared timeline-loop boundary.
+    ///
+    /// Only use this for a feeder whose queued frames repeat the same timeline range.
+    pub fn reset_for_loop(&self, sample: u64) {
+        self.0.store(sample, Ordering::Relaxed);
     }
 
     /// Returns the latest sample published by the render callback.

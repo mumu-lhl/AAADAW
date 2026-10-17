@@ -1,0 +1,17 @@
+record	value
+reference	Linux REAPER 7.82 / Default 7 File menu reference in `menu-file-native.png` shows a Recent projects cascade arrow; no populated submenu entry was captured natively
+application	AAADAW Linux desktop binary built after cascade implementation; rustc 1.99.0; `--no-default-features`
+aaadaw_binary_sha256	`191c02f8d88d19f8234b6e2df590a9a1a2ad364aa4e6fe72e7b4d863c21e2b04`
+display	Xvfb :197, 1280x800x24; isolated XDG config/data/cache and TMPDIR
+history_fixture	`/tmp/aaadaw-recent-project.aaadaw` loaded from `recent-projects.json`
+desktop_open	Clicked File at (35,30), then Recent projects at (120,280); the right-side panel aligned to the parent row and showed the stored project path
+desktop_select	Clicked the recent project entry at (520,289)
+open_result	Window title became `aaadaw-recent-project.aaadaw — AAADAW`; the persisted recent-project list retained the opened path
+cascade_capture	`menu-file-recent-projects-cascade-aaadaw.png`; SHA-256 `7982689a2a8dce5c1e4a8c1bab4aa379a99e19786c6ab8cb8ce22b60febb392f`
+opened_capture	`menu-file-recent-project-opened-cascade-aaadaw.png`; SHA-256 `47ae81bd5087c6d9ce9188b856ab8a034542158f0ae29e8d6088790c287634c7`
+keyboard_regression	App test covers Right to enter, Down to select the first path, Left to return to the parent, and Enter to open through the guarded project transition
+keyboard_window_open	Xvfb :198; clicked File, focused the AAADAW window, then pressed Down x6, Right, Down, Enter
+keyboard_cascade_capture	`menu-file-recent-projects-cascade-keyboard-aaadaw.png`; SHA-256 `568b65d8da4cfbf5dd9716789270848a16c15c5a5d1afb9ae518f48a0a2f363f`
+keyboard_opened_capture	`menu-file-recent-project-opened-cascade-keyboard-aaadaw.png`; SHA-256 `f76a989c6c5a3e0ccdab33e57551748c4ffe38ffd3fecac3dbea987cdd0c9fa2`
+keyboard_open_result	AAADAW title changed to `aaadaw-recent-project.aaadaw`; the actual keyboard route opened the recent path
+parity_limit	The cascade geometry is verified against AAADAW's parent row; native populated-submenu order/capacity/clear behavior, missing-file handling, and REAPER project-tab semantics remain open

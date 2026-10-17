@@ -1,0 +1,16 @@
+version	Linux REAPER 7.82/linux-x86_64
+theme	Default_7.0.ReaperThemeZip
+project	fresh unsaved MIDI-only project; transport stopped
+item	MIDI item at 2.000s; length 5.000s; B_LOOPSRC=1; selected
+notes_before	0.500-1.500s pitch 60 velocity 96; 2.500-3.500s pitch 64 velocity 108; source PPQ 960..2880 and 4800..6720
+nudge	Mode Nudge; Target contents; amount 250 milliseconds; Snap to unit off/on as recorded per case
+right_action	41249 Item edit: Nudge right by last nudge dialog settings
+left_action	41250 Item edit: Nudge left by last nudge dialog settings
+case	snap	action	source_offset_before_s	source_offset_after_s	item_position_s	item_length_s	loop_source	note_ppq_before_after	state_change_delta
+right_from_zero	off	41249	0.000000	4.750000	2.000000	5.000000	1	960-2880;4800-6720 unchanged	0
+left_from_4_75	off	41250	4.750000	0.000000	2.000000	5.000000	1	960-2880;4800-6720 unchanged	0
+left_from_zero	off	41250	0.000000	0.250000	2.000000	5.000000	1	960-2880;4800-6720 unchanged	0
+right_from_zero_snap_on	on	41249	0.000000	4.750000	2.000000	5.000000	1	960-2880;4800-6720 unchanged	0
+left_from_4_75_snap_on	on	41250	4.750000	0.000000	2.000000	5.000000	1	960-2880;4800-6720 unchanged	0
+left_from_zero_snap_on	on	41250	0.000000	0.250000	2.000000	5.000000	1	960-2880;4800-6720 unchanged	0
+screenshot	item-nudge-midi-contents-native-dialog.png; 528x121; Snap checked; SHA-256 f196b2b2014f4268367f4c7509f857c3977c237856f53173c05faa6b7555edc7

@@ -1,0 +1,32 @@
+reference	Linux REAPER 7.82/linux-x86_64; Default_7.0.ReaperThemeZip
+reference_display	Xvfb :624; 1280x800x24; fresh cfgfile; stopped unsaved project; action 41226 Nudge/Set Items
+reference_dialog	528x121; one selected audio split group; audio device unavailable; evaluation prompt dismissed before input
+reference_input	Open Unit or Target list with a pointer click; ArrowDown; Enter; Escape while a list is open
+native_unit_result	milliseconds -> minutes:seconds by ArrowDown+Enter
+native_target_result	position -> left trim by ArrowDown+Enter
+native_escape_result	one Escape closes the open list and keeps Nudge/Set Items open
+native_unit_open_screenshot	item-nudge-picker-native-unit-open.png; 1280x800; sha256 fc1286d57d86997406fa0a1316f3ee83375be6bf8b50db1b502a68b7444fce52
+native_unit_selected_screenshot	item-nudge-picker-native-unit-keyboard.png; 528x121; sha256 e0c11e6fb3f2314836a0d7e57fe0d9ca4d9eaf6aca450ef491d2618ebeb4817a
+native_target_open_screenshot	item-nudge-picker-native-target-open.png; 1280x800; sha256 06d978992cf357732eec95013bbf8f9072dd2ec8e1d852429eb4bbf2a9e22f45
+native_target_selected_screenshot	item-nudge-picker-native-target-keyboard.png; 528x121; sha256 83c6ae360e1aecbff5b5276139ba19566471da48962d091c58e0ce11576b2e97
+native_escape_screenshot	item-nudge-picker-native-escape-after.png; 528x121; sha256 8227b6179397ccdad618501da167062985f426446f86ea17d128365c31c3ac9c
+aaadaw_binary_sha256	34fb01f29fb29602125f8934063a55967a21b77c829fcb86afee2125b463eb63
+aaadaw_display	Xvfb :622/:623; 1280x800x24; WGPU_BACKEND=gl; isolated XDG config/data/state/cache; visible Nudge/Set window 528x121
+aaadaw_input	Actual window pointer clicks plus XTest ArrowDown/Enter/Escape; selector receives explicit X11 focus
+aaadaw_mode_result	Nudge -> Set by ArrowDown+Enter
+aaadaw_target_result	position -> left trim by ArrowDown+Enter
+aaadaw_nudge_unit_result	milliseconds -> minutes:seconds and milliseconds -> notes by ArrowDown+Enter
+aaadaw_note_value_result	1/256 -> 1/128 by ArrowDown+Enter
+aaadaw_set_units	minutes:seconds, measures.beats, samples, frames, pixels; five options exposed
+aaadaw_unit_open_screenshot	item-nudge-picker-aaadaw-unit-open.png; 1280x800; sha256 f13e37f188823f9c71cff68a21c37ed76eec69ca1a75938130be957acc979a24
+aaadaw_unit_selected_screenshot	item-nudge-picker-aaadaw-unit-keyboard.png; 528x121; sha256 ec296f6fd0e11731cca33f5bb522c9a6c157932393566aa5b36e9bb3ec72f8ab
+aaadaw_mode_selected_screenshot	item-nudge-picker-aaadaw-mode-keyboard.png; 528x121; sha256 6cbe7ba005bb29b934e89213a3c417b5c11f629e22ed3bc0a38290a66d0c3d31
+aaadaw_target_selected_screenshot	item-nudge-picker-aaadaw-target-keyboard.png; 528x121; sha256 66b56d7205c7e410e3110132f09d79263bdc97cffcb3a39e7d9a8f10e1a5e12e
+aaadaw_set_units_screenshot	item-nudge-picker-aaadaw-set-units-open.png; 1280x800; sha256 082ada4102aec0c3377db73ea266cfadd362ebbdd73d571ab2c16dff3c889510
+aaadaw_note_values_open_screenshot	item-nudge-picker-aaadaw-note-values-open.png; 1280x800; sha256 2d1a46f4140209859fc3228e2d88adc22efada7e302fe6422b50dd8e0c20d9de
+aaadaw_note_value_selected_screenshot	item-nudge-picker-aaadaw-note-value-keyboard.png; 528x121; sha256 dc4b66ec4cefb516a9a87c511eec99c1dd423b8c3621cf23519d54eba10b243e
+aaadaw_escape_screenshot	item-nudge-picker-aaadaw-escape-after.png; 528x121; sha256 d8cc09283d600c02e7035a1fd60e7f836c6699c1ea990c3b158ce22dea5e9a6d
+aaadaw_tests	item_nudge_keyboard_selectors_expose_only_native_mode_options; item_nudge_combo_consumes_escape_before_closing_the_dialog
+aaadaw_validation	57 focused item_nudge_* tests; full Stable App suite 625/625; workspace all-target Clippy -D warnings; rustfmt; git diff --check; all passed
+desktop_startup	bundled-Xvfb smoke; screenshot SHA-256 ae7790daa7323931332582152cd05219af623ac5530147835ee56910ba2ebd9b matches baseline
+remaining	Keyboard-only opening, Tab order, repeated-key timing, type-to-filter behavior, exact control/theme styling, and other Nudge/Set parity remain unverified

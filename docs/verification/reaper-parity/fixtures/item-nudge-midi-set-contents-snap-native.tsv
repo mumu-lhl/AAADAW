@@ -1,0 +1,11 @@
+version	7.82/linux-x86_64
+theme	Default_7.0.ReaperThemeZip
+mode	Set
+target	contents
+absolute_target_s	3.500000000
+snap_to_unit	true
+tempo	120 BPM
+source_loop_length_ppq	9600
+columns	label	item_position_s	item_length_s	source_offset_s	phase_ppq	loop_endpoint_ppq	state_change	selection
+before	2.000000000	5.000000000	4.000000000	7680.000	17280.000	7	selected
+after	2.000000000	5.000000000	3.000000000	5760.000	15360.000	8	selected

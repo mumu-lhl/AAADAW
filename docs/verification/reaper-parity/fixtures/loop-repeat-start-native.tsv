@@ -1,0 +1,9 @@
+version	7.82/linux-x86_64
+theme	Default_7.0.ReaperThemeZip
+action_repeat	Transport: Toggle repeat
+audio_test_setup	Dummy Audio
+repeat_enabled	true
+case	play_state	start_cursor_seconds	play_position_seconds
+start_before_loop	1	0.000000	0.325079
+start_inside_loop	1	1.500000	1.813469
+start_after_loop	1	3.000000	3.348299

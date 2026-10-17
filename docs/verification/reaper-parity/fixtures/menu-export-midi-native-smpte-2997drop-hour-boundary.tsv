@@ -1,0 +1,29 @@
+version	7.82/linux-x86_64
+theme	Default_7.0.ReaperThemeZip
+fixture	track Piano; item 0.25-1.25 seconds; C4 note; CC1; pitch bend
+project_frame_rate	29.970029970030 fps; drop-frame true; Project Settings > Video preset 29.97DF
+project_time_offset_seconds	3600.000000000
+project_start_time_display	1:00:00.000
+project_timemode	TIMEMODE 1 3 -1 30 1 0 -1 0
+native_project_fixture	fixtures/menu-export-midi-native-smpte-2997drop-hour-boundary.rpp
+native_project_sha256	9b48487fededf3004d82fee28faa75445681e1d592c8425701d583a3cc3455b0
+native_project_settings_start_time_screenshot	fixtures/menu-export-midi-native-smpte-2997drop-hour-boundary-start-time.png; Project Settings General shows 1:00:00.000; SHA-256 66c0462ee6f6e5b452fcb9a0cc7ee5853436238cc790d1c949275b62466221bf
+native_project_settings_video_screenshot	fixtures/menu-export-midi-native-smpte-2997drop-hour-boundary-video-rate.png; Project Settings Video shows 29.97DF; SHA-256 b4fa8c024b4dd17f63bd3c482eb07870e697af6e431d7b06b133de4c97b42192
+export_action	40849
+export_mode	Multitrack MIDI file (type 1 MIDI file)
+export_ppqn	960
+export_tempo_meter_changes	unchecked
+export_smpte_offset	checked
+export_markers	checked; project has no markers, so no marker events
+native_smpte_offset_event	FF 54 05 41 00 00 00 00 (01:00:00:00)
+native_conductor_events	destination-derived name; SMPTE offset, 4/4 and 120 BPM at tick 0; End-of-Track tick 0
+native_event_order	track name; SMPTE offset; time signature; tempo
+native_midi_track_events	Piano C4 note-on tick 480, CC1 tick 720, pitch bend tick 840, note-off and End-of-Track tick 1440
+native_export_fixture	fixtures/menu-export-midi-native-smpte-2997drop-hour-boundary.mid
+native_export_bytes	129
+native_export_sha256	260e7052661e41f06249659fecff5b4c5187768b64e27e7f6282f47fa3fa8281
+native_dialog_screenshot	fixtures/menu-export-midi-native-smpte-2997drop-hour-boundary-dialog.png; SHA-256 a89a841dccf06075a1517a65659a614db2bd4e5c4ef6460266c7ab97289afae0
+native_probe	scripts/reaper_parity/probe-midi-export-smpte-rate.lua; AAADAW_REAPER_FRAME_RATE=29.97DF; AAADAW_REAPER_PROJECT_OFFSET_SECONDS=3600
+native_probe_expected_event	FF 54 05 41 00 00 00 00
+reaper_binary_build_id	fb9ade2f211bc91a3ee6193630ef17bcf5f6528b
+reaper_binary_sha256	9976f5608068b7a58518969001b00b527fb0de6ed7459e0e5dda6f29878ee254

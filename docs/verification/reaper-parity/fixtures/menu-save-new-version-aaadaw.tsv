@@ -1,0 +1,22 @@
+field	value
+native_version	Linux REAPER 7.82 / Default_7.0.ReaperThemeZip
+native_action	41895 / File: Save new version of project (automatically increment project name) / Ctrl+Alt+Shift+S
+native_menu_label	Save new version of project
+native_probe	menu-save-new-version-native.tsv; scripts/reaper_parity/probe-save-new-version.lua
+native_probe_result	save-version-probe.rpp → save-version-probe_001.rpp → save-version-probe_002.rpp; active project path follows each version
+native_reference_screenshot	menu-file-native.png
+native_reference_screenshot_sha256	c5a37d3fa3c79c458dbd9caf868123d4dd64a0c0c95382c78e1bbbdb42c7229b
+aaadaw_environment	Linux AAADAW / Xvfb :252 / 1280x800 / fresh isolated XDG profile / audio unavailable
+aaadaw_menu_label	Save new version of project
+aaadaw_default_shortcut	Ctrl+Alt+Shift+S
+aaadaw_action_list_label	File: Save new version of project (automatically increment project name)
+aaadaw_popup_width_px	360
+aaadaw_menu_label_font_px	14
+aaadaw_screenshot	menu-save-new-version-aaadaw.png
+aaadaw_screenshot_sha256	d534c512b773f7852a7a9f5f87aae27092a44727db5f1e85fd90cccf2b6c0613
+test	crates/aaadaw/src/app/tests.rs::save_new_project_version_matches_native_action_and_shortcut
+test	crates/aaadaw/src/app/tests.rs::save_new_project_version_dispatches_to_a_non_overwriting_incremented_path
+test	crates/aaadaw/src/app/tests.rs::next_project_version_path_matches_reaper_padding_and_skips_existing_versions
+test	crates/aaadaw/src/app/tests.rs::saving_a_new_project_version_preserves_the_source_and_copies_current_state
+comparison_scope	File menu label, shortcut, single-line rendering, native action identity, incremented naming and active-path changes
+limitation	Other File menu entries, complete Action List window geometry, project version history details and full visual parity remain in_progress

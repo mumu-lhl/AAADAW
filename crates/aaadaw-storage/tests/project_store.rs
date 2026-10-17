@@ -1,6 +1,6 @@
 use aaadaw_core::{
-    DawAction, MeterPointSnapshot, MidiControllerData, MidiNoteData, MidiPitchBendData, Project,
-    VolumeAutomationPoint,
+    BpmBasis, DawAction, MeterPointSnapshot, MidiControllerData, MidiNoteData, MidiPitchBendData,
+    Project, RazorEditArea, VolumeAutomationPoint,
 };
 use aaadaw_storage::{CURRENT_SCHEMA_VERSION, ProjectStore, StorageError};
 use rusqlite::Connection;
@@ -13,6 +13,492 @@ use std::thread;
 use std::time::Duration;
 
 static NEXT_FILE_ID: AtomicU64 = AtomicU64::new(0);
+
+#[test]
+fn track_razor_edit_areas_migrate_and_round_trip() {
+    let path = project_path();
+    let mut project = Project::new();
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Razor track".into(),
+        })
+        .unwrap();
+    let track_id = project.tracks()[0].id();
+    project
+        .apply(DawAction::SetTrackRazorEditAreas {
+            track_areas: vec![(track_id, vec![RazorEditArea::new(480, 1_440).unwrap()])],
+        })
+        .unwrap();
+
+    let mut store = ProjectStore::open(&path).unwrap();
+    assert_eq!(store.schema_version().unwrap(), CURRENT_SCHEMA_VERSION);
+    store.save(&project).unwrap();
+    store.close().unwrap();
+
+    let store = ProjectStore::open(&path).unwrap();
+    assert_eq!(store.load().unwrap().snapshot(), project.snapshot());
+    store.close().unwrap();
+    remove_database(&path);
+}
+
+#[test]
+fn project_notes_migrate_schema27_preserve_media_and_roundtrip_unicode() {
+    let path = project_path();
+    let mut project = Project::new();
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Keep".into(),
+        })
+        .unwrap();
+    project
+        .apply(DawAction::SetFrameRate {
+            rate: aaadaw_core::FrameRate::Fps25,
+        })
+        .unwrap();
+    let mut store = ProjectStore::open(&path).unwrap();
+    store.save(&project).unwrap();
+    store.close().unwrap();
+    Connection::open(&path)
+        .unwrap()
+        .execute_batch("DROP TABLE project_notes; PRAGMA user_version=27;")
+        .unwrap();
+    let original_bytes = std::fs::read(&path).unwrap();
+    assert!(matches!(
+        ProjectStore::load_read_only(&path),
+        Err(StorageError::ReadOnlySchemaVersion { .. })
+    ));
+    assert_eq!(std::fs::read(&path).unwrap(), original_bytes);
+    for _ in 0..2 {
+        let store = ProjectStore::open(&path).unwrap();
+        assert_eq!(store.load().unwrap().snapshot(), project.snapshot());
+        assert_eq!(store.schema_version().unwrap(), CURRENT_SCHEMA_VERSION);
+        store.close().unwrap();
+    }
+    let notes = aaadaw_core::ProjectNotes {
+        title: "标题".into(),
+        author: "作者".into(),
+        text: "第一行\r\n\r\nend\r\n".into(),
+        show_on_load: true,
+        word_wrap: false,
+    };
+    project.apply(DawAction::SetProjectNotes { notes }).unwrap();
+    let mut store = ProjectStore::open(&path).unwrap();
+    store.save(&project).unwrap();
+    assert_eq!(store.load().unwrap().snapshot(), project.snapshot());
+    assert_eq!(
+        ProjectStore::load_read_only(&path).unwrap().snapshot(),
+        project.snapshot()
+    );
+    store.close().unwrap();
+    remove_database(&path);
+}
+
+#[test]
+fn project_start_measure_schema28_defaults_and_round_trips() {
+    let path = project_path();
+    let mut project = Project::new();
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Keep".into(),
+        })
+        .unwrap();
+    let mut store = ProjectStore::open(&path).unwrap();
+    store.save(&project).unwrap();
+    store.close().unwrap();
+
+    Connection::open(&path)
+        .unwrap()
+        .execute_batch(
+            "ALTER TABLE project_meta DROP COLUMN start_measure; PRAGMA user_version=28;",
+        )
+        .unwrap();
+    assert!(matches!(
+        ProjectStore::load_read_only(&path),
+        Err(StorageError::ReadOnlySchemaVersion { .. })
+    ));
+    let mut store = ProjectStore::open(&path).unwrap();
+    let migrated = store.load().unwrap();
+    assert_eq!(migrated.settings().start_measure(), 1);
+    assert_eq!(migrated.tracks()[0].name(), "Keep");
+
+    let mut changed = migrated;
+    changed
+        .apply(DawAction::SetProjectStartMeasure { measure: 12 })
+        .unwrap();
+    store.save(&changed).unwrap();
+    assert_eq!(store.load().unwrap().snapshot(), changed.snapshot());
+    changed
+        .apply(DawAction::SetProjectStartMeasure { measure: -2 })
+        .unwrap();
+    store.save(&changed).unwrap();
+    assert_eq!(store.load().unwrap().snapshot(), changed.snapshot());
+    store.close().unwrap();
+    remove_database(&path);
+}
+
+#[test]
+fn project_bpm_basis_schema29_defaults_and_round_trips() {
+    let path = project_path();
+    let project = Project::new();
+    let mut store = ProjectStore::open(&path).unwrap();
+    store.save(&project).unwrap();
+    store.close().unwrap();
+
+    Connection::open(&path)
+        .unwrap()
+        .execute_batch("ALTER TABLE project_meta DROP COLUMN bpm_basis; PRAGMA user_version=29;")
+        .unwrap();
+    assert!(matches!(
+        ProjectStore::load_read_only(&path),
+        Err(StorageError::ReadOnlySchemaVersion { .. })
+    ));
+    let mut store = ProjectStore::open(&path).unwrap();
+    let mut migrated = store.load().unwrap();
+    assert_eq!(migrated.settings().bpm_basis(), BpmBasis::Quarter);
+    migrated
+        .apply(DawAction::SetProjectBpmBasis {
+            basis: BpmBasis::DottedEighth,
+        })
+        .unwrap();
+    store.save(&migrated).unwrap();
+    assert_eq!(store.load().unwrap().snapshot(), migrated.snapshot());
+    store.close().unwrap();
+    remove_database(&path);
+}
+
+#[test]
+fn project_ruler_spacing_schema30_defaults_and_round_trips() {
+    let path = project_path();
+    let project = Project::new();
+    let mut store = ProjectStore::open(&path).unwrap();
+    store.save(&project).unwrap();
+    store.close().unwrap();
+
+    Connection::open(&path)
+        .unwrap()
+        .execute_batch(
+            "ALTER TABLE project_meta DROP COLUMN base_ruler_label_spacing_on_measure; PRAGMA user_version=30;",
+        )
+        .unwrap();
+    assert!(matches!(
+        ProjectStore::load_read_only(&path),
+        Err(StorageError::ReadOnlySchemaVersion { .. })
+    ));
+    let mut store = ProjectStore::open(&path).unwrap();
+    let mut migrated = store.load().unwrap();
+    assert!(migrated.settings().base_ruler_label_spacing_on_measure());
+    migrated
+        .apply(DawAction::SetBaseRulerLabelSpacingOnMeasure { enabled: false })
+        .unwrap();
+    store.save(&migrated).unwrap();
+    assert_eq!(store.load().unwrap().snapshot(), migrated.snapshot());
+    store.close().unwrap();
+    remove_database(&path);
+}
+
+#[test]
+fn project_start_time_offset_schema31_defaults_and_round_trips() {
+    let path = project_path();
+    let project = Project::new();
+    let mut store = ProjectStore::open(&path).unwrap();
+    store.save(&project).unwrap();
+    store.close().unwrap();
+
+    Connection::open(&path)
+        .unwrap()
+        .execute_batch(
+            "ALTER TABLE project_meta DROP COLUMN project_start_time_offset_seconds; PRAGMA user_version=31;",
+        )
+        .unwrap();
+    assert!(matches!(
+        ProjectStore::load_read_only(&path),
+        Err(StorageError::ReadOnlySchemaVersion { .. })
+    ));
+    let mut store = ProjectStore::open(&path).unwrap();
+    let mut migrated = store.load().unwrap();
+    assert_eq!(migrated.settings().project_start_time_offset_seconds(), 0.0);
+    assert!(
+        !migrated
+            .settings()
+            .project_start_time_fractional_frame_offset_allowed()
+    );
+    migrated
+        .apply(DawAction::SetProjectStartTimeFractionalFrameOffsetAllowed { allowed: true })
+        .unwrap();
+    migrated
+        .apply(DawAction::SetProjectStartTimeOffsetSeconds { seconds: -5.0 })
+        .unwrap();
+    store.save(&migrated).unwrap();
+    assert_eq!(store.load().unwrap().snapshot(), migrated.snapshot());
+    migrated
+        .apply(DawAction::SetProjectStartTimeOffsetSeconds { seconds: f64::MAX })
+        .unwrap();
+    store.save(&migrated).unwrap();
+    assert_eq!(store.load().unwrap().snapshot(), migrated.snapshot());
+    store.close().unwrap();
+    remove_database(&path);
+}
+
+#[test]
+fn fractional_frame_start_offset_flag_rejects_invalid_storage_values() {
+    let path = project_path();
+    let mut store = ProjectStore::open(&path).unwrap();
+    store.save(&Project::new()).unwrap();
+    store.close().unwrap();
+
+    Connection::open(&path)
+        .unwrap()
+        .execute_batch(
+            "PRAGMA ignore_check_constraints=ON; UPDATE project_meta SET project_start_time_fractional_frame_offset_allowed=2;",
+        )
+        .unwrap();
+    let store = ProjectStore::open(&path).unwrap();
+    assert!(matches!(
+        store.load(),
+        Err(StorageError::InvalidStoredData(
+            "unsupported fractional frame offset mode"
+        ))
+    ));
+    store.close().unwrap();
+    remove_database(&path);
+}
+
+#[test]
+fn whole_sample_tempo_flag_schema34_defaults_and_round_trips() {
+    let path = project_path();
+    let mut store = ProjectStore::open(&path).unwrap();
+    store.save(&Project::new()).unwrap();
+    store.close().unwrap();
+
+    Connection::open(&path)
+        .unwrap()
+        .execute_batch(
+            "ALTER TABLE project_meta DROP COLUMN force_tempo_changes_to_whole_samples; PRAGMA user_version=33;",
+        )
+        .unwrap();
+    assert!(matches!(
+        ProjectStore::load_read_only(&path),
+        Err(StorageError::ReadOnlySchemaVersion { .. })
+    ));
+
+    let mut store = ProjectStore::open(&path).unwrap();
+    let mut project = store.load().unwrap();
+    assert!(!project.settings().force_tempo_changes_to_whole_samples());
+    project
+        .apply(DawAction::SetForceTempoChangesToWholeSamples { enabled: true })
+        .unwrap();
+    store.save(&project).unwrap();
+    assert_eq!(store.load().unwrap().snapshot(), project.snapshot());
+    store.close().unwrap();
+    remove_database(&path);
+}
+
+#[test]
+fn whole_sample_tempo_flag_rejects_invalid_storage_values() {
+    let path = project_path();
+    let mut store = ProjectStore::open(&path).unwrap();
+    store.save(&Project::new()).unwrap();
+    store.close().unwrap();
+
+    Connection::open(&path)
+        .unwrap()
+        .execute_batch(
+            "PRAGMA ignore_check_constraints=ON; UPDATE project_meta SET force_tempo_changes_to_whole_samples=2;",
+        )
+        .unwrap();
+    let store = ProjectStore::open(&path).unwrap();
+    assert!(matches!(
+        store.load(),
+        Err(StorageError::InvalidStoredData(
+            "unsupported whole-sample tempo mode"
+        ))
+    ));
+    store.close().unwrap();
+    remove_database(&path);
+}
+
+#[test]
+fn failed_notes_save_rolls_back_project_and_invalid_display_flags_fail_closed() {
+    let path = project_path();
+    let mut project = Project::new();
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Original".into(),
+        })
+        .unwrap();
+    let original = project.snapshot();
+    let mut store = ProjectStore::open(&path).unwrap();
+    store.save(&project).unwrap();
+    Connection::open(&path).unwrap().execute_batch("CREATE TRIGGER fail_notes BEFORE INSERT ON project_notes BEGIN SELECT RAISE(ABORT,'owned notes failure'); END;").unwrap();
+    project
+        .apply(DawAction::SetProjectNotes {
+            notes: aaadaw_core::ProjectNotes {
+                text: "New notes".into(),
+                ..aaadaw_core::ProjectNotes::default()
+            },
+        })
+        .unwrap();
+    project
+        .apply(DawAction::SetFrameRate {
+            rate: aaadaw_core::FrameRate::Fps25,
+        })
+        .unwrap();
+    assert!(store.save(&project).is_err());
+    assert_eq!(store.load().unwrap().snapshot(), original);
+    store.close().unwrap();
+    Connection::open(&path)
+        .unwrap()
+        .execute_batch("PRAGMA ignore_check_constraints=ON; UPDATE project_notes SET word_wrap=9;")
+        .unwrap();
+    assert!(matches!(
+        ProjectStore::load_read_only(&path),
+        Err(StorageError::InvalidStoredData(_))
+    ));
+    remove_database(&path);
+}
+
+#[test]
+fn timecode_checkpoint_failure_rolls_back_all_project_data() {
+    let path = project_path();
+    let mut project = Project::new();
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Original".into(),
+        })
+        .unwrap();
+    let original = project.snapshot();
+    let mut store = ProjectStore::open(&path).unwrap();
+    store.save(&project).unwrap();
+    let connection = Connection::open(&path).unwrap();
+    connection.execute_batch("CREATE TRIGGER fail_timecode BEFORE INSERT ON project_timecode BEGIN SELECT RAISE(ABORT,'owned failure injection'); END;").unwrap();
+    drop(connection);
+    project
+        .apply(DawAction::SetFrameRate {
+            rate: aaadaw_core::FrameRate::Fps23976,
+        })
+        .unwrap();
+    project
+        .apply(DawAction::CreateTrack {
+            index: 1,
+            name: "New".into(),
+        })
+        .unwrap();
+    assert!(store.save(&project).is_err());
+    assert_eq!(store.load().unwrap().snapshot(), original);
+    store.close().unwrap();
+    remove_database(&path);
+}
+
+#[test]
+fn frame_rates_roundtrip_and_schema26_expands_to_default_without_media_changes() {
+    let path = project_path();
+    let mut project = Project::new();
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Owned".into(),
+        })
+        .unwrap();
+    project
+        .apply(DawAction::InsertAudioItem {
+            track_id: project.tracks()[0].id(),
+            media_ref: "asset://owned".into(),
+            start_sample: 16001,
+            source_offset_samples: 6000,
+            length_samples: 12000,
+        })
+        .unwrap();
+    let mut store = ProjectStore::open(&path).unwrap();
+    for rate in aaadaw_core::FrameRate::ALL {
+        project.apply(DawAction::SetFrameRate { rate }).unwrap();
+        store.save(&project).unwrap();
+        assert_eq!(store.load().unwrap().snapshot(), project.snapshot());
+        assert_eq!(
+            ProjectStore::load_read_only(&path).unwrap().snapshot(),
+            project.snapshot()
+        );
+    }
+    store.close().unwrap();
+    let connection = Connection::open(&path).unwrap();
+    connection
+        .execute_batch("DROP TABLE project_timecode; PRAGMA user_version = 26;")
+        .unwrap();
+    drop(connection);
+    let original = std::fs::read(&path).unwrap();
+    assert!(matches!(
+        ProjectStore::load_read_only(&path),
+        Err(StorageError::ReadOnlySchemaVersion { .. })
+    ));
+    assert_eq!(std::fs::read(&path).unwrap(), original);
+    project
+        .apply(DawAction::SetFrameRate {
+            rate: aaadaw_core::FrameRate::default(),
+        })
+        .unwrap();
+    for _ in 0..2 {
+        let store = ProjectStore::open(&path).unwrap();
+        assert_eq!(store.load().unwrap().snapshot(), project.snapshot());
+        assert_eq!(store.schema_version().unwrap(), CURRENT_SCHEMA_VERSION);
+        store.close().unwrap();
+    }
+    let connection = Connection::open(&path).unwrap();
+    assert!(
+        connection
+            .execute("UPDATE project_timecode SET frame_rate=10", [])
+            .is_err()
+    );
+    connection
+        .execute_batch(
+            "PRAGMA ignore_check_constraints=ON; UPDATE project_timecode SET frame_rate=10;",
+        )
+        .unwrap();
+    drop(connection);
+    assert!(matches!(
+        ProjectStore::open(&path).unwrap().load(),
+        Err(StorageError::InvalidStoredData("unsupported frame rate"))
+    ));
+    remove_database(&path);
+}
+
+#[test]
+fn master_mix_roundtrip_read_only_and_schema23_default_preserve_tracks() {
+    let path = project_path();
+    let mut project = Project::new();
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Track 0".into(),
+        })
+        .unwrap();
+    let mix = aaadaw_core::MasterMix::new(-12.0, -0.5).unwrap();
+    project.apply(DawAction::SetMasterMix { mix }).unwrap();
+    let mut store = ProjectStore::open(&path).unwrap();
+    store.save(&project).unwrap();
+    store.close().unwrap();
+    let bytes = std::fs::read(&path).unwrap();
+    assert_eq!(
+        ProjectStore::load_read_only(&path).unwrap().snapshot(),
+        project.snapshot()
+    );
+    assert_eq!(std::fs::read(&path).unwrap(), bytes);
+    let connection = Connection::open(&path).unwrap();
+    connection
+        .execute_batch("DROP TABLE project_master_mix; PRAGMA user_version = 23;")
+        .unwrap();
+    drop(connection);
+    let store = ProjectStore::open(&path).unwrap();
+    let restored = store.load().unwrap();
+    assert_eq!(restored.master_mix(), aaadaw_core::MasterMix::default());
+    assert_eq!(restored.tracks()[0].id().value(), 0);
+    assert_eq!(restored.tracks()[0].name(), "Track 0");
+    store.close().unwrap();
+    remove_database(&path);
+}
 
 fn project_path() -> PathBuf {
     let id = NEXT_FILE_ID.fetch_add(1, Ordering::Relaxed);
@@ -37,6 +523,101 @@ fn readonly_project_load_does_not_modify_saved_database() {
     assert!(project.tracks().is_empty());
     assert_eq!(std::fs::read(&path).unwrap(), original_bytes);
 
+    remove_database(&path);
+}
+
+#[test]
+fn ordinary_track_receivers_survive_save_and_read_only_reopen() {
+    let path = project_path();
+    let mut project = Project::new();
+    for (index, name) in ["Receiver", "Source"].into_iter().enumerate() {
+        project
+            .apply(DawAction::CreateTrack {
+                index,
+                name: name.into(),
+            })
+            .unwrap();
+    }
+    let receiver = project.tracks()[0].id();
+    let source = project.tracks()[1].id();
+    project
+        .apply(DawAction::SetTrackOutput {
+            track_id: source,
+            output_track: Some(receiver),
+        })
+        .unwrap();
+    let mut store = ProjectStore::open(&path).unwrap();
+    store.save(&project).unwrap();
+    store.close().unwrap();
+    let bytes = std::fs::read(&path).unwrap();
+    let restored = ProjectStore::load_read_only(&path).unwrap();
+    assert_eq!(restored.tracks()[1].output_track(), Some(receiver));
+    assert!(!restored.tracks()[0].is_bus());
+    assert_eq!(
+        restored.settings().pan_mode(),
+        aaadaw_core::PanMode::ZeroDbBalance
+    );
+    assert_eq!(std::fs::read(&path).unwrap(), bytes);
+    remove_database(&path);
+}
+
+#[test]
+fn schema_seventeen_preserves_legacy_mix_policy_and_new_defaults_round_trip() {
+    let path = project_path();
+    let settings = aaadaw_core::ProjectSettings::default()
+        .with_pan_mode(aaadaw_core::PanMode::LegacyMonoStereo);
+    let mut project = Project::with_settings(settings);
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Legacy source".into(),
+        })
+        .unwrap();
+    project
+        .apply(DawAction::CreateBusTrack {
+            index: 1,
+            name: "Legacy bus".into(),
+        })
+        .unwrap();
+    project
+        .apply(DawAction::SetTrackOutput {
+            track_id: project.tracks()[0].id(),
+            output_track: Some(project.tracks()[1].id()),
+        })
+        .unwrap();
+    let mut store = ProjectStore::open(&path).unwrap();
+    store.save(&project).unwrap();
+    store.close().unwrap();
+    let connection = Connection::open(&path).unwrap();
+    connection
+        .execute_batch("ALTER TABLE tracks DROP COLUMN parent_track_id; ALTER TABLE tracks DROP COLUMN is_folder; DROP TABLE track_sends; ALTER TABLE tracks DROP COLUMN main_send_enabled; ALTER TABLE project_meta DROP COLUMN pan_mode; ALTER TABLE tracks DROP COLUMN phase_inverted; DROP TABLE IF EXISTS arrangement_folder_compact; DROP TABLE IF EXISTS project_master_mix; PRAGMA user_version = 17;")
+        .unwrap();
+    drop(connection);
+    let backup_path = path.with_extension("v17-backup");
+    std::fs::copy(&path, &backup_path).unwrap();
+    let backup_bytes = std::fs::read(&backup_path).unwrap();
+    let store = ProjectStore::open(&path).unwrap();
+    assert_eq!(store.schema_version().unwrap(), CURRENT_SCHEMA_VERSION);
+    let restored = store.load().unwrap();
+    assert_eq!(restored.snapshot(), project.snapshot());
+    assert!(
+        restored
+            .tracks()
+            .iter()
+            .all(|track| track.pan_mode() == aaadaw_core::PanMode::LegacyMonoStereo)
+    );
+    store.close().unwrap();
+    let restored = ProjectStore::load_read_only(&path).unwrap();
+    assert_eq!(
+        restored.settings().pan_mode(),
+        aaadaw_core::PanMode::LegacyMonoStereo
+    );
+    assert_eq!(std::fs::read(&backup_path).unwrap(), backup_bytes);
+    assert!(matches!(
+        ProjectStore::load_read_only(&backup_path),
+        Err(StorageError::ReadOnlySchemaVersion { .. })
+    ));
+    std::fs::remove_file(backup_path).unwrap();
     remove_database(&path);
 }
 
@@ -82,6 +663,38 @@ fn project_store_round_trips_track_fx_parameter_automation() {
 }
 
 #[test]
+fn project_store_round_trips_muted_midi_item_state() {
+    let path = project_path();
+    let mut project = Project::new();
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Muted MIDI".to_owned(),
+        })
+        .unwrap();
+    project
+        .apply(DawAction::InsertMidiItem {
+            track_id: project.tracks()[0].id(),
+            start_tick: 0,
+            length_ticks: 960,
+        })
+        .unwrap();
+    project
+        .apply(DawAction::SetMidiItemMute {
+            item_id: project.midi_items()[0].id(),
+            muted: true,
+        })
+        .unwrap();
+
+    let mut store = ProjectStore::open(&path).unwrap();
+    store.save(&project).unwrap();
+    store.close().unwrap();
+    let reopened = ProjectStore::open(&path).unwrap().load().unwrap();
+    assert!(reopened.midi_items()[0].is_muted());
+    remove_database(&path);
+}
+
+#[test]
 fn project_store_round_trips_frozen_track_and_its_render_item() {
     let path = project_path();
     let mut project = Project::new();
@@ -112,6 +725,7 @@ fn project_store_round_trips_frozen_track_and_its_render_item() {
         .apply(DawAction::AddMidiNotes {
             item_id,
             notes: vec![MidiNoteData {
+                channel: 7,
                 pitch: 60,
                 tick: 0,
                 duration: 480,
@@ -142,7 +756,10 @@ fn project_store_round_trips_frozen_track_and_its_render_item() {
 #[test]
 fn schema_fourteen_migrates_track_freeze_reference_as_empty() {
     let path = project_path();
-    let mut project = Project::new();
+    let mut project = Project::with_settings(
+        aaadaw_core::ProjectSettings::default()
+            .with_pan_mode(aaadaw_core::PanMode::LegacyMonoStereo),
+    );
     project
         .apply(DawAction::CreateTrack {
             index: 0,
@@ -158,7 +775,7 @@ fn schema_fourteen_migrates_track_freeze_reference_as_empty() {
         .execute_batch(
             "ALTER TABLE tracks DROP COLUMN frozen_audio_item_id; \
              ALTER TABLE items DROP COLUMN source_offset_ticks; ALTER TABLE items DROP COLUMN name; \
-             PRAGMA user_version = 14;",
+             ALTER TABLE tracks DROP COLUMN parent_track_id; ALTER TABLE tracks DROP COLUMN is_folder; DROP TABLE track_sends; ALTER TABLE tracks DROP COLUMN main_send_enabled; ALTER TABLE project_meta DROP COLUMN pan_mode; ALTER TABLE tracks DROP COLUMN phase_inverted; DROP TABLE IF EXISTS arrangement_folder_compact; DROP TABLE IF EXISTS project_master_mix; PRAGMA user_version = 14;",
         )
         .unwrap();
     drop(connection);
@@ -205,7 +822,7 @@ fn midi_item_name_round_trips_and_schema_fifteen_defaults_existing_names() {
     let connection = Connection::open(&path).unwrap();
     connection
         .execute_batch(
-            "ALTER TABLE items DROP COLUMN source_offset_ticks; ALTER TABLE items DROP COLUMN name; PRAGMA user_version = 15;",
+            "ALTER TABLE items DROP COLUMN source_offset_ticks; ALTER TABLE items DROP COLUMN name; ALTER TABLE tracks DROP COLUMN parent_track_id; ALTER TABLE tracks DROP COLUMN is_folder; DROP TABLE track_sends; ALTER TABLE tracks DROP COLUMN main_send_enabled; ALTER TABLE project_meta DROP COLUMN pan_mode; ALTER TABLE tracks DROP COLUMN phase_inverted; DROP TABLE IF EXISTS arrangement_folder_compact; DROP TABLE IF EXISTS project_master_mix; PRAGMA user_version = 15;",
         )
         .unwrap();
     drop(connection);
@@ -241,7 +858,7 @@ fn midi_item_source_offset_round_trips_through_storage() {
         .unwrap();
     let item_id = project.midi_items()[0].id();
     project
-        .apply(DawAction::TrimMidiItemStart {
+        .apply(DawAction::EditMidiItemPlacement {
             item_id,
             start_tick: 1_440,
             length_ticks: 1_440,
@@ -283,9 +900,159 @@ fn readonly_project_load_rejects_older_schema_without_migrating_it() {
 }
 
 #[test]
-fn schema_thirteen_migrates_with_compatible_empty_arrangement_view_state() {
+fn schema_57_audio_sends_migrate_with_native_all_midi_default() {
     let path = project_path();
     let mut project = Project::new();
+    for (index, name) in ["Source", "Destination"].into_iter().enumerate() {
+        project
+            .apply(DawAction::CreateTrack {
+                index,
+                name: name.into(),
+            })
+            .unwrap();
+    }
+    project
+        .apply(DawAction::CreateAudioSend {
+            track_id: project.tracks()[0].id(),
+            destination: project.tracks()[1].id(),
+            parameters: aaadaw_core::AudioSendParameters {
+                midi_enabled: false,
+                ..Default::default()
+            },
+        })
+        .unwrap();
+    let mut store = ProjectStore::open(&path).unwrap();
+    store.save(&project).unwrap();
+    store.close().unwrap();
+
+    let connection = Connection::open(&path).unwrap();
+    connection
+        .execute_batch(
+            "ALTER TABLE track_sends DROP COLUMN midi_enabled; PRAGMA user_version = 57;",
+        )
+        .unwrap();
+    drop(connection);
+
+    let store = ProjectStore::open(&path).unwrap();
+    assert_eq!(store.schema_version().unwrap(), CURRENT_SCHEMA_VERSION);
+    let restored = store.load().unwrap();
+    assert!(restored.tracks()[0].sends()[0].parameters().midi_enabled);
+    store.close().unwrap();
+    remove_database(&path);
+}
+
+#[test]
+fn schema_58_migrates_stored_midi_events_to_channel_zero() {
+    let path = project_path();
+    let mut project = Project::new();
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Legacy channels".to_owned(),
+        })
+        .unwrap();
+    let track_id = project.tracks()[0].id();
+    project
+        .apply(DawAction::InsertMidiItem {
+            track_id,
+            start_tick: 0,
+            length_ticks: 960,
+        })
+        .unwrap();
+    let item_id = project.midi_items()[0].id();
+    project
+        .apply(DawAction::AddMidiNotes {
+            item_id,
+            notes: vec![MidiNoteData {
+                channel: 0,
+                pitch: 60,
+                tick: 0,
+                duration: 240,
+                velocity: 100,
+            }],
+        })
+        .unwrap();
+    project
+        .apply(DawAction::SetMidiControllers {
+            item_id,
+            controllers: vec![MidiControllerData {
+                channel: 0,
+                controller: 7,
+                tick: 120,
+                value: 80,
+            }],
+        })
+        .unwrap();
+    project
+        .apply(DawAction::SetMidiPitchBends {
+            item_id,
+            pitch_bends: vec![MidiPitchBendData {
+                channel: 0,
+                tick: 120,
+                value: 9_000,
+            }],
+        })
+        .unwrap();
+    let mut store = ProjectStore::open(&path).unwrap();
+    store.save(&project).unwrap();
+    store.close().unwrap();
+
+    let connection = Connection::open(&path).unwrap();
+    connection
+        .execute_batch(
+            "ALTER TABLE midi_notes DROP COLUMN channel;
+             CREATE TABLE midi_controllers_v58 (
+                 item_id INTEGER NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+                 position INTEGER NOT NULL CHECK (position >= 0),
+                 controller INTEGER NOT NULL CHECK (controller BETWEEN 0 AND 127),
+                 tick INTEGER NOT NULL CHECK (tick >= 0),
+                 value INTEGER NOT NULL CHECK (value BETWEEN 0 AND 127),
+                 PRIMARY KEY (item_id, position),
+                 UNIQUE (item_id, controller, tick)
+             );
+             INSERT INTO midi_controllers_v58(item_id, position, controller, tick, value)
+                 SELECT item_id, position, controller, tick, value FROM midi_controllers;
+             DROP TABLE midi_controllers;
+             ALTER TABLE midi_controllers_v58 RENAME TO midi_controllers;
+             CREATE INDEX midi_controllers_by_item_tick
+                 ON midi_controllers(item_id, tick, controller);
+             CREATE TABLE midi_pitch_bends_v58 (
+                 item_id INTEGER NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+                 position INTEGER NOT NULL CHECK (position >= 0),
+                 tick INTEGER NOT NULL CHECK (tick >= 0),
+                 value INTEGER NOT NULL CHECK (value BETWEEN 0 AND 16383),
+                 PRIMARY KEY (item_id, position),
+                 UNIQUE (item_id, tick)
+             );
+             INSERT INTO midi_pitch_bends_v58(item_id, position, tick, value)
+                 SELECT item_id, position, tick, value FROM midi_pitch_bends;
+             DROP TABLE midi_pitch_bends;
+             ALTER TABLE midi_pitch_bends_v58 RENAME TO midi_pitch_bends;
+             CREATE INDEX midi_pitch_bends_by_item_tick ON midi_pitch_bends(item_id, tick);
+             PRAGMA user_version = 58;",
+        )
+        .unwrap();
+    drop(connection);
+
+    let store = ProjectStore::open(&path).unwrap();
+    assert_eq!(store.schema_version().unwrap(), CURRENT_SCHEMA_VERSION);
+    let restored = store.load().unwrap();
+    assert_eq!(restored.snapshot(), project.snapshot());
+    let item = &restored.midi_items()[0];
+    assert_eq!(item.notes()[0].channel(), 0);
+    assert_eq!(item.controllers()[0].channel, 0);
+    assert_eq!(item.pitch_bends()[0].channel, 0);
+    store.close().unwrap();
+    remove_database(&path);
+}
+
+#[test]
+fn schema_thirteen_migrates_with_compatible_empty_arrangement_view_state() {
+    let path = project_path();
+    let mut project = Project::with_settings(
+        aaadaw_core::ProjectSettings::default()
+            .with_pan_mode(aaadaw_core::PanMode::LegacyMonoStereo),
+    );
     project
         .apply(DawAction::CreateTrack {
             index: 0,
@@ -304,7 +1071,7 @@ fn schema_thirteen_migrates_with_compatible_empty_arrangement_view_state() {
              DROP TABLE arrangement_view_meta; \
              ALTER TABLE tracks DROP COLUMN frozen_audio_item_id; \
              ALTER TABLE items DROP COLUMN source_offset_ticks; ALTER TABLE items DROP COLUMN name; \
-             PRAGMA user_version = 13;",
+             ALTER TABLE tracks DROP COLUMN parent_track_id; ALTER TABLE tracks DROP COLUMN is_folder; DROP TABLE track_sends; ALTER TABLE tracks DROP COLUMN main_send_enabled; ALTER TABLE project_meta DROP COLUMN pan_mode; ALTER TABLE tracks DROP COLUMN phase_inverted; DROP TABLE IF EXISTS arrangement_folder_compact; DROP TABLE IF EXISTS project_master_mix; PRAGMA user_version = 13;",
         )
         .unwrap();
     drop(connection);
@@ -471,6 +1238,7 @@ fn schema_migration_and_project_roundtrip_preserve_state() {
         .apply(DawAction::AddMidiNotes {
             item_id,
             notes: vec![MidiNoteData {
+                channel: 7,
                 pitch: 67,
                 tick: 120,
                 duration: 720,
@@ -483,31 +1251,43 @@ fn schema_migration_and_project_roundtrip_preserve_state() {
             item_id,
             controllers: vec![
                 MidiControllerData {
+                    channel: 7,
                     controller: 64,
                     tick: 0,
                     value: 127,
                 },
                 MidiControllerData {
+                    channel: 7,
                     controller: 64,
                     tick: 960,
                     value: 0,
                 },
                 MidiControllerData {
+                    channel: 1,
                     controller: 1,
                     tick: 480,
                     value: 64,
                 },
                 MidiControllerData {
+                    channel: 11,
+                    controller: 1,
+                    tick: 480,
+                    value: 65,
+                },
+                MidiControllerData {
+                    channel: 7,
                     controller: 7,
                     tick: 360,
                     value: 88,
                 },
                 MidiControllerData {
+                    channel: 8,
                     controller: 10,
                     tick: 480,
                     value: 32,
                 },
                 MidiControllerData {
+                    channel: 9,
                     controller: 11,
                     tick: 720,
                     value: 96,
@@ -520,12 +1300,19 @@ fn schema_migration_and_project_roundtrip_preserve_state() {
             item_id,
             pitch_bends: vec![
                 MidiPitchBendData {
+                    channel: 5,
                     tick: 0,
                     value: 8192,
                 },
                 MidiPitchBendData {
+                    channel: 5,
                     tick: 720,
                     value: 11_337,
+                },
+                MidiPitchBendData {
+                    channel: 14,
+                    tick: 720,
+                    value: 12_337,
                 },
             ],
         })
@@ -665,7 +1452,10 @@ fn checkpoint_reports_busy_while_a_reader_pins_the_wal_and_recovers_afterward() 
 #[test]
 fn schema_twelve_migrates_v11_tempo_curve_values() {
     let path = project_path();
-    let mut project = Project::new();
+    let mut project = Project::with_settings(
+        aaadaw_core::ProjectSettings::default()
+            .with_pan_mode(aaadaw_core::PanMode::LegacyMonoStereo),
+    );
     project
         .apply(DawAction::SetTempo {
             start_tick: 1920,
@@ -691,7 +1481,7 @@ fn schema_twelve_migrates_v11_tempo_curve_values() {
              DROP TABLE arrangement_view_meta;
              ALTER TABLE tracks DROP COLUMN frozen_audio_item_id;
              ALTER TABLE items DROP COLUMN source_offset_ticks; ALTER TABLE items DROP COLUMN name;
-             PRAGMA user_version = 11;
+             ALTER TABLE tracks DROP COLUMN parent_track_id; ALTER TABLE tracks DROP COLUMN is_folder; DROP TABLE track_sends; ALTER TABLE tracks DROP COLUMN main_send_enabled; ALTER TABLE project_meta DROP COLUMN pan_mode; ALTER TABLE tracks DROP COLUMN phase_inverted; DROP TABLE IF EXISTS arrangement_folder_compact; DROP TABLE IF EXISTS project_master_mix; PRAGMA user_version = 11;
              DROP TABLE track_fx_parameter_automation_points;
              CREATE TABLE tempo_points_v11 (
                  start_tick INTEGER PRIMARY KEY CHECK (start_tick >= 0),
@@ -751,7 +1541,7 @@ fn schema_two_tracks_migrate_without_an_instrument_assignment() {
              ALTER TABLE tracks DROP COLUMN output_track_id; \
              ALTER TABLE tracks DROP COLUMN is_bus; \
              DROP TABLE track_fx_plugins; \
-             PRAGMA user_version = 2;",
+             ALTER TABLE tracks DROP COLUMN parent_track_id; ALTER TABLE tracks DROP COLUMN is_folder; DROP TABLE track_sends; ALTER TABLE tracks DROP COLUMN main_send_enabled; ALTER TABLE project_meta DROP COLUMN pan_mode; ALTER TABLE tracks DROP COLUMN phase_inverted; DROP TABLE IF EXISTS arrangement_folder_compact; DROP TABLE IF EXISTS project_master_mix; PRAGMA user_version = 2;",
         )
         .expect("remove v3 columns to represent a v2 project");
     drop(connection);
@@ -1712,7 +2502,7 @@ fn schema_six_projects_migrate_host_fx_parameter_storage() {
     let connection = Connection::open(&path).expect("project should be SQLite");
     connection
         .execute_batch(
-            "DROP TABLE arrangement_fx_lanes; DROP TABLE arrangement_volume_lanes; DROP TABLE arrangement_view_meta; DROP TABLE track_fx_parameter_automation_points; DROP TABLE track_volume_automation; ALTER TABLE tracks DROP COLUMN frozen_audio_item_id; ALTER TABLE tracks DROP COLUMN output_track_id; ALTER TABLE tracks DROP COLUMN is_bus; ALTER TABLE items DROP COLUMN source_offset_ticks; ALTER TABLE items DROP COLUMN name; DROP TABLE track_fx_parameter_values; DROP TABLE midi_controllers; DROP TABLE midi_pitch_bends; PRAGMA user_version = 6;",
+            "DROP TABLE arrangement_fx_lanes; DROP TABLE arrangement_volume_lanes; DROP TABLE arrangement_view_meta; DROP TABLE track_fx_parameter_automation_points; DROP TABLE track_volume_automation; ALTER TABLE tracks DROP COLUMN frozen_audio_item_id; ALTER TABLE tracks DROP COLUMN output_track_id; ALTER TABLE tracks DROP COLUMN is_bus; ALTER TABLE items DROP COLUMN source_offset_ticks; ALTER TABLE items DROP COLUMN name; DROP TABLE track_fx_parameter_values; DROP TABLE midi_controllers; DROP TABLE midi_pitch_bends; ALTER TABLE tracks DROP COLUMN parent_track_id; ALTER TABLE tracks DROP COLUMN is_folder; DROP TABLE track_sends; ALTER TABLE tracks DROP COLUMN main_send_enabled; ALTER TABLE project_meta DROP COLUMN pan_mode; ALTER TABLE tracks DROP COLUMN phase_inverted; DROP TABLE IF EXISTS arrangement_folder_compact; DROP TABLE IF EXISTS project_master_mix; PRAGMA user_version = 6;",
         )
         .expect("project should resemble a schema-six database");
     drop(connection);
@@ -1726,7 +2516,10 @@ fn schema_six_projects_migrate_host_fx_parameter_storage() {
 #[test]
 fn schema_seven_projects_migrate_controller_storage_without_changing_notes() {
     let path = project_path();
-    let mut project = Project::new();
+    let mut project = Project::with_settings(
+        aaadaw_core::ProjectSettings::default()
+            .with_pan_mode(aaadaw_core::PanMode::LegacyMonoStereo),
+    );
     project
         .apply(DawAction::CreateTrack {
             index: 0,
@@ -1746,6 +2539,7 @@ fn schema_seven_projects_migrate_controller_storage_without_changing_notes() {
         .apply(DawAction::AddMidiNotes {
             item_id,
             notes: vec![MidiNoteData {
+                channel: 0,
                 pitch: 60,
                 tick: 120,
                 duration: 240,
@@ -1759,7 +2553,7 @@ fn schema_seven_projects_migrate_controller_storage_without_changing_notes() {
 
     let connection = Connection::open(&path).expect("project should be SQLite");
     connection
-        .execute_batch("DROP TABLE arrangement_fx_lanes; DROP TABLE arrangement_volume_lanes; DROP TABLE arrangement_view_meta; DROP TABLE track_fx_parameter_automation_points; DROP TABLE track_volume_automation; ALTER TABLE tracks DROP COLUMN frozen_audio_item_id; ALTER TABLE tracks DROP COLUMN output_track_id; ALTER TABLE tracks DROP COLUMN is_bus; ALTER TABLE items DROP COLUMN source_offset_ticks; ALTER TABLE items DROP COLUMN name; DROP TABLE midi_controllers; DROP TABLE midi_pitch_bends; PRAGMA user_version = 7;")
+        .execute_batch("DROP TABLE arrangement_fx_lanes; DROP TABLE arrangement_volume_lanes; DROP TABLE arrangement_view_meta; DROP TABLE track_fx_parameter_automation_points; DROP TABLE track_volume_automation; ALTER TABLE tracks DROP COLUMN frozen_audio_item_id; ALTER TABLE tracks DROP COLUMN output_track_id; ALTER TABLE tracks DROP COLUMN is_bus; ALTER TABLE items DROP COLUMN source_offset_ticks; ALTER TABLE items DROP COLUMN name; DROP TABLE midi_controllers; DROP TABLE midi_pitch_bends; ALTER TABLE tracks DROP COLUMN parent_track_id; ALTER TABLE tracks DROP COLUMN is_folder; DROP TABLE track_sends; ALTER TABLE tracks DROP COLUMN main_send_enabled; ALTER TABLE project_meta DROP COLUMN pan_mode; ALTER TABLE tracks DROP COLUMN phase_inverted; DROP TABLE IF EXISTS arrangement_folder_compact; DROP TABLE IF EXISTS project_master_mix; PRAGMA user_version = 7;")
         .expect("project should resemble a schema-seven database");
     drop(connection);
 
@@ -1773,7 +2567,10 @@ fn schema_seven_projects_migrate_controller_storage_without_changing_notes() {
 #[test]
 fn schema_eight_projects_migrate_volume_automation_storage_without_changing_tracks() {
     let path = project_path();
-    let mut project = Project::new();
+    let mut project = Project::with_settings(
+        aaadaw_core::ProjectSettings::default()
+            .with_pan_mode(aaadaw_core::PanMode::LegacyMonoStereo),
+    );
     project
         .apply(DawAction::CreateTrack {
             index: 0,
@@ -1786,7 +2583,7 @@ fn schema_eight_projects_migrate_volume_automation_storage_without_changing_trac
 
     let connection = Connection::open(&path).expect("project should be SQLite");
     connection
-        .execute_batch("DROP TABLE arrangement_fx_lanes; DROP TABLE arrangement_volume_lanes; DROP TABLE arrangement_view_meta; DROP TABLE track_fx_parameter_automation_points; DROP TABLE track_volume_automation; ALTER TABLE tracks DROP COLUMN frozen_audio_item_id; ALTER TABLE tracks DROP COLUMN output_track_id; ALTER TABLE tracks DROP COLUMN is_bus; ALTER TABLE items DROP COLUMN source_offset_ticks; ALTER TABLE items DROP COLUMN name; DROP TABLE midi_pitch_bends; PRAGMA user_version = 8;")
+        .execute_batch("DROP TABLE arrangement_fx_lanes; DROP TABLE arrangement_volume_lanes; DROP TABLE arrangement_view_meta; DROP TABLE track_fx_parameter_automation_points; DROP TABLE track_volume_automation; ALTER TABLE tracks DROP COLUMN frozen_audio_item_id; ALTER TABLE tracks DROP COLUMN output_track_id; ALTER TABLE tracks DROP COLUMN is_bus; ALTER TABLE items DROP COLUMN source_offset_ticks; ALTER TABLE items DROP COLUMN name; DROP TABLE midi_pitch_bends; ALTER TABLE tracks DROP COLUMN parent_track_id; ALTER TABLE tracks DROP COLUMN is_folder; DROP TABLE track_sends; ALTER TABLE tracks DROP COLUMN main_send_enabled; ALTER TABLE project_meta DROP COLUMN pan_mode; ALTER TABLE tracks DROP COLUMN phase_inverted; DROP TABLE IF EXISTS arrangement_folder_compact; DROP TABLE IF EXISTS project_master_mix; PRAGMA user_version = 8;")
         .expect("project should resemble a schema-eight database");
     drop(connection);
 
@@ -1812,12 +2609,609 @@ fn schema_nine_projects_migrate_tracks_to_master_by_default() {
     store.close().expect("project should close");
 
     let connection = Connection::open(&path).expect("project should be SQLite");
-    connection.execute_batch("DROP TABLE arrangement_fx_lanes; DROP TABLE arrangement_volume_lanes; DROP TABLE arrangement_view_meta; DROP TABLE track_fx_parameter_automation_points; ALTER TABLE tracks DROP COLUMN frozen_audio_item_id; ALTER TABLE tracks DROP COLUMN output_track_id; ALTER TABLE tracks DROP COLUMN is_bus; ALTER TABLE items DROP COLUMN source_offset_ticks; ALTER TABLE items DROP COLUMN name; DROP TABLE midi_pitch_bends; PRAGMA user_version = 9;").unwrap();
+    connection.execute_batch("DROP TABLE arrangement_fx_lanes; DROP TABLE arrangement_volume_lanes; DROP TABLE arrangement_view_meta; DROP TABLE track_fx_parameter_automation_points; ALTER TABLE tracks DROP COLUMN frozen_audio_item_id; ALTER TABLE tracks DROP COLUMN output_track_id; ALTER TABLE tracks DROP COLUMN is_bus; ALTER TABLE items DROP COLUMN source_offset_ticks; ALTER TABLE items DROP COLUMN name; DROP TABLE midi_pitch_bends; ALTER TABLE tracks DROP COLUMN parent_track_id; ALTER TABLE tracks DROP COLUMN is_folder; DROP TABLE track_sends; ALTER TABLE tracks DROP COLUMN main_send_enabled; ALTER TABLE project_meta DROP COLUMN pan_mode; ALTER TABLE tracks DROP COLUMN phase_inverted; DROP TABLE IF EXISTS arrangement_folder_compact; DROP TABLE IF EXISTS project_master_mix; PRAGMA user_version = 9;").unwrap();
     drop(connection);
     let store = ProjectStore::open(&path).expect("schema nine should migrate");
     let restored = store.load().unwrap();
     assert!(!restored.tracks()[0].is_bus());
     assert_eq!(restored.tracks()[0].output_track(), None);
     store.close().expect("migrated project should close");
+    remove_database(&path);
+}
+
+#[test]
+fn audio_sends_round_trip_with_duplicate_targets_order_ids_and_foreign_keys() {
+    let path = project_path();
+    let mut project = Project::new();
+    for (index, name) in ["Source", "Receiver"].into_iter().enumerate() {
+        project
+            .apply(DawAction::CreateTrack {
+                index,
+                name: name.into(),
+            })
+            .unwrap();
+    }
+    let source = project.tracks()[0].id();
+    let destination = project.tracks()[1].id();
+    for (volume_db, tap, midi_enabled) in [
+        (-6.0, aaadaw_core::AudioSendTap::PreFx, true),
+        (-12.0, aaadaw_core::AudioSendTap::PreFader, false),
+    ] {
+        project
+            .apply(DawAction::CreateAudioSend {
+                track_id: source,
+                destination,
+                parameters: aaadaw_core::AudioSendParameters {
+                    volume_db,
+                    tap,
+                    pan: 0.5,
+                    phase_inverted: true,
+                    midi_enabled,
+                    ..Default::default()
+                },
+            })
+            .unwrap();
+    }
+    project
+        .apply(DawAction::SetTrackMainSend {
+            track_id: source,
+            enabled: false,
+        })
+        .unwrap();
+    let expected = project.snapshot();
+    let mut store = ProjectStore::open(&path).unwrap();
+    store.save(&project).unwrap();
+    store.save(&project).unwrap();
+    store.close().unwrap();
+    let mut restored = ProjectStore::load_read_only(&path).unwrap();
+    assert_eq!(restored.snapshot(), expected);
+    restored
+        .apply(DawAction::CreateAudioSend {
+            track_id: source,
+            destination,
+            parameters: Default::default(),
+        })
+        .unwrap();
+    assert_eq!(restored.tracks()[0].sends()[2].id().value(), 2);
+    let connection = Connection::open(&path).unwrap();
+    connection
+        .pragma_update(None, "foreign_keys", true)
+        .unwrap();
+    assert!(
+        connection
+            .execute(
+                "INSERT INTO track_sends(id,source_track_id,position,destination_track_id,volume_db,pan,muted,phase_inverted) VALUES(900, ?1, 2, 9999, 0, 0, 0, 0)",
+                [source.value() as i64]
+            )
+            .is_err()
+    );
+    drop(connection);
+    assert_eq!(
+        ProjectStore::load_read_only(&path).unwrap().snapshot(),
+        expected
+    );
+    remove_database(&path);
+}
+
+#[test]
+fn schema_eighteen_adds_empty_sends_and_preserves_main_outputs_and_mix_policy() {
+    let path = project_path();
+    let mut project = Project::new();
+    for (index, name) in ["Source", "Receiver"].into_iter().enumerate() {
+        project
+            .apply(DawAction::CreateTrack {
+                index,
+                name: name.into(),
+            })
+            .unwrap();
+    }
+    project
+        .apply(DawAction::SetTrackOutput {
+            track_id: project.tracks()[0].id(),
+            output_track: Some(project.tracks()[1].id()),
+        })
+        .unwrap();
+    let expected = project.snapshot();
+    let mut store = ProjectStore::open(&path).unwrap();
+    store.save(&project).unwrap();
+    store.close().unwrap();
+    let connection = Connection::open(&path).unwrap();
+    connection.execute_batch("ALTER TABLE tracks DROP COLUMN parent_track_id; ALTER TABLE tracks DROP COLUMN is_folder; DROP TABLE track_sends; ALTER TABLE tracks DROP COLUMN main_send_enabled; ALTER TABLE tracks DROP COLUMN phase_inverted; DROP TABLE IF EXISTS arrangement_folder_compact; DROP TABLE IF EXISTS project_master_mix; PRAGMA user_version = 18;").unwrap();
+    drop(connection);
+    let store = ProjectStore::open(&path).unwrap();
+    assert_eq!(store.schema_version().unwrap(), CURRENT_SCHEMA_VERSION);
+    assert_eq!(store.load().unwrap().snapshot(), expected);
+    store.close().unwrap();
+    remove_database(&path);
+}
+
+#[test]
+fn schema_nineteen_preserves_sends_and_defaults_tap_to_post_fader() {
+    let path = project_path();
+    let mut project = Project::new();
+    for index in 0..2 {
+        project
+            .apply(DawAction::CreateTrack {
+                index,
+                name: format!("Track {index}"),
+            })
+            .unwrap();
+    }
+    project
+        .apply(DawAction::CreateAudioSend {
+            track_id: project.tracks()[0].id(),
+            destination: project.tracks()[1].id(),
+            parameters: aaadaw_core::AudioSendParameters {
+                volume_db: -6.0,
+                ..Default::default()
+            },
+        })
+        .unwrap();
+    let expected = project.snapshot();
+    let mut store = ProjectStore::open(&path).unwrap();
+    store.save(&project).unwrap();
+    store.close().unwrap();
+    let connection = rusqlite::Connection::open(&path).unwrap();
+    connection
+        .execute_batch("ALTER TABLE tracks DROP COLUMN parent_track_id; ALTER TABLE tracks DROP COLUMN is_folder; ALTER TABLE track_sends DROP COLUMN tap; ALTER TABLE tracks DROP COLUMN phase_inverted; DROP TABLE IF EXISTS arrangement_folder_compact; DROP TABLE IF EXISTS project_master_mix; PRAGMA user_version = 19;")
+        .unwrap();
+    drop(connection);
+    let store = ProjectStore::open(&path).unwrap();
+    assert_eq!(store.load().unwrap().snapshot(), expected);
+    store.close().unwrap();
+    remove_database(&path);
+}
+
+#[test]
+fn folders_round_trip_with_stable_parent_ids_and_media_ownership() {
+    let path = project_path();
+    let mut project = Project::new();
+    for index in 0..3 {
+        project
+            .apply(DawAction::CreateTrack {
+                index,
+                name: format!("Track {index}"),
+            })
+            .unwrap();
+    }
+    let ids: Vec<_> = project.tracks().iter().map(|track| track.id()).collect();
+    for id in &ids[..2] {
+        project
+            .apply(DawAction::SetTrackFolder {
+                track_id: *id,
+                enabled: true,
+            })
+            .unwrap();
+    }
+    project
+        .apply(DawAction::SetTrackParent {
+            track_id: ids[1],
+            parent: Some(ids[0]),
+        })
+        .unwrap();
+    project
+        .apply(DawAction::SetTrackParent {
+            track_id: ids[2],
+            parent: Some(ids[1]),
+        })
+        .unwrap();
+    project
+        .apply(DawAction::InsertAudioItem {
+            track_id: ids[2],
+            media_ref: "asset://leaf".into(),
+            start_sample: 0,
+            source_offset_samples: 0,
+            length_samples: 16,
+        })
+        .unwrap();
+    let expected = project.snapshot();
+    let mut store = ProjectStore::open(&path).unwrap();
+    store.save(&project).unwrap();
+    store.close().unwrap();
+    assert_eq!(
+        ProjectStore::load_read_only(&path).unwrap().snapshot(),
+        expected
+    );
+    remove_database(&path);
+}
+
+#[test]
+fn schema_twenty_keeps_existing_bus_routes_without_inventing_folder_parents() {
+    let path = project_path();
+    let mut project = Project::new();
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Source".into(),
+        })
+        .unwrap();
+    project
+        .apply(DawAction::CreateBusTrack {
+            index: 1,
+            name: "Bus".into(),
+        })
+        .unwrap();
+    project
+        .apply(DawAction::SetTrackOutput {
+            track_id: project.tracks()[0].id(),
+            output_track: Some(project.tracks()[1].id()),
+        })
+        .unwrap();
+    let expected = project.snapshot();
+    let mut store = ProjectStore::open(&path).unwrap();
+    store.save(&project).unwrap();
+    store.close().unwrap();
+    let connection = rusqlite::Connection::open(&path).unwrap();
+    connection.execute_batch("ALTER TABLE tracks DROP COLUMN parent_track_id; ALTER TABLE tracks DROP COLUMN is_folder; ALTER TABLE tracks DROP COLUMN phase_inverted; DROP TABLE IF EXISTS arrangement_folder_compact; DROP TABLE IF EXISTS project_master_mix; PRAGMA user_version = 20;").unwrap();
+    drop(connection);
+    let store = ProjectStore::open(&path).unwrap();
+    assert_eq!(store.load().unwrap().snapshot(), expected);
+    store.close().unwrap();
+    remove_database(&path);
+}
+
+#[test]
+fn folder_compact_view_state_round_trips_and_invalid_modes_rollback_project_save() {
+    use aaadaw_storage::{ArrangementViewState, FolderCompactViewState};
+    let path = project_path();
+    let mut project = Project::new();
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Folder".into(),
+        })
+        .unwrap();
+    let id = project.tracks()[0].id();
+    project
+        .apply(DawAction::SetTrackFolder {
+            track_id: id,
+            enabled: true,
+        })
+        .unwrap();
+    let before = project.snapshot();
+    let state = ArrangementViewState {
+        folder_compact: vec![FolderCompactViewState {
+            track_id: id.value(),
+            mode: 2,
+        }],
+        ..Default::default()
+    };
+    let mut store = ProjectStore::open(&path).unwrap();
+    store
+        .save_with_arrangement_view_state(&project, &state)
+        .unwrap();
+    assert_eq!(
+        store.load_arrangement_view_state().unwrap(),
+        Some(state.clone())
+    );
+    project
+        .apply(DawAction::CreateTrack {
+            index: 1,
+            name: "Must not be saved".into(),
+        })
+        .unwrap();
+    let mut invalid = state.clone();
+    invalid.folder_compact[0].mode = 3;
+    assert!(
+        store
+            .save_with_arrangement_view_state(&project, &invalid)
+            .is_err()
+    );
+    assert_eq!(store.load().unwrap().snapshot(), before);
+    assert_eq!(
+        store.load_arrangement_view_state().unwrap(),
+        Some(state.clone())
+    );
+    store.close().unwrap();
+    let store = ProjectStore::open(&path).unwrap();
+    assert_eq!(store.load_arrangement_view_state().unwrap(), Some(state));
+    store.close().unwrap();
+    remove_database(&path);
+}
+
+#[test]
+fn schema_twenty_one_preserves_existing_view_state_and_defaults_folders_to_normal() {
+    let path = project_path();
+    let project = Project::new();
+    let state = aaadaw_storage::ArrangementViewState::default();
+    let mut store = ProjectStore::open(&path).unwrap();
+    store
+        .save_with_arrangement_view_state(&project, &state)
+        .unwrap();
+    store.close().unwrap();
+    let connection = rusqlite::Connection::open(&path).unwrap();
+    connection
+        .execute_batch("ALTER TABLE tracks DROP COLUMN phase_inverted; DROP TABLE arrangement_folder_compact; DROP TABLE IF EXISTS project_master_mix; PRAGMA user_version = 21;")
+        .unwrap();
+    drop(connection);
+    let store = ProjectStore::open(&path).unwrap();
+    assert_eq!(store.load_arrangement_view_state().unwrap(), Some(state));
+    store.close().unwrap();
+    remove_database(&path);
+}
+
+#[test]
+fn track_phase_roundtrip_and_schema_twenty_two_default_keep_existing_view() {
+    let path = project_path();
+    let mut project = Project::new();
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Phase".into(),
+        })
+        .unwrap();
+    let id = project.tracks()[0].id();
+    project
+        .apply(DawAction::SetTrackPhase {
+            track_id: id,
+            phase_inverted: true,
+        })
+        .unwrap();
+    let mut store = ProjectStore::open(&path).unwrap();
+    store.save(&project).unwrap();
+    assert_eq!(store.load().unwrap().snapshot(), project.snapshot());
+    store.close().unwrap();
+    let connection = Connection::open(&path).unwrap();
+    connection
+        .execute_batch("ALTER TABLE tracks DROP COLUMN phase_inverted; DROP TABLE IF EXISTS project_master_mix; PRAGMA user_version = 22;")
+        .unwrap();
+    drop(connection);
+    let store = ProjectStore::open(&path).unwrap();
+    let loaded = store.load().unwrap();
+    assert!(!loaded.tracks()[0].is_phase_inverted());
+    assert_eq!(loaded.tracks()[0].id(), id);
+    store.close().unwrap();
+    remove_database(&path);
+}
+
+#[test]
+fn item_fades_roundtrip_readonly_legacy_default_and_invalid_values() {
+    let path = project_path();
+    let mut project = Project::new();
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Audio".into(),
+        })
+        .unwrap();
+    let track_id = project.tracks()[0].id();
+    project
+        .apply(DawAction::InsertAudioItem {
+            track_id,
+            media_ref: "asset://constant".into(),
+            start_sample: 100,
+            source_offset_samples: 200,
+            length_samples: 48_000,
+        })
+        .unwrap();
+    let fades = aaadaw_core::AudioItemFades {
+        fade_in: aaadaw_core::AudioFade::new(12_000.5, aaadaw_core::FadeShape::Smooth).unwrap(),
+        fade_out: aaadaw_core::AudioFade::new(60_000.25, aaadaw_core::FadeShape::SlowStart)
+            .unwrap(),
+    };
+    project
+        .apply(DawAction::SetAudioItemFades {
+            item_id: project.audio_items()[0].id(),
+            fades,
+        })
+        .unwrap();
+    let mut store = ProjectStore::open(&path).unwrap();
+    store.save(&project).unwrap();
+    store.close().unwrap();
+    let before = std::fs::read(&path).unwrap();
+    assert_eq!(
+        ProjectStore::load_read_only(&path).unwrap().snapshot(),
+        project.snapshot()
+    );
+    assert_eq!(std::fs::read(&path).unwrap(), before);
+    let connection = Connection::open(&path).unwrap();
+    connection.execute_batch("PRAGMA ignore_check_constraints = ON; UPDATE audio_item_fades SET fade_in_samples = -1;").unwrap();
+    drop(connection);
+    assert!(ProjectStore::load_read_only(&path).is_err());
+    let connection = Connection::open(&path).unwrap();
+    connection
+        .execute_batch("DROP TABLE audio_item_fades; PRAGMA user_version = 24;")
+        .unwrap();
+    drop(connection);
+    let store = ProjectStore::open(&path).unwrap();
+    let restored = store.load().unwrap();
+    assert_eq!(
+        restored.audio_items()[0].fades(),
+        aaadaw_core::AudioItemFades::default()
+    );
+    assert_eq!(restored.audio_items()[0].source_offset_samples(), 200);
+    store.close().unwrap();
+    remove_database(&path);
+}
+
+#[test]
+fn audio_item_mix_roundtrips_and_schema_38_migrates_with_neutral_defaults() {
+    let path = project_path();
+    let mut project = Project::new();
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Audio".into(),
+        })
+        .unwrap();
+    let track_id = project.tracks()[0].id();
+    project
+        .apply(DawAction::InsertAudioItem {
+            track_id,
+            media_ref: "asset://constant".into(),
+            start_sample: 100,
+            source_offset_samples: 200,
+            length_samples: 48_000,
+        })
+        .unwrap();
+    let item_id = project.audio_items()[0].id();
+    project
+        .apply(DawAction::SetAudioItemVolume {
+            item_id,
+            volume: 0.5,
+        })
+        .unwrap();
+    project
+        .apply(DawAction::SetAudioItemTakeMix {
+            item_id,
+            volume: 0.25,
+            pan: -0.5,
+        })
+        .unwrap();
+    project
+        .apply(DawAction::SetAudioItemPhase {
+            item_id,
+            inverted: true,
+        })
+        .unwrap();
+
+    let mut store = ProjectStore::open(&path).unwrap();
+    store.save(&project).unwrap();
+    assert_eq!(store.load().unwrap().snapshot(), project.snapshot());
+    store.close().unwrap();
+
+    let connection = Connection::open(&path).unwrap();
+    connection
+        .execute_batch(
+            "ALTER TABLE audio_items DROP COLUMN phase_inverted; \
+             ALTER TABLE audio_items DROP COLUMN take_pan; \
+             ALTER TABLE audio_items DROP COLUMN take_volume; \
+             ALTER TABLE audio_items DROP COLUMN volume; \
+             PRAGMA user_version = 38;",
+        )
+        .unwrap();
+    drop(connection);
+    assert!(matches!(
+        ProjectStore::load_read_only(&path),
+        Err(StorageError::ReadOnlySchemaVersion {
+            found: 38,
+            required: CURRENT_SCHEMA_VERSION
+        })
+    ));
+
+    let store = ProjectStore::open(&path).unwrap();
+    assert_eq!(store.schema_version().unwrap(), CURRENT_SCHEMA_VERSION);
+    let migrated = store.load().unwrap();
+    assert_eq!(migrated.audio_items()[0].volume(), 1.0);
+    assert_eq!(migrated.audio_items()[0].take_volume(), 1.0);
+    assert_eq!(migrated.audio_items()[0].take_pan(), 0.0);
+    assert!(!migrated.audio_items()[0].is_phase_inverted());
+    assert_eq!(migrated.audio_items()[0].media_ref(), "asset://constant");
+    store.close().unwrap();
+
+    let connection = Connection::open(&path).unwrap();
+    assert!(
+        connection
+            .execute("UPDATE audio_items SET volume = 17.0", [])
+            .is_err()
+    );
+    assert!(
+        connection
+            .execute("UPDATE audio_items SET take_volume = 17.0", [])
+            .is_err()
+    );
+    assert!(
+        connection
+            .execute("UPDATE audio_items SET take_pan = 1.1", [])
+            .is_err()
+    );
+    connection
+        .execute_batch(
+            "PRAGMA ignore_check_constraints = ON; UPDATE audio_items SET volume = 17.0;",
+        )
+        .unwrap();
+    drop(connection);
+    assert!(ProjectStore::load_read_only(&path).is_err());
+    remove_database(&path);
+}
+
+#[test]
+fn native_fade_mode_roundtrip_and_schema25_legacy_shape_preservation() {
+    use aaadaw_core::{AudioFade, AudioItemFades, FadeCurve, FadeCurveParameters, FadeShape};
+    let path = project_path();
+    let mut project = Project::new();
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Audio".into(),
+        })
+        .unwrap();
+    let track_id = project.tracks()[0].id();
+    project
+        .apply(DawAction::InsertAudioItem {
+            track_id,
+            media_ref: "asset://constant".into(),
+            start_sample: 0,
+            source_offset_samples: 200,
+            length_samples: 48_000,
+        })
+        .unwrap();
+    let item_id = project.audio_items()[0].id();
+    let native = AudioItemFades {
+        fade_in: AudioFade::with_curve(
+            12_000.5,
+            FadeCurve::Native(FadeCurveParameters::new(0.25, 0.5).unwrap()),
+        )
+        .unwrap(),
+        fade_out: AudioFade::new(60_000.25, FadeShape::Smooth).unwrap(),
+    };
+    project
+        .apply(DawAction::SetAudioItemFades {
+            item_id,
+            fades: native,
+        })
+        .unwrap();
+    let mut store = ProjectStore::open(&path).unwrap();
+    store.save(&project).unwrap();
+    store.close().unwrap();
+    let before = std::fs::read(&path).unwrap();
+    let loaded = ProjectStore::load_read_only(&path).unwrap();
+    assert_eq!(loaded.snapshot(), project.snapshot());
+    assert_eq!(loaded.audio_items()[0].fades(), native);
+    assert_eq!(std::fs::read(&path).unwrap(), before);
+    let connection = Connection::open(&path).unwrap();
+    connection
+        .execute_batch(
+            "PRAGMA ignore_check_constraints = ON; UPDATE audio_item_fade_curves SET in_s = NULL;",
+        )
+        .unwrap();
+    drop(connection);
+    assert!(ProjectStore::load_read_only(&path).is_err());
+    let mut store = ProjectStore::open(&path).unwrap();
+    let legacy = AudioItemFades {
+        fade_in: AudioFade::new(12_000.0, FadeShape::Smooth).unwrap(),
+        fade_out: AudioFade::new(12_000.0, FadeShape::SteepSmooth).unwrap(),
+    };
+    project
+        .apply(DawAction::SetAudioItemFades {
+            item_id,
+            fades: legacy,
+        })
+        .unwrap();
+    store.save(&project).unwrap();
+    store.close().unwrap();
+    let connection = Connection::open(&path).unwrap();
+    connection
+        .execute_batch("DROP TABLE audio_item_fade_curves; PRAGMA user_version = 25;")
+        .unwrap();
+    drop(connection);
+    let before = std::fs::read(&path).unwrap();
+    assert!(matches!(
+        ProjectStore::load_read_only(&path),
+        Err(StorageError::ReadOnlySchemaVersion {
+            found: 25,
+            required: CURRENT_SCHEMA_VERSION
+        })
+    ));
+    assert_eq!(std::fs::read(&path).unwrap(), before);
+    let store = ProjectStore::open(&path).unwrap();
+    let loaded = store.load().unwrap();
+    assert_eq!(loaded.audio_items()[0].fades(), legacy);
+    assert_eq!(
+        loaded.audio_items()[0].fades().gain_at(3000, 48_000),
+        0.15625
+    );
+    assert_eq!(loaded.snapshot(), project.snapshot());
+    store.close().unwrap();
     remove_database(&path);
 }

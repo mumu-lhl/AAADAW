@@ -1,0 +1,6 @@
+reference	Linux REAPER 7.82 / Default 7; Quantize Events scope All events; operation Position; 1/32 grid = 120 PPQ ticks; strength 100%
+before_notes	unselected C4 100-280; selected D4 350-430
+after_notes	unselected C4 120-300; selected D4 360-440
+before_other_events	unselected CC1 ch1 value64 @475; selected CC7 ch2 value96 @730; unselected pitch-bend ch1 value8192 @850
+after_other_events	unselected CC1 ch1 value64 @480; selected CC7 ch2 value96 @720; unselected pitch-bend ch1 value8192 @840
+behavior	All events quantizes note starts and CC/pitch-bend event positions independent of event selection, while preserving note lengths, event values, channels, and selection state

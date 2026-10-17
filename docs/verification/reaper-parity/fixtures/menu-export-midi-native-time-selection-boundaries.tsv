@@ -1,0 +1,17 @@
+version	7.82/linux-x86_64
+theme	Default_7.0.ReaperThemeZip
+time_selection	1.000000-2.000000 seconds; project ticks 1920-3840
+item_range	project ticks 480-5280
+native_note_fixture	C4 480-1440; C#4 1440-3360; D4 3480-4560; D#4 3840-4320
+native_project_fixture	fixtures/menu-export-midi-native-time-selection-boundaries.rpp
+native_project_sha256	8c430d83204d84e1e75d59fe03330eec0c5958cacfe874c8f2753527244cc491
+export_action	40849
+export_mode	Time selection only; All MIDI items; Type 1; PPQN 960
+native_export_result	C4 before selection excluded; C#4 note-on clipped to tick 0 and note-off retained at 1440; D4 note-on at 1560 retained but its note-off beyond the selection omitted; D#4 beginning exactly at selection end excluded
+native_export_fixture	fixtures/menu-export-midi-native-time-selection-boundaries.mid
+native_export_bytes	110
+native_export_sha256	c054dd7fc869b1d62ff1edb3602b323d44104518a92f6159d68714aad7b05eb3
+native_dialog_screenshot	fixtures/menu-export-midi-native-time-selection-boundaries-dialog.png; SHA-256 9709b8181051e0a3a6ca63917afd1218e9300cf8b55b518b379317f6cc4be39d
+native_probe	scripts/reaper_parity/probe-midi-export-time-selection-boundaries.lua
+reaper_binary_build_id	fb9ade2f211bc91a3ee6193630ef17bcf5f6528b
+reaper_binary_sha256	9976f5608068b7a58518969001b00b527fb0de6ed7459e0e5dda6f29878ee254

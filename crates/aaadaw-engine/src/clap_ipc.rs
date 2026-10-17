@@ -18,7 +18,7 @@ use tempfile::{NamedTempFile, TempPath};
 
 use memmap2::{MmapMut, MmapOptions};
 
-pub const CLAP_IPC_PROTOCOL_VERSION: u32 = 3;
+pub const CLAP_IPC_PROTOCOL_VERSION: u32 = 4;
 pub const CLAP_IPC_CHANNELS: usize = 2;
 pub const CLAP_IPC_MAX_BLOCK_FRAMES: usize = 1024;
 pub const CLAP_IPC_MAX_EVENTS: usize = 1024;
@@ -579,6 +579,7 @@ pub(crate) fn process_helper_requests(
                         note_id,
                         pitch: event.pitch,
                         velocity: event.velocity,
+                        channel: event.channel,
                         controller: (event.kind == ClapIpcMidiKind::ControllerChange as u8)
                             .then_some(event.controller),
                         pitch_bend: (event.kind == ClapIpcMidiKind::PitchBend as u8)
@@ -698,7 +699,9 @@ pub struct ClapIpcMidiEvent {
     pub pitch: u8,
     pub velocity: u8,
     pub controller: u8,
-    pub reserved: [u8; 2],
+    /// Zero-based MIDI channel in the inclusive range `0..16`.
+    pub channel: u8,
+    pub reserved: u8,
 }
 
 impl ClapIpcMidiEvent {
@@ -723,6 +726,9 @@ impl ClapIpcMidiEvent {
             .unwrap_or(Self::NO_NOTE_ID);
         let controller = event.controller.unwrap_or(Self::NO_CONTROLLER);
         let pitch_bend = event.pitch_bend.unwrap_or(Self::NO_PITCH_BEND);
+        if event.channel >= crate::MIDI_CHANNEL_COUNT {
+            return None;
+        }
         let encoded = Self {
             frame_offset: u32::try_from(event.sample_offset).ok()?,
             note_id,
@@ -731,7 +737,8 @@ impl ClapIpcMidiEvent {
             pitch: event.pitch,
             velocity: event.velocity,
             controller,
-            reserved: [0; 2],
+            channel: event.channel,
+            reserved: 0,
         };
         encoded.is_valid(frame_count).then_some(encoded)
     }
@@ -740,7 +747,8 @@ impl ClapIpcMidiEvent {
         if self.frame_offset as usize >= frame_count
             || self.pitch > 127
             || self.velocity > 127
-            || self.reserved != [0; 2]
+            || self.channel >= crate::MIDI_CHANNEL_COUNT
+            || self.reserved != 0
         {
             return false;
         }
@@ -1926,10 +1934,14 @@ mod tests {
             pitch: 64,
             velocity: 110,
             controller: ClapIpcMidiEvent::NO_CONTROLLER,
-            reserved: [0; 2],
+            channel: 0,
+            reserved: 0,
         };
         assert!(event.is_valid(4));
         event.frame_offset = 4;
+        assert!(!event.is_valid(4));
+        event.frame_offset = 3;
+        event.channel = crate::MIDI_CHANNEL_COUNT;
         assert!(!event.is_valid(4));
     }
 
@@ -1940,6 +1952,7 @@ mod tests {
             sample_offset: 3,
             track_id,
             note_id: Some(aaadaw_core::NoteId::from_value(11).unwrap()),
+            channel: 3,
             pitch: 64,
             velocity: 100,
             controller: None,
@@ -1949,6 +1962,7 @@ mod tests {
         let encoded = ClapIpcMidiEvent::from_scheduled(note, 8).unwrap();
         assert_eq!(encoded.frame_offset, 3);
         assert_eq!(encoded.note_id, 12);
+        assert_eq!(encoded.channel, 3);
         assert_eq!(encoded.kind, ClapIpcMidiKind::NoteOn as u8);
         assert!(encoded.is_valid(8));
 
@@ -1956,6 +1970,7 @@ mod tests {
             sample_offset: 0,
             track_id,
             note_id: None,
+            channel: 0,
             pitch: 0,
             velocity: 0,
             controller: Some(64),
@@ -1969,6 +1984,10 @@ mod tests {
         let mut invalid_offset = note;
         invalid_offset.sample_offset = 8;
         assert!(ClapIpcMidiEvent::from_scheduled(invalid_offset, 8).is_none());
+
+        let mut invalid_channel = note;
+        invalid_channel.channel = crate::MIDI_CHANNEL_COUNT;
+        assert!(ClapIpcMidiEvent::from_scheduled(invalid_channel, 8).is_none());
     }
 
     #[test]

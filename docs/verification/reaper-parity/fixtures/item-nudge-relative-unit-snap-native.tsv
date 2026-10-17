@@ -1,0 +1,15 @@
+version	7.82/linux-x86_64
+theme	Default_7.0.ReaperThemeZip
+project_sample_rate	44100
+project_bpm	120
+dialog_action	41226
+nudge_right_action	41249
+fixture	Audio A at 1.270s / 0.500s; Audio B at 4.100s / 1.000s; MIDI item at 0-8s
+baseline_item_selections_snap	state_change_count	21	undo_label	Change media item selection	audio_a_position_s	1.270000000	audio_a_length_s	0.500000000	audio_a_selected	1	audio_b_position_s	4.100000000	audio_b_length_s	1.000000000	audio_b_selected	1	midi_position_s	0.000000000	midi_length_s	8.000000000	midi_selected	0
+after_right_item_selections_snap	state_change_count	21	undo_label	Change media item selection	audio_a_position_s	5.000000000	audio_a_length_s	0.500000000	audio_a_selected	1	audio_b_position_s	7.830000000	audio_b_length_s	1.000000000	audio_b_selected	1	midi_position_s	0.000000000	midi_length_s	8.000000000	midi_selected	0
+baseline_notes_quarter_snap	state_change_count	22	undo_label	Nudge items	audio_a_position_s	1.270000000	audio_a_length_s	0.500000000	audio_a_selected	1	audio_b_position_s	4.100000000	audio_b_length_s	1.000000000	audio_b_selected	0	midi_position_s	0.000000000	midi_length_s	8.000000000	midi_selected	0
+after_right_notes_quarter_snap	state_change_count	22	undo_label	Nudge items	audio_a_position_s	2.000000000	audio_a_length_s	0.500000000	audio_a_selected	1	audio_b_position_s	4.100000000	audio_b_length_s	1.000000000	audio_b_selected	0	midi_position_s	0.000000000	midi_length_s	8.000000000	midi_selected	0
+baseline_notes_quarter_triplet_snap	state_change_count	23	undo_label	Nudge items	audio_a_position_s	1.270000000	audio_a_length_s	0.500000000	audio_a_selected	1	audio_b_position_s	4.100000000	audio_b_length_s	1.000000000	audio_b_selected	0	midi_position_s	0.000000000	midi_length_s	8.000000000	midi_selected	0
+after_right_notes_quarter_triplet_snap	state_change_count	23	undo_label	Nudge items	audio_a_position_s	1.666666667	audio_a_length_s	0.500000000	audio_a_selected	1	audio_b_position_s	4.100000000	audio_b_length_s	1.000000000	audio_b_selected	0	midi_position_s	0.000000000	midi_length_s	8.000000000	midi_selected	0
+baseline_item_lengths_snap	state_change_count	24	undo_label	Nudge items	audio_a_position_s	1.270000000	audio_a_length_s	0.500000000	audio_a_selected	1	audio_b_position_s	4.100000000	audio_b_length_s	1.000000000	audio_b_selected	0	midi_position_s	0.000000000	midi_length_s	8.000000000	midi_selected	0
+after_right_item_lengths_snap	state_change_count	24	undo_label	Nudge items	audio_a_position_s	2.000000000	audio_a_length_s	0.500000000	audio_a_selected	1	audio_b_position_s	4.100000000	audio_b_length_s	1.000000000	audio_b_selected	0	midi_position_s	0.000000000	midi_length_s	8.000000000	midi_selected	0

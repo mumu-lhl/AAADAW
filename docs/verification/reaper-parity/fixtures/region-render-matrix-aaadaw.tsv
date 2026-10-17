@@ -1,0 +1,32 @@
+key	value
+reference	Linux REAPER 7.82 linux-x86_64 / Default 7 / isolated fresh config
+native_project	region-render-matrix-native.rpp
+native_project_sha256	da2a36981d314b58802787fd1ffa56fd701b6639f4bacdaa39917032fe690929
+native_probe	probe-region-render-matrix.lua; native project saved after API setup and matrix window opened
+native_api_index	SetRegionRenderMatrix uses visible region number (1-based); EnumRegionRenderMatrix(0,1,...) maps to Intro; region 2 maps to Verse
+native_intro_assignment	Master mix; Drums; Guitar
+native_verse_assignment	Bass
+native_matrix_window	region-render-matrix-native.png; expanded native bottom dock; native table and assignments are visible
+native_matrix_screenshot_sha256	0764af18ad638afa70c24bd584f5d628598fb4791a24c7d72b4884c81592529d
+native_tsv_sha256	4cf7806afa80819f2919ed9b32664b932e3ffc1e55d314858b7dff2de306a604
+native_project_tracks	Drums; Bass; Guitar
+native_project_regions	Intro [0,4] seconds; Verse [4,8] seconds
+native_project_note	Intro marker flags include Master assignment; REGIONRENDER blocks persist per-region track assignments
+native_profile_note	Fresh project and isolated profile; audio device error was closed before capture; no audio-device behavior inferred
+
+aaadaw_project	region-render-matrix-aaadaw.aaadaw
+aaadaw_project_sha256	6347f8304fc575cd9cacf18ae70fee9c1c4a7e3c12d653d15946f6c1bdd3d700
+aaadaw_build	Current source built with cargo build -p aaadaw; app launched under Xvfb display :342
+aaadaw_build_id	944bdb25ccfa23d3db4550b82236df706fdd206b
+aaadaw_binary_sha256	0fa31649a8e6572e739df83f22751254d5d31e5ced8be8189a5e1dfa08bb7fdc
+aaadaw_project_load	Opened fixture through File > Recent projects; Arrange and Mixer displayed Drums, Bass, Guitar
+aaadaw_matrix_entry	Temporary isolated shortcuts.conf mapped view.region-render-matrix to F12; target-only test profile used for capture
+aaadaw_baseline	region-render-matrix-aaadaw.png; Master/Drums/Guitar assigned to Intro, Bass assigned to Verse
+aaadaw_baseline_sha256	ad8fb7e4596d8f87f7f1cef8c0855cc983e93156e028c61772167ed45b001ef8
+aaadaw_interaction	Click Master mix × Verse in the actual matrix window; checkbox changed on screen
+aaadaw_cell_edit_screenshot	region-render-matrix-aaadaw-cell-edit.png
+aaadaw_cell_edit_sha256	7b85fd03a42c4909b2c0cef07cb5a33818d101dd2234976654b7b45bb0858f3e
+aaadaw_undo	Ctrl+Z in the main window restored Master mix × Verse to unchecked; the final matrix matches the initial assignments
+aaadaw_undo_screenshot	region-render-matrix-aaadaw-undo.png
+aaadaw_undo_sha256	5a73416188165f2d0c88357a7187a699c4c68cccfffee6f30a1d0203f023a75a
+aaadaw_limitations	The AAADAW matrix is a separate 820×520 window rather than REAPER's docked panel; full geometry/theme parity and a native-versus-AAADAW rendered-audio/file-count comparison remain open. This evidence does not close either parity row.

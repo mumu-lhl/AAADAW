@@ -1,0 +1,19 @@
+field	value
+native_version	Linux REAPER 7.82 / Default_7.0.ReaperThemeZip
+native_actions	40897 File: Save all projects; 40886 File: Close all projects
+native_shortcuts	Neither action has a default shortcut
+native_probe	scripts/reaper_parity/probe-save-close-all.lua; menu-save-close-all-native.tsv
+native_save_all_result	One modified track was written to the active project's existing path
+native_close_all_result	The sole saved project closed; REAPER remained open on an empty, unsaved project workspace
+native_reference_screenshot	menu-file-native.png
+native_reference_screenshot_sha256	c5a37d3fa3c79c458dbd9caf868123d4dd64a0c0c95382c78e1bbbdb42c7229b
+aaadaw_environment	Linux AAADAW / Xvfb :254 / 1280x800 / fresh isolated XDG profile / audio unavailable
+aaadaw_menu_order	Save all projects follows Save new version; Close all projects follows Close project
+aaadaw_default_shortcuts	Neither action has a default shortcut
+aaadaw_screenshot	menu-save-close-all-aaadaw.png
+aaadaw_screenshot_sha256	525258db323da49741c309699f20b56b6019db961babc0585b03d9e5c7f4fd0e
+test	crates/aaadaw/src/app/tests.rs::file_menu_matches_native_save_all_and_close_all_actions_for_one_project
+test	crates/aaadaw/src/app/tests.rs::save_all_projects_routes_through_the_active_project_save
+test	crates/aaadaw/src/app/tests.rs::close_all_projects_routes_through_the_guarded_single_project_close
+comparison_scope	Menu labels/order/shortcuts, single-project save semantics, close transition guard and resulting empty workspace
+limitation	AAADAW supports one open project; saving/closing multiple REAPER project tabs is not implemented

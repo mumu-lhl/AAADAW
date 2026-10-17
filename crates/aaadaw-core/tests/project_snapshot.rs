@@ -22,6 +22,7 @@ fn project_snapshot_roundtrip_preserves_ids_and_timebase_state() {
         .apply(DawAction::AddMidiNotes {
             item_id,
             notes: vec![MidiNoteData {
+                channel: 0,
                 pitch: 64,
                 tick: 0,
                 duration: 960,

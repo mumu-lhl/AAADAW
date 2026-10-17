@@ -1,0 +1,31 @@
+key	value
+reference	Linux REAPER 7.82 / Default 7 / isolated config
+probe	scripts/reaper_parity/probe-render-date-time-wildcards.lua
+probe_script_sha256	1d5a2f0b00707c1bb7d92d12390870b9d499facbe67c92e0c13ad589b3e6c6ad
+timezone	TZ=Etc/GMT+12 (UTC-12) to distinguish $hour from $hour12 without changing system clock
+local_probe_time	2026-10-16 00:29:17 -1200
+pattern	$date-$time-$datetime-$year-$year2-$month-$monthname-$day-$dayname-$hour-$hour12-$ampm-$minute-$second-$localtime-$track
+preview_output	2026-10-16-00_29_18-2026-10-16 00_29_18-2026-26-10-oct-16-fri-00-12-am-29-18-Fri, Oct 16 2026 00_29-Master.wav
+finished_output	2026-10-16-00_29_28-2026-10-16 00_29_28-2026-26-10-oct-16-fri-00-12-am-29-28-Fri, Oct 16 2026 00_29-Master.wav
+format	WAV PCM24; 48,000 Hz; stereo; 48,000 frames; 1.000 seconds
+output_file_size_bytes	288690
+output_sha256	ff9dbc700ce21fe13303f50fe76742b879775fdb4c5deb74a99ad226ede29ad7
+preview_screenshot	render-wildcards-date-time-preview-native.png
+preview_screenshot_sha256	2823c4f6951f23cb60e7160319ad255a4877f64d179b7de8c8fa97b5633155b9
+finished_screenshot	render-wildcards-date-time-finished-native.png
+finished_screenshot_sha256	43fa2ec73dc9953101b3e7fb6b7e48390a5cc562687362ca00dc59072309a4af
+$date	YYYY-MM-DD
+$time	HH_MM_SS (24-hour)
+$datetime	YYYY-MM-DD HH_MM_SS
+$year	4-digit year
+$year2	2-digit year
+$month	2-digit month number
+$monthname	lowercase 3-letter English month name
+$day	2-digit day of month
+$dayname	lowercase 3-letter English weekday name
+$hour	2-digit 24-hour clock
+$hour12	2-digit 12-hour clock
+$ampm	lowercase am/pm
+$minute	2-digit minute
+$second	2-digit second
+$localtime	weekday, abbreviated month day year 24-hour HH_MM

@@ -6,8 +6,11 @@ const MEDIA_REF: &str = "asset://first-project/melody.wav";
 
 #[test]
 fn bundled_first_project_opens_with_decodable_embedded_audio() {
-    let project_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+    let fixture_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../../examples/first-project/first-project.aaadaw");
+    let scratch = tempfile::tempdir().expect("temporary project directory should be available");
+    let project_path = scratch.path().join("first-project.aaadaw");
+    std::fs::copy(fixture_path, &project_path).expect("fixture should copy to temporary storage");
     let store = ProjectStore::open(&project_path).expect("example project should open");
     let project = store.load().expect("example project should load");
 

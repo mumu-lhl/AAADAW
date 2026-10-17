@@ -1,0 +1,24 @@
+reaper_version	7.82/linux-x86_64
+reaper_theme	Default_7.0.ReaperThemeZip
+native_project	Fresh unsaved project; newly inserted 2-second MIDI item selected
+native_window	Media Item Properties; xwininfo 526x693
+native_loop_source_default	Checked
+native_screenshot	midi-item-properties-loop-source-native.png; 1280x800; SHA-256 54cbe02dd545b89d0d1fee0c1d9d717d0eb98b949160736187f43a6322d47bba
+aaadaw_build_id	731072fd5d787f4b86a53b0e680f01a7f5d59d69
+aaadaw_binary_sha256	a3b9012b630dd25abeba7f1fda6b3e6dd92c90f3ac7db86f7f0db28b421f8602
+aaadaw_startup_smoke	bundled Xvfb :90; actual 1280x800 main window visible
+aaadaw_startup_screenshot	aaadaw-desktop-runtime-startup.png; SHA-256 ae7790daa7323931332582152cd05219af623ac5530147835ee56910ba2ebd9b
+aaadaw_live_ui	Xvfb :155; isolated XDG profile; created and selected MIDI item through visible controls; F2 opened Item Properties
+aaadaw_window	Media Item Properties; xwininfo 526x390
+aaadaw_loop_source_default	Checked
+aaadaw_screenshot	midi-item-properties-loop-source-aaadaw.png; 1280x800; SHA-256 861d598d456616d5805be29153ab0004ae0821fdfa4889d72421155523322046
+app_regression	midi_item_properties_toggle_loop_source_preserves_source_length_and_undoes; 960-tick source loop; 1920-tick visible item; Apply/Undo/Redo
+engine_regression	event_plan_stops_repeating_midi_source_when_loop_source_is_disabled
+app_test_suite	Stable nextest; 585 passed; 0 skipped
+engine_test_suite	Nightly+Cranelift nextest with bundled Xvfb; 187 passed; 0 skipped
+aaadaw_source_length_build_id	cefd0b9deef9f55f3d07f233dca911297cb761d2
+aaadaw_source_length_binary_sha256	81f1b343d1d26e796819219b43d085880f7fda6060518f0270c8f7e9ead66e28
+aaadaw_source_length_live_ui	Xvfb :270; isolated XDG profile; created and selected MIDI item through visible controls; F2 opened Item Properties; changed source length from 3840 to 7680 PPQ and clicked Apply
+aaadaw_source_length_window	Media Item Properties; xwininfo 526x390; visible item length remained 2 seconds
+aaadaw_source_length_screenshot	midi-item-properties-source-length-aaadaw.png; 1280x800; SHA-256 4be933b643d448ef2c65378826c8613adef488098fee9b8c5a34ae923858cbef
+remaining_scope	Native source length is read-only in its Properties dialog; no shortening behavior is exposed there; empty trimmed source-length recovery; other MIDI Item Properties controls and full native window geometry

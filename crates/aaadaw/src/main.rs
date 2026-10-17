@@ -4,6 +4,7 @@ mod app;
 mod clap_scanner;
 mod logging;
 mod mcp;
+mod project_time;
 mod timeline;
 
 fn main() -> std::process::ExitCode {

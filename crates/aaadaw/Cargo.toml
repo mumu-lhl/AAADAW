@@ -31,6 +31,7 @@ rmcp = { version = "3.5.0", default-features = false, features = ["server", "tra
 iced_winit = { version = "0.14.1", default-features = false, features = ["x11", "wayland"] }
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 directories = "6.0.0"
+chrono = "0.4.45"
 tracing = "0.1"
 tracing-appender = "0.2.5"
 tracing-subscriber = { version = "0.3.23", default-features = false, features = ["env-filter", "fmt"] }

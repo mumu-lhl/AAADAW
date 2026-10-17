@@ -1,0 +1,7 @@
+reference	Linux REAPER 7.82 / Default 7; MIDI Editor action 40009; selected notes only; 1/32 grid = 120 PPQ ticks; strength 100%; Fix overlaps checked
+operation	input_selected_pitch_start_end	output_selected_pitch_start_end	unselected_pitch_start_end
+Position	60:100-220;62:350-430;64:900-970	60:120-240;62:360-440;64:960-1030	67:550-670
+Position and note end	60:100-280;62:350-430;64:900-970	60:120-240;62:360-480;64:960-1080	67:550-670
+Position and note length	60:100-280;62:350-430;64:900-970	60:120-360;62:360-480;64:960-1080	67:550-670
+Note end only	60:100-220;62:350-430;64:900-970	60:100-240;62:350-480;64:900-960	67:550-670
+Note length only	60:100-220;62:350-430;64:900-970	60:100-220;62:350-470;64:900-1020	67:550-670

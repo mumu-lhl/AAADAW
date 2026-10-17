@@ -1,0 +1,5 @@
+version	7.82/linux-x86_64
+theme	Default_7.0.ReaperThemeZip
+action_40616	Markers: Edit region near cursor
+case	region_number	cursor_before	result	cursor_after	observed
+dialog	1	1.500000000	open	1.500000000	Name, ID, Lane, Position, Length; Region Manager, Region Render Matrix, Set color, Reset color, OK, Cancel

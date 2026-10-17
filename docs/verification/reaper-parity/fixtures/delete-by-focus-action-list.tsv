@@ -1,0 +1,17 @@
+field	value
+reference	Linux REAPER 7.82 / Default 7
+reference_action	Main 40697 — Remove items/tracks/envelope points (depending on focus) — Delete
+reference_alternate	Main 40697 — Remove items/tracks/envelope points (depending on focus) - no prompting — no default binding
+reference_secondary_action	Main 40006 — Item: Remove items — no default binding
+aaadaw_commit	f19425d (nightly + Cranelift development build)
+display	X11 Xvfb :224, 1280x800x24, no window manager
+window_geometry	Both Action List client areas 701x475
+reaper_configuration	Fresh isolated config under target/reaper-parity-delete-ui/reaper-profile; no personal config or extensions
+aaadaw_configuration	Isolated XDG directories under target/reaper-parity-delete-ui; no project loaded
+reaper_filter	remove items/tracks/envelope points
+aaadaw_filter	delete by focus
+reaper_screenshot	delete-by-focus-action-list-native.png
+reaper_sha256	8225bc61804dc501ea14a74a308a0d724f81d90029183a305869c5c8c1d86904
+aaadaw_screenshot	delete-by-focus-action-list-aaadaw.png
+aaadaw_sha256	9a4e04921e1222c00b063f60ecfc5eb9f5e9ba31a597b2a4184da35d94333f99
+observation	REAPER displays the Delete-bound action and a separate no-prompting variant. AAADAW displays the matching action label with Delete; it does not yet include the alternate variant. This is an Action List screenshot comparison only; it does not verify runtime focus routing or pixel parity.

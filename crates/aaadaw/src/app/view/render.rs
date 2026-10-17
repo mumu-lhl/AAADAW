@@ -1,14 +1,475 @@
+use super::super::audio_export::{
+    RenderBounds, RenderFilenameWildcard, RenderSampleRate, RenderSource,
+    parse_render_peak_target_centi_dbfs, parse_render_tail_milliseconds,
+};
 use super::super::{App, Message, PathPickerTarget};
 use super::tokens;
-use aaadaw_app::WavSampleFormat;
-use iced::widget::{button, column, container, pick_list, row, rule, text};
+use aaadaw_app::{WavChannelCount, WavSampleFormat};
+use iced::widget::{
+    button, checkbox, column, container, pick_list, row, rule, scrollable, text, text_input,
+};
 use iced::{Alignment, Element, Length};
+
+fn wildcard_group_row(
+    label: &'static str,
+    wildcards: impl IntoIterator<Item = RenderFilenameWildcard>,
+) -> iced::widget::Row<'static, Message> {
+    wildcards
+        .into_iter()
+        .fold(row![text(label).size(11)], |tokens, wildcard| {
+            tokens.push(
+                button(wildcard.token()).on_press(Message::InsertRenderFilenameWildcard(wildcard)),
+            )
+        })
+        .spacing(tokens::SPACING_XS)
+        .align_y(Alignment::Center)
+}
 
 pub(super) fn view(app: &App) -> Element<'_, Message> {
     let options = app.wav_export_options;
+    let bounds = app.render_dialog.bounds;
+    let selected_media_items = app.render_dialog.source == RenderSource::SelectedMediaItems;
+    let region_render_matrix = app.render_dialog.source == RenderSource::RegionRenderMatrix;
+    let multiple_files = app.render_requires_multiple_files();
+    let output_description = match (selected_media_items, multiple_files) {
+        (true, true) => "Choose an audio format and filename prefix for the selected media items.",
+        (true, false) => "Choose an audio format and output filename for the selected media item.",
+        (false, true) => {
+            "Choose the render range and audio format, then select a filename prefix for the output set."
+        }
+        (false, false) => {
+            "Choose the render range and audio format, then select an output filename."
+        }
+    };
+    let form_hint = if !selected_media_items
+        && app.render_dialog.tail_enabled
+        && parse_render_tail_milliseconds(&app.render_dialog.tail_duration_text).is_err()
+    {
+        Some("Tail must be a non-negative whole number of milliseconds.")
+    } else if !selected_media_items
+        && bounds == RenderBounds::CustomTimeRange
+        && crate::project_time::parse_project_time(&app.render_dialog.custom_start_text).is_err()
+    {
+        Some("Enter a valid custom start time (for example, 0:00.000).")
+    } else if !selected_media_items
+        && bounds == RenderBounds::CustomTimeRange
+        && crate::project_time::parse_project_time(&app.render_dialog.custom_end_text).is_err()
+    {
+        Some("Enter a valid custom end time (for example, 0:05.000).")
+    } else if !selected_media_items
+        && bounds == RenderBounds::TimeSelection
+        && app.timeline.time_selection.is_none()
+    {
+        Some("Create a time selection in Arrange to render that range.")
+    } else if !selected_media_items
+        && matches!(
+            bounds,
+            RenderBounds::AllProjectRegions | RenderBounds::SelectedProjectRegions
+        )
+        && app.project.regions().is_empty()
+    {
+        Some("Add at least one project region in Arrange to render regions.")
+    } else if !selected_media_items
+        && matches!(
+            bounds,
+            RenderBounds::AllProjectMarkers | RenderBounds::SelectedProjectMarkers
+        )
+        && app.project.markers().is_empty()
+    {
+        Some("Add at least one project marker in Arrange to render markers.")
+    } else if region_render_matrix
+        && !matches!(
+            bounds,
+            RenderBounds::AllProjectRegions | RenderBounds::SelectedProjectRegions
+        )
+    {
+        Some("Region Render Matrix source requires project region bounds.")
+    } else if region_render_matrix && !app.has_valid_render_source() {
+        Some("Assign the Master mix or at least one track to a region in Region Render Matrix.")
+    } else if selected_media_items && !app.has_valid_render_source() {
+        app.selected_media_item_source_error()
+    } else if !app.has_valid_render_source() {
+        Some("Select one or more tracks in Arrange to render them via the master.")
+    } else if cfg!(target_os = "android") && app.render_requires_multiple_files() {
+        Some("The Android document picker supports one output file at a time.")
+    } else if app.render_dialog.normalize_peak
+        && parse_render_peak_target_centi_dbfs(&app.render_dialog.normalize_peak_target_text)
+            .is_err()
+    {
+        Some("Peak target must be between -60 and 0 dBFS with up to 2 decimals.")
+    } else if !selected_media_items
+        && bounds == RenderBounds::CustomTimeRange
+        && !app.can_submit_render()
+    {
+        Some("Custom range end must follow start and both times must map to valid project samples.")
+    } else if !selected_media_items
+        && matches!(
+            bounds,
+            RenderBounds::AllProjectMarkers | RenderBounds::SelectedProjectMarkers
+        )
+        && !app.can_submit_render()
+    {
+        Some(
+            "Each project marker must have a non-empty range up to the next marker or project end.",
+        )
+    } else if !app.can_submit_render() {
+        Some("Render range plus tail must contain at least one frame.")
+    } else {
+        None
+    };
+    let form_hint: Option<Element<'_, Message>> =
+        form_hint.map(|message| text(message).size(11).into());
+    let bounds_control: Element<'_, Message> = if selected_media_items {
+        row![
+            text("Time bounds").size(13),
+            iced::widget::Space::new().width(Length::Fill),
+            text(app.selected_media_items_summary()).size(13),
+        ]
+        .spacing(tokens::SPACING_SM)
+        .align_y(Alignment::Center)
+        .into()
+    } else {
+        let available_bounds = if region_render_matrix {
+            &RenderBounds::REGION_MATRIX[..]
+        } else {
+            &RenderBounds::ALL[..]
+        };
+        row![
+            text("Bounds").size(13),
+            iced::widget::Space::new().width(Length::Fill),
+            pick_list(available_bounds, Some(bounds), Message::SetRenderBounds,)
+                .text_size(13)
+                .padding([4, 8])
+                .width(Length::Fixed(180.0)),
+        ]
+        .spacing(tokens::SPACING_SM)
+        .align_y(Alignment::Center)
+        .into()
+    };
     let mut contents = column![
         text("Render project to WAV").size(20),
-        text("Choose the audio format, then select where to save the rendered file.").size(12),
+        text(output_description).size(12),
+        rule::horizontal(1),
+        row![
+            text("Source").size(13),
+            iced::widget::Space::new().width(Length::Fill),
+            pick_list(
+                &RenderSource::ALL[..],
+                Some(app.render_dialog.source),
+                Message::SetRenderSource,
+            )
+            .text_size(13)
+            .padding([4, 8])
+            .width(Length::Fixed(180.0)),
+        ]
+        .spacing(tokens::SPACING_SM)
+        .align_y(Alignment::Center),
+        text(app.render_source_description()).size(11),
+        row![
+            column![
+                checkbox(app.render_dialog.stems_pre_fader)
+                    .label("Render stems pre-fader")
+                    .on_toggle_maybe(
+                        app.can_render_stems_pre_fader()
+                            .then_some(|enabled| { Message::SetRenderStemsPreFader(enabled) })
+                    ),
+                text("Bypasses selected-track volume fader and automation for stems.").size(11),
+            ]
+            .spacing(2),
+        ]
+        .spacing(tokens::SPACING_SM)
+        .align_y(Alignment::Center),
+        bounds_control,
+        column![
+            row![
+                text("Filename pattern").size(13),
+                text_input(
+                    "$project-$region-$track",
+                    &app.render_dialog.filename_pattern
+                )
+                .on_input(Message::SetRenderFilenamePattern)
+                .size(13)
+                .padding([4, 8])
+                .width(Length::Fill),
+                button("Wildcards…")
+                    .on_press(Message::ToggleRenderWildcardMenu)
+                    .padding([4, 8]),
+            ]
+            .spacing(tokens::SPACING_XS)
+            .align_y(Alignment::Center),
+            text("Optional; omit the extension. Choose a wildcard to append it to the pattern.")
+                .size(11),
+        ]
+        .spacing(2),
+        if app.render_dialog.wildcard_menu_open {
+            column![
+                wildcard_group_row(
+                    "Project information:",
+                    RenderFilenameWildcard::ALL.into_iter().take(3),
+                ),
+                wildcard_group_row(
+                    "Computer information:",
+                    std::iter::once(RenderFilenameWildcard::User)
+                        .chain(std::iter::once(RenderFilenameWildcard::Computer)),
+                ),
+                wildcard_group_row(
+                    "Project directories:",
+                    RenderFilenameWildcard::ALL.into_iter().skip(3).take(2),
+                ),
+                wildcard_group_row(
+                    "Project notes:",
+                    RenderFilenameWildcard::ALL.into_iter().skip(5).take(2),
+                ),
+                wildcard_group_row(
+                    "Tempo:",
+                    RenderFilenameWildcard::ALL
+                        .into_iter()
+                        .skip(7)
+                        .take(2)
+                        .chain(std::iter::once(RenderFilenameWildcard::PlayRate)),
+                ),
+                wildcard_group_row(
+                    "Time signature:",
+                    RenderFilenameWildcard::ALL.into_iter().skip(9).take(3),
+                ),
+                wildcard_group_row(
+                    "Tracks:",
+                    RenderFilenameWildcard::ALL
+                        .into_iter()
+                        .skip(12)
+                        .take(3)
+                        .chain(std::iter::once(RenderFilenameWildcard::SelTrack),),
+                ),
+                wildcard_group_row(
+                    "Regions:",
+                    RenderFilenameWildcard::ALL.into_iter().skip(15).take(4),
+                ),
+                wildcard_group_row(
+                    "Region values:",
+                    std::iter::once(RenderFilenameWildcard::RegionNamedValue),
+                ),
+                wildcard_group_row(
+                    "Markers:",
+                    RenderFilenameWildcard::ALL.into_iter().skip(19).take(4),
+                ),
+                wildcard_group_row(
+                    "Marker values:",
+                    std::iter::once(RenderFilenameWildcard::MarkerNamedValue),
+                ),
+                wildcard_group_row(
+                    "Media items:",
+                    RenderFilenameWildcard::ALL.into_iter().skip(23).take(2),
+                ),
+                wildcard_group_row(
+                    "Position:",
+                    RenderFilenameWildcard::ALL.into_iter().skip(25).take(3),
+                ),
+                wildcard_group_row(
+                    "Beats:",
+                    RenderFilenameWildcard::ALL.into_iter().skip(28).take(3),
+                ),
+                wildcard_group_row(
+                    "Timecode:",
+                    RenderFilenameWildcard::ALL.into_iter().skip(31).take(2),
+                ),
+                wildcard_group_row(
+                    "Frames:",
+                    RenderFilenameWildcard::ALL.into_iter().skip(33).take(3),
+                ),
+                wildcard_group_row(
+                    "Seconds:",
+                    RenderFilenameWildcard::ALL.into_iter().skip(36).take(3),
+                ),
+                wildcard_group_row(
+                    "Length components:",
+                    RenderFilenameWildcard::ALL.into_iter().skip(39).take(4),
+                ),
+                wildcard_group_row(
+                    "Recording:",
+                    RenderFilenameWildcard::ALL.into_iter().skip(43).take(3),
+                ),
+                wildcard_group_row(
+                    "Pitch sequence:",
+                    RenderFilenameWildcard::ALL.into_iter().skip(46).take(3),
+                ),
+                wildcard_group_row(
+                    "Duplicate names:",
+                    RenderFilenameWildcard::ALL.into_iter().skip(49).take(1),
+                ),
+                wildcard_group_row(
+                    "Timeline order:",
+                    RenderFilenameWildcard::ALL.into_iter().skip(50).take(2),
+                ),
+                wildcard_group_row(
+                    "Timeline order by track:",
+                    RenderFilenameWildcard::ALL.into_iter().skip(52).take(2),
+                ),
+                wildcard_group_row(
+                    "Output format:",
+                    RenderFilenameWildcard::ALL.into_iter().skip(54).take(4),
+                ),
+                wildcard_group_row(
+                    "Channels:",
+                    RenderFilenameWildcard::ALL.into_iter().skip(58).take(1),
+                ),
+                wildcard_group_row(
+                    "Track FX:",
+                    RenderFilenameWildcard::ALL.into_iter().skip(61).take(2),
+                ),
+                wildcard_group_row(
+                    "Track folders:",
+                    RenderFilenameWildcard::ALL.into_iter().skip(63).take(4),
+                ),
+                wildcard_group_row(
+                    "Date/time:",
+                    RenderFilenameWildcard::ALL.into_iter().skip(71).take(3),
+                ),
+                wildcard_group_row(
+                    "Calendar:",
+                    RenderFilenameWildcard::ALL.into_iter().skip(74).take(6),
+                ),
+                wildcard_group_row(
+                    "Clock:",
+                    RenderFilenameWildcard::ALL.into_iter().skip(80).take(6),
+                ),
+                wildcard_group_row(
+                    "Unique ID:",
+                    RenderFilenameWildcard::ALL.into_iter().skip(86).take(1),
+                ),
+                row![
+                    text("Options:").size(12),
+                    checkbox(app.render_dialog.allow_slash_in_wildcard_substitutions)
+                        .label("Allow / (create directory) in wildcard substitutions")
+                        .on_toggle(Message::SetRenderWildcardAllowSlash),
+                ]
+                .spacing(tokens::SPACING_SM)
+                .align_y(Alignment::Center),
+            ]
+            .spacing(tokens::SPACING_XS)
+        } else {
+            column![]
+        },
+        {
+            let fields: Element<'_, Message> =
+                if !selected_media_items && bounds == RenderBounds::CustomTimeRange {
+                    row![
+                        text("Start:").size(13),
+                        text_input("0:00.000", &app.render_dialog.custom_start_text)
+                            .on_input(Message::SetRenderCustomStart)
+                            .size(13)
+                            .padding([4, 8])
+                            .width(Length::FillPortion(1)),
+                        text("End:").size(13),
+                        text_input("0:05.000", &app.render_dialog.custom_end_text)
+                            .on_input(Message::SetRenderCustomEnd)
+                            .size(13)
+                            .padding([4, 8])
+                            .width(Length::FillPortion(1)),
+                        text("Length:").size(13),
+                        text(
+                            app.custom_render_length_text()
+                                .unwrap_or_else(|| "—".to_owned())
+                        )
+                        .size(13),
+                    ]
+                    .spacing(tokens::SPACING_SM)
+                    .align_y(Alignment::Center)
+                    .into()
+                } else if let Some(summary) = app.render_bounds_summary() {
+                    text(summary).size(13).into()
+                } else {
+                    iced::widget::Space::new().height(Length::Fixed(0.0)).into()
+                };
+            fields
+        },
+        row![
+            checkbox(app.render_dialog.tail_enabled)
+                .label("Tail")
+                .on_toggle_maybe((!selected_media_items).then_some(Message::SetRenderTailEnabled),),
+            text_input("1000", &app.render_dialog.tail_duration_text)
+                .on_input_maybe(
+                    (app.render_dialog.tail_enabled && !selected_media_items)
+                        .then_some(Message::SetRenderTailDuration)
+                )
+                .size(13)
+                .padding([4, 8])
+                .width(Length::Fixed(88.0)),
+            text("ms").size(13),
+            iced::widget::Space::new().width(Length::Fill),
+        ]
+        .spacing(tokens::SPACING_SM)
+        .align_y(Alignment::Center),
+        row![
+            text("Sample rate").size(13),
+            iced::widget::Space::new().width(Length::Fill),
+            pick_list(
+                &RenderSampleRate::ALL[..],
+                Some(app.render_dialog.sample_rate),
+                Message::SetRenderSampleRate,
+            )
+            .text_size(13)
+            .padding([4, 8])
+            .width(Length::Fixed(180.0)),
+        ]
+        .spacing(tokens::SPACING_SM)
+        .align_y(Alignment::Center),
+        row![
+            text("Channels").size(13),
+            iced::widget::Space::new().width(Length::Fill),
+            pick_list(
+                &WavChannelCount::ALL[..],
+                Some(app.render_dialog.channels),
+                Message::SetRenderChannels,
+            )
+            .text_size(13)
+            .padding([4, 8])
+            .width(Length::Fixed(180.0)),
+        ]
+        .spacing(tokens::SPACING_SM)
+        .align_y(Alignment::Center),
+        row![
+            column![
+                text("Peak normalize").size(13),
+                text("Scales the loudest output sample to the selected target.").size(11),
+            ]
+            .spacing(2),
+            iced::widget::Space::new().width(Length::Fill),
+            button(if app.render_dialog.normalize_peak {
+                "On"
+            } else {
+                "Off"
+            })
+            .style(if app.render_dialog.normalize_peak {
+                button::primary
+            } else {
+                button::secondary
+            })
+            .on_press(Message::SetRenderPeakNormalization(
+                !app.render_dialog.normalize_peak,
+            )),
+        ]
+        .spacing(tokens::SPACING_SM)
+        .align_y(Alignment::Center),
+        row![
+            column![
+                text("Peak target (dBFS)").size(13),
+                text("Range: -60 to 0 dBFS.").size(11),
+            ]
+            .spacing(2),
+            iced::widget::Space::new().width(Length::Fill),
+            text_input("0", &app.render_dialog.normalize_peak_target_text)
+                .on_input(Message::SetRenderPeakTarget)
+                .size(13)
+                .padding([4, 8])
+                .width(Length::Fixed(88.0)),
+        ]
+        .spacing(tokens::SPACING_SM)
+        .align_y(Alignment::Center),
+        text(format!(
+            "Output rate: {} Hz",
+            app.render_output_sample_rate()
+        ))
+        .size(11),
         rule::horizontal(1),
         row![
             text("Format").size(13),
@@ -52,6 +513,10 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
     .padding(tokens::SPACING_LG)
     .width(Length::Fill);
 
+    if let Some(form_hint) = form_hint {
+        contents = contents.push(form_hint);
+    }
+
     if let Some(active) = &app.active_offline_job {
         contents = contents.push(text(format!("Active job: {}", active.job.label())).size(12));
     } else {
@@ -87,7 +552,11 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
 
     contents = contents.push(
         button(if app.path_picker_busy {
-            "Choose output file…"
+            if multiple_files {
+                "Choose output prefix…"
+            } else {
+                "Choose output file…"
+            }
         } else if app.offline_render_busy
             && app.offline_job_queue.len()
                 >= super::super::offline_job_queue::MAX_PENDING_OFFLINE_JOBS
@@ -101,6 +570,7 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
         .style(button::primary)
         .on_press_maybe(
             (!app.path_picker_busy
+                && app.can_submit_render()
                 && (!app.offline_render_busy
                     || app.offline_job_queue.len()
                         < super::super::offline_job_queue::MAX_PENDING_OFFLINE_JOBS))
@@ -108,7 +578,7 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
         ),
     );
 
-    container(contents)
+    container(scrollable(contents))
         .width(Length::Fill)
         .height(Length::Fill)
         .into()

@@ -1,0 +1,13 @@
+key	value
+reference	AAADAW Linux desktop; live X11 window; Receiver with two Audio Sends
+build_backend	nightly Cranelift
+binary_build_id	466f464154685bf2ac58e9d69397f38b2b60cb4f
+binary_sha256	04521f97a749c0a105608e67175b3fbe7ca6c6b08a8e794f7e7ee4750be85387
+display	Xvfb :2338; 1280x800; WGPU_BACKEND=gl
+routing_window	Routing for Receiver; 760x560
+project_generator	crates/aaadaw-storage/examples/generate_audio_send_demo.rs
+initial	Audio 1 and Audio 2 appear as separate Receive rows with a Remove button; screenshot images/audio-receives-remove-initial-aaadaw.png; SHA-256 e92da1354baa07c927970b7b410a931e3c2d92b1f942537bbc6cbe104ef9cc68
+remove	Clicked Remove on Audio 1; only the Audio 2 receive remained; screenshot images/audio-receives-remove-after-delete-aaadaw.png; SHA-256 951f67f7a4e5ed7c88e6161fcc1a2af46c382f005aaf4298451fd714f338ecb4
+undo	Sent Ctrl+Z with Routing for Receiver focused; both Receive rows returned; screenshot images/audio-receives-remove-after-undo-aaadaw.png; SHA-256 1131cc499f58be8678d56eb9f2c1ce919de98d921a93c71caae45d74824ac787
+automated_regressions	crates/aaadaw/src/app/tests.rs::receive_list_removal_deletes_only_that_send_and_undo_restores_it; crates/aaadaw/src/app/tests.rs::undo_shortcut_works_while_the_routing_window_has_focus
+scope	AAADAW live UI operation and undo evidence; no pixel comparison to REAPER; complete Routing parity remains open

@@ -36,7 +36,8 @@ The checked-in `deny.toml` is the executable policy; CI checks every feature
 and Linux, Windows, macOS, and Android target alongside the RustSec advisory
 audit. MIT, Apache-2.0, BSD, ISC, Unicode, zlib, Boost, and Apache/LLVM
 expressions are allowed. The audit found MPL-2.0 in `option-ext` and the
-Symphonia decoder family; these named crates are the only copyleft exception.
+Symphonia decoder family, including its ADPCM codec; these named crates are
+the only copyleft exception.
 MPL permits use in a larger work under other terms, but distribution of covered
 source files and modified versions carries source and notice obligations. Any
 binary release must provide the corresponding MPL source and notices; see the

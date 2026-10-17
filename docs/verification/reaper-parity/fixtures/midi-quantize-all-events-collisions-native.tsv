@@ -1,0 +1,8 @@
+reference	Linux REAPER 7.82 / Default 7; Quantize Events scope All events; operation Position; 1/32 grid = 120 PPQ ticks; strength 100%
+before_notes	unselected C4 100-280; selected D4 350-430
+after_notes	unselected C4 120-300; selected D4 360-440
+before_cc	unselected CC1 ch1 value64 @475; unselected CC1 ch1 value65 @485; selected CC7 ch2 value96 @730
+after_cc	unselected CC1 ch1 value65 @480; selected CC7 ch2 value96 @720
+before_pitch_bend	unselected ch1 value8000 @835; unselected ch1 value8192 @850
+after_pitch_bend	unselected ch1 value8192 @840
+collision_behavior	When quantize moves multiple same-channel/same-parameter events to one tick, REAPER retains the event that had the latest original tick and its value; one CC1 and one pitch-bend event remain at each collision tick

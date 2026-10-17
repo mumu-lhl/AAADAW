@@ -2,6 +2,12 @@
 
 > 本路线图以 [`docs/design/AAADAW_System_Architecture_Design.md`](docs/design/AAADAW_System_Architecture_Design.md) 为依据，将目标架构拆解为可逐步交付、可验证的里程碑。事项状态以勾选项为准；本路线图不承诺日历日期，按依赖关系与退出标准推进。
 
+## REAPER 7.82 全量对齐专项
+
+2026-10-09 用户批准以 **Linux REAPER 7.82、默认主题与配置** 对齐全部适用原厂界面、操作、交互及基础功能。按 [完整实施计划](docs/plans/reaper-parity-implementation.md) 的 P0–P12 和 [对齐矩阵](docs/reaper-parity/parity-matrix.csv) 推进。所有开发在 `feat/reaper-parity` 一个分支完成，只开一个 PR。
+
+下面 Core MVP/Phase 2 的勾选保留历史实现记录；已实现不等于通过参照验收。原先“后续专业制作能力”中的适用功能已纳入专项，不再以 MVP 范围将其排除。参照采集、原子清单和设备/视觉证据未完成前，不宣称 100% 对齐。实时安全、Project/Action、数据迁移和跨平台工程兼容门槛继续适用。
+
 ## 推进原则
 
 - **先做可用的垂直切片，再扩展功能面**：优先打通“工程数据 → 音频引擎 → UI → 保存/恢复”链路。
@@ -257,7 +263,7 @@
 
 ## 后续专业制作能力（分批立项）
 
-这些能力属于设计文档中的高级功能矩阵，不是 Core MVP 的隐含验收条件。应在核心产品稳定后根据用户需求拆分并独立验收。
+这些能力属于设计文档中的高级功能矩阵，不是历史 Core MVP 的隐含验收条件。2026-10-09 已批准的 REAPER 全量对齐专项将固定基线适用能力纳入本次交付，按专项依赖顺序实现并逐项验收。
 
 1. **路由与混音深化**：2–64 通道池、Send/Receive 与多种 Tap Point、侧链、插件引脚矩阵、路由矩阵、全图 PDC；最后再评估反馈路由及其延迟语义。
 2. **编辑与自动化**：Razor Editing、Automation Items、Pooled MIDI、更多淡化曲线、非破坏性处理、自动化模式与参数调制。

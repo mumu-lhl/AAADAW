@@ -1,0 +1,17 @@
+AAADAW Linux desktop Snap/Grid Settings window capture
+
+	value
+repository_branch	feat/reaper-parity
+reaper_target	Linux REAPER 7.82 / Default 7
+aaadaw_binary	target/debug/aaadaw
+aaadaw_binary_sha256	e91534371ca41474e4e6fd370710a9cbdcf69f7910babd6acc4e9f567d0decd7
+rust_backend	rustup nightly + -Zcodegen-backend=cranelift
+display	Xorg :112; 1280x800x24
+window_open	Actual keyboard Alt+L; title Snap/Grid Settings; 460x190
+settings_initial_state	Swing grid unchecked; swing amount 50%; grid line spacing 1/4
+settings_initial_screenshot	fixtures/item-snap-grid-settings-aaadaw.png; SHA-256 797bc123056ba48f619668fa4061e7254330ed0b91cf6dd247e612611f03aafb
+swing_toggle	Actual XTest pointer/button input toggled Swing grid on
+swing_enabled_screenshot	fixtures/item-snap-grid-settings-swing-enabled-aaadaw.png; SHA-256 1712cffafb547d7b4760419d5d523835e915aaf7b73545d715d8849dbb126847
+main_toolbar_screenshot	fixtures/item-snap-grid-toolbar-aaadaw.png; SHA-256 5983232a7cbe2cccfc9b20feb1d36f805f879d847cf558bb74e838e2d255ad1d
+audio_io	No audio-device feature; no hardware I/O or playback
+notes	Toolbar and dialog render in the new desktop binary. The screenshot is a local AAADAW capture, not a pixel-parity acceptance.

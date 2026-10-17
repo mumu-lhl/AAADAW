@@ -1,14 +1,2454 @@
 use super::messages::FreezeTrackResult;
 use super::offline_job_queue::{EnqueueError, OfflineJobId};
 use super::{App, Message, run_blocking};
-use aaadaw_core::{DawAction, Project, ProjectSnapshot, TrackId};
+use aaadaw_app::{ClapPluginDescriptor, WavChannelCount, WavSampleFormat};
+use aaadaw_core::{DawAction, ItemId, MarkerId, Project, ProjectSnapshot, RegionId, TrackId};
 use aaadaw_storage::ProjectStore;
 use iced::Task;
-use std::path::PathBuf;
-use std::sync::atomic::Ordering;
-use std::sync::{Arc, Mutex};
+use std::collections::{HashMap, HashSet};
+use std::env;
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, OnceLock};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 const JOB_HISTORY_CAPACITY: usize = 4;
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(crate) enum RenderBounds {
+    #[default]
+    EntireProject,
+    CustomTimeRange,
+    TimeSelection,
+    AllProjectRegions,
+    SelectedProjectRegions,
+    AllProjectMarkers,
+    SelectedProjectMarkers,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum RenderSampleRate {
+    Project,
+    Fixed(u32),
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(crate) enum RenderSource {
+    #[default]
+    MasterMix,
+    SelectedTracksStems,
+    SelectedTracksViaMaster,
+    MasterMixAndSelectedTracks,
+    SelectedMediaItems,
+    RegionRenderMatrix,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum RenderFilenameWildcard {
+    Project,
+    Title,
+    Author,
+    ProjectDirectory,
+    ProjectDirectoryNumbered,
+    ProjectNotes,
+    ProjectNotesNamed,
+    Tempo,
+    TimeSignature,
+    TimeSigNum,
+    TimeSigDenom,
+    Region,
+    RegionNumber,
+    RegionNumberNumbered,
+    RegionName,
+    Marker,
+    MarkerNumber,
+    MarkerNumberNumbered,
+    MarkerName,
+    Track,
+    TrackNumber,
+    TrackNameOrNumber,
+    Item,
+    ItemNumber,
+    Start,
+    End,
+    Length,
+    StartBeats,
+    EndBeats,
+    LengthBeats,
+    StartTimecode,
+    EndTimecode,
+    StartFrames,
+    EndFrames,
+    LengthFrames,
+    StartSeconds,
+    EndSeconds,
+    LengthSeconds,
+    LengthHours,
+    LengthMinutes,
+    LengthSecondsComponent,
+    LengthMilliseconds,
+    FileNumber,
+    FileNumberNumbered,
+    FileCount,
+    Note,
+    NoteNumbered,
+    Natural,
+    NameNumber,
+    TimelineOrder,
+    TimelineOrderNumbered,
+    TimelineOrderTrack,
+    TimelineOrderTrackNumbered,
+    Format,
+    SampleRate,
+    SampleRateKilohertz,
+    BitDepth,
+    Channels,
+    Bpm,
+    RegionNamedValue,
+    MarkerNamedValue,
+    Fx,
+    FxDelimited,
+    TrackSlashes,
+    Folders,
+    FoldersDelimited,
+    Parent,
+    SelTrack,
+    PlayRate,
+    User,
+    Computer,
+    Date,
+    Time,
+    DateTime,
+    Year,
+    YearTwoDigit,
+    Month,
+    MonthName,
+    Day,
+    DayName,
+    Hour,
+    Hour12,
+    AmPm,
+    Minute,
+    Second,
+    LocalTime,
+    UniqueId,
+}
+
+impl RenderFilenameWildcard {
+    pub(crate) const ALL: [Self; 87] = [
+        Self::Project,
+        Self::Title,
+        Self::Author,
+        Self::ProjectDirectory,
+        Self::ProjectDirectoryNumbered,
+        Self::ProjectNotes,
+        Self::ProjectNotesNamed,
+        Self::Bpm,
+        Self::Tempo,
+        Self::TimeSignature,
+        Self::TimeSigNum,
+        Self::TimeSigDenom,
+        Self::Track,
+        Self::TrackNumber,
+        Self::TrackNameOrNumber,
+        Self::Region,
+        Self::RegionNumber,
+        Self::RegionNumberNumbered,
+        Self::RegionName,
+        Self::Marker,
+        Self::MarkerNumber,
+        Self::MarkerNumberNumbered,
+        Self::MarkerName,
+        Self::Item,
+        Self::ItemNumber,
+        Self::Start,
+        Self::End,
+        Self::Length,
+        Self::StartBeats,
+        Self::EndBeats,
+        Self::LengthBeats,
+        Self::StartTimecode,
+        Self::EndTimecode,
+        Self::StartFrames,
+        Self::EndFrames,
+        Self::LengthFrames,
+        Self::StartSeconds,
+        Self::EndSeconds,
+        Self::LengthSeconds,
+        Self::LengthHours,
+        Self::LengthMinutes,
+        Self::LengthSecondsComponent,
+        Self::LengthMilliseconds,
+        Self::FileNumber,
+        Self::FileNumberNumbered,
+        Self::FileCount,
+        Self::Note,
+        Self::NoteNumbered,
+        Self::Natural,
+        Self::NameNumber,
+        Self::TimelineOrder,
+        Self::TimelineOrderNumbered,
+        Self::TimelineOrderTrack,
+        Self::TimelineOrderTrackNumbered,
+        Self::Format,
+        Self::SampleRate,
+        Self::SampleRateKilohertz,
+        Self::BitDepth,
+        Self::Channels,
+        Self::RegionNamedValue,
+        Self::MarkerNamedValue,
+        Self::Fx,
+        Self::FxDelimited,
+        Self::TrackSlashes,
+        Self::Folders,
+        Self::FoldersDelimited,
+        Self::Parent,
+        Self::SelTrack,
+        Self::PlayRate,
+        Self::User,
+        Self::Computer,
+        Self::Date,
+        Self::Time,
+        Self::DateTime,
+        Self::Year,
+        Self::YearTwoDigit,
+        Self::Month,
+        Self::MonthName,
+        Self::Day,
+        Self::DayName,
+        Self::Hour,
+        Self::Hour12,
+        Self::AmPm,
+        Self::Minute,
+        Self::Second,
+        Self::LocalTime,
+        Self::UniqueId,
+    ];
+
+    pub(crate) const fn token(self) -> &'static str {
+        match self {
+            Self::Project => "$project",
+            Self::Title => "$title",
+            Self::Author => "$author",
+            Self::ProjectDirectory => "$projectdirectory",
+            Self::ProjectDirectoryNumbered => "$projectdirectoryN",
+            Self::ProjectNotes => "$projectnotes",
+            Self::ProjectNotesNamed => "$projectnotes(name)",
+            Self::Tempo => "$tempo",
+            Self::TimeSignature => "$timesignature",
+            Self::TimeSigNum => "$timesignum",
+            Self::TimeSigDenom => "$timesigdenom",
+            Self::Region => "$region",
+            Self::RegionNumber => "$regionnumber",
+            Self::RegionNumberNumbered => "$regionnumber[N]",
+            Self::RegionName => "$regionname",
+            Self::Marker => "$marker",
+            Self::MarkerNumber => "$markernumber",
+            Self::MarkerNumberNumbered => "$markernumber[N]",
+            Self::MarkerName => "$markername",
+            Self::Track => "$track",
+            Self::TrackNumber => "$tracknumber",
+            Self::TrackNameOrNumber => "$tracknamenumber",
+            Self::Item => "$item",
+            Self::ItemNumber => "$itemnumber",
+            Self::Start => "$start",
+            Self::End => "$end",
+            Self::Length => "$length",
+            Self::StartBeats => "$startbeats",
+            Self::EndBeats => "$endbeats",
+            Self::LengthBeats => "$lengthbeats",
+            Self::StartTimecode => "$starttc",
+            Self::EndTimecode => "$endtc",
+            Self::StartFrames => "$startframes",
+            Self::EndFrames => "$endframes",
+            Self::LengthFrames => "$lengthframes",
+            Self::StartSeconds => "$startseconds",
+            Self::EndSeconds => "$endseconds",
+            Self::LengthSeconds => "$lengthseconds",
+            Self::LengthHours => "$lenhh",
+            Self::LengthMinutes => "$lenmm",
+            Self::LengthSecondsComponent => "$lenss",
+            Self::LengthMilliseconds => "$lentt",
+            Self::FileNumber => "$filenumber",
+            Self::FileNumberNumbered => "$filenumber[N]",
+            Self::FileCount => "$filecount",
+            Self::Note => "$note",
+            Self::NoteNumbered => "$note[X]",
+            Self::Natural => "$natural",
+            Self::NameNumber => "$namenumber",
+            Self::TimelineOrder => "$timelineorder",
+            Self::TimelineOrderNumbered => "$timelineorder[N]",
+            Self::TimelineOrderTrack => "$timelineorder_track",
+            Self::TimelineOrderTrackNumbered => "$timelineorder_track[N]",
+            Self::Format => "$format",
+            Self::SampleRate => "$samplerate",
+            Self::SampleRateKilohertz => "$sampleratek",
+            Self::BitDepth => "$bitdepth",
+            Self::Channels => "$channels",
+            Self::Bpm => "$bpm",
+            Self::RegionNamedValue => "$region(name)",
+            Self::MarkerNamedValue => "$marker(name)",
+            Self::Fx => "$fx",
+            Self::FxDelimited => "$fx[X]",
+            Self::TrackSlashes => "$trackslashes",
+            Self::Folders => "$folders",
+            Self::FoldersDelimited => "$folders[X]",
+            Self::Parent => "$parent",
+            Self::SelTrack => "$seltrack",
+            Self::PlayRate => "$playrate",
+            Self::User => "$user",
+            Self::Computer => "$computer",
+            Self::Date => "$date",
+            Self::Time => "$time",
+            Self::DateTime => "$datetime",
+            Self::Year => "$year",
+            Self::YearTwoDigit => "$year2",
+            Self::Month => "$month",
+            Self::MonthName => "$monthname",
+            Self::Day => "$day",
+            Self::DayName => "$dayname",
+            Self::Hour => "$hour",
+            Self::Hour12 => "$hour12",
+            Self::AmPm => "$ampm",
+            Self::Minute => "$minute",
+            Self::Second => "$second",
+            Self::LocalTime => "$localtime",
+            Self::UniqueId => "$uniqueid[N]",
+        }
+    }
+}
+
+const AAADAW_PROJECT_PLAY_RATE: f64 = 1.0;
+
+fn format_render_wildcard_playrate(playrate: f64) -> String {
+    format!("{playrate:.3}")
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct RenderFilenameSystemInfo {
+    user: String,
+    computer: String,
+    date_time: RenderFilenameDateTime,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct RenderFilenameDateTime {
+    local: chrono::DateTime<chrono::FixedOffset>,
+}
+
+impl RenderFilenameDateTime {
+    fn current() -> Self {
+        Self {
+            local: chrono::Local::now().fixed_offset(),
+        }
+    }
+
+    fn value(&self, token: &str) -> Option<String> {
+        let value = match token {
+            "date" => self.local.format("%Y-%m-%d").to_string(),
+            "time" => self.local.format("%H_%M_%S").to_string(),
+            "datetime" => self.local.format("%Y-%m-%d %H_%M_%S").to_string(),
+            "year" => self.local.format("%Y").to_string(),
+            "year2" => self.local.format("%y").to_string(),
+            "month" => self.local.format("%m").to_string(),
+            "monthname" => self.local.format("%b").to_string().to_lowercase(),
+            "day" => self.local.format("%d").to_string(),
+            "dayname" => self.local.format("%a").to_string().to_lowercase(),
+            "hour" => self.local.format("%H").to_string(),
+            "hour12" => self.local.format("%I").to_string(),
+            "ampm" => self.local.format("%p").to_string().to_lowercase(),
+            "minute" => self.local.format("%M").to_string(),
+            "second" => self.local.format("%S").to_string(),
+            "localtime" => self.local.format("%a, %b %d %Y %H_%M").to_string(),
+            _ => return None,
+        };
+        Some(value)
+    }
+}
+
+#[derive(Clone, Copy)]
+struct RenderFilenameExpansionContext<'a> {
+    plugins: &'a [ClapPluginDescriptor],
+    selected_tracks: &'a [TrackId],
+    system_info: &'a RenderFilenameSystemInfo,
+    allow_slash_in_wildcard_substitutions: bool,
+    file_number: u64,
+    file_count: usize,
+    item_name_number: Option<usize>,
+}
+
+#[derive(Clone, Copy)]
+struct RenderFilenameWildcardOptions<'a> {
+    plugins: &'a [ClapPluginDescriptor],
+    selected_tracks: &'a [TrackId],
+    allow_slash_in_wildcard_substitutions: bool,
+}
+
+impl RenderFilenameSystemInfo {
+    fn current() -> Self {
+        Self {
+            user: render_filename_user_from_values(
+                env::var("USER").ok(),
+                env::var("LOGNAME").ok(),
+                env::var("USERNAME").ok(),
+            ),
+            computer: render_filename_computer_from_values(
+                env::var("HOSTNAME")
+                    .ok()
+                    .filter(|hostname| !hostname.trim().is_empty())
+                    .or_else(|| env::var("COMPUTERNAME").ok()),
+                fs::read_to_string("/etc/hostname").ok(),
+            ),
+            date_time: RenderFilenameDateTime::current(),
+        }
+    }
+}
+
+fn render_filename_user_from_values(
+    user: Option<String>,
+    login_name: Option<String>,
+    user_name: Option<String>,
+) -> String {
+    [user, login_name, user_name]
+        .into_iter()
+        .flatten()
+        .find(|value| !value.is_empty())
+        .unwrap_or_default()
+}
+
+fn render_filename_computer_from_values(
+    hostname: Option<String>,
+    hostname_file: Option<String>,
+) -> String {
+    hostname
+        .filter(|value| !value.trim().is_empty())
+        .or(hostname_file)
+        .map(|value| value.trim().to_owned())
+        .unwrap_or_default()
+}
+
+impl RenderSource {
+    pub(crate) const ALL: [Self; 6] = [
+        Self::MasterMix,
+        Self::SelectedTracksStems,
+        Self::MasterMixAndSelectedTracks,
+        Self::SelectedTracksViaMaster,
+        Self::SelectedMediaItems,
+        Self::RegionRenderMatrix,
+    ];
+}
+
+impl std::fmt::Display for RenderSource {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(match self {
+            Self::MasterMix => "Master mix",
+            Self::SelectedTracksStems => "Selected tracks (stems)",
+            Self::SelectedTracksViaMaster => "Selected tracks via master",
+            Self::MasterMixAndSelectedTracks => "Master mix and stems",
+            Self::SelectedMediaItems => "Selected media items",
+            Self::RegionRenderMatrix => "Region Render Matrix",
+        })
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum SelectedTrackStemMode {
+    PostFader,
+    PreFader,
+    ViaMaster,
+}
+
+pub(super) fn parse_render_tail_milliseconds(value: &str) -> Result<u32, &'static str> {
+    let value = value.trim();
+    if value.is_empty() || !value.bytes().all(|byte| byte.is_ascii_digit()) {
+        return Err("Render tail must be a non-negative whole number of milliseconds");
+    }
+    value.parse::<u32>().map_err(|_| "Render tail is too large")
+}
+
+pub(super) fn parse_render_peak_target_centi_dbfs(value: &str) -> Result<i32, &'static str> {
+    let value = value.trim();
+    let (negative, magnitude) = match value.strip_prefix('-') {
+        Some(magnitude) => (true, magnitude),
+        None => (false, value),
+    };
+    let mut parts = magnitude.split('.');
+    let whole_text = parts.next().unwrap_or_default();
+    let fractional_text = parts.next();
+    if parts.next().is_some() {
+        return Err("Peak target must be between -60 and 0 dBFS with up to 2 decimals");
+    }
+    let fractional = fractional_text.unwrap_or_default();
+    if (whole_text.is_empty() && fractional.is_empty())
+        || fractional.len() > 2
+        || !whole_text.bytes().all(|byte| byte.is_ascii_digit())
+        || !fractional.bytes().all(|byte| byte.is_ascii_digit())
+    {
+        return Err("Peak target must be between -60 and 0 dBFS with up to 2 decimals");
+    }
+    let whole = if whole_text.is_empty() {
+        0
+    } else {
+        whole_text
+            .parse::<i32>()
+            .map_err(|_| "Peak target is too large")?
+    };
+    let fractional_centi = if fractional.is_empty() {
+        0
+    } else {
+        fractional
+            .parse::<i32>()
+            .map_err(|_| "Peak target must be between -60 and 0 dBFS with up to 2 decimals")?
+            * 10_i32.pow((2 - fractional.len()) as u32)
+    };
+    let magnitude_centi = whole
+        .checked_mul(100)
+        .and_then(|whole| whole.checked_add(fractional_centi))
+        .ok_or("Peak target is too large")?;
+    let target = if negative {
+        -magnitude_centi
+    } else {
+        magnitude_centi
+    };
+    if !(-6_000..=0).contains(&target) {
+        return Err("Peak target must be between -60 and 0 dBFS with up to 2 decimals");
+    }
+    Ok(target)
+}
+
+fn selected_track_stem_destinations(
+    base_path: &Path,
+    project: &Project,
+    selected_tracks: &[TrackId],
+    include_master_mix: bool,
+    stem_mode: SelectedTrackStemMode,
+) -> Result<Vec<(aaadaw_app::ProjectWavRenderSource, PathBuf)>, String> {
+    let parent = base_path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    let base_name = base_path
+        .file_stem()
+        .and_then(|name| name.to_str())
+        .filter(|name| !name.is_empty())
+        .ok_or_else(|| "Choose a WAV filename to use as the stem prefix".to_owned())?;
+    let extension = base_path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .filter(|extension| !extension.is_empty())
+        .unwrap_or("wav");
+    let mut used_names =
+        HashSet::with_capacity(selected_tracks.len() + usize::from(include_master_mix));
+    let mut outputs = Vec::with_capacity(selected_tracks.len() + usize::from(include_master_mix));
+    if include_master_mix {
+        used_names.insert(format!("{base_name}-master").to_lowercase());
+        outputs.push((
+            aaadaw_app::ProjectWavRenderSource::MasterMix,
+            parent.join(format!("{base_name}-Master.{extension}")),
+        ));
+    }
+
+    for (index, track_id) in selected_tracks.iter().enumerate() {
+        let track = project
+            .tracks()
+            .iter()
+            .find(|track| track.id() == *track_id)
+            .ok_or_else(|| {
+                format!(
+                    "Selected render track {} no longer exists",
+                    track_id.value()
+                )
+            })?;
+        let mut track_name = safe_stem_component(track.name());
+        if track_name.is_empty() {
+            track_name = format!("Track-{}", index + 1);
+        }
+        let mut candidate = format!("{base_name}-{track_name}");
+        if !used_names.insert(candidate.to_lowercase()) {
+            candidate.push_str(&format!("-{}", index + 1));
+            let mut disambiguator = 2;
+            while !used_names.insert(candidate.to_lowercase()) {
+                candidate = format!("{base_name}-{track_name}-{}-{disambiguator}", index + 1);
+                disambiguator += 1;
+            }
+        }
+        let source = match stem_mode {
+            SelectedTrackStemMode::PostFader => {
+                aaadaw_app::ProjectWavRenderSource::SelectedTrackStem(*track_id)
+            }
+            SelectedTrackStemMode::PreFader => {
+                aaadaw_app::ProjectWavRenderSource::SelectedTrackStemPreFader(*track_id)
+            }
+            SelectedTrackStemMode::ViaMaster => {
+                aaadaw_app::ProjectWavRenderSource::SelectedTrackViaMaster(*track_id)
+            }
+        };
+        outputs.push((source, parent.join(format!("{candidate}.{extension}"))));
+    }
+    Ok(outputs)
+}
+
+fn selected_media_item_render_jobs(
+    base_path: &Path,
+    project: &Project,
+    selected_items: &HashSet<ItemId>,
+    settings: aaadaw_app::ProjectWavRenderSettings,
+) -> Result<Vec<(aaadaw_app::ProjectWavRenderSettings, PathBuf)>, String> {
+    let item_order = render_project_item_order(project);
+    let items = item_order
+        .iter()
+        .enumerate()
+        .filter(|(_, item_id)| selected_items.contains(item_id))
+        .map(|(index, item_id)| {
+            if let Some(item) = project
+                .audio_items()
+                .iter()
+                .find(|item| item.id() == *item_id)
+            {
+                return Ok((
+                    index + 1,
+                    aaadaw_app::ProjectWavRenderSource::SelectedAudioItem(*item_id),
+                    item.start_sample(),
+                    item.end_sample(),
+                ));
+            }
+            let item = project
+                .midi_items()
+                .iter()
+                .find(|item| item.id() == *item_id)
+                .ok_or_else(|| "A selected media item no longer exists".to_owned())?;
+            let start_sample = project
+                .sample_at_tick(item.start_tick())
+                .map_err(|error| error.to_string())?;
+            let end_tick = item
+                .start_tick()
+                .checked_add(item.length_ticks())
+                .ok_or_else(|| "Selected MIDI item exceeds the supported timeline".to_owned())?;
+            let end_sample = project
+                .sample_at_tick(end_tick)
+                .map_err(|error| error.to_string())?;
+            Ok((
+                index + 1,
+                aaadaw_app::ProjectWavRenderSource::SelectedMidiItem(*item_id),
+                start_sample,
+                end_sample,
+            ))
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    if items.is_empty() {
+        return Err(
+            "Select one or more Audio or MIDI media items in Arrange to render them".into(),
+        );
+    }
+    let parent = base_path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    let base_name = base_path
+        .file_stem()
+        .and_then(|name| name.to_str())
+        .filter(|name| !name.is_empty())
+        .ok_or_else(|| "Choose a WAV filename to use as the selected-item prefix".to_owned())?;
+    let extension = base_path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .filter(|extension| !extension.is_empty())
+        .unwrap_or("wav");
+    let mut outputs = Vec::with_capacity(items.len());
+    let mut used_names = HashSet::with_capacity(items.len());
+    for (ordinal, source, start_sample, end_sample) in items {
+        let mut name = format!("{base_name}-item_{ordinal:02}");
+        let mut disambiguator = 2;
+        while !used_names.insert(name.to_lowercase()) {
+            name = format!("{base_name}-item_{ordinal:02}-{disambiguator}");
+            disambiguator += 1;
+        }
+        outputs.push((
+            aaadaw_app::ProjectWavRenderSettings {
+                source,
+                start_sample,
+                end_sample,
+                tail_milliseconds: 0,
+                ..settings
+            },
+            parent.join(format!("{name}.{extension}")),
+        ));
+    }
+    Ok(outputs)
+}
+
+fn render_project_item_order(project: &Project) -> Vec<ItemId> {
+    let track_order = project
+        .tracks()
+        .iter()
+        .enumerate()
+        .map(|(index, track)| (track.id(), index))
+        .collect::<HashMap<_, _>>();
+    let mut items = project
+        .audio_items()
+        .iter()
+        .map(|item| {
+            (
+                track_order
+                    .get(&item.track_id())
+                    .copied()
+                    .unwrap_or(usize::MAX),
+                item.start_sample(),
+                item.id(),
+            )
+        })
+        .chain(project.midi_items().iter().filter_map(|item| {
+            Some((
+                track_order
+                    .get(&item.track_id())
+                    .copied()
+                    .unwrap_or(usize::MAX),
+                project.sample_at_tick(item.start_tick()).ok()?,
+                item.id(),
+            ))
+        }))
+        .collect::<Vec<_>>();
+    items.sort_unstable_by_key(|(track_index, start_sample, item_id)| {
+        (*track_index, *start_sample, item_id.value())
+    });
+    items.into_iter().map(|(_, _, item_id)| item_id).collect()
+}
+
+fn render_project_item_name(project: &Project, item_id: ItemId) -> Option<&str> {
+    project
+        .audio_items()
+        .iter()
+        .find(|item| item.id() == item_id)
+        .map(aaadaw_core::AudioItem::name)
+        .or_else(|| {
+            project
+                .midi_items()
+                .iter()
+                .find(|item| item.id() == item_id)
+                .map(aaadaw_core::MidiItem::name)
+        })
+}
+
+fn render_project_item_track(project: &Project, item_id: ItemId) -> Option<TrackId> {
+    project
+        .audio_items()
+        .iter()
+        .find(|item| item.id() == item_id)
+        .map(aaadaw_core::AudioItem::track_id)
+        .or_else(|| {
+            project
+                .midi_items()
+                .iter()
+                .find(|item| item.id() == item_id)
+                .map(aaadaw_core::MidiItem::track_id)
+        })
+}
+
+fn render_project_item_timeline_order(
+    project: &Project,
+    item_id: ItemId,
+) -> Option<(usize, usize)> {
+    let target_track = render_project_item_track(project, item_id)?;
+    let target_start = project
+        .audio_items()
+        .iter()
+        .find(|item| item.id() == item_id)
+        .map(|item| item.start_sample())
+        .or_else(|| {
+            project
+                .midi_items()
+                .iter()
+                .find(|item| item.id() == item_id)
+                .and_then(|item| project.sample_at_tick(item.start_tick()).ok())
+        })?;
+    let precedes = |start_sample, candidate_id: ItemId| {
+        start_sample < target_start
+            || (start_sample == target_start && candidate_id.value() < item_id.value())
+    };
+    let audio_before = project
+        .audio_items()
+        .iter()
+        .filter(|item| precedes(item.start_sample(), item.id()));
+    let midi_before = project.midi_items().iter().filter(|item| {
+        project
+            .sample_at_tick(item.start_tick())
+            .is_ok_and(|start_sample| precedes(start_sample, item.id()))
+    });
+    let all_before = audio_before.count() + midi_before.count();
+    let audio_before_track = project
+        .audio_items()
+        .iter()
+        .filter(|item| item.track_id() == target_track && precedes(item.start_sample(), item.id()));
+    let midi_before_track = project.midi_items().iter().filter(|item| {
+        item.track_id() == target_track
+            && project
+                .sample_at_tick(item.start_tick())
+                .is_ok_and(|start_sample| precedes(start_sample, item.id()))
+    });
+    Some((
+        all_before + 1,
+        audio_before_track.count() + midi_before_track.count() + 1,
+    ))
+}
+
+fn project_region_render_jobs(
+    base_path: &Path,
+    project: &Project,
+    source: RenderSource,
+    selected_tracks: &[TrackId],
+    stems_pre_fader: bool,
+    settings: aaadaw_app::ProjectWavRenderSettings,
+    selected_region_ids: Option<&HashSet<RegionId>>,
+) -> Result<Vec<(aaadaw_app::ProjectWavRenderSettings, PathBuf)>, String> {
+    let parent = base_path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    let base_name = base_path
+        .file_stem()
+        .and_then(|name| name.to_str())
+        .filter(|name| !name.is_empty())
+        .ok_or_else(|| "Choose a WAV filename to use as the region prefix".to_owned())?;
+    let extension = base_path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .filter(|extension| !extension.is_empty())
+        .unwrap_or("wav");
+    let regions = project
+        .regions()
+        .iter()
+        .enumerate()
+        .filter(|(_, region)| {
+            selected_region_ids.is_none_or(|selected| selected.contains(&region.id()))
+        })
+        .collect::<Vec<_>>();
+    if regions.is_empty() {
+        return Err(
+            "Add or select at least one project region before rendering regions".to_owned(),
+        );
+    }
+
+    let stem_mode = match source {
+        RenderSource::SelectedTracksViaMaster => SelectedTrackStemMode::ViaMaster,
+        RenderSource::SelectedTracksStems | RenderSource::MasterMixAndSelectedTracks
+            if stems_pre_fader =>
+        {
+            SelectedTrackStemMode::PreFader
+        }
+        RenderSource::SelectedTracksStems | RenderSource::MasterMixAndSelectedTracks => {
+            SelectedTrackStemMode::PostFader
+        }
+        RenderSource::MasterMix => SelectedTrackStemMode::PostFader,
+        RenderSource::SelectedMediaItems => {
+            unreachable!("selected media items are not a track stem mode")
+        }
+        RenderSource::RegionRenderMatrix => SelectedTrackStemMode::ViaMaster,
+    };
+    let mut used_region_names = HashSet::with_capacity(regions.len());
+    let mut jobs = Vec::new();
+    for (index, region) in regions {
+        let start_sample = project
+            .sample_at_tick(region.start_ticks())
+            .map_err(|error| format!("Could not convert region start: {error}"))?;
+        let end_sample = project
+            .sample_at_tick(region.end_ticks())
+            .map_err(|error| format!("Could not convert region end: {error}"))?;
+        if end_sample <= start_sample {
+            return Err(format!(
+                "Project region {} must span at least one sample to render",
+                region.number()
+            ));
+        }
+        let mut region_name = safe_stem_component(region.name());
+        if region_name.is_empty() {
+            region_name = format!("Region-{}", region.number());
+        }
+        let initial_name = region_name.clone();
+        let mut suffix = index + 1;
+        while !used_region_names.insert(region_name.to_lowercase()) {
+            region_name = format!("{initial_name}-{}", suffix);
+            suffix += 1;
+        }
+        let region_base = parent.join(format!("{base_name}-{region_name}.{extension}"));
+        let destinations = match source {
+            RenderSource::MasterMix => {
+                vec![(aaadaw_app::ProjectWavRenderSource::MasterMix, region_base)]
+            }
+            RenderSource::SelectedTracksStems | RenderSource::SelectedTracksViaMaster => {
+                selected_track_stem_destinations(
+                    &region_base,
+                    project,
+                    selected_tracks,
+                    false,
+                    stem_mode,
+                )?
+            }
+            RenderSource::MasterMixAndSelectedTracks => selected_track_stem_destinations(
+                &region_base,
+                project,
+                selected_tracks,
+                true,
+                stem_mode,
+            )?,
+            RenderSource::SelectedMediaItems => {
+                unreachable!("selected media items are not a region source mode")
+            }
+            RenderSource::RegionRenderMatrix => {
+                let assigned_tracks = project
+                    .tracks()
+                    .iter()
+                    .filter(|track| region.render_track_ids().contains(&track.id()))
+                    .map(|track| track.id())
+                    .collect::<Vec<_>>();
+                selected_track_stem_destinations(
+                    &region_base,
+                    project,
+                    &assigned_tracks,
+                    region.renders_master_mix(),
+                    SelectedTrackStemMode::ViaMaster,
+                )?
+            }
+        };
+        for (render_source, destination) in destinations {
+            let mut region_settings = settings;
+            region_settings.source = render_source;
+            region_settings.start_sample = start_sample;
+            region_settings.end_sample = end_sample;
+            jobs.push((region_settings, destination));
+        }
+    }
+    if source == RenderSource::RegionRenderMatrix && jobs.is_empty() {
+        return Err("Assign a Master mix or track to a project region before rendering".to_owned());
+    }
+    Ok(jobs)
+}
+
+fn project_marker_render_jobs(
+    base_path: &Path,
+    project: &Project,
+    source: RenderSource,
+    selected_tracks: &[TrackId],
+    stems_pre_fader: bool,
+    settings: aaadaw_app::ProjectWavRenderSettings,
+    selected_marker_ids: Option<&HashSet<MarkerId>>,
+) -> Result<Vec<(aaadaw_app::ProjectWavRenderSettings, PathBuf)>, String> {
+    let parent = base_path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    let base_name = base_path
+        .file_stem()
+        .and_then(|name| name.to_str())
+        .filter(|name| !name.is_empty())
+        .ok_or_else(|| "Choose a WAV filename to use as the marker prefix".to_owned())?;
+    let extension = base_path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .filter(|extension| !extension.is_empty())
+        .unwrap_or("wav");
+    let project_end_sample = aaadaw_app::project_content_end_sample(project)
+        .map_err(|error| format!("Could not determine project render end: {error}"))?;
+    let markers = project
+        .markers()
+        .iter()
+        .enumerate()
+        .filter(|(_, marker)| {
+            selected_marker_ids.is_none_or(|selected| selected.contains(&marker.id()))
+        })
+        .collect::<Vec<_>>();
+    if markers.is_empty() {
+        return Err(
+            "Add or select at least one project marker before rendering markers".to_owned(),
+        );
+    }
+
+    let stem_mode = match source {
+        RenderSource::SelectedTracksViaMaster => SelectedTrackStemMode::ViaMaster,
+        RenderSource::SelectedTracksStems | RenderSource::MasterMixAndSelectedTracks
+            if stems_pre_fader =>
+        {
+            SelectedTrackStemMode::PreFader
+        }
+        RenderSource::SelectedTracksStems | RenderSource::MasterMixAndSelectedTracks => {
+            SelectedTrackStemMode::PostFader
+        }
+        RenderSource::MasterMix => SelectedTrackStemMode::PostFader,
+        RenderSource::SelectedMediaItems => {
+            unreachable!("selected media items are not a track stem mode")
+        }
+        RenderSource::RegionRenderMatrix => SelectedTrackStemMode::ViaMaster,
+    };
+    let mut used_marker_names = HashSet::with_capacity(markers.len());
+    let mut jobs = Vec::new();
+    for (index, marker) in markers {
+        let start_sample = project
+            .sample_at_tick(marker.position_ticks())
+            .map_err(|error| format!("Could not convert marker position: {error}"))?;
+        let end_sample = match project.markers().get(index + 1) {
+            Some(next_marker) => project
+                .sample_at_tick(next_marker.position_ticks())
+                .map_err(|error| format!("Could not convert next marker position: {error}"))?,
+            None => project_end_sample,
+        };
+        // REAPER skips a marker whose next marker or project end leaves it
+        // with no audio frames to render (for example, a marker at project end).
+        if end_sample <= start_sample {
+            continue;
+        }
+        aaadaw_app::render_range_length_samples_with_tail_milliseconds(
+            project.settings().sample_rate(),
+            start_sample,
+            end_sample,
+            settings.tail_milliseconds,
+        )
+        .map_err(|error| {
+            format!(
+                "Project marker {} has an invalid render range: {error}",
+                marker.number()
+            )
+        })?;
+
+        let mut marker_name = safe_stem_component(marker.name());
+        if marker_name.is_empty() {
+            marker_name = format!("{:02}", marker.number());
+        }
+        let initial_name = marker_name.clone();
+        let mut suffix = index + 1;
+        while !used_marker_names.insert(marker_name.to_lowercase()) {
+            marker_name = format!("{initial_name}-{suffix}");
+            suffix += 1;
+        }
+        let marker_base = parent.join(format!("{base_name}-{marker_name}.{extension}"));
+        let destinations = match source {
+            RenderSource::MasterMix => {
+                vec![(aaadaw_app::ProjectWavRenderSource::MasterMix, marker_base)]
+            }
+            RenderSource::SelectedTracksStems | RenderSource::SelectedTracksViaMaster => {
+                selected_track_stem_destinations(
+                    &marker_base,
+                    project,
+                    selected_tracks,
+                    false,
+                    stem_mode,
+                )?
+            }
+            RenderSource::MasterMixAndSelectedTracks => selected_track_stem_destinations(
+                &marker_base,
+                project,
+                selected_tracks,
+                true,
+                stem_mode,
+            )?,
+            RenderSource::SelectedMediaItems => {
+                unreachable!("selected media items are not a marker source mode")
+            }
+            RenderSource::RegionRenderMatrix => {
+                unreachable!("region render matrix requires project region bounds")
+            }
+        };
+        for (render_source, destination) in destinations {
+            let mut marker_settings = settings;
+            marker_settings.source = render_source;
+            marker_settings.start_sample = start_sample;
+            marker_settings.end_sample = end_sample;
+            jobs.push((marker_settings, destination));
+        }
+    }
+    if jobs.is_empty() {
+        return Err("Selected project markers have no non-empty render ranges".to_owned());
+    }
+    Ok(jobs)
+}
+
+fn safe_stem_component(name: &str) -> String {
+    name.trim()
+        .chars()
+        .map(|character| {
+            if character.is_control()
+                || matches!(
+                    character,
+                    '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|'
+                )
+            {
+                '_'
+            } else {
+                character
+            }
+        })
+        .collect::<String>()
+        .trim_end_matches([' ', '.'])
+        .to_owned()
+}
+
+const FORCED_RENDER_PATH_SEPARATOR: char = '\u{e000}';
+
+fn mark_forced_render_path_separators(value: &str) -> String {
+    value
+        .chars()
+        .map(|character| {
+            if character == '/' {
+                FORCED_RENDER_PATH_SEPARATOR
+            } else {
+                character
+            }
+        })
+        .collect()
+}
+
+fn safe_render_pattern_relative_path(name: &str) -> Option<PathBuf> {
+    let mut path = PathBuf::new();
+    for component in name.split(FORCED_RENDER_PATH_SEPARATOR) {
+        let component = safe_stem_component(component);
+        if !component.is_empty() {
+            path.push(component);
+        }
+    }
+    (!path.as_os_str().is_empty()).then_some(path)
+}
+
+#[cfg(test)]
+fn apply_render_filename_pattern(
+    outputs: Vec<(aaadaw_app::ProjectWavRenderSettings, PathBuf)>,
+    pattern: &str,
+    project: &Project,
+    project_path: &Path,
+) -> Result<Vec<(aaadaw_app::ProjectWavRenderSettings, PathBuf)>, String> {
+    apply_render_filename_pattern_with_plugins(outputs, pattern, project, project_path, &[])
+}
+
+#[cfg(test)]
+fn apply_render_filename_pattern_with_plugins(
+    outputs: Vec<(aaadaw_app::ProjectWavRenderSettings, PathBuf)>,
+    pattern: &str,
+    project: &Project,
+    project_path: &Path,
+    plugins: &[ClapPluginDescriptor],
+) -> Result<Vec<(aaadaw_app::ProjectWavRenderSettings, PathBuf)>, String> {
+    apply_render_filename_pattern_with_selected_tracks(
+        outputs,
+        pattern,
+        project,
+        project_path,
+        plugins,
+        &[],
+    )
+}
+
+#[cfg(test)]
+fn apply_render_filename_pattern_with_selected_tracks(
+    outputs: Vec<(aaadaw_app::ProjectWavRenderSettings, PathBuf)>,
+    pattern: &str,
+    project: &Project,
+    project_path: &Path,
+    plugins: &[ClapPluginDescriptor],
+    selected_tracks: &[TrackId],
+) -> Result<Vec<(aaadaw_app::ProjectWavRenderSettings, PathBuf)>, String> {
+    apply_render_filename_pattern_with_selected_tracks_and_options(
+        outputs,
+        pattern,
+        project,
+        project_path,
+        plugins,
+        selected_tracks,
+        false,
+    )
+}
+
+fn apply_render_filename_pattern_with_selected_tracks_and_options(
+    outputs: Vec<(aaadaw_app::ProjectWavRenderSettings, PathBuf)>,
+    pattern: &str,
+    project: &Project,
+    project_path: &Path,
+    plugins: &[ClapPluginDescriptor],
+    selected_tracks: &[TrackId],
+    allow_slash_in_wildcard_substitutions: bool,
+) -> Result<Vec<(aaadaw_app::ProjectWavRenderSettings, PathBuf)>, String> {
+    let system_info = RenderFilenameSystemInfo::current();
+    let expansion_context = RenderFilenameExpansionContext {
+        plugins,
+        selected_tracks,
+        system_info: &system_info,
+        allow_slash_in_wildcard_substitutions,
+        file_number: 1,
+        file_count: 1,
+        item_name_number: None,
+    };
+    apply_render_filename_pattern_with_context(
+        outputs,
+        pattern,
+        project,
+        project_path,
+        &expansion_context,
+    )
+}
+
+fn apply_render_filename_pattern_with_context(
+    outputs: Vec<(aaadaw_app::ProjectWavRenderSettings, PathBuf)>,
+    pattern: &str,
+    project: &Project,
+    project_path: &Path,
+    expansion_context: &RenderFilenameExpansionContext<'_>,
+) -> Result<Vec<(aaadaw_app::ProjectWavRenderSettings, PathBuf)>, String> {
+    let pattern = pattern.trim().replace(FORCED_RENDER_PATH_SEPARATOR, "_");
+    if pattern.is_empty() {
+        return Ok(outputs);
+    }
+
+    let file_count = outputs.len();
+    let mut used_names = HashSet::with_capacity(file_count);
+    let mut item_name_numbers = HashMap::<String, usize>::new();
+    outputs
+        .into_iter()
+        .enumerate()
+        .map(|(index, (settings, path))| {
+            let item_name_number = match settings.source {
+                aaadaw_app::ProjectWavRenderSource::SelectedAudioItem(item_id)
+                | aaadaw_app::ProjectWavRenderSource::SelectedMidiItem(item_id) => {
+                    render_project_item_name(project, item_id)
+                        .filter(|name| !name.is_empty())
+                        .map(|name| {
+                            let number = item_name_numbers.entry(name.to_owned()).or_default();
+                            *number += 1;
+                            *number
+                        })
+                }
+                _ => None,
+            };
+            let output_context = RenderFilenameExpansionContext {
+                file_number: u64::try_from(index).unwrap_or(u64::MAX).saturating_add(1),
+                file_count,
+                item_name_number,
+                ..*expansion_context
+            };
+            let fallback = path
+                .file_stem()
+                .and_then(|stem| stem.to_str())
+                .filter(|stem| !stem.is_empty())
+                .unwrap_or("render");
+            let expanded = expand_render_filename_pattern(
+                &pattern,
+                fallback,
+                project,
+                project_path,
+                settings,
+                &output_context,
+            );
+            let Some(relative_path) = safe_render_pattern_relative_path(&expanded) else {
+                return Err("Filename pattern must produce a non-empty file name".to_owned());
+            };
+            let relative_name = relative_path.to_string_lossy().into_owned();
+            if !used_names.insert(relative_name.to_lowercase()) {
+                return Err(format!(
+                    "Filename pattern creates duplicate output names ({relative_name}); include a wildcard such as $region, $track, or $item"
+                ));
+            }
+            let parent = path
+                .parent()
+                .filter(|parent| !parent.as_os_str().is_empty())
+                .unwrap_or_else(|| Path::new("."));
+            let extension = path
+                .extension()
+                .and_then(|extension| extension.to_str())
+                .filter(|extension| !extension.is_empty())
+                .unwrap_or("wav");
+            let mut output_path = parent.join(relative_path);
+            let file_name = output_path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .filter(|name| !name.is_empty())
+                .ok_or_else(|| "Filename pattern must produce a non-empty file name".to_owned())?;
+            output_path.set_file_name(format!("{file_name}.{extension}"));
+            Ok((settings, output_path))
+        })
+        .collect()
+}
+
+#[cfg(test)]
+fn apply_stem_filename_pattern_with_plugins(
+    outputs: Vec<(aaadaw_app::ProjectWavRenderSource, PathBuf)>,
+    settings: aaadaw_app::ProjectWavRenderSettings,
+    pattern: &str,
+    project: &Project,
+    project_path: &Path,
+    plugins: &[ClapPluginDescriptor],
+    selected_tracks: &[TrackId],
+) -> Result<Vec<(aaadaw_app::ProjectWavRenderSource, PathBuf)>, String> {
+    apply_stem_filename_pattern_with_plugins_and_options(
+        outputs,
+        settings,
+        pattern,
+        project,
+        project_path,
+        RenderFilenameWildcardOptions {
+            plugins,
+            selected_tracks,
+            allow_slash_in_wildcard_substitutions: false,
+        },
+    )
+}
+
+fn apply_stem_filename_pattern_with_plugins_and_options(
+    outputs: Vec<(aaadaw_app::ProjectWavRenderSource, PathBuf)>,
+    settings: aaadaw_app::ProjectWavRenderSettings,
+    pattern: &str,
+    project: &Project,
+    project_path: &Path,
+    wildcard_options: RenderFilenameWildcardOptions<'_>,
+) -> Result<Vec<(aaadaw_app::ProjectWavRenderSource, PathBuf)>, String> {
+    apply_render_filename_pattern_with_selected_tracks_and_options(
+        outputs
+            .into_iter()
+            .map(|(source, path)| {
+                let mut settings = settings;
+                settings.source = source;
+                (settings, path)
+            })
+            .collect(),
+        pattern,
+        project,
+        project_path,
+        wildcard_options.plugins,
+        wildcard_options.selected_tracks,
+        wildcard_options.allow_slash_in_wildcard_substitutions,
+    )
+    .map(|outputs| {
+        outputs
+            .into_iter()
+            .map(|(settings, path)| (settings.source, path))
+            .collect()
+    })
+}
+
+fn format_render_wildcard_seconds(seconds: f64) -> String {
+    if !seconds.is_finite() {
+        return String::new();
+    }
+    format!("{seconds:.3}")
+        .trim_end_matches('0')
+        .trim_end_matches('.')
+        .to_owned()
+}
+
+fn format_render_wildcard_clock(project: &Project, sample: u64) -> String {
+    project
+        .project_time_at_sample(sample)
+        .map(crate::project_time::format_project_time)
+        .unwrap_or_default()
+        .replace(':', "-")
+}
+
+fn format_render_wildcard_timecode(project: &Project, sample: u64) -> String {
+    project
+        .project_time_at_sample(sample)
+        .and_then(|seconds| {
+            crate::project_time::format_project_timecode(project.settings().frame_rate(), seconds)
+        })
+        .unwrap_or_default()
+        .replace(':', ".")
+}
+
+fn format_render_wildcard_frames(seconds: f64, frame_rate: aaadaw_core::FrameRate) -> String {
+    if !seconds.is_finite() {
+        return String::new();
+    }
+    let frames = ((seconds.abs() + 1e-8) * frame_rate.frames_per_second()).floor();
+    let frames = if frames >= u64::MAX as f64 {
+        u64::MAX
+    } else {
+        frames as u64
+    };
+    if seconds < 0.0 {
+        format!("-{frames}")
+    } else {
+        frames.to_string()
+    }
+}
+
+fn format_render_wildcard_beat_position(project: &Project, tick: u64) -> String {
+    let Ok(position) = project.musical_position_at_tick(tick) else {
+        return String::new();
+    };
+    let meter = project.time_signature_at_tick(tick);
+    let ticks_per_beat =
+        (u64::from(project.settings().ppq()) * 4 / u64::from(meter.denominator())).max(1);
+    let hundredths = (position.tick_in_beat() * 100 + ticks_per_beat / 2) / ticks_per_beat;
+    if hundredths >= 100 {
+        let next_tick = tick.saturating_add(ticks_per_beat.saturating_sub(position.tick_in_beat()));
+        if let Ok(next) = project.musical_position_at_tick(next_tick) {
+            return format!("{}.{}.{:02}", next.measure(), next.beat(), 0);
+        }
+    }
+    format!("{}.{}.{hundredths:02}", position.measure(), position.beat())
+}
+
+fn format_render_wildcard_beat_length(project: &Project, start_tick: u64, end_tick: u64) -> String {
+    let meter = project.time_signature_at_tick(start_tick);
+    let ticks_per_beat =
+        (u64::from(project.settings().ppq()) * 4 / u64::from(meter.denominator())).max(1);
+    let ticks = end_tick.saturating_sub(start_tick);
+    let mut beats = ticks / ticks_per_beat;
+    let mut hundredths = ((ticks % ticks_per_beat) * 100 + ticks_per_beat / 2) / ticks_per_beat;
+    if hundredths >= 100 {
+        beats = beats.saturating_add(1);
+        hundredths = 0;
+    }
+    format!("0.{beats}.{hundredths:02}")
+}
+
+fn format_render_wildcard_length_components(seconds: f64) -> [String; 4] {
+    if !seconds.is_finite() || seconds < 0.0 {
+        return std::array::from_fn(|_| String::new());
+    }
+    let total_milliseconds = ((seconds + 1e-8) * 1_000.0).floor();
+    let total_milliseconds = if total_milliseconds >= u64::MAX as f64 {
+        u64::MAX
+    } else {
+        total_milliseconds as u64
+    };
+    let total_seconds = total_milliseconds / 1_000;
+    [
+        (total_seconds / 3_600).to_string(),
+        (total_seconds / 60 % 60).to_string(),
+        (total_seconds % 60).to_string(),
+        format!("{:03}", total_milliseconds % 1_000),
+    ]
+}
+
+fn format_render_wildcard_sample_rate_kilohertz(sample_rate: u32) -> String {
+    let kilohertz = sample_rate / 1_000;
+    let remainder = sample_rate % 1_000;
+    if remainder == 0 {
+        kilohertz.to_string()
+    } else if remainder.is_multiple_of(100) {
+        format!("{kilohertz}.{}", remainder / 100)
+    } else if remainder.is_multiple_of(10) {
+        format!("{kilohertz}.{:02}", remainder / 10)
+    } else {
+        format!("{kilohertz}.{remainder:03}")
+    }
+}
+
+fn format_render_wildcard_bit_depth(sample_format: WavSampleFormat) -> String {
+    match sample_format {
+        WavSampleFormat::Pcm8 | WavSampleFormat::MuLaw8 => "8",
+        WavSampleFormat::Pcm16 => "16",
+        WavSampleFormat::Pcm24 => "24",
+        WavSampleFormat::Pcm32 | WavSampleFormat::Float32 => "32",
+        WavSampleFormat::Float64 => "64",
+        WavSampleFormat::ImaAdpcm4 => "4",
+        WavSampleFormat::Cadpcm2 => "2",
+    }
+    .to_owned()
+}
+
+fn parse_render_wildcard_note_start(note: &[char]) -> Option<i64> {
+    let (&letter, suffix) = note.split_first()?;
+    let pitch = match letter.to_ascii_uppercase() {
+        'C' => 0_i64,
+        'D' => 2,
+        'E' => 4,
+        'F' => 5,
+        'G' => 7,
+        'A' => 9,
+        'B' => 11,
+        _ => return None,
+    };
+    let (pitch, octave_start) = match suffix.first() {
+        Some('#') => (pitch + 1, 1),
+        Some('b' | 'B') => (pitch - 1, 1),
+        _ => (pitch, 0),
+    };
+    let octave = suffix[octave_start..]
+        .iter()
+        .collect::<String>()
+        .parse::<i64>()
+        .ok()?;
+    octave.checked_add(1)?.checked_mul(12)?.checked_add(pitch)
+}
+
+fn format_render_wildcard_chromatic_note(start: i64, file_number: u64) -> String {
+    const PITCHES: [&str; 12] = [
+        "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B",
+    ];
+    let ordinal = i64::try_from(file_number.saturating_sub(1)).unwrap_or(i64::MAX);
+    let note = start.saturating_add(ordinal);
+    let octave = note.div_euclid(12).saturating_sub(1);
+    format!("{}{octave}", PITCHES[note.rem_euclid(12) as usize])
+}
+
+fn format_render_wildcard_natural_note(file_number: u64) -> String {
+    const NOTES: [&str; 7] = ["C", "D", "E", "F", "G", "A", "B"];
+    let ordinal = file_number.saturating_sub(1);
+    let octave = i64::try_from(ordinal / 7)
+        .unwrap_or(i64::MAX)
+        .saturating_sub(1);
+    format!("{}{octave}", NOTES[(ordinal % 7) as usize])
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum RenderFilenameWildcardModifier {
+    ReplaceCharacters {
+        characters: Vec<char>,
+        replacement: char,
+    },
+    RemoveCharacter(char),
+    Truncate(usize),
+    Numbered {
+        start: u64,
+        width: usize,
+    },
+    NoteStart(Option<i64>),
+    ListSeparator(char),
+    UniqueIdLength(Option<usize>),
+}
+
+fn parse_render_filename_wildcard_modifiers(
+    characters: &[char],
+    start: usize,
+    token: &str,
+) -> (usize, Vec<RenderFilenameWildcardModifier>) {
+    let mut index = start;
+    let mut modifiers = Vec::new();
+    while index < characters.len() {
+        match characters[index] {
+            '<' => {
+                let Some(relative_end) = characters[index + 1..]
+                    .iter()
+                    .position(|character| *character == '>')
+                else {
+                    break;
+                };
+                let end = index + 1 + relative_end;
+                if end == index + 1 {
+                    break;
+                }
+                let modifier = &characters[index + 1..end];
+                if modifier.len() == 1 {
+                    modifiers.push(RenderFilenameWildcardModifier::RemoveCharacter(modifier[0]));
+                } else if let Some(replacement) = modifier.last().copied() {
+                    modifiers.push(RenderFilenameWildcardModifier::ReplaceCharacters {
+                        characters: modifier[..modifier.len() - 1].to_vec(),
+                        replacement,
+                    });
+                }
+                index = end + 1;
+            }
+            '[' => {
+                let Some(relative_end) = characters[index + 1..]
+                    .iter()
+                    .position(|character| *character == ']')
+                else {
+                    break;
+                };
+                let end = index + 1 + relative_end;
+                let suffix = &characters[index + 1..end];
+                if let Some(digits) = suffix.strip_prefix(&['<']) {
+                    let digits = digits.iter().collect::<String>();
+                    let Ok(limit) = digits.parse::<usize>() else {
+                        break;
+                    };
+                    modifiers.push(RenderFilenameWildcardModifier::Truncate(limit));
+                } else if token == "filenumber" && suffix.iter().all(char::is_ascii_digit) {
+                    modifiers.push(RenderFilenameWildcardModifier::Numbered {
+                        start: 1,
+                        width: suffix.len(),
+                    });
+                } else if token == "note"
+                    && suffix.len() == 1
+                    && suffix[0].eq_ignore_ascii_case(&'X')
+                {
+                    modifiers.push(RenderFilenameWildcardModifier::NoteStart(None));
+                } else if token == "note" {
+                    let Some(start) = parse_render_wildcard_note_start(suffix) else {
+                        break;
+                    };
+                    modifiers.push(RenderFilenameWildcardModifier::NoteStart(Some(start)));
+                } else if matches!(token, "timelineorder" | "timelineorder_track")
+                    && suffix.iter().all(char::is_ascii_digit)
+                {
+                    let digits = suffix.iter().collect::<String>();
+                    let Ok(start) = digits.parse::<u64>() else {
+                        break;
+                    };
+                    modifiers.push(RenderFilenameWildcardModifier::Numbered {
+                        start,
+                        width: suffix.len(),
+                    });
+                } else if matches!(token, "regionnumber" | "markernumber")
+                    && suffix.iter().all(char::is_ascii_digit)
+                {
+                    let width = suffix.len();
+                    let digits = suffix.iter().collect::<String>();
+                    let Ok(start) = digits.parse::<u64>() else {
+                        break;
+                    };
+                    modifiers.push(RenderFilenameWildcardModifier::Numbered { start, width });
+                } else if token == "uniqueid"
+                    && suffix.len() == 1
+                    && suffix[0].eq_ignore_ascii_case(&'N')
+                {
+                    // The picker inserts the native template. REAPER leaves that
+                    // placeholder empty until the user replaces N with a length.
+                    modifiers.push(RenderFilenameWildcardModifier::UniqueIdLength(None));
+                } else if token == "uniqueid" && suffix.iter().all(char::is_ascii_digit) {
+                    let digits = suffix.iter().collect::<String>();
+                    let length = digits.parse::<usize>().unwrap_or(usize::MAX);
+                    modifiers.push(RenderFilenameWildcardModifier::UniqueIdLength(Some(length)));
+                } else if matches!(token, "fx" | "folders") && suffix.len() == 1 {
+                    modifiers.push(RenderFilenameWildcardModifier::ListSeparator(suffix[0]));
+                } else {
+                    // Other [N] forms use render-order contexts which are not
+                    // modeled by the current single-source filename resolver.
+                    break;
+                }
+                index = end + 1;
+            }
+            _ => break,
+        }
+    }
+    (index, modifiers)
+}
+
+fn apply_render_filename_wildcard_case(value: &str, token: &str) -> String {
+    let mut token_characters = token.chars();
+    let Some(first) = token_characters.next() else {
+        return value.to_owned();
+    };
+    let Some(second) = token_characters.next() else {
+        return value.to_owned();
+    };
+
+    if first.is_ascii_uppercase() && second.is_ascii_uppercase() {
+        value.to_uppercase()
+    } else if first.is_ascii_lowercase() && second.is_ascii_uppercase() {
+        value.to_lowercase()
+    } else if first.is_ascii_uppercase() {
+        let mut value_characters = value.chars();
+        let Some(first_value_character) = value_characters.next() else {
+            return String::new();
+        };
+        first_value_character
+            .to_uppercase()
+            .chain(value_characters)
+            .collect()
+    } else {
+        value.to_owned()
+    }
+}
+
+fn apply_render_filename_wildcard_modifiers(
+    value: &str,
+    token: &str,
+    modifiers: &[RenderFilenameWildcardModifier],
+) -> String {
+    let mut value = apply_render_filename_wildcard_case(value, token);
+    for modifier in modifiers {
+        value = match modifier {
+            RenderFilenameWildcardModifier::ReplaceCharacters {
+                characters,
+                replacement,
+            } => value
+                .chars()
+                .map(|character| {
+                    if characters.contains(&character) {
+                        *replacement
+                    } else {
+                        character
+                    }
+                })
+                .collect(),
+            RenderFilenameWildcardModifier::RemoveCharacter(character) => {
+                value.chars().filter(|value| *value != *character).collect()
+            }
+            RenderFilenameWildcardModifier::Truncate(limit) => value.chars().take(*limit).collect(),
+            RenderFilenameWildcardModifier::Numbered { start, width } => value
+                .parse::<u64>()
+                .map(|number| start.saturating_add(number.saturating_sub(1)))
+                .map(|number| format!("{number:0width$}"))
+                .unwrap_or(value),
+            RenderFilenameWildcardModifier::ListSeparator(_) => value,
+            RenderFilenameWildcardModifier::NoteStart(_) => value,
+            RenderFilenameWildcardModifier::UniqueIdLength(Some(_)) => value,
+            RenderFilenameWildcardModifier::UniqueIdLength(None) => String::new(),
+        };
+    }
+    value
+}
+
+fn format_render_filename_unique_id(length: usize) -> String {
+    static SEED: OnceLock<u64> = OnceLock::new();
+    static NEXT_ID: AtomicU64 = AtomicU64::new(0);
+
+    let seed = *SEED.get_or_init(|| {
+        let time = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos() as u64;
+        time ^ (u64::from(std::process::id()) << 32)
+    });
+    let counter = NEXT_ID.fetch_add(1, Ordering::Relaxed);
+    let mut value = seed.wrapping_add(counter.wrapping_mul(0x9e37_79b9_7f4a_7c15));
+    value = (value ^ (value >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+    value = (value ^ (value >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+    value ^= value >> 31;
+
+    let value = format!("{value:016x}");
+    let length = length.clamp(8, 16);
+    value[..length].to_owned()
+}
+
+fn is_render_filename_wildcard_separator(character: char) -> bool {
+    matches!(character, ' ' | '-' | '_' | '.')
+}
+
+fn render_filename_project_directory(project_path: &Path, level: usize) -> String {
+    project_path
+        .parent()
+        .and_then(|directory| directory.ancestors().nth(level.saturating_sub(1)))
+        .and_then(Path::file_name)
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_default()
+}
+
+fn render_filename_named_value(text: &str, name: &str, separator: Option<char>) -> String {
+    text.split(|character| character == '\n' || character == '\r' || separator == Some(character))
+        .find_map(|entry| {
+            let (key, value) = entry.split_once('=')?;
+            (key == name).then(|| value.to_owned())
+        })
+        .unwrap_or_default()
+}
+
+fn render_filename_pattern_has_region_name(pattern: &str) -> bool {
+    pattern.split('$').skip(1).any(|expression| {
+        let token = expression
+            .split(|character: char| !character.is_ascii_alphanumeric())
+            .next()
+            .unwrap_or_default();
+        token.eq_ignore_ascii_case("region")
+    })
+}
+
+fn render_filename_pattern_has_item_name(pattern: &str) -> bool {
+    pattern.split('$').skip(1).any(|expression| {
+        let token = expression
+            .split(|character: char| !character.is_ascii_alphanumeric())
+            .next()
+            .unwrap_or_default();
+        token.eq_ignore_ascii_case("item")
+    })
+}
+
+fn expand_render_filename_pattern(
+    pattern: &str,
+    fallback: &str,
+    project: &Project,
+    project_path: &Path,
+    settings: aaadaw_app::ProjectWavRenderSettings,
+    context: &RenderFilenameExpansionContext<'_>,
+) -> String {
+    let RenderFilenameExpansionContext {
+        plugins,
+        selected_tracks,
+        system_info,
+        allow_slash_in_wildcard_substitutions,
+        file_number,
+        file_count,
+        item_name_number,
+    } = context;
+    let project_name = project_path
+        .file_stem()
+        .and_then(|name| name.to_str())
+        .filter(|name| !name.is_empty())
+        .unwrap_or(fallback);
+    let track_id = match settings.source {
+        aaadaw_app::ProjectWavRenderSource::SelectedTrackStem(track_id)
+        | aaadaw_app::ProjectWavRenderSource::SelectedTrackStemPreFader(track_id)
+        | aaadaw_app::ProjectWavRenderSource::SelectedTrackViaMaster(track_id) => Some(track_id),
+        aaadaw_app::ProjectWavRenderSource::SelectedAudioItem(item_id)
+        | aaadaw_app::ProjectWavRenderSource::SelectedMidiItem(item_id) => {
+            render_project_item_track(project, item_id)
+        }
+        aaadaw_app::ProjectWavRenderSource::MasterMix => None,
+    };
+    let track_name = track_id
+        .and_then(|track_id| project.tracks().iter().find(|track| track.id() == track_id))
+        .map(|track| track.name())
+        .unwrap_or_else(|| {
+            if settings.source == aaadaw_app::ProjectWavRenderSource::MasterMix {
+                "Master"
+            } else {
+                ""
+            }
+        });
+    let track_number = track_id
+        .and_then(|track_id| {
+            project
+                .tracks()
+                .iter()
+                .position(|track| track.id() == track_id)
+        })
+        .map_or(0, |index| index + 1);
+    let track_number_text = format!("{track_number:02}");
+    let track_name_or_number = track_id
+        .and_then(|track_id| project.tracks().iter().find(|track| track.id() == track_id))
+        .map(|track| {
+            if track.name().is_empty() {
+                format!("Track {track_number_text}")
+            } else {
+                track.name().to_owned()
+            }
+        })
+        .unwrap_or_else(|| {
+            if settings.source == aaadaw_app::ProjectWavRenderSource::MasterMix {
+                "Master".to_owned()
+            } else {
+                String::new()
+            }
+        });
+    let selected_track_name = selected_tracks
+        .first()
+        .and_then(|track_id| {
+            project
+                .tracks()
+                .iter()
+                .find(|track| track.id() == *track_id)
+        })
+        .map(|track| track.name())
+        .unwrap_or_default();
+    let fx_names = track_id
+        .and_then(|track_id| project.tracks().iter().find(|track| track.id() == track_id))
+        .map(|track| {
+            track
+                .fx_chain()
+                .iter()
+                .filter_map(|fx| {
+                    plugins
+                        .iter()
+                        .find(|descriptor| descriptor.plugin_id == fx.plugin_id())
+                        .map(|descriptor| descriptor.name.as_str())
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    let folder_names = track_id
+        .and_then(|track_id| project.tracks().iter().find(|track| track.id() == track_id))
+        .map(|track| {
+            let mut names = Vec::new();
+            let mut parent_id = track.parent_track();
+            while let Some(id) = parent_id {
+                let Some(parent) = project.tracks().iter().find(|parent| parent.id() == id) else {
+                    break;
+                };
+                names.push(parent.name());
+                parent_id = parent.parent_track();
+            }
+            names.reverse();
+            names
+        })
+        .unwrap_or_default();
+    let parent_name = folder_names.last().copied().unwrap_or_default();
+    let item_id = match settings.source {
+        aaadaw_app::ProjectWavRenderSource::SelectedAudioItem(item_id)
+        | aaadaw_app::ProjectWavRenderSource::SelectedMidiItem(item_id) => Some(item_id),
+        _ => None,
+    };
+    let item_index = item_id.and_then(|item_id| {
+        render_project_item_order(project)
+            .iter()
+            .position(|candidate| *candidate == item_id)
+    });
+    let item_name = item_id.map_or_else(String::new, |item_id| {
+        render_project_item_name(project, item_id)
+            .filter(|name| !name.is_empty())
+            .map(str::to_owned)
+            .unwrap_or_else(|| format!("item_{:02}", item_index.unwrap_or(0) + 1))
+    });
+    let item_number_text = item_index
+        .map(|index| format!("{:02}", index + 1))
+        .unwrap_or_default();
+    let region = project.regions().iter().find(|region| {
+        project.sample_at_tick(region.start_ticks()).ok() == Some(settings.start_sample)
+            && project.sample_at_tick(region.end_ticks()).ok() == Some(settings.end_sample)
+    });
+    let name_number_text = if render_filename_pattern_has_region_name(pattern) {
+        region.map_or_else(String::new, |region| {
+            let region_index = project
+                .regions()
+                .iter()
+                .position(|candidate| candidate.id() == region.id())
+                .unwrap_or(0);
+            format!(
+                "{:02}",
+                project
+                    .regions()
+                    .iter()
+                    .enumerate()
+                    .filter(|(index, candidate)| {
+                        candidate.name() == region.name()
+                            && (candidate.start_ticks() < region.start_ticks()
+                                || (candidate.start_ticks() == region.start_ticks()
+                                    && *index <= region_index))
+                    })
+                    .count()
+            )
+        })
+    } else if render_filename_pattern_has_item_name(pattern) {
+        item_name_number.map_or_else(String::new, |number| format!("{number:02}"))
+    } else {
+        String::new()
+    };
+    let marker = project
+        .markers()
+        .iter()
+        .enumerate()
+        .find(|(index, marker)| {
+            let Ok(start) = project.sample_at_tick(marker.position_ticks()) else {
+                return false;
+            };
+            let end = project
+                .markers()
+                .get(index + 1)
+                .and_then(|next| project.sample_at_tick(next.position_ticks()).ok())
+                .or_else(|| aaadaw_app::project_content_end_sample(project).ok());
+            start == settings.start_sample && end == Some(settings.end_sample)
+        });
+    let (timeline_order_text, timeline_order_track_text) = item_id
+        .and_then(|item_id| render_project_item_timeline_order(project, item_id))
+        .or_else(|| {
+            region.map(|region| {
+                let region_index = project
+                    .regions()
+                    .iter()
+                    .position(|candidate| candidate.id() == region.id())
+                    .unwrap_or(0);
+                let order = project
+                    .regions()
+                    .iter()
+                    .enumerate()
+                    .filter(|(index, other)| {
+                        other.start_ticks() < region.start_ticks()
+                            || (other.start_ticks() == region.start_ticks()
+                                && *index < region_index)
+                    })
+                    .count()
+                    + 1;
+                (order, order)
+            })
+        })
+        .map_or_else(
+            || (String::new(), String::new()),
+            |(order, track_order)| (order.to_string(), track_order.to_string()),
+        );
+    let bpm = project
+        .tick_at_sample(settings.start_sample)
+        .ok()
+        .map(|tick| project.tempo_at_tick(tick))
+        .unwrap_or_else(|| project.settings().initial_tempo_bpm());
+    let bpm_text = if bpm.fract().abs() < f64::EPSILON {
+        format!("{bpm:.0}")
+    } else {
+        bpm.to_string()
+    };
+    let tick = project.tick_at_sample(settings.start_sample).unwrap_or(0);
+    let time_signature = project.time_signature_at_tick(tick);
+    let time_signature_text = format!(
+        "{}-{}",
+        time_signature.numerator(),
+        time_signature.denominator()
+    );
+    let sample_rate = f64::from(project.settings().sample_rate());
+    let start_seconds = settings.start_sample as f64 / sample_rate;
+    let end_seconds = settings.end_sample as f64 / sample_rate;
+    let length_seconds = end_seconds - start_seconds;
+    let start_tick = project.tick_at_sample(settings.start_sample).unwrap_or(0);
+    let end_tick = project
+        .tick_at_sample(settings.end_sample)
+        .unwrap_or(start_tick);
+    let length_components = format_render_wildcard_length_components(length_seconds);
+    let frame_rate = project.settings().frame_rate();
+    let region_number_text =
+        region.map_or_else(String::new, |region| format!("{:02}", region.number()));
+    let marker_number_text =
+        marker.map_or_else(String::new, |(_, marker)| format!("{:02}", marker.number()));
+    let region_name_or_number = region.map_or_else(String::new, |region| {
+        if region.name().is_empty() {
+            format!("{:02}", region.number())
+        } else {
+            region.name().to_owned()
+        }
+    });
+    let marker_name_or_number = marker.map_or_else(String::new, |(_, marker)| {
+        if marker.name().is_empty() {
+            format!("{:02}", marker.number())
+        } else {
+            marker.name().to_owned()
+        }
+    });
+    let region_name = region.map_or_else(String::new, |region| region.name().to_owned());
+    let marker_name = marker.map_or_else(String::new, |(_, marker)| marker.name().to_owned());
+
+    let mut result = String::with_capacity(pattern.len());
+    let characters = pattern.chars().collect::<Vec<_>>();
+    let mut index = 0;
+    while index < characters.len() {
+        if characters[index] != '$' {
+            result.push(characters[index]);
+            index += 1;
+            continue;
+        }
+        let token_start = index + 1;
+        let mut token_end = token_start;
+        while token_end < characters.len() && characters[token_end].is_ascii_alphanumeric() {
+            token_end += 1;
+        }
+        if token_end == token_start {
+            result.push('$');
+            index += 1;
+            continue;
+        }
+        let full_token = characters[token_start..token_end]
+            .iter()
+            .collect::<String>();
+        if full_token.eq_ignore_ascii_case("timelineorder")
+            && characters.get(token_end) == Some(&'_')
+        {
+            let mut suffix_end = token_end;
+            while suffix_end < characters.len()
+                && (characters[suffix_end].is_ascii_alphanumeric() || characters[suffix_end] == '_')
+            {
+                suffix_end += 1;
+            }
+            if suffix_end > token_end + 1 {
+                token_end = suffix_end;
+            }
+        } else if full_token.eq_ignore_ascii_case("projectdirectoryn") && full_token.ends_with('N')
+        {
+            token_end -= 1;
+        } else if full_token.len() > "projectdirectory".len()
+            && full_token[.."projectdirectory".len()].eq_ignore_ascii_case("projectdirectory")
+            && full_token["projectdirectory".len()..]
+                .chars()
+                .all(|character| character.is_ascii_digit())
+        {
+            // `$projectdirectoryN` uses a numeric path level, while date/time
+            // wildcards such as `$year2` and `$hour12` include digits in the
+            // wildcard name itself. Keep both forms unambiguous.
+            token_end = token_start + "projectdirectory".len();
+        }
+        let token_original = characters[token_start..token_end]
+            .iter()
+            .collect::<String>();
+        let token = token_original.to_ascii_lowercase();
+        let mut project_directory_level = None;
+        let directory_expression_end = if token == "projectdirectory" {
+            let mut suffix_end = token_end;
+            while suffix_end < characters.len() && characters[suffix_end].is_ascii_digit() {
+                suffix_end += 1;
+            }
+            let level = if suffix_end == token_end {
+                1
+            } else {
+                let suffix = characters[token_end..suffix_end].iter().collect::<String>();
+                match suffix.parse::<usize>() {
+                    // REAPER treats zero as an ordinary suffix, so `$projectdirectory0`
+                    // expands the current directory and keeps the trailing `0` literal.
+                    Ok(0) => {
+                        suffix_end = token_end;
+                        1
+                    }
+                    Ok(level) => level,
+                    Err(_) => usize::MAX,
+                }
+            };
+            project_directory_level = Some(level);
+            suffix_end
+        } else {
+            token_end
+        };
+        let known_token = token == "tracknameornumber"
+            || RenderFilenameWildcard::ALL.iter().any(|wildcard| {
+                wildcard
+                    .token()
+                    .trim_start_matches('$')
+                    .split(['(', '['])
+                    .next()
+                    == Some(token.as_str())
+            });
+        let (expression_end, named_value_key, named_value_separator) =
+            if matches!(token.as_str(), "projectnotes" | "region" | "marker")
+                && characters.get(token_end) == Some(&'(')
+            {
+                let expression_start = token_end + 1;
+                characters[expression_start..]
+                    .iter()
+                    .position(|character| *character == ')')
+                    .map(|relative_end| {
+                        let expression_end = expression_start + relative_end + 1;
+                        let name = characters[expression_start..expression_end - 1]
+                            .iter()
+                            .collect::<String>();
+                        let separator = if matches!(token.as_str(), "region" | "marker")
+                            && characters.get(expression_end) == Some(&'[')
+                            && characters.get(expression_end + 2) == Some(&']')
+                        {
+                            Some(characters[expression_end + 1])
+                        } else {
+                            None
+                        };
+                        let expression_end = if separator.is_some() {
+                            expression_end + 3
+                        } else {
+                            expression_end
+                        };
+                        (expression_end, Some(name), separator)
+                    })
+                    .unwrap_or((token_end, None, None))
+            } else {
+                (directory_expression_end, None, None)
+            };
+        let (wildcard_end, modifiers) = if known_token {
+            parse_render_filename_wildcard_modifiers(&characters, expression_end, &token)
+        } else {
+            (expression_end, Vec::new())
+        };
+        let expansion_start = result.len();
+        match token.as_str() {
+            "project" => result.push_str(project_name),
+            "title" => result.push_str(&project.project_notes().title),
+            "author" => result.push_str(&project.project_notes().author),
+            "projectdirectory" => result.push_str(&render_filename_project_directory(
+                project_path,
+                project_directory_level.unwrap_or(1),
+            )),
+            "projectnotes" => result.push_str(
+                &named_value_key
+                    .as_deref()
+                    .map(|name| {
+                        render_filename_named_value(&project.project_notes().text, name, None)
+                    })
+                    .unwrap_or_else(|| project.project_notes().text.clone()),
+            ),
+            "region" if named_value_key.is_some() => result.push_str(
+                &named_value_key
+                    .as_deref()
+                    .map(|name| {
+                        region.map_or_else(String::new, |region| {
+                            render_filename_named_value(region.name(), name, named_value_separator)
+                        })
+                    })
+                    .unwrap_or_default(),
+            ),
+            "marker" if named_value_key.is_some() => result.push_str(
+                &named_value_key
+                    .as_deref()
+                    .map(|name| {
+                        marker.map_or_else(String::new, |(_, marker)| {
+                            render_filename_named_value(marker.name(), name, named_value_separator)
+                        })
+                    })
+                    .unwrap_or_default(),
+            ),
+            "start" => result.push_str(&format_render_wildcard_clock(
+                project,
+                settings.start_sample,
+            )),
+            "end" => result.push_str(&format_render_wildcard_clock(project, settings.end_sample)),
+            "length" => result.push_str(
+                &crate::project_time::format_project_time(length_seconds).replace(':', "-"),
+            ),
+            "startbeats" => {
+                result.push_str(&format_render_wildcard_beat_position(project, start_tick));
+            }
+            "endbeats" => {
+                result.push_str(&format_render_wildcard_beat_position(project, end_tick));
+            }
+            "lengthbeats" => result.push_str(&format_render_wildcard_beat_length(
+                project, start_tick, end_tick,
+            )),
+            "starttc" => {
+                result.push_str(&format_render_wildcard_timecode(
+                    project,
+                    settings.start_sample,
+                ));
+            }
+            "endtc" => {
+                result.push_str(&format_render_wildcard_timecode(
+                    project,
+                    settings.end_sample,
+                ));
+            }
+            "startframes" => {
+                result.push_str(&format_render_wildcard_frames(start_seconds, frame_rate))
+            }
+            "endframes" => {
+                result.push_str(&format_render_wildcard_frames(end_seconds, frame_rate));
+            }
+            "lengthframes" => {
+                result.push_str(&format_render_wildcard_frames(length_seconds, frame_rate));
+            }
+            "startseconds" => result.push_str(&format_render_wildcard_seconds(start_seconds)),
+            "endseconds" => result.push_str(&format_render_wildcard_seconds(end_seconds)),
+            "lengthseconds" => {
+                result.push_str(&format_render_wildcard_seconds(length_seconds));
+            }
+            "lenhh" => result.push_str(&length_components[0]),
+            "lenmm" => result.push_str(&length_components[1]),
+            "lenss" => result.push_str(&length_components[2]),
+            "lentt" => result.push_str(&length_components[3]),
+            "filenumber" => result.push_str(&file_number.to_string()),
+            "filecount" => result.push_str(&file_count.to_string()),
+            "note" => match modifiers.iter().find_map(|modifier| match modifier {
+                RenderFilenameWildcardModifier::NoteStart(start) => Some(*start),
+                _ => None,
+            }) {
+                // REAPER's picker inserts `$note[X]` as a template. If X is
+                // left in place, its first output is empty and subsequent
+                // outputs follow the default chromatic sequence.
+                Some(None) if *file_number > 1 => result.push_str(
+                    &format_render_wildcard_chromatic_note(0, file_number.saturating_sub(1)),
+                ),
+                Some(None) => {}
+                Some(Some(start)) => {
+                    result.push_str(&format_render_wildcard_chromatic_note(start, *file_number));
+                }
+                None => result.push_str(&format_render_wildcard_chromatic_note(0, *file_number)),
+            },
+            "natural" => result.push_str(&format_render_wildcard_natural_note(*file_number)),
+            "namenumber" => result.push_str(&name_number_text),
+            "timelineorder" => result.push_str(&timeline_order_text),
+            "timelineorder_track" => result.push_str(&timeline_order_track_text),
+            "fx" => {
+                let separator = modifiers
+                    .iter()
+                    .find_map(|modifier| match modifier {
+                        RenderFilenameWildcardModifier::ListSeparator(separator) => {
+                            Some(*separator)
+                        }
+                        _ => None,
+                    })
+                    .unwrap_or('_');
+                result.push_str(&fx_names.join(&separator.to_string()));
+            }
+            "trackslashes" => result.push_str(track_name),
+            "folders" => {
+                let separator = modifiers
+                    .iter()
+                    .find_map(|modifier| match modifier {
+                        RenderFilenameWildcardModifier::ListSeparator(separator) => {
+                            Some(*separator)
+                        }
+                        _ => None,
+                    })
+                    .unwrap_or('/');
+                let folders = folder_names.join(&separator.to_string());
+                result.push_str(&folders);
+            }
+            "parent" => result.push_str(parent_name),
+            "seltrack" => result.push_str(selected_track_name),
+            "user" => result.push_str(&system_info.user),
+            "computer" => result.push_str(&system_info.computer),
+            "uniqueid" => {
+                let requested_length = modifiers.iter().find_map(|modifier| match modifier {
+                    RenderFilenameWildcardModifier::UniqueIdLength(length) => Some(*length),
+                    _ => None,
+                });
+                match requested_length {
+                    Some(None) => {}
+                    Some(Some(length)) => {
+                        result.push_str(&format_render_filename_unique_id(length))
+                    }
+                    None => result.push_str(&format_render_filename_unique_id(8)),
+                }
+            }
+            "date" | "time" | "datetime" | "year" | "year2" | "month" | "monthname" | "day"
+            | "dayname" | "hour" | "hour12" | "ampm" | "minute" | "second" | "localtime" => result
+                .push_str(
+                    &system_info
+                        .date_time
+                        .value(&token)
+                        .expect("date/time tokens are in the native wildcard catalog"),
+                ),
+            // AAADAW currently has no project transport-rate setting, so its only
+            // supported project rate is the 1x default used by its offline renderer.
+            "playrate" => {
+                result.push_str(&format_render_wildcard_playrate(AAADAW_PROJECT_PLAY_RATE))
+            }
+            "format" => result.push_str("wav"),
+            "samplerate" => result.push_str(&settings.output_sample_rate.to_string()),
+            "sampleratek" => result.push_str(&format_render_wildcard_sample_rate_kilohertz(
+                settings.output_sample_rate,
+            )),
+            "bitdepth" => result.push_str(&format_render_wildcard_bit_depth(
+                settings.export_options.sample_format,
+            )),
+            "channels" => result.push_str(&settings.output_channels.channels().to_string()),
+            "tempo" => result.push_str(&bpm_text),
+            "timesignature" => result.push_str(&time_signature_text),
+            "timesignum" => result.push_str(&time_signature.numerator().to_string()),
+            "timesigdenom" => result.push_str(&time_signature.denominator().to_string()),
+            "track" => result.push_str(track_name),
+            "tracknumber" => result.push_str(&track_number_text),
+            "tracknamenumber" | "tracknameornumber" => result.push_str(&track_name_or_number),
+            "region" => result.push_str(&region_name_or_number),
+            "regionnumber" => result.push_str(&region_number_text),
+            "regionname" => result.push_str(&region_name),
+            "marker" => result.push_str(&marker_name_or_number),
+            "markernumber" => result.push_str(&marker_number_text),
+            "markername" => result.push_str(&marker_name),
+            "item" => result.push_str(&item_name),
+            "itemnumber" => result.push_str(&item_number_text),
+            "bpm" => result.push_str(&bpm_text),
+            _ => {
+                result.push('$');
+                result.extend(&characters[token_start..token_end]);
+            }
+        }
+        if known_token {
+            let expansion = result.split_off(expansion_start);
+            let mut expansion =
+                apply_render_filename_wildcard_modifiers(&expansion, &token_original, &modifiers);
+            let folders_use_path_separator = token == "folders"
+                && !modifiers.iter().any(|modifier| {
+                    matches!(modifier, RenderFilenameWildcardModifier::ListSeparator(separator) if *separator != '/')
+                });
+            if *allow_slash_in_wildcard_substitutions
+                || token == "trackslashes"
+                || folders_use_path_separator
+            {
+                expansion = mark_forced_render_path_separators(&expansion);
+            }
+            if expansion.is_empty() {
+                if result
+                    .chars()
+                    .next_back()
+                    .is_some_and(is_render_filename_wildcard_separator)
+                {
+                    result.pop();
+                } else if characters
+                    .get(wildcard_end)
+                    .copied()
+                    .is_some_and(is_render_filename_wildcard_separator)
+                {
+                    index = wildcard_end + 1;
+                    continue;
+                }
+            } else {
+                result.push_str(&expansion);
+            }
+            index = wildcard_end;
+        } else {
+            index = token_end;
+        }
+    }
+    result
+}
+
+impl RenderSampleRate {
+    pub(crate) const ALL: [Self; 12] = [
+        Self::Project,
+        Self::Fixed(8_000),
+        Self::Fixed(11_025),
+        Self::Fixed(16_000),
+        Self::Fixed(22_050),
+        Self::Fixed(32_000),
+        Self::Fixed(44_100),
+        Self::Fixed(48_000),
+        Self::Fixed(88_200),
+        Self::Fixed(96_000),
+        Self::Fixed(176_400),
+        Self::Fixed(192_000),
+    ];
+}
+
+impl std::fmt::Display for RenderSampleRate {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Project => formatter.write_str("Project rate"),
+            Self::Fixed(sample_rate) => write!(formatter, "{sample_rate} Hz"),
+        }
+    }
+}
+
+impl RenderBounds {
+    pub(crate) const ALL: [Self; 7] = [
+        Self::CustomTimeRange,
+        Self::EntireProject,
+        Self::TimeSelection,
+        Self::AllProjectRegions,
+        Self::SelectedProjectRegions,
+        Self::AllProjectMarkers,
+        Self::SelectedProjectMarkers,
+    ];
+    pub(crate) const REGION_MATRIX: [Self; 2] =
+        [Self::AllProjectRegions, Self::SelectedProjectRegions];
+}
+
+impl std::fmt::Display for RenderBounds {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(match self {
+            Self::CustomTimeRange => "Custom time range",
+            Self::EntireProject => "Entire project",
+            Self::TimeSelection => "Time selection",
+            Self::AllProjectRegions => "All project regions",
+            Self::SelectedProjectRegions => "Selected regions",
+            Self::AllProjectMarkers => "All project markers",
+            Self::SelectedProjectMarkers => "Selected markers",
+        })
+    }
+}
+
+#[derive(Clone, Debug)]
+pub(super) struct RenderDialogState {
+    pub(super) bounds: RenderBounds,
+    pub(super) custom_start_text: String,
+    pub(super) custom_end_text: String,
+    custom_range_initialized: bool,
+    pub(super) source: RenderSource,
+    pub(super) sample_rate: RenderSampleRate,
+    pub(super) channels: WavChannelCount,
+    pub(super) normalize_peak: bool,
+    pub(super) normalize_peak_target_text: String,
+    pub(super) tail_enabled: bool,
+    pub(super) tail_duration_text: String,
+    pub(super) stems_pre_fader: bool,
+    pub(super) filename_pattern: String,
+    pub(super) allow_slash_in_wildcard_substitutions: bool,
+    pub(super) wildcard_menu_open: bool,
+}
+
+#[derive(Debug)]
+struct ResolvedRenderSettings {
+    start_sample: u64,
+    end_sample: u64,
+    tail_milliseconds: u32,
+    output_sample_rate: u32,
+    selected_tracks: Vec<TrackId>,
+    normalize_peak_target_centi_dbfs: i32,
+}
+
+impl Default for RenderDialogState {
+    fn default() -> Self {
+        Self {
+            bounds: RenderBounds::EntireProject,
+            custom_start_text: "0:00.000".to_owned(),
+            custom_end_text: "0:00.000".to_owned(),
+            custom_range_initialized: false,
+            source: RenderSource::MasterMix,
+            sample_rate: RenderSampleRate::Project,
+            channels: WavChannelCount::Stereo,
+            normalize_peak: false,
+            normalize_peak_target_text: "0".to_owned(),
+            tail_enabled: false,
+            tail_duration_text: "1000".to_owned(),
+            stems_pre_fader: false,
+            filename_pattern: String::new(),
+            allow_slash_in_wildcard_substitutions: true,
+            wildcard_menu_open: false,
+        }
+    }
+}
 
 #[derive(Clone)]
 pub(super) struct OfflineRenderJob {
@@ -23,8 +2463,14 @@ pub(super) struct OfflineRenderJob {
 enum OfflineRenderKind {
     ProjectWav {
         destination: PathBuf,
-        master_ceiling: aaadaw_engine::MasterOutputCeiling,
-        options: aaadaw_app::WavExportOptions,
+        settings: aaadaw_app::ProjectWavRenderSettings,
+    },
+    ProjectWavStems {
+        outputs: Vec<(aaadaw_app::ProjectWavRenderSource, PathBuf)>,
+        settings: aaadaw_app::ProjectWavRenderSettings,
+    },
+    ProjectWavBatch {
+        outputs: Vec<(aaadaw_app::ProjectWavRenderSettings, PathBuf)>,
     },
     FreezeTrack {
         track_id: TrackId,
@@ -38,6 +2484,28 @@ impl OfflineRenderJob {
 }
 
 impl App {
+    pub(super) fn initialize_custom_render_range(&mut self) {
+        if self.render_dialog.custom_range_initialized {
+            return;
+        }
+        let start_seconds = self.project.project_time_at_sample(0).unwrap_or(0.0);
+        let end_seconds = aaadaw_app::project_content_end_sample(&self.project)
+            .ok()
+            .and_then(|sample| self.project.project_time_at_sample(sample).ok())
+            .unwrap_or(start_seconds);
+        self.render_dialog.custom_start_text =
+            crate::project_time::format_project_time(start_seconds);
+        self.render_dialog.custom_end_text = crate::project_time::format_project_time(end_seconds);
+        self.render_dialog.custom_range_initialized = true;
+    }
+
+    pub(super) fn custom_render_length_text(&self) -> Option<String> {
+        let (start_sample, end_sample) = self.selected_render_bounds().ok()?;
+        let duration_seconds =
+            (end_sample - start_sample) as f64 / f64::from(self.project.settings().sample_rate());
+        Some(crate::project_time::format_project_time(duration_seconds))
+    }
+
     pub(super) fn offline_job_submission_allowed(&self) -> bool {
         #[cfg(feature = "audio-device")]
         let recording_active =
@@ -106,21 +2574,387 @@ impl App {
             self.status = "Choose a WAV destination separate from the project file".to_owned();
             return Task::none();
         }
+        let filename_pattern = self.render_dialog.filename_pattern.clone();
+        let naming_project_path = self
+            .project_path
+            .clone()
+            .unwrap_or_else(|| project_path.clone());
+        let ResolvedRenderSettings {
+            start_sample,
+            end_sample,
+            tail_milliseconds,
+            output_sample_rate,
+            selected_tracks,
+            normalize_peak_target_centi_dbfs,
+        } = match self.selected_render_settings() {
+            Ok(settings) => settings,
+            Err(error) => {
+                self.status = error;
+                return Task::none();
+            }
+        };
 
         let file_name = destination.file_name().map_or_else(
             || destination.display().to_string(),
             |name| name.to_string_lossy().into_owned(),
         );
+        let source = match (self.render_dialog.source, selected_tracks.as_slice()) {
+            (RenderSource::SelectedTracksStems, [track_id]) => {
+                if self.render_dialog.stems_pre_fader {
+                    aaadaw_app::ProjectWavRenderSource::SelectedTrackStemPreFader(*track_id)
+                } else {
+                    aaadaw_app::ProjectWavRenderSource::SelectedTrackStem(*track_id)
+                }
+            }
+            (RenderSource::SelectedTracksViaMaster, [track_id]) => {
+                aaadaw_app::ProjectWavRenderSource::SelectedTrackViaMaster(*track_id)
+            }
+            (RenderSource::SelectedMediaItems, _) => aaadaw_app::ProjectWavRenderSource::MasterMix,
+            _ => aaadaw_app::ProjectWavRenderSource::MasterMix,
+        };
+        let settings = aaadaw_app::ProjectWavRenderSettings {
+            master_ceiling: self.audio_settings.master_output_ceiling,
+            export_options: self.wav_export_options,
+            output_sample_rate,
+            output_channels: self.render_dialog.channels,
+            source,
+            normalize_peak_target_centi_dbfs,
+            start_sample,
+            end_sample,
+            tail_milliseconds,
+            normalize_peak: self.render_dialog.normalize_peak,
+        };
+        if self.render_dialog.source == RenderSource::SelectedMediaItems {
+            let selected_items = self.effective_selected_media_item_ids();
+            let outputs = match selected_media_item_render_jobs(
+                &destination,
+                &self.project,
+                &selected_items,
+                settings,
+            ) {
+                Ok(outputs) => outputs,
+                Err(error) => {
+                    self.status = error;
+                    return Task::none();
+                }
+            };
+            let outputs = if outputs.len() == 1 {
+                vec![(outputs[0].0, destination.clone())]
+            } else {
+                outputs
+            };
+            let outputs = match apply_render_filename_pattern_with_selected_tracks_and_options(
+                outputs,
+                &filename_pattern,
+                &self.project,
+                &naming_project_path,
+                &self.clap_plugin_scan.plugins,
+                &selected_tracks,
+                self.render_dialog.allow_slash_in_wildcard_substitutions,
+            ) {
+                Ok(outputs) => outputs,
+                Err(error) => {
+                    self.status = error;
+                    return Task::none();
+                }
+            };
+            if let Some((_, existing)) =
+                outputs
+                    .iter()
+                    .find(|(_, path)| match std::fs::symlink_metadata(path) {
+                        Ok(_) => true,
+                        Err(error) => error.kind() != std::io::ErrorKind::NotFound,
+                    })
+            {
+                self.status = format!(
+                    "Choose a new render filename; selected-item output already exists: {}",
+                    existing.display()
+                );
+                return Task::none();
+            }
+            if outputs.iter().any(|(_, path)| path == &project_path) {
+                self.status =
+                    "Choose selected-item output separate from the project file".to_owned();
+                return Task::none();
+            }
+            if outputs.len() == 1 {
+                let (settings, _) = outputs[0];
+                return self.enqueue_offline_job(OfflineRenderJob {
+                    kind: OfflineRenderKind::ProjectWav {
+                        destination,
+                        settings,
+                    },
+                    snapshot: Arc::new(self.project.snapshot()),
+                    project_path,
+                    project_generation: self.project_generation,
+                    label: format!("Render {file_name}"),
+                });
+            }
+            if cfg!(target_os = "android") {
+                self.status =
+                    "Rendering multiple selected media items requires a desktop build".to_owned();
+                return Task::none();
+            }
+            let job = OfflineRenderJob {
+                kind: OfflineRenderKind::ProjectWavBatch { outputs },
+                snapshot: Arc::new(self.project.snapshot()),
+                project_path,
+                project_generation: self.project_generation,
+                label: format!("Render {} selected media items", selected_items.len()),
+            };
+            return self.enqueue_offline_job(job);
+        }
+        if matches!(
+            self.render_dialog.bounds,
+            RenderBounds::AllProjectRegions
+                | RenderBounds::SelectedProjectRegions
+                | RenderBounds::AllProjectMarkers
+                | RenderBounds::SelectedProjectMarkers
+        ) {
+            if cfg!(target_os = "android") {
+                self.status = "Rendering project regions or markers to multiple files requires a desktop build".to_owned();
+                return Task::none();
+            }
+            let selected_regions = (self.render_dialog.bounds
+                == RenderBounds::SelectedProjectRegions)
+                .then(|| self.effective_selected_region_ids())
+                .flatten();
+            let selected_markers = (self.render_dialog.bounds
+                == RenderBounds::SelectedProjectMarkers)
+                .then(|| self.effective_selected_marker_ids())
+                .flatten();
+            let output_result = match self.render_dialog.bounds {
+                RenderBounds::AllProjectRegions | RenderBounds::SelectedProjectRegions => {
+                    project_region_render_jobs(
+                        &destination,
+                        &self.project,
+                        self.render_dialog.source,
+                        &selected_tracks,
+                        self.render_dialog.stems_pre_fader,
+                        settings,
+                        selected_regions.as_ref(),
+                    )
+                }
+                RenderBounds::AllProjectMarkers | RenderBounds::SelectedProjectMarkers => {
+                    project_marker_render_jobs(
+                        &destination,
+                        &self.project,
+                        self.render_dialog.source,
+                        &selected_tracks,
+                        self.render_dialog.stems_pre_fader,
+                        settings,
+                        selected_markers.as_ref(),
+                    )
+                }
+                _ => unreachable!("only region and marker bounds create render batches"),
+            };
+            let outputs = match output_result {
+                Ok(outputs) => outputs,
+                Err(error) => {
+                    self.status = error;
+                    return Task::none();
+                }
+            };
+            let outputs = match apply_render_filename_pattern_with_selected_tracks_and_options(
+                outputs,
+                &filename_pattern,
+                &self.project,
+                &naming_project_path,
+                &self.clap_plugin_scan.plugins,
+                &selected_tracks,
+                self.render_dialog.allow_slash_in_wildcard_substitutions,
+            ) {
+                Ok(outputs) => outputs,
+                Err(error) => {
+                    self.status = error;
+                    return Task::none();
+                }
+            };
+            let outputs_per_range = match self.render_dialog.source {
+                RenderSource::MasterMix => 1,
+                RenderSource::SelectedMediaItems => 1,
+                RenderSource::RegionRenderMatrix => 1,
+                RenderSource::SelectedTracksStems | RenderSource::SelectedTracksViaMaster => {
+                    selected_tracks.len()
+                }
+                RenderSource::MasterMixAndSelectedTracks => selected_tracks.len().saturating_add(1),
+            }
+            .max(1);
+            let range_count = if self.render_dialog.source == RenderSource::RegionRenderMatrix {
+                self.project
+                    .regions()
+                    .iter()
+                    .filter(|region| {
+                        selected_regions
+                            .as_ref()
+                            .is_none_or(|selected| selected.contains(&region.id()))
+                    })
+                    .filter(|region| {
+                        region.renders_master_mix() || !region.render_track_ids().is_empty()
+                    })
+                    .count()
+            } else {
+                outputs.len() / outputs_per_range
+            };
+            if let Some((_, existing)) =
+                outputs
+                    .iter()
+                    .find(|(_, path)| match std::fs::symlink_metadata(path) {
+                        Ok(_) => true,
+                        Err(error) => error.kind() != std::io::ErrorKind::NotFound,
+                    })
+            {
+                self.status = format!(
+                    "Choose a new render prefix; batch output already exists: {}",
+                    existing.display()
+                );
+                return Task::none();
+            }
+            if outputs.iter().any(|(_, path)| path == &project_path) {
+                self.status = "Choose batch output names separate from the project file".to_owned();
+                return Task::none();
+            }
+            let label = match self.render_dialog.bounds {
+                RenderBounds::AllProjectRegions | RenderBounds::SelectedProjectRegions => {
+                    format!("Render {range_count} project regions")
+                }
+                RenderBounds::AllProjectMarkers | RenderBounds::SelectedProjectMarkers => {
+                    format!("Render {range_count} project markers")
+                }
+                _ => unreachable!("only region and marker bounds create render batches"),
+            };
+            let job = OfflineRenderJob {
+                kind: OfflineRenderKind::ProjectWavBatch { outputs },
+                snapshot: Arc::new(self.project.snapshot()),
+                project_path,
+                project_generation: self.project_generation,
+                label,
+            };
+            return self.enqueue_offline_job(job);
+        }
+        let requires_multiple_files = self.render_requires_multiple_files();
+        let (kind, label) = if requires_multiple_files {
+            if cfg!(target_os = "android") {
+                self.status = "The Android document picker supports one render file at a time; use a desktop build for stems".to_owned();
+                return Task::none();
+            }
+            match std::fs::symlink_metadata(&destination) {
+                Ok(_) => {
+                    self.status =
+                        "Choose a new filename for the stem prefix; that file already exists"
+                            .to_owned();
+                    return Task::none();
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => {
+                    self.status = format!("Could not inspect stem prefix: {error}");
+                    return Task::none();
+                }
+            }
+            let outputs = match selected_track_stem_destinations(
+                &destination,
+                &self.project,
+                &selected_tracks,
+                self.render_dialog.source == RenderSource::MasterMixAndSelectedTracks,
+                match self.render_dialog.source {
+                    RenderSource::SelectedTracksViaMaster => SelectedTrackStemMode::ViaMaster,
+                    RenderSource::SelectedTracksStems
+                    | RenderSource::MasterMixAndSelectedTracks
+                        if self.render_dialog.stems_pre_fader =>
+                    {
+                        SelectedTrackStemMode::PreFader
+                    }
+                    RenderSource::SelectedTracksStems
+                    | RenderSource::MasterMixAndSelectedTracks => SelectedTrackStemMode::PostFader,
+                    RenderSource::MasterMix => {
+                        unreachable!("Master mix cannot request a multi-track output set")
+                    }
+                    RenderSource::SelectedMediaItems => {
+                        unreachable!("selected media item jobs are enqueued above")
+                    }
+                    RenderSource::RegionRenderMatrix => {
+                        unreachable!("region render matrix is submitted as a region batch")
+                    }
+                },
+            ) {
+                Ok(outputs) => outputs,
+                Err(error) => {
+                    self.status = error;
+                    return Task::none();
+                }
+            };
+            let outputs = match apply_stem_filename_pattern_with_plugins_and_options(
+                outputs,
+                settings,
+                &filename_pattern,
+                &self.project,
+                &naming_project_path,
+                RenderFilenameWildcardOptions {
+                    plugins: &self.clap_plugin_scan.plugins,
+                    selected_tracks: &selected_tracks,
+                    allow_slash_in_wildcard_substitutions: self
+                        .render_dialog
+                        .allow_slash_in_wildcard_substitutions,
+                },
+            ) {
+                Ok(outputs) => outputs,
+                Err(error) => {
+                    self.status = error;
+                    return Task::none();
+                }
+            };
+            if outputs.iter().any(|(_, path)| path == &project_path) {
+                self.status = "Choose stem output names separate from the project file".to_owned();
+                return Task::none();
+            }
+            (
+                OfflineRenderKind::ProjectWavStems { outputs, settings },
+                if self.render_dialog.source == RenderSource::MasterMixAndSelectedTracks {
+                    format!(
+                        "Render Master mix and {} selected stems",
+                        selected_tracks.len()
+                    )
+                } else {
+                    format!("Render {} selected tracks as stems", selected_tracks.len())
+                },
+            )
+        } else {
+            let mut outputs = match apply_render_filename_pattern_with_selected_tracks_and_options(
+                vec![(settings, destination.clone())],
+                &filename_pattern,
+                &self.project,
+                &naming_project_path,
+                &self.clap_plugin_scan.plugins,
+                &selected_tracks,
+                self.render_dialog.allow_slash_in_wildcard_substitutions,
+            ) {
+                Ok(outputs) => outputs,
+                Err(error) => {
+                    self.status = error;
+                    return Task::none();
+                }
+            };
+            let (settings, destination) = outputs
+                .pop()
+                .expect("single output pattern expansion preserves its job");
+            if destination == project_path {
+                self.status = "Choose a WAV destination separate from the project file".to_owned();
+                return Task::none();
+            }
+            (
+                OfflineRenderKind::ProjectWav {
+                    destination,
+                    settings,
+                },
+                format!("Render {file_name}"),
+            )
+        };
         let job = OfflineRenderJob {
-            kind: OfflineRenderKind::ProjectWav {
-                destination,
-                master_ceiling: self.audio_settings.master_output_ceiling,
-                options: self.wav_export_options,
-            },
+            kind,
             snapshot: Arc::new(self.project.snapshot()),
             project_path,
             project_generation: self.project_generation,
-            label: format!("Render {file_name}"),
+            label,
         };
         self.enqueue_offline_job(job)
     }
@@ -152,15 +2986,562 @@ impl App {
         }
     }
 
+    pub(super) fn can_submit_render(&self) -> bool {
+        if cfg!(target_os = "android") && self.render_requires_multiple_files() {
+            return false;
+        }
+        if self.render_dialog.source == RenderSource::RegionRenderMatrix
+            && !matches!(
+                self.render_dialog.bounds,
+                RenderBounds::AllProjectRegions | RenderBounds::SelectedProjectRegions
+            )
+        {
+            return false;
+        }
+        if self.render_dialog.source != RenderSource::SelectedMediaItems
+            && cfg!(target_os = "android")
+            && matches!(
+                self.render_dialog.bounds,
+                RenderBounds::AllProjectRegions
+                    | RenderBounds::SelectedProjectRegions
+                    | RenderBounds::AllProjectMarkers
+                    | RenderBounds::SelectedProjectMarkers
+            )
+        {
+            return false;
+        }
+        self.selected_render_settings().is_ok()
+    }
+
+    pub(super) fn has_valid_render_source(&self) -> bool {
+        match self.render_dialog.source {
+            RenderSource::MasterMix => true,
+            RenderSource::SelectedMediaItems => self.selected_media_item_source_error().is_none(),
+            RenderSource::RegionRenderMatrix => {
+                if !matches!(
+                    self.render_dialog.bounds,
+                    RenderBounds::AllProjectRegions | RenderBounds::SelectedProjectRegions
+                ) {
+                    return false;
+                }
+                let selected = (self.render_dialog.bounds == RenderBounds::SelectedProjectRegions)
+                    .then(|| self.effective_selected_region_ids())
+                    .flatten();
+                self.project.regions().iter().any(|region| {
+                    selected
+                        .as_ref()
+                        .is_none_or(|selected| selected.contains(&region.id()))
+                        && (region.renders_master_mix() || !region.render_track_ids().is_empty())
+                })
+            }
+            RenderSource::SelectedTracksStems
+            | RenderSource::SelectedTracksViaMaster
+            | RenderSource::MasterMixAndSelectedTracks => {
+                !self.selected_tracks_for_render().is_empty()
+            }
+        }
+    }
+
+    pub(super) fn render_requires_multiple_files(&self) -> bool {
+        if self.render_dialog.source == RenderSource::SelectedMediaItems {
+            return self.effective_selected_media_item_ids().len() > 1;
+        }
+        if matches!(
+            self.render_dialog.bounds,
+            RenderBounds::AllProjectRegions
+                | RenderBounds::SelectedProjectRegions
+                | RenderBounds::AllProjectMarkers
+                | RenderBounds::SelectedProjectMarkers
+        ) {
+            return true;
+        }
+        let outputs_per_range = match self.render_dialog.source {
+            RenderSource::MasterMix => 1,
+            RenderSource::SelectedMediaItems => 1,
+            RenderSource::RegionRenderMatrix => 1,
+            RenderSource::SelectedTracksStems | RenderSource::SelectedTracksViaMaster => {
+                self.selected_render_track_count()
+            }
+            RenderSource::MasterMixAndSelectedTracks => {
+                self.selected_render_track_count().saturating_add(1)
+            }
+        };
+        outputs_per_range > 1
+    }
+
+    pub(super) fn selected_render_track_count(&self) -> usize {
+        self.selected_tracks_for_render().len()
+    }
+
+    pub(super) fn render_source_description(&self) -> &'static str {
+        match self.render_dialog.source {
+            RenderSource::MasterMix => "Renders the project through the Master mix.",
+            RenderSource::SelectedMediaItems => {
+                "Renders each selected audio or MIDI item as a separate WAV. MIDI items use their track instrument."
+            }
+            RenderSource::SelectedTracksStems => {
+                "Renders each selected track as a separate stem without the Master mix gain."
+            }
+            RenderSource::SelectedTracksViaMaster => {
+                "Renders each selected track through the Master as its own WAV stem."
+            }
+            RenderSource::MasterMixAndSelectedTracks => {
+                "Renders one Master mix WAV plus one stem for each selected track."
+            }
+            RenderSource::RegionRenderMatrix => {
+                "Renders the Master mix and tracks assigned to each project region."
+            }
+        }
+    }
+
+    pub(super) fn can_render_stems_pre_fader(&self) -> bool {
+        matches!(
+            self.render_dialog.source,
+            RenderSource::SelectedTracksStems | RenderSource::MasterMixAndSelectedTracks
+        )
+    }
+
+    pub(super) fn render_output_sample_rate(&self) -> u32 {
+        match self.render_dialog.sample_rate {
+            RenderSampleRate::Project => self.project.settings().sample_rate(),
+            RenderSampleRate::Fixed(sample_rate) => sample_rate,
+        }
+    }
+
+    pub(super) fn render_bounds_summary(&self) -> Option<String> {
+        if self.render_dialog.source == RenderSource::SelectedMediaItems {
+            return None;
+        }
+        let count = match self.render_dialog.bounds {
+            RenderBounds::AllProjectRegions => self.project.regions().len(),
+            RenderBounds::SelectedProjectRegions => self
+                .effective_selected_region_ids()
+                .map_or(self.project.regions().len(), |selected| selected.len()),
+            RenderBounds::AllProjectMarkers | RenderBounds::SelectedProjectMarkers => {
+                let selected = if self.render_dialog.bounds == RenderBounds::SelectedProjectMarkers
+                {
+                    self.effective_selected_marker_ids()
+                } else {
+                    None
+                };
+                let Ok(project_end_sample) = aaadaw_app::project_content_end_sample(&self.project)
+                else {
+                    return Some("No renderable markers".to_owned());
+                };
+                self.project
+                    .markers()
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, marker)| {
+                        selected
+                            .as_ref()
+                            .is_none_or(|selected| selected.contains(&marker.id()))
+                    })
+                    .filter(|(index, marker)| {
+                        let Ok(start_sample) = self.project.sample_at_tick(marker.position_ticks())
+                        else {
+                            return false;
+                        };
+                        let end_sample = match self.project.markers().get(index + 1) {
+                            Some(next_marker) => self
+                                .project
+                                .sample_at_tick(next_marker.position_ticks())
+                                .unwrap_or(start_sample),
+                            None => project_end_sample,
+                        };
+                        end_sample > start_sample
+                    })
+                    .count()
+            }
+            _ => return None,
+        };
+        let noun = if matches!(
+            self.render_dialog.bounds,
+            RenderBounds::AllProjectRegions | RenderBounds::SelectedProjectRegions
+        ) {
+            "region"
+        } else {
+            "marker"
+        };
+        Some(format!(
+            "{count} {noun}{}",
+            if count == 1 { "" } else { "s" }
+        ))
+    }
+
+    pub(super) fn selected_media_items_summary(&self) -> String {
+        let count = self.effective_selected_media_item_ids().len();
+        format!("{count} media item{}", if count == 1 { "" } else { "s" })
+    }
+
+    pub(super) fn selected_media_item_source_error(&self) -> Option<&'static str> {
+        if self.effective_selected_media_item_ids().is_empty() {
+            return Some("Select one or more Audio or MIDI media items in Arrange to render them.");
+        }
+        None
+    }
+
+    fn effective_selected_media_item_ids(&self) -> HashSet<ItemId> {
+        self.project
+            .audio_items()
+            .iter()
+            .map(|item| item.id())
+            .chain(self.project.midi_items().iter().map(|item| item.id()))
+            .filter(|item_id| self.timeline.selected_items.contains(item_id))
+            .collect()
+    }
+
+    fn selected_media_item_union_range(&self) -> Result<(u64, u64), String> {
+        if let Some(error) = self.selected_media_item_source_error() {
+            return Err(error.to_owned());
+        }
+        let ranges = self
+            .project
+            .audio_items()
+            .iter()
+            .filter(|item| self.timeline.selected_items.contains(&item.id()));
+        let audio_ranges = ranges
+            .map(|item| (item.start_sample(), item.end_sample()))
+            .collect::<Vec<_>>();
+        let midi_ranges = self
+            .project
+            .midi_items()
+            .iter()
+            .filter(|item| self.timeline.selected_items.contains(&item.id()))
+            .map(|item| {
+                let end_tick = item
+                    .start_tick()
+                    .checked_add(item.length_ticks())
+                    .ok_or_else(|| {
+                        "Selected MIDI item exceeds the supported timeline".to_owned()
+                    })?;
+                let start = self
+                    .project
+                    .sample_at_tick(item.start_tick())
+                    .map_err(|error| error.to_string())?;
+                let end = self
+                    .project
+                    .sample_at_tick(end_tick)
+                    .map_err(|error| error.to_string())?;
+                Ok((start, end))
+            })
+            .collect::<Result<Vec<_>, String>>()?;
+        let mut ranges = audio_ranges.into_iter().chain(midi_ranges);
+        let first = ranges
+            .next()
+            .expect("selection validation requires one media item");
+        let (start, end) = ranges.fold(first, |(start, end), (next_start, next_end)| {
+            (start.min(next_start), end.max(next_end))
+        });
+        (end > start)
+            .then_some((start, end))
+            .ok_or_else(|| "Selected media items must span at least one project sample".to_owned())
+    }
+
+    fn selected_render_settings(&self) -> Result<ResolvedRenderSettings, String> {
+        if self.render_dialog.source == RenderSource::RegionRenderMatrix
+            && !matches!(
+                self.render_dialog.bounds,
+                RenderBounds::AllProjectRegions | RenderBounds::SelectedProjectRegions
+            )
+        {
+            return Err("Region Render Matrix source requires project region bounds".to_owned());
+        }
+        let tail_milliseconds = if self.render_dialog.source == RenderSource::SelectedMediaItems {
+            0
+        } else if self.render_dialog.tail_enabled {
+            parse_render_tail_milliseconds(&self.render_dialog.tail_duration_text)
+                .map_err(str::to_owned)?
+        } else {
+            0
+        };
+        let (start_sample, end_sample) =
+            if self.render_dialog.source == RenderSource::SelectedMediaItems {
+                self.selected_media_item_union_range()?
+            } else {
+                self.selected_render_bounds()?
+            };
+        aaadaw_app::render_range_length_samples_with_tail_milliseconds(
+            self.project.settings().sample_rate(),
+            start_sample,
+            end_sample,
+            tail_milliseconds,
+        )
+        .map_err(|error| format!("Render range is empty or too large: {error}"))?;
+        let selected_tracks = match self.render_dialog.source {
+            RenderSource::MasterMix
+            | RenderSource::SelectedMediaItems
+            | RenderSource::RegionRenderMatrix => Vec::new(),
+            RenderSource::SelectedTracksStems
+            | RenderSource::SelectedTracksViaMaster
+            | RenderSource::MasterMixAndSelectedTracks => {
+                let selected_tracks = self.selected_tracks_for_render();
+                if selected_tracks.is_empty() {
+                    return Err("Select at least one track in Arrange to render stems".to_owned());
+                }
+                selected_tracks
+            }
+        };
+        let normalize_peak_target_centi_dbfs = if self.render_dialog.normalize_peak {
+            parse_render_peak_target_centi_dbfs(&self.render_dialog.normalize_peak_target_text)
+                .map_err(str::to_owned)?
+        } else {
+            0
+        };
+        let output_sample_rate = self.render_output_sample_rate();
+        if self.render_dialog.source != RenderSource::SelectedMediaItems
+            && matches!(
+                self.render_dialog.bounds,
+                RenderBounds::AllProjectMarkers | RenderBounds::SelectedProjectMarkers
+            )
+        {
+            let selected_markers = (self.render_dialog.bounds
+                == RenderBounds::SelectedProjectMarkers)
+                .then(|| self.effective_selected_marker_ids())
+                .flatten();
+            let validation_settings = aaadaw_app::ProjectWavRenderSettings {
+                master_ceiling: self.audio_settings.master_output_ceiling,
+                export_options: self.wav_export_options,
+                output_sample_rate,
+                output_channels: self.render_dialog.channels,
+                source: aaadaw_app::ProjectWavRenderSource::MasterMix,
+                normalize_peak_target_centi_dbfs,
+                start_sample,
+                end_sample,
+                tail_milliseconds,
+                normalize_peak: self.render_dialog.normalize_peak,
+            };
+            project_marker_render_jobs(
+                Path::new("marker-range-validation.wav"),
+                &self.project,
+                RenderSource::MasterMix,
+                &[],
+                false,
+                validation_settings,
+                selected_markers.as_ref(),
+            )?;
+        }
+        Ok(ResolvedRenderSettings {
+            start_sample,
+            end_sample,
+            tail_milliseconds,
+            output_sample_rate: self.render_output_sample_rate(),
+            selected_tracks,
+            normalize_peak_target_centi_dbfs,
+        })
+    }
+
+    fn selected_tracks_for_render(&self) -> Vec<TrackId> {
+        if self.timeline.selected_tracks.is_empty() {
+            return self
+                .timeline
+                .selected_track
+                .filter(|selected| {
+                    self.project
+                        .tracks()
+                        .iter()
+                        .any(|track| track.id() == *selected)
+                })
+                .into_iter()
+                .collect();
+        }
+        self.project
+            .tracks()
+            .iter()
+            .filter(|track| self.timeline.selected_tracks.contains(&track.id()))
+            .map(|track| track.id())
+            .collect()
+    }
+
+    fn effective_selected_region_ids(&self) -> Option<HashSet<RegionId>> {
+        let selected = self
+            .project
+            .regions()
+            .iter()
+            .filter_map(|region| {
+                self.selected_render_regions
+                    .contains(&region.id())
+                    .then_some(region.id())
+            })
+            .collect::<HashSet<_>>();
+        (!selected.is_empty()).then_some(selected)
+    }
+
+    fn effective_selected_marker_ids(&self) -> Option<HashSet<MarkerId>> {
+        let selected = self
+            .project
+            .markers()
+            .iter()
+            .filter_map(|marker| {
+                self.selected_render_markers
+                    .contains(&marker.id())
+                    .then_some(marker.id())
+            })
+            .collect::<HashSet<_>>();
+        (!selected.is_empty()).then_some(selected)
+    }
+
+    fn selected_render_bounds(&self) -> Result<(u64, u64), String> {
+        match self.render_dialog.bounds {
+            RenderBounds::EntireProject => aaadaw_app::project_content_end_sample(&self.project)
+                .map(|end_sample| (0, end_sample))
+                .map_err(|error| format!("Could not determine render bounds: {error}")),
+            RenderBounds::CustomTimeRange => {
+                let start_seconds =
+                    crate::project_time::parse_project_time(&self.render_dialog.custom_start_text)
+                        .map_err(|error| format!("Invalid custom start time: {error}"))?;
+                let end_seconds =
+                    crate::project_time::parse_project_time(&self.render_dialog.custom_end_text)
+                        .map_err(|error| format!("Invalid custom end time: {error}"))?;
+                let start_sample = self
+                    .project
+                    .sample_at_project_time(start_seconds)
+                    .map_err(|error| format!("Could not convert custom start: {error}"))?;
+                let end_sample = self
+                    .project
+                    .sample_at_project_time(end_seconds)
+                    .map_err(|error| format!("Could not convert custom end: {error}"))?;
+                if end_sample <= start_sample {
+                    return Err(
+                        "Custom time range end must be after its start by at least one project sample"
+                            .to_owned(),
+                    );
+                }
+                Ok((start_sample, end_sample))
+            }
+            RenderBounds::TimeSelection => {
+                let Some(selection) = self.timeline.time_selection else {
+                    return Err("Create a time selection in Arrange before rendering it".to_owned());
+                };
+                let start_sample = self
+                    .project
+                    .sample_at_tick(selection.start_tick)
+                    .map_err(|error| format!("Could not convert render start: {error}"))?;
+                let end_sample = self
+                    .project
+                    .sample_at_tick(selection.end_tick)
+                    .map_err(|error| format!("Could not convert render end: {error}"))?;
+                if end_sample <= start_sample {
+                    return Err("Time selection must span at least one project sample".to_owned());
+                }
+                Ok((start_sample, end_sample))
+            }
+            RenderBounds::AllProjectRegions | RenderBounds::SelectedProjectRegions => {
+                let selected_regions = (self.render_dialog.bounds
+                    == RenderBounds::SelectedProjectRegions)
+                    .then(|| self.effective_selected_region_ids())
+                    .flatten();
+                let regions = self
+                    .project
+                    .regions()
+                    .iter()
+                    .filter(|region| {
+                        selected_regions
+                            .as_ref()
+                            .is_none_or(|selected| selected.contains(&region.id()))
+                    })
+                    .collect::<Vec<_>>();
+                if regions.is_empty() {
+                    return Err(
+                        "Add at least one project region before rendering regions".to_owned()
+                    );
+                }
+                let start_sample = regions
+                    .iter()
+                    .map(|region| {
+                        self.project
+                            .sample_at_tick(region.start_ticks())
+                            .map_err(|error| format!("Could not convert region start: {error}"))
+                    })
+                    .collect::<Result<Vec<_>, _>>()?
+                    .into_iter()
+                    .min()
+                    .expect("non-empty regions have a first start");
+                let end_sample = regions
+                    .iter()
+                    .map(|region| {
+                        self.project
+                            .sample_at_tick(region.end_ticks())
+                            .map_err(|error| format!("Could not convert region end: {error}"))
+                    })
+                    .collect::<Result<Vec<_>, _>>()?
+                    .into_iter()
+                    .max()
+                    .expect("non-empty regions have a last end");
+                if end_sample <= start_sample {
+                    return Err("Project regions must span at least one project sample".to_owned());
+                }
+                Ok((start_sample, end_sample))
+            }
+            RenderBounds::AllProjectMarkers | RenderBounds::SelectedProjectMarkers => {
+                let selected_markers = (self.render_dialog.bounds
+                    == RenderBounds::SelectedProjectMarkers)
+                    .then(|| self.effective_selected_marker_ids())
+                    .flatten();
+                if self.project.markers().is_empty() {
+                    return Err(
+                        "Add at least one project marker before rendering markers".to_owned()
+                    );
+                }
+                let end_sample = aaadaw_app::project_content_end_sample(&self.project)
+                    .map_err(|error| format!("Could not determine project render end: {error}"))?;
+                let mut ranges = Vec::new();
+                for (index, marker) in self.project.markers().iter().enumerate() {
+                    if selected_markers
+                        .as_ref()
+                        .is_some_and(|selected| !selected.contains(&marker.id()))
+                    {
+                        continue;
+                    }
+                    let start_sample = self
+                        .project
+                        .sample_at_tick(marker.position_ticks())
+                        .map_err(|error| format!("Could not convert marker position: {error}"))?;
+                    let marker_end_sample = match self.project.markers().get(index + 1) {
+                        Some(next_marker) => self
+                            .project
+                            .sample_at_tick(next_marker.position_ticks())
+                            .map_err(|error| {
+                                format!("Could not convert next marker position: {error}")
+                            })?,
+                        None => end_sample,
+                    };
+                    if marker_end_sample > start_sample {
+                        ranges.push((start_sample, marker_end_sample));
+                    }
+                }
+                let Some(start_sample) = ranges.iter().map(|range| range.0).min() else {
+                    return Err("Project markers have no non-empty render ranges".to_owned());
+                };
+                let end_sample = ranges
+                    .iter()
+                    .map(|range| range.1)
+                    .max()
+                    .expect("non-empty marker ranges have a last end");
+                Ok((start_sample, end_sample))
+            }
+        }
+    }
+
     fn start_next_offline_job(&mut self) -> Task<Message> {
         if !self.offline_job_queue.is_empty() && !self.offline_job_submission_allowed() {
             self.status = "Offline jobs are waiting for the current project operation".to_owned();
             return Task::none();
         }
         while let Some(queued) = self.offline_job_queue.pop_front() {
-            if let OfflineRenderKind::ProjectWav { destination, .. } = &queued.job.kind
-                && destination == &queued.job.project_path
-            {
+            let writes_project_file = match &queued.job.kind {
+                OfflineRenderKind::ProjectWav { destination, .. } => {
+                    destination == &queued.job.project_path
+                }
+                OfflineRenderKind::ProjectWavStems { outputs, .. } => outputs
+                    .iter()
+                    .any(|(_, destination)| destination == &queued.job.project_path),
+                OfflineRenderKind::ProjectWavBatch { outputs } => outputs
+                    .iter()
+                    .any(|(_, destination)| destination == &queued.job.project_path),
+                OfflineRenderKind::FreezeTrack { .. } => false,
+            };
+            if writes_project_file {
                 self.record_offline_job_result(format!(
                     "{} failed: destination is the project file",
                     queued.job.label
@@ -185,23 +3566,20 @@ impl App {
             let task = match &job.kind {
                 OfflineRenderKind::ProjectWav {
                     destination,
-                    master_ceiling,
-                    options,
+                    settings,
                 } => {
                     let destination = destination.clone();
                     let result_path = destination.clone();
-                    let master_ceiling = *master_ceiling;
-                    let options = *options;
+                    let settings = *settings;
                     Task::perform(
                         run_blocking("aaadaw-offline-render", move || {
                             let project = Project::from_snapshot((*snapshot).clone())
                                 .map_err(|error| error.to_string())?;
-                            aaadaw_app::render_project_file_to_wav(
+                            aaadaw_app::render_project_file_to_wav_with_settings(
                                 project_path,
                                 &project,
                                 &destination,
-                                master_ceiling,
-                                options,
+                                settings,
                                 &worker_cancel,
                                 |done, total| {
                                     *worker_progress
@@ -213,6 +3591,64 @@ impl App {
                             .map_err(|error| error.to_string())?;
                             #[cfg(target_os = "android")]
                             crate::android_platform::sync_saf_document(&destination)?;
+                            Ok(result_path)
+                        }),
+                        Message::OfflineRenderFinished,
+                    )
+                }
+                OfflineRenderKind::ProjectWavStems { outputs, settings } => {
+                    let outputs = outputs.clone();
+                    let settings = *settings;
+                    let result_path = outputs
+                        .first()
+                        .map(|(_, path)| path.clone())
+                        .unwrap_or_default();
+                    Task::perform(
+                        run_blocking("aaadaw-offline-stems", move || {
+                            let project = Project::from_snapshot((*snapshot).clone())
+                                .map_err(|error| error.to_string())?;
+                            aaadaw_app::render_project_wav_sources_to_wavs(
+                                project_path,
+                                &project,
+                                &outputs,
+                                settings,
+                                &worker_cancel,
+                                |done, total| {
+                                    *worker_progress
+                                        .lock()
+                                        .unwrap_or_else(std::sync::PoisonError::into_inner) =
+                                        (done, total);
+                                },
+                            )
+                            .map_err(|error| error.to_string())?;
+                            Ok(result_path)
+                        }),
+                        Message::OfflineRenderFinished,
+                    )
+                }
+                OfflineRenderKind::ProjectWavBatch { outputs } => {
+                    let outputs = outputs.clone();
+                    let result_path = outputs
+                        .first()
+                        .map(|(_, path)| path.clone())
+                        .unwrap_or_default();
+                    Task::perform(
+                        run_blocking("aaadaw-offline-batch", move || {
+                            let project = Project::from_snapshot((*snapshot).clone())
+                                .map_err(|error| error.to_string())?;
+                            aaadaw_app::render_project_wav_jobs_to_wavs(
+                                project_path,
+                                &project,
+                                &outputs,
+                                &worker_cancel,
+                                |done, total| {
+                                    *worker_progress
+                                        .lock()
+                                        .unwrap_or_else(std::sync::PoisonError::into_inner) =
+                                        (done, total);
+                                },
+                            )
+                            .map_err(|error| error.to_string())?;
                             Ok(result_path)
                         }),
                         Message::OfflineRenderFinished,
@@ -499,14 +3935,2036 @@ mod tests {
     use super::super::offline_job_queue::OfflineJobQueue;
     use super::super::offline_job_queue::QueuedOfflineJob;
     use super::*;
-    use aaadaw_core::DawAction;
+    use aaadaw_core::{DawAction, ProjectNotes};
+
+    #[test]
+    fn render_filename_patterns_expand_native_wildcard_contexts_safely() {
+        let mut project = Project::default();
+        project
+            .apply(DawAction::CreateTrack {
+                index: 0,
+                name: "Drums/Kit".to_owned(),
+            })
+            .expect("filename fixture track should be created");
+        let track_id = project.tracks()[0].id();
+        project
+            .apply(DawAction::InsertAudioItem {
+                track_id,
+                media_ref: "fixture.wav".to_owned(),
+                start_sample: 0,
+                source_offset_samples: 0,
+                length_samples: 96_000,
+            })
+            .expect("filename fixture item should be inserted");
+        project
+            .apply(DawAction::InsertProjectRegion {
+                start_ticks: 0,
+                end_ticks: 3_840,
+                name: "Intro".to_owned(),
+            })
+            .expect("filename fixture region should be inserted");
+        project
+            .apply(DawAction::InsertProjectMarker {
+                position_ticks: 0,
+                name: "Start".to_owned(),
+            })
+            .expect("filename fixture marker should be inserted");
+        project
+            .apply(DawAction::SetProjectNotes {
+                notes: ProjectNotes {
+                    title: "Session title".to_owned(),
+                    author: "Render author".to_owned(),
+                    text: "Mix notes".to_owned(),
+                    ..ProjectNotes::default()
+                },
+            })
+            .expect("filename fixture project notes should be set");
+        let settings = |source| aaadaw_app::ProjectWavRenderSettings {
+            master_ceiling: aaadaw_engine::MasterOutputCeiling::default(),
+            export_options: aaadaw_app::WavExportOptions::default(),
+            output_sample_rate: 48_000,
+            output_channels: WavChannelCount::Stereo,
+            source,
+            start_sample: 0,
+            end_sample: 96_000,
+            tail_milliseconds: 0,
+            normalize_peak: false,
+            normalize_peak_target_centi_dbfs: 0,
+        };
+        let project_path = Path::new("/projects/session.aaadaw");
+        let output = Path::new("/renders/base.wav").to_owned();
+        let track_output = apply_render_filename_pattern(
+            vec![(
+                settings(aaadaw_app::ProjectWavRenderSource::SelectedTrackViaMaster(
+                    track_id,
+                )),
+                output.clone(),
+            )],
+            "$project-$title-$author-$projectnotes-$region-$regionnumber-$marker-$markernumber-$track-$tracknumber-$tracknamenumber-$tracknameornumber-$bpm-$tempo-$timesignature-$timesignum-$timesigdenom",
+            &project,
+            project_path,
+        )
+        .expect("project, track, region, marker and tempo tokens should resolve");
+        assert_eq!(
+            track_output[0].1,
+            Path::new(
+                "/renders/session-Session title-Render author-Mix notes-Intro-01-Start-01-Drums_Kit-01-Drums_Kit-Drums_Kit-120-120-4-4-4-4.wav"
+            )
+        );
+
+        let item_id = project.audio_items()[0].id();
+        let item_output = apply_render_filename_pattern(
+            vec![(
+                settings(aaadaw_app::ProjectWavRenderSource::SelectedAudioItem(
+                    item_id,
+                )),
+                output,
+            )],
+            "$region-$item",
+            &project,
+            project_path,
+        )
+        .expect("region and item tokens should resolve");
+        assert_eq!(item_output[0].1, Path::new("/renders/Intro-item_01.wav"));
+
+        project
+            .apply(DawAction::CreateTrack {
+                index: 1,
+                name: String::new(),
+            })
+            .expect("an unnamed filename fixture track should be created");
+        let unnamed_track_id = project.tracks()[1].id();
+        let unnamed_track_output = apply_render_filename_pattern(
+            vec![(
+                settings(aaadaw_app::ProjectWavRenderSource::SelectedTrackStem(
+                    unnamed_track_id,
+                )),
+                Path::new("/renders/base.wav").to_owned(),
+            )],
+            "$tracknamenumber-$tracknameornumber",
+            &project,
+            project_path,
+        )
+        .expect("unnamed tracks should resolve to their numbered display name");
+        assert_eq!(
+            unnamed_track_output[0].1,
+            Path::new("/renders/Track 02-Track 02.wav")
+        );
+    }
+
+    #[test]
+    fn render_project_directory_wildcards_match_native_levels_and_suffixes() {
+        let project = Project::default();
+        let settings = aaadaw_app::ProjectWavRenderSettings {
+            master_ceiling: aaadaw_engine::MasterOutputCeiling::default(),
+            export_options: aaadaw_app::WavExportOptions::default(),
+            output_sample_rate: 48_000,
+            output_channels: WavChannelCount::Stereo,
+            source: aaadaw_app::ProjectWavRenderSource::MasterMix,
+            start_sample: 0,
+            end_sample: 48_000,
+            tail_milliseconds: 0,
+            normalize_peak: false,
+            normalize_peak_target_centi_dbfs: 0,
+        };
+        let project_path =
+            Path::new("/projects/ProjectRoot/Albums/Album01/Session/Directory.aaadaw");
+        let output = apply_render_filename_pattern(
+            vec![(settings, Path::new("/renders/base.wav").to_owned())],
+            "$projectdirectory-$projectdirectory0-$projectdirectory1-$projectdirectory2-$projectdirectory3-$projectdirectory4-$projectdirectory5-$projectdirectory6-$projectdirectoryN",
+            &project,
+            project_path,
+        )
+        .expect("project directory levels should resolve safely");
+
+        assert_eq!(
+            output[0].1,
+            Path::new(
+                "/renders/Session-Session0-Session-Album01-Albums-ProjectRoot-projects-SessionN.wav"
+            )
+        );
+    }
+
+    #[test]
+    fn render_track_folder_wildcards_match_native_hierarchy_and_slash_paths() {
+        let mut project = Project::default();
+        for (index, name) in ["Drums", "Acoustic", "Kick/Snare"].into_iter().enumerate() {
+            project
+                .apply(DawAction::CreateTrack {
+                    index,
+                    name: name.to_owned(),
+                })
+                .expect("folder wildcard track should be created");
+        }
+        let track_ids = project
+            .tracks()
+            .iter()
+            .map(|track| track.id())
+            .collect::<Vec<_>>();
+        for track_id in [track_ids[0], track_ids[1]] {
+            project
+                .apply(DawAction::SetTrackFolder {
+                    track_id,
+                    enabled: true,
+                })
+                .expect("parent tracks should become folders");
+        }
+        for (track_id, parent) in [(track_ids[1], track_ids[0]), (track_ids[2], track_ids[1])] {
+            project
+                .apply(DawAction::SetTrackParent {
+                    track_id,
+                    parent: Some(parent),
+                })
+                .expect("track should be nested in its folder");
+        }
+        let settings = aaadaw_app::ProjectWavRenderSettings {
+            master_ceiling: aaadaw_engine::MasterOutputCeiling::default(),
+            export_options: aaadaw_app::WavExportOptions::default(),
+            output_sample_rate: 48_000,
+            output_channels: WavChannelCount::Stereo,
+            source: aaadaw_app::ProjectWavRenderSource::SelectedTrackStem(track_ids[2]),
+            start_sample: 0,
+            end_sample: 48_000,
+            tail_milliseconds: 0,
+            normalize_peak: false,
+            normalize_peak_target_centi_dbfs: 0,
+        };
+        let output = apply_render_filename_pattern(
+            vec![(settings, Path::new("/renders/base.wav").to_owned())],
+            "$track-$trackslashes-$folders-$folders[,]-$parent",
+            &project,
+            Path::new("/projects/session.aaadaw"),
+        )
+        .expect("track path and parent-folder tokens should resolve");
+        assert_eq!(
+            output[0].1,
+            Path::new("/renders/Kick_Snare-Kick/Snare-Drums/Acoustic-Drums,Acoustic-Acoustic.wav")
+        );
+
+        let root_track_output = apply_render_filename_pattern(
+            vec![(
+                aaadaw_app::ProjectWavRenderSettings {
+                    source: aaadaw_app::ProjectWavRenderSource::SelectedTrackStem(track_ids[0]),
+                    ..settings
+                },
+                Path::new("/renders/base.wav").to_owned(),
+            )],
+            "$folders-$track",
+            &project,
+            Path::new("/projects/session.aaadaw"),
+        )
+        .expect("top-level tracks should have an empty folder path");
+        assert_eq!(root_track_output[0].1, Path::new("/renders/Drums.wav"));
+    }
+
+    #[test]
+    fn render_wildcard_picker_lists_and_inserts_supported_tokens() {
+        assert_eq!(
+            RenderFilenameWildcard::ALL.map(RenderFilenameWildcard::token),
+            [
+                "$project",
+                "$title",
+                "$author",
+                "$projectdirectory",
+                "$projectdirectoryN",
+                "$projectnotes",
+                "$projectnotes(name)",
+                "$bpm",
+                "$tempo",
+                "$timesignature",
+                "$timesignum",
+                "$timesigdenom",
+                "$track",
+                "$tracknumber",
+                "$tracknamenumber",
+                "$region",
+                "$regionnumber",
+                "$regionnumber[N]",
+                "$regionname",
+                "$marker",
+                "$markernumber",
+                "$markernumber[N]",
+                "$markername",
+                "$item",
+                "$itemnumber",
+                "$start",
+                "$end",
+                "$length",
+                "$startbeats",
+                "$endbeats",
+                "$lengthbeats",
+                "$starttc",
+                "$endtc",
+                "$startframes",
+                "$endframes",
+                "$lengthframes",
+                "$startseconds",
+                "$endseconds",
+                "$lengthseconds",
+                "$lenhh",
+                "$lenmm",
+                "$lenss",
+                "$lentt",
+                "$filenumber",
+                "$filenumber[N]",
+                "$filecount",
+                "$note",
+                "$note[X]",
+                "$natural",
+                "$namenumber",
+                "$timelineorder",
+                "$timelineorder[N]",
+                "$timelineorder_track",
+                "$timelineorder_track[N]",
+                "$format",
+                "$samplerate",
+                "$sampleratek",
+                "$bitdepth",
+                "$channels",
+                "$region(name)",
+                "$marker(name)",
+                "$fx",
+                "$fx[X]",
+                "$trackslashes",
+                "$folders",
+                "$folders[X]",
+                "$parent",
+                "$seltrack",
+                "$playrate",
+                "$user",
+                "$computer",
+                "$date",
+                "$time",
+                "$datetime",
+                "$year",
+                "$year2",
+                "$month",
+                "$monthname",
+                "$day",
+                "$dayname",
+                "$hour",
+                "$hour12",
+                "$ampm",
+                "$minute",
+                "$second",
+                "$localtime",
+                "$uniqueid[N]",
+            ]
+        );
+
+        let mut app = App::default();
+        let _ = app.update(Message::ToggleRenderWildcardMenu);
+        assert!(app.render_dialog.wildcard_menu_open);
+
+        let _ = app.update(Message::SetRenderFilenamePattern("$project-".to_owned()));
+        let _ = app.update(Message::InsertRenderFilenameWildcard(
+            RenderFilenameWildcard::Track,
+        ));
+        assert_eq!(app.render_dialog.filename_pattern, "$project-$track");
+        assert!(!app.render_dialog.wildcard_menu_open);
+
+        let _ = app.update(Message::InsertRenderFilenameWildcard(
+            RenderFilenameWildcard::Project,
+        ));
+        assert_eq!(
+            app.render_dialog.filename_pattern,
+            "$project-$track$project"
+        );
+        let _ = app.update(Message::InsertRenderFilenameWildcard(
+            RenderFilenameWildcard::ProjectNotesNamed,
+        ));
+        assert_eq!(
+            app.render_dialog.filename_pattern,
+            "$project-$track$project$projectnotes(name)"
+        );
+        let _ = app.update(Message::SetRenderFilenamePattern("stem-".to_owned()));
+        let _ = app.update(Message::InsertRenderFilenameWildcard(
+            RenderFilenameWildcard::FxDelimited,
+        ));
+        assert_eq!(app.render_dialog.filename_pattern, "stem-$fx[X]");
+        assert!(!app.render_dialog.wildcard_menu_open);
+
+        let _ = app.update(Message::InsertRenderFilenameWildcard(
+            RenderFilenameWildcard::SelTrack,
+        ));
+        assert_eq!(app.render_dialog.filename_pattern, "stem-$fx[X]$seltrack");
+        assert!(!app.render_dialog.wildcard_menu_open);
+
+        let _ = app.update(Message::InsertRenderFilenameWildcard(
+            RenderFilenameWildcard::PlayRate,
+        ));
+        assert_eq!(
+            app.render_dialog.filename_pattern,
+            "stem-$fx[X]$seltrack$playrate"
+        );
+        assert!(!app.render_dialog.wildcard_menu_open);
+
+        let _ = app.update(Message::InsertRenderFilenameWildcard(
+            RenderFilenameWildcard::User,
+        ));
+        assert_eq!(
+            app.render_dialog.filename_pattern,
+            "stem-$fx[X]$seltrack$playrate$user"
+        );
+        assert!(!app.render_dialog.wildcard_menu_open);
+
+        let _ = app.update(Message::InsertRenderFilenameWildcard(
+            RenderFilenameWildcard::Computer,
+        ));
+        assert_eq!(
+            app.render_dialog.filename_pattern,
+            "stem-$fx[X]$seltrack$playrate$user$computer"
+        );
+        assert!(!app.render_dialog.wildcard_menu_open);
+
+        let _ = app.update(Message::InsertRenderFilenameWildcard(
+            RenderFilenameWildcard::DateTime,
+        ));
+        assert_eq!(
+            app.render_dialog.filename_pattern,
+            "stem-$fx[X]$seltrack$playrate$user$computer$datetime"
+        );
+        assert!(!app.render_dialog.wildcard_menu_open);
+
+        let _ = app.update(Message::InsertRenderFilenameWildcard(
+            RenderFilenameWildcard::UniqueId,
+        ));
+        assert_eq!(
+            app.render_dialog.filename_pattern,
+            "stem-$fx[X]$seltrack$playrate$user$computer$datetime$uniqueid[N]"
+        );
+        assert!(!app.render_dialog.wildcard_menu_open);
+    }
+
+    #[test]
+    fn render_playrate_wildcard_uses_native_three_decimal_format_at_default_rate() {
+        assert_eq!(format_render_wildcard_playrate(1.0), "1.000");
+        assert_eq!(format_render_wildcard_playrate(1.059_463_094), "1.059");
+
+        let project = Project::default();
+        let settings = aaadaw_app::ProjectWavRenderSettings {
+            master_ceiling: aaadaw_engine::MasterOutputCeiling::default(),
+            export_options: aaadaw_app::WavExportOptions::default(),
+            output_sample_rate: 48_000,
+            output_channels: WavChannelCount::Stereo,
+            source: aaadaw_app::ProjectWavRenderSource::MasterMix,
+            start_sample: 0,
+            end_sample: 48_000,
+            tail_milliseconds: 0,
+            normalize_peak: false,
+            normalize_peak_target_centi_dbfs: 0,
+        };
+        let output = apply_render_filename_pattern(
+            vec![(settings, Path::new("/renders/base.wav").to_owned())],
+            "$playrate-$track",
+            &project,
+            Path::new("/projects/playrate.aaadaw"),
+        )
+        .expect("the default project playrate should resolve into a safe file name");
+        assert_eq!(output[0].1, Path::new("/renders/1.000-Master.wav"));
+    }
+
+    #[test]
+    fn render_filename_system_wildcards_match_native_user_and_computer_values() {
+        assert_eq!(
+            render_filename_user_from_values(
+                Some("FixtureUser".to_owned()),
+                Some("OtherLogin".to_owned()),
+                Some("FallbackUser".to_owned()),
+            ),
+            "FixtureUser"
+        );
+        assert_eq!(
+            render_filename_user_from_values(None, Some("OtherLogin".to_owned()), None),
+            "OtherLogin"
+        );
+        assert_eq!(
+            render_filename_user_from_values(None, None, Some("FallbackUser".to_owned())),
+            "FallbackUser"
+        );
+        assert_eq!(
+            render_filename_computer_from_values(
+                Some("  StudioComputer  ".to_owned()),
+                Some("FallbackComputer\n".to_owned()),
+            ),
+            "StudioComputer"
+        );
+        assert_eq!(
+            render_filename_computer_from_values(
+                Some(" \n".to_owned()),
+                Some("FallbackComputer\n".to_owned()),
+            ),
+            "FallbackComputer"
+        );
+
+        let project = Project::default();
+        let settings = aaadaw_app::ProjectWavRenderSettings {
+            master_ceiling: aaadaw_engine::MasterOutputCeiling::default(),
+            export_options: aaadaw_app::WavExportOptions::default(),
+            output_sample_rate: 48_000,
+            output_channels: WavChannelCount::Stereo,
+            source: aaadaw_app::ProjectWavRenderSource::MasterMix,
+            start_sample: 0,
+            end_sample: 48_000,
+            tail_milliseconds: 0,
+            normalize_peak: false,
+            normalize_peak_target_centi_dbfs: 0,
+        };
+        let system_info = RenderFilenameSystemInfo {
+            user: "FixtureUser".to_owned(),
+            computer: "StudioComputer".to_owned(),
+            date_time: RenderFilenameDateTime {
+                local: chrono::DateTime::parse_from_rfc3339("2026-10-16T00:29:28-12:00")
+                    .expect("fixed UTC-12 date/time should parse"),
+            },
+        };
+        let expansion_context = RenderFilenameExpansionContext {
+            plugins: &[],
+            selected_tracks: &[],
+            system_info: &system_info,
+            allow_slash_in_wildcard_substitutions: false,
+            file_number: 1,
+            file_count: 1,
+            item_name_number: None,
+        };
+        let output = apply_render_filename_pattern_with_context(
+            vec![(settings, Path::new("/renders/base.wav").to_owned())],
+            "$user-$computer-$track",
+            &project,
+            Path::new("/projects/system-info.aaadaw"),
+            &expansion_context,
+        )
+        .expect("system identity wildcards should resolve into a safe output name");
+        assert_eq!(
+            output[0].1,
+            Path::new("/renders/FixtureUser-StudioComputer-Master.wav")
+        );
+
+        let output = apply_render_filename_pattern_with_context(
+            vec![(settings, Path::new("/renders/base.wav").to_owned())],
+            "$date-$time-$datetime-$year-$year2-$month-$monthname-$day-$dayname-$hour-$hour12-$ampm-$minute-$second-$localtime-$track",
+            &project,
+            Path::new("/projects/system-info.aaadaw"),
+            &expansion_context,
+        )
+        .expect("date and time wildcards should match native formats");
+        assert_eq!(
+            output[0].1,
+            Path::new(
+                "/renders/2026-10-16-00_29_28-2026-10-16 00_29_28-2026-26-10-oct-16-fri-00-12-am-29-28-Fri, Oct 16 2026 00_29-Master.wav"
+            )
+        );
+    }
+
+    #[test]
+    fn render_filename_unique_ids_match_native_lengths_and_per_occurrence_values() {
+        let project = Project::default();
+        let settings = aaadaw_app::ProjectWavRenderSettings {
+            master_ceiling: aaadaw_engine::MasterOutputCeiling::default(),
+            export_options: aaadaw_app::WavExportOptions::default(),
+            output_sample_rate: 48_000,
+            output_channels: WavChannelCount::Stereo,
+            source: aaadaw_app::ProjectWavRenderSource::MasterMix,
+            start_sample: 0,
+            end_sample: 48_000,
+            tail_milliseconds: 0,
+            normalize_peak: false,
+            normalize_peak_target_centi_dbfs: 0,
+        };
+        let output = apply_render_filename_pattern(
+            vec![
+                (settings, Path::new("/renders/first.wav").to_owned()),
+                (settings, Path::new("/renders/second.wav").to_owned()),
+            ],
+            "$uniqueid-$uniqueid[4]-$uniqueid[8]-$uniqueid[9]-$uniqueid[12]-$uniqueid[16]-$uniqueid[17]-$uniqueid[64]-$uniqueid[N]-$track",
+            &project,
+            Path::new("/projects/uniqueid.aaadaw"),
+        )
+        .expect("unique ID wildcards should produce safe output names");
+
+        let first = output[0].1.file_stem().unwrap().to_str().unwrap();
+        let ids = first.split('-').collect::<Vec<_>>();
+        assert_eq!(ids.len(), 9);
+        assert_eq!(
+            ids[..8].iter().map(|value| value.len()).collect::<Vec<_>>(),
+            [8, 8, 8, 9, 12, 16, 16, 16]
+        );
+        assert_eq!(ids[8], "Master");
+        assert!(ids[..8].iter().all(|value| {
+            value
+                .chars()
+                .all(|character| character.is_ascii_digit() || ('a'..='f').contains(&character))
+        }));
+        assert_eq!(ids[..8].iter().copied().collect::<HashSet<_>>().len(), 8);
+
+        let second = output[1].1.file_stem().unwrap().to_str().unwrap();
+        let second_ids = second.split('-').collect::<Vec<_>>();
+        assert_eq!(second_ids.len(), 9);
+        assert_eq!(second_ids[5].len(), 16);
+        assert!(second_ids[..8].iter().all(|value| {
+            value
+                .chars()
+                .all(|character| character.is_ascii_digit() || ('a'..='f').contains(&character))
+        }));
+        assert_ne!(ids[5], second_ids[5]);
+        assert_ne!(first, second);
+
+        let placeholder = apply_render_filename_pattern(
+            vec![(settings, Path::new("/renders/base.wav").to_owned())],
+            "$uniqueid[N]-$track",
+            &project,
+            Path::new("/projects/uniqueid.aaadaw"),
+        )
+        .expect("the native length template should resolve empty until edited");
+        assert_eq!(placeholder[0].1, Path::new("/renders/Master.wav"));
+    }
+
+    #[test]
+    fn render_filename_allow_slash_option_creates_directories_but_forced_slashes_stay_active() {
+        let mut project = Project::default();
+        project
+            .apply(DawAction::CreateTrack {
+                index: 0,
+                name: "Kick/Snare".to_owned(),
+            })
+            .expect("slash-name track should be created");
+        let track_id = project.tracks()[0].id();
+        let settings = aaadaw_app::ProjectWavRenderSettings {
+            master_ceiling: aaadaw_engine::MasterOutputCeiling::default(),
+            export_options: aaadaw_app::WavExportOptions::default(),
+            output_sample_rate: 48_000,
+            output_channels: WavChannelCount::Stereo,
+            source: aaadaw_app::ProjectWavRenderSource::SelectedTrackStem(track_id),
+            start_sample: 0,
+            end_sample: 48_000,
+            tail_milliseconds: 0,
+            normalize_peak: false,
+            normalize_peak_target_centi_dbfs: 0,
+        };
+        let output = apply_render_filename_pattern_with_selected_tracks_and_options(
+            vec![(settings, Path::new("/renders/base.wav").to_owned())],
+            "$track",
+            &project,
+            Path::new("/projects/slashes.aaadaw"),
+            &[],
+            &[],
+            false,
+        )
+        .expect("disabled slash substitutions should keep one safe filename component");
+        assert_eq!(output[0].1, Path::new("/renders/Kick_Snare.wav"));
+
+        let output = apply_render_filename_pattern_with_selected_tracks_and_options(
+            vec![(settings, Path::new("/renders/base.wav").to_owned())],
+            "$track",
+            &project,
+            Path::new("/projects/slashes.aaadaw"),
+            &[],
+            &[],
+            true,
+        )
+        .expect("enabled slash substitutions should create a nested output path");
+        assert_eq!(output[0].1, Path::new("/renders/Kick/Snare.wav"));
+
+        let forced = apply_render_filename_pattern_with_selected_tracks_and_options(
+            vec![(settings, Path::new("/renders/base.wav").to_owned())],
+            "$trackslashes",
+            &project,
+            Path::new("/projects/slashes.aaadaw"),
+            &[],
+            &[],
+            false,
+        )
+        .expect("the Track slashes wildcard should force nested output when the option is off");
+        assert_eq!(forced[0].1, Path::new("/renders/Kick/Snare.wav"));
+    }
+
+    #[test]
+    fn render_selected_track_wildcard_uses_primary_selection_for_each_output() {
+        let mut project = Project::default();
+        for (index, name) in ["Bass", "Keys"].into_iter().enumerate() {
+            project
+                .apply(DawAction::CreateTrack {
+                    index,
+                    name: name.to_owned(),
+                })
+                .expect("selected-track wildcard tracks should be created");
+        }
+        let track_ids = project
+            .tracks()
+            .iter()
+            .map(|track| track.id())
+            .collect::<Vec<_>>();
+        let settings = aaadaw_app::ProjectWavRenderSettings {
+            master_ceiling: aaadaw_engine::MasterOutputCeiling::default(),
+            export_options: aaadaw_app::WavExportOptions::default(),
+            output_sample_rate: 48_000,
+            output_channels: WavChannelCount::Stereo,
+            source: aaadaw_app::ProjectWavRenderSource::MasterMix,
+            start_sample: 0,
+            end_sample: 48_000,
+            tail_milliseconds: 0,
+            normalize_peak: false,
+            normalize_peak_target_centi_dbfs: 0,
+        };
+        let project_path = Path::new("/projects/selected-track.aaadaw");
+
+        let master = apply_render_filename_pattern_with_selected_tracks(
+            vec![(settings, Path::new("/renders/base.wav").to_owned())],
+            "$seltrack-$track",
+            &project,
+            project_path,
+            &[],
+            &[track_ids[1]],
+        )
+        .expect("a single selected track should name the Master mix output");
+        assert_eq!(master[0].1, Path::new("/renders/Keys-Master.wav"));
+
+        let stems = apply_stem_filename_pattern_with_plugins(
+            vec![
+                (
+                    aaadaw_app::ProjectWavRenderSource::SelectedTrackStem(track_ids[0]),
+                    Path::new("/renders/base.wav").to_owned(),
+                ),
+                (
+                    aaadaw_app::ProjectWavRenderSource::SelectedTrackStem(track_ids[1]),
+                    Path::new("/renders/base.wav").to_owned(),
+                ),
+            ],
+            settings,
+            "$seltrack-$track",
+            &project,
+            project_path,
+            &[],
+            &track_ids,
+        )
+        .expect("selected stems should retain the primary track separately from each stem");
+        assert_eq!(
+            stems
+                .iter()
+                .map(|(_, path)| path.as_path())
+                .collect::<Vec<_>>(),
+            [
+                Path::new("/renders/Bass-Bass.wav"),
+                Path::new("/renders/Bass-Keys.wav"),
+            ]
+        );
+
+        let unselected = apply_render_filename_pattern_with_selected_tracks(
+            vec![(settings, Path::new("/renders/base.wav").to_owned())],
+            "$seltrack-$track",
+            &project,
+            project_path,
+            &[],
+            &[],
+        )
+        .expect("an empty track selection should leave only the Master name");
+        assert_eq!(unselected[0].1, Path::new("/renders/Master.wav"));
+    }
+
+    #[test]
+    fn render_filename_fx_wildcards_match_native_list_separators_and_display_names() {
+        let mut project = Project::default();
+        project
+            .apply(DawAction::CreateTrack {
+                index: 0,
+                name: "FX Wildcard".to_owned(),
+            })
+            .expect("track should be created");
+        let track_id = project.tracks()[0].id();
+        project
+            .apply(DawAction::SetTrackFxChain {
+                track_id,
+                plugins: vec![
+                    aaadaw_core::TrackFxPlugin::new("vendor.volume", "/plugins/volume.clap")
+                        .expect("volume plugin reference should be valid"),
+                    aaadaw_core::TrackFxPlugin::new("vendor.eq", "/plugins/eq.clap")
+                        .expect("EQ plugin reference should be valid"),
+                ],
+            })
+            .expect("track FX chain should be set");
+        let plugins = [
+            aaadaw_app::ClapPluginDescriptor {
+                entry_path: PathBuf::from("/plugins/volume.clap"),
+                plugin_id: "vendor.volume".to_owned(),
+                name: "Volume Adjustment".to_owned(),
+                vendor: Some("Cockos".to_owned()),
+                features: vec!["audio-effect".to_owned()],
+            },
+            aaadaw_app::ClapPluginDescriptor {
+                entry_path: PathBuf::from("/plugins/eq.clap"),
+                plugin_id: "vendor.eq".to_owned(),
+                name: "ReaEQ".to_owned(),
+                vendor: Some("Cockos".to_owned()),
+                features: vec!["audio-effect".to_owned()],
+            },
+        ];
+        let settings = |source| aaadaw_app::ProjectWavRenderSettings {
+            master_ceiling: aaadaw_engine::MasterOutputCeiling::default(),
+            export_options: aaadaw_app::WavExportOptions::default(),
+            output_sample_rate: 48_000,
+            output_channels: WavChannelCount::Stereo,
+            source,
+            start_sample: 0,
+            end_sample: 48_000,
+            tail_milliseconds: 0,
+            normalize_peak: false,
+            normalize_peak_target_centi_dbfs: 0,
+        };
+        let project_path = Path::new("/projects/fx-wildcard.aaadaw");
+        let output = apply_render_filename_pattern_with_plugins(
+            vec![(
+                settings(aaadaw_app::ProjectWavRenderSource::SelectedTrackStem(
+                    track_id,
+                )),
+                Path::new("/renders/base.wav").to_owned(),
+            )],
+            "$track-$fx-$fx[,]",
+            &project,
+            project_path,
+            &plugins,
+        )
+        .expect("FX names and custom separators should expand");
+        assert_eq!(
+            output[0].1,
+            Path::new("/renders/FX Wildcard-Volume Adjustment_ReaEQ-Volume Adjustment,ReaEQ.wav")
+        );
+
+        let case_adjusted = apply_render_filename_pattern_with_plugins(
+            vec![(
+                settings(aaadaw_app::ProjectWavRenderSource::SelectedTrackStem(
+                    track_id,
+                )),
+                Path::new("/renders/base.wav").to_owned(),
+            )],
+            "$FX[+]",
+            &project,
+            project_path,
+            &plugins,
+        )
+        .expect("single-character FX separators should be preserved");
+        assert_eq!(
+            case_adjusted[0].1,
+            Path::new("/renders/VOLUME ADJUSTMENT+REAEQ.wav")
+        );
+    }
+
+    #[test]
+    fn render_filename_region_and_marker_numbers_match_native_start_number_rules() {
+        let mut project = Project::default();
+        for (start_ticks, end_ticks, name) in [(0, 1_920, "First"), (1_920, 3_840, "Second")] {
+            project
+                .apply(DawAction::InsertProjectRegion {
+                    start_ticks,
+                    end_ticks,
+                    name: name.to_owned(),
+                })
+                .expect("numbered region should be inserted");
+        }
+        for (position_ticks, name) in [(0, "First"), (1_920, "Second"), (3_840, "End")] {
+            project
+                .apply(DawAction::InsertProjectMarker {
+                    position_ticks,
+                    name: name.to_owned(),
+                })
+                .expect("numbered marker should be inserted");
+        }
+        let settings = aaadaw_app::ProjectWavRenderSettings {
+            master_ceiling: aaadaw_engine::MasterOutputCeiling::default(),
+            export_options: aaadaw_app::WavExportOptions::default(),
+            output_sample_rate: 48_000,
+            output_channels: WavChannelCount::Stereo,
+            source: aaadaw_app::ProjectWavRenderSource::MasterMix,
+            start_sample: project
+                .sample_at_tick(1_920)
+                .expect("start tick should convert"),
+            end_sample: project
+                .sample_at_tick(3_840)
+                .expect("end tick should convert"),
+            tail_milliseconds: 0,
+            normalize_peak: false,
+            normalize_peak_target_centi_dbfs: 0,
+        };
+        let output = apply_render_filename_pattern(
+            vec![(settings, Path::new("/renders/base.wav").to_owned())],
+            "$regionnumber[001]-$markernumber[005]",
+            &project,
+            Path::new("/projects/numbered.aaadaw"),
+        )
+        .expect("region and marker start-number modifiers should expand");
+        assert_eq!(output[0].1, Path::new("/renders/002-006.wav"));
+
+        let output = apply_render_filename_pattern(
+            vec![(settings, Path::new("/renders/base.wav").to_owned())],
+            "$regionnumber[01]-$markernumber[01]",
+            &project,
+            Path::new("/projects/numbered.aaadaw"),
+        )
+        .expect("two-digit number modifiers should retain their requested width");
+        assert_eq!(output[0].1, Path::new("/renders/02-02.wav"));
+    }
+
+    #[test]
+    fn render_filename_file_number_and_file_count_follow_output_batch_order() {
+        let project = Project::default();
+        let settings = aaadaw_app::ProjectWavRenderSettings {
+            master_ceiling: aaadaw_engine::MasterOutputCeiling::default(),
+            export_options: aaadaw_app::WavExportOptions::default(),
+            output_sample_rate: 48_000,
+            output_channels: WavChannelCount::Stereo,
+            source: aaadaw_app::ProjectWavRenderSource::MasterMix,
+            start_sample: 0,
+            end_sample: 48_000,
+            tail_milliseconds: 0,
+            normalize_peak: false,
+            normalize_peak_target_centi_dbfs: 0,
+        };
+        let project_path = Path::new("/projects/file-counters.aaadaw");
+        let outputs = vec![
+            (settings, Path::new("/renders/first.wav").to_owned()),
+            (settings, Path::new("/renders/second.wav").to_owned()),
+        ];
+
+        let numbered = apply_render_filename_pattern(
+            outputs.clone(),
+            "$filenumber[01]-$filecount",
+            &project,
+            project_path,
+        )
+        .expect("zero-padded file counters should expand in output order");
+        assert_eq!(numbered[0].1, Path::new("/renders/01-2.wav"));
+        assert_eq!(numbered[1].1, Path::new("/renders/02-2.wav"));
+
+        let bare = apply_render_filename_pattern(
+            outputs,
+            "$filenumber-$filecount",
+            &project,
+            project_path,
+        )
+        .expect("bare file counters should expand in output order");
+        assert_eq!(bare[0].1, Path::new("/renders/1-2.wav"));
+        assert_eq!(bare[1].1, Path::new("/renders/2-2.wav"));
+
+        let single = apply_render_filename_pattern(
+            vec![(settings, Path::new("/renders/single.wav").to_owned())],
+            "$filecount-$filenumber[001]",
+            &project,
+            project_path,
+        )
+        .expect("single-file batches should report one padded file number and count");
+        assert_eq!(single[0].1, Path::new("/renders/1-001.wav"));
+    }
+
+    #[test]
+    fn render_filename_timeline_order_uses_regions_time_and_numeric_start_modifiers() {
+        let mut project = Project::default();
+        for (start_ticks, end_ticks, name) in [(0, 1_920, "First"), (1_920, 3_840, "Second")] {
+            project
+                .apply(DawAction::InsertProjectRegion {
+                    start_ticks,
+                    end_ticks,
+                    name: name.to_owned(),
+                })
+                .expect("timeline-order region should be inserted");
+        }
+        let base_settings = aaadaw_app::ProjectWavRenderSettings {
+            master_ceiling: aaadaw_engine::MasterOutputCeiling::default(),
+            export_options: aaadaw_app::WavExportOptions::default(),
+            output_sample_rate: 48_000,
+            output_channels: WavChannelCount::Stereo,
+            source: aaadaw_app::ProjectWavRenderSource::MasterMix,
+            start_sample: 0,
+            end_sample: 0,
+            tail_milliseconds: 0,
+            normalize_peak: false,
+            normalize_peak_target_centi_dbfs: 0,
+        };
+        let first = aaadaw_app::ProjectWavRenderSettings {
+            end_sample: project
+                .sample_at_tick(1_920)
+                .expect("first end should convert"),
+            ..base_settings
+        };
+        let second = aaadaw_app::ProjectWavRenderSettings {
+            start_sample: project
+                .sample_at_tick(1_920)
+                .expect("second start should convert"),
+            end_sample: project
+                .sample_at_tick(3_840)
+                .expect("second end should convert"),
+            ..base_settings
+        };
+        let output = apply_render_filename_pattern(
+            vec![
+                (second, Path::new("/renders/second.wav").to_owned()),
+                (first, Path::new("/renders/first.wav").to_owned()),
+            ],
+            "$timelineorder-$timelineorder[005]-$timelineorder_track[01]-$region",
+            &project,
+            Path::new("/projects/timeline-order.aaadaw"),
+        )
+        .expect("timeline counters should follow project time rather than batch order");
+        assert_eq!(output[0].1, Path::new("/renders/2-006-02-Second.wav"));
+        assert_eq!(output[1].1, Path::new("/renders/1-005-01-First.wav"));
+    }
+
+    #[test]
+    fn render_filename_timeline_order_counts_selected_items_globally_and_per_track() {
+        let mut project = Project::default();
+        project
+            .apply(DawAction::CreateTrack {
+                index: 0,
+                name: "First track".to_owned(),
+            })
+            .expect("first timeline track should be created");
+        project
+            .apply(DawAction::CreateTrack {
+                index: 1,
+                name: "Second track".to_owned(),
+            })
+            .expect("second timeline track should be created");
+        let first_track = project.tracks()[0].id();
+        let second_track = project.tracks()[1].id();
+        for (track_id, start_sample) in [(first_track, 48_000), (second_track, 0), (first_track, 0)]
+        {
+            project
+                .apply(DawAction::InsertAudioItem {
+                    track_id,
+                    media_ref: "timeline-fixture.wav".to_owned(),
+                    start_sample,
+                    source_offset_samples: 0,
+                    length_samples: 48_000,
+                })
+                .expect("timeline item should be inserted");
+        }
+        let selected_item = project
+            .audio_items()
+            .iter()
+            .find(|item| item.track_id() == first_track && item.start_sample() == 48_000)
+            .expect("late item on the first track should exist");
+        let settings = aaadaw_app::ProjectWavRenderSettings {
+            master_ceiling: aaadaw_engine::MasterOutputCeiling::default(),
+            export_options: aaadaw_app::WavExportOptions::default(),
+            output_sample_rate: 48_000,
+            output_channels: WavChannelCount::Stereo,
+            source: aaadaw_app::ProjectWavRenderSource::SelectedAudioItem(selected_item.id()),
+            start_sample: selected_item.start_sample(),
+            end_sample: selected_item.start_sample() + selected_item.length_samples(),
+            tail_milliseconds: 0,
+            normalize_peak: false,
+            normalize_peak_target_centi_dbfs: 0,
+        };
+        let output = apply_render_filename_pattern(
+            vec![(settings, Path::new("/renders/item.wav").to_owned())],
+            "$timelineorder-$timelineorder_track[01]",
+            &project,
+            Path::new("/projects/timeline-item.aaadaw"),
+        )
+        .expect("item timeline counters should include global and same-track order");
+        assert_eq!(output[0].1, Path::new("/renders/3-02.wav"));
+    }
+
+    #[test]
+    fn render_filename_recording_notes_and_duplicate_region_names_follow_output_order() {
+        let mut project = Project::default();
+        for index in 0..8_u64 {
+            let start_ticks = index * 3_840;
+            let end_ticks = start_ticks + 1_920;
+            project
+                .apply(DawAction::InsertProjectRegion {
+                    start_ticks,
+                    end_ticks,
+                    name: "Verse".to_owned(),
+                })
+                .expect("duplicate region names should be allowed");
+        }
+        let jobs = project
+            .regions()
+            .iter()
+            .map(|region| {
+                let start_sample = project
+                    .sample_at_tick(region.start_ticks())
+                    .expect("region start should convert");
+                let end_sample = project
+                    .sample_at_tick(region.end_ticks())
+                    .expect("region end should convert");
+                let settings = aaadaw_app::ProjectWavRenderSettings {
+                    master_ceiling: aaadaw_engine::MasterOutputCeiling::default(),
+                    export_options: aaadaw_app::WavExportOptions::default(),
+                    output_sample_rate: 48_000,
+                    output_channels: WavChannelCount::Stereo,
+                    source: aaadaw_app::ProjectWavRenderSource::MasterMix,
+                    start_sample,
+                    end_sample,
+                    tail_milliseconds: 0,
+                    normalize_peak: false,
+                    normalize_peak_target_centi_dbfs: 0,
+                };
+                (settings, Path::new("/renders/file.wav").to_owned())
+            })
+            .collect::<Vec<_>>();
+        let first_settings = jobs[0].0;
+        let output = apply_render_filename_pattern(
+            jobs,
+            "$region-$namenumber-$note-$note[B2]-$natural",
+            &project,
+            Path::new("/projects/recording-notes.aaadaw"),
+        )
+        .expect("recording note names should be unique in output order");
+        let expected = [
+            "Verse-01-C-1-B2-C-1.wav",
+            "Verse-02-C#-1-C3-D-1.wav",
+            "Verse-03-D-1-C#3-E-1.wav",
+            "Verse-04-D#-1-D3-F-1.wav",
+            "Verse-05-E-1-D#3-G-1.wav",
+            "Verse-06-F-1-E3-A-1.wav",
+            "Verse-07-F#-1-F3-B-1.wav",
+            "Verse-08-G-1-F#3-C0.wav",
+        ];
+        assert_eq!(
+            output
+                .iter()
+                .map(|(_, path)| path.file_name().unwrap().to_str().unwrap())
+                .collect::<Vec<_>>(),
+            expected
+        );
+        let placeholder = apply_render_filename_pattern(
+            output.clone(),
+            "$note[X]-$natural-$namenumber",
+            &project,
+            Path::new("/projects/recording-notes.aaadaw"),
+        )
+        .expect("the unfilled note template should follow the native preview");
+        assert_eq!(
+            placeholder
+                .iter()
+                .map(|(_, path)| path.file_name().unwrap().to_str().unwrap())
+                .collect::<Vec<_>>(),
+            [
+                "C-1.wav",
+                "C-1-D-1.wav",
+                "C#-1-E-1.wav",
+                "D-1-F-1.wav",
+                "D#-1-G-1.wav",
+                "E-1-A-1.wav",
+                "F-1-B-1.wav",
+                "F#-1-C0.wav",
+            ]
+        );
+        let first_placeholder = apply_render_filename_pattern(
+            vec![(first_settings, Path::new("/renders/file.wav").to_owned())],
+            "$note[X]-$natural-$namenumber",
+            &project,
+            Path::new("/projects/recording-notes.aaadaw"),
+        )
+        .expect("the literal note placeholder is empty on the first output");
+        assert_eq!(first_placeholder[0].1, Path::new("/renders/C-1.wav"));
+    }
+
+    #[test]
+    fn render_filename_regionname_and_markername_match_native_name_only_values() {
+        let mut project = Project::default();
+        for (start_ticks, end_ticks, name) in [(0, 1_920, "Verse"), (1_920, 3_840, "Chorus")] {
+            project
+                .apply(DawAction::InsertProjectRegion {
+                    start_ticks,
+                    end_ticks,
+                    name: name.to_owned(),
+                })
+                .expect("named region should be inserted");
+        }
+        for (position_ticks, name) in [(0, "Start"), (1_920, "Next"), (3_840, "End")] {
+            project
+                .apply(DawAction::InsertProjectMarker {
+                    position_ticks,
+                    name: name.to_owned(),
+                })
+                .expect("named marker should be inserted");
+        }
+
+        for (start_ticks, end_ticks, expected_name) in [
+            (0, 1_920, "Verse-Start.wav"),
+            (1_920, 3_840, "Chorus-Next.wav"),
+        ] {
+            let settings = aaadaw_app::ProjectWavRenderSettings {
+                master_ceiling: aaadaw_engine::MasterOutputCeiling::default(),
+                export_options: aaadaw_app::WavExportOptions::default(),
+                output_sample_rate: 48_000,
+                output_channels: WavChannelCount::Stereo,
+                source: aaadaw_app::ProjectWavRenderSource::MasterMix,
+                start_sample: project
+                    .sample_at_tick(start_ticks)
+                    .expect("start tick should convert"),
+                end_sample: project
+                    .sample_at_tick(end_ticks)
+                    .expect("end tick should convert"),
+                tail_milliseconds: 0,
+                normalize_peak: false,
+                normalize_peak_target_centi_dbfs: 0,
+            };
+            let output = apply_render_filename_pattern(
+                vec![(settings, Path::new("/renders/base.wav").to_owned())],
+                "$regionname-$markername",
+                &project,
+                Path::new("/projects/named.aaadaw"),
+            )
+            .expect("name-only Region and Marker values should expand");
+            assert_eq!(output[0].1, Path::new("/renders").join(expected_name));
+        }
+
+        let mut unnamed_project = Project::default();
+        unnamed_project
+            .apply(DawAction::InsertProjectRegion {
+                start_ticks: 0,
+                end_ticks: 1_920,
+                name: String::new(),
+            })
+            .expect("unnamed region should be inserted");
+        for position_ticks in [0, 1_920] {
+            unnamed_project
+                .apply(DawAction::InsertProjectMarker {
+                    position_ticks,
+                    name: String::new(),
+                })
+                .expect("unnamed marker should be inserted");
+        }
+        let settings = aaadaw_app::ProjectWavRenderSettings {
+            master_ceiling: aaadaw_engine::MasterOutputCeiling::default(),
+            export_options: aaadaw_app::WavExportOptions::default(),
+            output_sample_rate: 48_000,
+            output_channels: WavChannelCount::Stereo,
+            source: aaadaw_app::ProjectWavRenderSource::MasterMix,
+            start_sample: 0,
+            end_sample: 48_000,
+            tail_milliseconds: 0,
+            normalize_peak: false,
+            normalize_peak_target_centi_dbfs: 0,
+        };
+        for (pattern, expected_name) in [
+            ("$regionname-$regionnumber", "01.wav"),
+            ("$markername-$markernumber", "01.wav"),
+        ] {
+            let output = apply_render_filename_pattern(
+                vec![(settings, Path::new("/renders/base.wav").to_owned())],
+                pattern,
+                &unnamed_project,
+                Path::new("/projects/unnamed.aaadaw"),
+            )
+            .expect("an empty name-only value should not add a number fallback");
+            assert_eq!(output[0].1, Path::new("/renders").join(expected_name));
+        }
+    }
+
+    #[test]
+    fn render_filename_region_and_marker_named_values_match_native_key_value_rules() {
+        let mut project = Project::default();
+        for (start_ticks, end_ticks, name) in
+            [(0, 1_920, "role=Verse"), (1_920, 3_840, "role=Chorus")]
+        {
+            project
+                .apply(DawAction::InsertProjectRegion {
+                    start_ticks,
+                    end_ticks,
+                    name: name.to_owned(),
+                })
+                .expect("named-value region should be inserted");
+        }
+        for (position_ticks, name) in [(0, "role=Start"), (1_920, "role=Next"), (3_840, "role=End")]
+        {
+            project
+                .apply(DawAction::InsertProjectMarker {
+                    position_ticks,
+                    name: name.to_owned(),
+                })
+                .expect("named-value marker should be inserted");
+        }
+
+        for (start_ticks, end_ticks, expected_name) in [
+            (0, 1_920, "Verse-Start.wav"),
+            (1_920, 3_840, "Chorus-Next.wav"),
+        ] {
+            let settings = aaadaw_app::ProjectWavRenderSettings {
+                master_ceiling: aaadaw_engine::MasterOutputCeiling::default(),
+                export_options: aaadaw_app::WavExportOptions::default(),
+                output_sample_rate: 48_000,
+                output_channels: WavChannelCount::Stereo,
+                source: aaadaw_app::ProjectWavRenderSource::MasterMix,
+                start_sample: project
+                    .sample_at_tick(start_ticks)
+                    .expect("start tick should convert"),
+                end_sample: project
+                    .sample_at_tick(end_ticks)
+                    .expect("end tick should convert"),
+                tail_milliseconds: 0,
+                normalize_peak: false,
+                normalize_peak_target_centi_dbfs: 0,
+            };
+            let output = apply_render_filename_pattern(
+                vec![(settings, Path::new("/renders/base.wav").to_owned())],
+                "$region(role)-$marker(role)",
+                &project,
+                Path::new("/projects/named-values.aaadaw"),
+            )
+            .expect("Region and Marker named values should expand");
+            assert_eq!(output[0].1, Path::new("/renders").join(expected_name));
+
+            let missing_key_output = apply_render_filename_pattern(
+                vec![(settings, Path::new("/renders/base.wav").to_owned())],
+                "$region(missing)-$marker(role)",
+                &project,
+                Path::new("/projects/named-values.aaadaw"),
+            )
+            .expect("missing named values should expand to empty");
+            let marker_name = if start_ticks == 0 {
+                "Start.wav"
+            } else {
+                "Next.wav"
+            };
+            assert_eq!(
+                missing_key_output[0].1,
+                Path::new("/renders").join(marker_name)
+            );
+        }
+    }
+
+    #[test]
+    fn render_filename_region_and_marker_named_values_accept_native_separators() {
+        let mut project = Project::default();
+        project
+            .apply(DawAction::InsertProjectRegion {
+                start_ticks: 0,
+                end_ticks: 1_920,
+                name: "role=Verse|alternate=Intro".to_owned(),
+            })
+            .expect("separator fixture region should be inserted");
+        project
+            .apply(DawAction::InsertProjectMarker {
+                position_ticks: 0,
+                name: "role=Start|alternate=Downbeat".to_owned(),
+            })
+            .expect("separator fixture marker should be inserted");
+        project
+            .apply(DawAction::InsertProjectMarker {
+                position_ticks: 1_920,
+                name: "role=End|alternate=Outro".to_owned(),
+            })
+            .expect("separator fixture end marker should be inserted");
+        let settings = aaadaw_app::ProjectWavRenderSettings {
+            master_ceiling: aaadaw_engine::MasterOutputCeiling::default(),
+            export_options: aaadaw_app::WavExportOptions::default(),
+            output_sample_rate: 48_000,
+            output_channels: WavChannelCount::Stereo,
+            source: aaadaw_app::ProjectWavRenderSource::MasterMix,
+            start_sample: 0,
+            end_sample: project
+                .sample_at_tick(1_920)
+                .expect("region end tick should convert"),
+            tail_milliseconds: 0,
+            normalize_peak: false,
+            normalize_peak_target_centi_dbfs: 0,
+        };
+
+        for (pattern, expected_name) in [
+            (
+                "$region(role)-$marker(role)",
+                "Verse_alternate=Intro-Start_alternate=Downbeat.wav",
+            ),
+            ("$region(role)[|]-$marker(role)[|]", "Verse-Start.wav"),
+            (
+                "$region(alternate)[|]-$marker(alternate)[|]",
+                "Intro-Downbeat.wav",
+            ),
+        ] {
+            let output = apply_render_filename_pattern(
+                vec![(settings, Path::new("/renders/base.wav").to_owned())],
+                pattern,
+                &project,
+                Path::new("/projects/named-values.aaadaw"),
+            )
+            .expect("native named-value separators should expand");
+            assert_eq!(output[0].1, Path::new("/renders").join(expected_name));
+        }
+    }
+
+    #[test]
+    fn render_filename_unnamed_regions_and_markers_fall_back_to_native_numbers() {
+        let mut project = Project::default();
+        for (start_ticks, end_ticks) in [(0, 1_920), (1_920, 3_840)] {
+            project
+                .apply(DawAction::InsertProjectRegion {
+                    start_ticks,
+                    end_ticks,
+                    name: String::new(),
+                })
+                .expect("unnamed region should be inserted");
+        }
+        for position_ticks in [0, 1_920, 3_840] {
+            project
+                .apply(DawAction::InsertProjectMarker {
+                    position_ticks,
+                    name: String::new(),
+                })
+                .expect("unnamed marker should be inserted");
+        }
+
+        for (start_ticks, end_ticks, expected_name) in
+            [(0, 1_920, "01-01.wav"), (1_920, 3_840, "02-02.wav")]
+        {
+            let settings = aaadaw_app::ProjectWavRenderSettings {
+                master_ceiling: aaadaw_engine::MasterOutputCeiling::default(),
+                export_options: aaadaw_app::WavExportOptions::default(),
+                output_sample_rate: 48_000,
+                output_channels: WavChannelCount::Stereo,
+                source: aaadaw_app::ProjectWavRenderSource::MasterMix,
+                start_sample: project
+                    .sample_at_tick(start_ticks)
+                    .expect("start tick should convert"),
+                end_sample: project
+                    .sample_at_tick(end_ticks)
+                    .expect("end tick should convert"),
+                tail_milliseconds: 0,
+                normalize_peak: false,
+                normalize_peak_target_centi_dbfs: 0,
+            };
+            let output = apply_render_filename_pattern(
+                vec![(settings, Path::new("/renders/base.wav").to_owned())],
+                "$region-$marker",
+                &project,
+                Path::new("/projects/unnamed.aaadaw"),
+            )
+            .expect("unnamed Region and Marker values should use their native numbers");
+            assert_eq!(output[0].1, Path::new("/renders").join(expected_name));
+        }
+    }
+
+    #[test]
+    fn render_filename_named_project_notes_match_native_name_value_rules() {
+        let mut project = Project::default();
+        project
+            .apply(DawAction::SetProjectNotes {
+                notes: ProjectNotes {
+                    text: "first=john\nlast=doe".to_owned(),
+                    ..ProjectNotes::default()
+                },
+            })
+            .expect("named project notes fixture should be set");
+        let settings = aaadaw_app::ProjectWavRenderSettings {
+            master_ceiling: aaadaw_engine::MasterOutputCeiling::default(),
+            export_options: aaadaw_app::WavExportOptions::default(),
+            output_sample_rate: 48_000,
+            output_channels: WavChannelCount::Stereo,
+            source: aaadaw_app::ProjectWavRenderSource::MasterMix,
+            start_sample: 0,
+            end_sample: 48_000,
+            tail_milliseconds: 0,
+            normalize_peak: false,
+            normalize_peak_target_centi_dbfs: 0,
+        };
+        let output = apply_render_filename_pattern(
+            vec![(settings, Path::new("/renders/base.wav").to_owned())],
+            "$projectnotes(first)-$projectnotes(last)-$projectnotes(missing)",
+            &project,
+            Path::new("/projects/named-notes.aaadaw"),
+        )
+        .expect("named project note values should expand");
+        assert_eq!(output[0].1, Path::new("/renders/john-doe.wav"));
+
+        project
+            .apply(DawAction::SetProjectNotes {
+                notes: ProjectNotes {
+                    text: "first=john;last=doe".to_owned(),
+                    ..ProjectNotes::default()
+                },
+            })
+            .expect("delimiter-separated project notes fixture should be set");
+        let output = apply_render_filename_pattern(
+            vec![(settings, Path::new("/renders/base.wav").to_owned())],
+            "$projectnotes(last)[;]",
+            &project,
+            Path::new("/projects/named-notes.aaadaw"),
+        )
+        .expect("unsupported project-note separator suffix should remain literal");
+        assert_eq!(output[0].1, Path::new("/renders/[;].wav"));
+    }
+
+    #[test]
+    fn render_filename_position_and_length_wildcards_match_native_formats() {
+        let mut project = Project::default();
+        project
+            .apply(DawAction::CreateTrack {
+                index: 0,
+                name: "Position fixture".to_owned(),
+            })
+            .expect("position fixture track should be created");
+        let track_id = project.tracks()[0].id();
+        project
+            .apply(DawAction::InsertAudioItem {
+                track_id,
+                media_ref: "position-fixture.wav".to_owned(),
+                start_sample: 102_000,
+                source_offset_samples: 0,
+                length_samples: 59_232,
+            })
+            .expect("fractional position fixture item should be inserted");
+        let item_id = project.audio_items()[0].id();
+        let settings = aaadaw_app::ProjectWavRenderSettings {
+            master_ceiling: aaadaw_engine::MasterOutputCeiling::default(),
+            export_options: aaadaw_app::WavExportOptions::default(),
+            output_sample_rate: 48_000,
+            output_channels: WavChannelCount::Stereo,
+            source: aaadaw_app::ProjectWavRenderSource::SelectedAudioItem(item_id),
+            start_sample: 102_000,
+            end_sample: 161_232,
+            tail_milliseconds: 0,
+            normalize_peak: false,
+            normalize_peak_target_centi_dbfs: 0,
+        };
+        let output = apply_render_filename_pattern(
+            vec![(settings, Path::new("/renders/base.wav").to_owned())],
+            "$start-$end-$length-$startbeats-$endbeats-$lengthbeats-$starttc-$endtc-$startframes-$endframes-$lengthframes-$startseconds-$endseconds-$lengthseconds-$lenhh-$lenmm-$lenss-$lentt",
+            &project,
+            Path::new("/projects/position.aaadaw"),
+        )
+        .expect("position and length wildcard values should expand");
+        assert_eq!(
+            output[0].1,
+            Path::new(
+                "/renders/0-02.125-0-03.359-0-01.234-2.1.25-2.3.72-0.2.47-00.00.02.03-00.00.03.10-63-100-37-2.125-3.359-1.234-0-0-1-234.wav"
+            )
+        );
+    }
+
+    #[test]
+    fn render_filename_output_wildcards_match_native_format_and_channel_values() {
+        let project = Project::default();
+        let mut settings = aaadaw_app::ProjectWavRenderSettings {
+            master_ceiling: aaadaw_engine::MasterOutputCeiling::default(),
+            export_options: aaadaw_app::WavExportOptions::default(),
+            output_sample_rate: 44_100,
+            output_channels: WavChannelCount::Mono,
+            source: aaadaw_app::ProjectWavRenderSource::MasterMix,
+            start_sample: 0,
+            end_sample: 48_000,
+            tail_milliseconds: 0,
+            normalize_peak: false,
+            normalize_peak_target_centi_dbfs: 0,
+        };
+        settings.export_options.sample_format = WavSampleFormat::Pcm16;
+
+        let output = apply_render_filename_pattern(
+            vec![(settings, Path::new("/renders/base.wav").to_owned())],
+            "$format-$samplerate-$sampleratek-$bitdepth-$channels",
+            &project,
+            Path::new("/projects/format.aaadaw"),
+        )
+        .expect("output-format wildcards should expand");
+        assert_eq!(output[0].1, Path::new("/renders/wav-44100-44.1-16-1.wav"));
+
+        settings.output_sample_rate = 22_050;
+        let output = apply_render_filename_pattern(
+            vec![(settings, Path::new("/renders/base.wav").to_owned())],
+            "$samplerate-$sampleratek-$channels",
+            &project,
+            Path::new("/projects/format.aaadaw"),
+        )
+        .expect("fractional kilohertz sample rates should retain precision");
+        assert_eq!(output[0].1, Path::new("/renders/22050-22.05-1.wav"));
+
+        settings.output_sample_rate = 48_000;
+        settings.output_channels = WavChannelCount::Stereo;
+        for (sample_format, bit_depth) in [
+            (WavSampleFormat::Pcm8, "8"),
+            (WavSampleFormat::Pcm16, "16"),
+            (WavSampleFormat::Pcm24, "24"),
+            (WavSampleFormat::Pcm32, "32"),
+            (WavSampleFormat::Float32, "32"),
+            (WavSampleFormat::Float64, "64"),
+            (WavSampleFormat::ImaAdpcm4, "4"),
+            (WavSampleFormat::Cadpcm2, "2"),
+            (WavSampleFormat::MuLaw8, "8"),
+        ] {
+            settings.export_options.sample_format = sample_format;
+            let output = apply_render_filename_pattern(
+                vec![(settings, Path::new("/renders/base.wav").to_owned())],
+                "$bitdepth-$sampleratek-$channels",
+                &project,
+                Path::new("/projects/format.aaadaw"),
+            )
+            .expect("supported WAV bit depth should expand");
+            assert_eq!(
+                output[0].1.file_name().and_then(|name| name.to_str()),
+                Some(format!("{bit_depth}-48-2.wav").as_str())
+            );
+        }
+    }
+
+    #[test]
+    fn render_filename_wildcard_case_and_character_rules_match_native_help() {
+        let mut project = Project::default();
+        project
+            .apply(DawAction::CreateTrack {
+                index: 0,
+                name: "Drums Kit".to_owned(),
+            })
+            .expect("modifier fixture track should be created");
+        let track_id = project.tracks()[0].id();
+        let settings = aaadaw_app::ProjectWavRenderSettings {
+            master_ceiling: aaadaw_engine::MasterOutputCeiling::default(),
+            export_options: aaadaw_app::WavExportOptions::default(),
+            output_sample_rate: 48_000,
+            output_channels: WavChannelCount::Stereo,
+            source: aaadaw_app::ProjectWavRenderSource::SelectedTrackStem(track_id),
+            start_sample: 0,
+            end_sample: 48_000,
+            tail_milliseconds: 0,
+            normalize_peak: false,
+            normalize_peak_target_centi_dbfs: 0,
+        };
+
+        let output = apply_render_filename_pattern(
+            vec![(settings, Path::new("/renders/base.wav").to_owned())],
+            "$Track|$TRACK|$tRACK|$track< >|$track< _>|$track[<5]",
+            &project,
+            Path::new("/projects/modifiers.aaadaw"),
+        )
+        .expect("native wildcard text modifiers should expand");
+        assert_eq!(
+            output[0].1,
+            Path::new("/renders/Drums Kit_DRUMS KIT_drums kit_DrumsKit_Drums_Kit_Drums.wav")
+        );
+    }
+
+    #[test]
+    fn render_filename_item_number_matches_the_selected_items_project_order() {
+        let mut project = Project::default();
+        project
+            .apply(DawAction::CreateTrack {
+                index: 0,
+                name: "Item number fixture".to_owned(),
+            })
+            .expect("item number fixture track should be created");
+        let track_id = project.tracks()[0].id();
+        for start_sample in [0, 48_000, 96_000] {
+            project
+                .apply(DawAction::InsertAudioItem {
+                    track_id,
+                    media_ref: "fixture.wav".to_owned(),
+                    start_sample,
+                    source_offset_samples: 0,
+                    length_samples: 48_000,
+                })
+                .expect("item number fixture should be inserted");
+        }
+        let item_id = project.audio_items()[1].id();
+        let settings = aaadaw_app::ProjectWavRenderSettings {
+            master_ceiling: aaadaw_engine::MasterOutputCeiling::default(),
+            export_options: aaadaw_app::WavExportOptions::default(),
+            output_sample_rate: 48_000,
+            output_channels: WavChannelCount::Stereo,
+            source: aaadaw_app::ProjectWavRenderSource::SelectedAudioItem(item_id),
+            start_sample: 48_000,
+            end_sample: 96_000,
+            tail_milliseconds: 0,
+            normalize_peak: false,
+            normalize_peak_target_centi_dbfs: 0,
+        };
+        let output = apply_render_filename_pattern(
+            vec![(settings, Path::new("/renders/base.wav").to_owned())],
+            "$item-$itemnumber",
+            &project,
+            Path::new("/projects/item-number.aaadaw"),
+        )
+        .expect("the selected item's identity and number should expand");
+        assert_eq!(output[0].1, Path::new("/renders/item_02-02.wav"));
+    }
+
+    #[test]
+    fn render_filename_item_name_and_duplicate_name_number_follow_the_selected_item() {
+        let mut project = Project::default();
+        project
+            .apply(DawAction::CreateTrack {
+                index: 0,
+                name: "Item names".to_owned(),
+            })
+            .expect("item-name fixture track should be created");
+        let track_id = project.tracks()[0].id();
+        for start_sample in [0, 48_000, 96_000] {
+            project
+                .apply(DawAction::InsertAudioItem {
+                    track_id,
+                    media_ref: "fixture.wav".to_owned(),
+                    start_sample,
+                    source_offset_samples: 0,
+                    length_samples: 48_000,
+                })
+                .expect("item-name fixture should be inserted");
+        }
+        for (start_ticks, end_ticks, name) in [(0, 1_920, "Region 1"), (3_840, 5_760, "Region 3")] {
+            project
+                .apply(DawAction::InsertProjectRegion {
+                    start_ticks,
+                    end_ticks,
+                    name: name.to_owned(),
+                })
+                .expect("item-name fixture region should be inserted");
+        }
+        let item_ids = project
+            .audio_items()
+            .iter()
+            .map(aaadaw_core::AudioItem::id)
+            .collect::<Vec<_>>();
+        for item_id in item_ids.iter().copied() {
+            project
+                .apply(DawAction::SetAudioItemName {
+                    item_id,
+                    name: "Hit".to_owned(),
+                })
+                .expect("duplicate item names should be accepted");
+        }
+        let settings = |item_id, start_sample| aaadaw_app::ProjectWavRenderSettings {
+            master_ceiling: aaadaw_engine::MasterOutputCeiling::default(),
+            export_options: aaadaw_app::WavExportOptions::default(),
+            output_sample_rate: 48_000,
+            output_channels: WavChannelCount::Stereo,
+            source: aaadaw_app::ProjectWavRenderSource::SelectedAudioItem(item_id),
+            start_sample,
+            end_sample: start_sample + 48_000,
+            tail_milliseconds: 0,
+            normalize_peak: false,
+            normalize_peak_target_centi_dbfs: 0,
+        };
+
+        let output = apply_render_filename_pattern(
+            vec![
+                (
+                    settings(item_ids[0], 0),
+                    Path::new("/renders/base.wav").to_owned(),
+                ),
+                (
+                    settings(item_ids[2], 96_000),
+                    Path::new("/renders/base.wav").to_owned(),
+                ),
+            ],
+            "$item-$namenumber-$itemnumber",
+            &project,
+            Path::new("/projects/item-names.aaadaw"),
+        )
+        .expect("selected Item name and its duplicate ordinal should expand");
+        assert_eq!(output[0].1, Path::new("/renders/Hit-01-01.wav"));
+        assert_eq!(output[1].1, Path::new("/renders/Hit-02-03.wav"));
+
+        let output = apply_render_filename_pattern(
+            vec![
+                (
+                    settings(item_ids[0], 0),
+                    Path::new("/renders/base.wav").to_owned(),
+                ),
+                (
+                    settings(item_ids[2], 96_000),
+                    Path::new("/renders/base.wav").to_owned(),
+                ),
+            ],
+            "$item-$region-$namenumber",
+            &project,
+            Path::new("/projects/item-names.aaadaw"),
+        )
+        .expect("the name-number context should follow the region name wildcard");
+        assert_eq!(output[0].1, Path::new("/renders/Hit-Region 1-01.wav"));
+        assert_eq!(output[1].1, Path::new("/renders/Hit-Region 3-01.wav"));
+    }
+
+    #[test]
+    fn render_filename_selected_midi_items_share_item_names_and_ordinals_with_audio() {
+        let mut project = Project::default();
+        project
+            .apply(DawAction::CreateTrack {
+                index: 0,
+                name: "Mixed items".to_owned(),
+            })
+            .expect("mixed-item fixture track should be created");
+        let track_id = project.tracks()[0].id();
+        project
+            .apply(DawAction::InsertAudioItem {
+                track_id,
+                media_ref: "fixture.wav".to_owned(),
+                start_sample: 0,
+                source_offset_samples: 0,
+                length_samples: 24_000,
+            })
+            .expect("first audio fixture should be inserted");
+        project
+            .apply(DawAction::InsertMidiItem {
+                track_id,
+                start_tick: 960,
+                length_ticks: 960,
+            })
+            .expect("MIDI fixture should be inserted");
+        project
+            .apply(DawAction::InsertAudioItem {
+                track_id,
+                media_ref: "fixture.wav".to_owned(),
+                start_sample: 48_000,
+                source_offset_samples: 0,
+                length_samples: 24_000,
+            })
+            .expect("second audio fixture should be inserted");
+        let item_ids = render_project_item_order(&project);
+        assert_eq!(item_ids.len(), 3);
+        for item_id in item_ids.iter().copied() {
+            if project
+                .audio_items()
+                .iter()
+                .any(|item| item.id() == item_id)
+            {
+                project
+                    .apply(DawAction::SetAudioItemName {
+                        item_id,
+                        name: "Hit".to_owned(),
+                    })
+                    .expect("Audio item should accept the fixture name");
+            } else {
+                project
+                    .apply(DawAction::SetMidiItemName {
+                        item_id,
+                        name: "Hit".to_owned(),
+                    })
+                    .expect("MIDI item should accept the same fixture name");
+            }
+        }
+        let outputs = item_ids
+            .iter()
+            .map(|item_id| {
+                let (source, start_sample, end_sample) = project
+                    .audio_items()
+                    .iter()
+                    .find(|item| item.id() == *item_id)
+                    .map(|item| {
+                        (
+                            aaadaw_app::ProjectWavRenderSource::SelectedAudioItem(*item_id),
+                            item.start_sample(),
+                            item.end_sample(),
+                        )
+                    })
+                    .unwrap_or_else(|| {
+                        let item = project
+                            .midi_items()
+                            .iter()
+                            .find(|item| item.id() == *item_id)
+                            .unwrap();
+                        (
+                            aaadaw_app::ProjectWavRenderSource::SelectedMidiItem(*item_id),
+                            project.sample_at_tick(item.start_tick()).unwrap(),
+                            project
+                                .sample_at_tick(item.start_tick() + item.length_ticks())
+                                .unwrap(),
+                        )
+                    });
+                (
+                    aaadaw_app::ProjectWavRenderSettings {
+                        master_ceiling: aaadaw_engine::MasterOutputCeiling::default(),
+                        export_options: aaadaw_app::WavExportOptions::default(),
+                        output_sample_rate: 48_000,
+                        output_channels: WavChannelCount::Stereo,
+                        source,
+                        start_sample,
+                        end_sample,
+                        tail_milliseconds: 0,
+                        normalize_peak: false,
+                        normalize_peak_target_centi_dbfs: 0,
+                    },
+                    Path::new("/renders/base.wav").to_owned(),
+                )
+            })
+            .collect::<Vec<_>>();
+        let output = apply_render_filename_pattern(
+            outputs,
+            "$item-$namenumber-$itemnumber-$timelineorder_track",
+            &project,
+            Path::new("/projects/mixed-items.aaadaw"),
+        )
+        .expect("audio and MIDI selected-item contexts should resolve consistently");
+        assert_eq!(output[0].1, Path::new("/renders/Hit-01-01-1.wav"));
+        assert_eq!(output[1].1, Path::new("/renders/Hit-02-02-2.wav"));
+        assert_eq!(output[2].1, Path::new("/renders/Hit-03-03-3.wav"));
+    }
+
+    #[test]
+    fn render_filename_selected_midi_item_name_number_ignores_unselected_duplicate() {
+        let mut project = Project::default();
+        project
+            .apply(DawAction::CreateTrack {
+                index: 0,
+                name: "MIDI items".to_owned(),
+            })
+            .expect("MIDI fixture track should be created");
+        let track_id = project.tracks()[0].id();
+        let mut item_ids = Vec::new();
+        for start_tick in [0, 1_920, 3_840] {
+            project
+                .apply(DawAction::InsertMidiItem {
+                    track_id,
+                    start_tick,
+                    length_ticks: 960,
+                })
+                .expect("MIDI fixture item should be inserted");
+            let item_id = project.midi_items().last().unwrap().id();
+            project
+                .apply(DawAction::SetMidiItemName {
+                    item_id,
+                    name: "MIDI Hit".to_owned(),
+                })
+                .expect("MIDI fixture item should be named");
+            item_ids.push(item_id);
+        }
+
+        let outputs = [item_ids[0], item_ids[2]]
+            .into_iter()
+            .map(|item_id| {
+                let item = project
+                    .midi_items()
+                    .iter()
+                    .find(|item| item.id() == item_id)
+                    .unwrap();
+                (
+                    aaadaw_app::ProjectWavRenderSettings {
+                        master_ceiling: aaadaw_engine::MasterOutputCeiling::default(),
+                        export_options: aaadaw_app::WavExportOptions::default(),
+                        output_sample_rate: 48_000,
+                        output_channels: WavChannelCount::Stereo,
+                        source: aaadaw_app::ProjectWavRenderSource::SelectedMidiItem(item_id),
+                        start_sample: project.sample_at_tick(item.start_tick()).unwrap(),
+                        end_sample: project
+                            .sample_at_tick(item.start_tick() + item.length_ticks())
+                            .unwrap(),
+                        tail_milliseconds: 0,
+                        normalize_peak: false,
+                        normalize_peak_target_centi_dbfs: 0,
+                    },
+                    Path::new("/renders/base.wav").to_owned(),
+                )
+            })
+            .collect();
+        let output = apply_render_filename_pattern(
+            outputs,
+            "$item-$namenumber-$itemnumber",
+            &project,
+            Path::new("/projects/midi-items.aaadaw"),
+        )
+        .expect("selected MIDI item names should match native output order");
+        assert_eq!(output[0].1, Path::new("/renders/MIDI Hit-01-01.wav"));
+        assert_eq!(output[1].1, Path::new("/renders/MIDI Hit-02-03.wav"));
+    }
+
+    #[test]
+    fn render_filename_empty_wildcards_omit_the_nearest_native_separator() {
+        let project = Project::default();
+        let settings = aaadaw_app::ProjectWavRenderSettings {
+            master_ceiling: aaadaw_engine::MasterOutputCeiling::default(),
+            export_options: aaadaw_app::WavExportOptions::default(),
+            output_sample_rate: 48_000,
+            output_channels: WavChannelCount::Stereo,
+            source: aaadaw_app::ProjectWavRenderSource::MasterMix,
+            start_sample: 0,
+            end_sample: 48_000,
+            tail_milliseconds: 0,
+            normalize_peak: false,
+            normalize_peak_target_centi_dbfs: 0,
+        };
+        let output = apply_render_filename_pattern(
+            vec![(settings, Path::new("/renders/base.wav").to_owned())],
+            "$region-$track.$marker_$format",
+            &project,
+            Path::new("/projects/empty.aaadaw"),
+        )
+        .expect("empty native wildcard values should omit adjacent separators");
+        assert_eq!(output[0].1, Path::new("/renders/Master_wav.wav"));
+
+        let output = apply_render_filename_pattern(
+            vec![(settings, Path::new("/renders/base.wav").to_owned())],
+            "$marker_$format",
+            &project,
+            Path::new("/projects/empty.aaadaw"),
+        )
+        .expect("a leading empty wildcard should omit its following separator");
+        assert_eq!(output[0].1, Path::new("/renders/wav.wav"));
+    }
+
+    #[test]
+    fn render_filename_patterns_preserve_unknown_tokens_and_reject_duplicate_targets() {
+        let project = Project::default();
+        let settings = aaadaw_app::ProjectWavRenderSettings {
+            master_ceiling: aaadaw_engine::MasterOutputCeiling::default(),
+            export_options: aaadaw_app::WavExportOptions::default(),
+            output_sample_rate: 48_000,
+            output_channels: WavChannelCount::Stereo,
+            source: aaadaw_app::ProjectWavRenderSource::MasterMix,
+            start_sample: 0,
+            end_sample: 48_000,
+            tail_milliseconds: 0,
+            normalize_peak: false,
+            normalize_peak_target_centi_dbfs: 0,
+        };
+        let project_path = Path::new("session.aaadaw");
+        let first = PathBuf::from("renders/first.wav");
+        let second = PathBuf::from("renders/second.wav");
+        let unchanged = apply_render_filename_pattern(
+            vec![(settings, first.clone())],
+            "  ",
+            &project,
+            project_path,
+        )
+        .expect("blank pattern should preserve generated destinations");
+        assert_eq!(unchanged[0].1, first);
+
+        let unknown = apply_render_filename_pattern(
+            vec![(settings, second)],
+            "$project-$unknown",
+            &project,
+            project_path,
+        )
+        .expect("unknown wildcard text should remain visible");
+        assert_eq!(unknown[0].1, Path::new("renders/session-$unknown.wav"));
+
+        let unknown_underscore = apply_render_filename_pattern(
+            vec![(settings, PathBuf::from("renders/unknown.wav"))],
+            "$timelineorder_suffix",
+            &project,
+            project_path,
+        )
+        .expect("unknown underscore wildcard names should remain literal");
+        assert_eq!(
+            unknown_underscore[0].1,
+            Path::new("renders/$timelineorder_suffix.wav")
+        );
+
+        let duplicate = apply_render_filename_pattern(
+            vec![
+                (settings, PathBuf::from("renders/first.wav")),
+                (settings, PathBuf::from("renders/second.wav")),
+            ],
+            "$project",
+            &project,
+            project_path,
+        )
+        .expect_err("duplicate wildcard output paths must be rejected");
+        assert!(duplicate.contains("duplicate output names"));
+    }
 
     fn wav_job(label: &str, destination: &str) -> OfflineRenderJob {
         OfflineRenderJob {
             kind: OfflineRenderKind::ProjectWav {
                 destination: PathBuf::from(destination),
-                master_ceiling: aaadaw_engine::MasterOutputCeiling::default(),
-                options: aaadaw_app::WavExportOptions::default(),
+                settings: aaadaw_app::ProjectWavRenderSettings {
+                    master_ceiling: aaadaw_engine::MasterOutputCeiling::default(),
+                    export_options: aaadaw_app::WavExportOptions::default(),
+                    output_sample_rate: Project::default().settings().sample_rate(),
+                    output_channels: WavChannelCount::Stereo,
+                    source: aaadaw_app::ProjectWavRenderSource::MasterMix,
+                    start_sample: 0,
+                    end_sample: 0,
+                    tail_milliseconds: aaadaw_app::DEFAULT_EFFECT_TAIL_SECONDS * 1_000,
+                    normalize_peak: false,
+                    normalize_peak_target_centi_dbfs: 0,
+                },
             },
             snapshot: Arc::new(Project::default().snapshot()),
             project_path: PathBuf::from("session.aaadaw"),
@@ -544,6 +6002,1725 @@ mod tests {
     fn queue_state_is_empty_by_default() {
         let queue: OfflineJobQueue<&str> = OfflineJobQueue::default();
         assert!(queue.is_empty());
+    }
+
+    #[test]
+    fn render_source_menu_keeps_master_and_stem_sources_grouped() {
+        assert_eq!(
+            RenderSource::ALL,
+            [
+                RenderSource::MasterMix,
+                RenderSource::SelectedTracksStems,
+                RenderSource::MasterMixAndSelectedTracks,
+                RenderSource::SelectedTracksViaMaster,
+                RenderSource::SelectedMediaItems,
+                RenderSource::RegionRenderMatrix,
+            ]
+        );
+        assert_eq!(
+            RenderSource::SelectedTracksStems.to_string(),
+            "Selected tracks (stems)"
+        );
+        assert_eq!(
+            RenderSource::MasterMixAndSelectedTracks.to_string(),
+            "Master mix and stems"
+        );
+        assert_eq!(
+            RenderSource::SelectedTracksViaMaster.to_string(),
+            "Selected tracks via master"
+        );
+        assert_eq!(
+            RenderSource::SelectedMediaItems.to_string(),
+            "Selected media items"
+        );
+        assert_eq!(
+            RenderSource::RegionRenderMatrix.to_string(),
+            "Region Render Matrix"
+        );
+        let mut app = App::default();
+        let _task = app.update(Message::SetRenderSource(RenderSource::RegionRenderMatrix));
+        assert_eq!(app.render_dialog.bounds, RenderBounds::AllProjectRegions);
+        assert!(!app.has_valid_render_source());
+        assert!(!app.can_submit_render());
+    }
+
+    #[test]
+    fn selected_media_items_queue_independent_direct_source_outputs() {
+        let mut project = Project::default();
+        project
+            .apply(DawAction::CreateTrack {
+                index: 0,
+                name: "Media source".to_owned(),
+            })
+            .expect("source track should be created");
+        let track_id = project.tracks()[0].id();
+        for (start_sample, length_samples) in [(24_000, 48_000), (96_000, 24_000)] {
+            project
+                .apply(DawAction::InsertAudioItem {
+                    track_id,
+                    media_ref: format!("linked-{start_sample}"),
+                    start_sample,
+                    source_offset_samples: 0,
+                    length_samples,
+                })
+                .expect("audio item should be inserted");
+        }
+        let item_ids = project
+            .audio_items()
+            .iter()
+            .map(|item| item.id())
+            .collect::<Vec<_>>();
+        let settings = aaadaw_app::ProjectWavRenderSettings {
+            master_ceiling: aaadaw_engine::MasterOutputCeiling::default(),
+            export_options: aaadaw_app::WavExportOptions::default(),
+            output_sample_rate: project.settings().sample_rate(),
+            output_channels: WavChannelCount::Stereo,
+            source: aaadaw_app::ProjectWavRenderSource::MasterMix,
+            start_sample: 0,
+            end_sample: 120_000,
+            tail_milliseconds: 250,
+            normalize_peak: false,
+            normalize_peak_target_centi_dbfs: 0,
+        };
+        let prefix =
+            std::env::temp_dir().join(format!("aaadaw-selected-items-{}.wav", std::process::id()));
+        let jobs = selected_media_item_render_jobs(
+            &prefix,
+            &project,
+            &item_ids.iter().copied().collect::<HashSet<_>>(),
+            settings,
+        )
+        .expect("each selected audio item should produce one job");
+        assert_eq!(jobs.len(), 2);
+        assert_eq!(
+            jobs[0].0.source,
+            aaadaw_app::ProjectWavRenderSource::SelectedAudioItem(item_ids[0])
+        );
+        assert_eq!(
+            (jobs[0].0.start_sample, jobs[0].0.end_sample),
+            (24_000, 72_000)
+        );
+        assert_eq!(jobs[0].0.tail_milliseconds, 0);
+        assert_eq!(
+            jobs[1].0.source,
+            aaadaw_app::ProjectWavRenderSource::SelectedAudioItem(item_ids[1])
+        );
+        assert_eq!(
+            (jobs[1].0.start_sample, jobs[1].0.end_sample),
+            (96_000, 120_000)
+        );
+        assert_eq!(
+            jobs[1]
+                .1
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap(),
+            format!("aaadaw-selected-items-{}-item_02.wav", std::process::id())
+        );
+
+        let mut app = App {
+            project,
+            project_path: Some(std::env::temp_dir().join(format!(
+                "aaadaw-selected-items-project-{}.aaadaw",
+                std::process::id()
+            ))),
+            render_dialog: RenderDialogState {
+                source: RenderSource::SelectedMediaItems,
+                bounds: RenderBounds::AllProjectMarkers,
+                tail_enabled: true,
+                tail_duration_text: "invalid-but-disabled-for-items".to_owned(),
+                ..RenderDialogState::default()
+            },
+            offline_render_busy: true,
+            ..App::default()
+        };
+        app.timeline.selected_items.extend(item_ids.iter().copied());
+        assert_eq!(app.selected_media_items_summary(), "2 media items");
+        assert!(app.has_valid_render_source());
+        assert!(app.can_submit_render());
+        assert!(app.render_requires_multiple_files());
+        let _task = app.start_offline_render(prefix.clone());
+        let queued = app
+            .offline_job_queue
+            .pop_front()
+            .expect("selected item set should queue one atomic batch");
+        assert_eq!(queued.job.label, "Render 2 selected media items");
+        let OfflineRenderKind::ProjectWavBatch { outputs } = queued.job.kind else {
+            panic!("multiple selected media items should use a grouped job")
+        };
+        assert_eq!(outputs.len(), 2);
+        assert_eq!(
+            outputs[0].0.source,
+            aaadaw_app::ProjectWavRenderSource::SelectedAudioItem(item_ids[0])
+        );
+        assert_eq!(
+            outputs[1].0.source,
+            aaadaw_app::ProjectWavRenderSource::SelectedAudioItem(item_ids[1])
+        );
+
+        app.timeline.selected_items.remove(&item_ids[1]);
+        let single_destination = std::env::temp_dir().join(format!(
+            "aaadaw-selected-item-single-{}.wav",
+            std::process::id()
+        ));
+        let _task = app.start_offline_render(single_destination.clone());
+        let queued = app
+            .offline_job_queue
+            .pop_front()
+            .expect("one selected item should queue a single-file render");
+        let OfflineRenderKind::ProjectWav {
+            destination,
+            settings,
+        } = queued.job.kind
+        else {
+            panic!("one selected item should use the user-selected destination")
+        };
+        assert_eq!(destination, single_destination);
+        assert_eq!(
+            settings.source,
+            aaadaw_app::ProjectWavRenderSource::SelectedAudioItem(item_ids[0])
+        );
+        assert_eq!(
+            (settings.start_sample, settings.end_sample),
+            (24_000, 72_000)
+        );
+        assert_eq!(settings.tail_milliseconds, 0);
+    }
+
+    #[test]
+    fn selected_media_item_source_accepts_midi_only_selection() {
+        let mut project = Project::default();
+        project
+            .apply(DawAction::CreateTrack {
+                index: 0,
+                name: "MIDI source".to_owned(),
+            })
+            .expect("source track should be created");
+        let track_id = project.tracks()[0].id();
+        project
+            .apply(DawAction::InsertMidiItem {
+                track_id,
+                start_tick: 0,
+                length_ticks: 960,
+            })
+            .expect("MIDI item should be inserted");
+        let midi_item_id = project.midi_items()[0].id();
+        let mut app = App {
+            project,
+            render_dialog: RenderDialogState {
+                source: RenderSource::SelectedMediaItems,
+                ..RenderDialogState::default()
+            },
+            ..App::default()
+        };
+        assert!(!app.has_valid_render_source());
+        assert!(
+            app.selected_media_item_source_error()
+                .unwrap()
+                .contains("Select one or more Audio or MIDI")
+        );
+        app.timeline.selected_items.insert(midi_item_id);
+        assert!(app.has_valid_render_source());
+        assert!(app.can_submit_render());
+        assert_eq!(app.selected_media_items_summary(), "1 media item");
+        assert_eq!(app.selected_render_settings().unwrap().start_sample, 0);
+        assert_eq!(app.selected_render_settings().unwrap().end_sample, 24_000);
+
+        let destination = std::env::temp_dir().join(format!(
+            "aaadaw-selected-midi-item-{}.wav",
+            std::process::id()
+        ));
+        let settings = aaadaw_app::ProjectWavRenderSettings {
+            master_ceiling: aaadaw_engine::MasterOutputCeiling::default(),
+            export_options: aaadaw_app::WavExportOptions::default(),
+            output_sample_rate: app.project.settings().sample_rate(),
+            output_channels: WavChannelCount::Stereo,
+            source: aaadaw_app::ProjectWavRenderSource::MasterMix,
+            start_sample: 0,
+            end_sample: 24_000,
+            tail_milliseconds: 0,
+            normalize_peak: false,
+            normalize_peak_target_centi_dbfs: 0,
+        };
+        let jobs = selected_media_item_render_jobs(
+            &destination,
+            &app.project,
+            &app.effective_selected_media_item_ids(),
+            settings,
+        )
+        .expect("a selected MIDI item should produce a render job");
+        assert_eq!(jobs.len(), 1);
+        assert_eq!(
+            jobs[0].0.source,
+            aaadaw_app::ProjectWavRenderSource::SelectedMidiItem(midi_item_id)
+        );
+        assert_eq!((jobs[0].0.start_sample, jobs[0].0.end_sample), (0, 24_000));
+
+        app.project
+            .apply(DawAction::InsertAudioItem {
+                track_id,
+                media_ref: "asset://mixed-audio-item".to_owned(),
+                start_sample: 48_000,
+                source_offset_samples: 0,
+                length_samples: 24_000,
+            })
+            .expect("an audio item should be insertable alongside the MIDI item");
+        let audio_item_id = app.project.audio_items()[0].id();
+        app.timeline.selected_items.insert(audio_item_id);
+        let jobs = selected_media_item_render_jobs(
+            &destination,
+            &app.project,
+            &app.effective_selected_media_item_ids(),
+            settings,
+        )
+        .expect("a mixed Audio/MIDI selection should produce one job per item");
+        assert_eq!(jobs.len(), 2);
+        assert_eq!(
+            jobs[0].0.source,
+            aaadaw_app::ProjectWavRenderSource::SelectedMidiItem(midi_item_id)
+        );
+        assert_eq!(
+            jobs[1].0.source,
+            aaadaw_app::ProjectWavRenderSource::SelectedAudioItem(audio_item_id)
+        );
+        assert!(jobs[1].1.to_string_lossy().ends_with("-item_02.wav"));
+    }
+
+    #[test]
+    fn custom_render_range_maps_project_clock_values_to_sample_boundaries_and_freezes_them() {
+        let mut project = Project::default();
+        project
+            .apply(DawAction::SetProjectStartTimeOffsetSeconds { seconds: -5.0 })
+            .expect("project clock offset should be set");
+        let mut app = App {
+            project,
+            project_path: Some(std::env::temp_dir().join(format!(
+                "aaadaw-custom-range-queued-{}.aaadaw",
+                std::process::id()
+            ))),
+            render_dialog: RenderDialogState {
+                bounds: RenderBounds::CustomTimeRange,
+                custom_start_text: "-0:04.877".to_owned(),
+                custom_end_text: "-0:02.544".to_owned(),
+                custom_range_initialized: true,
+                ..RenderDialogState::default()
+            },
+            offline_render_busy: true,
+            ..App::default()
+        };
+
+        assert_eq!(app.selected_render_bounds(), Ok((5_904, 117_888)));
+        assert_eq!(app.custom_render_length_text().as_deref(), Some("0:02.333"));
+        assert!(app.can_submit_render());
+
+        let output =
+            std::env::temp_dir().join(format!("aaadaw-custom-range-{}.wav", std::process::id()));
+        let _task = app.start_offline_render(output);
+        app.render_dialog.custom_start_text = "0:00.000".to_owned();
+        app.render_dialog.custom_end_text = "0:01.000".to_owned();
+        let queued = app
+            .offline_job_queue
+            .pop_front()
+            .expect("custom time range should queue as a project render");
+        let OfflineRenderKind::ProjectWav { settings, .. } = queued.job.kind else {
+            panic!("a custom time range should queue one bounded WAV render")
+        };
+        assert_eq!(settings.start_sample, 5_904);
+        assert_eq!(settings.end_sample, 117_888);
+    }
+
+    #[test]
+    fn render_tail_is_opt_in_and_freezes_its_enabled_duration() {
+        let mut app = App {
+            project_path: Some(std::env::temp_dir().join(format!(
+                "aaadaw-render-tail-queued-{}.aaadaw",
+                std::process::id()
+            ))),
+            render_dialog: RenderDialogState {
+                bounds: RenderBounds::CustomTimeRange,
+                custom_start_text: "0:00.000".to_owned(),
+                custom_end_text: "0:02.000".to_owned(),
+                custom_range_initialized: true,
+                tail_duration_text: "invalid while disabled".to_owned(),
+                ..RenderDialogState::default()
+            },
+            offline_render_busy: true,
+            ..App::default()
+        };
+
+        assert!(!app.render_dialog.tail_enabled);
+        assert_eq!(app.selected_render_settings().unwrap().tail_milliseconds, 0);
+        assert!(app.can_submit_render(), "disabled tail input is ignored");
+
+        app.render_dialog.tail_enabled = true;
+        assert!(!app.can_submit_render(), "enabled tail input must validate");
+        app.render_dialog.tail_duration_text = "1250".to_owned();
+        assert!(app.can_submit_render());
+
+        let output =
+            std::env::temp_dir().join(format!("aaadaw-render-tail-{}.wav", std::process::id()));
+        let _task = app.start_offline_render(output);
+        app.render_dialog.tail_enabled = false;
+        app.render_dialog.tail_duration_text = "0".to_owned();
+
+        let queued = app
+            .offline_job_queue
+            .pop_front()
+            .expect("the enabled tail render should queue");
+        let OfflineRenderKind::ProjectWav { settings, .. } = queued.job.kind else {
+            panic!("custom time range should queue one WAV render")
+        };
+        assert_eq!(settings.tail_milliseconds, 1_250);
+    }
+
+    #[test]
+    fn custom_render_range_initializes_from_project_clock_and_content_end_once() {
+        let mut project = Project::default();
+        project
+            .apply(DawAction::SetProjectStartTimeOffsetSeconds { seconds: -5.0 })
+            .expect("project clock offset should be set");
+        project
+            .apply(DawAction::CreateTrack {
+                index: 0,
+                name: "Range".to_owned(),
+            })
+            .expect("range track should be created");
+        let track_id = project.tracks()[0].id();
+        project
+            .apply(DawAction::InsertMidiItem {
+                track_id,
+                start_tick: 0,
+                length_ticks: 2_400,
+            })
+            .expect("project content should have a 1.25-second end");
+        let mut app = App {
+            project,
+            ..App::default()
+        };
+
+        app.initialize_custom_render_range();
+        assert_eq!(app.render_dialog.custom_start_text, "-0:05.000");
+        assert_eq!(app.render_dialog.custom_end_text, "-0:03.750");
+
+        app.render_dialog.custom_start_text = "-0:04.500".to_owned();
+        app.project = Project::default();
+        app.initialize_custom_render_range();
+        assert_eq!(app.render_dialog.custom_start_text, "-0:04.500");
+        assert_eq!(app.render_dialog.custom_end_text, "-0:03.750");
+    }
+
+    #[test]
+    fn custom_render_range_rejects_invalid_out_of_project_and_empty_ranges() {
+        let mut app = App {
+            render_dialog: RenderDialogState {
+                bounds: RenderBounds::CustomTimeRange,
+                custom_range_initialized: true,
+                ..RenderDialogState::default()
+            },
+            ..App::default()
+        };
+
+        app.render_dialog.custom_start_text = "not a time".to_owned();
+        assert!(
+            app.selected_render_bounds()
+                .expect_err("malformed start should be rejected")
+                .contains("Invalid custom start time")
+        );
+
+        app.render_dialog.custom_start_text = "0:02.000".to_owned();
+        app.render_dialog.custom_end_text = "0:01.000".to_owned();
+        assert!(
+            app.selected_render_bounds()
+                .expect_err("reversed range should be rejected")
+                .contains("end must be after")
+        );
+
+        app.render_dialog.custom_start_text = "0:01.000".to_owned();
+        app.render_dialog.custom_end_text = "0:01.000".to_owned();
+        assert!(
+            app.selected_render_bounds()
+                .expect_err("zero-length range should be rejected")
+                .contains("end must be after")
+        );
+
+        app.render_dialog.custom_start_text = "-0:00.001".to_owned();
+        app.render_dialog.custom_end_text = "0:01.000".to_owned();
+        assert!(
+            app.selected_render_bounds()
+                .expect_err("time before project sample zero should be rejected")
+                .contains("Could not convert custom start")
+        );
+    }
+
+    #[test]
+    fn pre_fader_stem_control_is_available_only_for_stem_sources() {
+        let mut app = App::default();
+        assert!(!app.can_render_stems_pre_fader());
+        let _task = app.update(Message::SetRenderStemsPreFader(true));
+        assert!(!app.render_dialog.stems_pre_fader);
+
+        app.render_dialog.source = RenderSource::SelectedTracksStems;
+        assert!(app.can_render_stems_pre_fader());
+        let _task = app.update(Message::SetRenderStemsPreFader(true));
+        assert!(app.render_dialog.stems_pre_fader);
+
+        app.render_dialog.source = RenderSource::SelectedTracksViaMaster;
+        assert!(!app.can_render_stems_pre_fader());
+        let _task = app.update(Message::SetRenderStemsPreFader(false));
+        assert!(app.render_dialog.stems_pre_fader);
+
+        app.render_dialog.source = RenderSource::MasterMixAndSelectedTracks;
+        assert!(app.can_render_stems_pre_fader());
+    }
+
+    #[test]
+    fn render_bounds_resolve_the_current_time_selection_to_project_samples() {
+        let mut app = App::default();
+        app.render_dialog.bounds = RenderBounds::TimeSelection;
+        assert!(!app.can_submit_render());
+        assert!(
+            app.selected_render_bounds()
+                .expect_err("a selection is required")
+                .contains("Create a time selection")
+        );
+
+        app.timeline.time_selection = Some(crate::timeline::TimeSelection {
+            start_tick: 960,
+            end_tick: 2_880,
+        });
+        assert_eq!(
+            app.selected_render_bounds()
+                .expect("selection should convert on the project sample clock"),
+            (24_000, 72_000)
+        );
+        assert!(app.can_submit_render());
+
+        app.render_dialog.sample_rate = RenderSampleRate::Fixed(44_100);
+        assert_eq!(
+            app.render_output_sample_rate(),
+            44_100,
+            "fixed render rate should be resolved independently of the project rate"
+        );
+
+        app.render_dialog.tail_enabled = true;
+        app.render_dialog.tail_duration_text = "two".to_owned();
+        assert!(!app.can_submit_render());
+
+        app.render_dialog.bounds = RenderBounds::EntireProject;
+        app.render_dialog.tail_duration_text = "0".to_owned();
+        assert!(!app.can_submit_render());
+    }
+
+    #[test]
+    fn render_all_regions_freezes_each_region_range_and_output_name() {
+        let mut project = Project::default();
+        project
+            .apply(DawAction::InsertProjectRegion {
+                start_ticks: 960,
+                end_ticks: 2_880,
+                name: "Verse/Part".to_owned(),
+            })
+            .expect("first region should be inserted");
+        project
+            .apply(DawAction::InsertProjectRegion {
+                start_ticks: 3_840,
+                end_ticks: 4_800,
+                name: "Verse/Part".to_owned(),
+            })
+            .expect("second region should be inserted");
+        project
+            .apply(DawAction::CreateTrack {
+                index: 0,
+                name: "Lead".to_owned(),
+            })
+            .expect("render source track should be created");
+        let track_id = project.tracks()[0].id();
+        let settings = aaadaw_app::ProjectWavRenderSettings {
+            master_ceiling: aaadaw_engine::MasterOutputCeiling::default(),
+            export_options: aaadaw_app::WavExportOptions::default(),
+            output_sample_rate: project.settings().sample_rate(),
+            output_channels: WavChannelCount::Stereo,
+            source: aaadaw_app::ProjectWavRenderSource::MasterMix,
+            start_sample: 0,
+            end_sample: 120_000,
+            tail_milliseconds: 250,
+            normalize_peak: true,
+            normalize_peak_target_centi_dbfs: -602,
+        };
+        let base = std::env::temp_dir().join("aaadaw-region-prefix.wav");
+
+        let outputs = project_region_render_jobs(
+            &base,
+            &project,
+            RenderSource::SelectedTracksViaMaster,
+            &[track_id],
+            false,
+            settings,
+            None,
+        )
+        .expect("each project region should make a stem render job");
+
+        assert_eq!(outputs.len(), 2);
+        assert_eq!(
+            outputs[0],
+            (
+                aaadaw_app::ProjectWavRenderSettings {
+                    source: aaadaw_app::ProjectWavRenderSource::SelectedTrackViaMaster(track_id),
+                    start_sample: 24_000,
+                    end_sample: 72_000,
+                    ..settings
+                },
+                std::env::temp_dir().join("aaadaw-region-prefix-Verse_Part-Lead.wav")
+            )
+        );
+        assert_eq!(
+            outputs[1],
+            (
+                aaadaw_app::ProjectWavRenderSettings {
+                    source: aaadaw_app::ProjectWavRenderSource::SelectedTrackViaMaster(track_id),
+                    start_sample: 96_000,
+                    end_sample: 120_000,
+                    ..settings
+                },
+                std::env::temp_dir().join("aaadaw-region-prefix-Verse_Part-2-Lead.wav")
+            )
+        );
+        assert!(outputs.iter().all(|(settings, _)| {
+            settings.tail_milliseconds == 250
+                && settings.normalize_peak
+                && settings.normalize_peak_target_centi_dbfs == -602
+        }));
+
+        let mut app = App {
+            project,
+            project_path: Some(std::env::temp_dir().join(format!(
+                "aaadaw-region-queued-{}.aaadaw",
+                std::process::id()
+            ))),
+            render_dialog: RenderDialogState {
+                bounds: RenderBounds::AllProjectRegions,
+                ..RenderDialogState::default()
+            },
+            offline_render_busy: true,
+            ..App::default()
+        };
+        assert_eq!(app.selected_render_bounds(), Ok((24_000, 120_000)));
+        assert!(app.render_requires_multiple_files());
+        assert!(app.can_submit_render());
+        app.render_dialog.source = RenderSource::SelectedTracksViaMaster;
+        app.timeline.selected_track = Some(track_id);
+        app.timeline.selected_tracks.insert(track_id);
+        let output_prefix = std::env::temp_dir().join(format!(
+            "aaadaw-queued-region-prefix-{}.wav",
+            std::process::id()
+        ));
+        let _task = app.start_offline_render(output_prefix);
+        let queued = app
+            .offline_job_queue
+            .pop_front()
+            .expect("all project regions should queue as one grouped job");
+        let OfflineRenderKind::ProjectWavBatch { outputs } = queued.job.kind else {
+            panic!("All project regions should use the bounded multi-file worker")
+        };
+        assert_eq!(outputs.len(), 2);
+        assert_eq!(outputs[0].0.start_sample, 24_000);
+        assert_eq!(outputs[0].0.end_sample, 72_000);
+        assert_eq!(outputs[1].0.start_sample, 96_000);
+        assert_eq!(outputs[1].0.end_sample, 120_000);
+        assert!(outputs.iter().all(|(settings, _)| {
+            settings.source == aaadaw_app::ProjectWavRenderSource::SelectedTrackViaMaster(track_id)
+        }));
+
+        app.project = Project::default();
+        assert!(
+            app.selected_render_bounds()
+                .expect_err("rendering regions requires at least one region")
+                .contains("Add at least one project region")
+        );
+        assert!(!app.can_submit_render());
+    }
+
+    #[test]
+    fn region_render_matrix_uses_each_regions_master_and_track_assignments() {
+        let mut project = Project::default();
+        for (index, name) in [(0, "Lead"), (1, "Guitar")] {
+            project
+                .apply(DawAction::CreateTrack {
+                    index,
+                    name: name.to_owned(),
+                })
+                .expect("render track should be created");
+        }
+        for (start_ticks, end_ticks) in [(0, 1_920), (1_920, 3_840)] {
+            project
+                .apply(DawAction::InsertProjectRegion {
+                    start_ticks,
+                    end_ticks,
+                    name: "Verse".to_owned(),
+                })
+                .expect("region should be inserted");
+        }
+        let regions = project.regions().to_vec();
+        let lead = project.tracks()[0].id();
+        let guitar = project.tracks()[1].id();
+        project
+            .apply(DawAction::SetProjectRegionRenderMatrix {
+                region_id: regions[0].id(),
+                render_master_mix: true,
+                render_track_ids: vec![lead],
+            })
+            .expect("first region matrix assignments should be stored");
+        project
+            .apply(DawAction::SetProjectRegionRenderMatrix {
+                region_id: regions[1].id(),
+                render_master_mix: false,
+                render_track_ids: vec![guitar],
+            })
+            .expect("second region matrix assignments should be stored");
+        let settings = aaadaw_app::ProjectWavRenderSettings {
+            master_ceiling: aaadaw_engine::MasterOutputCeiling::default(),
+            export_options: aaadaw_app::WavExportOptions::default(),
+            output_sample_rate: project.settings().sample_rate(),
+            output_channels: WavChannelCount::Stereo,
+            source: aaadaw_app::ProjectWavRenderSource::MasterMix,
+            start_sample: 0,
+            end_sample: 120_000,
+            tail_milliseconds: 0,
+            normalize_peak: false,
+            normalize_peak_target_centi_dbfs: 0,
+        };
+        let outputs = project_region_render_jobs(
+            Path::new("matrix-prefix.wav"),
+            &project,
+            RenderSource::RegionRenderMatrix,
+            &[],
+            false,
+            settings,
+            None,
+        )
+        .expect("assigned matrix targets should produce a grouped render");
+
+        assert_eq!(outputs.len(), 3);
+        assert_eq!(
+            outputs[0],
+            (
+                aaadaw_app::ProjectWavRenderSettings {
+                    start_sample: 0,
+                    end_sample: 48_000,
+                    ..settings
+                },
+                PathBuf::from("./matrix-prefix-Verse-Master.wav")
+            )
+        );
+        assert_eq!(
+            outputs[1],
+            (
+                aaadaw_app::ProjectWavRenderSettings {
+                    source: aaadaw_app::ProjectWavRenderSource::SelectedTrackViaMaster(lead),
+                    start_sample: 0,
+                    end_sample: 48_000,
+                    ..settings
+                },
+                PathBuf::from("./matrix-prefix-Verse-Lead.wav")
+            )
+        );
+        assert_eq!(
+            outputs[2],
+            (
+                aaadaw_app::ProjectWavRenderSettings {
+                    source: aaadaw_app::ProjectWavRenderSource::SelectedTrackViaMaster(guitar),
+                    start_sample: 48_000,
+                    end_sample: 96_000,
+                    ..settings
+                },
+                PathBuf::from("./matrix-prefix-Verse-2-Guitar.wav")
+            )
+        );
+    }
+
+    #[test]
+    fn region_render_matrix_wavs_match_native_target_count_ranges_and_samples() {
+        fn riff_chunk<'a>(bytes: &'a [u8], chunk_id: &[u8; 4]) -> &'a [u8] {
+            assert_eq!(&bytes[0..4], b"RIFF");
+            assert_eq!(&bytes[8..12], b"WAVE");
+            let mut offset = 12;
+            while offset + 8 <= bytes.len() {
+                let id = &bytes[offset..offset + 4];
+                let length =
+                    u32::from_le_bytes(bytes[offset + 4..offset + 8].try_into().unwrap()) as usize;
+                let start = offset + 8;
+                let end = start + length;
+                assert!(end <= bytes.len(), "RIFF chunk must fit within the file");
+                if id == chunk_id {
+                    return &bytes[start..end];
+                }
+                offset = end + (length & 1);
+            }
+            panic!("RIFF chunk {:?} should exist", chunk_id);
+        }
+
+        let directory = tempfile::tempdir().expect("render fixture directory should be created");
+        let project_path = directory.path().join("region-matrix.aaadaw");
+        let mut store = ProjectStore::open(&project_path).expect("project store should be created");
+        let mut media_refs = Vec::new();
+        for (name, value) in [("Drums", 0.125_f32), ("Bass", 0.25), ("Guitar", 0.375)] {
+            let source_path = directory.path().join(format!("{name}.wav"));
+            let mut source = aaadaw_app::WavExport::create(
+                &source_path,
+                48_000,
+                aaadaw_app::WavExportOptions {
+                    sample_format: aaadaw_app::WavSampleFormat::Pcm24,
+                    dither: false,
+                },
+            )
+            .expect("matrix source WAV should be created");
+            source
+                .write_frames(&vec![[value, value]; 4 * 48_000])
+                .expect("matrix source frames should be written");
+            source
+                .finish()
+                .expect("matrix source WAV should be published");
+            media_refs.push(
+                store
+                    .import_audio_file(source_path)
+                    .expect("matrix source should be embedded in the project"),
+            );
+        }
+        store
+            .close()
+            .expect("project store should close before rendering");
+
+        let mut project = Project::default();
+        for (index, name) in [("Drums", 0), ("Bass", 1), ("Guitar", 2)] {
+            project
+                .apply(DawAction::CreateTrack {
+                    index: name,
+                    name: index.to_owned(),
+                })
+                .expect("matrix track should be created");
+        }
+        let track_ids = project
+            .tracks()
+            .iter()
+            .map(|track| track.id())
+            .collect::<Vec<_>>();
+        for (track_id, media_ref) in track_ids.iter().copied().zip(media_refs) {
+            project
+                .apply(DawAction::InsertAudioItem {
+                    track_id,
+                    media_ref,
+                    start_sample: 0,
+                    source_offset_samples: 0,
+                    length_samples: 4 * 48_000,
+                })
+                .expect("matrix audio item should be inserted");
+        }
+        for (start_ticks, end_ticks, name) in [(0, 3_840, "Intro"), (3_840, 7_680, "Verse")] {
+            project
+                .apply(DawAction::InsertProjectRegion {
+                    start_ticks,
+                    end_ticks,
+                    name: name.to_owned(),
+                })
+                .expect("matrix region should be inserted");
+        }
+        let regions = project.regions().to_vec();
+        project
+            .apply(DawAction::SetProjectRegionRenderMatrix {
+                region_id: regions[0].id(),
+                render_master_mix: true,
+                render_track_ids: vec![track_ids[0], track_ids[2]],
+            })
+            .expect("Intro matrix assignments should be stored");
+        project
+            .apply(DawAction::SetProjectRegionRenderMatrix {
+                region_id: regions[1].id(),
+                render_master_mix: false,
+                render_track_ids: vec![track_ids[1]],
+            })
+            .expect("Verse matrix assignments should be stored");
+
+        let settings = aaadaw_app::ProjectWavRenderSettings {
+            master_ceiling: aaadaw_engine::MasterOutputCeiling::default(),
+            export_options: aaadaw_app::WavExportOptions {
+                sample_format: aaadaw_app::WavSampleFormat::Pcm24,
+                dither: false,
+            },
+            output_sample_rate: 48_000,
+            output_channels: WavChannelCount::Stereo,
+            source: aaadaw_app::ProjectWavRenderSource::MasterMix,
+            start_sample: 0,
+            end_sample: 4 * 48_000,
+            tail_milliseconds: 0,
+            normalize_peak: false,
+            normalize_peak_target_centi_dbfs: 0,
+        };
+        let prefix = directory.path().join("matrix-prefix.wav");
+        let outputs = project_region_render_jobs(
+            &prefix,
+            &project,
+            RenderSource::RegionRenderMatrix,
+            &[],
+            false,
+            settings,
+            None,
+        )
+        .expect("assigned matrix targets should produce render jobs");
+        let outputs = apply_render_filename_pattern(
+            outputs,
+            "$region-$track",
+            &project,
+            Path::new("matrix-prefix.aaadaw"),
+        )
+        .expect("REAPER-style region/track wildcards should name matrix outputs");
+        assert_eq!(
+            outputs
+                .iter()
+                .map(|(_, path)| path.file_name().unwrap().to_string_lossy().into_owned())
+                .collect::<Vec<_>>(),
+            [
+                "Intro-Master.wav",
+                "Intro-Drums.wav",
+                "Intro-Guitar.wav",
+                "Verse-Bass.wav",
+            ]
+        );
+        assert_eq!(
+            outputs
+                .iter()
+                .map(|(settings, _)| (settings.start_sample, settings.end_sample))
+                .collect::<Vec<_>>(),
+            [(0, 96_000), (0, 96_000), (0, 96_000), (96_000, 192_000)]
+        );
+
+        aaadaw_app::render_project_wav_jobs_to_wavs(
+            &project_path,
+            &project,
+            &outputs,
+            &std::sync::atomic::AtomicBool::new(false),
+            |_, _| {},
+        )
+        .expect("all matrix render jobs should publish as one WAV batch");
+
+        let native_fixtures = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../docs/verification/reaper-parity/fixtures/region-render-matrix-render");
+        for (name, native_name, left, right) in [
+            ("Intro-Master.wav", "Intro-Master.wav", 0.75_f64, 0.75_f64),
+            ("Intro-Drums.wav", "Intro-Drums.wav", 0.125, 0.125),
+            ("Intro-Guitar.wav", "Intro-Guitar.wav", 0.375, 0.375),
+            ("Verse-Bass.wav", "Verse-Bass.wav", 0.25, 0.25),
+        ] {
+            let bytes = std::fs::read(directory.path().join(name))
+                .expect("matrix output should be readable");
+            let native = std::fs::read(native_fixtures.join(native_name))
+                .expect("native REAPER matrix output fixture should be available");
+            let format = riff_chunk(&bytes, b"fmt ");
+            let native_format = riff_chunk(&native, b"fmt ");
+            assert_eq!(
+                u32::from_le_bytes(format[4..8].try_into().unwrap()),
+                48_000,
+                "{name} sample rate"
+            );
+            assert_eq!(u16::from_le_bytes(format[2..4].try_into().unwrap()), 2);
+            assert_eq!(u16::from_le_bytes(format[14..16].try_into().unwrap()), 24);
+            assert_eq!(format, native_format, "{name} format should match REAPER");
+            let samples = riff_chunk(&bytes, b"data");
+            let native_samples = riff_chunk(&native, b"data");
+            assert_eq!(samples.len(), 96_000 * 6, "{name} should be 96,000 frames");
+            assert_eq!(
+                samples, native_samples,
+                "{name} PCM payload should match the REAPER matrix render"
+            );
+            let sample = |encoded: &[u8]| {
+                let padded = [
+                    encoded[0],
+                    encoded[1],
+                    encoded[2],
+                    if encoded[2] & 0x80 == 0 { 0 } else { 0xff },
+                ];
+                i32::from_le_bytes(padded)
+            };
+            let expected_left = (left * 8_388_608.0).round() as i32;
+            let expected_right = (right * 8_388_608.0).round() as i32;
+            assert_eq!(
+                sample(&samples[0..3]),
+                expected_left,
+                "{name} native left amplitude"
+            );
+            assert_eq!(
+                sample(&samples[3..6]),
+                expected_right,
+                "{name} native right amplitude"
+            );
+        }
+    }
+
+    #[test]
+    fn render_all_markers_freezes_next_marker_ranges_and_output_names() {
+        let mut project = Project::default();
+        project
+            .apply(DawAction::CreateTrack {
+                index: 0,
+                name: "Lead".to_owned(),
+            })
+            .expect("marker render track should be created");
+        let track_id = project.tracks()[0].id();
+        project
+            .apply(DawAction::InsertMidiItem {
+                track_id,
+                start_tick: 0,
+                length_ticks: 4_800,
+            })
+            .expect("project content should extend past the last marker");
+        for (position_ticks, name) in [(960, "Verse/Part"), (2_880, "Verse/Part"), (3_840, "")] {
+            project
+                .apply(DawAction::InsertProjectMarker {
+                    position_ticks,
+                    name: name.to_owned(),
+                })
+                .expect("project marker should be inserted");
+        }
+        let settings = aaadaw_app::ProjectWavRenderSettings {
+            master_ceiling: aaadaw_engine::MasterOutputCeiling::default(),
+            export_options: aaadaw_app::WavExportOptions::default(),
+            output_sample_rate: project.settings().sample_rate(),
+            output_channels: WavChannelCount::Stereo,
+            source: aaadaw_app::ProjectWavRenderSource::MasterMix,
+            start_sample: 0,
+            end_sample: 120_000,
+            tail_milliseconds: 250,
+            normalize_peak: false,
+            normalize_peak_target_centi_dbfs: 0,
+        };
+        let prefix = std::env::temp_dir().join("aaadaw-marker-prefix.wav");
+        let outputs = project_marker_render_jobs(
+            &prefix,
+            &project,
+            RenderSource::MasterMix,
+            &[],
+            false,
+            settings,
+            None,
+        )
+        .expect("every marker should create a bounded render job");
+        assert_eq!(outputs.len(), 3);
+        assert_eq!(
+            outputs,
+            [
+                (
+                    aaadaw_app::ProjectWavRenderSettings {
+                        source: aaadaw_app::ProjectWavRenderSource::MasterMix,
+                        start_sample: 24_000,
+                        end_sample: 72_000,
+                        ..settings
+                    },
+                    std::env::temp_dir().join("aaadaw-marker-prefix-Verse_Part.wav")
+                ),
+                (
+                    aaadaw_app::ProjectWavRenderSettings {
+                        start_sample: 72_000,
+                        end_sample: 96_000,
+                        ..settings
+                    },
+                    std::env::temp_dir().join("aaadaw-marker-prefix-Verse_Part-2.wav")
+                ),
+                (
+                    aaadaw_app::ProjectWavRenderSettings {
+                        start_sample: 96_000,
+                        end_sample: 120_000,
+                        ..settings
+                    },
+                    std::env::temp_dir().join("aaadaw-marker-prefix-03.wav")
+                ),
+            ]
+        );
+        assert!(
+            outputs
+                .iter()
+                .all(|(job_settings, _)| job_settings.tail_milliseconds == 250)
+        );
+
+        let mut app = App {
+            project,
+            project_path: Some(std::env::temp_dir().join(format!(
+                "aaadaw-marker-queued-{}.aaadaw",
+                std::process::id()
+            ))),
+            render_dialog: RenderDialogState {
+                bounds: RenderBounds::AllProjectMarkers,
+                ..RenderDialogState::default()
+            },
+            offline_render_busy: true,
+            ..App::default()
+        };
+        assert_eq!(app.selected_render_bounds(), Ok((24_000, 120_000)));
+        assert!(app.render_requires_multiple_files());
+        assert!(app.can_submit_render());
+        let output_prefix = std::env::temp_dir().join(format!(
+            "aaadaw-queued-marker-prefix-{}.wav",
+            std::process::id()
+        ));
+        let _task = app.start_offline_render(output_prefix);
+        let queued = app
+            .offline_job_queue
+            .pop_front()
+            .expect("all project markers should queue as one grouped job");
+        let OfflineRenderKind::ProjectWavBatch { outputs } = queued.job.kind else {
+            panic!("All project markers should use the bounded multi-file worker")
+        };
+        assert_eq!(outputs.len(), 3);
+        assert_eq!(outputs[0].0.start_sample, 24_000);
+        assert_eq!(outputs[0].0.end_sample, 72_000);
+        assert_eq!(outputs[1].0.start_sample, 72_000);
+        assert_eq!(outputs[1].0.end_sample, 96_000);
+        assert_eq!(outputs[2].0.start_sample, 96_000);
+        assert_eq!(outputs[2].0.end_sample, 120_000);
+
+        app.project = Project::default();
+        assert!(
+            app.selected_render_bounds()
+                .expect_err("rendering markers requires at least one marker")
+                .contains("Add at least one project marker")
+        );
+        assert!(!app.can_submit_render());
+    }
+
+    #[test]
+    fn render_selected_regions_and_markers_use_their_selected_ranges() {
+        let mut project = Project::default();
+        project
+            .apply(DawAction::CreateTrack {
+                index: 0,
+                name: "Selection fixture".to_owned(),
+            })
+            .expect("render track should be created");
+        let track_id = project.tracks()[0].id();
+        project
+            .apply(DawAction::InsertMidiItem {
+                track_id,
+                start_tick: 0,
+                length_ticks: 4_800,
+            })
+            .expect("project media should extend to five seconds");
+        for (start_ticks, end_ticks, name) in [
+            (960, 1_920, "First region"),
+            (2_880, 4_800, "Second region"),
+        ] {
+            project
+                .apply(DawAction::InsertProjectRegion {
+                    start_ticks,
+                    end_ticks,
+                    name: name.to_owned(),
+                })
+                .expect("region should be inserted");
+        }
+        for (position_ticks, name) in [
+            (960, "First marker"),
+            (2_880, "Second marker"),
+            (3_840, "Last marker"),
+        ] {
+            project
+                .apply(DawAction::InsertProjectMarker {
+                    position_ticks,
+                    name: name.to_owned(),
+                })
+                .expect("marker should be inserted");
+        }
+        project
+            .apply(DawAction::InsertProjectMarker {
+                position_ticks: 4_800,
+                name: "At project end".to_owned(),
+            })
+            .expect("project-end marker should be inserted");
+        let selected_region = project.regions()[1].id();
+        let selected_marker = project.markers()[1].id();
+        let final_marker = project.markers()[2].id();
+        let project_end_marker = project.markers()[3].id();
+        let settings = aaadaw_app::ProjectWavRenderSettings {
+            master_ceiling: aaadaw_engine::MasterOutputCeiling::default(),
+            export_options: aaadaw_app::WavExportOptions::default(),
+            output_sample_rate: project.settings().sample_rate(),
+            output_channels: WavChannelCount::Stereo,
+            source: aaadaw_app::ProjectWavRenderSource::MasterMix,
+            start_sample: 0,
+            end_sample: 120_000,
+            tail_milliseconds: 0,
+            normalize_peak: false,
+            normalize_peak_target_centi_dbfs: 0,
+        };
+        let region_ids = HashSet::from([selected_region]);
+        let region_outputs = project_region_render_jobs(
+            Path::new("selected-region-prefix.wav"),
+            &project,
+            RenderSource::MasterMix,
+            &[],
+            false,
+            settings,
+            Some(&region_ids),
+        )
+        .expect("selected region should produce a render job");
+        assert_eq!(region_outputs.len(), 1);
+        assert_eq!(region_outputs[0].0.start_sample, 72_000);
+        assert_eq!(region_outputs[0].0.end_sample, 120_000);
+        assert_eq!(
+            region_outputs[0]
+                .1
+                .file_name()
+                .and_then(|name| name.to_str()),
+            Some("selected-region-prefix-Second region.wav")
+        );
+
+        let marker_ids = HashSet::from([selected_marker, final_marker]);
+        let marker_outputs = project_marker_render_jobs(
+            Path::new("selected-marker-prefix.wav"),
+            &project,
+            RenderSource::MasterMix,
+            &[],
+            false,
+            settings,
+            Some(&marker_ids),
+        )
+        .expect("selected markers should produce bounded render jobs");
+        assert_eq!(marker_outputs.len(), 2);
+        assert_eq!(marker_outputs[0].0.start_sample, 72_000);
+        assert_eq!(marker_outputs[0].0.end_sample, 96_000);
+        assert_eq!(marker_outputs[1].0.start_sample, 96_000);
+        assert_eq!(marker_outputs[1].0.end_sample, 120_000);
+
+        let mut app = App {
+            project,
+            project_path: Some(std::env::temp_dir().join(format!(
+                "aaadaw-selected-bounds-{}.aaadaw",
+                std::process::id()
+            ))),
+            render_dialog: RenderDialogState {
+                bounds: RenderBounds::SelectedProjectMarkers,
+                ..RenderDialogState::default()
+            },
+            offline_render_busy: true,
+            ..App::default()
+        };
+        assert!(app.selected_render_markers.is_empty());
+        assert!(app.selected_render_regions.is_empty());
+        assert_eq!(app.selected_render_bounds(), Ok((24_000, 120_000)));
+        assert_eq!(app.render_bounds_summary().as_deref(), Some("3 markers"));
+        app.render_dialog.bounds = RenderBounds::SelectedProjectRegions;
+        assert_eq!(app.selected_render_bounds(), Ok((24_000, 120_000)));
+        assert_eq!(app.render_bounds_summary().as_deref(), Some("2 regions"));
+        app.render_dialog.bounds = RenderBounds::SelectedProjectMarkers;
+        app.selected_render_markers
+            .extend([selected_marker, final_marker, project_end_marker]);
+        assert_eq!(app.selected_render_bounds(), Ok((72_000, 120_000)));
+        assert_eq!(app.render_bounds_summary().as_deref(), Some("2 markers"));
+        assert!(app.render_requires_multiple_files());
+        assert!(app.can_submit_render());
+
+        let output_prefix = std::env::temp_dir().join(format!(
+            "aaadaw-selected-marker-prefix-{}.wav",
+            std::process::id()
+        ));
+        let _task = app.start_offline_render(output_prefix);
+        let queued = app
+            .offline_job_queue
+            .pop_front()
+            .expect("selected marker jobs should be queued as a batch");
+        assert_eq!(queued.job.label, "Render 2 project markers");
+        let OfflineRenderKind::ProjectWavBatch { outputs } = queued.job.kind else {
+            panic!("selected markers should use the bounded multi-file worker")
+        };
+        assert_eq!(outputs.len(), 2);
+        assert_eq!(outputs[0].0.start_sample, 72_000);
+        assert_eq!(outputs[0].0.end_sample, 96_000);
+        assert_eq!(outputs[1].0.start_sample, 96_000);
+        assert_eq!(outputs[1].0.end_sample, 120_000);
+
+        app.render_dialog.bounds = RenderBounds::SelectedProjectRegions;
+        app.selected_render_regions.insert(selected_region);
+        assert_eq!(app.selected_render_bounds(), Ok((72_000, 120_000)));
+        assert_eq!(app.render_bounds_summary().as_deref(), Some("1 region"));
+        assert!(app.can_submit_render());
+    }
+
+    #[test]
+    fn selected_track_render_accepts_one_or_more_valid_track_selections_in_track_order() {
+        let mut app = App::default();
+        app.render_dialog.source = RenderSource::SelectedTracksViaMaster;
+        app.render_dialog.bounds = RenderBounds::TimeSelection;
+        app.timeline.time_selection = Some(crate::timeline::TimeSelection {
+            start_tick: 0,
+            end_tick: 960,
+        });
+        assert!(!app.has_valid_render_source());
+        assert!(
+            app.selected_render_settings()
+                .expect_err("a selected track is required")
+                .contains("Select at least one track")
+        );
+
+        app.project
+            .apply(DawAction::CreateTrack {
+                index: 0,
+                name: "First".to_owned(),
+            })
+            .expect("first track should be created");
+        app.project
+            .apply(DawAction::CreateTrack {
+                index: 1,
+                name: "Second".to_owned(),
+            })
+            .expect("second track should be created");
+        let first = app.project.tracks()[0].id();
+        let second = app.project.tracks()[1].id();
+        app.timeline.selected_track = Some(first);
+        app.timeline.selected_tracks.insert(first);
+        assert!(app.has_valid_render_source());
+        assert_eq!(
+            app.selected_render_settings()
+                .expect("one selected track should be renderable")
+                .selected_tracks,
+            vec![first]
+        );
+
+        app.timeline.selected_tracks.insert(second);
+        assert!(app.has_valid_render_source());
+        assert_eq!(app.selected_render_track_count(), 2);
+        assert_eq!(
+            app.selected_render_settings()
+                .expect("multiple selected tracks should render as stems")
+                .selected_tracks,
+            vec![first, second],
+            "stem order follows Arrange track order"
+        );
+    }
+
+    #[test]
+    fn selected_track_stem_names_use_track_names_and_disambiguate_duplicates() {
+        let mut project = Project::default();
+        project
+            .apply(DawAction::CreateTrack {
+                index: 0,
+                name: "Lead Vox".to_owned(),
+            })
+            .expect("first track should be created");
+        project
+            .apply(DawAction::CreateTrack {
+                index: 1,
+                name: "Lead Vox".to_owned(),
+            })
+            .expect("second track should be created");
+        let ids = project
+            .tracks()
+            .iter()
+            .map(|track| track.id())
+            .collect::<Vec<_>>();
+        let base = std::env::temp_dir().join("aaadaw-stem-prefix.wav");
+
+        let outputs = selected_track_stem_destinations(
+            &base,
+            &project,
+            &ids,
+            false,
+            SelectedTrackStemMode::ViaMaster,
+        )
+        .expect("selected tracks should receive distinct output names");
+        assert_eq!(
+            outputs[0].1,
+            std::env::temp_dir().join("aaadaw-stem-prefix-Lead Vox.wav")
+        );
+        assert_eq!(
+            outputs[1].1,
+            std::env::temp_dir().join("aaadaw-stem-prefix-Lead Vox-2.wav")
+        );
+        assert!(matches!(
+            outputs[0].0,
+            aaadaw_app::ProjectWavRenderSource::SelectedTrackViaMaster(_)
+        ));
+        let plain_stems = selected_track_stem_destinations(
+            &base,
+            &project,
+            &ids,
+            false,
+            SelectedTrackStemMode::PostFader,
+        )
+        .expect("plain selected stems should keep the selected track source");
+        assert!(matches!(
+            plain_stems[0].0,
+            aaadaw_app::ProjectWavRenderSource::SelectedTrackStem(_)
+        ));
+        let pre_fader_stems = selected_track_stem_destinations(
+            &base,
+            &project,
+            &ids,
+            false,
+            SelectedTrackStemMode::PreFader,
+        )
+        .expect("pre-fader stems should keep the selected track source");
+        assert!(matches!(
+            pre_fader_stems[0].0,
+            aaadaw_app::ProjectWavRenderSource::SelectedTrackStemPreFader(_)
+        ));
+        let combined = selected_track_stem_destinations(
+            &base,
+            &project,
+            &ids,
+            true,
+            SelectedTrackStemMode::PostFader,
+        )
+        .expect("Master mix plus stems should receive distinct output names");
+        assert_eq!(
+            combined[0],
+            (
+                aaadaw_app::ProjectWavRenderSource::MasterMix,
+                std::env::temp_dir().join("aaadaw-stem-prefix-Master.wav")
+            )
+        );
+        assert_eq!(combined.len(), 3);
+        assert_eq!(
+            combined[1].1,
+            std::env::temp_dir().join("aaadaw-stem-prefix-Lead Vox.wav")
+        );
+    }
+
+    #[test]
+    fn render_tail_parses_integer_milliseconds_exactly() {
+        for (input, expected) in [
+            ("2000", 2_000),
+            ("1200", 1_200),
+            ("125", 125),
+            ("500", 500),
+            (" 3125 ", 3_125),
+        ] {
+            assert_eq!(parse_render_tail_milliseconds(input), Ok(expected));
+        }
+        for invalid in ["", ".", "-1", "+1", "1.0001", "1..2", "1,5", "4294967296"] {
+            assert!(
+                parse_render_tail_milliseconds(invalid).is_err(),
+                "{invalid:?} must be rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn render_peak_target_parses_exact_dbfs_to_hundredths() {
+        for (input, expected) in [
+            ("0", 0),
+            ("-0.5", -50),
+            ("-6", -600),
+            ("-6.02", -602),
+            ("-60", -6_000),
+            ("-60.00", -6_000),
+        ] {
+            assert_eq!(parse_render_peak_target_centi_dbfs(input), Ok(expected));
+        }
+        for invalid in ["", ".", "-", "1", "-60.01", "-1.001", "--1", "NaN"] {
+            assert!(
+                parse_render_peak_target_centi_dbfs(invalid).is_err(),
+                "{invalid:?} must be rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn queued_render_keeps_its_original_range_and_tail_after_arrange_changes() {
+        let project_path = std::env::temp_dir().join("aaadaw-render-snapshot.aaadaw");
+        let mut app = App {
+            project_path: Some(project_path.clone()),
+            offline_render_busy: true,
+            ..App::default()
+        };
+        app.project
+            .apply(DawAction::CreateTrack {
+                index: 0,
+                name: "Selected render source".to_owned(),
+            })
+            .expect("render source track should be created");
+        let selected_track_id = app.project.tracks()[0].id();
+        app.timeline.selected_track = Some(selected_track_id);
+        app.timeline.selected_tracks.insert(selected_track_id);
+        app.render_dialog.bounds = RenderBounds::TimeSelection;
+        app.render_dialog.source = RenderSource::SelectedTracksViaMaster;
+        app.render_dialog.sample_rate = RenderSampleRate::Fixed(44_100);
+        app.render_dialog.channels = WavChannelCount::Mono;
+        app.render_dialog.normalize_peak = true;
+        app.render_dialog.normalize_peak_target_text = " -6.02 ".to_owned();
+        app.render_dialog.tail_enabled = true;
+        app.render_dialog.tail_duration_text = "3125".to_owned();
+        app.timeline.time_selection = Some(crate::timeline::TimeSelection {
+            start_tick: 960,
+            end_tick: 2_880,
+        });
+
+        let destination = std::env::temp_dir().join("aaadaw-render-snapshot.wav");
+        let _task = app.start_offline_render(destination);
+        assert_eq!(app.offline_job_queue.len(), 1);
+        app.timeline.time_selection = Some(crate::timeline::TimeSelection {
+            start_tick: 0,
+            end_tick: 960,
+        });
+        app.render_dialog.sample_rate = RenderSampleRate::Project;
+        app.render_dialog.source = RenderSource::MasterMix;
+        app.render_dialog.channels = WavChannelCount::Stereo;
+        app.render_dialog.normalize_peak = false;
+        app.render_dialog.normalize_peak_target_text = "-12.0".to_owned();
+        app.render_dialog.tail_duration_text = "0".to_owned();
+
+        let queued = app
+            .offline_job_queue
+            .pop_front()
+            .expect("queued job should remain available while another render runs");
+        match queued.job.kind {
+            OfflineRenderKind::ProjectWav { settings, .. } => {
+                assert_eq!(settings.start_sample, 24_000);
+                assert_eq!(settings.end_sample, 72_000);
+                assert_eq!(settings.tail_milliseconds, 3_125);
+                assert_eq!(settings.output_sample_rate, 44_100);
+                assert_eq!(settings.output_channels, WavChannelCount::Mono);
+                assert_eq!(settings.normalize_peak_target_centi_dbfs, -602);
+                assert_eq!(
+                    settings.source,
+                    aaadaw_app::ProjectWavRenderSource::SelectedTrackViaMaster(selected_track_id)
+                );
+                assert!(settings.normalize_peak);
+            }
+            OfflineRenderKind::ProjectWavStems { .. } => {
+                panic!("one selected track should keep the single-file render path")
+            }
+            OfflineRenderKind::ProjectWavBatch { .. } => {
+                panic!("entire-project bounds should keep the single-file render path")
+            }
+            OfflineRenderKind::FreezeTrack { .. } => panic!("expected WAV render"),
+        }
+    }
+
+    #[test]
+    fn queued_single_selected_stem_keeps_the_plain_track_output_source() {
+        let project_path = std::env::temp_dir().join("aaadaw-render-plain-stem.aaadaw");
+        let mut app = App {
+            project_path: Some(project_path),
+            offline_render_busy: true,
+            ..App::default()
+        };
+        app.project
+            .apply(DawAction::CreateTrack {
+                index: 0,
+                name: "Selected source".to_owned(),
+            })
+            .expect("render source track should be created");
+        let selected = app.project.tracks()[0].id();
+        app.project
+            .apply(DawAction::InsertMidiItem {
+                track_id: selected,
+                start_tick: 0,
+                length_ticks: 960,
+            })
+            .expect("selected render track should contain non-empty media");
+        app.timeline.selected_track = Some(selected);
+        app.timeline.selected_tracks.insert(selected);
+        app.render_dialog.source = RenderSource::SelectedTracksStems;
+
+        let _task = app.start_offline_render(std::env::temp_dir().join("plain-stem.wav"));
+        let queued = app
+            .offline_job_queue
+            .pop_front()
+            .expect("single selected stem should be queued");
+        match queued.job.kind {
+            OfflineRenderKind::ProjectWav { settings, .. } => assert_eq!(
+                settings.source,
+                aaadaw_app::ProjectWavRenderSource::SelectedTrackStem(selected)
+            ),
+            OfflineRenderKind::ProjectWavStems { .. } => {
+                panic!("one selected stem should keep the single-file path")
+            }
+            OfflineRenderKind::ProjectWavBatch { .. } => {
+                panic!("entire-project bounds should keep the single-file path")
+            }
+            OfflineRenderKind::FreezeTrack { .. } => panic!("expected a WAV render"),
+        }
+
+        app.render_dialog.stems_pre_fader = true;
+        let _task = app.start_offline_render(std::env::temp_dir().join("plain-stem-prefader.wav"));
+        let queued = app
+            .offline_job_queue
+            .pop_front()
+            .expect("pre-fader stem should be queued");
+        match queued.job.kind {
+            OfflineRenderKind::ProjectWav { settings, .. } => assert_eq!(
+                settings.source,
+                aaadaw_app::ProjectWavRenderSource::SelectedTrackStemPreFader(selected)
+            ),
+            OfflineRenderKind::ProjectWavStems { .. } => {
+                panic!("one selected stem should keep the single-file path")
+            }
+            OfflineRenderKind::ProjectWavBatch { .. } => {
+                panic!("entire-project bounds should keep the single-file path")
+            }
+            OfflineRenderKind::FreezeTrack { .. } => panic!("expected a WAV render"),
+        }
+    }
+
+    #[test]
+    fn queued_selected_track_stems_freeze_track_order_and_output_names() {
+        let project_path = std::env::temp_dir().join("aaadaw-render-stems-snapshot.aaadaw");
+        let mut app = App {
+            project_path: Some(project_path),
+            offline_render_busy: true,
+            ..App::default()
+        };
+        for (index, name) in [(0, "Drums"), (1, "Bass"), (2, "Guide")] {
+            app.project
+                .apply(DawAction::CreateTrack {
+                    index,
+                    name: name.to_owned(),
+                })
+                .expect("render tracks should be created");
+        }
+        let first = app.project.tracks()[0].id();
+        let second = app.project.tracks()[1].id();
+        app.timeline.selected_track = Some(first);
+        app.timeline.selected_tracks.extend([first, second]);
+        app.render_dialog.source = RenderSource::SelectedTracksViaMaster;
+        app.render_dialog.bounds = RenderBounds::TimeSelection;
+        app.timeline.time_selection = Some(crate::timeline::TimeSelection {
+            start_tick: 0,
+            end_tick: 960,
+        });
+        let _ = app.update(Message::SetRenderFilenamePattern(
+            "$project-$track".to_owned(),
+        ));
+
+        let _task = app.start_offline_render(std::env::temp_dir().join("selected-stems.wav"));
+        assert_eq!(app.offline_job_queue.len(), 1);
+        app.timeline.selected_tracks.clear();
+        app.timeline.selected_track = None;
+        let queued = app
+            .offline_job_queue
+            .pop_front()
+            .expect("queued stems should be retained while another render runs");
+        match queued.job.kind {
+            OfflineRenderKind::ProjectWavStems { outputs, settings } => {
+                assert_eq!(
+                    outputs,
+                    [
+                        (
+                            aaadaw_app::ProjectWavRenderSource::SelectedTrackViaMaster(first),
+                            std::env::temp_dir().join("aaadaw-render-stems-snapshot-Drums.wav")
+                        ),
+                        (
+                            aaadaw_app::ProjectWavRenderSource::SelectedTrackViaMaster(second),
+                            std::env::temp_dir().join("aaadaw-render-stems-snapshot-Bass.wav")
+                        ),
+                    ]
+                );
+                assert_eq!(settings.start_sample, 0);
+                assert_eq!(settings.end_sample, 24_000);
+                assert_eq!(
+                    settings.source,
+                    aaadaw_app::ProjectWavRenderSource::MasterMix
+                );
+            }
+            OfflineRenderKind::ProjectWav { .. } => {
+                panic!("multiple selected tracks should create a stem job")
+            }
+            OfflineRenderKind::ProjectWavBatch { .. } => {
+                panic!("entire-project bounds should create a track stem job")
+            }
+            OfflineRenderKind::FreezeTrack { .. } => panic!("expected a stem render job"),
+        }
+
+        app.timeline.selected_track = Some(first);
+        app.timeline.selected_tracks.extend([first, second]);
+        app.render_dialog.filename_pattern = "$project".to_owned();
+        let _task = app.start_offline_render(std::env::temp_dir().join("duplicate-stems.wav"));
+        assert!(app.offline_job_queue.is_empty());
+        assert!(app.status.contains("duplicate output names"));
+        app.render_dialog.filename_pattern.clear();
+
+        let prefix = std::env::temp_dir().join(format!(
+            "aaadaw-existing-stem-prefix-{}.wav",
+            std::process::id()
+        ));
+        std::fs::write(&prefix, b"preserve selected prefix")
+            .expect("existing stem prefix should be written");
+        let _task = app.start_offline_render(prefix.clone());
+        assert!(app.offline_job_queue.is_empty());
+        assert!(app.status.contains("stem prefix"));
+        assert_eq!(std::fs::read(&prefix).unwrap(), b"preserve selected prefix");
+        std::fs::remove_file(prefix).expect("existing stem prefix should be removed");
+
+        app.render_dialog.source = RenderSource::MasterMixAndSelectedTracks;
+        let _task = app.start_offline_render(std::env::temp_dir().join("combined-stems.wav"));
+        let queued = app
+            .offline_job_queue
+            .pop_front()
+            .expect("Master mix plus stems should enter the render queue");
+        match queued.job.kind {
+            OfflineRenderKind::ProjectWavStems { outputs, settings } => {
+                assert_eq!(
+                    outputs,
+                    [
+                        (
+                            aaadaw_app::ProjectWavRenderSource::MasterMix,
+                            std::env::temp_dir().join("combined-stems-Master.wav")
+                        ),
+                        (
+                            aaadaw_app::ProjectWavRenderSource::SelectedTrackStem(first),
+                            std::env::temp_dir().join("combined-stems-Drums.wav")
+                        ),
+                        (
+                            aaadaw_app::ProjectWavRenderSource::SelectedTrackStem(second),
+                            std::env::temp_dir().join("combined-stems-Bass.wav")
+                        ),
+                    ]
+                );
+                assert_eq!(
+                    settings.source,
+                    aaadaw_app::ProjectWavRenderSource::MasterMix
+                );
+            }
+            OfflineRenderKind::ProjectWav { .. } => {
+                panic!("Master mix plus stems should make a grouped output job")
+            }
+            OfflineRenderKind::ProjectWavBatch { .. } => {
+                panic!("entire-project bounds should create a track stem job")
+            }
+            OfflineRenderKind::FreezeTrack { .. } => panic!("expected grouped render job"),
+        }
+
+        app.render_dialog.stems_pre_fader = true;
+        let _task =
+            app.start_offline_render(std::env::temp_dir().join("combined-stems-prefader.wav"));
+        let queued = app
+            .offline_job_queue
+            .pop_front()
+            .expect("pre-fader Master mix and stems should enter the render queue");
+        match queued.job.kind {
+            OfflineRenderKind::ProjectWavStems { outputs, .. } => {
+                assert_eq!(
+                    outputs,
+                    [
+                        (
+                            aaadaw_app::ProjectWavRenderSource::MasterMix,
+                            std::env::temp_dir().join("combined-stems-prefader-Master.wav")
+                        ),
+                        (
+                            aaadaw_app::ProjectWavRenderSource::SelectedTrackStemPreFader(first),
+                            std::env::temp_dir().join("combined-stems-prefader-Drums.wav")
+                        ),
+                        (
+                            aaadaw_app::ProjectWavRenderSource::SelectedTrackStemPreFader(second),
+                            std::env::temp_dir().join("combined-stems-prefader-Bass.wav")
+                        ),
+                    ]
+                );
+            }
+            OfflineRenderKind::ProjectWav { .. } => {
+                panic!("pre-fader Master mix plus stems should make a grouped output job")
+            }
+            OfflineRenderKind::ProjectWavBatch { .. } => {
+                panic!("entire-project bounds should create a track stem job")
+            }
+            OfflineRenderKind::FreezeTrack { .. } => panic!("expected grouped render job"),
+        }
     }
 
     #[test]
@@ -653,6 +7830,13 @@ mod tests {
             })
             .unwrap();
         let track_id = project.tracks()[0].id();
+        project
+            .apply(DawAction::InsertMidiItem {
+                track_id,
+                start_tick: 0,
+                length_ticks: 960,
+            })
+            .unwrap();
         let mut app = App {
             project,
             project_path: Some(project_path.clone()),

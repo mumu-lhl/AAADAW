@@ -1,0 +1,22 @@
+key	value
+reference	Linux REAPER 7.82 / Default 7 / Linux desktop
+probe_script	../../../../scripts/reaper_parity/probe-render-empty-name-wildcards.lua
+source_generator	../../../../scripts/reaper_parity/probe-render-format-vectors.py
+source	48 kHz stereo PCM24 source.wav; 48,000 frames
+source_sha256	187b0243f13ddc06d27181da243ee07f89c593ec11ac9d2b0b3cbc342967b485
+wildcard_pattern	$region-$marker
+bounds	All project regions
+project_regions	Unnamed region 1 [0, 2 seconds); unnamed region 2 [2, 4 seconds)
+project_markers	Unnamed marker 1 at 0 seconds; unnamed marker 2 at 2 seconds; unnamed marker 3 at 4 seconds
+render_preview	2 files; preview path ends in 01-01.wav
+rendered_filenames	01-01.wav; 02-02.wav
+render_format	WAV; 24-bit PCM; 48,000 Hz; 2 channels
+render_lengths_frames	96,000; 96,000
+render_file_sizes_bytes	576,690; 576,690
+render_file_sha256	e1b3ac93bf76c8a816ba1b8d95720f501a4ed4734f498f571a32556fd227b7e1; 542d1b7b287143c3321bf8f88be07625b8b713bc526a2242d9bdffd1b4a51c2c
+native_render_dialog_screenshot	render-wildcards-empty-name-all-regions-native.png
+native_render_dialog_screenshot_sha256	35a35c805af4f08ec3db295248ed6bca354f13d7d529f0852a75971c5e697e3c
+native_finished_render_screenshot	render-wildcards-empty-name-finished-native.png
+native_finished_render_screenshot_sha256	c537348b7e8bf6bf9b8161b53f7fe847179df285bce7a6f1ead3515d9aa6a22d
+native_config	Isolated REAPER profile copied from render-wildcards-native; default theme verified by probe assertions
+native_observation	With empty Region and Marker names, $region and $marker resolve to their two-digit visible object numbers (01 and 02)

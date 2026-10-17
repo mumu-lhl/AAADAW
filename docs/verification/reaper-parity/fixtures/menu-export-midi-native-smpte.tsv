@@ -1,0 +1,24 @@
+version	7.82/linux-x86_64
+theme	Default_7.0.ReaperThemeZip
+fixture	track Piano; item 0.25-1.25 seconds; C4 note, CC1, pitch bend
+project_frame_rate	30.000000 fps; drop-frame false
+project_time_offset_seconds	0.000000000
+take_local_ppq_events	note-on 0; CC1 240; pitch bend 360; note-off 960
+project_ppq_events	note-on 480; CC1 720; pitch bend 840; note-off 1440
+export_action	40849
+export_mode	Multitrack MIDI file (type 1 MIDI file)
+export_ppqn	960
+export_tempo_meter_changes	unchecked
+export_smpte_offset	checked
+export_markers	unchecked
+native_smpte_offset_event	FF 54 05 60 00 00 00 00 (30 fps, 00:00:00:00)
+native_conductor_events	name at tick 0; SMPTE offset, 4/4, and 120 BPM at tick 0; End-of-Track tick 0
+native_event_order	track name; SMPTE offset; time signature; tempo
+native_midi_track_events	Piano note-on tick 480, CC1 tick 720, pitch bend tick 840, note-off and End-of-Track tick 1440
+native_export_path	/tmp/midi-smpte-native-20261016.mid
+native_export_bytes	120
+native_export_sha256	ee8dcaec79fc0d61657ec2992676ab0f6757e79039caa2254f648caa57c31df1
+native_dialog_screenshot	fixtures/menu-export-midi-native-smpte-dialog.png
+native_dialog_screenshot_sha256	e7ff0e12e0d41fd0cedf08c162db1ea81e01d7ba87f1514aea1be610a6a1b596
+native_binary_fixture	fixtures/menu-export-midi-native-smpte.mid
+native_probe	scripts/reaper_parity/probe-midi-export-content.lua

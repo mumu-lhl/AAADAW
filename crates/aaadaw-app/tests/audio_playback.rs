@@ -1,8 +1,13 @@
 use aaadaw_app::{
-    PlaybackBuildError, WavExportOptions, WavSampleFormat, prepare_audio_playback,
-    prepare_audio_playback_at, render_prepared_audio_to_pcm24_wav, render_prepared_audio_to_wav,
+    PlaybackBuildError, ProjectWavRenderSettings, ProjectWavRenderSource, WavExportOptions,
+    WavSampleFormat, prepare_audio_playback, prepare_audio_playback_at,
+    prepare_audio_playback_at_with_loop_range, prepare_audio_playback_with_resampling_quality,
+    render_prepared_audio_to_pcm24_wav, render_prepared_audio_to_wav,
+    render_project_file_to_wav_with_settings,
 };
 use aaadaw_core::{DawAction, Project};
+use aaadaw_engine::TransportLoopRange;
+use aaadaw_media::ResamplingQuality;
 use aaadaw_storage::ProjectStore;
 use std::io::Cursor;
 use std::path::PathBuf;
@@ -72,7 +77,10 @@ fn project_with_audio_item_at(
     start_sample: u64,
     length_samples: u64,
 ) -> Project {
-    let mut project = Project::new();
+    let mut project = Project::with_settings(
+        aaadaw_core::ProjectSettings::default()
+            .with_pan_mode(aaadaw_core::PanMode::LegacyMonoStereo),
+    );
     project
         .apply(DawAction::CreateTrack {
             index: 0,
@@ -125,6 +133,1352 @@ fn prepares_and_renders_an_embedded_audio_item() {
     assert!((output[0][0] + center_gain).abs() < 1.0e-5);
     assert!((output[1][0]).abs() < 1.0e-5);
     assert!((output[2][0] - center_gain * 0.5).abs() < 1.0e-5);
+
+    store.close().expect("project should close");
+    remove_database(&database_path);
+}
+
+#[test]
+fn inverted_audio_items_export_with_reversed_polarity() {
+    let database_path = unique_path("aaadaw");
+    let render_path = unique_path("wav");
+    let wav = pcm_wav(&[8_192; 8], 48_000);
+    let mut store = ProjectStore::open(&database_path).expect("project should open");
+    store
+        .import_audio_asset("asset://phase-inverted", "phase.wav", Cursor::new(&wav))
+        .expect("WAV should embed");
+    let mut project = project_with_audio_item("asset://phase-inverted".to_owned(), 8);
+    let item_id = project.audio_items()[0].id();
+    project
+        .apply(DawAction::SetAudioItemPhase {
+            item_id,
+            inverted: true,
+        })
+        .expect("audio item should invert phase");
+
+    let prepared = prepare_audio_playback_with_resampling_quality(
+        &project,
+        &store,
+        16,
+        8,
+        ResamplingQuality::Sinc192,
+    )
+    .expect("phase-inverted source should prepare for offline rendering");
+    render_prepared_audio_to_pcm24_wav(
+        prepared,
+        &project,
+        &render_path,
+        8,
+        &AtomicBool::new(false),
+        |_, _| {},
+    )
+    .expect("phase-inverted source should export");
+    let mut decoder = aaadaw_media::AudioStreamDecoder::open(&render_path)
+        .expect("offline output should be a readable WAV");
+    let mut rendered = Vec::new();
+    while let Some(chunk) = decoder.next_chunk().expect("offline WAV should decode") {
+        rendered.extend_from_slice(chunk.samples());
+    }
+    assert_eq!(rendered.len(), 16);
+    let expected = -0.25 * std::f32::consts::FRAC_1_SQRT_2;
+    assert!(
+        rendered
+            .iter()
+            .all(|sample| (*sample - expected).abs() < 1.0e-6)
+    );
+
+    store.close().expect("project should close");
+    remove_database(&database_path);
+    let _ = std::fs::remove_file(render_path);
+}
+
+#[test]
+fn muted_audio_items_stay_silent_in_realtime_and_offline_rendering() {
+    let database_path = unique_path("aaadaw");
+    let render_path = unique_path("wav");
+    let wav = pcm_wav(&[8_192; 8], 48_000);
+    let mut store = ProjectStore::open(&database_path).expect("project should open");
+    store
+        .import_audio_asset("asset://muted", "muted.wav", Cursor::new(&wav))
+        .expect("WAV should embed");
+    let mut project = project_with_audio_item("asset://muted".to_owned(), 8);
+    let item_id = project.audio_items()[0].id();
+    project
+        .apply(DawAction::SetAudioItemMute {
+            item_id,
+            muted: true,
+        })
+        .expect("audio item should mute");
+
+    let prepared = prepare_audio_playback(&project, &store, 16, 8)
+        .expect("muted source should prepare for realtime playback");
+    let (mut graph, feeders) = prepared.into_parts();
+    for feeder in feeders {
+        feeder.join().expect("muted source should decode");
+    }
+    graph.transport_mut().start();
+    let mut playback = [[1.0; 2]; 8];
+    let stats = graph
+        .render_into(&mut playback)
+        .expect("muted source should render in realtime");
+    assert_eq!(stats.underrun_samples, 0);
+    assert_eq!(playback, [[0.0; 2]; 8]);
+
+    let prepared = prepare_audio_playback_with_resampling_quality(
+        &project,
+        &store,
+        16,
+        8,
+        ResamplingQuality::Sinc192,
+    )
+    .expect("muted source should prepare for offline rendering");
+    render_prepared_audio_to_pcm24_wav(
+        prepared,
+        &project,
+        &render_path,
+        8,
+        &AtomicBool::new(false),
+        |_, _| {},
+    )
+    .expect("muted source should render offline");
+    let mut decoder = aaadaw_media::AudioStreamDecoder::open(&render_path)
+        .expect("offline output should be a readable WAV");
+    let mut rendered = Vec::new();
+    while let Some(chunk) = decoder.next_chunk().expect("offline WAV should decode") {
+        rendered.extend_from_slice(chunk.samples());
+    }
+    assert_eq!(rendered, [0.0; 16]);
+
+    store.close().expect("project should close");
+    remove_database(&database_path);
+    let _ = std::fs::remove_file(render_path);
+}
+
+#[test]
+fn copied_loop_sources_repeat_in_realtime_and_offline_project_rendering() {
+    let database_path = unique_path("aaadaw");
+    let playback_wav = pcm_wav(&[0, 8_192, 16_384], 48_000);
+    let mut store = ProjectStore::open(&database_path).expect("project should open");
+    store
+        .import_audio_asset(
+            "asset://looped-playback",
+            "loop.wav",
+            Cursor::new(&playback_wav),
+        )
+        .expect("looped source should embed");
+
+    let mut project = Project::with_settings(
+        aaadaw_core::ProjectSettings::default()
+            .with_pan_mode(aaadaw_core::PanMode::LegacyMonoStereo),
+    );
+    for index in 0..2 {
+        project
+            .apply(DawAction::CreateTrack {
+                index,
+                name: format!("Loop {}", index + 1),
+            })
+            .expect("audio track should be created");
+        project
+            .apply(DawAction::InsertLoopedAudioItem {
+                track_id: project.tracks()[index].id(),
+                media_ref: "asset://looped-playback".to_owned(),
+                start_sample: 0,
+                source_offset_samples: 0,
+                phase_inverted: false,
+                source_section_start_samples: 1,
+                length_samples: 5,
+                muted: false,
+                source_section_length_samples: 2,
+            })
+            .expect("looped item should be inserted");
+    }
+
+    let prepared = prepare_audio_playback(&project, &store, 16, 8)
+        .expect("looped embedded sources should prepare for playback");
+    assert_eq!(prepared.feeder_count(), 2);
+    let (mut graph, feeders) = prepared.into_parts();
+    for feeder in feeders {
+        feeder
+            .join()
+            .expect("playback feeder should loop the source section");
+    }
+    graph.transport_mut().start();
+    let mut playback = [[0.0; 2]; 5];
+    let stats = graph
+        .render_into(&mut playback)
+        .expect("looped playback graph should render");
+    assert_eq!(stats.underrun_samples, 0);
+    let center_gain = std::f32::consts::FRAC_1_SQRT_2;
+    let expected_mono = [0.25_f32, 0.5, 0.25, 0.5, 0.25];
+    for (frame, sample) in playback.iter().zip(expected_mono) {
+        assert!((frame[0] - sample * center_gain * 2.0).abs() < 1.0e-5);
+        assert!((frame[1] - sample * center_gain * 2.0).abs() < 1.0e-5);
+    }
+
+    let prepared = prepare_audio_playback_with_resampling_quality(
+        &project,
+        &store,
+        16,
+        8,
+        ResamplingQuality::Sinc192,
+    )
+    .expect("looped sources should prepare for offline render quality");
+    let render_path = unique_path("wav");
+    render_prepared_audio_to_pcm24_wav(
+        prepared,
+        &project,
+        &render_path,
+        5,
+        &AtomicBool::new(false),
+        |_, _| {},
+    )
+    .expect("offline renderer should repeat the copied source sections");
+    let mut decoder = aaadaw_media::AudioStreamDecoder::open(&render_path)
+        .expect("offline output should be a readable WAV");
+    let mut rendered = Vec::new();
+    while let Some(chunk) = decoder.next_chunk().expect("offline WAV should decode") {
+        rendered.extend_from_slice(chunk.samples());
+    }
+    assert_eq!(decoder.metadata().channel_count, Some(2));
+    assert_eq!(rendered.len(), 10);
+    for (frame, sample) in rendered.as_chunks::<2>().0.iter().zip(expected_mono) {
+        assert!((frame[0] - sample * center_gain * 2.0).abs() < 2.0e-5);
+        assert!((frame[1] - sample * center_gain * 2.0).abs() < 2.0e-5);
+    }
+
+    store.close().expect("project should close");
+    remove_database(&database_path);
+    let _ = std::fs::remove_file(render_path);
+}
+
+#[test]
+fn transport_loop_preparation_repeats_an_embedded_bounded_stereo_item() {
+    let database_path = unique_path("aaadaw");
+    let source_frames: Vec<_> = (0_i16..16)
+        .map(|index| {
+            let sample = (index - 8) * 2_048;
+            [sample, -sample]
+        })
+        .collect();
+    let wav = stereo_pcm_wav(&source_frames, 48_000);
+    let mut store = ProjectStore::open(&database_path).expect("project should open");
+    store
+        .import_audio_asset("asset://transport-loop", "loop.wav", Cursor::new(&wav))
+        .expect("loop source should embed");
+
+    let mut project = Project::with_settings(
+        aaadaw_core::ProjectSettings::default()
+            .with_pan_mode(aaadaw_core::PanMode::LegacyMonoStereo),
+    );
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Transport loop".to_owned(),
+        })
+        .expect("track should be created");
+    let loop_range = TransportLoopRange::new(16, 32).expect("loop should be nonempty");
+    project
+        .apply(DawAction::InsertLoopedAudioItem {
+            track_id: project.tracks()[0].id(),
+            media_ref: "asset://transport-loop".to_owned(),
+            start_sample: loop_range.start_sample(),
+            source_offset_samples: 0,
+            phase_inverted: false,
+            source_section_start_samples: 0,
+            length_samples: loop_range.length_samples(),
+            muted: false,
+            source_section_length_samples: loop_range.length_samples(),
+        })
+        .expect("looped item should be inserted");
+
+    let prepared = prepare_audio_playback_at_with_loop_range(
+        &project,
+        &store,
+        20,
+        Some(loop_range),
+        64,
+        32,
+        ResamplingQuality::Sinc64,
+    )
+    .expect("matching embedded loop item should prepare");
+    assert_eq!(prepared.feeder_count(), 1);
+    let (mut graph, feeders) = prepared.into_parts();
+    std::thread::sleep(std::time::Duration::from_millis(20));
+    graph.transport_mut().start();
+    let mut output = [[0.0_f32; 2]; 32];
+    let stats = graph
+        .render_into(&mut output)
+        .expect("prepared loop graph should render through two wraps");
+    assert_eq!(stats.underrun_samples, 0);
+    for (frame_index, frame) in output.iter().enumerate() {
+        let source_index = (frame_index + 4) % source_frames.len();
+        let expected = [
+            source_frames[source_index][0] as f32 / 32_768.0,
+            source_frames[source_index][1] as f32 / 32_768.0,
+        ];
+        assert!((frame[0] - expected[0]).abs() < 1.0e-6);
+        assert!((frame[1] - expected[1]).abs() < 1.0e-6);
+    }
+    assert_eq!(graph.transport_mut().position_samples(), 20);
+    for feeder in feeders {
+        feeder.cancel().expect("loop feeder should stop cleanly");
+    }
+    drop(graph);
+
+    project
+        .apply(DawAction::SetAudioItemLoopSource {
+            item_id: project.audio_items()[0].id(),
+            enabled: false,
+        })
+        .expect("loop-source mode should be editable while stopped");
+    assert!(matches!(
+        prepare_audio_playback_at_with_loop_range(
+            &project,
+            &store,
+            20,
+            Some(loop_range),
+            64,
+            32,
+            ResamplingQuality::Sinc64,
+        ),
+        Err(PlaybackBuildError::Media(
+            aaadaw_media::MediaError::InvalidTimelineLoop
+        ))
+    ));
+
+    store.close().expect("project should close");
+    remove_database(&database_path);
+}
+
+#[test]
+fn transport_loop_preparation_repeats_a_trimmed_stereo_item_with_loop_source_disabled() {
+    let database_path = unique_path("aaadaw");
+    let source_frames: Vec<_> = (0_i16..32)
+        .map(|index| {
+            let sample = (index - 16) * 1_024;
+            [sample, -sample]
+        })
+        .collect();
+    let wav = stereo_pcm_wav(&source_frames, 48_000);
+    let mut store = ProjectStore::open(&database_path).expect("project should open");
+    store
+        .import_audio_asset("asset://transport-trim-loop", "trim.wav", Cursor::new(&wav))
+        .expect("trimmed source should embed");
+
+    let mut project = Project::with_settings(
+        aaadaw_core::ProjectSettings::default()
+            .with_pan_mode(aaadaw_core::PanMode::LegacyMonoStereo),
+    );
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Trimmed loop".to_owned(),
+        })
+        .expect("track should be created");
+    let loop_range = TransportLoopRange::new(16, 32).expect("loop should be nonempty");
+    project
+        .apply(DawAction::InsertAudioItem {
+            track_id: project.tracks()[0].id(),
+            media_ref: "asset://transport-trim-loop".to_owned(),
+            start_sample: loop_range.start_sample(),
+            source_offset_samples: 16,
+            length_samples: loop_range.length_samples(),
+        })
+        .expect("normal trimmed audio item should be inserted");
+    project
+        .apply(DawAction::SetAudioItemLoopSource {
+            item_id: project.audio_items()[0].id(),
+            enabled: false,
+        })
+        .expect("the item source loop should be disabled");
+
+    let prepared = prepare_audio_playback_at_with_loop_range(
+        &project,
+        &store,
+        20,
+        Some(loop_range),
+        64,
+        32,
+        ResamplingQuality::Sinc64,
+    )
+    .expect("exact-range normal trimmed item should prepare for Repeat");
+    assert_eq!(prepared.feeder_count(), 1);
+    let (mut graph, feeders) = prepared.into_parts();
+    std::thread::sleep(std::time::Duration::from_millis(20));
+    graph.transport_mut().start();
+    let mut output = [[0.0_f32; 2]; 32];
+    let stats = graph
+        .render_into(&mut output)
+        .expect("trimmed source should repeat across two wraps");
+    assert_eq!(stats.underrun_samples, 0);
+    for (frame_index, frame) in output.iter().enumerate() {
+        let source_index = 16 + (frame_index + 4) % 16;
+        let expected = [
+            source_frames[source_index][0] as f32 / 32_768.0,
+            source_frames[source_index][1] as f32 / 32_768.0,
+        ];
+        assert!((frame[0] - expected[0]).abs() < 1.0e-6);
+        assert!((frame[1] - expected[1]).abs() < 1.0e-6);
+    }
+    assert_eq!(graph.transport_mut().position_samples(), 20);
+    for feeder in feeders {
+        feeder
+            .cancel()
+            .expect("trimmed loop feeder should stop cleanly");
+    }
+    drop(graph);
+
+    let prepared = prepare_audio_playback_at_with_loop_range(
+        &project,
+        &store,
+        4,
+        Some(loop_range),
+        64,
+        32,
+        ResamplingQuality::Sinc64,
+    )
+    .expect("playback before the item should stay silent until its loop-start boundary");
+    let (mut graph, feeders) = prepared.into_parts();
+    std::thread::sleep(std::time::Duration::from_millis(20));
+    graph.transport_mut().start();
+    let mut output = [[0.0_f32; 2]; 32];
+    let stats = graph
+        .render_into(&mut output)
+        .expect("pre-item silence and Loop playback should render together");
+    assert_eq!(stats.underrun_samples, 0);
+    for (index, frame) in output.iter().enumerate() {
+        let expected_source_index = if index < 12 {
+            None
+        } else {
+            Some(16 + (index - 12) % 16)
+        };
+        let expected = expected_source_index.map_or([0.0; 2], |source_index| {
+            [
+                source_frames[source_index][0] as f32 / 32_768.0,
+                source_frames[source_index][1] as f32 / 32_768.0,
+            ]
+        });
+        assert!((frame[0] - expected[0]).abs() < 1.0e-6);
+        assert!((frame[1] - expected[1]).abs() < 1.0e-6);
+    }
+    assert_eq!(graph.transport_mut().position_samples(), 20);
+    for feeder in feeders {
+        feeder
+            .cancel()
+            .expect("pre-item feeder should stop cleanly");
+    }
+    drop(graph);
+
+    store.close().expect("project should close");
+    remove_database(&database_path);
+}
+
+#[test]
+fn transport_loop_preparation_repeats_a_mono_source_as_centered_stereo() {
+    let database_path = unique_path("aaadaw");
+    let source_samples: Vec<_> = (0_i16..32).map(|index| (index - 16) * 1_024).collect();
+    let wav = pcm_wav(&source_samples, 48_000);
+    let mut store = ProjectStore::open(&database_path).expect("project should open");
+    store
+        .import_audio_asset(
+            "asset://mono-transport-loop",
+            "mono-loop.wav",
+            Cursor::new(&wav),
+        )
+        .expect("mono source should embed");
+    let mut project = Project::with_settings(
+        aaadaw_core::ProjectSettings::default()
+            .with_pan_mode(aaadaw_core::PanMode::LegacyMonoStereo),
+    );
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Mono loop".to_owned(),
+        })
+        .expect("track should be created");
+    let loop_range = TransportLoopRange::new(16, 32).expect("loop should be nonempty");
+    project
+        .apply(DawAction::InsertAudioItem {
+            track_id: project.tracks()[0].id(),
+            media_ref: "asset://mono-transport-loop".to_owned(),
+            start_sample: loop_range.start_sample(),
+            source_offset_samples: 0,
+            length_samples: loop_range.length_samples(),
+        })
+        .expect("mono audio item should be inserted");
+    project
+        .apply(DawAction::SetAudioItemLoopSource {
+            item_id: project.audio_items()[0].id(),
+            enabled: false,
+        })
+        .expect("item source loop should be disabled");
+
+    let prepared = prepare_audio_playback_at_with_loop_range(
+        &project,
+        &store,
+        20,
+        Some(loop_range),
+        64,
+        32,
+        ResamplingQuality::Sinc64,
+    )
+    .expect("mono PCM should repeat through the stereo playback graph");
+    let (mut graph, feeders) = prepared.into_parts();
+    assert_eq!(feeders.len(), 1);
+    std::thread::sleep(std::time::Duration::from_millis(20));
+    graph.transport_mut().start();
+    let mut output = [[0.0_f32; 2]; 32];
+    let stats = graph
+        .render_into(&mut output)
+        .expect("mono source should render through two transport wraps");
+    assert_eq!(stats.underrun_samples, 0);
+    let center_gain = std::f32::consts::FRAC_1_SQRT_2;
+    for (index, frame) in output.iter().enumerate() {
+        let source_index = (index + 4) % 16;
+        let expected = source_samples[source_index] as f32 / 32_768.0 * center_gain;
+        assert!((frame[0] - expected).abs() < 1.0e-6);
+        assert!((frame[1] - expected).abs() < 1.0e-6);
+    }
+    for feeder in feeders {
+        feeder
+            .cancel()
+            .expect("mono loop feeder should stop cleanly");
+    }
+    drop(graph);
+
+    store.close().expect("project should close");
+    remove_database(&database_path);
+}
+
+#[test]
+fn transport_loop_preparation_repeats_the_source_segment_of_a_containing_item() {
+    let database_path = unique_path("aaadaw");
+    let source_frames: Vec<_> = (0_i16..48)
+        .map(|index| {
+            let sample = (index - 24) * 512;
+            [sample, -sample]
+        })
+        .collect();
+    let wav = stereo_pcm_wav(&source_frames, 48_000);
+    let mut store = ProjectStore::open(&database_path).expect("project should open");
+    store
+        .import_audio_asset(
+            "asset://containing-loop",
+            "containing.wav",
+            Cursor::new(&wav),
+        )
+        .expect("containing source should embed");
+    let mut project = Project::with_settings(
+        aaadaw_core::ProjectSettings::default()
+            .with_pan_mode(aaadaw_core::PanMode::LegacyMonoStereo),
+    );
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Containing loop item".to_owned(),
+        })
+        .expect("track should be created");
+    project
+        .apply(DawAction::InsertAudioItem {
+            track_id: project.tracks()[0].id(),
+            media_ref: "asset://containing-loop".to_owned(),
+            start_sample: 8,
+            source_offset_samples: 4,
+            length_samples: 32,
+        })
+        .expect("audio item should contain the Loop range");
+    project
+        .apply(DawAction::SetAudioItemLoopSource {
+            item_id: project.audio_items()[0].id(),
+            enabled: false,
+        })
+        .expect("the item source loop should be disabled");
+    let loop_range = TransportLoopRange::new(16, 32).expect("loop should be nonempty");
+
+    let prepared = prepare_audio_playback_at_with_loop_range(
+        &project,
+        &store,
+        20,
+        Some(loop_range),
+        64,
+        32,
+        ResamplingQuality::Sinc64,
+    )
+    .expect("an item containing the complete Loop range should prepare");
+    let (mut graph, feeders) = prepared.into_parts();
+    assert_eq!(feeders.len(), 1);
+    std::thread::sleep(std::time::Duration::from_millis(20));
+    graph.transport_mut().start();
+    let mut output = [[0.0_f32; 2]; 32];
+    let stats = graph
+        .render_into(&mut output)
+        .expect("the contained source segment should repeat across two wraps");
+    assert_eq!(stats.underrun_samples, 0);
+    for (index, frame) in output.iter().enumerate() {
+        let source_index = 12 + (index + 4) % 16;
+        assert!((frame[0] - source_frames[source_index][0] as f32 / 32_768.0).abs() < 1.0e-6);
+        assert!((frame[1] - source_frames[source_index][1] as f32 / 32_768.0).abs() < 1.0e-6);
+    }
+    assert_eq!(graph.transport_mut().position_samples(), 20);
+    for feeder in feeders {
+        feeder
+            .cancel()
+            .expect("containing loop feeder should stop cleanly");
+    }
+    drop(graph);
+
+    let prepared = prepare_audio_playback_at_with_loop_range(
+        &project,
+        &store,
+        12,
+        Some(loop_range),
+        64,
+        36,
+        ResamplingQuality::Sinc64,
+    )
+    .expect("pre-loop playback should hand off into the item's Loop overlap");
+    let (mut graph, feeders) = prepared.into_parts();
+    assert_eq!(feeders.len(), 1);
+    std::thread::sleep(std::time::Duration::from_millis(20));
+    graph.transport_mut().start();
+    let mut output = [[0.0_f32; 2]; 36];
+    let stats = graph
+        .render_into(&mut output)
+        .expect("linear prefix and Loop playback should render together");
+    assert_eq!(stats.underrun_samples, 0);
+    for (index, frame) in output.iter().enumerate() {
+        let source_index = if index < 4 {
+            8 + index
+        } else {
+            12 + (index - 4) % 16
+        };
+        assert!((frame[0] - source_frames[source_index][0] as f32 / 32_768.0).abs() < 1.0e-6);
+        assert!((frame[1] - source_frames[source_index][1] as f32 / 32_768.0).abs() < 1.0e-6);
+    }
+    assert_eq!(graph.transport_mut().position_samples(), 16);
+    for feeder in feeders {
+        feeder
+            .cancel()
+            .expect("pre-loop feeder should stop cleanly");
+    }
+    drop(graph);
+
+    let prepared = prepare_audio_playback_at_with_loop_range(
+        &project,
+        &store,
+        4,
+        Some(loop_range),
+        64,
+        32,
+        ResamplingQuality::Sinc64,
+    )
+    .expect("playback before the item should reach its prefix and Loop overlap");
+    let (mut graph, feeders) = prepared.into_parts();
+    std::thread::sleep(std::time::Duration::from_millis(20));
+    graph.transport_mut().start();
+    let mut output = [[0.0_f32; 2]; 32];
+    let stats = graph
+        .render_into(&mut output)
+        .expect("pre-item silence, linear prefix, and Repeat should render together");
+    assert_eq!(stats.underrun_samples, 0);
+    for (index, frame) in output.iter().enumerate() {
+        let expected_source_index = if index < 4 {
+            None
+        } else if index < 12 {
+            Some(4 + index - 4)
+        } else {
+            Some(12 + (index - 12) % 16)
+        };
+        let expected = expected_source_index.map_or([0.0; 2], |source_index| {
+            [
+                source_frames[source_index][0] as f32 / 32_768.0,
+                source_frames[source_index][1] as f32 / 32_768.0,
+            ]
+        });
+        assert!((frame[0] - expected[0]).abs() < 1.0e-6);
+        assert!((frame[1] - expected[1]).abs() < 1.0e-6);
+    }
+    assert_eq!(graph.transport_mut().position_samples(), 20);
+    for feeder in feeders {
+        feeder
+            .cancel()
+            .expect("playback-before-item feeder should stop cleanly");
+    }
+    drop(graph);
+
+    store.close().expect("project should close");
+    remove_database(&database_path);
+}
+
+#[test]
+fn transport_loop_preparation_repeats_items_that_partially_overlap_the_loop() {
+    let database_path = unique_path("aaadaw");
+    let source_frames: Vec<_> = (0_i16..48)
+        .map(|index| {
+            let sample = (index - 24) * 512;
+            [sample, -sample]
+        })
+        .collect();
+    let wav = stereo_pcm_wav(&source_frames, 48_000);
+    let mut store = ProjectStore::open(&database_path).expect("project should open");
+    store
+        .import_audio_asset(
+            "asset://partial-transport-loop",
+            "partial-loop.wav",
+            Cursor::new(&wav),
+        )
+        .expect("partial-loop source should embed");
+    let mut project = Project::with_settings(
+        aaadaw_core::ProjectSettings::default()
+            .with_pan_mode(aaadaw_core::PanMode::LegacyMonoStereo),
+    );
+    for (index, name) in [
+        "Before loop end",
+        "After loop start",
+        "Before playhead in loop",
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        project
+            .apply(DawAction::CreateTrack {
+                index,
+                name: name.to_owned(),
+            })
+            .expect("track should be created");
+    }
+    project
+        .apply(DawAction::InsertAudioItem {
+            track_id: project.tracks()[0].id(),
+            media_ref: "asset://partial-transport-loop".to_owned(),
+            start_sample: 8,
+            source_offset_samples: 4,
+            length_samples: 16,
+        })
+        .expect("item ending inside Loop should be inserted");
+    project
+        .apply(DawAction::InsertAudioItem {
+            track_id: project.tracks()[1].id(),
+            media_ref: "asset://partial-transport-loop".to_owned(),
+            start_sample: 24,
+            source_offset_samples: 0,
+            length_samples: 8,
+        })
+        .expect("item beginning inside Loop should be inserted");
+    project
+        .apply(DawAction::InsertAudioItem {
+            track_id: project.tracks()[2].id(),
+            media_ref: "asset://partial-transport-loop".to_owned(),
+            start_sample: 17,
+            source_offset_samples: 20,
+            length_samples: 2,
+        })
+        .expect("item before the current Loop position should be inserted");
+    let item_ids: Vec<_> = project.audio_items().iter().map(|item| item.id()).collect();
+    for item_id in item_ids {
+        project
+            .apply(DawAction::SetAudioItemLoopSource {
+                item_id,
+                enabled: false,
+            })
+            .expect("transport Repeat should not depend on item Loop source");
+    }
+
+    let loop_range = TransportLoopRange::new(16, 32).expect("loop should be nonempty");
+    let prepared = prepare_audio_playback_at_with_loop_range(
+        &project,
+        &store,
+        20,
+        Some(loop_range),
+        64,
+        64,
+        ResamplingQuality::Sinc64,
+    )
+    .expect("items that overlap only part of Loop should prepare");
+    let (mut graph, feeders) = prepared.into_parts();
+    assert_eq!(feeders.len(), 3);
+    std::thread::sleep(std::time::Duration::from_millis(20));
+    graph.transport_mut().start();
+    let mut output = [[0.0_f32; 2]; 44];
+    let stats = graph
+        .render_into(&mut output)
+        .expect("partial item segments should repeat across transport wraps");
+    assert_eq!(stats.underrun_samples, 0);
+    for (index, frame) in output.iter().enumerate() {
+        let project_sample = 16 + (20 + index as u64 - 16) % 16;
+        let mut source_index = if project_sample < 24 {
+            project_sample - 4
+        } else {
+            project_sample - 24
+        } as usize;
+        let mut expected = source_frames[source_index];
+        if (17..19).contains(&project_sample) {
+            source_index = 20 + (project_sample - 17) as usize;
+            expected[0] += source_frames[source_index][0];
+            expected[1] += source_frames[source_index][1];
+        }
+        assert!((frame[0] - expected[0] as f32 / 32_768.0).abs() < 1.0e-6);
+        assert!((frame[1] - expected[1] as f32 / 32_768.0).abs() < 1.0e-6);
+    }
+    assert_eq!(graph.transport_mut().position_samples(), 16);
+    for feeder in feeders {
+        feeder
+            .cancel()
+            .expect("partial-loop feeder should stop cleanly");
+    }
+    drop(graph);
+
+    store.close().expect("project should close");
+    remove_database(&database_path);
+}
+
+#[test]
+fn transport_loop_preparation_resamples_rate_aligned_source_segments() {
+    let database_path = unique_path("aaadaw");
+    let source_frames: Vec<_> = (0_i16..32)
+        .map(|index| {
+            let sample = if (8..12).contains(&index) { 4_096 } else { 0 };
+            [sample, -sample]
+        })
+        .collect();
+    let normalized_source_frame = |index: usize| {
+        [
+            source_frames[index][0] as f32 / 32_768.0,
+            source_frames[index][1] as f32 / 32_768.0,
+        ]
+    };
+    let expected_converted_prefix = |start: usize, length: usize| {
+        let mut resampler =
+            aaadaw_media::StereoPcmResampler::new(24_000, 48_000, ResamplingQuality::Sinc64)
+                .expect("valid sample rates should create a prefix reference");
+        let prefix = (start..start + length)
+            .map(normalized_source_frame)
+            .collect::<Vec<_>>();
+        let mut output = resampler
+            .push_frames(&prefix)
+            .expect("prefix frames should convert");
+        let lookahead = (0..32)
+            .map(|offset| normalized_source_frame(8 + offset % 8))
+            .collect::<Vec<_>>();
+        output.extend(
+            resampler
+                .push_frames(&lookahead)
+                .expect("Loop-start context should finish the prefix conversion"),
+        );
+        output.truncate(length * 2);
+        output
+    };
+    let wav = stereo_pcm_wav(&source_frames, 24_000);
+    let mut store = ProjectStore::open(&database_path).expect("project should open");
+    store
+        .import_audio_asset(
+            "asset://resampled-transport-loop",
+            "resampled-loop.wav",
+            Cursor::new(&wav),
+        )
+        .expect("resampled source should embed");
+    let mut project = Project::with_settings(
+        aaadaw_core::ProjectSettings::default()
+            .with_pan_mode(aaadaw_core::PanMode::LegacyMonoStereo),
+    );
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Resampled loop".to_owned(),
+        })
+        .expect("track should be created");
+    let loop_range = TransportLoopRange::new(16, 32).expect("loop should be nonempty");
+    project
+        .apply(DawAction::InsertAudioItem {
+            track_id: project.tracks()[0].id(),
+            media_ref: "asset://resampled-transport-loop".to_owned(),
+            start_sample: 8,
+            source_offset_samples: 4,
+            length_samples: 32,
+        })
+        .expect("rate-converted item should be inserted");
+    project
+        .apply(DawAction::SetAudioItemLoopSource {
+            item_id: project.audio_items()[0].id(),
+            enabled: false,
+        })
+        .expect("transport Repeat should not depend on item Loop source");
+
+    let prepared = prepare_audio_playback_at_with_loop_range(
+        &project,
+        &store,
+        20,
+        Some(loop_range),
+        64,
+        64,
+        ResamplingQuality::Sinc64,
+    )
+    .expect("an exactly rate-aligned loop source should resample");
+    let (mut graph, feeders) = prepared.into_parts();
+    assert_eq!(feeders.len(), 1);
+    std::thread::sleep(std::time::Duration::from_millis(20));
+    graph.transport_mut().start();
+    let mut output = [[0.0_f32; 2]; 48];
+    let stats = graph
+        .render_into(&mut output)
+        .expect("resampled source should repeat through three passes");
+    assert_eq!(stats.underrun_samples, 0);
+    assert!(output.iter().any(|frame| frame[0].abs() > 0.01));
+    for (index, (first, repeated)) in output[16..32].iter().zip(&output[32..48]).enumerate() {
+        assert!(
+            (first[0] - repeated[0]).abs() < 1.0e-6,
+            "left loop output differs at {index}: {first:?} vs {repeated:?}"
+        );
+        assert!(
+            (first[1] - repeated[1]).abs() < 1.0e-6,
+            "right loop output differs at {index}: {first:?} vs {repeated:?}"
+        );
+    }
+    assert_eq!(graph.transport_mut().position_samples(), 20);
+    for feeder in feeders {
+        feeder
+            .cancel()
+            .expect("resampled loop feeder should stop cleanly");
+    }
+    drop(graph);
+
+    let pre_loop_resampling = prepare_audio_playback_at_with_loop_range(
+        &project,
+        &store,
+        12,
+        Some(loop_range),
+        64,
+        64,
+        ResamplingQuality::Sinc64,
+    )
+    .expect("bounded rate-converted pre-loop audio should use cyclic sinc history");
+    let (mut graph, feeders) = pre_loop_resampling.into_parts();
+    std::thread::sleep(std::time::Duration::from_millis(20));
+    graph.transport_mut().start();
+    let mut output = [[0.0_f32; 2]; 36];
+    let stats = graph
+        .render_into(&mut output)
+        .expect("resampled prefix should hand off to two stable Loop passes");
+    assert_eq!(stats.underrun_samples, 0);
+    let expected_prefix = expected_converted_prefix(6, 2);
+    for (index, (actual, expected)) in output[..4].iter().zip(&expected_prefix).enumerate() {
+        assert!(
+            (actual[0] - expected[0]).abs() < 1.0e-6,
+            "prefix frame {index}"
+        );
+        assert!(
+            (actual[1] - expected[1]).abs() < 1.0e-6,
+            "prefix frame {index}"
+        );
+    }
+    for (index, (first, repeated)) in output[4..20].iter().zip(&output[20..36]).enumerate() {
+        assert!(
+            (first[0] - repeated[0]).abs() < 1.0e-6,
+            "first left Loop pass differs at {index}: {first:?} vs {repeated:?}"
+        );
+        assert!(
+            (first[1] - repeated[1]).abs() < 1.0e-6,
+            "first right Loop pass differs at {index}: {first:?} vs {repeated:?}"
+        );
+    }
+    assert_eq!(
+        graph.transport_mut().position_samples(),
+        loop_range.start_sample()
+    );
+    for feeder in feeders {
+        feeder
+            .cancel()
+            .expect("resampled pre-loop feeder should stop cleanly");
+    }
+    drop(graph);
+
+    let pre_item_resampling = prepare_audio_playback_at_with_loop_range(
+        &project,
+        &store,
+        4,
+        Some(loop_range),
+        64,
+        64,
+        ResamplingQuality::Sinc64,
+    )
+    .expect("rate-converted pre-item silence and prefix should reach cyclic Loop playback");
+    let (mut graph, feeders) = pre_item_resampling.into_parts();
+    std::thread::sleep(std::time::Duration::from_millis(20));
+    graph.transport_mut().start();
+    let mut output = [[0.0_f32; 2]; 44];
+    let stats = graph
+        .render_into(&mut output)
+        .expect("pre-item silence, converted prefix, and Loop should render together");
+    assert_eq!(stats.underrun_samples, 0);
+    assert!(
+        output[..4]
+            .iter()
+            .all(|frame| frame[0] == 0.0 && frame[1] == 0.0)
+    );
+    let expected_prefix = expected_converted_prefix(4, 4);
+    for (index, (actual, expected)) in output[4..12].iter().zip(&expected_prefix).enumerate() {
+        assert!(
+            (actual[0] - expected[0]).abs() < 1.0e-6,
+            "prefix frame {index}"
+        );
+        assert!(
+            (actual[1] - expected[1]).abs() < 1.0e-6,
+            "prefix frame {index}"
+        );
+    }
+    for (index, (first, repeated)) in output[12..28].iter().zip(&output[28..44]).enumerate() {
+        assert!(
+            (first[0] - repeated[0]).abs() < 1.0e-6,
+            "pre-item left Loop pass differs at {index}: {first:?} vs {repeated:?}"
+        );
+        assert!(
+            (first[1] - repeated[1]).abs() < 1.0e-6,
+            "pre-item right Loop pass differs at {index}: {first:?} vs {repeated:?}"
+        );
+    }
+    assert_eq!(
+        graph.transport_mut().position_samples(),
+        loop_range.start_sample()
+    );
+    for feeder in feeders {
+        feeder
+            .cancel()
+            .expect("pre-item resampled feeder should stop cleanly");
+    }
+    drop(graph);
+
+    let mut bounded_project = Project::with_settings(
+        aaadaw_core::ProjectSettings::default()
+            .with_pan_mode(aaadaw_core::PanMode::LegacyMonoStereo),
+    );
+    bounded_project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Resampled bounded loop".to_owned(),
+        })
+        .expect("bounded track should be created");
+    bounded_project
+        .apply(DawAction::InsertLoopedAudioItem {
+            track_id: bounded_project.tracks()[0].id(),
+            media_ref: "asset://resampled-transport-loop".to_owned(),
+            start_sample: loop_range.start_sample(),
+            source_offset_samples: 0,
+            phase_inverted: false,
+            source_section_start_samples: 8,
+            length_samples: loop_range.length_samples(),
+            muted: false,
+            source_section_length_samples: 8,
+        })
+        .expect("rate-converted bounded item should be inserted");
+    let prepared = prepare_audio_playback_at_with_loop_range(
+        &bounded_project,
+        &store,
+        20,
+        Some(loop_range),
+        64,
+        64,
+        ResamplingQuality::Sinc64,
+    )
+    .expect("a bounded source section with an exact converted duration should resample");
+    let (mut graph, feeders) = prepared.into_parts();
+    std::thread::sleep(std::time::Duration::from_millis(20));
+    graph.transport_mut().start();
+    let mut output = [[0.0_f32; 2]; 48];
+    let stats = graph
+        .render_into(&mut output)
+        .expect("bounded resampled source should repeat through three passes");
+    assert_eq!(stats.underrun_samples, 0);
+    assert!(output.iter().any(|frame| frame[0].abs() > 0.01));
+    for (first, repeated) in output[16..32].iter().zip(&output[32..48]) {
+        assert!((first[0] - repeated[0]).abs() < 1.0e-6);
+        assert!((first[1] - repeated[1]).abs() < 1.0e-6);
+    }
+    for feeder in feeders {
+        feeder
+            .cancel()
+            .expect("bounded resampled loop feeder should stop cleanly");
+    }
+    drop(graph);
+
+    let mut unaligned_project = Project::with_settings(
+        aaadaw_core::ProjectSettings::default()
+            .with_pan_mode(aaadaw_core::PanMode::LegacyMonoStereo),
+    );
+    unaligned_project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Unaligned loop".to_owned(),
+        })
+        .expect("unaligned track should be created");
+    let unaligned_loop = TransportLoopRange::new(16, 31).expect("loop should be nonempty");
+    unaligned_project
+        .apply(DawAction::InsertAudioItem {
+            track_id: unaligned_project.tracks()[0].id(),
+            media_ref: "asset://resampled-transport-loop".to_owned(),
+            start_sample: unaligned_loop.start_sample(),
+            source_offset_samples: 4,
+            length_samples: unaligned_loop.length_samples(),
+        })
+        .expect("unaligned item should be inserted");
+    let unaligned = prepare_audio_playback_at_with_loop_range(
+        &unaligned_project,
+        &store,
+        20,
+        Some(unaligned_loop),
+        64,
+        64,
+        ResamplingQuality::Sinc64,
+    );
+    let Err(PlaybackBuildError::Media(aaadaw_media::MediaError::WorkerStartupFailed {
+        message,
+        ..
+    })) = unaligned
+    else {
+        panic!("unaligned loop sample boundaries should fail feeder preparation");
+    };
+    assert!(message.contains("exact sample boundaries"));
+
+    store.close().expect("project should close");
+    remove_database(&database_path);
+}
+
+#[test]
+fn transport_loop_preparation_repeats_midi_notes_at_the_project_loop_boundary() {
+    let database_path = unique_path("aaadaw");
+    let store = ProjectStore::open(&database_path).expect("project should open");
+    let mut project = Project::with_settings(aaadaw_core::ProjectSettings::default());
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "MIDI loop".to_owned(),
+        })
+        .expect("MIDI track should be created");
+    project
+        .apply(DawAction::InsertMidiItem {
+            track_id: project.tracks()[0].id(),
+            start_tick: 0,
+            length_ticks: 960,
+        })
+        .expect("MIDI item should be created");
+    project
+        .apply(DawAction::AddMidiNotes {
+            item_id: project.midi_items()[0].id(),
+            notes: vec![aaadaw_core::MidiNoteData {
+                channel: 0,
+                pitch: 64,
+                tick: 0,
+                duration: 480,
+                velocity: 100,
+            }],
+        })
+        .expect("MIDI note should be added");
+
+    let loop_start = project
+        .sample_at_tick(0)
+        .expect("loop start should convert");
+    let loop_end = project
+        .sample_at_tick(960)
+        .expect("loop end should convert");
+    let note_end = project
+        .sample_at_tick(480)
+        .expect("note end should convert");
+    let loop_range = TransportLoopRange::new(loop_start, loop_end)
+        .expect("project loop should cover a positive sample range");
+    let loop_frames = usize::try_from(loop_range.length_samples())
+        .expect("loop length should fit a render block");
+    let mut prepared = prepare_audio_playback_at_with_loop_range(
+        &project,
+        &store,
+        loop_start,
+        Some(loop_range),
+        64,
+        loop_frames,
+        ResamplingQuality::Sinc64,
+    )
+    .expect("MIDI-only loop playback should prepare");
+    assert_eq!(prepared.feeder_count(), 0);
+    store.close().expect("project should close");
+
+    let graph = prepared.graph_mut();
+    graph.transport_mut().start();
+    let mut first_output = vec![[0.0_f32; 2]; loop_frames];
+    let mut midi_output = [None; 8];
+    let first = graph
+        .render_with_midi(&mut midi_output, &mut first_output)
+        .expect("first pass should emit the MIDI note");
+    assert_eq!(first.midi_event_count, 2);
+    assert_eq!(
+        midi_output[..first.midi_event_count]
+            .iter()
+            .flatten()
+            .map(|event| (event.sample_offset, event.kind))
+            .collect::<Vec<_>>(),
+        vec![
+            (0, aaadaw_engine::MidiEventKind::NoteOn),
+            (
+                usize::try_from(note_end - loop_start).expect("note offset should fit"),
+                aaadaw_engine::MidiEventKind::NoteOff,
+            ),
+        ]
+    );
+    assert_eq!(graph.transport_mut().position_samples(), loop_start);
+
+    midi_output.fill(None);
+    let mut wrapped_output = [[0.0_f32; 2]; 4];
+    let wrapped = graph
+        .render_with_midi(&mut midi_output, &mut wrapped_output)
+        .expect("next pass should chase the note at Loop start");
+    assert_eq!(wrapped.midi_event_count, 1);
+    let repeated_note = midi_output[0].expect("loop start should emit a note-on");
+    assert_eq!(repeated_note.sample_offset, 0);
+    assert_eq!(repeated_note.kind, aaadaw_engine::MidiEventKind::NoteOn);
+    assert_eq!(graph.transport_mut().position_samples(), loop_start + 4);
+
+    drop(prepared);
+    remove_database(&database_path);
+}
+
+#[test]
+fn transport_loop_playback_started_after_the_range_keeps_advancing_linearly() {
+    let database_path = unique_path("aaadaw");
+    let store = ProjectStore::open(&database_path).expect("project should open");
+    let mut project = Project::with_settings(aaadaw_core::ProjectSettings::default());
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "MIDI loop".to_owned(),
+        })
+        .expect("MIDI track should be created");
+    project
+        .apply(DawAction::InsertMidiItem {
+            track_id: project.tracks()[0].id(),
+            start_tick: 0,
+            length_ticks: 960,
+        })
+        .expect("MIDI item should be created");
+    project
+        .apply(DawAction::AddMidiNotes {
+            item_id: project.midi_items()[0].id(),
+            notes: vec![aaadaw_core::MidiNoteData {
+                channel: 0,
+                pitch: 64,
+                tick: 0,
+                duration: 480,
+                velocity: 100,
+            }],
+        })
+        .expect("MIDI note should be added");
+
+    let loop_start = project
+        .sample_at_tick(0)
+        .expect("loop start should convert");
+    let loop_end = project
+        .sample_at_tick(960)
+        .expect("loop end should convert");
+    let start_after_loop = project
+        .sample_at_tick(1_440)
+        .expect("position after loop should convert");
+    assert!(start_after_loop > loop_end);
+    let loop_range = TransportLoopRange::new(loop_start, loop_end)
+        .expect("project loop should cover a positive sample range");
+    let mut prepared = prepare_audio_playback_at_with_loop_range(
+        &project,
+        &store,
+        start_after_loop,
+        Some(loop_range),
+        64,
+        4,
+        ResamplingQuality::Sinc64,
+    )
+    .expect("playback after the loop should still prepare");
+    assert_eq!(prepared.feeder_count(), 0);
+    store.close().expect("project should close");
+
+    let graph = prepared.graph_mut();
+    graph.transport_mut().start();
+    let mut output = [[0.0_f32; 2]; 4];
+    let mut midi_output = [None; 8];
+    let stats = graph
+        .render_with_midi(&mut midi_output, &mut output)
+        .expect("the transport should advance from its position beyond Loop");
+
+    assert_eq!(stats.midi_event_count, 0);
+    assert!(midi_output.iter().all(Option::is_none));
+    assert_eq!(
+        graph.transport_mut().position_samples(),
+        start_after_loop + 4
+    );
+
+    drop(prepared);
+    remove_database(&database_path);
+}
+
+#[test]
+fn transport_loop_playback_started_after_the_range_plays_audio_linearly() {
+    let database_path = unique_path("aaadaw");
+    let source_frames: Vec<_> = (0_i16..48)
+        .map(|index| {
+            let sample = (index - 24) * 512;
+            [sample, -sample]
+        })
+        .collect();
+    let wav = stereo_pcm_wav(&source_frames, 48_000);
+    let mut store = ProjectStore::open(&database_path).expect("project should open");
+    store
+        .import_audio_asset(
+            "asset://after-loop-audio",
+            "after-loop.wav",
+            Cursor::new(&wav),
+        )
+        .expect("audio source should embed");
+    let mut project = Project::with_settings(
+        aaadaw_core::ProjectSettings::default()
+            .with_pan_mode(aaadaw_core::PanMode::LegacyMonoStereo),
+    );
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Audio after loop".to_owned(),
+        })
+        .expect("track should be created");
+    let loop_range = TransportLoopRange::new(16, 32).expect("loop should be nonempty");
+    project
+        .apply(DawAction::InsertAudioItem {
+            track_id: project.tracks()[0].id(),
+            media_ref: "asset://after-loop-audio".to_owned(),
+            start_sample: 24,
+            source_offset_samples: 8,
+            length_samples: 16,
+        })
+        .expect("audio item should extend past Loop");
+
+    let prepared = prepare_audio_playback_at_with_loop_range(
+        &project,
+        &store,
+        35,
+        Some(loop_range),
+        64,
+        8,
+        ResamplingQuality::Sinc64,
+    )
+    .expect("audio playback after Loop should use a linear feeder");
+    let (mut graph, feeders) = prepared.into_parts();
+    assert_eq!(feeders.len(), 1);
+    for feeder in feeders {
+        feeder.join().expect("linear audio feeder should finish");
+    }
+    graph.transport_mut().start();
+    let mut output = [[0.0_f32; 2]; 5];
+    let stats = graph
+        .render_into(&mut output)
+        .expect("transport should render linearly after Loop");
+    assert_eq!(stats.underrun_samples, 0);
+    for (index, frame) in output.iter().enumerate() {
+        let expected_source = source_frames[19 + index];
+        assert!((frame[0] - expected_source[0] as f32 / 32_768.0).abs() < 1.0e-6);
+        assert!((frame[1] - expected_source[1] as f32 / 32_768.0).abs() < 1.0e-6);
+    }
+    assert_eq!(graph.transport_mut().position_samples(), 40);
 
     store.close().expect("project should close");
     remove_database(&database_path);
@@ -282,7 +1636,14 @@ fn stereo_audio_item_keeps_channel_separation_in_playback_and_offline_export() {
     store
         .import_audio_asset("asset://stereo", "stereo.wav", Cursor::new(&wav))
         .expect("stereo WAV should embed");
-    let project = project_with_audio_item("asset://stereo".to_owned(), 4);
+    let mut project = project_with_audio_item("asset://stereo".to_owned(), 4);
+    let item_id = project.audio_items()[0].id();
+    project
+        .apply(DawAction::SetAudioItemLoopSource {
+            item_id,
+            enabled: false,
+        })
+        .expect("stereo fixture should play its source once");
 
     let prepared = prepare_audio_playback(&project, &store, 16, 4)
         .expect("embedded stereo source should prepare");
@@ -302,7 +1663,8 @@ fn stereo_audio_item_keeps_channel_separation_in_playback_and_offline_export() {
     assert!((output[1][1] + 0.375).abs() < 1.0e-5);
     assert!((output[2][0] - 0.25).abs() < 1.0e-5);
     assert!((output[2][1] + 0.5).abs() < 1.0e-5);
-    assert_eq!(output[2], output[3]);
+    assert!((output[3][0] - output[2][0]).abs() < 0.05);
+    assert!((output[3][1] - output[2][1]).abs() < 0.05);
 
     let prepared = prepare_audio_playback_at(&project, &store, 2, 8, 4)
         .expect("stereo seek refill should prepare");
@@ -318,7 +1680,8 @@ fn stereo_audio_item_keeps_channel_separation_in_playback_and_offline_export() {
     assert_eq!(seek_stats.underrun_samples, 0);
     assert!((seek_output[0][0] - 0.25).abs() < 1.0e-5);
     assert!((seek_output[0][1] + 0.5).abs() < 1.0e-5);
-    assert_eq!(seek_output[0], seek_output[1]);
+    assert!((seek_output[1][0] - 0.25).abs() < 0.05);
+    assert!((seek_output[1][1] + 0.5).abs() < 0.05);
 
     let prepared = prepare_audio_playback(&project, &store, 1, 4)
         .expect("stereo source should prepare for offline export");
@@ -345,6 +1708,306 @@ fn stereo_audio_item_keeps_channel_separation_in_playback_and_offline_export() {
     assert!(exported[4] > 0.24 && exported[5] < -0.49);
 
     std::fs::remove_file(export_path).expect("export should be removed");
+    remove_database(&database_path);
+}
+
+#[test]
+fn render_quality_uses_a_sharper_sinc_filter_than_playback_quality() {
+    let database_path = unique_path("aaadaw");
+    let mut store = ProjectStore::open(&database_path).expect("project should open");
+    let source_rate = 96_000.0;
+    let source = (0..96_000)
+        .map(|index| {
+            (2.0 * std::f32::consts::PI * 26_000.0 * index as f32 / source_rate).sin() * 0.8
+        })
+        .map(|sample| (sample * i16::MAX as f32) as i16)
+        .collect::<Vec<_>>();
+    store
+        .import_audio_asset(
+            "asset://resampling",
+            "resampling.wav",
+            Cursor::new(pcm_wav(&source, 96_000)),
+        )
+        .expect("high-rate WAV should embed");
+    let project = project_with_audio_item("asset://resampling".to_owned(), 48_000);
+
+    let measured_alias = |quality| {
+        let prepared = prepare_audio_playback_with_resampling_quality(
+            &project, &store, 50_000, 2_048, quality,
+        )
+        .expect("audio should prepare at requested quality");
+        let (mut graph, feeders) = prepared.into_parts();
+        for feeder in feeders {
+            feeder.join().expect("resampling worker should finish");
+        }
+        graph.transport_mut().start();
+        let mut output = vec![[0.0; 2]; 48_000];
+        for block in output.chunks_mut(2_048) {
+            let stats = graph
+                .render_into(block)
+                .expect("prepared audio should render");
+            assert_eq!(stats.underrun_samples, 0);
+        }
+        let center_gain = std::f32::consts::FRAC_1_SQRT_2;
+        let margin = 256;
+        let stable = &output[margin..output.len() - margin];
+        let projection = stable
+            .iter()
+            .enumerate()
+            .map(|(index, frame)| {
+                let absolute_index = index + margin;
+                (frame[0] / center_gain)
+                    * (2.0 * std::f32::consts::PI * 22_000.0 * absolute_index as f32 / 48_000.0)
+                        .sin()
+            })
+            .sum::<f32>();
+        2.0 * projection.abs() / stable.len() as f32
+    };
+
+    let playback_alias = measured_alias(ResamplingQuality::Sinc64);
+    let render_alias = measured_alias(ResamplingQuality::Sinc192);
+    assert!(
+        render_alias < playback_alias * 0.7,
+        "192pt render alias {render_alias} should be below 70% of 64pt playback alias {playback_alias}"
+    );
+
+    store.close().expect("project should close");
+    remove_database(&database_path);
+}
+
+#[test]
+fn project_render_time_selection_starts_at_its_sample_and_adds_the_requested_tail() {
+    let database_path = unique_path("aaadaw");
+    let output_path = unique_path("wav");
+    let mut source = vec![0_i16; 96_000];
+    source[24_000..48_000].fill(16_384);
+    source[48_000..].fill(8_192);
+    let mut store = ProjectStore::open(&database_path).expect("project should open");
+    store
+        .import_audio_asset(
+            "asset://render-range",
+            "range.wav",
+            Cursor::new(pcm_wav(&source, 48_000)),
+        )
+        .expect("source WAV should embed");
+    store
+        .close()
+        .expect("project should close before rendering");
+    let project = project_with_audio_item("asset://render-range".to_owned(), 96_000);
+
+    render_project_file_to_wav_with_settings(
+        &database_path,
+        &project,
+        &output_path,
+        ProjectWavRenderSettings {
+            master_ceiling: aaadaw_engine::MasterOutputCeiling::default(),
+            export_options: WavExportOptions::default(),
+            output_sample_rate: 44_100,
+            output_channels: aaadaw_app::WavChannelCount::Mono,
+            source: ProjectWavRenderSource::MasterMix,
+            start_sample: 24_000,
+            end_sample: 48_000,
+            tail_milliseconds: 1_250,
+            normalize_peak: true,
+            normalize_peak_target_centi_dbfs: 0,
+        },
+        &AtomicBool::new(false),
+        |_, _| {},
+    )
+    .expect("selected range should render with its requested tail");
+
+    let bytes = std::fs::read(&output_path).expect("range render should be published");
+    assert_eq!(
+        u32::from_le_bytes(bytes[24..28].try_into().unwrap()),
+        44_100
+    );
+    assert_eq!(u16::from_le_bytes(bytes[22..24].try_into().unwrap()), 1);
+    assert_eq!(u16::from_le_bytes(bytes[34..36].try_into().unwrap()), 24);
+    let data_bytes = u32::from_le_bytes(bytes[40..44].try_into().expect("WAV data size"));
+    assert_eq!(data_bytes, 77_175 * 3);
+    assert_eq!(bytes.len(), 44 + data_bytes as usize);
+    let (samples, remainder) = bytes[44..].as_chunks::<3>();
+    assert!(remainder.is_empty());
+    let peak = samples
+        .iter()
+        .map(|sample| {
+            let value = i32::from_le_bytes([
+                sample[0],
+                sample[1],
+                sample[2],
+                if sample[2] & 0x80 == 0 { 0 } else { 0xff },
+            ]);
+            value.unsigned_abs()
+        })
+        .max()
+        .expect("rendered samples should be present");
+    assert!(
+        peak >= 8_380_000,
+        "peak-normalized PCM24 output should reach 0 dBFS, got {peak}"
+    );
+    let stable_left_offset = 44 + 1_000 * 3;
+    let first_left = i32::from_le_bytes([
+        bytes[stable_left_offset],
+        bytes[stable_left_offset + 1],
+        bytes[stable_left_offset + 2],
+        if bytes[stable_left_offset + 2] & 0x80 == 0 {
+            0
+        } else {
+            0xff
+        },
+    ]);
+    assert!(
+        first_left > 2_000_000,
+        "resampled output should preserve the selected passband, got {first_left}"
+    );
+    let tail_left_offset = 44 + (22_050 + 1_000) * 3;
+    let tail_left = i32::from_le_bytes([
+        bytes[tail_left_offset],
+        bytes[tail_left_offset + 1],
+        bytes[tail_left_offset + 2],
+        if bytes[tail_left_offset + 2] & 0x80 == 0 {
+            0
+        } else {
+            0xff
+        },
+    ]);
+    assert!(
+        tail_left > 900_000,
+        "the appended timeline tail should contain the following project audio, got {tail_left}"
+    );
+
+    let untailed_output_path = unique_path("wav");
+    render_project_file_to_wav_with_settings(
+        &database_path,
+        &project,
+        &untailed_output_path,
+        ProjectWavRenderSettings {
+            master_ceiling: aaadaw_engine::MasterOutputCeiling::default(),
+            export_options: WavExportOptions::default(),
+            output_sample_rate: 44_100,
+            output_channels: aaadaw_app::WavChannelCount::Mono,
+            source: ProjectWavRenderSource::MasterMix,
+            start_sample: 24_000,
+            end_sample: 48_000,
+            tail_milliseconds: 0,
+            normalize_peak: false,
+            normalize_peak_target_centi_dbfs: 0,
+        },
+        &AtomicBool::new(false),
+        |_, _| {},
+    )
+    .expect("disabled tail should render only the selected range");
+    let untailed_bytes =
+        std::fs::read(&untailed_output_path).expect("untailed range render should be published");
+    let untailed_data_bytes =
+        u32::from_le_bytes(untailed_bytes[40..44].try_into().expect("WAV data size"));
+    assert_eq!(untailed_data_bytes, 22_050 * 3);
+    assert_eq!(untailed_bytes.len(), 44 + untailed_data_bytes as usize);
+
+    std::fs::remove_file(output_path).expect("rendered file should be removed");
+    std::fs::remove_file(untailed_output_path).expect("untailed render should be removed");
+    remove_database(&database_path);
+}
+
+#[test]
+fn selected_track_via_master_render_omits_unselected_track_media() {
+    let database_path = unique_path("aaadaw");
+    let selected_path = unique_path("wav");
+    let master_path = unique_path("wav");
+    let source = pcm_wav(&vec![4_096; 48_000], 48_000);
+    let mut store = ProjectStore::open(&database_path).expect("project should open");
+    store
+        .import_audio_asset(
+            "asset://selected-render-track",
+            "selected-render-track.wav",
+            Cursor::new(source),
+        )
+        .expect("shared track source should embed");
+    store
+        .close()
+        .expect("project should close before rendering");
+
+    let mut project = project_with_audio_item("asset://selected-render-track".to_owned(), 48_000);
+    let selected_track = project.tracks()[0].id();
+    project
+        .apply(DawAction::CreateTrack {
+            index: 1,
+            name: "Unselected".to_owned(),
+        })
+        .expect("second track should be created");
+    project
+        .apply(DawAction::InsertAudioItem {
+            track_id: project.tracks()[1].id(),
+            media_ref: "asset://selected-render-track".to_owned(),
+            start_sample: 0,
+            source_offset_samples: 0,
+            length_samples: 48_000,
+        })
+        .expect("second track should use the same source");
+
+    let settings = |source| ProjectWavRenderSettings {
+        master_ceiling: aaadaw_engine::MasterOutputCeiling::default(),
+        export_options: WavExportOptions::default(),
+        output_sample_rate: 48_000,
+        output_channels: aaadaw_app::WavChannelCount::Stereo,
+        source,
+        start_sample: 0,
+        end_sample: 48_000,
+        tail_milliseconds: 0,
+        normalize_peak: false,
+        normalize_peak_target_centi_dbfs: 0,
+    };
+    render_project_file_to_wav_with_settings(
+        &database_path,
+        &project,
+        &selected_path,
+        settings(ProjectWavRenderSource::SelectedTrackViaMaster(
+            selected_track,
+        )),
+        &AtomicBool::new(false),
+        |_, _| {},
+    )
+    .expect("selected track should render through the master");
+    render_project_file_to_wav_with_settings(
+        &database_path,
+        &project,
+        &master_path,
+        settings(ProjectWavRenderSource::MasterMix),
+        &AtomicBool::new(false),
+        |_, _| {},
+    )
+    .expect("the master mix should render both tracks");
+
+    let selected = std::fs::read(&selected_path).expect("selected-track WAV should exist");
+    let master = std::fs::read(&master_path).expect("master WAV should exist");
+    let stable_left_sample = |bytes: &[u8]| {
+        let offset = 44 + 1_000 * 6;
+        i32::from_le_bytes([
+            bytes[offset],
+            bytes[offset + 1],
+            bytes[offset + 2],
+            if bytes[offset + 2] & 0x80 == 0 {
+                0
+            } else {
+                0xff
+            },
+        ])
+    };
+    let selected_level = stable_left_sample(&selected);
+    let master_level = stable_left_sample(&master);
+    assert!(selected_level > 0, "selected source should be audible");
+    let ratio = f64::from(master_level) / f64::from(selected_level);
+    assert!(
+        (ratio - 2.0).abs() < 0.02,
+        "the full mix should contain both identical sources (ratio {ratio})"
+    );
+    assert!(
+        project.tracks().iter().all(|track| !track.is_solo()),
+        "the render source must not mutate the saved project solo state"
+    );
+
+    std::fs::remove_file(selected_path).expect("selected WAV should be removed");
+    std::fs::remove_file(master_path).expect("master WAV should be removed");
     remove_database(&database_path);
 }
 
@@ -390,84 +2053,97 @@ fn offline_render_waits_for_bounded_media_feeders_and_exports_the_mix() {
 }
 
 #[test]
-fn offline_render_routes_selected_pcm_and_float_formats_through_the_same_graph() {
+fn offline_render_routes_linear_companded_and_adpcm_formats_through_the_same_graph() {
     let database_path = unique_path("aaadaw");
-    let pcm16_path = unique_path("pcm16-wav");
-    let float_path = unique_path("float-wav");
     let wav = pcm_wav(&[16_384, -16_384, 8_192, -8_192], 48_000);
     let mut store = ProjectStore::open(&database_path).expect("project should open");
     store
         .import_audio_asset("asset://formats", "formats.wav", Cursor::new(&wav))
         .expect("WAV should embed");
     let project = project_with_audio_item("asset://formats".to_owned(), 4);
-    let prepared = prepare_audio_playback(&project, &store, 1, 4)
-        .expect("embedded source should prepare for PCM16 export");
     store.close().expect("project should close");
-    render_prepared_audio_to_wav(
-        prepared,
-        &project,
-        &pcm16_path,
-        4,
-        WavExportOptions {
-            sample_format: WavSampleFormat::Pcm16,
-            dither: false,
-        },
-        &AtomicBool::new(false),
-        |_, _| {},
-    )
-    .expect("selected PCM16 render should finish");
+    for sample_format in WavSampleFormat::ALL {
+        let path = unique_path("render-format-wav");
+        let store = ProjectStore::open(&database_path).expect("project should reopen");
+        let prepared = prepare_audio_playback(&project, &store, 1, 4)
+            .expect("embedded source should prepare for selected output format");
+        store
+            .close()
+            .expect("project should close before rendering");
+        render_prepared_audio_to_wav(
+            prepared,
+            &project,
+            &path,
+            4,
+            WavExportOptions {
+                sample_format,
+                dither: false,
+            },
+            &AtomicBool::new(false),
+            |_, _| {},
+        )
+        .unwrap_or_else(|error| panic!("{sample_format} render should finish: {error}"));
 
-    let pcm16_bytes = std::fs::read(&pcm16_path).expect("PCM16 output should exist");
-    assert_eq!(
-        u16::from_le_bytes(pcm16_bytes[34..36].try_into().unwrap()),
-        16
-    );
-    let mut decoder =
-        aaadaw_media::AudioStreamDecoder::open(&pcm16_path).expect("PCM16 output should decode");
-    let chunk = decoder
-        .next_chunk()
-        .expect("PCM16 output should read")
-        .expect("PCM16 output should contain frames");
-    assert_eq!(chunk.channels(), 2);
-    let expected_centered_mono = 0.5 * std::f32::consts::FRAC_1_SQRT_2;
-    assert!((chunk.samples()[0] - expected_centered_mono).abs() < 1.0e-4);
-    assert!((chunk.samples()[1] - expected_centered_mono).abs() < 1.0e-4);
+        let bytes = std::fs::read(&path).expect("rendered WAV should exist");
+        let expected_bits = match sample_format {
+            WavSampleFormat::Pcm8 => 8,
+            WavSampleFormat::Pcm16 => 16,
+            WavSampleFormat::Pcm24 => 24,
+            WavSampleFormat::Pcm32 => 32,
+            WavSampleFormat::Float32 => 32,
+            WavSampleFormat::Float64 => 64,
+            WavSampleFormat::MuLaw8 => 8,
+            WavSampleFormat::ImaAdpcm4 => 4,
+            WavSampleFormat::Cadpcm2 => 2,
+        };
+        assert_eq!(
+            u16::from_le_bytes(bytes[34..36].try_into().unwrap()),
+            expected_bits,
+            "{sample_format} WAV bit depth"
+        );
+        if matches!(
+            sample_format,
+            WavSampleFormat::Float32 | WavSampleFormat::Float64
+        ) {
+            assert_eq!(u16::from_le_bytes(bytes[20..22].try_into().unwrap()), 3);
+        } else if sample_format == WavSampleFormat::MuLaw8 {
+            assert_eq!(u16::from_le_bytes(bytes[20..22].try_into().unwrap()), 7);
+        } else if sample_format == WavSampleFormat::ImaAdpcm4 {
+            assert_eq!(u16::from_le_bytes(bytes[20..22].try_into().unwrap()), 17);
+        } else if sample_format == WavSampleFormat::Cadpcm2 {
+            assert_eq!(
+                u16::from_le_bytes(bytes[20..22].try_into().unwrap()),
+                0xac0c
+            );
+        } else {
+            assert_eq!(u16::from_le_bytes(bytes[20..22].try_into().unwrap()), 1);
+        }
 
-    let store = ProjectStore::open(&database_path).expect("project should reopen");
-    let prepared = prepare_audio_playback(&project, &store, 1, 4)
-        .expect("embedded source should prepare for float export");
-    store
-        .close()
-        .expect("project should close before float export");
-    render_prepared_audio_to_wav(
-        prepared,
-        &project,
-        &float_path,
-        4,
-        WavExportOptions {
-            sample_format: WavSampleFormat::Float32,
-            dither: true,
-        },
-        &AtomicBool::new(false),
-        |_, _| {},
-    )
-    .expect("selected float render should finish");
-    let float_bytes = std::fs::read(&float_path).expect("float output should exist");
-    assert_eq!(
-        u16::from_le_bytes(float_bytes[20..22].try_into().unwrap()),
-        3
-    );
-    let mut decoder =
-        aaadaw_media::AudioStreamDecoder::open(&float_path).expect("float output should decode");
-    let chunk = decoder
-        .next_chunk()
-        .expect("float output should read")
-        .expect("float output should contain frames");
-    assert_eq!(chunk.channels(), 2);
-    assert!((chunk.samples()[0] - chunk.samples()[1]).abs() < f32::EPSILON);
+        let mut decoder = aaadaw_media::AudioStreamDecoder::open(&path)
+            .unwrap_or_else(|error| panic!("{sample_format} output should decode: {error}"));
+        let chunk = decoder
+            .next_chunk()
+            .unwrap_or_else(|error| panic!("{sample_format} decoder should read: {error}"))
+            .unwrap_or_else(|| panic!("{sample_format} output should contain frames"));
+        assert_eq!(chunk.channels(), 2);
+        let expected_centered_mono = 0.5 * std::f32::consts::FRAC_1_SQRT_2;
+        let tolerance = if matches!(
+            sample_format,
+            WavSampleFormat::MuLaw8 | WavSampleFormat::ImaAdpcm4 | WavSampleFormat::Cadpcm2
+        ) {
+            0.02
+        } else if sample_format == WavSampleFormat::Pcm8 {
+            1.0 / 128.0
+        } else if sample_format == WavSampleFormat::Pcm16 {
+            1.0e-4
+        } else {
+            1.0e-6
+        };
+        assert!((chunk.samples()[0] - expected_centered_mono).abs() < tolerance);
+        assert!((chunk.samples()[1] - expected_centered_mono).abs() < tolerance);
+        std::fs::remove_file(path).expect("rendered WAV should be removed");
+    }
 
-    std::fs::remove_file(pcm16_path).expect("PCM16 output should be removed");
-    std::fs::remove_file(float_path).expect("float output should be removed");
     remove_database(&database_path);
 }
 
@@ -593,7 +2269,10 @@ fn stereo_source_trim_advances_left_and_right_together() {
     store
         .import_audio_asset("asset://stereo-trim", "trim.wav", Cursor::new(&wav))
         .expect("stereo WAV should embed");
-    let mut project = Project::new();
+    let mut project = Project::with_settings(
+        aaadaw_core::ProjectSettings::default()
+            .with_pan_mode(aaadaw_core::PanMode::LegacyMonoStereo),
+    );
     project
         .apply(DawAction::CreateTrack {
             index: 0,

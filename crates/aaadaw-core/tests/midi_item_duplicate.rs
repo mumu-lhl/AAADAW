@@ -23,12 +23,14 @@ fn duplicate_midi_item_copies_content_with_fresh_ids_and_is_undoable() {
             item_id: source_id,
             notes: vec![
                 MidiNoteData {
+                    channel: 0,
                     pitch: 60,
                     tick: 0,
                     duration: 480,
                     velocity: 100,
                 },
                 MidiNoteData {
+                    channel: 0,
                     pitch: 67,
                     tick: 1_200,
                     duration: 720,
@@ -141,6 +143,7 @@ fn duplicate_midi_item_to_track_preserves_content_and_supports_undo_redo() {
         .apply(DawAction::AddMidiNotes {
             item_id: source_id,
             notes: vec![MidiNoteData {
+                channel: 0,
                 pitch: 67,
                 tick: 240,
                 duration: 480,

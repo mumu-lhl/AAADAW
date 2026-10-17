@@ -1,0 +1,8 @@
+field	value
+environment	Linux AAADAW / 1280x800 / temporary unsaved project
+action	Double-click the TCP track name
+result	The editable track-name field receives focus; the displayed draft remains Audio 1
+screenshot	track-name-double-click-aaadaw.png
+screenshot_sha256	dbadd6248ef99b6aa8ce61f70696deaf9cb53ff83cbe65df30e15c199f08bb16
+test	crates/aaadaw/src/app/tests.rs::track_rename_is_undoable
+limit	This screenshot verifies entry into the editor; rename commit and undo remain covered by the app test, not this manual screenshot

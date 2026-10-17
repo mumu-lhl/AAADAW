@@ -490,6 +490,7 @@ pub struct ClapInstrumentProcessor {
 struct ActiveNote {
     note_id: u32,
     pitch: u8,
+    channel: u8,
 }
 
 /// A processor stopped on the audio thread and ready to return to its control-thread owner.
@@ -1524,6 +1525,15 @@ impl ClapInstrumentProcessor {
                 "CLAP note event offset is outside the current block",
             ));
         }
+        if let Some(event) = events
+            .iter()
+            .find(|event| event.channel >= crate::MIDI_CHANNEL_COUNT)
+        {
+            return Err(ClapInstrumentError::new(format!(
+                "MIDI channel {} is outside the 0..16 range",
+                event.channel
+            )));
+        }
         if output.is_empty() {
             return Ok(());
         }
@@ -1537,6 +1547,7 @@ impl ClapInstrumentProcessor {
                 event.track_id.value(),
                 event.pitch,
                 event.note_id.map_or(0, aaadaw_core::NoteId::value),
+                event.channel,
                 event.controller.unwrap_or(0),
             )
         });
@@ -1565,6 +1576,7 @@ impl ClapInstrumentProcessor {
             let active_note = ActiveNote {
                 note_id,
                 pitch: event.pitch,
+                channel: event.channel,
             };
             match event.kind {
                 MidiEventKind::NoteOn => {
@@ -1611,13 +1623,14 @@ impl ClapInstrumentProcessor {
                 })?;
                 let midi_bytes = match event.kind {
                     MidiEventKind::ControllerChange => [
-                        0xb0,
+                        0xb0 | event.channel,
                         event.controller.expect("controller event number"),
                         event.velocity,
                     ],
-                    MidiEventKind::PitchBend => {
-                        pitch_bend_midi_bytes(event.pitch_bend.expect("pitch-bend event value"))
-                    }
+                    MidiEventKind::PitchBend => pitch_bend_midi_bytes(
+                        event.pitch_bend.expect("pitch-bend event value"),
+                        event.channel,
+                    ),
                     MidiEventKind::NoteOff | MidiEventKind::NoteOn => {
                         unreachable!("only control events are handled in this branch")
                     }
@@ -1637,7 +1650,12 @@ impl ClapInstrumentProcessor {
             .ok_or_else(|| {
                 ClapInstrumentError::new("MIDI note ID exceeds the CLAP note-ID range")
             })?;
-            let pckn = Pckn::new(self.input_note_port, 0_u16, u16::from(event.pitch), note_id);
+            let pckn = Pckn::new(
+                self.input_note_port,
+                u16::from(event.channel),
+                u16::from(event.pitch),
+                note_id,
+            );
             match event.kind {
                 MidiEventKind::NoteOn => self.input_events.push(&NoteOnEvent::new(
                     sample_offset,
@@ -1685,7 +1703,7 @@ impl ClapInstrumentProcessor {
                 0,
                 Pckn::new(
                     self.input_note_port,
-                    0_u16,
+                    u16::from(note.channel),
                     u16::from(note.pitch),
                     note.note_id,
                 ),
@@ -1795,8 +1813,8 @@ impl ClapInstrumentProcessor {
     }
 }
 
-fn pitch_bend_midi_bytes(value: u16) -> [u8; 3] {
-    [0xe0, (value & 0x7f) as u8, (value >> 7) as u8]
+fn pitch_bend_midi_bytes(value: u16, channel: u8) -> [u8; 3] {
+    [0xe0 | channel, (value & 0x7f) as u8, (value >> 7) as u8]
 }
 
 /// Lists plugin descriptors exposed by one CLAP entry file.
@@ -2064,9 +2082,10 @@ mod tests {
 
     #[test]
     fn pitch_bend_values_encode_as_little_endian_14_bit_midi_data() {
-        assert_eq!(pitch_bend_midi_bytes(0), [0xe0, 0, 0]);
-        assert_eq!(pitch_bend_midi_bytes(8192), [0xe0, 0, 64]);
-        assert_eq!(pitch_bend_midi_bytes(16_383), [0xe0, 127, 127]);
+        assert_eq!(pitch_bend_midi_bytes(0, 0), [0xe0, 0, 0]);
+        assert_eq!(pitch_bend_midi_bytes(8192, 0), [0xe0, 0, 64]);
+        assert_eq!(pitch_bend_midi_bytes(16_383, 0), [0xe0, 127, 127]);
+        assert_eq!(pitch_bend_midi_bytes(8192, 5), [0xe5, 0, 64]);
     }
     use crate::{
         AudioItemStream, AudioRenderGraph, TrackFxProcessor, TrackInstrumentProcessor,
@@ -2140,6 +2159,7 @@ mod tests {
             .apply(DawAction::AddMidiNotes {
                 item_id,
                 notes: vec![MidiNoteData {
+                    channel: 0,
                     pitch: 64,
                     tick: 0,
                     duration: note_duration,
@@ -3132,6 +3152,7 @@ mod tests {
         let (track_id, note_id) = test_ids();
         let events = [
             ScheduledMidiEvent {
+                channel: 0,
                 sample_offset: 7,
                 track_id,
                 note_id: Some(note_id),
@@ -3142,6 +3163,7 @@ mod tests {
                 kind: MidiEventKind::NoteOff,
             },
             ScheduledMidiEvent {
+                channel: 0,
                 sample_offset: 3,
                 track_id,
                 note_id: Some(note_id),
@@ -3152,6 +3174,7 @@ mod tests {
                 kind: MidiEventKind::NoteOn,
             },
             ScheduledMidiEvent {
+                channel: 0,
                 sample_offset: 3,
                 track_id,
                 note_id: Some(note_id),
@@ -3192,6 +3215,7 @@ mod tests {
         let (track_id, note_id) = test_ids();
         let events = [
             ScheduledMidiEvent {
+                channel: 0,
                 sample_offset: 0,
                 track_id,
                 note_id: Some(note_id),
@@ -3202,6 +3226,7 @@ mod tests {
                 kind: MidiEventKind::NoteOn,
             },
             ScheduledMidiEvent {
+                channel: 0,
                 sample_offset: 3,
                 track_id,
                 note_id: None,
@@ -3212,6 +3237,7 @@ mod tests {
                 kind: MidiEventKind::ControllerChange,
             },
             ScheduledMidiEvent {
+                channel: 0,
                 sample_offset: 8,
                 track_id,
                 note_id: None,
@@ -3222,6 +3248,7 @@ mod tests {
                 kind: MidiEventKind::ControllerChange,
             },
             ScheduledMidiEvent {
+                channel: 0,
                 sample_offset: 4,
                 track_id,
                 note_id: None,
@@ -3232,6 +3259,7 @@ mod tests {
                 kind: MidiEventKind::ControllerChange,
             },
             ScheduledMidiEvent {
+                channel: 0,
                 sample_offset: 5,
                 track_id,
                 note_id: Some(note_id),
@@ -3242,6 +3270,7 @@ mod tests {
                 kind: MidiEventKind::NoteOff,
             },
             ScheduledMidiEvent {
+                channel: 0,
                 sample_offset: 6,
                 track_id,
                 note_id: None,
@@ -3252,6 +3281,7 @@ mod tests {
                 kind: MidiEventKind::ControllerChange,
             },
             ScheduledMidiEvent {
+                channel: 0,
                 sample_offset: 7,
                 track_id,
                 note_id: None,
@@ -3262,6 +3292,7 @@ mod tests {
                 kind: MidiEventKind::ControllerChange,
             },
             ScheduledMidiEvent {
+                channel: 0,
                 sample_offset: 10,
                 track_id,
                 note_id: None,
@@ -3272,6 +3303,7 @@ mod tests {
                 kind: MidiEventKind::ControllerChange,
             },
             ScheduledMidiEvent {
+                channel: 0,
                 sample_offset: 9,
                 track_id,
                 note_id: None,
@@ -3319,6 +3351,7 @@ mod tests {
             .expect("controller-capable plugin should accept reset events");
 
         let event = ScheduledMidiEvent {
+            channel: 0,
             sample_offset: 0,
             track_id,
             note_id: Some(note_id),
@@ -3350,6 +3383,7 @@ mod tests {
         processor.input_midi_port = None;
         let (track_id, note_id) = test_ids();
         let event = ScheduledMidiEvent {
+            channel: 0,
             sample_offset: 0,
             track_id,
             note_id: Some(note_id),
@@ -3399,6 +3433,7 @@ mod tests {
             ClapInstrumentOwner::load_from_entry(entry, PLUGIN_ID, 48_000, 4, 1)
                 .expect("test synth should load");
         let event = ScheduledMidiEvent {
+            channel: 0,
             sample_offset: 4,
             track_id: test_ids().0,
             note_id: Some(test_ids().1),
@@ -3556,7 +3591,7 @@ mod tests {
             .join()
             .expect("render graph thread");
 
-        assert_eq!(stats.midi_event_count, 2);
+        assert_eq!(stats.midi_event_count, 4);
         assert_eq!(stats.underrun_samples, 0);
         assert_eq!(stats.master_guarded_samples, 0);
         let midi_level = 64.0 / 127.0;
@@ -3736,7 +3771,8 @@ mod tests {
             let mut output = [[0.0_f32; 2]; 128];
             let mut rendered = false;
             let mut preview_event_count = 0;
-            for _ in 0..100 {
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+            while std::time::Instant::now() < deadline {
                 let stats = graph
                     .render_into(&mut output)
                     .expect("stopped isolated route should render preview blocks");
@@ -3745,7 +3781,11 @@ mod tests {
                     rendered = true;
                     break;
                 }
-                std::thread::yield_now();
+                // The real device spaces callbacks in time. A tight fixed-count
+                // loop can expire every IPC response before the helper is scheduled,
+                // especially when Windows runs this test beside other lib tests.
+                // Wait only in the test harness; render_into remains nonblocking.
+                std::thread::sleep(std::time::Duration::from_millis(1));
             }
             assert_eq!(graph.transport_mut().position_samples(), 0);
             preview.release();
@@ -3826,5 +3866,96 @@ mod tests {
             .expect("retired processor exists")
             .into_parts();
         owner.deactivate(stopped);
+    }
+    #[test]
+    fn send_taps_bracket_fx_and_source_fader_without_reprocessing() {
+        use aaadaw_core::{AudioSendParameters, AudioSendTap};
+        for (tap, expected) in [
+            (AudioSendTap::PreFx, [0.125, 0.125]),
+            (AudioSendTap::PreFader, [0.0625, 0.0625]),
+            (AudioSendTap::PostFader, [0.0, 0.015625]),
+        ] {
+            let mut project = Project::new();
+            for (index, name) in ["Source", "Receiver"].into_iter().enumerate() {
+                project
+                    .apply(DawAction::CreateTrack {
+                        index,
+                        name: name.into(),
+                    })
+                    .unwrap();
+            }
+            let source = project.tracks()[0].id();
+            let receiver = project.tracks()[1].id();
+            project
+                .apply(DawAction::SetTrackMainSend {
+                    track_id: source,
+                    enabled: false,
+                })
+                .unwrap();
+            project
+                .apply(DawAction::SetTrackVolume {
+                    track_id: source,
+                    volume_db: 20.0 * 0.25_f32.log10(),
+                })
+                .unwrap();
+            project
+                .apply(DawAction::SetTrackPan {
+                    track_id: source,
+                    pan: 1.0,
+                })
+                .unwrap();
+            project
+                .apply(DawAction::SetTrackFxChain {
+                    track_id: source,
+                    plugins: vec![TrackFxPlugin::new(EFFECT_PLUGIN_ID, "test.clap").unwrap()],
+                })
+                .unwrap();
+            project
+                .apply(DawAction::CreateAudioSend {
+                    track_id: source,
+                    destination: receiver,
+                    parameters: AudioSendParameters {
+                        tap,
+                        ..Default::default()
+                    },
+                })
+                .unwrap();
+            let (mut producer, consumer) = pcm_stream(4).unwrap();
+            producer.push_samples(&[0.125; 4]);
+            let (_, silent) = pcm_stream(4).unwrap();
+            let (owner, processor) =
+                ClapEffectOwner::load_from_entry(test_effect_entry(), EFFECT_PLUGIN_ID, 48_000, 4)
+                    .unwrap();
+            let mut graph = AudioRenderGraph::new(&project, vec![consumer, silent], 4).unwrap();
+            graph
+                .install_fx_processors(
+                    &project,
+                    &mut vec![TrackFxProcessor::new(
+                        source,
+                        0,
+                        EFFECT_PLUGIN_ID,
+                        processor,
+                    )],
+                )
+                .unwrap();
+            graph.transport_mut().start();
+            let mut output = [[0.0; 2]; 4];
+            graph.render_into(&mut output).unwrap();
+            for frame in output {
+                for channel in 0..2 {
+                    assert!(
+                        (frame[channel] - expected[channel]).abs() < 1e-6,
+                        "{tap:?} {frame:?}"
+                    );
+                }
+            }
+            graph.stop_fx_processors();
+            let (_, _, _, stopped) = graph
+                .take_stopped_fx_processors()
+                .pop()
+                .unwrap()
+                .into_parts();
+            owner.deactivate(stopped);
+        }
     }
 }

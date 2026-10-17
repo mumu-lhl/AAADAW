@@ -49,6 +49,7 @@ fn vs_main(
     @location(4) item_id: vec2<u32>,
     @location(5) track_index: u32,
     @location(6) kind: u32,
+    @location(7) tick_fractions: vec2<f32>,
 ) -> VertexOutput {
     let corners = array<vec2<f32>, 6>(
         vec2<f32>(0.0, 0.0),
@@ -60,8 +61,8 @@ fn vs_main(
     );
     let corner = corners[vertex_index];
     let origin = uniforms.origin_cursor.xy;
-    let start_x = signed_tick_delta(start_tick, origin) * uniforms.view.z;
-    let end_x = signed_tick_delta(end_tick, origin) * uniforms.view.z;
+    let start_x = (signed_tick_delta(start_tick, origin) + tick_fractions.x) * uniforms.view.z;
+    let end_x = (signed_tick_delta(end_tick, origin) + tick_fractions.y) * uniforms.view.z;
     var x = mix(start_x, end_x, corner.x) * uniforms.view.w;
     var width = (end_x - start_x) * uniforms.view.w;
     if kind == 0u {
@@ -75,6 +76,9 @@ fn vs_main(
         width = uniforms.view.x;
     } else if (kind >= 3u && kind <= 6u) || kind == 10u {
         width = uniforms.view.w;
+        if kind == 5u {
+            x += y_height.x * uniforms.view.z * uniforms.view.w;
+        }
         if corner.x > 0.5 {
             x += select(1.0, 2.0, kind == 5u || kind == 6u);
         }
@@ -90,8 +94,20 @@ fn vs_main(
         width = max(width, 3.0);
     }
     var logical_y = y_height.x + corner.y * y_height.y;
+    if kind == 5u {
+        logical_y = corner.y * y_height.y;
+    }
     if kind == 12u {
         logical_y = mix(y_height.x, y_height.y, corner.x) + (corner.y - 0.5) * 2.5;
+    }
+    if kind == 16u {
+        let start = vec2<f32>(bitcast<f32>(start_tick.x), y_height.x);
+        let end = vec2<f32>(bitcast<f32>(end_tick.x), y_height.y);
+        let delta = end - start;
+        let normal = vec2<f32>(-delta.y, delta.x) / max(length(delta), 0.001);
+        let point = mix(start, end, corner.x) + normal * (corner.y - 0.5);
+        x = point.x * uniforms.view.w;
+        logical_y = point.y;
     }
     let y = logical_y * uniforms.view.w;
     let screen_x = x;

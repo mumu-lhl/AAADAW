@@ -1,0 +1,9 @@
+# Item Nudge Edit Cursor Target
+
+This record checks REAPER 7.82 / Default 7 Position Nudge with Target `edit cursor` and the Notes unit. The native project ran at 44.1 kHz and 120 BPM with Audio A at 1.000 seconds and a MIDI item at 0 seconds. Neither item was selected. The [ReaScript](../../../scripts/reaper_parity/probe-item-nudge-edit-cursor-units.lua) and [fixture TSV](fixtures/item-nudge-edit-cursor-native.tsv) record cursor and item state before and after each action.
+
+With the edit cursor at 1.270 seconds, the amount at 1, and note value `1/4T`, Nudge Right with Snap off moved the cursor to 1.603333 seconds. Snap to unit moved it to 1.666667 seconds, the nearest quarter-triplet grid position. Both actions left the Audio and MIDI item positions unchanged, kept the project state-change count unchanged, and worked with no items selected. The actual [Snap-on dialog capture](fixtures/item-nudge-edit-cursor-notes-triplet-snap-native-after.png) shows Target `edit cursor`, Unit `notes`, value `1/4T`, Snap to unit enabled, and the cursor at 1.667 seconds.
+
+AAADAW previously failed this case because the edit-cursor path sent `notes` through a second Snap conversion that did not recognize the new relative units. It now performs the target snap once and maps musical Snap for Notes through the selected note-value grid. The regression `item_nudge_edit_cursor_notes_snap_uses_note_grid_without_moving_items` checks Snap off (2,440 → 3,080 ticks), Snap on (2,440 → 3,200 ticks), unchanged item positions and selection, and absence of an error.
+
+This confirms Position / Edit Cursor / Notes at constant tempo for a quarter-triplet value. Other Nudge units and Targets, variable-tempo Notes behavior, PickList keyboard navigation, broader Undo parity, and full dialog parity remain open. `ITEM-NUDGE-SET-001` and P4 remain `in_progress`.

@@ -1,0 +1,34 @@
+captured_at_utc	2026-10-16
+platform	Linux x86_64; isolated Xvfb :339; X11; 1280x800x24
+configuration	Fresh -cfgfile profile; copied only Default_7.0.ReaperThemeZip; no custom keymap, mouse map, or third-party extensions
+probe_script	scripts/reaper_parity/probe-item-hover-selection-anchor.lua
+method	Actual mouse click establishes A1 or A2; Main actions 40529/40530 run with the pointer over A2; actual Shift-click on B2 follows; selected item IDs are read before and after each step
+anchor_inference	Baseline A1 then Shift-click B2 selects A1,B1,B2. After 40529 or 40530 adds A2, the same Shift-click selects A1,A2,B1,B2; after 40530 removes A2, it selects A1,B1,B2. Toggling off the sole anchor A2 leaves no selected items, but Shift-click B2 selects A2,B2. These follow-up gestures show the actions preserve the existing range anchor, including a deselected anchor.
+api_limit	REAPER ReaScript exposes selected items but not the private range-anchor field; the anchor is inferred from native Shift-click outcomes.
+screenshot_baseline	item-hover-anchor-baseline-shift-native.png; SHA-256 aa9a5283c3c67caf178e0accf54e72e69092eb682e27b414b211566af37e3772
+screenshot_40529_before_shift	item-hover-anchor-40529-before-shift-native.png; SHA-256 5b8d280b8995a6d627fdb17bc1d1af62b72a36ad9f1a012962a12c8cb59460f5
+screenshot_40529_after_shift	item-hover-anchor-40529-after-shift-native.png; SHA-256 9340e68a186c580d33c635e53bc7be1a5f0bdf17e20643ef5017f11675a9c6b8
+version	7.82/linux-x86_64
+theme	Default_7.0.ReaperThemeZip
+fixture	Two tracks; MIDI items A1/A2 and B1/B2 at 1-2, 4-5, 1-2, and 3-4 seconds
+step	action_id	pointer_xy	hovered_item	selected_items_api	selected_flags	project_state_count	undo_label
+baseline_A1_click		500,140	A1	A1	A1	2	Change media item selection
+baseline_shift_A1_to_B2		700,225	B2	A1,B1,B2	A1,B1,B2	3	Change media item selection
+add_A2_40529_before	40529	800,140	A2	A1	A1	4	Change media item selection
+add_A2_40529_after	40529	800,140	A2	A1,A2	A1,A2	6	Change media item selection
+after_40529_add_A2		800,140	A2	A1,A2	A1,A2	6	Change media item selection
+after_40529_shift_A2_to_B2		700,225	B2	A1,A2,B1,B2	A1,A2,B1,B2	7	Change media item selection
+add_A2_40530_before	40530	800,140	A2	A1	A1	8	Change media item selection
+add_A2_40530_after	40530	800,140	A2	A1,A2	A1,A2	10	Change media item selection
+after_40530_add_A2		800,140	A2	A1,A2	A1,A2	10	Change media item selection
+after_40530_shift_A2_to_B2		700,225	B2	A1,A2,B1,B2	A1,A2,B1,B2	11	Change media item selection
+add_A2_before_remove_before	40529	800,140	A2	A1	A1	12	Change media item selection
+add_A2_before_remove_after	40529	800,140	A2	A1,A2	A1,A2	14	Change media item selection
+toggle_A2_remove_before	40530	800,140	A2	A1,A2	A1,A2	14	Change media item selection
+toggle_A2_remove_after	40530	800,140	A2	A1	A1	16	Change media item selection
+after_40530_remove_A2		800,140	A2	A1	A1	16	Change media item selection
+after_40530_remove_shift_A2_to_B2		700,225	B2	A1,B1,B2	A1,B1,B2	17	Change media item selection
+toggle_anchor_A2_off_before	40530	800,140	A2	A2	A2	18	Change media item selection
+toggle_anchor_A2_off_after	40530	800,140	A2			20	Change media item selection
+after_40530_anchor_off_empty		800,140	A2			20	Change media item selection
+after_40530_anchor_off_shift_B2		700,225	B2	A2,B2	A2,B2	21	Change media item selection

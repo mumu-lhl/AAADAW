@@ -681,6 +681,14 @@ fn keyboard_shortcuts(app: &App, compact: bool) -> Element<'_, Message> {
                 Length::Fixed(150.0)
             })
             .on_press(Message::StartShortcutCapture(action_id.clone()));
+        let add = button("Add")
+            .height(if compact {
+                Length::Fixed(48.0)
+            } else {
+                Length::Shrink
+            })
+            .style(button::text)
+            .on_press(Message::AddShortcutBinding(action_id.clone()));
         let clear = button("Clear")
             .height(if compact {
                 Length::Fixed(48.0)
@@ -702,12 +710,12 @@ fn keyboard_shortcuts(app: &App, compact: bool) -> Element<'_, Message> {
         let row: Element<'_, Message> = if compact {
             column![
                 label,
-                row![binding, clear, restore].spacing(tokens::ROW_GAP)
+                row![binding, add, clear, restore].spacing(tokens::ROW_GAP)
             ]
             .spacing(tokens::ROW_GAP)
             .into()
         } else {
-            row![label, binding, clear, restore]
+            row![label, binding, add, clear, restore]
                 .spacing(6)
                 .align_y(Alignment::Center)
                 .into()

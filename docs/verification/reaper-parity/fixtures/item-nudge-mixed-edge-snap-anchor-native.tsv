@@ -1,0 +1,34 @@
+version	7.82/linux-x86_64
+theme	Default_7.0.ReaperThemeZip
+dialog_action	41226
+fixture	loop-source Audio at 2s and loop-source MIDI at 6s; each 10s; source-length API units are seconds for Audio and QN for MIDI; note, CC, and pitch bend
+baseline	state_change_count	2	state_change_delta	0	item_count	2	undo_label	Mixed Set edge probe setup
+baseline_item	0	type	audio	position_s	2.000400000	length_s	10.000000000	loop_source	1	source_offset_s	0.000000000	source_length_native_units	4.000000000	selected	1	notes		controllers		midi_counts	none
+baseline_item	1	type	midi	position_s	6.000600000	length_s	9.999400000	loop_source	1	source_offset_s	0.000000000	source_length_native_units	19.998958333	selected	1	notes	0,0,0,960.000,1920.000,0,60,96	controllers	0,0,0,2880.000,176,0,1,80;1,0,0,3840.000,224,0,0,80	midi_counts	1	2	0
+left_trim_nudge_snap_after	state_change_count	3	state_change_delta	1	item_count	2	undo_label	Nudge items
+left_trim_nudge_snap_after_item	0	type	audio	position_s	2.001000000	length_s	9.999400000	loop_source	1	source_offset_s	0.000600000	source_length_native_units	4.000000000	selected	1	notes		controllers		midi_counts	none
+left_trim_nudge_snap_after_item	1	type	midi	position_s	6.001200000	length_s	9.998800000	loop_source	1	source_offset_s	0.000600000	source_length_native_units	19.998958333	selected	1	notes	0,0,0,960.000,1920.000,0,60,96	controllers	0,0,0,2880.000,176,0,1,80;1,0,0,3840.000,224,0,0,80	midi_counts	1	2	0
+undo_left_trim_nudge_snap	state_change_count	4	state_change_delta	2	item_count	2	undo_label	Mixed Set edge probe setup
+undo_left_trim_nudge_snap_item	0	type	audio	position_s	2.000400000	length_s	10.000000000	loop_source	1	source_offset_s	0.000000000	source_length_native_units	4.000000000	selected	1	notes		controllers		midi_counts	none
+undo_left_trim_nudge_snap_item	1	type	midi	position_s	6.000600000	length_s	9.999400000	loop_source	1	source_offset_s	0.000000000	source_length_native_units	19.998958333	selected	1	notes	0,0,0,960.000,1920.000,0,60,96	controllers	0,0,0,2880.000,176,0,1,80;1,0,0,3840.000,224,0,0,80	midi_counts	1	2	0
+end_position_nudge_snap_after	state_change_count	4	state_change_delta	2	item_count	2	undo_label	Mixed Set edge probe setup
+end_position_nudge_snap_after_item	0	type	audio	position_s	2.001000000	length_s	10.000000000	loop_source	1	source_offset_s	0.000000000	source_length_native_units	4.000000000	selected	1	notes		controllers		midi_counts	none
+end_position_nudge_snap_after_item	1	type	midi	position_s	6.001200000	length_s	9.999400000	loop_source	1	source_offset_s	0.000000000	source_length_native_units	19.998958333	selected	1	notes	0,0,0,960.000,1920.000,0,60,96	controllers	0,0,0,2880.000,176,0,1,80;1,0,0,3840.000,224,0,0,80	midi_counts	1	2	0
+undo_end_position_nudge_snap	state_change_count	6	state_change_delta	4	item_count	2	undo_label	Mixed Set edge probe setup
+undo_end_position_nudge_snap_item	0	type	audio	position_s	2.000400000	length_s	10.000000000	loop_source	1	source_offset_s	0.000000000	source_length_native_units	4.000000000	selected	1	notes		controllers		midi_counts	none
+undo_end_position_nudge_snap_item	1	type	midi	position_s	6.000600000	length_s	9.999400000	loop_source	1	source_offset_s	0.000000000	source_length_native_units	19.998958333	selected	1	notes	0,0,0,960.000,1920.000,0,60,96	controllers	0,0,0,2880.000,176,0,1,80;1,0,0,3840.000,224,0,0,80	midi_counts	1	2	0
+right_trim_nudge_snap_after	state_change_count	6	state_change_delta	4	item_count	2	undo_label	Mixed Set edge probe setup
+right_trim_nudge_snap_after_item	0	type	audio	position_s	2.000400000	length_s	10.000600000	loop_source	1	source_offset_s	0.000000000	source_length_native_units	4.000000000	selected	1	notes		controllers		midi_counts	none
+right_trim_nudge_snap_after_item	1	type	midi	position_s	6.000600000	length_s	10.000000000	loop_source	1	source_offset_s	0.000000000	source_length_native_units	19.998958333	selected	1	notes	0,0,0,960.000,1920.000,0,60,96	controllers	0,0,0,2880.000,176,0,1,80;1,0,0,3840.000,224,0,0,80	midi_counts	1	2	0
+undo_right_trim_nudge_snap	state_change_count	8	state_change_delta	6	item_count	2	undo_label	Mixed Set edge probe setup
+undo_right_trim_nudge_snap_item	0	type	audio	position_s	2.000400000	length_s	10.000000000	loop_source	1	source_offset_s	0.000000000	source_length_native_units	4.000000000	selected	1	notes		controllers		midi_counts	none
+undo_right_trim_nudge_snap_item	1	type	midi	position_s	6.000600000	length_s	9.999400000	loop_source	1	source_offset_s	0.000000000	source_length_native_units	19.998958333	selected	1	notes	0,0,0,960.000,1920.000,0,60,96	controllers	0,0,0,2880.000,176,0,1,80;1,0,0,3840.000,224,0,0,80	midi_counts	1	2	0
+end_position_nudge_snap_0_8_after	state_change_count	8	state_change_delta	6	item_count	2	undo_label	Mixed Set edge probe setup
+end_position_nudge_snap_0_8_after_item	0	type	audio	position_s	2.001000000	length_s	10.000000000	loop_source	1	source_offset_s	0.000000000	source_length_native_units	4.000000000	selected	1	notes		controllers		midi_counts	none
+end_position_nudge_snap_0_8_after_item	1	type	midi	position_s	6.001200000	length_s	9.999400000	loop_source	1	source_offset_s	0.000000000	source_length_native_units	19.998958333	selected	1	notes	0,0,0,960.000,1920.000,0,60,96	controllers	0,0,0,2880.000,176,0,1,80;1,0,0,3840.000,224,0,0,80	midi_counts	1	2	0
+undo_end_position_nudge_snap_0_8	state_change_count	10	state_change_delta	8	item_count	2	undo_label	Mixed Set edge probe setup
+undo_end_position_nudge_snap_0_8_item	0	type	audio	position_s	2.000400000	length_s	10.000000000	loop_source	1	source_offset_s	0.000000000	source_length_native_units	4.000000000	selected	1	notes		controllers		midi_counts	none
+undo_end_position_nudge_snap_0_8_item	1	type	midi	position_s	6.000600000	length_s	9.999400000	loop_source	1	source_offset_s	0.000000000	source_length_native_units	19.998958333	selected	1	notes	0,0,0,960.000,1920.000,0,60,96	controllers	0,0,0,2880.000,176,0,1,80;1,0,0,3840.000,224,0,0,80	midi_counts	1	2	0
+right_trim_nudge_snap_0_8_after	state_change_count	10	state_change_delta	8	item_count	2	undo_label	Mixed Set edge probe setup
+right_trim_nudge_snap_0_8_after_item	0	type	audio	position_s	2.000400000	length_s	10.000600000	loop_source	1	source_offset_s	0.000000000	source_length_native_units	4.000000000	selected	1	notes		controllers		midi_counts	none
+right_trim_nudge_snap_0_8_after_item	1	type	midi	position_s	6.000600000	length_s	10.000000000	loop_source	1	source_offset_s	0.000000000	source_length_native_units	19.998958333	selected	1	notes	0,0,0,960.000,1920.000,0,60,96	controllers	0,0,0,2880.000,176,0,1,80;1,0,0,3840.000,224,0,0,80	midi_counts	1	2	0

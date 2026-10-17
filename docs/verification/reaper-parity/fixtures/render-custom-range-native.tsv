@@ -1,0 +1,20 @@
+field	value
+version	Linux REAPER 7.82/linux-x86_64 rev 338578
+theme	Default_7.0.ReaperThemeZip; isolated factory configuration
+audio_device	Dummy Audio; no hardware I/O
+fixture	48 kHz stereo PCM24 source; one-second media items at [0,1], [2,3], [4,5]; source SHA-256 3fc2b329a255fba613ee7af55714f8a2facb47b9352ec1859b8bb9e4b502f5d6
+ui_bounds_selection	Custom time range
+ui_start	0:00.123
+ui_end	0:02.456
+ui_length	0:02.333
+ui_tail	Disabled
+ui_render_button	Render 1 file
+output_format	WAV PCM24 stereo, 48000 Hz
+output_range	[0.123, 2.456) seconds; samples [5904, 117888)
+output_frames	111984
+output_audio_data_bytes	671904
+output_size_bytes	672594
+output_sha256	606363d0f5b5149ffe3ed3907355232ed53ca7fd626bcd01e593f35d8011882d
+screenshot	fixtures/render-custom-range-native.png; SHA-256 9295f97fb8cf58be3650279e7b998ab1e25ca2806af998dbe5219bdca96ed416
+probe	../../../scripts/reaper_parity/probe-render-custom-range.lua creates the disposable source project; enter the recorded values in the actual Bounds controls before rendering
+setter_caution	Project RENDER_STARTPOS and RENDER_ENDPOS only initialize the probe; semantics were checked in the actual Render window and exported WAV

@@ -1,0 +1,8 @@
+reference	7.82/linux-x86_64; Linux; Default 7
+folder_main_send_enabled_note_on	1
+folder_main_send_enabled_note_off	1
+leaf_parent_send_disabled_note_on	0
+leaf_parent_send_disabled_note_off	0
+inner_parent_send_disabled_note_on	0
+inner_parent_send_disabled_note_off	0
+probe	JSFX counts incoming MIDI in the folder parent during offline project render

@@ -1,0 +1,9 @@
+version	7.82/linux-x86_64
+theme	Default_7.0.ReaperThemeZip
+action_40632	Go to start of loop
+action_40633	Go to end of loop
+case	cursor_after_seconds
+no_loop_go_to_start	4.000000
+no_loop_go_to_end	4.000000
+loop_go_to_start	1.000000
+loop_go_to_end	2.000000

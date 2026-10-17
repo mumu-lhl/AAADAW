@@ -23,6 +23,7 @@ fn midi_notes_can_be_added_queried_and_undone() {
         .apply(DawAction::AddMidiNotes {
             item_id,
             notes: vec![MidiNoteData {
+                channel: 0,
                 pitch: 60,
                 tick: 0,
                 duration: 960,
@@ -38,6 +39,60 @@ fn midi_notes_can_be_added_queried_and_undone() {
     assert!(project.midi_items()[0].notes().is_empty());
     assert!(project.redo().expect("redo should succeed"));
     assert_eq!(project.midi_items()[0].notes()[0].pitch(), 60);
+}
+
+#[test]
+fn midi_item_mute_is_undoable_and_survives_snapshot_and_duplicate() {
+    let mut project = Project::new();
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Piano".to_owned(),
+        })
+        .expect("creating a track should succeed");
+    let track_id = project.tracks()[0].id();
+    project
+        .apply(DawAction::InsertMidiItem {
+            track_id,
+            start_tick: 0,
+            length_ticks: 3_840,
+        })
+        .expect("inserting a MIDI item should succeed");
+    let item_id = project.midi_items()[0].id();
+    project
+        .apply(DawAction::AddMidiNotes {
+            item_id,
+            notes: vec![MidiNoteData {
+                channel: 0,
+                pitch: 60,
+                tick: 0,
+                duration: 960,
+                velocity: 100,
+            }],
+        })
+        .expect("adding a MIDI note should succeed");
+    project
+        .apply(DawAction::SetMidiItemMute {
+            item_id,
+            muted: true,
+        })
+        .expect("MIDI item should mute");
+
+    assert!(project.midi_items()[0].is_muted());
+    let restored = Project::from_snapshot(project.snapshot()).expect("snapshot should restore");
+    assert!(restored.midi_items()[0].is_muted());
+    assert_eq!(restored.midi_items()[0].notes().len(), 1);
+
+    assert!(project.undo().expect("mute should undo"));
+    assert!(!project.midi_items()[0].is_muted());
+    assert!(project.redo().expect("mute should redo"));
+    assert!(project.midi_items()[0].is_muted());
+
+    project
+        .apply(DawAction::DuplicateMidiItem { item_id })
+        .expect("muted MIDI item should duplicate");
+    assert_eq!(project.midi_items().len(), 2);
+    assert!(project.midi_items().iter().all(|item| item.is_muted()));
 }
 
 #[test]
@@ -62,6 +117,7 @@ fn midi_note_edits_change_timing_and_velocity_with_undo_redo() {
         .apply(DawAction::AddMidiNotes {
             item_id,
             notes: vec![MidiNoteData {
+                channel: 0,
                 pitch: 60,
                 tick: 0,
                 duration: 960,
@@ -72,6 +128,7 @@ fn midi_note_edits_change_timing_and_velocity_with_undo_redo() {
     let note_id = project.midi_items()[0].notes()[0].id();
 
     let edited = MidiNoteData {
+        channel: 0,
         pitch: 67,
         tick: 120,
         duration: 480,

@@ -37,12 +37,46 @@ impl App {
                 .set_mime_type("application/octet-stream")
                 .add_filter("AAADAW project", &["aaadaw"])
                 .save_data(Vec::<u8>::new(), completion),
+            PathPickerTarget::SaveProjectTemplate => robius_file_picker::FileDialog::new()
+                .set_title("Save AAADAW project template")
+                .set_file_name("template.aaadaw")
+                .set_mime_type("application/octet-stream")
+                .add_filter("AAADAW project template", &["aaadaw"])
+                .save_data(Vec::<u8>::new(), completion),
             PathPickerTarget::ExportWav => robius_file_picker::FileDialog::new()
                 .set_title("Render project to WAV")
                 .set_file_name("render.wav")
                 .set_mime_type("audio/wav")
                 .add_filter("WAV audio", &["wav"])
                 .save_data(Vec::<u8>::new(), completion),
+            PathPickerTarget::ExportMidi => robius_file_picker::FileDialog::new()
+                .set_title("Export project MIDI")
+                .set_file_name("project.mid")
+                .set_mime_type("audio/midi")
+                .add_filter("MIDI files", &["mid", "midi"])
+                .save_data(Vec::<u8>::new(), completion),
+            PathPickerTarget::ExportShortcutMap => robius_file_picker::FileDialog::new()
+                .set_title("Export AAADAW shortcut map")
+                .set_file_name("Shortcuts.aaadawkeymap")
+                .set_mime_type("text/plain")
+                .add_filter("AAADAW shortcut map", &["aaadawkeymap"])
+                .save_data(Vec::<u8>::new(), completion),
+            PathPickerTarget::ExportReaperKeyMap => robius_file_picker::FileDialog::new()
+                .set_title("Export REAPER 7.82 Main key map")
+                .set_file_name("Shortcuts.ReaperKeyMap")
+                .set_mime_type("text/plain")
+                .add_filter("REAPER key map", &["ReaperKeyMap"])
+                .save_data(Vec::<u8>::new(), completion),
+            PathPickerTarget::ImportShortcutMap => robius_file_picker::FileDialog::new()
+                .set_title("Import AAADAW shortcut map")
+                .set_mime_type("text/plain")
+                .add_filter("AAADAW shortcut map", &["aaadawkeymap"])
+                .pick_file(completion),
+            PathPickerTarget::ImportReaperKeyMap => robius_file_picker::FileDialog::new()
+                .set_title("Import REAPER 7.82 Main key map")
+                .set_mime_type("text/plain")
+                .add_filter("REAPER key map", &["ReaperKeyMap"])
+                .pick_file(completion),
             PathPickerTarget::ImportAudio
             | PathPickerTarget::ImportAudioToProject
             | PathPickerTarget::RelinkAudio => robius_file_picker::FileDialog::new()
@@ -78,10 +112,19 @@ impl App {
                 };
                 let result = run_blocking("aaadaw-document-stage", move || {
                     let path = match target {
-                        PathPickerTarget::SaveProject | PathPickerTarget::ExportWav => {
+                        PathPickerTarget::SaveProject
+                        | PathPickerTarget::SaveProjectTemplate
+                        | PathPickerTarget::ExportWav
+                        | PathPickerTarget::ExportMidi
+                        | PathPickerTarget::ExportShortcutMap
+                        | PathPickerTarget::ExportReaperKeyMap => {
                             crate::android_platform::prepare_saf_save(
                                 file,
-                                matches!(target, PathPickerTarget::SaveProject),
+                                matches!(
+                                    target,
+                                    PathPickerTarget::SaveProject
+                                        | PathPickerTarget::SaveProjectTemplate
+                                ),
                             )
                         }
                         PathPickerTarget::AddClapPluginPath => {
@@ -108,6 +151,30 @@ impl App {
             self.status = "A file dialog is already open".to_owned();
             return Task::none();
         }
+        let midi_export_name = self
+            .midi_export_dialog
+            .as_ref()
+            .and_then(|dialog| {
+                PathBuf::from(&dialog.destination)
+                    .file_name()
+                    .map(|name| name.to_string_lossy().into_owned())
+            })
+            .unwrap_or_else(|| "midi_export.mid".to_owned());
+        let template_file_name = self
+            .project_path
+            .as_deref()
+            .and_then(std::path::Path::file_stem)
+            .map_or_else(
+                || "Project template.aaadaw".to_owned(),
+                |name| format!("{}.aaadaw", name.to_string_lossy()),
+            );
+        let template_directory = super::project_templates::directory();
+        if let Some(directory) = template_directory.as_ref()
+            && let Err(error) = std::fs::create_dir_all(directory)
+        {
+            self.status = format!("Could not create project template folder: {error}");
+            return Task::none();
+        }
         self.path_picker_busy = true;
         self.active_menu = None;
         Task::perform(
@@ -122,11 +189,44 @@ impl App {
                         .set_file_name("project.aaadaw")
                         .add_filter("AAADAW project", &["aaadaw"])
                         .save_file(),
+                    PathPickerTarget::SaveProjectTemplate => {
+                        let mut dialog = rfd::FileDialog::new()
+                            .set_title("Save AAADAW project template")
+                            .set_file_name(template_file_name)
+                            .add_filter("AAADAW project template", &["aaadaw"]);
+                        if let Some(directory) = template_directory {
+                            dialog = dialog.set_directory(directory);
+                        }
+                        dialog.save_file()
+                    }
                     PathPickerTarget::ExportWav => rfd::FileDialog::new()
                         .set_title("Render project to WAV")
                         .set_file_name("render.wav")
                         .add_filter("WAV audio", &["wav"])
                         .save_file(),
+                    PathPickerTarget::ExportMidi => rfd::FileDialog::new()
+                        .set_title("Export project MIDI")
+                        .set_file_name(midi_export_name)
+                        .add_filter("MIDI files", &["mid", "midi"])
+                        .save_file(),
+                    PathPickerTarget::ExportShortcutMap => rfd::FileDialog::new()
+                        .set_title("Export AAADAW shortcut map")
+                        .set_file_name("Shortcuts.aaadawkeymap")
+                        .add_filter("AAADAW shortcut map", &["aaadawkeymap"])
+                        .save_file(),
+                    PathPickerTarget::ExportReaperKeyMap => rfd::FileDialog::new()
+                        .set_title("Export REAPER 7.82 Main key map")
+                        .set_file_name("Shortcuts.ReaperKeyMap")
+                        .add_filter("REAPER key map", &["ReaperKeyMap"])
+                        .save_file(),
+                    PathPickerTarget::ImportShortcutMap => rfd::FileDialog::new()
+                        .set_title("Import AAADAW shortcut map")
+                        .add_filter("AAADAW shortcut map", &["aaadawkeymap"])
+                        .pick_file(),
+                    PathPickerTarget::ImportReaperKeyMap => rfd::FileDialog::new()
+                        .set_title("Import REAPER 7.82 Main key map")
+                        .add_filter("REAPER key map", &["ReaperKeyMap"])
+                        .pick_file(),
                     PathPickerTarget::ImportAudio | PathPickerTarget::ImportAudioToProject => {
                         rfd::FileDialog::new()
                             .set_title("Choose audio to import")
@@ -171,7 +271,70 @@ impl App {
                     self.active_menu = None;
                     super::project_io::save_project(self, Some(path))
                 }
+                PathPickerTarget::SaveProjectTemplate => self.save_project_template(path),
                 PathPickerTarget::ExportWav => self.start_offline_render(path),
+                PathPickerTarget::ExportMidi => {
+                    if let Some(dialog) = &mut self.midi_export_dialog {
+                        dialog.destination = path.to_string_lossy().into_owned();
+                    }
+                    Task::none()
+                }
+                PathPickerTarget::ImportShortcutMap => {
+                    self.path_picker_busy = true;
+                    Task::perform(
+                        super::run_blocking("aaadaw-shortcut-map-import", move || {
+                            super::shortcut_map::read(&path)
+                        }),
+                        Message::ShortcutMapImported,
+                    )
+                }
+                PathPickerTarget::ExportShortcutMap => {
+                    let path = if path.extension().is_none() {
+                        path.with_extension("aaadawkeymap")
+                    } else {
+                        path
+                    };
+                    let bindings = self
+                        .shortcut_bindings
+                        .read()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner)
+                        .clone();
+                    self.path_picker_busy = true;
+                    Task::perform(
+                        super::run_blocking("aaadaw-shortcut-map-export", move || {
+                            super::shortcut_map::write(&path, &bindings)
+                        }),
+                        Message::ShortcutMapExported,
+                    )
+                }
+                PathPickerTarget::ImportReaperKeyMap => {
+                    self.path_picker_busy = true;
+                    Task::perform(
+                        super::run_blocking("aaadaw-reaper-keymap-import", move || {
+                            super::shortcut_map::read_reaper(&path)
+                        }),
+                        Message::ReaperKeyMapImported,
+                    )
+                }
+                PathPickerTarget::ExportReaperKeyMap => {
+                    let path = if path.extension().is_none() {
+                        path.with_extension("ReaperKeyMap")
+                    } else {
+                        path
+                    };
+                    let bindings = self
+                        .shortcut_bindings
+                        .read()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner)
+                        .clone();
+                    self.path_picker_busy = true;
+                    Task::perform(
+                        super::run_blocking("aaadaw-reaper-keymap-export", move || {
+                            super::shortcut_map::write_reaper(&path, &bindings)
+                        }),
+                        Message::ReaperKeyMapExported,
+                    )
+                }
                 PathPickerTarget::ImportAudio => {
                     self.audio_file_path_query = path.to_string_lossy().into_owned();
                     Task::none()
@@ -201,6 +364,7 @@ impl App {
             Ok(None) => {
                 if matches!(target, PathPickerTarget::OpenProject) {
                     self.pending_project_transition = None;
+                    self.pending_project_path_to_open = None;
                     self.status = "Open cancelled; current project was kept".to_owned();
                 }
                 if self.status == "Wait for the file dialog to finish" {
@@ -211,6 +375,7 @@ impl App {
             Err(error) => {
                 if matches!(target, PathPickerTarget::OpenProject) {
                     self.pending_project_transition = None;
+                    self.pending_project_path_to_open = None;
                 }
                 self.status = format!("File dialog failed: {error}");
                 Task::none()
@@ -302,8 +467,8 @@ impl App {
                 .ok_or_else(|| "Add an audio track before importing audio".to_owned())?
         };
         let start_sample = self
-            .project
-            .sample_at_tick(self.timeline.edit_cursor_tick)
+            .timeline
+            .edit_cursor_sample(&self.project)
             .map_err(|error| format!("Edit cursor is outside the project time range: {error}"))?;
         Ok((track.id(), start_sample))
     }
@@ -817,7 +982,10 @@ impl App {
                         .imported_actions
                         .iter()
                         .filter_map(|action| match action {
-                            DawAction::InsertAudioItem { media_ref, .. } => Some(media_ref.clone()),
+                            DawAction::InsertAudioItem { media_ref, .. }
+                            | DawAction::InsertLoopedAudioItem { media_ref, .. } => {
+                                Some(media_ref.clone())
+                            }
                             _ => None,
                         })
                         .collect::<Vec<_>>();
@@ -973,7 +1141,8 @@ fn cleanup_recorded_import(target: &super::RecordImportTarget) -> Result<(), Str
         .imported_actions
         .iter()
         .filter_map(|action| match action {
-            DawAction::InsertAudioItem { media_ref, .. } => Some(media_ref.clone()),
+            DawAction::InsertAudioItem { media_ref, .. }
+            | DawAction::InsertLoopedAudioItem { media_ref, .. } => Some(media_ref.clone()),
             _ => None,
         })
         .collect::<Vec<_>>();

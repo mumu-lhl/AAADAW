@@ -24,7 +24,7 @@ The Arrangement opens with one audio track and one four-second item. The melody 
 
 ## Play and mix
 
-The transport stays at the bottom of the main window. Press **Space** or click **Play** to play/pause. **Stop** returns to the playback start; **Restart** returns to the project start. Clicking the ruler moves the edit cursor. To seek the playhead while stopped, enter a sample position in the transport's **Sample** field and click **Seek**.
+The transport stays at the bottom of the main window. Press **Space** to toggle play/stop. **Enter** or **Ctrl+Space** toggles play/pause; the desktop has separate **Play**, **Pause**, and **Stop** buttons. **Stop** returns to the playback start; **Restart** returns to the project start. Clicking the ruler moves the edit cursor. To seek the playhead while stopped, enter a sample position in the transport's **Sample** field and click **Seek**.
 
 Adjust track volume and pan in its track controls. The Master output is protected by a configurable sample-peak ceiling; this is not a loudness meter or true-peak limiter.
 
@@ -43,7 +43,8 @@ AAADAW may create a sibling `.aaapeaks` file for waveform previews. It is a rebu
 | Duplicate selected item | Ctrl+D | Ctrl+D |
 | Delete selected items | Delete or Backspace | Delete or Backspace |
 | Split selected items at edit cursor | S | S |
-| Play/pause | Space | Space |
+| Play/stop | Space | Space |
+| Play/pause | Enter or Ctrl+Space | Enter or Ctrl+Space |
 
 Change or restore bindings in **File → Settings… → Keyboard Shortcuts**. The app uses platform command modifiers; the table shows their current Linux and Windows labels. Keyboard shortcuts only run when a text field or another control has not consumed the key.
 

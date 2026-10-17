@@ -1,0 +1,42 @@
+-- Run only in an isolated Linux REAPER 7.82 / Default 7 session.
+-- Set AAADAW_REAPER_PROBE_DIR before launching this script through REAPER.
+-- Use a fresh REAPER config with midiexport=0 for All / Entire project.
+local root = assert(os.getenv("AAADAW_REAPER_PROBE_DIR")) .. "/"
+assert(reaper.GetAppVersion() == "7.82/linux-x86_64")
+assert(reaper.GetLastColorThemeFile():match("Default_7%.0%.ReaperThemeZip$"))
+assert(reaper.GetPlayStateEx(0) == 0)
+local _, project_path = reaper.EnumProjects(-1, "")
+assert(project_path == "", "Run this probe in a fresh, unsaved project")
+assert(reaper.CountTracks(0) == 0, "Run this probe in an empty project")
+
+reaper.InsertTrackAtIndex(0, true)
+reaper.InsertTrackAtIndex(1, true)
+local folder = assert(reaper.GetTrack(0, 0))
+local child = assert(reaper.GetTrack(0, 1))
+reaper.GetSetMediaTrackInfo_String(folder, "P_NAME", "Muted Folder", true)
+reaper.GetSetMediaTrackInfo_String(child, "P_NAME", "MIDI Child", true)
+reaper.SetMediaTrackInfo_Value(folder, "I_FOLDERDEPTH", 1)
+reaper.SetMediaTrackInfo_Value(child, "I_FOLDERDEPTH", -1)
+reaper.SetMediaTrackInfo_Value(folder, "B_MUTE", 1)
+
+local item = assert(reaper.CreateNewMIDIItemInProj(child, 0, 1, false))
+local take = assert(reaper.GetActiveTake(item))
+assert(reaper.MIDI_InsertNote(take, false, false, 0, 240, 0, 60, 100, false))
+reaper.MIDI_Sort(take)
+reaper.SetTrackSelected(folder, false)
+reaper.SetTrackSelected(child, false)
+reaper.SetMediaItemSelected(item, false)
+assert(not reaper.IsMediaItemSelected(item))
+
+reaper.Main_SaveProjectEx(0, root .. "menu-export-midi-native-folder-muted.rpp", 0)
+local metadata = assert(io.open(root .. "folder-muted.tsv", "w"))
+metadata:write("version\t", reaper.GetAppVersion(), "\n")
+metadata:write("theme\tDefault_7.0.ReaperThemeZip\n")
+metadata:write("folder_muted\ttrue\n")
+metadata:write("child_track_muted\tfalse\n")
+metadata:write("item_muted\tfalse\n")
+metadata:write("item_selected\tfalse\n")
+metadata:write("item_track\tMIDI Child inside Muted Folder\n")
+metadata:write("export_scope\tAll / Entire project (midiexport=0)\n")
+metadata:close()
+reaper.Main_OnCommand(40849, 0)

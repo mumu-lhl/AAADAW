@@ -1,0 +1,26 @@
+version	7.82/linux-x86_64
+theme	Default_7.0.ReaperThemeZip
+fixture	track AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA; item 0.25-1.25 seconds; C4 note; CC1; pitch bend
+track_name_unicode_scalars	127
+track_name_utf8_bytes	127
+exported_track_name_ascii_bytes	127
+exported_track_name_meta_length_vlq	7F
+project_frame_rate	30.000000 fps; drop-frame false
+project_time_offset_seconds	0.000000000
+native_project_fixture	fixtures/menu-export-midi-native-track-name-127-ascii.rpp
+native_project_sha256	967fdfd17870cfda63a15aa75aed89ef216b6bf5ac7e4156d0777f7cf98d415e
+export_action	40849
+export_mode	Multitrack MIDI file (type 1 MIDI file)
+export_ppqn	960
+export_tempo_meter_changes	unchecked
+export_smpte_offset	unchecked
+export_markers	unchecked; fixture has no project markers
+native_midi_track_name_event	FF 03 7F followed by 127 ASCII bytes
+native_midi_track_events	C4 note-on tick 480, CC1 tick 720, pitch bend tick 840, note-off and End-of-Track tick 1440
+native_export_fixture	fixtures/menu-export-midi-native-track-name-127-ascii.mid
+native_export_bytes	234
+native_export_sha256	db8043b66bc6eb1742e9167ad4a455f88b10416e3d2e9c75f8ba057fb9b61d29
+native_dialog_screenshot	fixtures/menu-export-midi-native-track-name-127-ascii-dialog.png; SHA-256 587c7fc94df857631003cd95e767c0d98d428483e03970fadde9b423cbc7c30d
+native_probe	scripts/reaper_parity/probe-midi-export-content.lua; AAADAW_REAPER_TRACK_NAME_BYTES=127; saved native project and track-name readback
+reaper_binary_build_id	fb9ade2f211bc91a3ee6193630ef17bcf5f6528b
+reaper_binary_sha256	9976f5608068b7a58518969001b00b527fb0de6ed7459e0e5dda6f29878ee254

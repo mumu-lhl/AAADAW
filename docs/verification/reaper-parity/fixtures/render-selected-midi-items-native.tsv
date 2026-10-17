@@ -1,0 +1,22 @@
+key	value
+reference	Linux REAPER 7.82/linux-x86_64 rev 338578; Default 7; official Linux x86_64 archive SHA-256 a4aa961534f22ae5ae910e4ec0c200dcb4476c9f7556806fe09a9743cd582563
+probe	scripts/reaper_parity/probe-render-midi-item.lua; isolated -cfgfile profile; Xvfb 1280x800; audio device closed
+project	fixtures/render-selected-midi-items-native.rpp; MIDI render fixture track with ReaSynth and three one-second MIDI items at 0s, 2s, and 4s
+items	All take names are MIDI Hit; each has MIDI note 60, velocity 100; first and third items are selected, middle item is not selected
+source	Selected media items; Render dialog reports 2 media items
+pattern	$item-$namenumber-$itemnumber
+format	WAV PCM 24-bit; 48000 Hz; stereo; each render is 1.000 second / 48,000 frames
+output_1	MIDI Hit-01-01.wav; selected project item 1; $namenumber=01; $itemnumber=01
+output_1_wav_sha256	5892cd76dfa39a3c98e796d974c2f53b73889f6ccc0c1795048cc9b06ff55ae3
+output_2	MIDI Hit-02-03.wav; selected project item 3; $namenumber=02; $itemnumber=03
+output_2_wav_sha256	5721feffea92b369511d0ada477d6f87d8aadbc0f8ea6092e899c29bbb02183e
+pcm_data_sha256_each	5c56027ba734ddf18f11008794bc6d0434fb25494c4942ffa8814a23ce1adb7e
+pcm_payloads_byte_equal	true; the identical notes through the same ReaSynth render to the same PCM24 data
+sample_peak	3310443; -8.0761 dBFS for both outputs
+sample_rms	-14.0949 dBFS for both outputs
+render_dialog_screenshot	fixtures/render-selected-midi-items-native.png
+render_dialog_screenshot_sha256	71e993782df29b097cbd88e91bb08d3ce552db45bf7f48c30b97a39cf9e7dafe
+finished_screenshot	fixtures/render-selected-midi-items-finished-native.png
+finished_screenshot_sha256	767aba6686f71698760c20d9ea998564f424a38904cd55ead01fed655686a356
+project_sha256	5abb3dda47570748f0eb3786a9133581619abd848a70132cd7c3e7734c718d00
+aaadaw_comparison	Wildcard ordering matches App regression coverage; AAADAW does not yet load the native VST2 ReaSynth, so plugin PCM equality with REAPER is not claimed

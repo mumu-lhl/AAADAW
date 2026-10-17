@@ -1,0 +1,55 @@
+version	7.82/linux-x86_64
+theme	Default_7.0.ReaperThemeZip
+dialog_action	41226
+fixture	two selected loop-source Audio items at 2s and 6s; each 10s long; source offsets 0s
+baseline	state_change_count	4	state_change_delta	0	item_count	2	undo_label	Set edge multi-select probe setup
+baseline_item_1	position_s	2.000000000	length_s	10.000000000	loop_source	1	source_offset_s	0.000000000	selected	1
+baseline_item_2	position_s	6.000000000	length_s	10.000000000	loop_source	1	source_offset_s	0.000000000	selected	1
+baseline_end_absolute	state_change_count	4	state_change_delta	0	item_count	2	undo_label	Set edge multi-select probe setup
+baseline_end_absolute_item_1	position_s	2.000000000	length_s	10.000000000	loop_source	1	source_offset_s	0.000000000	selected	1
+baseline_end_absolute_item_2	position_s	6.000000000	length_s	10.000000000	loop_source	1	source_offset_s	0.000000000	selected	1
+end_absolute14	state_change_count	5	state_change_delta	1	item_count	2	undo_label	Nudge items
+end_absolute14_item_1	position_s	4.000000000	length_s	10.000000000	loop_source	1	source_offset_s	0.000000000	selected	1
+end_absolute14_item_2	position_s	4.000000000	length_s	10.000000000	loop_source	1	source_offset_s	0.000000000	selected	1
+undo_end_absolute14	state_change_count	6	state_change_delta	2	item_count	2	undo_label	Set edge multi-select probe setup
+undo_end_absolute14_item_1	position_s	2.000000000	length_s	10.000000000	loop_source	1	source_offset_s	0.000000000	selected	1
+undo_end_absolute14_item_2	position_s	6.000000000	length_s	10.000000000	loop_source	1	source_offset_s	0.000000000	selected	1
+redo_end_absolute14	state_change_count	7	state_change_delta	3	item_count	2	undo_label	Nudge items
+redo_end_absolute14_item_1	position_s	4.000000000	length_s	10.000000000	loop_source	1	source_offset_s	0.000000000	selected	1
+redo_end_absolute14_item_2	position_s	4.000000000	length_s	10.000000000	loop_source	1	source_offset_s	0.000000000	selected	1
+baseline_left_edge	state_change_count	7	state_change_delta	0	item_count	2	undo_label	Nudge items
+baseline_left_edge_item_1	position_s	2.000000000	length_s	10.000000000	loop_source	1	source_offset_s	0.000000000	selected	1
+baseline_left_edge_item_2	position_s	6.000000000	length_s	10.000000000	loop_source	1	source_offset_s	0.000000000	selected	1
+left_edge4	state_change_count	8	state_change_delta	1	item_count	2	undo_label	Nudge items
+left_edge4_item_1	position_s	4.000000000	length_s	8.000000000	loop_source	1	source_offset_s	0.000000000	selected	1
+left_edge4_item_2	position_s	4.000000000	length_s	12.000000000	loop_source	1	source_offset_s	0.000000000	selected	1
+baseline_right_trim	state_change_count	8	state_change_delta	0	item_count	2	undo_label	Nudge items
+baseline_right_trim_item_1	position_s	2.000000000	length_s	10.000000000	loop_source	1	source_offset_s	0.000000000	selected	1
+baseline_right_trim_item_2	position_s	6.000000000	length_s	10.000000000	loop_source	1	source_offset_s	0.000000000	selected	1
+right_trim14	state_change_count	9	state_change_delta	1	item_count	2	undo_label	Nudge items
+right_trim14_item_1	position_s	2.000000000	length_s	12.000000000	loop_source	1	source_offset_s	0.000000000	selected	1
+right_trim14_item_2	position_s	6.000000000	length_s	8.000000000	loop_source	1	source_offset_s	0.000000000	selected	1
+baseline_end_relative2	state_change_count	9	state_change_delta	0	item_count	2	undo_label	Nudge items
+baseline_end_relative2_item_1	position_s	2.000000000	length_s	10.000000000	loop_source	1	source_offset_s	0.000000000	selected	1
+baseline_end_relative2_item_2	position_s	6.000000000	length_s	10.000000000	loop_source	1	source_offset_s	0.000000000	selected	1
+end_relative2	state_change_count	9	state_change_delta	0	item_count	2	undo_label	Nudge items
+end_relative2_item_1	position_s	2.000000000	length_s	10.000000000	loop_source	1	source_offset_s	0.000000000	selected	1
+end_relative2_item_2	position_s	6.000000000	length_s	10.000000000	loop_source	1	source_offset_s	0.000000000	selected	1
+end_relative_plus2	state_change_count	9	state_change_delta	0	item_count	2	undo_label	Nudge items
+end_relative_plus2_item_1	position_s	2.000000000	length_s	10.000000000	loop_source	1	source_offset_s	0.000000000	selected	1
+end_relative_plus2_item_2	position_s	6.000000000	length_s	10.000000000	loop_source	1	source_offset_s	0.000000000	selected	1
+baseline_end_relative14	state_change_count	9	state_change_delta	0	item_count	2	undo_label	Nudge items
+baseline_end_relative14_item_1	position_s	2.000000000	length_s	10.000000000	loop_source	1	source_offset_s	0.000000000	selected	1
+baseline_end_relative14_item_2	position_s	6.000000000	length_s	10.000000000	loop_source	1	source_offset_s	0.000000000	selected	1
+end_relative14	state_change_count	10	state_change_delta	1	item_count	2	undo_label	Nudge items
+end_relative14_item_1	position_s	0.000000000	length_s	10.000000000	loop_source	1	source_offset_s	0.000000000	selected	1
+end_relative14_item_2	position_s	4.000000000	length_s	10.000000000	loop_source	1	source_offset_s	0.000000000	selected	1
+baseline_left_trim	state_change_count	10	state_change_delta	0	item_count	2	undo_label	Nudge items
+baseline_left_trim_item_1	position_s	2.000000000	length_s	10.000000000	loop_source	1	source_offset_s	0.000000000	selected	1
+baseline_left_trim_item_2	position_s	6.000000000	length_s	10.000000000	loop_source	1	source_offset_s	0.000000000	selected	1
+left_trim4	state_change_count	10	state_change_delta	0	item_count	2	undo_label	Nudge items
+left_trim4_item_1	position_s	2.000000000	length_s	10.000000000	loop_source	1	source_offset_s	0.000000000	selected	1
+left_trim4_item_2	position_s	6.000000000	length_s	10.000000000	loop_source	1	source_offset_s	0.000000000	selected	1
+left_trim4	state_change_count	11	state_change_delta	1	item_count	2	undo_label	Nudge items
+left_trim4_item_1	position_s	4.000000000	length_s	8.000000000	loop_source	1	source_offset_s	2.000000000	selected	1
+left_trim4_item_2	position_s	4.000000000	length_s	12.000000000	loop_source	1	source_offset_s	2.000000000	selected	1

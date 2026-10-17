@@ -1,0 +1,15 @@
+key	value
+reference	AAADAW Linux desktop; Xvfb 1280x800; isolated XDG configuration
+project	/tmp/aaadaw-selected-midi-render-ui.aaadaw; one instrument track; three MIDI items named MIDI Hit
+selection	One MIDI item selected by a real desktop click; Render reports 1 media item
+render_source	Selected media items
+render_description	Renders each selected audio or MIDI item as a separate WAV; MIDI items use their track instrument
+render_window	640x720
+desktop_build_id	1fd2ab7bfe4eea51469db16fe56b66671e51f7d9
+desktop_binary_sha256	abf644e43d64a6e95eae7a64c30be454b0b2e48ac87dc65ed2da02f81ab087e2
+capture_script	scripts/reaper_parity/capture-render-filename-pattern-aaadaw.sh
+capture_environment	AAADAW_PROJECT_PATH=/tmp/aaadaw-selected-midi-render-ui.aaadaw; AAADAW_SELECT_PROJECT_ITEM_AT=420,200; AAADAW_SELECT_RENDER_SOURCE=selected-media-items
+screenshot	fixtures/render-selected-midi-items-aaadaw.png
+screenshot_sha256	9d2e13da4f2300afa025b9d4e111c5ba7464853eea3ab9a7ae629a5981109c74
+offline_render_test	selected_midi_item_source_renders_only_its_timeline_range; 48 kHz; 24,000 frames for the selected 0.5-second item
+native_comparison	Native REAPER 7.82 / Default 7 ReaSynth render confirms Selected media items routing and `$item-$namenumber-$itemnumber` output ordering; see fixtures/render-selected-midi-items-native.tsv

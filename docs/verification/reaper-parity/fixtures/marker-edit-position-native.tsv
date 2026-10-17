@@ -1,0 +1,5 @@
+step	操作	Name	Position before	Edit cursor before	Position draft	Action	Position after	Edit cursor after	Observed
+dialog	REAPER 7.82 Default 7; double-click marker	3.1.50	3.2.00	3.1.50	3.2.00	open	3.2.00	3.1.50	Name field receives focus; ID is 1; Lane displays 2; Position uses bar.beat.hundredths
+cancel	Set Position to 3.3.00 then click Cancel	3.1.50	3.1.50	3.1.50	3.3.00	cancel	3.1.50	3.1.50	Manager Start remains 3.1.50
+accept	Set Position from 3.1.50 to 3.2.00 then click OK	3.1.50	3.1.50	3.1.50	3.2.00	accept	3.2.00	3.1.50	Marker moves independently; Position Undo was not independently verified
+cancel-clean	Set Position to 3.3.00 then click Cancel	3.1.50	3.1.50	3.2.00	3.3.00	cancel	3.2.00	3.1.50	Clean Manager screenshot confirms Start remains 3.2.00

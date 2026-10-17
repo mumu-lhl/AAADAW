@@ -90,6 +90,7 @@ pub fn add_quarter_note(project: &Project, item_id: ItemId) -> Result<DawAction,
     Ok(DawAction::AddMidiNotes {
         item_id,
         notes: vec![MidiNoteData {
+            channel: 0,
             pitch: 60,
             tick,
             duration,
@@ -225,6 +226,7 @@ fn find_note(
         .find(|note| note.id() == note_id)
         .ok_or(MidiEditError::NoteNotFound)?;
     Ok(MidiNoteData {
+        channel: note.channel(),
         pitch: note.pitch(),
         tick: note.tick(),
         duration: note.duration(),

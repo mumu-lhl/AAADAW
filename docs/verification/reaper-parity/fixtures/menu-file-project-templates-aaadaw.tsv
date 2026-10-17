@@ -1,0 +1,18 @@
+record	value
+reference	Linux REAPER 7.82 / Default 7 File menu fixture `menu-file-native.png` shows the Project templates cascade parent; no populated native template list was captured
+application	AAADAW Linux desktop binary from the final worktree; `--no-default-features`
+aaadaw_binary_sha256	`c4aa545bf69890a7857b6a383cc24f624b044ccce62514b25438441ca835dc20`
+display	Xvfb :517, 1280x800x24; isolated XDG config/data/state/cache/runtime
+template_fixture	`examples/first-project/first-project.aaadaw` copied to the isolated `aaadaw/ProjectTemplates/First Project.aaadaw`
+template_source_sha256	`956cc6027f75f66e4cda3570eb9e5926e1cbf0a9682fbfccf2f9e90c1fb9d9f2`
+template_copy_sha256	`956cc6027f75f66e4cda3570eb9e5926e1cbf0a9682fbfccf2f9e90c1fb9d9f2`; identical to the source before and after both opens
+mouse_open	Clicked File at (35,30), Project templates at (142,286), then First Project at (493,289)
+mouse_cascade_capture	`menu-file-project-templates-cascade-aaadaw.png`; SHA-256 `e42ea7b47702bfc7c20dae3ca2622daa7369fb41662bf3364da2c088e85765f0`
+mouse_open_capture	`menu-file-project-template-opened-aaadaw.png`; SHA-256 `5ff32441655c14cab64764d3371adf4319fff0b41c899a10d3246b83fd15310d`
+keyboard_open	Clicked File, focused the AAADAW window, then sent Down ×6 → Right → Down → Enter through XTest
+keyboard_cascade_capture	`menu-file-project-template-cascade-keyboard-aaadaw.png`; SHA-256 `f6e6232d4c10fb475168edfb8c2c99ee21fd50090229b0c4aab41a6df709e5a1`
+keyboard_open_capture	`menu-file-project-template-opened-keyboard-aaadaw.png`; SHA-256 `3ac80ddf021817ab5c883e1d9a1680ad94eeb324c00b05497e9e17dc9decd840`
+open_result	Window title `First Project.aaadaw — AAADAW`; Audio track and `melody.wav` waveform loaded; status `Created project from template First Project.aaadaw`
+recent_projects	No `recent-projects.json` was created in the isolated configuration; template working copies do not enter the MRU list
+source_safety	The template database SHA-256 remained identical to the bundled source after mouse and keyboard opens
+parity_limit	Populated REAPER template-list order, native save dialog, template defaults/format, and project-tab semantics remain unverified or incomplete
