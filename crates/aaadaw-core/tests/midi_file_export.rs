@@ -522,6 +522,55 @@ fn reaper_782_selected_track_time_scope_without_overlap_exports_empty_header() {
 }
 
 #[test]
+fn reaper_782_all_time_scope_without_overlap_exports_empty_header() {
+    let mut project = Project::new();
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Unselected track".to_owned(),
+        })
+        .unwrap();
+    let track_id = project.tracks()[0].id();
+    project
+        .apply(DawAction::InsertMidiItem {
+            track_id,
+            start_tick: 0,
+            length_ticks: 1_920,
+        })
+        .unwrap();
+    let item_id = project.midi_items()[0].id();
+    project
+        .apply(DawAction::AddMidiNotes {
+            item_id,
+            notes: vec![MidiNoteData {
+                pitch: 60,
+                tick: 0,
+                duration: 240,
+                velocity: 100,
+            }],
+        })
+        .unwrap();
+
+    let options = MidiExportOptions {
+        time_scope: MidiExportTimeScope::TimeSelectionOnly,
+        ..MidiExportOptions::for_project(&project)
+    };
+    let selection = MidiExportSelection {
+        selected_track_ids: Vec::new(),
+        selected_item_ids: Vec::new(),
+        time_selection_ticks: Some((3_840, 5_760)),
+    };
+    assert!(!midi_export_has_items_in_scope(&project, options, &selection).unwrap());
+    let actual =
+        encode_standard_midi_with_selection(&project, options, "midi_export", &selection).unwrap();
+    let native = include_bytes!(
+        "../../../docs/verification/reaper-parity/fixtures/menu-export-midi-native-scope-all-time-empty.mid"
+    );
+
+    assert_eq!(actual, native);
+}
+
+#[test]
 fn reaper_782_export_skips_muted_midi_items() {
     let project = native_midi_muted_scope_fixture(false, true);
     let options = MidiExportOptions::for_project(&project);
