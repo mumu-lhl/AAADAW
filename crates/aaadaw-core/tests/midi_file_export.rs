@@ -803,6 +803,27 @@ fn reaper_782_type_zero_midi_export_selected_track_and_time_selection_match_nati
 }
 
 #[test]
+fn reaper_782_type_zero_midi_export_all_items_and_time_selection_match_native() {
+    let (project, selection, _) = native_midi_scope_intersection_fixture_project();
+    let options = MidiExportOptions {
+        file_type: MidiFileType::Type0,
+        time_scope: MidiExportTimeScope::TimeSelectionOnly,
+        ..MidiExportOptions::for_project(&project)
+    };
+    let actual =
+        encode_standard_midi_with_selection(&project, options, "type0-all-time", &selection)
+            .unwrap();
+    let native = include_bytes!(
+        "../../../docs/verification/reaper-parity/fixtures/menu-export-midi-native-scope-all-time-type0.mid"
+    );
+
+    assert_eq!(
+        actual, native,
+        "Type 0 all-items + time-selection output matches REAPER's merged event track"
+    );
+}
+
+#[test]
 fn reaper_782_midi_export_selected_item_outside_time_selection_matches_native_empty_track() {
     let (project, selection, _) = native_midi_scope_intersection_fixture_project();
     let options = MidiExportOptions {
@@ -848,6 +869,34 @@ fn reaper_782_midi_export_selected_item_inside_time_selection_matches_native() {
     );
 
     assert_eq!(actual, native);
+}
+
+#[test]
+fn reaper_782_type_zero_midi_export_selected_item_and_time_selection_match_native() {
+    let (project, mut selection, in_range_item_id) =
+        native_midi_scope_intersection_fixture_project();
+    selection.selected_item_ids = vec![in_range_item_id];
+    let options = MidiExportOptions {
+        file_type: MidiFileType::Type0,
+        item_scope: MidiExportItemScope::SelectedItemsOnly,
+        time_scope: MidiExportTimeScope::TimeSelectionOnly,
+        ..MidiExportOptions::for_project(&project)
+    };
+    let actual = encode_standard_midi_with_selection(
+        &project,
+        options,
+        "type0-selected-items-time",
+        &selection,
+    )
+    .unwrap();
+    let native = include_bytes!(
+        "../../../docs/verification/reaper-parity/fixtures/menu-export-midi-native-scope-selected-items-time-type0.mid"
+    );
+
+    assert_eq!(
+        actual, native,
+        "Type 0 selected-item + time-selection output matches REAPER's merged event track"
+    );
 }
 
 #[test]
