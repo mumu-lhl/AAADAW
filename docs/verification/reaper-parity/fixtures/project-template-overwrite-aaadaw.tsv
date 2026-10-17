@@ -1,0 +1,18 @@
+record	value
+application	Linux desktop AAADAW built with `--no-default-features`; final production binary recorded below
+production_binary_sha256	`fb584c8e12d4a32898c559f9fb8d4c163523934067786122dac17057b0259146`
+production_build_id	`15f1879ec05fe16f99974e024d517cb789f6943b`
+screenshot_build_sha256	`94462fb4c980d1f68f5e208e5df4138180691b8bd0b9d23a52673952c403392b`
+screenshot_build_id	`58bdcec7dcd60c439c3121ec62cef1141a091f16`; this build contained a temporary, uncommitted initialization hook used only to seed the pending modal for capture
+capture	Actual 1280×800 AAADAW Xvfb window on display `:944`; isolated XDG config/data/cache/state/runtime; seeded path was a valid `Existing.aaadaw` template in the isolated template directory
+normal_production_launch	The final binary without the capture hook launched on Xvfb `:945`; `xwininfo` observed the 1280×800 `New project — AAADAW` window and its startup log had no error
+production_capture_hook	Absent from final source and production binary; the capture-only binary and its identity are recorded separately above
+full_window	`project-template-overwrite-dialog-aaadaw.png`; SHA-256 `d5918f220c74710f45c4d1f8186da3ae2297c65d7a0bf146d24cd4f36e19df55`; 1280×800
+modal_crop	`project-template-overwrite-confirm-aaadaw.png`; SHA-256 `9a5565c67482b572d79a8d1adad390215fa0d17e55193b98519e4ac44ea7f854`; 520×122
+native_comparison	REAPER 7.82 / Default 7 modal crop is 521×126 (`project-template-overwrite-confirm-native.png`); AAADAW keeps this sample absolute path on one line and centers OK/Cancel
+normal_picker_route	Not visually exercised: this minimal Xvfb environment has no XDG desktop portal or `zenity` file-dialog provider. The capture hook is absent from the final source; the normal picker-to-prompt path is covered by app-level tests
+behavior_tests	`confirmed_project_template_overwrite_replaces_the_file_atomically`; `failed_project_template_overwrite_preserves_the_existing_file`; `project_template_overwrite_prompt_is_modal_and_escape_cancels_without_writing`; `project_template_overwrite_refuses_to_replace_the_open_project_file`
+full_app_tests	Stable AAADAW desktop suite: 716 passed, 0 failed
+static_checks	Strict all-target Clippy with `-D warnings`, `cargo fmt --all -- --check`, and `git diff --check` passed
+visual_limit	Dialog geometry is close to native, but AAADAW's dark surface, blue primary button, and text spacing differ from REAPER; pixel-level styling and a normal picker-driven capture remain open
+parity_status	`SHELL-PROJECT-TEMPLATE-001` remains `in_progress`; Android template saving, multiple project tabs, and REAPER's complete template/default-project format remain incomplete

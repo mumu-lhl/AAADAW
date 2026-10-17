@@ -16,4 +16,4 @@ overwrite_confirmation	`project-template-overwrite-confirm-native.png`; SHA-256 
 overwrite_cancel	Cancel preserved the existing `alpha.RPP` SHA-256 `3285ebbf604e27ead2584c242747f71d08775e65c7d539e1f9a8c5ad7a0d5ff4` and the template directory's two entries.
 alpha_template	`alpha.RPP`; SHA-256 `3285ebbf604e27ead2584c242747f71d08775e65c7d539e1f9a8c5ad7a0d5ff4`
 zeta_template	`Zeta.RPP`; SHA-256 `665875e0480878248703db8c5133260a9d2ff5f276b96cc2f97928534ca3e6e2`
-parity_limit	AAADAW uses `.aaadaw` and currently rejects duplicate template names without presenting REAPER's overwrite confirmation. REAPER's complete template format/default-project behavior remains outside this fixture.
+parity_limit	AAADAW uses `.aaadaw` and now offers an overwrite confirmation with atomic replacement after OK; see `project-template-overwrite-aaadaw.tsv` for AAADAW evidence. REAPER's complete template format/default-project behavior remains outside this fixture.

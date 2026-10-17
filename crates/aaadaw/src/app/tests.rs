@@ -7209,6 +7209,115 @@ fn saving_a_project_as_template_creates_a_valid_non_overwritable_copy() {
 }
 
 #[test]
+fn confirmed_project_template_overwrite_replaces_the_file_atomically() {
+    let directory = tempfile::tempdir().expect("test directory should be created");
+    let template_path = directory.path().join("Blank Project.aaadaw");
+    let mut original_app = App::default();
+    let _ = original_app.update(Message::AddTrack);
+    super::project_io::save_project_template(
+        template_path.clone(),
+        original_app.project.snapshot(),
+        ArrangementViewState::default(),
+        None,
+    )
+    .expect("the original template should be saved");
+    assert_eq!(
+        load_project_file(template_path.clone())
+            .unwrap()
+            .tracks()
+            .len(),
+        1
+    );
+
+    let mut replacement_app = App::default();
+    let _ = replacement_app.update(Message::AddTrack);
+    let _ = replacement_app.update(Message::AddTrack);
+    super::project_io::overwrite_project_template(
+        template_path.clone(),
+        replacement_app.project.snapshot(),
+        ArrangementViewState::default(),
+        None,
+    )
+    .expect("an explicitly confirmed template can be replaced");
+
+    assert_eq!(load_project_file(template_path).unwrap().tracks().len(), 2);
+}
+
+#[test]
+fn failed_project_template_overwrite_preserves_the_existing_file() {
+    let directory = tempfile::tempdir().expect("test directory should be created");
+    let template_path = directory.path().join("Blank Project.aaadaw");
+    super::project_io::save_project_template(
+        template_path.clone(),
+        Project::new().snapshot(),
+        ArrangementViewState::default(),
+        None,
+    )
+    .expect("the original template should be saved");
+    let original_bytes = std::fs::read(&template_path).unwrap();
+    let invalid_media_source = directory.path().join("invalid-source.aaadaw");
+    std::fs::write(&invalid_media_source, b"not an AAADAW project").unwrap();
+
+    let error = super::project_io::overwrite_project_template(
+        template_path.clone(),
+        Project::new().snapshot(),
+        ArrangementViewState::default(),
+        Some(invalid_media_source),
+    )
+    .expect_err("a failed write must not replace the existing template");
+
+    assert!(!error.is_empty());
+    assert_eq!(std::fs::read(&template_path).unwrap(), original_bytes);
+    assert!(load_project_file(template_path).is_ok());
+}
+
+#[test]
+fn project_template_overwrite_prompt_is_modal_and_escape_cancels_without_writing() {
+    let directory = tempfile::tempdir().expect("test directory should be created");
+    let template_path = directory.path().join("Existing.aaadaw");
+    let original = b"existing template file";
+    std::fs::write(&template_path, original).unwrap();
+    let mut app = App::default();
+
+    let _ = app.request_project_template_save(template_path.clone(), directory.path());
+    assert_eq!(
+        app.pending_project_template_overwrite.as_deref(),
+        Some(template_path.as_path())
+    );
+    assert!(!app.io_busy);
+
+    let _ = app.update(Message::AddTrack);
+    assert!(app.project.tracks().is_empty());
+    let _ = app.update(Message::Escape);
+
+    assert!(app.pending_project_template_overwrite.is_none());
+    assert_eq!(app.status, "Project template overwrite cancelled");
+    assert_eq!(std::fs::read(template_path).unwrap(), original);
+}
+
+#[test]
+fn project_template_overwrite_refuses_to_replace_the_open_project_file() {
+    let directory = tempfile::tempdir().expect("test directory should be created");
+    let template_path = directory.path().join("Existing.aaadaw");
+    let original = b"existing template file";
+    std::fs::write(&template_path, original).unwrap();
+    let mut app = App {
+        project_path: Some(template_path.clone()),
+        pending_project_template_overwrite: Some(template_path.clone()),
+        ..App::default()
+    };
+
+    let _ = app.update(Message::ConfirmProjectTemplateOverwrite);
+
+    assert!(app.pending_project_template_overwrite.is_none());
+    assert_eq!(
+        app.status,
+        "Cannot overwrite a project template while it is open"
+    );
+    assert_eq!(std::fs::read(template_path).unwrap(), original);
+}
+
+#[test]
 fn close_all_projects_routes_through_the_guarded_single_project_close() {
     let mut app = App {
         project_path_query: "current.aaadaw".to_owned(),

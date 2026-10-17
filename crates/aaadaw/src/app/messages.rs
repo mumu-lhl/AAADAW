@@ -548,6 +548,8 @@ pub(crate) enum Message {
     OpenProjectTemplate(PathBuf),
     ProjectTemplateCopied(PathBuf, Result<(PathBuf, PathBuf), String>),
     ProjectTemplateSaved(PathBuf, Result<(), String>),
+    ConfirmProjectTemplateOverwrite,
+    CancelProjectTemplateOverwrite,
     OpenProject,
     SaveProject,
     SaveProjectNewVersion,

@@ -146,13 +146,35 @@ pub(super) fn save_project_template(
         return Err("a project template with that name already exists".to_owned());
     }
     let mut lock = ProjectSessionLock::acquire(&path).map_err(|error| error.to_string())?;
-    save_project_session_file_with_media(
+    let project = Project::from_snapshot(snapshot).map_err(|error| error.to_string())?;
+    save_new_project_session_file(
         path,
-        snapshot,
-        arrangement_view_state,
-        false,
-        Some(&mut lock),
+        &project,
+        &arrangement_view_state,
+        &mut lock,
         source_media_path,
+        false,
+    )
+}
+
+pub(super) fn overwrite_project_template(
+    path: PathBuf,
+    snapshot: ProjectSnapshot,
+    arrangement_view_state: ArrangementViewState,
+    source_media_path: Option<PathBuf>,
+) -> Result<(), String> {
+    if !path.is_file() {
+        return Err("the project template to overwrite no longer exists".to_owned());
+    }
+    let mut lock = ProjectSessionLock::acquire(&path).map_err(|error| error.to_string())?;
+    let project = Project::from_snapshot(snapshot).map_err(|error| error.to_string())?;
+    save_new_project_session_file(
+        path,
+        &project,
+        &arrangement_view_state,
+        &mut lock,
+        source_media_path,
+        true,
     )
 }
 
@@ -387,6 +409,7 @@ pub(super) fn save_project_session_file_with_media(
             &arrangement_view_state,
             new_session_lock,
             source_media_path,
+            false,
         );
     }
     if !can_overwrite && path.exists() {
@@ -408,6 +431,7 @@ fn save_new_project_session_file(
     arrangement_view_state: &ArrangementViewState,
     new_session_lock: &mut ProjectSessionLock,
     source_media_path: Option<PathBuf>,
+    replace_existing: bool,
 ) -> Result<(), String> {
     let parent = path
         .parent()
@@ -439,8 +463,14 @@ fn save_new_project_session_file(
     let close = store.close().map_err(|error| error.to_string());
     save?;
     close?;
-    temporary_path
-        .persist_noclobber(&path)
-        .map_err(|error| error.error.to_string())?;
+    if replace_existing {
+        temporary_path
+            .persist(&path)
+            .map_err(|error| error.error.to_string())?;
+    } else {
+        temporary_path
+            .persist_noclobber(&path)
+            .map_err(|error| error.error.to_string())?;
+    }
     Ok(())
 }

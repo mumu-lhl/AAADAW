@@ -399,6 +399,50 @@ fn desktop_view(app: &App) -> Element<'_, Message> {
             .height(Length::Fill)
             .into();
     }
+    if let Some(path) = &app.pending_project_template_overwrite {
+        let dialog = container(
+            column![
+                text("File exists:").size(13),
+                text(path.display().to_string())
+                    .size(10)
+                    .width(Length::Fill),
+                text("Overwrite?").size(13),
+                container(
+                    row![
+                        button(text("OK")).on_press(Message::ConfirmProjectTemplateOverwrite),
+                        button(text("Cancel"))
+                            .style(button::secondary)
+                            .on_press(Message::CancelProjectTemplateOverwrite),
+                    ]
+                    .spacing(tokens::SECTION_GAP)
+                    .align_y(Alignment::Center),
+                )
+                .width(Length::Fill)
+                .center_x(Length::Fill),
+            ]
+            .spacing(tokens::ROW_GAP),
+        )
+        .width(Length::Fixed(520.0))
+        .padding(tokens::SPACING_LG)
+        .style(iced::widget::container::rounded_box);
+        let backdrop = mouse_area(
+            container(dialog)
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .center(Length::Fill)
+                .style(|_| iced::widget::container::Style {
+                    background: Some(iced::Background::Color(iced::Color::from_rgba8(
+                        0, 0, 0, 0.66,
+                    ))),
+                    ..iced::widget::container::Style::default()
+                }),
+        )
+        .on_press(Message::CancelProjectTemplateOverwrite);
+        return stack![layered, backdrop]
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .into();
+    }
     if let Some(track_ids) = &app.pending_focused_track_deletion {
         let count = track_ids.len();
         let noun = if count == 1 { "track" } else { "tracks" };

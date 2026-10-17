@@ -17,4 +17,4 @@ unit_verification	`CARGO_TARGET_DIR=target/verify-stable PKG_CONFIG_PATH=target/
 full_app_suite	`cargo xtest -p aaadaw --bin aaadaw`: 696 passed, 0 skipped.
 strict_clippy	`cargo clippy --locked -p aaadaw --bin aaadaw --all-targets -- -D warnings`: no issues.
 format_and_diff	`cargo fmt --all -- --check` and `git diff --check` passed.
-parity_limit	REAPER uses `.RPP` and asks before overwriting. AAADAW uses `.aaadaw` and currently rejects a duplicate template without prompting. Multiple project tabs and complete native template/default-project behavior remain incomplete.
+parity_limit	REAPER uses `.RPP` and asks before overwriting. AAADAW now confirms before atomically replacing a duplicate `.aaadaw`; screenshot and workflow limits are recorded in `project-template-overwrite-aaadaw.tsv`. Multiple project tabs and complete native template/default-project behavior remain incomplete.

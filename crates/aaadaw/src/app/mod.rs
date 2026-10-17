@@ -346,6 +346,7 @@ struct App {
     recent_projects_menu_open: bool,
     project_template_paths: Vec<PathBuf>,
     project_templates_menu_open: bool,
+    pending_project_template_overwrite: Option<PathBuf>,
     pending_project_path_to_open: Option<PathBuf>,
     pending_project_template_source: Option<PathBuf>,
     pending_project_template_working_copy: Option<project_templates::WorkingCopy>,
@@ -1837,6 +1838,19 @@ impl App {
                 &message,
                 Message::ConfirmFocusedTrackDeletion
                     | Message::CancelFocusedTrackDeletion
+                    | Message::Escape
+                    | Message::RuntimeKeyboardEvent(..)
+                    | Message::BackgroundTick
+                    | Message::MeterTick
+            )
+        {
+            return Task::none();
+        }
+        if self.pending_project_template_overwrite.is_some()
+            && !matches!(
+                &message,
+                Message::ConfirmProjectTemplateOverwrite
+                    | Message::CancelProjectTemplateOverwrite
                     | Message::Escape
                     | Message::RuntimeKeyboardEvent(..)
                     | Message::BackgroundTick
@@ -3955,6 +3969,29 @@ impl App {
                     self.keyboard_modifiers = *modifiers;
                     self.timeline.modifiers = *modifiers;
                 }
+                if self.pending_project_template_overwrite.is_some() {
+                    if self.main_window_id == Some(window_id)
+                        && status == iced::event::Status::Ignored
+                        && let iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
+                            key: iced::keyboard::Key::Named(key),
+                            modifiers,
+                            repeat: false,
+                            ..
+                        }) = &event
+                        && modifiers.is_empty()
+                    {
+                        match key {
+                            iced::keyboard::key::Named::Enter => {
+                                return self.update(Message::ConfirmProjectTemplateOverwrite);
+                            }
+                            iced::keyboard::key::Named::Escape => {
+                                return self.update(Message::CancelProjectTemplateOverwrite);
+                            }
+                            _ => {}
+                        }
+                    }
+                    return Task::none();
+                }
                 if self.pending_focused_track_deletion.is_some() {
                     if self.main_window_id == Some(window_id)
                         && status == iced::event::Status::Ignored
@@ -4307,6 +4344,10 @@ impl App {
                 self.transport_details_open = !self.transport_details_open;
             }
             Message::Escape => {
+                if self.pending_project_template_overwrite.take().is_some() {
+                    self.status = "Project template overwrite cancelled".to_owned();
+                    return Task::none();
+                }
                 if self.midi_export_window_id.is_some() {
                     return self.close_midi_export_dialog();
                 }
@@ -5755,6 +5796,16 @@ impl App {
                     Err(error) => {
                         self.status = format!("Could not save project template: {error}");
                     }
+                }
+            }
+            Message::ConfirmProjectTemplateOverwrite => {
+                if let Some(path) = self.pending_project_template_overwrite.take() {
+                    task = self.overwrite_project_template(path);
+                }
+            }
+            Message::CancelProjectTemplateOverwrite => {
+                if self.pending_project_template_overwrite.take().is_some() {
+                    self.status = "Project template overwrite cancelled".to_owned();
                 }
             }
             Message::ProjectSaved(path, revision, result, plugin_state_warning, shared_lock) => {
@@ -12584,35 +12635,112 @@ impl App {
     }
 
     fn save_project_template(&mut self, selected_path: PathBuf) -> Task<Message> {
-        if self.io_busy || self.unsaved_session_snapshot_busy || self.path_picker_busy {
-            self.status = "Wait for the current project operation to finish".to_owned();
-            return Task::none();
-        }
         let Some(template_directory) = project_templates::directory() else {
             self.status = "Project template folder is unavailable".to_owned();
             return Task::none();
         };
-        let path = match project_templates::resolve_save_path(&selected_path, &template_directory) {
+        self.request_project_template_save(selected_path, &template_directory)
+    }
+
+    fn request_project_template_save(
+        &mut self,
+        selected_path: PathBuf,
+        template_directory: &std::path::Path,
+    ) -> Task<Message> {
+        if self.io_busy || self.unsaved_session_snapshot_busy || self.path_picker_busy {
+            self.status = "Wait for the current project operation to finish".to_owned();
+            return Task::none();
+        }
+        let path = match project_templates::resolve_save_path(&selected_path, template_directory) {
             Ok(path) => path,
             Err(error) => {
                 self.status = error;
                 return Task::none();
             }
         };
+        match std::fs::symlink_metadata(&path) {
+            Ok(_) if path.is_file() => {
+                self.pending_project_template_overwrite = Some(path.clone());
+                self.active_menu = None;
+                self.project_templates_menu_open = false;
+                self.status = format!("File exists: {}. Overwrite?", path.display());
+                return Task::none();
+            }
+            Ok(_) => {
+                self.status = format!("Project template path is not a file: {}", path.display());
+                return Task::none();
+            }
+            Err(error) if error.kind() != std::io::ErrorKind::NotFound => {
+                self.status = format!("Could not inspect project template path: {error}");
+                return Task::none();
+            }
+            Err(_) => {}
+        }
+        self.write_project_template(path, false)
+    }
+
+    fn overwrite_project_template(&mut self, path: PathBuf) -> Task<Message> {
+        if self.io_busy || self.unsaved_session_snapshot_busy || self.path_picker_busy {
+            self.status = "Wait for the current project operation to finish".to_owned();
+            return Task::none();
+        }
+        if self
+            .project_path
+            .as_deref()
+            .is_some_and(|project_path| project_templates::same_path(project_path, &path))
+        {
+            self.status = "Cannot overwrite a project template while it is open".to_owned();
+            return Task::none();
+        }
+        match std::fs::symlink_metadata(&path) {
+            Ok(_) if path.is_file() => self.write_project_template(path, true),
+            Ok(_) => {
+                self.status = format!("Project template path is not a file: {}", path.display());
+                Task::none()
+            }
+            Err(error) => {
+                self.status = if error.kind() == std::io::ErrorKind::NotFound {
+                    "Project template no longer exists; choose a new template name".to_owned()
+                } else {
+                    format!("Could not inspect project template path: {error}")
+                };
+                Task::none()
+            }
+        }
+    }
+
+    fn write_project_template(&mut self, path: PathBuf, overwrite: bool) -> Task<Message> {
+        if self.io_busy || self.unsaved_session_snapshot_busy || self.path_picker_busy {
+            self.status = "Wait for the current project operation to finish".to_owned();
+            return Task::none();
+        }
         let snapshot = self.project.snapshot();
         let view_state = self.project_arrangement_view_state();
         let source_media_path = self.media_store_path();
         self.io_busy = true;
-        self.status = format!("Saving project template {}…", path.display());
+        self.status = if overwrite {
+            format!("Overwriting project template {}…", path.display())
+        } else {
+            format!("Saving project template {}…", path.display())
+        };
         Task::perform(
             run_blocking("aaadaw-project-template-save", move || {
-                project_io::save_project_template(
-                    path.clone(),
-                    snapshot,
-                    view_state,
-                    source_media_path,
-                )
-                .map(|()| path)
+                let save = if overwrite {
+                    project_io::overwrite_project_template(
+                        path.clone(),
+                        snapshot,
+                        view_state,
+                        source_media_path,
+                    )
+                } else {
+                    project_io::save_project_template(
+                        path.clone(),
+                        snapshot,
+                        view_state,
+                        source_media_path,
+                    )
+                };
+                save.map(|()| path)
             }),
             |result| match result {
                 Ok(path) => Message::ProjectTemplateSaved(path, Ok(())),
