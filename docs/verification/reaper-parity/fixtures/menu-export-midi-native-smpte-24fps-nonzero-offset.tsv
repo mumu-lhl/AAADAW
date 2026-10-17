@@ -23,5 +23,5 @@ native_export_sha256	e7299698df0c36e8178330ea549afb5c4a6d088f889081ca4354ff67b20
 native_dialog_screenshot	fixtures/menu-export-midi-native-smpte-24fps-nonzero-offset-dialog.png
 native_dialog_screenshot_sha256	40c3a1b8d370591e65d23c197fd322324cd2fa34f6a900dacd80addb304cc93c
 native_dialog_observed	Type 1; PPQN 960; Embed SMPTE offset checked
-native_probe	scripts/reaper_parity/probe-midi-export-smpte-24fps.lua
+native_probe	scripts/reaper_parity/probe-midi-export-smpte-rate.lua
 native_probe_readback	24.000000 fps; drop-frame false; project offset 10.500000000 seconds

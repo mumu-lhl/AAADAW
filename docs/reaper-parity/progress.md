@@ -1915,6 +1915,12 @@ An isolated Linux REAPER 7.82 / Default 7 probe loaded a project at 24 fps non-d
 
 Added `reaper_782_type_one_24fps_nonzero_smpte_offset_matches_native_bytes`. Stable `aaadaw-core` Nextest passed 159/159; strict all-target Core Clippy with `-D warnings`, rustfmt, and `git diff --check` passed. `FILE-MIDI-EXPORT-001` remains `in_progress`: 23.976/25/29.97 fps and drop-frame offsets, remaining option combinations, and full dialog alignment still need native comparison.
 
+### 2026-10-17 MIDI export: 25 fps SMPTE offset byte parity
+
+Extended the isolated Linux REAPER 7.82 / Default 7 probe to load a 25 fps non-drop project with a 10.5-second offset and verify both values through REAPER's API. The native Type 1, PPQN 960 export with Embed SMPTE offset checked contains `FF 54 05 20 00 0A 0C 00` (00:00:10:12); all 107 output bytes match AAADAW. The checked native export dialog, project, MIDI file, binary identity and hashes are recorded in the [25 fps fixture](../verification/reaper-parity/fixtures/menu-export-midi-native-smpte-25fps-nonzero-offset.tsv).
+
+Added `reaper_782_type_one_25fps_nonzero_smpte_offset_matches_native_bytes`. Stable `aaadaw-core` Nextest passed 160/160; strict all-target Core Clippy with `-D warnings`, rustfmt, and `git -c core.whitespace=cr-at-eol diff --check` passed (the native RPP fixture retains REAPER's CRLF line endings). `FILE-MIDI-EXPORT-001` remains `in_progress`: 23.976/29.97 fps, drop-frame offsets, remaining option combinations, and full dialog alignment still need native comparison.
+
 ### 2026-10-17 Action List shortcut-map import/export
 
 AAADAW Action List `Options` now opens import/export entries for a versioned `AAADAW_SHORTCUT_MAP` file. The portable file contains stable AAADAW action IDs and canonical shortcut alternatives, preserving explicit empty overrides; importing replaces only the user override layer and returns omitted actions to factory bindings. Import validates version, size, rows, shortcut syntax, IDs, and macro conflicts before one atomic write, so invalid maps or save failures leave active shortcuts intact. Export uses atomic replacement and refuses to overwrite the application’s active `shortcuts.conf`.

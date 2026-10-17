@@ -603,6 +603,33 @@ fn reaper_782_type_one_24fps_nonzero_smpte_offset_matches_native_bytes() {
 }
 
 #[test]
+fn reaper_782_type_one_25fps_nonzero_smpte_offset_matches_native_bytes() {
+    let mut project = native_midi_fixture_project();
+    project
+        .apply(DawAction::SetProjectStartTimeOffsetSeconds { seconds: 10.5 })
+        .unwrap();
+    project
+        .apply(DawAction::SetFrameRate {
+            rate: FrameRate::Fps25,
+        })
+        .unwrap();
+    let options = MidiExportOptions {
+        embed_smpte_offset: true,
+        ..MidiExportOptions::for_project(&project)
+    };
+    let actual =
+        encode_standard_midi_with_conductor_track_name(&project, options, "project-25fps").unwrap();
+    let native = include_bytes!(
+        "../../../docs/verification/reaper-parity/fixtures/menu-export-midi-native-smpte-25fps-nonzero-offset.mid"
+    );
+
+    assert_eq!(
+        actual, native,
+        "25 fps non-drop SMPTE offset metadata and MIDI tracks match REAPER 7.82"
+    );
+}
+
+#[test]
 fn reaper_782_type_zero_export_matches_native_event_bytes() {
     let project = native_midi_fixture_project();
     let mut options = MidiExportOptions::for_project(&project);
