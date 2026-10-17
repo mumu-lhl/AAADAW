@@ -1,0 +1,20 @@
+version	7.82/linux-x86_64
+theme	Default_7.0.ReaperThemeZip
+project	fixtures/menu-export-midi-native-type0-marker-ruler-individual-hidden.rpp; ruler hidden, #Intro/Verse individually visible, #Hidden individually hidden
+export_action	40849 / File: Export project MIDI...
+export_mode	Type 0 / Merge to single MIDI track
+export_ppqn	960
+export_markers	checked
+export_hidden_markers	checked
+export_hash_filter	checked; only names beginning with #
+export_tempo_meter	unchecked
+export_smpte_offset	unchecked
+marker_dialog	fixtures/menu-export-midi-native-type0-marker-ruler-individual-hidden-filtered-markers-dialog.png; 518x452; SHA-256 28c417bb8609c13e67ddddae61bc88dbbca624ed5ea890a53da25d1c19d8cc9e
+marker_export_path	/tmp/aaadaw-type0-ruler-individual-hidden-filter-markers.mid
+marker_export_file	fixtures/menu-export-midi-native-type0-marker-ruler-individual-hidden-filtered-markers.mid; 55 bytes; SHA-256 82da9d861cce11fcec9a63bc030daeef39871970cc365f56b67940ac6f5ec8bb
+marker_events	One SMF Type 0 track; only #Intro marker tick 0; Verse excluded by # filter; #Hidden excluded because individually hidden; C4 note 480-1440; CC1 tick 720; pitch bend tick 840; End-of-Track tick 1440
+cue_dialog	fixtures/menu-export-midi-native-type0-marker-ruler-individual-hidden-filtered-cues-dialog.png; 518x452; SHA-256 a1b135ac6a1bf719debd623402bd94f830931606e0e3776f10beaa4095028e8c
+cue_export_path	/tmp/aaadaw-type0-ruler-individual-hidden-filter-cues.mid
+cue_export_file	fixtures/menu-export-midi-native-type0-marker-ruler-individual-hidden-filtered-cues.mid; 55 bytes; SHA-256 a8cbcc8a6ac7ba084aeb0cf1207f5c53573246353a67dbbad63d39c3b2cf8c98
+cue_events	One SMF Type 0 track; only #Intro cue tick 0; Verse excluded by # filter; #Hidden excluded because individually hidden; C4 note 480-1440; CC1 tick 720; pitch bend tick 840; End-of-Track tick 1440
+observation	With hidden-ruler inclusion and the # filter enabled, Type 0 exports only individually visible ruler-hidden entries whose names begin with #; the individually hidden #Hidden entry remains omitted
