@@ -638,6 +638,12 @@ Storage 往返与 schema 54 → 55 默认值迁移由 `arrangement_view_state_ro
 
 针对性验证包含 `fractional_midi_item_positions_survive_moves_and_event_mapping`（含复制位置保留）、`schema_55_midi_items_migrate_with_zero_fractional_ppq`、`midi_loop_metadata_round_trips_through_snapshots_and_sqlite`、`midi_item_snap_retains_reaper_fractional_swing_ppq`、`event_plan_preserves_fractional_ppq_item_positions_in_playback_samples`、`fractional_midi_item_bounds_survive_timeline_geometry_cache` 和 `midi_export_keeps_fractional_item_position_until_output_ppq_rounding`；完整 MIDI export native byte regressions 通过 27/27。Xvfb 下 nightly Cranelift workspace suite 已通过，Stable strict all-target Clippy `-D warnings` 通过；补充的复制与几何回归也通过。仍需建立从 REAPER 原厂 Action 到 AAADAW 实窗项目位置的直接图像对照；此缺口不改变三条 snap matrix row 的 `in_progress` 状态。
 
+#### 2026-10-17：MIDI Item Properties 精确保留 fractional PPQ
+
+将分数起点贯通到 MIDI Item Properties 的位置显示、长度终点换算和 Apply：编辑 Position 时把 Sample/Time/Beats/H:M:S:F 转为 1/200 PPQ，位置与其它字段通过同一事务提交；长度仍按模型支持的整数 tick 存储，Apply/Undo/Redo 保留起点子刻度。Samples 属性往返测试覆盖 3840.8 PPQ，App 级测试通过属性窗口把 3840.8 移到 3860.8 PPQ 并验证一次 revision 与 Undo/Redo。MIDI Editor 网格拍/小节着色现在在起点带 fractional PPQ 时不再误标整 tick 边界。
+
+nightly + Cranelift AAADAW binary suite 688/688 通过；Stable `cargo clippy -p aaadaw --all-targets -- -D warnings`、`cargo fmt --all -- --check` 与 `git diff --check` 通过。REAPER/AAADAW fractional-position 实窗截图对照及属性窗口完整视觉/焦点验收仍未完成，`ITEM-PROPERTIES-001`、`ITEM-PROPERTIES-UNITS-001` 和 `ITEM-SELECT-018/019/020` 保持 `in_progress`。
+
 ### 2026-10-13 Render Bounds：All project regions 批量输出
 
 依照 P10，本切片实现了 Render Bounds 的 `All project regions`：每个工程区域按各自采样边界生成 WAV，采用所选文件名作为前缀、区域名作为文件名部分，并对清理后重名的区域追加稳定序号。多文件输出作为一个离线批次执行，复用私有暂存目录、目标不覆盖和失败回滚；Android 暂不开放多文件边界。没有区域时明确提示且禁止提交。原厂 REAPER 7.82 / Default 7 实窗确认该边界菜单项会输出三个区域文件，实际文件均为 48 kHz、PCM24、立体声、48000 帧；UI 截图、输出测量、探针和逐项对照见 [render bounds verification](../verification/reaper-parity/project-render-range.md)。

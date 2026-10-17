@@ -2376,6 +2376,7 @@ impl canvas::Program<Message> for PianoRoll<'_> {
         let grid_left = KEY_WIDTH;
         let grid_top = HEADER_HEIGHT;
         let mapping = self.mapping();
+        let item_start_position = self.item.start_position();
         frame.fill_rectangle(
             Point::new(0.0, 0.0),
             Size::new(bounds.width, HEADER_HEIGHT),
@@ -2390,11 +2391,18 @@ impl canvas::Program<Message> for PianoRoll<'_> {
         for tick in mapping.grid_tick_positions(self.origin_tick, end_tick) {
             let x = grid_left + mapping.x_at_tick(tick);
             if x >= grid_left && x <= bounds.width {
-                let project_tick = self.item.start_tick().saturating_add(tick);
-                let position = self.project.musical_position_at_tick(project_tick).ok();
-                let measure = position
-                    .is_some_and(|position| position.beat() == 1 && position.tick_in_beat() == 0);
-                let beat = position.is_some_and(|position| position.tick_in_beat() == 0);
+                let project_position = item_start_position.checked_add_ticks(tick);
+                let position = project_position.and_then(|position| {
+                    self.project.musical_position_at_tick(position.tick()).ok()
+                });
+                let on_project_tick =
+                    project_position.is_some_and(|position| position.subtick() == 0);
+                let measure = on_project_tick
+                    && position.is_some_and(|position| {
+                        position.beat() == 1 && position.tick_in_beat() == 0
+                    });
+                let beat = on_project_tick
+                    && position.is_some_and(|position| position.tick_in_beat() == 0);
                 let color = if measure {
                     Color::from_rgb8(92, 101, 107)
                 } else if beat {

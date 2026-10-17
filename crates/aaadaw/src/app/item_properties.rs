@@ -4,7 +4,8 @@ use crate::project_time::{
     format_project_time, format_project_timecode, parse_project_time, parse_project_timecode,
 };
 use aaadaw_core::{
-    AudioFade, AudioItem, AudioItemFades, FadeCurve, FadeCurveParameters, ItemId, MidiItem, Project,
+    AudioFade, AudioItem, AudioItemFades, FadeCurve, FadeCurveParameters, ItemId, MidiItem,
+    MidiItemPosition, Project,
 };
 use iced::Task;
 use serde::{Deserialize, Serialize};
@@ -598,11 +599,11 @@ impl App {
         let current_muted = item.is_muted();
         let current_loop_source = item.is_loop_source();
         let current_source_loop_length = item.source_loop_length_ticks();
-        let current_start = item.start_tick();
+        let current_start = item.start_position();
         let current_length = item.length_ticks();
         let current_source_offset = item.source_offset_ticks();
         let current_name = item.name().to_owned();
-        let (start_tick, length_ticks, source_offset_ticks) =
+        let (start_position, length_ticks, source_offset_ticks) =
             match draft.placement_in_project(item, &self.project) {
                 Ok(placement) => placement,
                 Err(error) => {
@@ -616,7 +617,7 @@ impl App {
         let changes_placement = (draft.changed[ItemPropertyField::Position.index()]
             || draft.changed[ItemPropertyField::Length.index()]
             || draft.changed[ItemPropertyField::SourceOffset.index()])
-            && (start_tick != current_start
+            && (start_position != current_start
                 || length_ticks != current_length
                 || source_offset_ticks != current_source_offset);
         let target_muted = draft.muted;
@@ -656,10 +657,16 @@ impl App {
         if changes_placement {
             actions.push(aaadaw_core::DawAction::EditMidiItemPlacement {
                 item_id,
-                start_tick,
+                start_tick: start_position.tick(),
                 length_ticks,
                 source_offset_ticks,
             });
+            if start_position != current_start {
+                actions.push(aaadaw_core::DawAction::SetMidiItemPosition {
+                    item_id,
+                    position: start_position,
+                });
+            }
         }
         if changes_mute {
             actions.push(aaadaw_core::DawAction::SetMidiItemMute {
@@ -699,7 +706,7 @@ impl App {
             self.apply_action(action, "MIDI item properties applied");
             if !self.project.midi_items().iter().any(|item| {
                 item.id() == item_id
-                    && item.start_tick() == start_tick
+                    && item.start_position() == start_position
                     && item.length_ticks() == length_ticks
                     && item.source_offset_ticks() == source_offset_ticks
                     && item.source_loop_length_ticks() == target_source_loop_length
@@ -1479,8 +1486,12 @@ impl MidiItemProperties {
             source_loop_length_changed: false,
             name_changed: false,
         };
-        let start_tick = item.start_tick() as f64;
-        let end_tick = item.start_tick().saturating_add(item.length_ticks()) as f64;
+        let start_position = item.start_position();
+        let end_position = start_position
+            .checked_add_ticks(item.length_ticks())
+            .expect("validated MIDI item end");
+        let start_tick = start_position.as_ticks_f64();
+        let end_tick = end_position.as_ticks_f64();
         let formatted = project
             .sample_at_tick_position(start_tick)
             .and_then(|start_sample| {
@@ -1641,24 +1652,29 @@ impl MidiItemProperties {
         &self,
         item: &MidiItem,
         project: &Project,
-    ) -> Result<(u64, u64, u64), String> {
+    ) -> Result<(MidiItemPosition, u64, u64), String> {
         let position_changed = self.changed[ItemPropertyField::Position.index()];
         let length_changed = self.changed[ItemPropertyField::Length.index()];
         let source_offset_changed = self.changed[ItemPropertyField::SourceOffset.index()];
         if !position_changed && !length_changed && !source_offset_changed {
             return Ok((
-                item.start_tick(),
+                item.start_position(),
                 item.length_ticks(),
                 item.source_offset_ticks(),
             ));
         }
 
         let current_start_sample = project
-            .sample_at_tick_position(item.start_tick() as f64)
+            .sample_at_tick_position(item.start_position().as_ticks_f64())
             .map_err(|error| error.to_string())?;
         let mut start_sample = current_start_sample;
         let mut length_samples = project
-            .sample_at_tick_position(item.start_tick().saturating_add(item.length_ticks()) as f64)
+            .sample_at_tick_position(
+                item.start_position()
+                    .checked_add_ticks(item.length_ticks())
+                    .expect("validated MIDI item end")
+                    .as_ticks_f64(),
+            )
             .map_err(|error| error.to_string())?
             - current_start_sample;
         let mut source_offset_ticks = item.source_offset_ticks();
@@ -1737,26 +1753,29 @@ impl MidiItemProperties {
         {
             return Err("MIDI item position and length must be nonnegative and nonzero".to_owned());
         }
-        let start_tick = if position_changed {
-            sample_to_tick(project, start_sample)?
+        let start_position = if position_changed {
+            sample_to_midi_item_position(project, start_sample)?
         } else {
-            item.start_tick()
+            item.start_position()
         };
         let length_ticks = if length_changed {
-            let end_tick = sample_to_tick(project, start_sample + length_samples)?;
-            end_tick
-                .checked_sub(start_tick)
-                .ok_or_else(|| "MIDI item length must be at least one project tick".to_owned())?
+            let end_position =
+                sample_to_midi_item_position(project, start_sample + length_samples)?;
+            let length = end_position.as_ticks_f64() - start_position.as_ticks_f64();
+            if !length.is_finite() || length < 0.5 || length > ((1_u64 << 53) - 1) as f64 {
+                return Err("MIDI item length must be at least one project tick".to_owned());
+            }
+            length.round() as u64
         } else {
             item.length_ticks()
         };
         if length_ticks == 0
-            || start_tick.checked_add(length_ticks).is_none()
+            || start_position.checked_add_ticks(length_ticks).is_none()
             || source_offset_ticks.checked_add(length_ticks).is_none()
         {
             return Err("Invalid MIDI item position or length".to_owned());
         }
-        Ok((start_tick, length_ticks, source_offset_ticks))
+        Ok((start_position, length_ticks, source_offset_ticks))
     }
 }
 
@@ -1777,6 +1796,21 @@ fn sample_to_tick(project: &Project, sample: f64) -> Result<u64, String> {
         return Err("MIDI item position or length is outside the supported range".to_owned());
     }
     Ok(tick.round() as u64)
+}
+
+fn sample_to_midi_item_position(
+    project: &Project,
+    sample: f64,
+) -> Result<MidiItemPosition, String> {
+    let tick = project
+        .tick_at_sample_position(sample)
+        .map_err(|error| error.to_string())?;
+    let scaled = tick * f64::from(aaadaw_core::MIDI_ITEM_SUBTICKS_PER_TICK);
+    if !scaled.is_finite() || scaled < 0.0 || scaled > ((1_u64 << 53) - 1) as f64 {
+        return Err("MIDI item position or length is outside the supported range".to_owned());
+    }
+    MidiItemPosition::from_total_subticks(scaled.round() as u128)
+        .ok_or_else(|| "MIDI item position or length is outside the supported range".to_owned())
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1922,7 +1956,7 @@ mod tests {
             assert_eq!(
                 draft.placement_in_project(item, &project).unwrap(),
                 (
-                    item.start_tick(),
+                    item.start_position(),
                     item.length_ticks(),
                     item.source_offset_ticks()
                 ),
@@ -1937,6 +1971,38 @@ mod tests {
         let mut overflowing = MidiItemProperties::from_item(item, &project, TimeUnit::Samples);
         overflowing.edit(ItemPropertyField::Position, "9007199254740992".to_owned());
         assert!(overflowing.placement_in_project(item, &project).is_err());
+    }
+
+    #[test]
+    fn midi_sample_position_property_round_trips_fractional_ppq_position() {
+        let mut project = Project::new();
+        project
+            .apply(DawAction::CreateTrack {
+                index: 0,
+                name: "MIDI".into(),
+            })
+            .unwrap();
+        project
+            .apply(DawAction::InsertMidiItem {
+                track_id: project.tracks()[0].id(),
+                start_tick: 3_840,
+                length_ticks: 1_920,
+            })
+            .unwrap();
+        let item_id = project.midi_items()[0].id();
+        let position = MidiItemPosition::new(3_840, 160).unwrap();
+        project
+            .apply(DawAction::SetMidiItemPosition { item_id, position })
+            .unwrap();
+        let item = &project.midi_items()[0];
+        let mut draft = MidiItemProperties::from_item(item, &project, TimeUnit::Samples);
+        let displayed_position = draft.fields[ItemPropertyField::Position.index()].clone();
+        draft.edit(ItemPropertyField::Position, displayed_position);
+
+        assert_eq!(
+            draft.placement_in_project(item, &project).unwrap(),
+            (position, item.length_ticks(), item.source_offset_ticks())
+        );
     }
 
     #[test]

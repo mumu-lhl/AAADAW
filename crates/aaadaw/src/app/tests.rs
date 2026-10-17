@@ -19186,6 +19186,60 @@ fn midi_item_properties_opens_applies_mute_and_keeps_notes_undoable() {
 }
 
 #[test]
+fn midi_item_properties_apply_preserves_fractional_ppq_position_and_undoes() {
+    use super::item_properties::{ItemPropertyField, TimeUnit};
+
+    let mut app = App {
+        item_properties_unit: TimeUnit::Samples,
+        ..App::default()
+    };
+    app.project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "MIDI".into(),
+        })
+        .unwrap();
+    let track_id = app.project.tracks()[0].id();
+    app.project
+        .apply(DawAction::InsertMidiItem {
+            track_id,
+            start_tick: 3_840,
+            length_ticks: 1_920,
+        })
+        .unwrap();
+    let item_id = app.project.midi_items()[0].id();
+    let original_position = MidiItemPosition::new(3_840, 160).unwrap();
+    app.project
+        .apply(DawAction::SetMidiItemPosition {
+            item_id,
+            position: original_position,
+        })
+        .unwrap();
+    app.timeline.rebuild(&app.project);
+    app.timeline.selected_item = Some(item_id);
+    app.timeline.selected_items.insert(item_id);
+    let revision = app.revision;
+
+    let _ = app.update(Message::ToggleItemProperties);
+    let _ = app.update(Message::ItemPropertyFieldChanged(
+        ItemPropertyField::Position,
+        "96520".into(),
+    ));
+    let _ = app.update(Message::ApplyItemProperties(false));
+
+    let moved_position = MidiItemPosition::new(3_860, 160).unwrap();
+    assert_eq!(app.project.midi_items()[0].start_position(), moved_position);
+    assert_eq!(app.revision, revision + 1);
+    let _ = app.update(Message::Undo);
+    assert_eq!(
+        app.project.midi_items()[0].start_position(),
+        original_position
+    );
+    let _ = app.update(Message::Redo);
+    assert_eq!(app.project.midi_items()[0].start_position(), moved_position);
+}
+
+#[test]
 fn midi_item_properties_toggle_loop_source_preserves_source_length_and_undoes() {
     let mut app = App::default();
     app.project
