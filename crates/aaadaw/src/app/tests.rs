@@ -12531,6 +12531,96 @@ fn midi_quantize_dialog_keeps_selected_overlapped_note_end_when_fix_overlaps_is_
 }
 
 #[test]
+fn midi_quantize_dialog_uses_the_active_swing_grid_for_notes_and_all_events() {
+    let mut app = App::default();
+    let _ = app.update(Message::AddTrack);
+    let track_id = app.project.tracks()[0].id();
+    app.project
+        .apply(DawAction::InsertMidiItem {
+            track_id,
+            start_tick: 0,
+            length_ticks: 4_000,
+        })
+        .expect("test MIDI item should be inserted");
+    let item_id = app.project.midi_items()[0].id();
+    app.project
+        .apply(DawAction::AddMidiNotes {
+            item_id,
+            notes: vec![
+                MidiNoteData {
+                    channel: 0,
+                    pitch: 60,
+                    tick: 170,
+                    duration: 90,
+                    velocity: 96,
+                },
+                MidiNoteData {
+                    channel: 0,
+                    pitch: 62,
+                    tick: 350,
+                    duration: 80,
+                    velocity: 96,
+                },
+            ],
+        })
+        .expect("test notes should be inserted");
+    app.project
+        .apply(DawAction::SetMidiControllers {
+            item_id,
+            controllers: vec![MidiControllerData {
+                controller: 1,
+                channel: 0,
+                tick: 475,
+                value: 64,
+            }],
+        })
+        .expect("test controller should be inserted");
+    app.project
+        .apply(DawAction::SetMidiPitchBends {
+            item_id,
+            pitch_bends: vec![MidiPitchBendData {
+                channel: 0,
+                tick: 835,
+                value: 8_000,
+            }],
+        })
+        .expect("test pitch bend should be inserted");
+    let selected_id = app.project.midi_items()[0].notes()[0].id();
+    app.midi_editor_selected_notes = HashSet::from([selected_id]);
+    let _ = app.update(Message::SnapSwingGridChanged(true));
+    let _ = app.update(Message::SnapSwingAmountChanged(50));
+
+    let _ = app.update(Message::OpenMidiQuantizeDialog(item_id));
+    let _ = app.update(Message::AcceptMidiQuantize);
+    let item = &app.project.midi_items()[0];
+    assert_eq!(item.notes()[0].tick(), 150);
+    assert_eq!(item.notes()[1].tick(), 350);
+    assert_eq!(item.controllers()[0].tick, 475);
+    assert_eq!(item.pitch_bends()[0].tick, 835);
+    let _ = app.update(Message::Undo);
+
+    let _ = app.update(Message::OpenMidiQuantizeDialog(item_id));
+    let _ = app.update(Message::SetMidiQuantizeScope(MidiQuantizeScope::AllEvents));
+    let _ = app.update(Message::AcceptMidiQuantize);
+    let item = &app.project.midi_items()[0];
+    assert_eq!(
+        item.notes()
+            .iter()
+            .map(|note| (note.tick(), note.duration()))
+            .collect::<Vec<_>>(),
+        [(150, 90), (390, 80)]
+    );
+    assert_eq!(item.controllers()[0].tick, 480);
+    assert_eq!(item.pitch_bends()[0].tick, 870);
+    let _ = app.update(Message::Undo);
+    let item = &app.project.midi_items()[0];
+    assert_eq!(item.notes()[0].tick(), 170);
+    assert_eq!(item.notes()[1].tick(), 350);
+    assert_eq!(item.controllers()[0].tick, 475);
+    assert_eq!(item.pitch_bends()[0].tick, 835);
+}
+
+#[test]
 fn midi_quantize_dialog_applies_note_length_only_to_selected_notes() {
     let mut app = App::default();
     let _ = app.update(Message::AddTrack);

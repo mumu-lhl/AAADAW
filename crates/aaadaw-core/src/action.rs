@@ -518,6 +518,8 @@ pub enum DawAction {
         grid: GridFraction,
         strength: f32,
         operation: MidiNoteQuantizeOperation,
+        /// Swing amount of the MIDI editor grid, clamped to -100..=100 percent.
+        swing_amount_percent: i16,
         /// Shorten notes that overlap the next note with the same channel and pitch.
         fix_overlaps: bool,
     },
@@ -527,6 +529,8 @@ pub enum DawAction {
         grid: GridFraction,
         strength: f32,
         operation: MidiNoteQuantizeOperation,
+        /// Swing amount of the MIDI editor grid, clamped to -100..=100 percent.
+        swing_amount_percent: i16,
         /// Shorten notes that overlap the next note with the same channel and pitch.
         fix_overlaps: bool,
     },

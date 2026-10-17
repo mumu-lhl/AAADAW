@@ -1938,6 +1938,7 @@ impl App {
                 grid,
                 strength,
                 operation,
+                swing_amount_percent: self.timeline.active_snap_swing_amount_percent(),
                 fix_overlaps: dialog.fix_overlaps,
             },
             MidiQuantizeScope::AllNotes | MidiQuantizeScope::SelectedNotes => {
@@ -1947,6 +1948,7 @@ impl App {
                     grid,
                     strength,
                     operation,
+                    swing_amount_percent: self.timeline.active_snap_swing_amount_percent(),
                     fix_overlaps: dialog.fix_overlaps,
                 }
             }

@@ -343,6 +343,7 @@ fn midi_quantize_dialog_operations_match_reaper_ticks_and_round_trip_history() {
                 grid,
                 strength: 1.0,
                 operation,
+                swing_amount_percent: 0,
                 fix_overlaps: false,
             })
             .expect("dialog operation should quantize selected notes");
@@ -368,6 +369,169 @@ fn midi_quantize_dialog_operations_match_reaper_ticks_and_round_trip_history() {
             .collect::<Vec<_>>();
         assert_eq!(redone, expected, "redo failed for {operation:?}");
     }
+}
+
+#[test]
+fn midi_quantize_dialog_uses_swing_grid_for_note_positions_and_endpoints() {
+    let mut project = Project::new();
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Piano".to_owned(),
+        })
+        .expect("test track should be created");
+    let track_id = project.tracks()[0].id();
+    project
+        .apply(DawAction::InsertMidiItem {
+            track_id,
+            start_tick: 0,
+            length_ticks: 4_000,
+        })
+        .expect("test MIDI item should be inserted");
+    let item_id = project.midi_items()[0].id();
+    project
+        .apply(DawAction::AddMidiNotes {
+            item_id,
+            notes: vec![
+                MidiNoteData {
+                    channel: 0,
+                    pitch: 66,
+                    tick: 75,
+                    duration: 20,
+                    velocity: 96,
+                },
+                MidiNoteData {
+                    channel: 0,
+                    pitch: 60,
+                    tick: 170,
+                    duration: 90,
+                    velocity: 96,
+                },
+                MidiNoteData {
+                    channel: 0,
+                    pitch: 62,
+                    tick: 350,
+                    duration: 80,
+                    velocity: 96,
+                },
+                MidiNoteData {
+                    channel: 0,
+                    pitch: 64,
+                    tick: 550,
+                    duration: 120,
+                    velocity: 96,
+                },
+            ],
+        })
+        .expect("test notes should be inserted");
+    let selected_note_ids = project.midi_items()[0]
+        .notes()
+        .iter()
+        .take(3)
+        .map(|note| note.id())
+        .collect::<Vec<_>>();
+    let endpoint_note_ids = selected_note_ids[1..].to_vec();
+    let grid = GridFraction::new(1, 32).expect("1/32 is a valid grid");
+    let positions = |project: &Project| {
+        project.midi_items()[0]
+            .notes()
+            .iter()
+            .map(|note| (note.tick(), note.duration()))
+            .collect::<Vec<_>>()
+    };
+
+    project
+        .apply(DawAction::QuantizeMidiNotesWithOperation {
+            item_id,
+            note_ids: selected_note_ids.clone(),
+            grid,
+            strength: 1.0,
+            operation: MidiNoteQuantizeOperation::Position,
+            swing_amount_percent: 50,
+            fix_overlaps: false,
+        })
+        .expect("swing position quantize should succeed");
+    assert_eq!(
+        positions(&project),
+        [(150, 20), (150, 90), (390, 80), (550, 120)]
+    );
+    assert!(project.undo().expect("swing position quantize should undo"));
+
+    project
+        .apply(DawAction::QuantizeMidiNotesWithOperation {
+            item_id,
+            note_ids: endpoint_note_ids.clone(),
+            grid,
+            strength: 1.0,
+            operation: MidiNoteQuantizeOperation::PositionAndNoteEnd,
+            swing_amount_percent: 50,
+            fix_overlaps: false,
+        })
+        .expect("swing endpoint quantize should succeed");
+    assert_eq!(
+        positions(&project),
+        [(75, 20), (150, 90), (390, 90), (550, 120)]
+    );
+    assert!(project.undo().expect("swing endpoint quantize should undo"));
+
+    project
+        .apply(DawAction::QuantizeMidiNotesWithOperation {
+            item_id,
+            note_ids: endpoint_note_ids.clone(),
+            grid,
+            strength: 1.0,
+            operation: MidiNoteQuantizeOperation::NoteEndOnly,
+            swing_amount_percent: 50,
+            fix_overlaps: false,
+        })
+        .expect("swing note-end-only quantize should succeed");
+    assert_eq!(
+        positions(&project),
+        [(75, 20), (170, 70), (350, 40), (550, 120)]
+    );
+    assert!(
+        project
+            .undo()
+            .expect("swing note-end-only quantize should undo")
+    );
+
+    project
+        .apply(DawAction::QuantizeMidiNotesWithOperation {
+            item_id,
+            note_ids: endpoint_note_ids.clone(),
+            grid,
+            strength: 1.0,
+            operation: MidiNoteQuantizeOperation::NoteLengthOnly,
+            swing_amount_percent: 50,
+            fix_overlaps: false,
+        })
+        .expect("swing note-length-only quantize should succeed");
+    assert_eq!(
+        positions(&project),
+        [(75, 20), (170, 120), (350, 120), (550, 120)]
+    );
+    assert!(
+        project
+            .undo()
+            .expect("swing note-length-only quantize should undo")
+    );
+
+    project
+        .apply(DawAction::QuantizeMidiNotesWithOperation {
+            item_id,
+            note_ids: endpoint_note_ids,
+            grid,
+            strength: 0.5,
+            operation: MidiNoteQuantizeOperation::Position,
+            swing_amount_percent: -50,
+            fix_overlaps: false,
+        })
+        .expect("negative partial swing quantize should succeed");
+    assert_eq!(
+        positions(&project),
+        [(75, 20), (205, 90), (340, 80), (550, 120)]
+    );
+    assert!(project.undo().expect("negative swing quantize should undo"));
 }
 
 #[test]
@@ -431,6 +595,7 @@ fn midi_quantize_fix_overlaps_matches_reaper_for_same_channel_and_pitch() {
                 grid,
                 strength: 1.0,
                 operation: MidiNoteQuantizeOperation::PositionAndNoteLength,
+                swing_amount_percent: 0,
                 fix_overlaps,
             })
             .expect("quantize should succeed");
@@ -450,6 +615,7 @@ fn midi_quantize_fix_overlaps_matches_reaper_for_same_channel_and_pitch() {
             grid,
             strength: 0.0,
             operation: MidiNoteQuantizeOperation::PositionAndNoteLength,
+            swing_amount_percent: 0,
             fix_overlaps: false,
         })
         .expect("zero-strength note-length quantize should be valid");
@@ -529,6 +695,7 @@ fn midi_quantize_fix_overlaps_trims_unselected_predecessor_in_selected_scope() {
             grid: GridFraction::new(1, 32).expect("1/32 is a valid grid"),
             strength: 1.0,
             operation: MidiNoteQuantizeOperation::PositionAndNoteLength,
+            swing_amount_percent: 0,
             fix_overlaps: true,
         })
         .expect("selected note should quantize and fix its overlap");
@@ -558,6 +725,7 @@ fn midi_quantize_fix_overlaps_trims_unselected_predecessor_in_selected_scope() {
             grid: GridFraction::new(1, 32).expect("1/32 is a valid grid"),
             strength: 1.0,
             operation: MidiNoteQuantizeOperation::PositionAndNoteLength,
+            swing_amount_percent: 0,
             fix_overlaps: false,
         })
         .expect("unchecked selected note should quantize without trimming its predecessor");
@@ -679,6 +847,7 @@ fn midi_quantize_all_events_matches_reaper_and_undoes_as_one_edit() {
             grid: GridFraction::new(1, 32).expect("1/32 is a valid grid"),
             strength: 1.0,
             operation: MidiNoteQuantizeOperation::Position,
+            swing_amount_percent: 50,
             fix_overlaps: false,
         })
         .expect("all MIDI event positions should be quantized");
@@ -689,7 +858,7 @@ fn midi_quantize_all_events_matches_reaper_and_undoes_as_one_edit() {
             .iter()
             .map(|note| (note.tick(), note.duration()))
             .collect::<Vec<_>>(),
-        [(120, 180), (360, 80)]
+        [(150, 180), (390, 80)]
     );
     assert_eq!(
         item.controllers()
@@ -708,7 +877,7 @@ fn midi_quantize_all_events_matches_reaper_and_undoes_as_one_edit() {
             .iter()
             .map(|bend| (bend.channel, bend.tick, bend.value))
             .collect::<Vec<_>>(),
-        [(0, 840, 8_192)]
+        [(0, 870, 8_192)]
     );
 
     assert!(

@@ -25,22 +25,38 @@ struct QuantizedMidiNoteChange {
     after_duration: u64,
 }
 
-fn quantized_midi_note_changes(
-    item: &MidiItem,
-    selected_note_ids: Option<&HashSet<NoteId>>,
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct MidiQuantizeSettings {
     grid: crate::GridFraction,
     strength: f32,
     ppq: u32,
     operation: MidiNoteQuantizeOperation,
+    swing_amount_percent: i16,
     fix_overlaps: bool,
+}
+
+fn quantized_midi_note_changes(
+    item: &MidiItem,
+    selected_note_ids: Option<&HashSet<NoteId>>,
+    settings: MidiQuantizeSettings,
 ) -> Result<Vec<QuantizedMidiNoteChange>, ActionError> {
+    let MidiQuantizeSettings {
+        grid,
+        strength,
+        ppq,
+        operation,
+        swing_amount_percent,
+        fix_overlaps,
+    } = settings;
     if !strength.is_finite() || !(0.0..=1.0).contains(&strength) {
         return Err(ActionError::InvalidQuantizeStrength);
     }
     let grid_ticks = grid
         .ticks(ppq)
         .map_err(|_| ActionError::InvalidQuantizeGrid)?;
-    let quantize_absolute_tick = |absolute_tick| quantize_tick(absolute_tick, grid_ticks, strength);
+    let quantize_absolute_tick = |absolute_tick| {
+        quantize_tick_with_swing(absolute_tick, grid_ticks, strength, swing_amount_percent)
+    };
     let mut changes = Vec::new();
     let quantize_position = midi_quantize_includes_note_position(operation);
     let quantize_end = matches!(
@@ -72,13 +88,13 @@ fn quantized_midi_note_changes(
                 .ok_or(ActionError::InvalidMidiNote)?;
             let mut quantized_end = quantize_absolute_tick(absolute_end)?;
             if quantized_end <= quantized_absolute {
-                quantized_end = quantized_absolute
-                    .checked_add(grid_ticks)
-                    .ok_or(ActionError::InvalidMidiNote)?;
+                quantized_end =
+                    next_swing_grid_tick(quantized_absolute, grid_ticks, swing_amount_percent)
+                        .ok_or(ActionError::InvalidMidiNote)?;
             }
             quantized_end - quantized_absolute
         } else if quantize_length {
-            let duration = quantize_absolute_tick(note.data.duration)?;
+            let duration = quantize_tick(note.data.duration, grid_ticks, strength)?;
             if strength == 0.0 {
                 duration.max(1)
             } else {
@@ -218,17 +234,78 @@ fn preserve_selected_overlapped_note_ends(
 }
 
 fn quantize_tick(tick: u64, grid_ticks: u64, strength: f32) -> Result<u64, ActionError> {
+    quantize_tick_with_swing(tick, grid_ticks, strength, 0)
+}
+
+fn quantize_tick_with_swing(
+    tick: u64,
+    grid_ticks: u64,
+    strength: f32,
+    swing_amount_percent: i16,
+) -> Result<u64, ActionError> {
     let lower = tick / grid_ticks * grid_ticks;
-    let remainder = tick - lower;
-    let round_up_threshold = grid_ticks / 2 + grid_ticks % 2;
-    let nearest = if remainder >= round_up_threshold {
-        lower.checked_add(grid_ticks).unwrap_or(lower)
+    let nearest = if swing_amount_percent == 0 {
+        let remainder = tick - lower;
+        let round_up_threshold = grid_ticks / 2 + grid_ticks % 2;
+        if remainder >= round_up_threshold {
+            lower.checked_add(grid_ticks).unwrap_or(lower)
+        } else {
+            lower
+        }
     } else {
-        lower
+        nearest_swing_grid_tick(tick, grid_ticks, swing_amount_percent).unwrap_or(tick)
     };
     let distance = nearest as i128 - tick as i128;
     let adjustment = (distance as f64 * f64::from(strength)).round() as i128;
     u64::try_from(tick as i128 + adjustment).map_err(|_| ActionError::InvalidMidiNote)
+}
+
+fn swing_grid_point_numerator(index: u64, grid_ticks: u64, swing_amount_percent: i16) -> i128 {
+    let straight = i128::from(index) * i128::from(grid_ticks) * 200;
+    if index % 2 == 1 {
+        straight + i128::from(grid_ticks) * i128::from(swing_amount_percent.clamp(-100, 100))
+    } else {
+        straight
+    }
+}
+
+fn nearest_swing_grid_tick(tick: u64, grid_ticks: u64, swing_amount_percent: i16) -> Option<u64> {
+    let target = i128::from(tick) * 200;
+    let base_index = tick / grid_ticks;
+    let first_index = base_index.saturating_sub(2);
+    let last_index = base_index.saturating_add(3);
+    let mut nearest: Option<(i128, i128)> = None;
+    for index in first_index..=last_index {
+        let candidate = swing_grid_point_numerator(index, grid_ticks, swing_amount_percent);
+        if candidate < 0 {
+            continue;
+        }
+        let distance = (candidate - target).abs();
+        if nearest.is_none_or(|(best_distance, best_candidate)| {
+            distance < best_distance || (distance == best_distance && candidate > best_candidate)
+        }) {
+            nearest = Some((distance, candidate));
+        }
+    }
+    let (_, numerator) = nearest?;
+    u64::try_from(((numerator + 100) / 200).min(i128::from(u64::MAX))).ok()
+}
+
+fn next_swing_grid_tick(tick: u64, grid_ticks: u64, swing_amount_percent: i16) -> Option<u64> {
+    let target = i128::from(tick) * 200;
+    let base_index = tick / grid_ticks;
+    for index in base_index..=base_index.saturating_add(3) {
+        let candidate = swing_grid_point_numerator(index, grid_ticks, swing_amount_percent);
+        if candidate <= target {
+            continue;
+        }
+        let candidate_tick =
+            u64::try_from(((candidate + 100) / 200).min(i128::from(u64::MAX))).ok()?;
+        if candidate_tick > tick {
+            return Some(candidate_tick);
+        }
+    }
+    None
 }
 
 fn midi_quantize_includes_note_position(operation: MidiNoteQuantizeOperation) -> bool {
@@ -245,11 +322,13 @@ fn quantized_midi_event_tick(
     tick: u64,
     grid_ticks: u64,
     strength: f32,
+    swing_amount_percent: i16,
 ) -> Result<u64, ActionError> {
     let absolute_tick = item
         .project_tick_at_content_tick(tick)
         .ok_or(ActionError::InvalidMidiNote)?;
-    let quantized_absolute = quantize_tick(absolute_tick, grid_ticks, strength)?;
+    let quantized_absolute =
+        quantize_tick_with_swing(absolute_tick, grid_ticks, strength, swing_amount_percent)?;
     midi_source_tick_at_project_tick(item, quantized_absolute).ok_or(ActionError::InvalidMidiNote)
 }
 
@@ -4704,11 +4783,14 @@ impl Project {
                 let changes = quantized_midi_note_changes(
                     item,
                     None,
-                    grid,
-                    strength,
-                    state.tempo_map.settings().ppq(),
-                    MidiNoteQuantizeOperation::Position,
-                    false,
+                    MidiQuantizeSettings {
+                        grid,
+                        strength,
+                        ppq: state.tempo_map.settings().ppq(),
+                        operation: MidiNoteQuantizeOperation::Position,
+                        swing_amount_percent: 0,
+                        fix_overlaps: false,
+                    },
                 )?;
                 ProjectEvent::MidiNotesQuantized { item_id, changes }
             }
@@ -4727,11 +4809,14 @@ impl Project {
                 let changes = quantized_midi_note_changes(
                     item,
                     Some(&selected_note_ids),
-                    grid,
-                    strength,
-                    state.tempo_map.settings().ppq(),
-                    MidiNoteQuantizeOperation::Position,
-                    false,
+                    MidiQuantizeSettings {
+                        grid,
+                        strength,
+                        ppq: state.tempo_map.settings().ppq(),
+                        operation: MidiNoteQuantizeOperation::Position,
+                        swing_amount_percent: 0,
+                        fix_overlaps: false,
+                    },
                 )?;
                 ProjectEvent::MidiNotesQuantized { item_id, changes }
             }
@@ -4750,11 +4835,14 @@ impl Project {
                 let changes = quantized_midi_note_changes(
                     item,
                     Some(&selected_note_ids),
-                    grid,
-                    strength,
-                    state.tempo_map.settings().ppq(),
-                    MidiNoteQuantizeOperation::PositionAndNoteEnd,
-                    false,
+                    MidiQuantizeSettings {
+                        grid,
+                        strength,
+                        ppq: state.tempo_map.settings().ppq(),
+                        operation: MidiNoteQuantizeOperation::PositionAndNoteEnd,
+                        swing_amount_percent: 0,
+                        fix_overlaps: false,
+                    },
                 )?;
                 ProjectEvent::MidiNotesQuantized { item_id, changes }
             }
@@ -4764,6 +4852,7 @@ impl Project {
                 grid,
                 strength,
                 operation,
+                swing_amount_percent,
                 fix_overlaps,
             } => {
                 let selected_note_ids = note_ids.into_iter().collect::<HashSet<_>>();
@@ -4775,11 +4864,14 @@ impl Project {
                 let mut changes = quantized_midi_note_changes(
                     item,
                     Some(&selected_note_ids),
-                    grid,
-                    strength,
-                    state.tempo_map.settings().ppq(),
-                    operation,
-                    fix_overlaps,
+                    MidiQuantizeSettings {
+                        grid,
+                        strength,
+                        ppq: state.tempo_map.settings().ppq(),
+                        operation,
+                        swing_amount_percent,
+                        fix_overlaps,
+                    },
                 )?;
                 if !fix_overlaps
                     && operation == MidiNoteQuantizeOperation::PositionAndNoteLength
@@ -4798,6 +4890,7 @@ impl Project {
                 grid,
                 strength,
                 operation,
+                swing_amount_percent,
                 fix_overlaps,
             } => {
                 let item = state
@@ -4809,11 +4902,14 @@ impl Project {
                 let note_changes = quantized_midi_note_changes(
                     item,
                     None,
-                    grid,
-                    strength,
-                    ppq,
-                    operation,
-                    fix_overlaps,
+                    MidiQuantizeSettings {
+                        grid,
+                        strength,
+                        ppq,
+                        operation,
+                        swing_amount_percent,
+                        fix_overlaps,
+                    },
                 )?;
                 let mut events = Vec::with_capacity(3);
                 if !note_changes.is_empty() {
@@ -4828,8 +4924,13 @@ impl Project {
                         .map_err(|_| ActionError::InvalidQuantizeGrid)?;
                     let mut controllers = item.controllers.as_ref().clone();
                     for controller in &mut controllers {
-                        controller.tick =
-                            quantized_midi_event_tick(item, controller.tick, grid_ticks, strength)?;
+                        controller.tick = quantized_midi_event_tick(
+                            item,
+                            controller.tick,
+                            grid_ticks,
+                            strength,
+                            swing_amount_percent,
+                        )?;
                     }
                     // The source list is tick-ordered; replacing a destination key keeps
                     // REAPER's later-original-event winner when quantized positions collide.
@@ -4846,8 +4947,13 @@ impl Project {
                     }
                     let mut pitch_bends = item.pitch_bends.as_ref().clone();
                     for bend in &mut pitch_bends {
-                        bend.tick =
-                            quantized_midi_event_tick(item, bend.tick, grid_ticks, strength)?;
+                        bend.tick = quantized_midi_event_tick(
+                            item,
+                            bend.tick,
+                            grid_ticks,
+                            strength,
+                            swing_amount_percent,
+                        )?;
                     }
                     coalesce_midi_pitch_bends_at_same_tick(&mut pitch_bends);
                     if !valid_midi_pitch_bends(&pitch_bends) {
