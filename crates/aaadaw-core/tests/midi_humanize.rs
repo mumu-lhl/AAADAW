@@ -48,8 +48,42 @@ fn project_with_midi_notes() -> (Project, aaadaw_core::ItemId) {
     (project, item_id)
 }
 
+fn project_with_humanize_notes(note_count: usize) -> (Project, aaadaw_core::ItemId) {
+    let mut project = Project::new();
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Humanize probe".to_owned(),
+        })
+        .expect("test track should be created");
+    let track_id = project.tracks()[0].id();
+    project
+        .apply(DawAction::InsertMidiItem {
+            track_id,
+            start_tick: 0,
+            length_ticks: (note_count as u64) * 1_000 + 4_000,
+        })
+        .expect("test MIDI item should be inserted");
+    let item_id = project.midi_items()[0].id();
+    project
+        .apply(DawAction::AddMidiNotes {
+            item_id,
+            notes: (0..note_count)
+                .map(|index| MidiNoteData {
+                    channel: (index % 16) as u8,
+                    pitch: 60 + (index % 60) as u8,
+                    tick: 2_000 + (index as u64) * 1_000,
+                    duration: 90,
+                    velocity: 64,
+                })
+                .collect(),
+        })
+        .expect("test MIDI notes should be inserted");
+    (project, item_id)
+}
+
 #[test]
-fn humanize_moves_only_selected_notes_within_the_grid_and_is_replayable() {
+fn humanize_moves_only_selected_notes_within_the_native_timing_range_and_is_replayable() {
     let (mut project, item_id) = project_with_midi_notes();
     let original = project.midi_items()[0]
         .notes()
@@ -80,7 +114,7 @@ fn humanize_moves_only_selected_notes_within_the_grid_and_is_replayable() {
         .collect::<Vec<_>>();
     assert_ne!(after, original);
     for index in 0..2 {
-        assert!(original[index].0.abs_diff(after[index].0) <= 60);
+        assert!(original[index].0.abs_diff(after[index].0) <= 480);
         assert_eq!(original[index].1, after[index].1);
         assert!(original[index].2.abs_diff(after[index].2) <= original[index].2 / 2);
     }
@@ -174,6 +208,119 @@ fn humanize_timing_bias_uses_a_wider_range_than_the_grid_only_jitter() {
         notes
             .iter()
             .zip(&original_ticks)
-            .all(|(note, tick)| { note.tick().abs_diff(*tick) <= 540 && note.velocity() > 0 })
+            .all(|(note, tick)| { note.tick().abs_diff(*tick) <= 480 && note.velocity() > 0 })
     );
+}
+
+#[test]
+fn humanize_timing_is_independent_of_the_midi_editor_grid() {
+    let (mut fine_grid_project, fine_grid_item) = project_with_midi_notes();
+    let (mut coarse_grid_project, coarse_grid_item) = project_with_midi_notes();
+    let fine_grid_notes = fine_grid_project.midi_items()[0]
+        .notes()
+        .iter()
+        .map(|note| note.id())
+        .collect::<Vec<_>>();
+    let coarse_grid_notes = coarse_grid_project.midi_items()[0]
+        .notes()
+        .iter()
+        .map(|note| note.id())
+        .collect::<Vec<_>>();
+    let seed = 0x7041_74a9_c5b2_31df;
+
+    for (project, item_id, note_ids, grid) in [
+        (
+            &mut fine_grid_project,
+            fine_grid_item,
+            fine_grid_notes,
+            GridFraction::new(1, 32).expect("1/32 is a valid grid"),
+        ),
+        (
+            &mut coarse_grid_project,
+            coarse_grid_item,
+            coarse_grid_notes,
+            GridFraction::new(1, 4).expect("1/4 is a valid grid"),
+        ),
+    ] {
+        project
+            .apply(DawAction::HumanizeMidiNotes {
+                item_id,
+                note_ids,
+                grid,
+                timing_amount_percent: 100,
+                velocity_amount_percent: 0,
+                timing_bias_percent: 0,
+                seed,
+            })
+            .expect("humanize should succeed on either editor grid");
+    }
+
+    let fine_ticks = fine_grid_project.midi_items()[0]
+        .notes()
+        .iter()
+        .map(|note| note.tick())
+        .collect::<Vec<_>>();
+    let coarse_ticks = coarse_grid_project.midi_items()[0]
+        .notes()
+        .iter()
+        .map(|note| note.tick())
+        .collect::<Vec<_>>();
+    assert_eq!(fine_ticks, coarse_ticks);
+}
+
+#[test]
+fn humanize_timing_uses_the_measured_zero_bias_scale_and_provisional_bias_shift() {
+    const NOTE_COUNT: usize = 64;
+    let projects = [-100, 0, 100].map(|bias| {
+        let (mut project, item_id) = project_with_humanize_notes(NOTE_COUNT);
+        let note_ids = project.midi_items()[0]
+            .notes()
+            .iter()
+            .map(|note| note.id())
+            .collect::<Vec<_>>();
+        project
+            .apply(DawAction::HumanizeMidiNotes {
+                item_id,
+                note_ids,
+                grid: GridFraction::new(1, 32).expect("1/32 is a valid grid"),
+                timing_amount_percent: 100,
+                velocity_amount_percent: 0,
+                timing_bias_percent: bias,
+                seed: 0x51a8_7d32_e4c9_0b6f,
+            })
+            .expect("humanize should succeed for every timing bias");
+        project.midi_items()[0]
+            .notes()
+            .iter()
+            .map(|note| note.tick())
+            .zip((0..NOTE_COUNT).map(|index| 2_000 + (index as u64) * 1_000))
+            .map(|(after, before)| after as i64 - before as i64)
+            .collect::<Vec<_>>()
+    });
+    let mean = |offsets: &[i64]| {
+        offsets.iter().map(|offset| *offset as f64).sum::<f64>() / offsets.len() as f64
+    };
+    let standard_deviation = |offsets: &[i64]| {
+        let average = mean(offsets);
+        (offsets
+            .iter()
+            .map(|offset| (*offset as f64 - average).powi(2))
+            .sum::<f64>()
+            / offsets.len() as f64)
+            .sqrt()
+    };
+
+    // These fixed-seed bounds cover the local model; native bias samples are
+    // inconsistent and remain an open parity item.
+    assert!(mean(&projects[1]).abs() <= 30.0);
+    assert!((-150.0..=-90.0).contains(&mean(&projects[0])));
+    assert!((90.0..=150.0).contains(&mean(&projects[2])));
+    for offsets in &projects {
+        let spread = standard_deviation(offsets);
+        assert!(
+            (100.0..=145.0).contains(&spread),
+            "unexpected spread: {spread}"
+        );
+        assert!(offsets.iter().all(|offset| offset.abs() <= 480));
+    }
 }

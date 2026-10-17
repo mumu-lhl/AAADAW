@@ -2157,3 +2157,15 @@ Linux REAPER 7.82 / Default 7 实测：确认 All notes、Timing 37%、Velocity 
 AAADAW 现把这些值保存到版本化全局 `midi-humanize-preferences.json`，通过临时文件原子写入；只有 OK 会更新并安排保存，Cancel/Escape 保留上次确认值。启动时恢复配置，退出时刷新待写设置；无效版本和超范围值不会覆盖原配置。App 回归覆盖默认值、Cancel 不提交、OK 更新、重新打开恢复；偏好模块回归覆盖读写及无效文件保护。夜间 Cranelift Build ID `d8ab03b30c7e342bbe69412b51f092b31cf42ccd`、SHA-256 `71f667150d23eec0363788308b72aa38c74bd80cb30e63c206bd06c1274f323c`；Xorg dummy :289 中用独立 XDG profile 启动当前桌面二进制，实际窗口恢复 All/37/61/−42，截图 SHA-256 `07ef32b4ca4eed80afd55272dfc4f9aa0d1be40118b3e802beeb9d004668e585`。
 
 AAADAW App 全套 **746/746**、Humanize preferences 定向 2/2、Core/App strict Clippy (`-D warnings`)、fmt 与 diff 检查通过。`MIDI-HUMANIZE-001` 仍为 `in_progress`：timing/velocity/bias 的精确原厂随机曲线、低/高 velocity 边界和 New random seed 序列尚未匹配；P7 与 UI-019 继续开放。
+
+### 2026-10-17 MIDI Humanize timing distribution 校准
+
+在 REAPER 7.82 / Default 7、960 PPQ、120 BPM、MIDI 与项目 1/32 网格下，重新采集 64 和 512 个音符两份 100% Timing / 0% Velocity / 0% bias 样本，并保存设置截图、应用后截图与逐音符前后读数。合计 576 个选中音符的位移均值 −1.35 tick、标准差 122.31 tick、范围 −373 到 +400 tick，分布接近对称，支持零 bias 时的 PPQ/8 尺度；音长、pitch、channel、velocity、selection 和未选音符保持不变。
+
+原厂 bias 端点仍未形成可复现的单一关系：64 音符 +100% 的均值为 +122.8 tick，−99% 为 −131.4 tick；512 音符重复样本中，+100% 两次均值分别为 −126.8 与 +121.3 tick，−100% 两次为 −5.9 与 +111.3 tick。各次已保存设置截图与前后读数；这些结果不足以支持一个确定的 bias 模型，因此 AAADAW 当前 ±PPQ/8 线性偏移仍是临时近似，Humanize 继续为 `in_progress`。
+
+Core 当前 timing 模型使用标准差 `project PPQ / 8` 的正态抽样、按 Timing 百分比缩放，并在四个标准差处截断；Bias 模型单独标为临时近似。新的 REAPER 探针可设置 note count、velocity、tempo、MIDI/project grid，并导出事件前后读数。
+
+当前代码由 nightly Rust 1.101.0 Cranelift 构建，Build ID `9efbe45b29a0ff959422bd60affe6e86c084bf2f`，SHA-256 `1aa3f584b7916b1f52181c8f0cf39debe878b5ec2c04b264ce6edc9b48075fe8`。Xorg :90 验证新二进制启动；Xorg :290 实际创建 MIDI item 与 note、打开 Humanize、应用 100% Timing / 0% Velocity / 0% bias。启动、默认 dialog、配置与应用后截图及哈希见 [当前 Humanize Cranelift fixtures](../verification/reaper-parity/midi-humanize.md)。Cranelift 报告 `TimelinePipeline: MaybeSync` 的未来兼容递归 trait 警告，构建成功。
+
+Core 全套 **228 tests / 41 binaries** 通过；最后收紧后的 Humanize Core 定向套件 **5/5**；AAADAW App **767/767**；Core/App all-target Clippy (`-D warnings`) 与 `cargo fmt --all -- --check` 通过。`MIDI-HUMANIZE-001`、UI-019 与 P7 仍开放：Bias 原厂语义、velocity 分布/边界、精确 RNG 和 New random seed 行为没有关闭。

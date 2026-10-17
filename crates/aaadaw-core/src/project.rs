@@ -55,6 +55,21 @@ struct MidiHumanizeSettings {
     seed: u64,
 }
 
+fn next_midi_humanize_random_unit(random_state: &mut u64) -> f64 {
+    *random_state = random_state.wrapping_add(0x9e37_79b9_7f4a_7c15);
+    let mut value = *random_state;
+    value = (value ^ (value >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+    value = (value ^ (value >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+    value ^= value >> 31;
+    (value >> 11) as f64 / ((1_u64 << 53) as f64)
+}
+
+fn next_midi_humanize_standard_normal(random_state: &mut u64) -> f64 {
+    let first = next_midi_humanize_random_unit(random_state).max(1.0 / (1_u64 << 53) as f64);
+    let second = next_midi_humanize_random_unit(random_state);
+    (-2.0 * first.ln()).sqrt() * (std::f64::consts::TAU * second).cos()
+}
+
 fn quantized_midi_note_changes(
     item: &MidiItem,
     selected_note_ids: Option<&HashSet<NoteId>>,
@@ -161,16 +176,14 @@ fn humanized_midi_note_changes(
     {
         return Err(ActionError::InvalidMidiHumanizeSettings);
     }
-    let grid_ticks = grid
+    let _ = grid
         .ticks(ppq)
         .map_err(|_| ActionError::InvalidQuantizeGrid)?;
-    let timing_scale = u64::from(timing_amount_percent);
-    let grid_timing_span = grid_ticks.saturating_mul(timing_scale) / 200;
-    let biased_timing_span = u64::from(ppq)
-        .saturating_mul(timing_scale)
-        .saturating_mul(timing_bias_percent.unsigned_abs() as u64)
-        / 20_000;
-    let maximum_timing_offset = grid_timing_span.saturating_add(biased_timing_span);
+    // Zero-bias REAPER samples support PPQ/8; the linear bias shift remains
+    // provisional because repeated native endpoint samples are inconsistent.
+    let timing_scale = f64::from(timing_amount_percent) / 100.0;
+    let timing_standard_deviation = f64::from(ppq) / 8.0 * timing_scale;
+    let timing_bias = f64::from(timing_bias_percent) / 100.0;
     let mut random_state = seed;
     let mut changes = Vec::new();
     for note in item
@@ -178,20 +191,9 @@ fn humanized_midi_note_changes(
         .iter()
         .filter(|note| selected_note_ids.contains(&note.id))
     {
-        let mut next_unit = || {
-            random_state = random_state.wrapping_add(0x9e37_79b9_7f4a_7c15);
-            let mut value = random_state;
-            value = (value ^ (value >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
-            value = (value ^ (value >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
-            value ^= value >> 31;
-            let unit = (value >> 11) as f64 / ((1_u64 << 53) as f64);
-            unit * 2.0 - 1.0
-        };
-        let centered_timing = next_unit();
-        let bias = f64::from(timing_bias_percent) / 100.0;
-        let biased_timing =
-            (centered_timing + bias * (1.0 - centered_timing * centered_timing)).clamp(-1.0, 1.0);
-        let timing_offset = (biased_timing * maximum_timing_offset as f64).round() as i64;
+        let standard_normal = next_midi_humanize_standard_normal(&mut random_state);
+        let biased_timing = (standard_normal + timing_bias).clamp(-4.0, 4.0);
+        let timing_offset = (biased_timing * timing_standard_deviation).round() as i64;
         let absolute_tick = item
             .project_tick_at_content_tick(note.data.tick)
             .ok_or(ActionError::InvalidMidiNote)?;
@@ -206,7 +208,8 @@ fn humanized_midi_note_changes(
             .ok_or(ActionError::InvalidMidiNote)?;
         let velocity_span =
             (u16::from(note.data.velocity) * u16::from(velocity_amount_percent) / 200) as i16;
-        let velocity_offset = (next_unit() * f64::from(velocity_span)).round() as i16;
+        let velocity_unit = next_midi_humanize_random_unit(&mut random_state) * 2.0 - 1.0;
+        let velocity_offset = (velocity_unit * f64::from(velocity_span)).round() as i16;
         let after_velocity = (i16::from(note.data.velocity) + velocity_offset).clamp(1, 127) as u8;
         if !valid_midi_note_source_range(item, after_tick, note.data.duration) {
             return Err(ActionError::InvalidMidiNote);
