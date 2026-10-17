@@ -81,3 +81,12 @@ fn invalid_timecodes_fail_without_saturating_or_wrapping() {
     assert!(FrameRate::Fps2997Drop.parse_timecode("0:01:00:02").is_ok());
     assert!(FrameRate::Fps2997Drop.parse_timecode("0:10:00:00").is_ok());
 }
+
+#[test]
+fn drop_frame_timecode_skips_labels_at_the_first_minute_boundary() {
+    let rate = FrameRate::Fps2997Drop;
+    let timecode = rate.format_timecode(60.06).unwrap();
+
+    assert_eq!(timecode, "0:01:00:02");
+    assert!((rate.parse_timecode(&timecode).unwrap() - 60.06).abs() < 1e-9);
+}
