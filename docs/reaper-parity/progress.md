@@ -1909,6 +1909,12 @@ Stable `cargo xtest -p aaadaw --bin aaadaw` passed 696/696; the focused template
 
 `SHELL-PROJECT-TEMPLATE-001` remains `in_progress`: AAADAW deliberately preserves the existing template when a duplicate name is selected but does not yet show REAPER's overwrite confirmation; Android saving, multiple project tabs, and the full REAPER template/default-project format remain incomplete.
 
+### 2026-10-17 MIDI export: 24 fps SMPTE offset byte parity
+
+An isolated Linux REAPER 7.82 / Default 7 probe loaded a project at 24 fps non-drop with a 10.5-second project offset. The native Type 1, PPQN 960 export with Embed SMPTE offset checked contains `FF 54 05 00 00 0A 0C 00` (00:00:10:12); the complete 107-byte file now matches AAADAW byte-for-byte. The probe reads the frame rate and project offset back from the reopened project, and the native export dialog capture confirms Type 1, PPQN 960, and the checked SMPTE option. Project, MIDI, screenshot hashes and probe results are in the [24 fps SMPTE fixture](../verification/reaper-parity/fixtures/menu-export-midi-native-smpte-24fps-nonzero-offset.tsv).
+
+Added `reaper_782_type_one_24fps_nonzero_smpte_offset_matches_native_bytes`. Stable `aaadaw-core` Nextest passed 159/159; strict all-target Core Clippy with `-D warnings`, rustfmt, and `git diff --check` passed. `FILE-MIDI-EXPORT-001` remains `in_progress`: 23.976/25/29.97 fps and drop-frame offsets, remaining option combinations, and full dialog alignment still need native comparison.
+
 ### 2026-10-17 Action List shortcut-map import/export
 
 AAADAW Action List `Options` now opens import/export entries for a versioned `AAADAW_SHORTCUT_MAP` file. The portable file contains stable AAADAW action IDs and canonical shortcut alternatives, preserving explicit empty overrides; importing replaces only the user override layer and returns omitted actions to factory bindings. Import validates version, size, rows, shortcut syntax, IDs, and macro conflicts before one atomic write, so invalid maps or save failures leave active shortcuts intact. Export uses atomic replacement and refuses to overwrite the application’s active `shortcuts.conf`.
