@@ -1221,6 +1221,71 @@ fn reaper_782_type_one_nonzero_smpte_offset_matches_native_bytes() {
 }
 
 #[test]
+fn reaper_782_type_zero_nonzero_smpte_offset_and_time_selection_match_native_bytes() {
+    let mut project = native_midi_fixture_project();
+    project
+        .apply(DawAction::SetProjectStartTimeOffsetSeconds { seconds: 10.5 })
+        .unwrap();
+    let options = MidiExportOptions {
+        file_type: MidiFileType::Type0,
+        time_scope: MidiExportTimeScope::TimeSelectionOnly,
+        embed_smpte_offset: true,
+        ..MidiExportOptions::for_project(&project)
+    };
+    let selection = MidiExportSelection {
+        time_selection_ticks: Some((960, 2880)),
+        ..MidiExportSelection::default()
+    };
+    let actual = encode_standard_midi_with_selection(
+        &project,
+        options,
+        "midi-type0-selection-offset",
+        &selection,
+    )
+    .unwrap();
+    let native = include_bytes!(
+        "../../../docs/verification/reaper-parity/fixtures/menu-export-midi-native-smpte-selection-offset-type0.mid"
+    );
+
+    assert_eq!(
+        actual, native,
+        "Type 0 adds the 0.5-second range start to the configured 10.5-second SMPTE offset"
+    );
+}
+
+#[test]
+fn reaper_782_type_one_nonzero_smpte_offset_and_time_selection_match_native_bytes() {
+    let mut project = native_midi_fixture_project();
+    project
+        .apply(DawAction::SetProjectStartTimeOffsetSeconds { seconds: 10.5 })
+        .unwrap();
+    let options = MidiExportOptions {
+        time_scope: MidiExportTimeScope::TimeSelectionOnly,
+        embed_smpte_offset: true,
+        ..MidiExportOptions::for_project(&project)
+    };
+    let selection = MidiExportSelection {
+        time_selection_ticks: Some((960, 2880)),
+        ..MidiExportSelection::default()
+    };
+    let actual = encode_standard_midi_with_selection(
+        &project,
+        options,
+        "midi-type1-selection-offset",
+        &selection,
+    )
+    .unwrap();
+    let native = include_bytes!(
+        "../../../docs/verification/reaper-parity/fixtures/menu-export-midi-native-smpte-selection-offset-type1.mid"
+    );
+
+    assert_eq!(
+        actual, native,
+        "Type 1 adds the 0.5-second range start to the configured 10.5-second SMPTE offset"
+    );
+}
+
+#[test]
 fn reaper_782_type_one_24fps_nonzero_smpte_offset_matches_native_bytes() {
     let mut project = native_midi_fixture_project();
     project
