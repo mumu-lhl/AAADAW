@@ -242,7 +242,14 @@ fn item_nudge_moves_selected_audio_and_midi_together_and_undoes_as_one_edit() {
     let audio_length = app.project.audio_items()[0].length_samples();
     let midi_length = app.project.midi_items()[0].length_ticks();
     let nudge_samples = (f64::from(app.project.settings().sample_rate()) / 1_000.0).round() as u64;
-    let expected_midi_tick = app.project.tick_at_sample(nudge_samples).unwrap();
+    let expected_midi_tick = app
+        .project
+        .tick_at_sample_position(nudge_samples as f64)
+        .unwrap();
+    let expected_midi_position = MidiItemPosition::from_total_subticks(
+        (expected_midi_tick * f64::from(aaadaw_core::MIDI_ITEM_SUBTICKS_PER_TICK)).round() as u128,
+    )
+    .unwrap();
 
     let _ = app.update(Message::NudgeSelectedItems(1));
 
@@ -252,7 +259,10 @@ fn item_nudge_moves_selected_audio_and_midi_together_and_undoes_as_one_edit() {
         audio_source_offset
     );
     assert_eq!(app.project.audio_items()[0].length_samples(), audio_length);
-    assert_eq!(app.project.midi_items()[0].start_tick(), expected_midi_tick);
+    assert_eq!(
+        app.project.midi_items()[0].start_position(),
+        expected_midi_position
+    );
     assert_eq!(app.project.midi_items()[0].length_ticks(), midi_length);
     assert_eq!(app.revision, original_revision + 1);
     assert_eq!(app.timeline.selected_items.len(), 2);
@@ -261,14 +271,23 @@ fn item_nudge_moves_selected_audio_and_midi_together_and_undoes_as_one_edit() {
 
     let _ = app.update(Message::Undo);
     assert_eq!(app.project.audio_items()[0].start_sample(), 0);
-    assert_eq!(app.project.midi_items()[0].start_tick(), 0);
+    assert_eq!(
+        app.project.midi_items()[0].start_position(),
+        MidiItemPosition::new(0, 0).unwrap()
+    );
     let _ = app.update(Message::Redo);
     assert_eq!(app.project.audio_items()[0].start_sample(), nudge_samples);
-    assert_eq!(app.project.midi_items()[0].start_tick(), expected_midi_tick);
+    assert_eq!(
+        app.project.midi_items()[0].start_position(),
+        expected_midi_position
+    );
 
     let _ = app.update(Message::NudgeSelectedItems(-1));
     assert_eq!(app.project.audio_items()[0].start_sample(), 0);
-    assert_eq!(app.project.midi_items()[0].start_tick(), 0);
+    assert_eq!(
+        app.project.midi_items()[0].start_position(),
+        MidiItemPosition::new(0, 0).unwrap()
+    );
 }
 
 #[test]
@@ -948,6 +967,40 @@ fn item_nudge_set_applies_absolute_and_relative_positions_to_mixed_selection() {
     assert_eq!(
         app.project.midi_items()[0].start_tick(),
         app.project.tick_at_sample(relative_sample).unwrap()
+    );
+}
+
+#[test]
+fn item_nudge_sample_delta_preserves_fractional_midi_item_position() {
+    use super::item_nudge::{Mode, Unit};
+
+    let mut app = item_snap_test_app(96_020, 3_840);
+    let midi_id = app.project.midi_items()[0].id();
+    let original_position = MidiItemPosition::new(3_840, 160).unwrap();
+    app.project
+        .apply(DawAction::SetMidiItemPosition {
+            item_id: midi_id,
+            position: original_position,
+        })
+        .unwrap();
+    app.timeline.rebuild(&app.project);
+
+    let _ = app.update(Message::ItemNudgeModeChanged(Mode::Nudge));
+    let _ = app.update(Message::ItemNudgeUnitChanged(Unit::Samples));
+    let _ = app.update(Message::ItemNudgeValueChanged("480".into()));
+    let _ = app.update(Message::NudgeSelectedItems(1));
+
+    let expected_position = MidiItemPosition::new(3_860, 0).unwrap();
+    assert_eq!(
+        app.project.midi_items()[0].start_position(),
+        expected_position
+    );
+    assert_eq!(app.project.audio_items()[0].start_sample(), 96_500);
+    assert!(app.item_nudge_dialog.error.is_none());
+    let _ = app.update(Message::Undo);
+    assert_eq!(
+        app.project.midi_items()[0].start_position(),
+        original_position
     );
 }
 

@@ -1,6 +1,8 @@
 use super::{App, Message, commands};
 use crate::project_time;
-use aaadaw_core::{AudioItem, DawAction, ItemId, MidiItem};
+use aaadaw_core::{
+    AudioItem, DawAction, ItemId, MIDI_ITEM_SUBTICKS_PER_TICK, MidiItem, MidiItemPosition,
+};
 use aaadaw_storage::ProjectStore;
 use iced::Task;
 use iced::widget::combo_box;
@@ -1285,15 +1287,17 @@ impl App {
             .iter()
             .find(|item| item.id() == item_id)
             .ok_or_else(|| "Selected item is unavailable".to_owned())?;
-        let end_tick = item
-            .start_tick()
-            .checked_add(item.length_ticks())
+        let end_position = item
+            .start_position()
+            .checked_add_ticks(item.length_ticks())
             .ok_or_else(|| {
                 "Selected MIDI item edge is outside the supported timeline".to_owned()
             })?;
-        self.project
-            .sample_at_tick(end_tick)
-            .map_err(|error| error.to_string())
+        let sample = self
+            .project
+            .sample_at_tick_position(end_position.as_ticks_f64())
+            .map_err(|error| error.to_string())?;
+        checked_sample_position(sample, "Selected MIDI item edge")
     }
 
     fn apply_set_contents(&mut self) {
@@ -1556,30 +1560,47 @@ impl App {
             .iter()
             .filter(|item| selected_ids.contains(&item.id()))
         {
-            let start_sample = match self.project.sample_at_tick(item.start_tick()) {
+            const MAX_EXACT: f64 = (1_u64 << 53) as f64;
+            let start_sample = match self
+                .project
+                .sample_at_tick_position(item.start_position().as_ticks_f64())
+            {
                 Ok(sample) => sample,
                 Err(error) => {
                     self.item_nudge_dialog.error = Some(error.to_string());
                     return;
                 }
             };
-            let Some(new_sample) = shifted_sample(start_sample, delta_samples) else {
+            if delta_samples.unsigned_abs() > (1_u64 << 53) as u128 {
                 self.item_nudge_dialog.error =
                     Some("Selected items cannot move beyond the sample timeline".to_owned());
                 return;
-            };
-            let start_tick = match self.project.tick_at_sample(new_sample) {
-                Ok(tick) => tick,
+            }
+            let new_sample = start_sample + delta_samples as f64;
+            if !new_sample.is_finite() || !(0.0..=MAX_EXACT).contains(&new_sample) {
+                self.item_nudge_dialog.error =
+                    Some("Selected items cannot move beyond the sample timeline".to_owned());
+                return;
+            }
+            let new_position = match midi_item_position_at_sample(&self.project, new_sample) {
+                Ok(position) => position,
                 Err(error) => {
-                    self.item_nudge_dialog.error = Some(error.to_string());
+                    self.item_nudge_dialog.error = Some(error);
                     return;
                 }
             };
-            if start_tick != item.start_tick() {
-                actions.push(DawAction::EditMidiItem {
+            if new_position != item.start_position() {
+                if new_position
+                    .checked_add_ticks(item.length_ticks())
+                    .is_none()
+                {
+                    self.item_nudge_dialog.error =
+                        Some("Selected items cannot move beyond the MIDI tick timeline".to_owned());
+                    return;
+                }
+                actions.push(DawAction::SetMidiItemPosition {
                     item_id: item.id(),
-                    start_tick,
-                    length_ticks: item.length_ticks(),
+                    position: new_position,
                 });
             }
         }
@@ -2944,9 +2965,12 @@ impl App {
         {
             selected.push((
                 item.id(),
-                self.project
-                    .sample_at_tick(item.start_tick())
-                    .map_err(|error| error.to_string())?,
+                checked_sample_position(
+                    self.project
+                        .sample_at_tick_position(item.start_position().as_ticks_f64())
+                        .map_err(|error| error.to_string())?,
+                    "MIDI item position",
+                )?,
             ));
         }
         selected.sort_by_key(|(_, sample)| *sample);
@@ -2976,6 +3000,21 @@ fn wrapped_source_sample(current: u64, start: u64, length: u64, delta: i128) -> 
 fn shifted_sample(sample: u64, delta: i128) -> Option<u64> {
     let shifted = i128::from(sample).checked_add(delta)?;
     u64::try_from(shifted).ok()
+}
+
+fn midi_item_position_at_sample(
+    project: &aaadaw_core::Project,
+    sample: f64,
+) -> Result<MidiItemPosition, String> {
+    let tick = project
+        .tick_at_sample_position(sample)
+        .map_err(|error| error.to_string())?;
+    let scaled = tick * f64::from(MIDI_ITEM_SUBTICKS_PER_TICK);
+    if !scaled.is_finite() || scaled < 0.0 || scaled > ((1_u64 << 53) - 1) as f64 {
+        return Err("MIDI item position is outside the supported range".to_owned());
+    }
+    MidiItemPosition::from_total_subticks(scaled.round() as u128)
+        .ok_or_else(|| "MIDI item position is outside the supported range".to_owned())
 }
 
 fn checked_sample_position(sample: f64, label: &str) -> Result<u64, String> {

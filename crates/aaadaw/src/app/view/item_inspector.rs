@@ -1,7 +1,7 @@
 use super::super::{App, Message};
 use super::tokens;
 use aaadaw_app::{AudioAssetSourceStatus, AudioAssetSourceStatusEntry};
-use aaadaw_core::ItemId;
+use aaadaw_core::{ItemId, MidiItemPosition};
 use iced::widget::{Button, button, column, container, row, scrollable, text, text_input};
 use iced::{Element, Length};
 
@@ -171,7 +171,7 @@ fn selected_item_view(app: &App, item_id: ItemId, touch_targets: bool) -> Elemen
         let mut item_actions = row![
             text(format!(
                 "Tick {} · length {}",
-                item.start_tick(),
+                format_midi_item_position(item.start_position()),
                 item.length_ticks()
             ))
             .width(Length::Fill),
@@ -252,6 +252,18 @@ fn selected_item_view(app: &App, item_id: ItemId, touch_targets: bool) -> Elemen
     } else {
         column![text("Selected Item no longer exists.")].into()
     }
+}
+
+fn format_midi_item_position(position: MidiItemPosition) -> String {
+    if position.subtick() == 0 {
+        return position.tick().to_string();
+    }
+    let thousandths = u16::from(position.subtick()) * 5;
+    let mut formatted = format!("{}.{thousandths:03}", position.tick());
+    while formatted.ends_with('0') {
+        formatted.pop();
+    }
+    formatted
 }
 
 fn action_row<'a>(
@@ -338,4 +350,22 @@ fn midi_pitch_name(pitch: u8) -> String {
     let pitch_class = PITCH_CLASSES[usize::from(pitch % 12)];
     let octave = i16::from(pitch) / 12 - 1;
     format!("{pitch_class}{octave}")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::format_midi_item_position;
+    use aaadaw_core::MidiItemPosition;
+
+    #[test]
+    fn midi_item_inspector_formats_fractional_ppq_without_rounding() {
+        for (position, expected) in [
+            (MidiItemPosition::new(0, 0).unwrap(), "0"),
+            (MidiItemPosition::new(0, 1).unwrap(), "0.005"),
+            (MidiItemPosition::new(964, 160).unwrap(), "964.8"),
+            (MidiItemPosition::new(964, 199).unwrap(), "964.995"),
+        ] {
+            assert_eq!(format_midi_item_position(position), expected);
+        }
+    }
 }

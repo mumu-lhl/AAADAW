@@ -644,6 +644,12 @@ Storage 往返与 schema 54 → 55 默认值迁移由 `arrangement_view_state_ro
 
 nightly + Cranelift AAADAW binary suite 688/688 通过；Stable `cargo clippy -p aaadaw --all-targets -- -D warnings`、`cargo fmt --all -- --check` 与 `git diff --check` 通过。REAPER/AAADAW fractional-position 实窗截图对照及属性窗口完整视觉/焦点验收仍未完成，`ITEM-PROPERTIES-001`、`ITEM-PROPERTIES-UNITS-001` 和 `ITEM-SELECT-018/019/020` 保持 `in_progress`。
 
+#### 2026-10-17：MIDI Position Nudge 与 Inspector 不舍入子刻度
+
+Position Nudge 现在从精确 MIDI PPQ 起点换算连续 sample、应用整数 sample 位移后再恢复 1/200-PPQ 子刻度；所选 MIDI 的 Nudge anchor 和末端 sample 同样使用精确起止位置。混合 Audio/MIDI 的 1 ms Nudge、fractional item 的 480-sample Nudge 与 Undo 均有 App 回归。Arrangement Inspector 将 1/200 PPQ 格式化为最多三位小数，例如 `964.8`、`964.995`，不通过浮点字符串舍入。
+
+nightly + Cranelift AAADAW binary suite 690/690 通过；Stable aaadaw all-target Clippy `-D warnings`、fmt 与 diff 检查通过。尚无包含 fractional MIDI item 的 Inspector 实窗截图；Item Nudge 的更多 targets/units 及完整原厂交互仍未验收，`ITEM-NUDGE-SET-001` 和相关选择/属性行维持 `in_progress`。
+
 ### 2026-10-13 Render Bounds：All project regions 批量输出
 
 依照 P10，本切片实现了 Render Bounds 的 `All project regions`：每个工程区域按各自采样边界生成 WAV，采用所选文件名作为前缀、区域名作为文件名部分，并对清理后重名的区域追加稳定序号。多文件输出作为一个离线批次执行，复用私有暂存目录、目标不覆盖和失败回滚；Android 暂不开放多文件边界。没有区域时明确提示且禁止提交。原厂 REAPER 7.82 / Default 7 实窗确认该边界菜单项会输出三个区域文件，实际文件均为 48 kHz、PCM24、立体声、48000 帧；UI 截图、输出测量、探针和逐项对照见 [render bounds verification](../verification/reaper-parity/project-render-range.md)。
