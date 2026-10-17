@@ -490,6 +490,7 @@ pub struct ClapInstrumentProcessor {
 struct ActiveNote {
     note_id: u32,
     pitch: u8,
+    channel: u8,
 }
 
 /// A processor stopped on the audio thread and ready to return to its control-thread owner.
@@ -1524,6 +1525,15 @@ impl ClapInstrumentProcessor {
                 "CLAP note event offset is outside the current block",
             ));
         }
+        if let Some(event) = events
+            .iter()
+            .find(|event| event.channel >= crate::MIDI_CHANNEL_COUNT)
+        {
+            return Err(ClapInstrumentError::new(format!(
+                "MIDI channel {} is outside the 0..16 range",
+                event.channel
+            )));
+        }
         if output.is_empty() {
             return Ok(());
         }
@@ -1537,6 +1547,7 @@ impl ClapInstrumentProcessor {
                 event.track_id.value(),
                 event.pitch,
                 event.note_id.map_or(0, aaadaw_core::NoteId::value),
+                event.channel,
                 event.controller.unwrap_or(0),
             )
         });
@@ -1565,6 +1576,7 @@ impl ClapInstrumentProcessor {
             let active_note = ActiveNote {
                 note_id,
                 pitch: event.pitch,
+                channel: event.channel,
             };
             match event.kind {
                 MidiEventKind::NoteOn => {
@@ -1611,13 +1623,14 @@ impl ClapInstrumentProcessor {
                 })?;
                 let midi_bytes = match event.kind {
                     MidiEventKind::ControllerChange => [
-                        0xb0,
+                        0xb0 | event.channel,
                         event.controller.expect("controller event number"),
                         event.velocity,
                     ],
-                    MidiEventKind::PitchBend => {
-                        pitch_bend_midi_bytes(event.pitch_bend.expect("pitch-bend event value"))
-                    }
+                    MidiEventKind::PitchBend => pitch_bend_midi_bytes(
+                        event.pitch_bend.expect("pitch-bend event value"),
+                        event.channel,
+                    ),
                     MidiEventKind::NoteOff | MidiEventKind::NoteOn => {
                         unreachable!("only control events are handled in this branch")
                     }
@@ -1637,7 +1650,12 @@ impl ClapInstrumentProcessor {
             .ok_or_else(|| {
                 ClapInstrumentError::new("MIDI note ID exceeds the CLAP note-ID range")
             })?;
-            let pckn = Pckn::new(self.input_note_port, 0_u16, u16::from(event.pitch), note_id);
+            let pckn = Pckn::new(
+                self.input_note_port,
+                u16::from(event.channel),
+                u16::from(event.pitch),
+                note_id,
+            );
             match event.kind {
                 MidiEventKind::NoteOn => self.input_events.push(&NoteOnEvent::new(
                     sample_offset,
@@ -1685,7 +1703,7 @@ impl ClapInstrumentProcessor {
                 0,
                 Pckn::new(
                     self.input_note_port,
-                    0_u16,
+                    u16::from(note.channel),
                     u16::from(note.pitch),
                     note.note_id,
                 ),
@@ -1795,8 +1813,8 @@ impl ClapInstrumentProcessor {
     }
 }
 
-fn pitch_bend_midi_bytes(value: u16) -> [u8; 3] {
-    [0xe0, (value & 0x7f) as u8, (value >> 7) as u8]
+fn pitch_bend_midi_bytes(value: u16, channel: u8) -> [u8; 3] {
+    [0xe0 | channel, (value & 0x7f) as u8, (value >> 7) as u8]
 }
 
 /// Lists plugin descriptors exposed by one CLAP entry file.
@@ -2064,9 +2082,10 @@ mod tests {
 
     #[test]
     fn pitch_bend_values_encode_as_little_endian_14_bit_midi_data() {
-        assert_eq!(pitch_bend_midi_bytes(0), [0xe0, 0, 0]);
-        assert_eq!(pitch_bend_midi_bytes(8192), [0xe0, 0, 64]);
-        assert_eq!(pitch_bend_midi_bytes(16_383), [0xe0, 127, 127]);
+        assert_eq!(pitch_bend_midi_bytes(0, 0), [0xe0, 0, 0]);
+        assert_eq!(pitch_bend_midi_bytes(8192, 0), [0xe0, 0, 64]);
+        assert_eq!(pitch_bend_midi_bytes(16_383, 0), [0xe0, 127, 127]);
+        assert_eq!(pitch_bend_midi_bytes(8192, 5), [0xe5, 0, 64]);
     }
     use crate::{
         AudioItemStream, AudioRenderGraph, TrackFxProcessor, TrackInstrumentProcessor,
@@ -3132,6 +3151,7 @@ mod tests {
         let (track_id, note_id) = test_ids();
         let events = [
             ScheduledMidiEvent {
+                channel: 0,
                 sample_offset: 7,
                 track_id,
                 note_id: Some(note_id),
@@ -3142,6 +3162,7 @@ mod tests {
                 kind: MidiEventKind::NoteOff,
             },
             ScheduledMidiEvent {
+                channel: 0,
                 sample_offset: 3,
                 track_id,
                 note_id: Some(note_id),
@@ -3152,6 +3173,7 @@ mod tests {
                 kind: MidiEventKind::NoteOn,
             },
             ScheduledMidiEvent {
+                channel: 0,
                 sample_offset: 3,
                 track_id,
                 note_id: Some(note_id),
@@ -3192,6 +3214,7 @@ mod tests {
         let (track_id, note_id) = test_ids();
         let events = [
             ScheduledMidiEvent {
+                channel: 0,
                 sample_offset: 0,
                 track_id,
                 note_id: Some(note_id),
@@ -3202,6 +3225,7 @@ mod tests {
                 kind: MidiEventKind::NoteOn,
             },
             ScheduledMidiEvent {
+                channel: 0,
                 sample_offset: 3,
                 track_id,
                 note_id: None,
@@ -3212,6 +3236,7 @@ mod tests {
                 kind: MidiEventKind::ControllerChange,
             },
             ScheduledMidiEvent {
+                channel: 0,
                 sample_offset: 8,
                 track_id,
                 note_id: None,
@@ -3222,6 +3247,7 @@ mod tests {
                 kind: MidiEventKind::ControllerChange,
             },
             ScheduledMidiEvent {
+                channel: 0,
                 sample_offset: 4,
                 track_id,
                 note_id: None,
@@ -3232,6 +3258,7 @@ mod tests {
                 kind: MidiEventKind::ControllerChange,
             },
             ScheduledMidiEvent {
+                channel: 0,
                 sample_offset: 5,
                 track_id,
                 note_id: Some(note_id),
@@ -3242,6 +3269,7 @@ mod tests {
                 kind: MidiEventKind::NoteOff,
             },
             ScheduledMidiEvent {
+                channel: 0,
                 sample_offset: 6,
                 track_id,
                 note_id: None,
@@ -3252,6 +3280,7 @@ mod tests {
                 kind: MidiEventKind::ControllerChange,
             },
             ScheduledMidiEvent {
+                channel: 0,
                 sample_offset: 7,
                 track_id,
                 note_id: None,
@@ -3262,6 +3291,7 @@ mod tests {
                 kind: MidiEventKind::ControllerChange,
             },
             ScheduledMidiEvent {
+                channel: 0,
                 sample_offset: 10,
                 track_id,
                 note_id: None,
@@ -3272,6 +3302,7 @@ mod tests {
                 kind: MidiEventKind::ControllerChange,
             },
             ScheduledMidiEvent {
+                channel: 0,
                 sample_offset: 9,
                 track_id,
                 note_id: None,
@@ -3319,6 +3350,7 @@ mod tests {
             .expect("controller-capable plugin should accept reset events");
 
         let event = ScheduledMidiEvent {
+            channel: 0,
             sample_offset: 0,
             track_id,
             note_id: Some(note_id),
@@ -3350,6 +3382,7 @@ mod tests {
         processor.input_midi_port = None;
         let (track_id, note_id) = test_ids();
         let event = ScheduledMidiEvent {
+            channel: 0,
             sample_offset: 0,
             track_id,
             note_id: Some(note_id),
@@ -3399,6 +3432,7 @@ mod tests {
             ClapInstrumentOwner::load_from_entry(entry, PLUGIN_ID, 48_000, 4, 1)
                 .expect("test synth should load");
         let event = ScheduledMidiEvent {
+            channel: 0,
             sample_offset: 4,
             track_id: test_ids().0,
             note_id: Some(test_ids().1),

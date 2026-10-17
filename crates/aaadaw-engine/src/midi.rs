@@ -5,6 +5,7 @@ use std::fmt;
 
 const MAX_COMPILED_MIDI_EVENTS: usize = 1_000_000;
 const FIRST_LIVE_MIDI_NOTE_ID: u64 = 1 << 30;
+pub const MIDI_CHANNEL_COUNT: u8 = 16;
 
 fn sample_at_midi_position(
     project: &Project,
@@ -33,6 +34,8 @@ pub enum MidiEventKind {
 pub struct ScheduledMidiEvent {
     pub sample_offset: usize,
     pub track_id: TrackId,
+    /// Zero-based channel in the inclusive range `0..16`.
+    pub channel: u8,
     pub note_id: Option<NoteId>,
     pub pitch: u8,
     pub velocity: u8,
@@ -88,6 +91,7 @@ impl MidiInputMessage {
         Some(ScheduledMidiEvent {
             sample_offset: 0,
             track_id,
+            channel: self.status & 0x0f,
             pitch,
             velocity,
             controller,
@@ -736,6 +740,7 @@ impl MidiEventPlan {
                 output[written] = Some(ScheduledMidiEvent {
                     sample_offset: 0,
                     track_id: timeline.track_id,
+                    channel: 0,
                     note_id: None,
                     pitch: timeline.controller,
                     velocity: value.value,
@@ -792,6 +797,7 @@ impl MidiEventPlan {
             output[written] = Some(ScheduledMidiEvent {
                 sample_offset: 0,
                 track_id: timeline.track_id,
+                channel: 0,
                 note_id: None,
                 pitch: 0,
                 velocity: 0,
@@ -869,6 +875,7 @@ impl MidiEventPlan {
             output[*written] = Some(ScheduledMidiEvent {
                 sample_offset: 0,
                 track_id: note.track_id,
+                channel: 0,
                 note_id: Some(note.note_id),
                 pitch: note.pitch,
                 velocity: note.velocity,
@@ -932,6 +939,7 @@ impl MidiEventPlan {
             *destination = Some(ScheduledMidiEvent {
                 sample_offset: (event.absolute_sample - start_sample) as usize,
                 track_id: event.track_id,
+                channel: 0,
                 note_id: event.note_id,
                 pitch: event.pitch,
                 velocity: event.velocity,
@@ -1225,16 +1233,41 @@ mod input_tests {
     fn live_midi_decoder_maps_controllers_and_pitch_bend() {
         let mut decoder = MidiInputDecoder::default();
         let mut messages = Vec::new();
-        decoder.push_bytes(&[0xB0, 7, 100, 0xE0, 0, 64], &mut messages);
+        decoder.push_bytes(&[0xB3, 7, 100, 0xE5, 0, 64], &mut messages);
         let track_id = TrackId::from_value(9).unwrap();
 
         let controller = messages[0].scheduled_event(track_id).unwrap();
         assert_eq!(controller.kind, MidiEventKind::ControllerChange);
+        assert_eq!(controller.channel, 3);
         assert_eq!(controller.controller, Some(7));
         assert_eq!(controller.velocity, 100);
         let bend = messages[1].scheduled_event(track_id).unwrap();
         assert_eq!(bend.kind, MidiEventKind::PitchBend);
+        assert_eq!(bend.channel, 5);
         assert_eq!(bend.pitch_bend, Some(8192));
+    }
+
+    #[test]
+    fn live_midi_decoder_pairs_same_pitch_notes_per_channel() {
+        let mut decoder = MidiInputDecoder::default();
+        let mut messages = Vec::new();
+        decoder.push_bytes(
+            &[0x90, 60, 100, 0x91, 60, 101, 0x80, 60, 0, 0x81, 60, 0],
+            &mut messages,
+        );
+        let track_id = TrackId::from_value(10).unwrap();
+        let events = messages
+            .iter()
+            .map(|message| message.scheduled_event(track_id).unwrap())
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            events.iter().map(|event| event.channel).collect::<Vec<_>>(),
+            [0, 1, 0, 1]
+        );
+        assert_eq!(events[0].note_id, events[2].note_id);
+        assert_eq!(events[1].note_id, events[3].note_id);
+        assert_ne!(events[0].note_id, events[1].note_id);
     }
 }
 

@@ -296,6 +296,7 @@ fn segmented_event_plan_keeps_output_unchanged_when_callback_buffer_is_too_small
     let sentinel = ScheduledMidiEvent {
         sample_offset: 99,
         track_id: project.tracks()[0].id(),
+        channel: 0,
         note_id: None,
         pitch: 1,
         velocity: 2,

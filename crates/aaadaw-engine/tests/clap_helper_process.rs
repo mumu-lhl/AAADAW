@@ -81,7 +81,8 @@ fn midi_event(
         pitch,
         velocity,
         controller,
-        reserved: [0; 2],
+        channel: 0,
+        reserved: 0,
     }
 }
 

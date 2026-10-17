@@ -93,8 +93,8 @@ pub use master_output::{
     MasterOutputSafetyError,
 };
 pub use midi::{
-    MidiEventKind, MidiEventPlan, MidiInputDecoder, MidiInputMessage, MidiScheduleError,
-    MidiSegmentCursor, MidiSegmentSchedule, ScheduledMidiEvent,
+    MIDI_CHANNEL_COUNT, MidiEventKind, MidiEventPlan, MidiInputDecoder, MidiInputMessage,
+    MidiScheduleError, MidiSegmentCursor, MidiSegmentSchedule, ScheduledMidiEvent,
 };
 
 /// Lock-free control for auditioning one note through a prepared track instrument.
@@ -1183,6 +1183,9 @@ pub enum AudioGraphError {
         requested: usize,
         maximum: usize,
     },
+    InvalidMidiChannel {
+        channel: u8,
+    },
     InstrumentEventBufferFull {
         track_id: TrackId,
     },
@@ -1219,6 +1222,12 @@ impl fmt::Display for AudioGraphError {
                 formatter,
                 "live MIDI input block has {requested} events; maximum is {maximum}"
             ),
+            Self::InvalidMidiChannel { channel } => {
+                write!(
+                    formatter,
+                    "MIDI channel {channel} is outside the 0..16 range"
+                )
+            }
             Self::InstrumentEventBufferFull { track_id } => write!(
                 formatter,
                 "MIDI event buffer for track {} is too small",
@@ -1603,6 +1612,7 @@ fn submit_isolated_block_with_preview(
                 event.sample_offset,
                 event.sort_priority(),
                 event.track_id.value(),
+                event.channel,
                 event.controller.unwrap_or(event.pitch),
                 event.note_id.map_or(0, aaadaw_core::NoteId::value),
             )
@@ -2850,6 +2860,15 @@ impl AudioRenderGraph {
         midi_input: &[Option<ScheduledMidiEvent>],
         output: &mut [[f32; 2]],
     ) -> Result<AudioRenderStats, AudioGraphError> {
+        if let Some(event) = midi_input
+            .iter()
+            .flatten()
+            .find(|event| event.channel >= MIDI_CHANNEL_COUNT)
+        {
+            return Err(AudioGraphError::InvalidMidiChannel {
+                channel: event.channel,
+            });
+        }
         self.render_callback(true, midi_input, midi_output, output)
     }
 
@@ -3303,6 +3322,7 @@ impl AudioRenderGraph {
                         .find(|route| route.track_index == previous_index)
                 {
                     self.midi_scratch[midi_event_count] = Some(ScheduledMidiEvent {
+                        channel: 0,
                         sample_offset: 0,
                         track_id: route.track_id,
                         note_id: Some(
@@ -3326,6 +3346,7 @@ impl AudioRenderGraph {
                         .find(|route| route.track_index == next_index)
                 {
                     self.midi_scratch[midi_event_count] = Some(ScheduledMidiEvent {
+                        channel: 0,
                         sample_offset: 0,
                         track_id: route.track_id,
                         note_id: Some(
@@ -3386,6 +3407,7 @@ impl AudioRenderGraph {
                     event.sample_offset,
                     event.sort_priority(),
                     event.track_id.value(),
+                    event.channel,
                     event.controller.unwrap_or(event.pitch),
                     event.note_id.map_or(0, aaadaw_core::NoteId::value),
                 )
