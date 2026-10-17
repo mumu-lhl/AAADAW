@@ -490,6 +490,7 @@ struct App {
     midi_editor_draw_channel: u8,
     midi_editor_filter_enabled: bool,
     midi_editor_filter_channels: u16,
+    midi_editor_filter_inverted: bool,
     midi_editor_filter_dialog_open: bool,
     midi_editor_origin_tick: u64,
     midi_editor_edit_cursor_tick: Option<u64>,
@@ -1490,9 +1491,17 @@ impl App {
         let selection = self.midi_editor_channel_selection;
         let filter_enabled = self.midi_editor_filter_enabled;
         let filter_channels = self.midi_editor_filter_channels;
+        let filter_inverted = self.midi_editor_filter_inverted;
         item.notes()
             .iter()
-            .filter(|note| selection.shows_channel(note.channel(), filter_enabled, filter_channels))
+            .filter(|note| {
+                selection.shows_channel(
+                    note.channel(),
+                    filter_enabled,
+                    filter_channels,
+                    filter_inverted,
+                )
+            })
             .map(|note| note.id())
             .collect()
     }
@@ -3629,6 +3638,10 @@ impl App {
             Message::ToggleMidiEditorFilterChannel(_) => {}
             Message::SetMidiEditorFilterChannelsAll(all) => {
                 self.midi_editor_filter_channels = if all { u16::MAX } else { 0 };
+                self.retain_visible_midi_note_selection();
+            }
+            Message::ToggleMidiEditorFilterInvert => {
+                self.midi_editor_filter_inverted = !self.midi_editor_filter_inverted;
                 self.retain_visible_midi_note_selection();
             }
             Message::CloseMidiEditorFilter => self.midi_editor_filter_dialog_open = false,

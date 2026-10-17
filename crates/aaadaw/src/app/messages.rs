@@ -196,16 +196,22 @@ impl MidiEditorChannelSelection {
         channel: u8,
         filter_enabled: bool,
         filter_channels: u16,
+        filter_inverted: bool,
     ) -> bool {
         if !filter_enabled {
             return true;
         }
-        match self {
+        let passes = match self {
             Self::AllChannels => true,
             Self::Channel(selected) => channel == selected,
             Self::Multichannel => {
                 filter_channels & (1_u16.checked_shl(u32::from(channel)).unwrap_or(0)) != 0
             }
+        };
+        if self == Self::Multichannel && filter_inverted {
+            !passes
+        } else {
+            passes
         }
     }
 }
@@ -490,6 +496,7 @@ pub(crate) enum Message {
     ToggleMidiEditorChannelFilter,
     ToggleMidiEditorFilterChannel(u8),
     SetMidiEditorFilterChannelsAll(bool),
+    ToggleMidiEditorFilterInvert,
     CloseMidiEditorFilter,
     MidiEditorFeedback(String),
     SelectMidiNotes(HashSet<NoteId>),
@@ -903,12 +910,14 @@ mod midi_channel_selection_tests {
 
     #[test]
     fn channel_filter_matches_all_single_and_multiple_channel_modes() {
-        assert!(MidiEditorChannelSelection::AllChannels.shows_channel(15, true, 0));
-        assert!(!MidiEditorChannelSelection::Channel(2).shows_channel(1, true, u16::MAX));
-        assert!(MidiEditorChannelSelection::Channel(2).shows_channel(2, true, 0));
-        assert!(!MidiEditorChannelSelection::Multichannel.shows_channel(1, true, 0b0101));
-        assert!(MidiEditorChannelSelection::Multichannel.shows_channel(2, true, 0b0100));
-        assert!(MidiEditorChannelSelection::Multichannel.shows_channel(15, false, 0));
+        assert!(MidiEditorChannelSelection::AllChannels.shows_channel(15, true, 0, false));
+        assert!(!MidiEditorChannelSelection::Channel(2).shows_channel(1, true, u16::MAX, false));
+        assert!(MidiEditorChannelSelection::Channel(2).shows_channel(2, true, 0, true));
+        assert!(!MidiEditorChannelSelection::Multichannel.shows_channel(1, true, 0b0101, false));
+        assert!(MidiEditorChannelSelection::Multichannel.shows_channel(2, true, 0b0100, false));
+        assert!(!MidiEditorChannelSelection::Multichannel.shows_channel(0, true, 0b0101, true));
+        assert!(MidiEditorChannelSelection::Multichannel.shows_channel(1, true, 0b0101, true));
+        assert!(MidiEditorChannelSelection::Multichannel.shows_channel(15, false, 0, true));
     }
 
     #[test]

@@ -12295,6 +12295,74 @@ fn midi_editor_humanize_dialog_defaults_to_selected_notes_and_is_undoable() {
 }
 
 #[test]
+fn midi_editor_multichannel_invert_shows_the_complement_and_drops_hidden_selection() {
+    let mut app = App::default();
+    let _ = app.update(Message::AddTrack);
+    let track_id = app.project.tracks()[0].id();
+    app.project
+        .apply(DawAction::InsertMidiItem {
+            track_id,
+            start_tick: 0,
+            length_ticks: 3_840,
+        })
+        .expect("test MIDI item should be inserted");
+    let item_id = app.project.midi_items()[0].id();
+    app.project
+        .apply(DawAction::AddMidiNotes {
+            item_id,
+            notes: vec![
+                MidiNoteData {
+                    channel: 0,
+                    pitch: 60,
+                    tick: 100,
+                    duration: 90,
+                    velocity: 80,
+                },
+                MidiNoteData {
+                    channel: 1,
+                    pitch: 62,
+                    tick: 300,
+                    duration: 90,
+                    velocity: 80,
+                },
+                MidiNoteData {
+                    channel: 2,
+                    pitch: 64,
+                    tick: 500,
+                    duration: 90,
+                    velocity: 80,
+                },
+            ],
+        })
+        .expect("test notes should be inserted");
+    app.midi_editor_item_id = Some(item_id);
+    app.midi_editor_channel_selection = super::messages::MidiEditorChannelSelection::Multichannel;
+    app.midi_editor_filter_enabled = true;
+    app.midi_editor_filter_channels = 0b101;
+    let note_ids = app.project.midi_items()[0]
+        .notes()
+        .iter()
+        .map(|note| note.id())
+        .collect::<Vec<_>>();
+    app.midi_editor_selected_notes = HashSet::from([note_ids[0], note_ids[1]]);
+
+    assert_eq!(
+        app.visible_midi_note_ids(),
+        HashSet::from([note_ids[0], note_ids[2]])
+    );
+    let _ = app.update(Message::ToggleMidiEditorFilterInvert);
+    assert_eq!(app.visible_midi_note_ids(), HashSet::from([note_ids[1]]));
+    assert_eq!(app.midi_editor_selected_notes, HashSet::from([note_ids[1]]));
+
+    let _ = app.update(Message::ToggleMidiEditorFilterInvert);
+    assert_eq!(
+        app.visible_midi_note_ids(),
+        HashSet::from([note_ids[0], note_ids[2]])
+    );
+    assert!(app.midi_editor_selected_notes.is_empty());
+}
+
+#[test]
 fn midi_editor_quantize_positions_and_ends_changes_only_selected_notes() {
     let mut app = App::default();
     let _ = app.update(Message::AddTrack);

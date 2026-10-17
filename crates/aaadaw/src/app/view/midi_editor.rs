@@ -210,6 +210,7 @@ fn midi_snap_for_app(app: &App) -> MidiSnap {
         draw_channel: app.midi_editor_draw_channel.min(15),
         filter_enabled: app.midi_editor_filter_enabled,
         filter_channels: app.midi_editor_filter_channels,
+        filter_inverted: app.midi_editor_filter_inverted,
     }
 }
 
@@ -224,6 +225,7 @@ struct MidiSnap {
     draw_channel: u8,
     filter_enabled: bool,
     filter_channels: u16,
+    filter_inverted: bool,
 }
 
 impl Default for MidiSnap {
@@ -238,14 +240,19 @@ impl Default for MidiSnap {
             draw_channel: 0,
             filter_enabled: false,
             filter_channels: 0,
+            filter_inverted: false,
         }
     }
 }
 
 impl MidiSnap {
     fn channel_visible(self, channel: u8) -> bool {
-        self.channel_selection
-            .shows_channel(channel, self.filter_enabled, self.filter_channels)
+        self.channel_selection.shows_channel(
+            channel,
+            self.filter_enabled,
+            self.filter_channels,
+            self.filter_inverted,
+        )
     }
 }
 
@@ -290,6 +297,7 @@ fn view_with_profile(app: &App, touch_targets: bool) -> Element<'_, Message> {
                 note.channel(),
                 app.midi_editor_filter_enabled,
                 app.midi_editor_filter_channels,
+                app.midi_editor_filter_inverted,
             )
         })
         .count();
@@ -968,9 +976,20 @@ fn channel_filter_dialog(app: &App, touch_targets: bool) -> Element<'_, Message>
     ]
     .spacing(ROW_GAP)
     .align_y(iced::Alignment::Center);
+    let filter_options = row![
+        checkbox(app.midi_editor_filter_enabled)
+            .label("Show only events that pass filter")
+            .on_toggle(|_| Message::ToggleMidiEditorChannelFilter),
+        checkbox(app.midi_editor_filter_inverted)
+            .label("Invert")
+            .on_toggle(|_| Message::ToggleMidiEditorFilterInvert),
+    ]
+    .spacing(ROW_GAP)
+    .align_y(iced::Alignment::Center);
     container(
         column![
             header,
+            filter_options,
             first_row,
             second_row,
             row![
@@ -3818,6 +3837,19 @@ mod tests {
                 .is_none()
         );
 
+        roll.snap.channel_selection = MidiEditorChannelSelection::Multichannel;
+        roll.snap.filter_channels = 0b0100;
+        roll.snap.filter_inverted = true;
+        assert!(
+            roll.note_at_point(Point::new(2.0, 9.0), false, 500.0)
+                .is_none()
+        );
+        roll.snap.filter_channels = 0b0010;
+        assert!(
+            roll.note_at_point(Point::new(2.0, 9.0), false, 500.0)
+                .is_some()
+        );
+
         roll.snap.filter_enabled = false;
         assert!(
             roll.note_at_point(Point::new(2.0, 9.0), false, 500.0)
@@ -3904,6 +3936,27 @@ mod tests {
             Some(1)
         );
 
+        let inverted_snap = MidiSnap {
+            filter_channels: 0b10,
+            filter_inverted: true,
+            ..snap
+        };
+        let inverted_controller_lane = ControllerLane {
+            snap: inverted_snap,
+            ..controller_lane
+        };
+        assert_eq!(
+            inverted_controller_lane
+                .closest_point(Point::new(0.0, controller_y(64, 72.0)))
+                .map(|(index, _)| index),
+            Some(0)
+        );
+        assert!(
+            inverted_controller_lane
+                .closest_point(Point::new(96.0, controller_y(64, 72.0)))
+                .is_none()
+        );
+
         let pitch_bend_lane = PitchBendLane {
             item,
             item_id,
@@ -3925,6 +3978,22 @@ mod tests {
                 .closest_point(Point::new(96.0, pitch_bend_y(8_192, 72.0)))
                 .map(|(index, _)| index),
             Some(1)
+        );
+
+        let inverted_pitch_bend_lane = PitchBendLane {
+            snap: inverted_snap,
+            ..pitch_bend_lane
+        };
+        assert_eq!(
+            inverted_pitch_bend_lane
+                .closest_point(Point::new(0.0, pitch_bend_y(8_192, 72.0)))
+                .map(|(index, _)| index),
+            Some(0)
+        );
+        assert!(
+            inverted_pitch_bend_lane
+                .closest_point(Point::new(96.0, pitch_bend_y(8_192, 72.0)))
+                .is_none()
         );
     }
 

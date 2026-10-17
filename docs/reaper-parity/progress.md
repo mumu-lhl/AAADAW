@@ -2181,3 +2181,11 @@ Core 全套 **228 tests / 41 binaries** 通过；最后收紧后的 Humanize Cor
 nightly Cranelift 重建后的桌面二进制 Build ID `91ba39a553698e12b82712452d6e44e7b02959d4`、SHA-256 `0443ccf711827af62243b3beb0a5d9f3a8e474f422e007dd036c288c07b83ef8`。Xvfb :291 实际启动该二进制、创建 track/MIDI item/note、打开 Humanize Notes、设为 Timing 100% / Velocity 0% / bias 0%，并在 OK 后返回编辑器；启动、对话框、配置与应用后截图及哈希已纳入验证资料。
 
 Core Nextest **229 tests / 41 binaries** 通过，Humanize Core 定向 **6/6**，AAADAW App **767/767**；Core/App all-target Clippy (`-D warnings`)、`cargo fmt --all -- --check`、`git diff --check` 和 parity matrix **107 项 / 15 列 / 唯一 ID** 校验通过。`MIDI-HUMANIZE-001`、UI-019 与 P7 仍开放，直到精确随机序列、seed 和 invocation 语义达到验收标准。
+
+### 2026-10-17 MIDI Editor Multichannel 反向筛选
+
+REAPER 7.82 / Default 7 的 `Filter Events` 窗口实测：勾选 Channel 1 和 3–16、取消 Channel 2 并启用 “Show only events that pass filter” 时，Invert 关闭显示 4 个匹配音符；启用 Invert 后通道勾选集不变，只显示互补的 2 个 Channel 2 音符。原厂成对截图、事件 tick/channel 读数及复现探针见 [MIDI channel fixture manifest](../verification/reaper-parity/fixtures/midi-channel-editor-ui.tsv)。
+
+AAADAW 的 Multichannel 面板新增原厂同名 Show only 与 Invert 控件；Invert 对当前通道集合取反并驱动音符、CC、Pitch Bend 的显示和命中测试，改变筛选后清除变为隐藏的音符选择。App 回归验证互补集合与选中项清理；Piano Roll、CC 和 Pitch Bend lane 分别覆盖反向命中路径。nightly Cranelift 当前二进制 Build ID `42006dc9d7d0b4c8d2caa280cb0457955388dc5d`，SHA-256 `f3d657dca6cfdb19ff6e4300e3962f46df80e4a2fe7047567d78c4b52efd902c`；Xvfb :294 实窗截图显示同一通道集合下 4→2 个可见音符，截图哈希与原厂参考均列入 fixture manifest。
+
+AAADAW App Nextest **768/768，0 skipped**、all-target Clippy (`-D warnings`)、`cargo fmt --all -- --check` 通过。`MIDI-CHANNEL-VIEW-001` 保持 `in_progress`：原厂 Solo、参数/值/位置/长度/事件类型条件、轨道列表、通道颜色及单独浮动窗口和完整几何仍未实现；UI-018、UI-019 与 P7 继续开放。
