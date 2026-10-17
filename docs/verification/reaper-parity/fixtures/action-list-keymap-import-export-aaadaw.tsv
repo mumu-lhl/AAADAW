@@ -1,7 +1,7 @@
 field	value
 reference	AAADAW desktop build, Linux / REAPER 7.82 parity branch; live UI evidence
-build_id	91075db1945fccdb37301fcf5b8e55de58bdb873
-binary_sha256	3df1691a1ad8c0bc2f0b100bf59bcbd1347a9fedcd7669bf98f1691a8290edee
+build_id	0da735bc2e079a7576bec5d43262482dd9121427
+binary_sha256	6b6d023c3e4ecca294d08140776920276fb73cb6c6486867054a5b94321de446
 display	Xvfb :828, 1280x800x24; isolated XDG_CONFIG_HOME/DATA_HOME/CACHE_HOME/RUNTIME_HOME
 action_list_client	701x475
 options_steps	Open standalone Action List (Shift+/); click Options
@@ -12,7 +12,7 @@ options_screenshot_size	701x475
 map_format	AAADAW_SHORTCUT_MAP tab-separated v1; stable action ID plus canonical shortcut alternatives
 import_semantics	Replaces AAADAW custom shortcut overrides; omitted actions use factory shortcuts; macro definitions are not transferred
 validation	Strict version/header, 1 MiB bounded read, known action IDs, valid shortcut parsing, duplicate IDs rejected, config replacement is atomic
-test_result	AAADAW desktop test binary: 711 passed, 0 failed, 0 ignored; cargo check/build and clippy with warnings denied passed
+test_result	AAADAW desktop test binary: 712 passed, 0 failed, 0 ignored; cargo check/build and clippy with warnings denied passed
 file_dialog_limit	This Xvfb image has no xdg-desktop-portal or zenity service, so file chooser interaction could not be exercised; parser/writer and transactional state replacement were tested directly
-native_keymap_compatibility	Strict REAPER 7.82 Main keyboard subset: 29 mapped action IDs; unknown actions, sections, SCR/layout records, flags and keys fail explicitly
+native_keymap_compatibility	Strict REAPER 7.82 Main keyboard subset: 102 mapped action IDs; unknown actions, sections, SCR/layout records, flags and keys fail explicitly
 matrix_status	INPUT-BIND-001 remains in_progress

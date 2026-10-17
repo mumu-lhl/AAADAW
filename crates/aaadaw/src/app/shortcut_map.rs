@@ -70,6 +70,307 @@ const REAPER_ACTIONS: &[(&str, u32, &str)] = &[
         "Track: Toggle solo for selected tracks",
     ),
     ("transport.stop-playback", 1016, "Transport: Stop"),
+    (
+        "file.save-project-new-version",
+        41895,
+        "File: Save new version of project (automatically increment project name)",
+    ),
+    ("file.save-all-projects", 40897, "File: Save all projects"),
+    (
+        "file.save-project-as-template",
+        40394,
+        "File: Save project as template...",
+    ),
+    ("file.open-render-queue", 40929, "File: Open render queue"),
+    (
+        "file.export-project-midi",
+        40849,
+        "File: Export project MIDI...",
+    ),
+    ("grid.toggle-swing", 42304, "Grid: Toggle swing grid"),
+    ("edit.paste-items", 42398, "Item: Paste items/tracks"),
+    (
+        "ruler.toggle-project-markers",
+        43485,
+        "Ruler: Show/hide all project markers",
+    ),
+    (
+        "ruler.toggle-project-regions",
+        43487,
+        "Ruler: Show/hide all project regions",
+    ),
+    (
+        "ruler.toggle-project-regions-and-markers",
+        43489,
+        "Ruler: Show/hide all project regions and markers",
+    ),
+    (
+        "regions.delete-near-cursor",
+        40615,
+        "Markers: Delete region near cursor",
+    ),
+    (
+        "regions.edit-near-cursor",
+        40616,
+        "Markers: Edit region near cursor",
+    ),
+    ("loop-time.go-to-start", 40632, "Go to start of loop"),
+    ("loop-time.go-to-end", 40633, "Go to end of loop"),
+    (
+        "ruler.toggle-selected-project-markers",
+        43484,
+        "Ruler: Show/hide selected project markers",
+    ),
+    (
+        "ruler.toggle-selected-project-regions",
+        43486,
+        "Ruler: Show/hide selected project regions",
+    ),
+    ("item.select-all", 40182, "Item: Select all items"),
+    ("item.nudge-set", 41226, "Item edit: Nudge/Set..."),
+    (
+        "item.nudge-set.close",
+        41227,
+        "Item edit: Close nudge/Set dialog",
+    ),
+    (
+        "item.nudge-left",
+        41250,
+        "Item edit: Nudge left by last nudge dialog settings",
+    ),
+    (
+        "item.nudge-right",
+        41249,
+        "Item edit: Nudge right by last nudge dialog settings",
+    ),
+    (
+        "item.select-all-in-track",
+        40421,
+        "Item: Select all items in track",
+    ),
+    (
+        "item.select-all-in-time-selection",
+        40717,
+        "Item: Select all items in current time selection",
+    ),
+    (
+        "item.unselect-all",
+        40289,
+        "Item: Unselect (clear selection of) all items",
+    ),
+    ("item.invert-selection", 41115, "Item: Invert selection"),
+    (
+        "item.select-next-adjacent",
+        41127,
+        "Item: Select next adjacent non-overlapping item",
+    ),
+    (
+        "item.select-previous-adjacent",
+        41128,
+        "Item: Select previous adjacent non-overlapping item",
+    ),
+    (
+        "item.select-previous-track",
+        41139,
+        "Item navigation: Select and move to item in previous track without changing track selection",
+    ),
+    (
+        "item.select-next-track",
+        41140,
+        "Item navigation: Select and move to item in next track without changing track selection",
+    ),
+    (
+        "item.navigate-cursor-left-edge",
+        41167,
+        "Item navigation: Move cursor left to nearest item edge",
+    ),
+    (
+        "item.navigate-cursor-right-edge",
+        41168,
+        "Item navigation: Move cursor right to nearest item edge",
+    ),
+    (
+        "item.navigate-cursor-selected-start",
+        41173,
+        "Item navigation: Move cursor to start of items",
+    ),
+    (
+        "item.navigate-cursor-selected-end",
+        41174,
+        "Item navigation: Move cursor to end of items",
+    ),
+    ("item.snap-left", 41182, "Item: Snap items left"),
+    ("item.snap-right", 41183, "Item: Snap items right"),
+    (
+        "item.snap-nearest",
+        41184,
+        "Item: Snap items to nearest snap point",
+    ),
+    (
+        "item.select-under-mouse",
+        40528,
+        "Item: Select item under mouse cursor",
+    ),
+    (
+        "item.add-under-mouse-to-selection",
+        40529,
+        "Item: Select item under mouse cursor (leaving other items selected)",
+    ),
+    (
+        "item.toggle-under-mouse-selection",
+        40530,
+        "Item: Toggle selection of item under mouse cursor",
+    ),
+    ("item.toggle-mute", 40175, "Item properties: Toggle mute"),
+    (
+        "edit.delete-focused",
+        40697,
+        "Remove items/tracks/envelope points (depending on focus)",
+    ),
+    (
+        "edit.delete-focused-no-prompting",
+        40184,
+        "Remove items/tracks/envelope points (depending on focus) - no prompting",
+    ),
+    (
+        "item.trim-to-selection",
+        40508,
+        "Item: Trim items to selected area",
+    ),
+    (
+        "item.enclose-media-in-razor-edit",
+        42409,
+        "Razor edit: Enclose media items, including space between items",
+    ),
+    ("item.heal-splits", 40548, "Item: Heal splits in items"),
+    ("item.duplicate", 41295, "Item: Duplicate items"),
+    (
+        "item.select-all-on-selected-tracks-in-time-selection",
+        40718,
+        "Item: Select all items on selected tracks in current time selection",
+    ),
+    (
+        "regions.insert-from-time-selection",
+        40174,
+        "Markers: Insert region from time selection",
+    ),
+    (
+        "insert.project-marker",
+        40157,
+        "Markers: Insert marker at current position",
+    ),
+    (
+        "markers.delete-near-cursor",
+        40613,
+        "Markers: Delete marker near cursor",
+    ),
+    (
+        "navigation.previous-project-marker",
+        40172,
+        "Markers: Go to previous marker/project start",
+    ),
+    (
+        "navigation.next-project-marker",
+        40173,
+        "Markers: Go to next marker/project end",
+    ),
+    ("loop-time.set-start", 40222, "Loop points: Set start point"),
+    ("loop-time.set-end", 40223, "Loop points: Set end point"),
+    (
+        "loop-time.toggle-link",
+        40621,
+        "Options: Toggle loop points linked to time selection",
+    ),
+    (
+        "loop-time.loop-to-time-selection",
+        40622,
+        "Time selection: Move loop points to time selection",
+    ),
+    (
+        "loop-time.time-selection-to-loop",
+        40623,
+        "Time selection: Move time selection to loop points",
+    ),
+    (
+        "loop-time.remove-loop-if-unlinked",
+        40624,
+        "Loop points: Remove (unselect) loop points, if not linked to time selection, ignoring lock state",
+    ),
+    (
+        "loop-time.remove-time-selection-and-loop",
+        40020,
+        "Time selection: Remove (unselect) time selection and loop points",
+    ),
+    (
+        "view.marker-manager",
+        40326,
+        "View: Show region/marker manager window",
+    ),
+    (
+        "view.region-render-matrix",
+        41888,
+        "View: Show region render matrix window",
+    ),
+    (
+        "track.toggle-phase",
+        40282,
+        "Track: Invert track polarity/phase",
+    ),
+    (
+        "ruler.toggle-selected-project-regions-and-markers",
+        43488,
+        "Ruler: Show/hide selected project regions and markers",
+    ),
+    (
+        "markers.add-or-move.01",
+        40657,
+        "Markers: Add/move marker 1 to play/edit cursor",
+    ),
+    (
+        "markers.add-or-move.02",
+        40658,
+        "Markers: Add/move marker 2 to play/edit cursor",
+    ),
+    (
+        "markers.add-or-move.03",
+        40659,
+        "Markers: Add/move marker 3 to play/edit cursor",
+    ),
+    (
+        "markers.add-or-move.04",
+        40660,
+        "Markers: Add/move marker 4 to play/edit cursor",
+    ),
+    (
+        "markers.add-or-move.05",
+        40661,
+        "Markers: Add/move marker 5 to play/edit cursor",
+    ),
+    (
+        "markers.add-or-move.06",
+        40662,
+        "Markers: Add/move marker 6 to play/edit cursor",
+    ),
+    (
+        "markers.add-or-move.07",
+        40663,
+        "Markers: Add/move marker 7 to play/edit cursor",
+    ),
+    (
+        "markers.add-or-move.08",
+        40664,
+        "Markers: Add/move marker 8 to play/edit cursor",
+    ),
+    (
+        "markers.add-or-move.09",
+        40665,
+        "Markers: Add/move marker 9 to play/edit cursor",
+    ),
+    (
+        "markers.add-or-move.10",
+        40656,
+        "Markers: Add/move marker 10 to play/edit cursor",
+    ),
 ];
 
 pub(super) fn read(path: &Path) -> Result<ShortcutBindings, String> {
@@ -399,6 +700,24 @@ mod tests {
             assert_eq!(bindings[action], key, "{action}");
         }
         assert_eq!(serialize_reaper(&bindings).unwrap(), contents);
+    }
+
+    #[test]
+    fn reaper_main_mapping_table_round_trips_all_unique_native_action_ids() {
+        assert_eq!(REAPER_ACTIONS.len(), 102);
+        let mut action_ids = REAPER_ACTIONS
+            .iter()
+            .map(|(_, action_id, _)| *action_id)
+            .collect::<Vec<_>>();
+        action_ids.sort_unstable();
+        assert!(action_ids.windows(2).all(|pair| pair[0] != pair[1]));
+
+        let bindings = REAPER_ACTIONS
+            .iter()
+            .map(|(id, _, _)| ((*id).to_owned(), "Mod+Alt+F12".to_owned()))
+            .collect::<ShortcutBindings>();
+        let serialized = serialize_reaper(&bindings).unwrap();
+        assert_eq!(parse_reaper(&serialized).unwrap(), bindings);
     }
 
     #[test]

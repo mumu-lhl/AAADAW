@@ -16,11 +16,16 @@ native_import_path	copy fixture into profile REAPER/KeyMaps, Actions > Key map..
 native_import_observed	Main Action List filtered to Undo showed Ctrl+Z, Alt+F11 after import; original Ctrl+Z factory binding remained
 native_import_screenshot	reaper-keymap-main-import-native.png; 701x475; sha256=275ca57fc3aa623f6f74f32cc7c1121123be1564224ef41b5e46ea107072eb04
 native_menu_screenshot	reaper-keymap-native-menu.png; 1280x800; sha256=0a39833fe50b262269fdcc398dc0d003c420cadaa30dea7adb1b8513d367bb65
-semantic_boundary	29 exact Main-section keyboard action mappings; verified Main-section keyboard subset only; unknown action IDs, other Section IDs, action_id=0 layout rows, SCR/custom actions, MIDI/OSC, Scope and non-round-trippable keys are rejected
+semantic_boundary	102 exact Main-section keyboard action mappings; verified Main-section keyboard subset only; unknown action IDs, other Section IDs, action_id=0 layout rows, SCR/custom actions, MIDI/OSC, Scope and non-round-trippable keys are rejected
 multi_action_import_fixture	reaper-keymap-main-import-aaadaw-multi.ReaperKeyMap
 multi_action_import_fixture_sha256	11b3398a3740a0708297b0a8e633cbe7569d7a6edd873e78e9980ed0fd3d4777
 multi_action_import_result	REAPER accepted six Main KEY records for Show action list, snap/grid, Insert new track, and selected-track mute/arm/solo
 multi_action_action_list_filter	Show action list displayed F2 alongside its existing factory ? binding after native import
 multi_action_import_screenshot	reaper-keymap-main-multi-action-import-native.png; 701x475; sha256=c1caf821d226749e1f03767775969d83e7c9a565209ca083bbaf57e27f545568
-main_action_mapping_count	29; each native ID and name exactly matches docs/verification/reaper-parity/linux-7.82/actions.tsv Section 0
-added_main_actions	40605 Show action list; 40860 Close current project tab; 40886 File: Close all projects; 40071 Options: Show snap/grid settings; 40001 Track: Insert new track; 1042 Track: Cycle folder collapsed state; 40005 Track: Remove tracks; 6/7/9 selected-track mute/solo/record arm; 1016 Transport: Stop
+main_action_mapping_count	102; each native ID and name exactly matches docs/verification/reaper-parity/linux-7.82/actions.tsv Section 0
+added_main_actions_first_expansion	40605 Show action list; 40860 Close current project tab; 40886 File: Close all projects; 40071 Options: Show snap/grid settings; 40001 Track: Insert new track; 1042 Track: Cycle folder collapsed state; 40005 Track: Remove tracks; 6/7/9 selected-track mute/solo/record arm; 1016 Transport: Stop
+editing_action_import_fixture	reaper-keymap-main-editing-actions.ReaperKeyMap
+editing_action_import_fixture_sha256	c48d5425f8e722b3a4e6fe2646d5c6a665df3f00c6a7d1ae44f9a8bbbb87001c
+editing_action_import_result	REAPER accepted four Main KEY records for Item edit: Nudge/Set, Item: Snap items left, Item: Select all items, and Go to start of loop
+editing_action_action_list_filter	Nudge/Set search showed new F9 alongside the factory N binding
+editing_action_import_screenshot	reaper-keymap-main-editing-actions-native.png; 701x475; sha256=df9352dbe7ab058e0e29d1e1507983d3b938670701f876e6bc582a5f55b74370
