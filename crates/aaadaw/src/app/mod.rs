@@ -2033,6 +2033,7 @@ impl App {
                     | Message::ActionListSelectBinding(_)
                     | Message::ActionInputConfirm
                     | Message::ActionInputCancel
+                    | Message::ActionInputSpecialKey
                     | Message::ActionListAddBinding
                     | Message::ActionListDeleteBinding
                     | Message::ActionListFindShortcut
@@ -3053,6 +3054,7 @@ impl App {
                 } else if self.action_input_window_id == Some(window_id) {
                     self.action_input_window_id = None;
                     self.action_list.capture = None;
+                    self.action_list.special_key_capture_pending = false;
                     self.action_list.input_action = None;
                     self.action_list.input_draft = None;
                 } else if self.action_list_window_id == Some(window_id) {
@@ -3898,6 +3900,18 @@ impl App {
                 self.action_list.selected_binding = Some(index)
             }
             Message::ActionListAddBinding => task = self.open_action_input(),
+            Message::ActionInputSpecialKey => {
+                if self.action_input_window_id.is_some()
+                    && matches!(
+                        self.action_list.capture,
+                        Some(action_list::CaptureMode::Add)
+                    )
+                {
+                    self.action_list.special_key_capture_pending = true;
+                    self.action_list.input_draft = None;
+                    self.action_list.feedback.clear();
+                }
+            }
             Message::ActionInputConfirm => task = self.confirm_action_input(),
             Message::ActionInputCancel => task = self.close_action_input(),
             Message::ActionListFindShortcut => {

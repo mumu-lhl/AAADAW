@@ -1892,3 +1892,9 @@ Cranelift 1.101 workspace Nextest 全量 1306/1306、0 skipped 通过，X11 测�
 扩展 Action List 快捷键捕获与配置解析，支持 iced 0.14 暴露的全部 295 个非修饰 `Named` 键：F1–F35、导航与编辑键、浏览器/媒体/音量、启动和输入法键等。Alt、AltGraph、Control、Fn、FnLock、Shift、Symbol、SymbolLock、Meta、Hyper、Super 仍作为修饰键处理，不能单独成为组合主键。逐键回归以 Ctrl+Alt+Shift+Super 验证实际捕获、精确匹配、标签序列化和配置解析；同时把原 `F25` 负例更新为 `F36`。
 
 Cranelift 1.101 AAADAW binary tests 694/694 passed；新增逐键测试 1/1 passed；Stable `cargo clippy -p aaadaw --bin aaadaw --all-targets -- -D warnings`、fmt 和 diff 检查通过。Xvfb 实窗中从 Actions 为 Edit: Undo 打开 Keyboard input 并输入 F35，窗口显示录入草稿；[截图 fixture](../verification/reaper-parity/fixtures/action-list-named-key-aaadaw.tsv) 记录窗口大小、Build ID、二进制和截图哈希。这只证明 AAADAW 捕获可用，不是 REAPER 对照；本轮未新增原厂探针。REAPER Special keys 对话框、Scope、MIDI/OSC、Action Section 和重复绑定完整优先级仍未对齐，`INPUT-BIND-001` 继续 `in_progress`。
+
+### 2026-10-17 Action List Special key mode：Enter/Tab 绑定录入
+
+Linux REAPER 7.82 / Default 7 的 387×229 Keyboard/MIDI/OSC Input 实窗确认：点击 `Special key (Enter, Tab, etc.)` 后提示 `<type special key now>>`，按 Enter 将字段设为 `Enter` 且窗口仍打开；Cancel 丢弃草稿。AAADAW 加入同名入口和独立待捕获状态。Xvfb 实窗中该模式提示与 REAPER 一致，按 Enter 显示 `Enter`，随后点击 OK 将其保存为 Edit: Undo 的附加绑定 `Mod+Z; StandardEnter`，Action List 窗口显示 `Shortcut saved`。配置保留 `StandardEnter` 的主键区身份，界面显示与原厂一致的 `Enter`。捕获期间 Enter 不再误作确认键。REAPER 原厂提示/Enter 截图、AAADAW 同尺寸输入窗两张截图、保存结果、二进制 Build ID 与 SHA-256 均见 [special-key fixture](../verification/reaper-parity/fixtures/keyboard-special-key-aaadaw.tsv)。
+
+`special_key_capture_records_enter_and_tab_without_confirming_the_binding` 与 `shortcut_labels_use_the_platform_modifier_name` 两项 Stable 定向回归通过；Stable aaadaw all-target Clippy `-D warnings` 通过。更新二进制 Build ID、SHA-256、native/AAADAW 实窗截图哈希见 fixture。Cranelift workspace nextest 冷链接在环境重启时被终止，未取得结果，不作为通过记录。矩阵只记录本次特殊键输入路径，`INPUT-BIND-001` 仍为 `in_progress`：Scope、MIDI/OSC、自动关闭、Section/跨 Section 优先级、重复绑定全规则及完整窗口仍待实现与验收。

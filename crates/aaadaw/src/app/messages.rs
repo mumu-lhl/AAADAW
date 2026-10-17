@@ -194,6 +194,7 @@ pub(crate) enum Message {
     ActionListSelect(String),
     ActionListSelectBinding(usize),
     ActionListAddBinding,
+    ActionInputSpecialKey,
     ActionInputConfirm,
     ActionInputCancel,
     ActionListDeleteBinding,

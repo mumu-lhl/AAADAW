@@ -1,0 +1,11 @@
+field	value
+reference	Linux REAPER 7.82 x86_64 rev 338578 (2026-10-04), Default 7 theme
+display	Xvfb :798, 1280x800x24, no window manager
+configuration	isolated -cfgfile profile copied from the local REAPER reference profile; no project was loaded or changed
+input_window	Keyboard/MIDI/OSC Input, 387x229
+interaction	Opened Main Actions, selected a Main action and clicked Add; clicked Special key (Enter, Tab, etc.), which changed the field to <type special key now>>; pressed Enter and the field displayed Enter while the dialog remained open; clicked Cancel without saving a binding
+reaper_binary_sha256	9976f5608068b7a58518969001b00b527fb0de6ed7459e0e5dda6f29878ee254
+special_mode_screenshot	keyboard-special-mode-native.png
+special_mode_screenshot_sha256	04607534f89b5b5d12359757356ad2aabc207099d43f3f5464399cd619b67166
+enter_capture_screenshot	keyboard-special-enter-native.png
+enter_capture_screenshot_sha256	86166c974e47ef509b79c1644b88d6d08a46c68c2720fa4f4858d52cc03cdeae

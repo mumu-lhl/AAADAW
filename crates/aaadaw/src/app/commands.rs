@@ -2463,9 +2463,21 @@ pub(super) fn format_shortcut_label(binding: &str) -> String {
 
 fn format_shortcut_label_for_platform(binding: &str, is_macos: bool) -> String {
     let modifier = format!("{}+", modifier_name_for_platform(is_macos));
-    binding
+    let platform_binding = binding
         .replace("Ctrl/Cmd+", &modifier)
-        .replace("Mod+", &modifier)
+        .replace("Mod+", &modifier);
+    platform_binding
+        .split(';')
+        .map(|chord| {
+            chord
+                .trim()
+                .split('+')
+                .map(|part| part.strip_prefix("Standard").unwrap_or(part))
+                .collect::<Vec<_>>()
+                .join("+")
+        })
+        .collect::<Vec<_>>()
+        .join("; ")
 }
 
 fn modifier_name_for_platform(is_macos: bool) -> &'static str {
@@ -3570,6 +3582,10 @@ mod shortcut_label_tests {
         assert_eq!(
             format_shortcut_label_for_platform("Ctrl/Cmd+N", false),
             "Ctrl+N"
+        );
+        assert_eq!(
+            format_shortcut_label_for_platform("Ctrl+StandardEnter; StandardHome", false),
+            "Ctrl+Enter; Home"
         );
         assert_eq!(
             capture_binding("Space", Modifiers::SHIFT).unwrap(),

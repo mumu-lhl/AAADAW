@@ -21,6 +21,7 @@ pub(super) struct ActionListState {
     pub(super) selected: Option<String>,
     pub(super) selected_binding: Option<usize>,
     pub(super) capture: Option<CaptureMode>,
+    pub(super) special_key_capture_pending: bool,
     pub(super) input_draft: Option<shortcut::Shortcut>,
     pub(super) input_action: Option<String>,
     pub(super) feedback: String,
@@ -207,6 +208,7 @@ impl App {
             return iced::window::gain_focus(window);
         }
         self.action_list.input_action = Some(action);
+        self.action_list.special_key_capture_pending = false;
         self.action_list.input_draft = None;
         self.action_list.feedback.clear();
         self.action_list.capture = Some(CaptureMode::Add);
@@ -221,6 +223,7 @@ impl App {
 
     pub(super) fn close_action_input(&mut self) -> Task<Message> {
         self.action_list.capture = None;
+        self.action_list.special_key_capture_pending = false;
         self.action_list.input_draft = None;
         self.action_list.input_action = None;
         self.action_input_window_id
@@ -373,6 +376,7 @@ impl App {
             }
             if key == Key::Named(Named::Enter)
                 && modifiers == Modifiers::NONE
+                && !self.action_list.special_key_capture_pending
                 && self.action_list.input_draft.is_some()
             {
                 return self.confirm_action_input();
@@ -401,6 +405,7 @@ impl App {
             match mode {
                 CaptureMode::Add => {
                     self.action_list.input_draft = Some(chord);
+                    self.action_list.special_key_capture_pending = false;
                     self.action_list.feedback.clear();
                 }
                 CaptureMode::Find => {
@@ -524,6 +529,82 @@ mod tests {
 #[cfg(test)]
 mod input_tests {
     use super::*;
+
+    fn key_event(
+        key: Key,
+        physical_key: iced::keyboard::key::Physical,
+        modifiers: Modifiers,
+    ) -> iced::Event {
+        let modified_key = key.clone();
+        iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
+            key,
+            modified_key,
+            physical_key,
+            location: iced::keyboard::Location::Standard,
+            modifiers,
+            text: None,
+            repeat: false,
+        })
+    }
+
+    #[test]
+    fn special_key_capture_records_enter_and_tab_without_confirming_the_binding() {
+        let mut app = App::default();
+        app.action_list.select("edit.undo".into());
+        let _ = app.open_action_input();
+        app.action_list.input_draft = Some(
+            shortcut::Shortcut::parse("Alt+F12")
+                .expect("test shortcut should parse")
+                .expect("test shortcut should contain one binding"),
+        );
+
+        let _ = app.update(Message::ActionInputSpecialKey);
+        assert!(app.action_list.special_key_capture_pending);
+        assert!(app.action_list.input_draft.is_none());
+        let _ = app.action_list_keyboard_event(
+            key_event(
+                Key::Named(Named::Enter),
+                iced::keyboard::key::Physical::Code(iced::keyboard::key::Code::Enter),
+                Modifiers::NONE,
+            ),
+            iced::event::Status::Ignored,
+        );
+        assert_eq!(
+            app.action_list
+                .input_draft
+                .map(|binding| binding.config_label()),
+            Some("StandardEnter".to_owned())
+        );
+        assert!(!app.action_list.special_key_capture_pending);
+        assert!(app.action_input_window_id.is_some());
+
+        let _ = app.update(Message::ActionInputSpecialKey);
+        let _ = app.action_list_keyboard_event(
+            key_event(
+                Key::Named(Named::Tab),
+                iced::keyboard::key::Physical::Code(iced::keyboard::key::Code::Tab),
+                Modifiers::NONE,
+            ),
+            iced::event::Status::Captured,
+        );
+        assert_eq!(
+            app.action_list
+                .input_draft
+                .map(|binding| binding.config_label()),
+            Some("Tab".to_owned())
+        );
+        assert!(app.action_input_window_id.is_some());
+        let _ = app.confirm_action_input_with(|bindings| {
+            assert_eq!(bindings["edit.undo"], "Mod+Z; Tab");
+            Ok(())
+        });
+        assert!(app.action_input_window_id.is_none());
+        assert_eq!(
+            app.shortcut_bindings.read().unwrap()["edit.undo"],
+            "Mod+Z; Tab"
+        );
+    }
+
     #[test]
     fn input_draft_waits_for_confirmation_and_survives_save_failure() {
         let mut app = App::default();

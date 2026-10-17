@@ -187,7 +187,7 @@ Add 现在打开 387×229 的 Keyboard input 窗口，默认键入仅更新草�
 ![录入草稿](images/action-input-draft.png)
 ![确认保存](images/action-input-saved.png)
 
-窗口只实现键盘基础输入；特殊键入口、Enter 本身的特殊录入方式、Scope、MIDI/OSC、自动关闭选项和原厂完整布局仍缺。重复分配优先级不能由单次实测推断，继续保持未完成。
+窗口目前只实现键盘基础输入；Scope、MIDI/OSC、自动关闭选项和原厂完整布局仍缺。REAPER 的 `Special key (Enter, Tab, etc.)` 入口现已实现：在该模式按 Enter 会把 Enter 写入快捷键草稿并保持窗口打开，只有之后点击 OK 才保存。原厂 7.82 和 AAADAW 的 387×229 实窗截图及步骤见 [special-key fixture](fixtures/keyboard-special-key-aaadaw.tsv)，AAADAW 另有 Enter 录入、保存后的 Action List 截图。Action List 显示 `Enter`，配置仍以 `StandardEnter` 保留主键区身份。功能回归覆盖 Enter、Tab、草稿替换、Enter 不误确认及保存。Named key 的常规捕获与此特殊键入口相互独立。重复分配优先级不能由单次实测推断；Section、MIDI/OSC、Scope、自动关闭与完整界面仍保持未完成。
 
 ## 2026-10-17 Named shortcut keys
 

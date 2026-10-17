@@ -154,6 +154,16 @@ pub(super) fn input_view(app: &App) -> Element<'_, Message> {
         .input_draft
         .map(|binding| commands::format_shortcut_label(&binding.config_label()))
         .unwrap_or_default();
+    let label = if app.action_list.special_key_capture_pending {
+        "<type special key now>".to_owned()
+    } else {
+        label
+    };
+    let prompt = if app.action_list.special_key_capture_pending {
+        "Press a special key now"
+    } else {
+        "Press a key or key combination"
+    };
     let action = app
         .action_list
         .input_action
@@ -163,11 +173,13 @@ pub(super) fn input_view(app: &App) -> Element<'_, Message> {
     container(
         column![
             text(action).size(12),
-            text("Press a key or key combination").size(12),
+            text(prompt).size(12),
             container(text(label).size(16))
                 .padding(8)
                 .width(Length::Fill)
                 .style(container::bordered_box),
+            button(text("Special key (Enter, Tab, etc.)").size(12))
+                .on_press(Message::ActionInputSpecialKey),
             text(&app.action_list.feedback).size(11),
             iced::widget::Space::new().height(Length::Fill),
             row![
