@@ -965,6 +965,47 @@ fn reaper_782_type_zero_hidden_cue_ruler_opt_in_matches_native_bytes() {
 }
 
 #[test]
+fn reaper_782_type_zero_hidden_ruler_opt_in_still_excludes_individually_hidden_markers() {
+    let project = native_midi_marker_ruler_and_individually_hidden_fixture_project();
+    let options = MidiExportOptions {
+        file_type: MidiFileType::Type0,
+        export_markers: true,
+        export_hidden_markers: true,
+        ..MidiExportOptions::for_project(&project)
+    };
+    let actual = encode_standard_midi(&project, options).unwrap();
+    let native = include_bytes!(
+        "../../../docs/verification/reaper-parity/fixtures/menu-export-midi-native-type0-marker-ruler-individual-hidden-markers-included.mid"
+    );
+
+    assert_eq!(
+        actual, native,
+        "Type 0 ruler opt-in includes ruler-hidden markers but still omits an individually hidden marker"
+    );
+}
+
+#[test]
+fn reaper_782_type_zero_hidden_ruler_cue_opt_in_still_excludes_individually_hidden_cues() {
+    let project = native_midi_marker_ruler_and_individually_hidden_fixture_project();
+    let options = MidiExportOptions {
+        file_type: MidiFileType::Type0,
+        export_markers: true,
+        marker_type: MidiMarkerType::Cues,
+        export_hidden_markers: true,
+        ..MidiExportOptions::for_project(&project)
+    };
+    let actual = encode_standard_midi(&project, options).unwrap();
+    let native = include_bytes!(
+        "../../../docs/verification/reaper-parity/fixtures/menu-export-midi-native-type0-marker-ruler-individual-hidden-cues-included.mid"
+    );
+
+    assert_eq!(
+        actual, native,
+        "Type 0 cue ruler opt-in includes ruler-hidden cues but still omits an individually hidden cue"
+    );
+}
+
+#[test]
 fn reaper_782_type_one_tempo_and_meter_changes_match_native_bytes() {
     let mut project = native_midi_fixture_project();
     project
@@ -1083,6 +1124,14 @@ fn native_midi_marker_filter_fixture_project() -> Project {
 
 fn native_midi_marker_ruler_hidden_fixture_project() -> Project {
     let mut project = native_midi_marker_fixture_project();
+    project
+        .apply(DawAction::SetProjectMarkersVisibleOnRuler { visible: false })
+        .unwrap();
+    project
+}
+
+fn native_midi_marker_ruler_and_individually_hidden_fixture_project() -> Project {
+    let mut project = native_midi_marker_filter_fixture_project();
     project
         .apply(DawAction::SetProjectMarkersVisibleOnRuler { visible: false })
         .unwrap();
