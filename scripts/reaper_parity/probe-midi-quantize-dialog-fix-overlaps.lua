@@ -4,6 +4,7 @@ local capture_case = assert(os.getenv("AAADAW_REAPER_PROBE_CASE"),
 assert(capture_case == "checked" or capture_case == "unchecked")
 local selected_indexes_env = os.getenv("AAADAW_REAPER_PROBE_SELECTED_NOTE_INDEXES")
 local include_third_note = os.getenv("AAADAW_REAPER_PROBE_INCLUDE_THIRD_NOTE") ~= "false"
+local sample = os.getenv("AAADAW_REAPER_PROBE_SAMPLE") or "overlap"
 local selected_indexes = {}
 if selected_indexes_env then
   for index in string.gmatch(selected_indexes_env, "[^,]+") do
@@ -17,8 +18,14 @@ local item = assert(reaper.CreateNewMIDIItemInProj(track, 0, 4, false))
 local take = assert(reaper.GetActiveTake(item))
 -- Deliberately overlapping same-pitch notes exercise Fix overlaps. Do not call
 -- MIDI_Sort here: it resolves those overlaps before the dialog can see them.
-local probe_notes = {{100, 300}, {180, 350}, {330, 480}}
-if not include_third_note then
+local probe_notes
+if sample == "nonoverlap" then
+  probe_notes = {{100, 280}, {400, 520}}
+else
+  assert(sample == "overlap")
+  probe_notes = {{100, 300}, {180, 350}, {330, 480}}
+end
+if sample == "overlap" and not include_third_note then
   probe_notes[3] = nil
 end
 for index, note in ipairs(probe_notes) do

@@ -550,6 +550,38 @@ fn midi_quantize_fix_overlaps_trims_unselected_predecessor_in_selected_scope() {
             .collect::<Vec<_>>(),
         [(100, 200), (180, 120)]
     );
+
+    project
+        .apply(DawAction::QuantizeMidiNotesWithOperation {
+            item_id,
+            note_ids: vec![selected_note_id],
+            grid: GridFraction::new(1, 32).expect("1/32 is a valid grid"),
+            strength: 1.0,
+            operation: MidiNoteQuantizeOperation::PositionAndNoteLength,
+            fix_overlaps: false,
+        })
+        .expect("unchecked selected note should quantize without trimming its predecessor");
+    assert_eq!(
+        project.midi_items()[0]
+            .notes()
+            .iter()
+            .map(|note| (note.tick(), note.duration()))
+            .collect::<Vec<_>>(),
+        [(100, 200), (240, 60)]
+    );
+    assert!(
+        project
+            .undo()
+            .expect("unchecked quantize should be undoable")
+    );
+    assert_eq!(
+        project.midi_items()[0]
+            .notes()
+            .iter()
+            .map(|note| (note.tick(), note.duration()))
+            .collect::<Vec<_>>(),
+        [(100, 200), (180, 120)]
+    );
 }
 
 #[test]

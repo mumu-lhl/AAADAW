@@ -168,6 +168,55 @@ fn fix_quantized_midi_note_overlaps(item: &MidiItem, changes: &mut Vec<Quantized
     });
 }
 
+fn preserve_selected_overlapped_note_ends(
+    item: &MidiItem,
+    selected_note_ids: &HashSet<NoteId>,
+    changes: &mut [QuantizedMidiNoteChange],
+) {
+    let mut notes_by_id = HashMap::with_capacity(item.notes.len());
+    let mut unselected_ends_by_key: HashMap<(u8, u8), Vec<(u64, u64)>> = HashMap::new();
+    for note in item.notes.iter() {
+        notes_by_id.insert(note.id, note);
+        if !selected_note_ids.contains(&note.id) {
+            unselected_ends_by_key
+                .entry((note.data.channel, note.data.pitch))
+                .or_default()
+                .push((
+                    note.data.tick,
+                    note.data.tick.saturating_add(note.data.duration),
+                ));
+        }
+    }
+    for unselected_ends in unselected_ends_by_key.values_mut() {
+        unselected_ends.sort_unstable_by_key(|(start, _)| *start);
+        let mut max_end = 0;
+        for (_, end) in unselected_ends {
+            max_end = max_end.max(*end);
+            *end = max_end;
+        }
+    }
+
+    for change in changes {
+        let Some(note) = notes_by_id.get(&change.note_id) else {
+            continue;
+        };
+        let Some(unselected_ends) =
+            unselected_ends_by_key.get(&(note.data.channel, note.data.pitch))
+        else {
+            continue;
+        };
+        let preceding_note_count =
+            unselected_ends.partition_point(|(start, _)| *start < note.data.tick);
+        if preceding_note_count == 0
+            || unselected_ends[preceding_note_count - 1].1 <= note.data.tick
+        {
+            continue;
+        }
+        let original_end = note.data.tick.saturating_add(note.data.duration);
+        change.after_duration = original_end.saturating_sub(change.after_tick).max(1);
+    }
+}
+
 fn quantize_tick(tick: u64, grid_ticks: u64, strength: f32) -> Result<u64, ActionError> {
     let lower = tick / grid_ticks * grid_ticks;
     let remainder = tick - lower;
@@ -4723,7 +4772,7 @@ impl Project {
                     .iter()
                     .find(|item| item.id == item_id)
                     .ok_or(ActionError::MidiItemNotFound { item_id })?;
-                let changes = quantized_midi_note_changes(
+                let mut changes = quantized_midi_note_changes(
                     item,
                     Some(&selected_note_ids),
                     grid,
@@ -4732,6 +4781,16 @@ impl Project {
                     operation,
                     fix_overlaps,
                 )?;
+                if !fix_overlaps
+                    && operation == MidiNoteQuantizeOperation::PositionAndNoteLength
+                    && selected_note_ids.len() < item.notes.len()
+                {
+                    preserve_selected_overlapped_note_ends(item, &selected_note_ids, &mut changes);
+                    changes.retain(|change| {
+                        change.before_tick != change.after_tick
+                            || change.before_duration != change.after_duration
+                    });
+                }
                 ProjectEvent::MidiNotesQuantized { item_id, changes }
             }
             DawAction::QuantizeMidiEventsWithOperation {

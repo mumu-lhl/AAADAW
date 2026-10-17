@@ -12468,6 +12468,69 @@ fn midi_quantize_dialog_fix_overlaps_defaults_on_and_can_be_disabled() {
 }
 
 #[test]
+fn midi_quantize_dialog_keeps_selected_overlapped_note_end_when_fix_overlaps_is_off() {
+    let mut app = App::default();
+    let _ = app.update(Message::AddTrack);
+    let track_id = app.project.tracks()[0].id();
+    app.project
+        .apply(DawAction::InsertMidiItem {
+            track_id,
+            start_tick: 0,
+            length_ticks: 4_000,
+        })
+        .expect("test MIDI item should be inserted");
+    let item_id = app.project.midi_items()[0].id();
+    app.project
+        .apply(DawAction::AddMidiNotes {
+            item_id,
+            notes: vec![
+                MidiNoteData {
+                    channel: 0,
+                    pitch: 60,
+                    tick: 100,
+                    duration: 200,
+                    velocity: 96,
+                },
+                MidiNoteData {
+                    channel: 0,
+                    pitch: 60,
+                    tick: 180,
+                    duration: 120,
+                    velocity: 96,
+                },
+            ],
+        })
+        .expect("overlapping notes should be inserted");
+    let selected_note_id = app.project.midi_items()[0].notes()[1].id();
+    app.midi_editor_selected_notes = HashSet::from([selected_note_id]);
+
+    let _ = app.update(Message::OpenMidiQuantizeDialog(item_id));
+    let _ = app.update(Message::SetMidiQuantizeOperation(
+        MidiQuantizeOperation::PositionAndNoteLength,
+    ));
+    let _ = app.update(Message::SetMidiQuantizeFixOverlaps(false));
+    let _ = app.update(Message::AcceptMidiQuantize);
+
+    assert_eq!(
+        app.project.midi_items()[0]
+            .notes()
+            .iter()
+            .map(|note| (note.tick(), note.duration()))
+            .collect::<Vec<_>>(),
+        [(100, 200), (240, 60)]
+    );
+    let _ = app.update(Message::Undo);
+    assert_eq!(
+        app.project.midi_items()[0]
+            .notes()
+            .iter()
+            .map(|note| (note.tick(), note.duration()))
+            .collect::<Vec<_>>(),
+        [(100, 200), (180, 120)]
+    );
+}
+
+#[test]
 fn midi_quantize_dialog_applies_note_length_only_to_selected_notes() {
     let mut app = App::default();
     let _ = app.update(Message::AddTrack);
