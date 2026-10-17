@@ -1,0 +1,6 @@
+reference	Linux REAPER 7.82 / Default 7; MIDI Editor action 40009; Position; 1/32 grid = 120 PPQ ticks; Strength 50%
+before_selected_pitch_start_end	60:170-260;62:350-430;64:900-970
+after_selected_pitch_start_end	60:145-235;62:355-435;64:930-1000
+unselected_pitch_start_end	67:550-670 (unchanged)
+behavior	Move each selected note start halfway toward the nearest grid line; preserve note lengths and unselected notes
+reproduction	scripts/reaper_parity/probe-midi-quantize-dialog-operations.lua; set AAADAW_REAPER_PROBE_CASE=strength50 and AAADAW_REAPER_PROBE_DELAY_SECONDS=5; choose Position, set Strength to 50%, and press OK

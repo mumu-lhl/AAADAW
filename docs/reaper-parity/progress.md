@@ -2110,4 +2110,4 @@ Linux REAPER 7.82 / Default 7 action 40009 的实窗截图确认默认设置，�
 
 AAADAW 对话框现提供 Selected/All notes、全部五种原厂音符操作、0–100% strength 与 Commit/OK/Cancel/Escape；原有快速 `Q pos`、`Q pos+end` 仍保留。Core 通过一个量化操作动作记录位置和长度变化，所有五种模式的选中范围、tick 结果及 Undo/Redo 均有回归。Workspace Nextest **1414 tests，74 binaries** 全部通过，包含 Core 五模式 tick/Undo/Redo 与 App scope/operation/Commit/Cancel 路径；严格 workspace all-target Clippy (`-D warnings`)、fmt、diff 检查、106 ID/15 列 matrix 和 9 个量化截图哈希均通过。原厂、AAADAW 对话框、菜单与操作截图见[对话框验证资料](../verification/reaper-parity/midi-note-quantize-dialog.md)。
 
-`MIDI-QUANTIZE-DIALOG-001`、UI-019 与 P7 仍为 `in_progress`：All/Selected events、Bypass、Fix overlaps 行为、原厂非满力度结果对照、Swing 交集与已记忆对话框设置尚未覆盖。
+`MIDI-QUANTIZE-DIALOG-001`、UI-019 与 P7 仍为 `in_progress`：All/Selected events、Bypass、Fix overlaps 行为、Swing 交集与已记忆对话框设置尚未覆盖。

@@ -6,7 +6,8 @@ reference_dialog_capture	midi-quantize-dialog-reaper-native.png; 1280x800; SHA-2
 reference_scope_capture	midi-quantize-scope-menu-reaper-native.png; 1280x800; SHA-256 04177db53c22e9bfafa6c700e019d240f4fe52c6081dda4126ecadf6dc2b9bc1
 reference_operation_capture	midi-quantize-operation-menu-reaper-native.png; 1280x800; SHA-256 471b1c1b0de775c97606511c05be1da2cd02a4d820d5e70d709bb468a93a2466
 reference_operation_results	midi-quantize-operations-native.tsv; five native operations sampled at 100% on a 1/32 grid; selected and unselected note ticks recorded
-reference_strength_behavior	Not probed; REAPER's slider range and default were captured, but no native 50% event result is claimed
+reference_strength_capture	midi-quantize-strength-50-reaper-native.png; 1280x800; SHA-256 681ced3006e0582671c3c87939a7e1d572d240cbd113b7365fcd3e985ad64a18
+reference_strength_behavior	At Strength 50%, REAPER moves selected note starts halfway toward the nearest grid line while preserving lengths; event output is recorded in midi-quantize-strength-native.tsv
 
 aaadaw_run	Linux x86_64; isolated Xvfb :247, 1280x800x24; project midi-note-quantize-aaadaw.aaadaw; built desktop executable Build ID 47fa05819b658ce13bc224f016433d57e2e36c0c; binary SHA-256 91e894d07d07a12530240010e21c02b48be46d0b2f75afa61cbef644913e25b7
 aaadaw_operation_capture_run	Linux x86_64; isolated Xvfb :248, 1280x800x24; fresh project with one open MIDI item; build ID 9116634819f2da650808936a13f0918d462eb8db; binary SHA-256 f801715cfc4842886abf310d7272e361f7fee2cc01b0b345a6404a1d0f06dfe0
@@ -21,4 +22,4 @@ aaadaw_interaction	Opened Quantize... from the Piano Roll, selected All notes an
 aaadaw_dialog_default	Selected notes; Position; 100%; current grid displayed as Use grid · 1/32
 aaadaw_strength_test	App regression sets 50% and verifies a selected note at tick 170 moves to 145 while an unselected note stays at 350
 aaadaw_supported_subset	All notes/Selected notes; Position/Position and note end/Position and note length/Note end only/Note length only; 0–100% strength; Commit, OK, Cancel and Escape
-open_gaps	All events/Selected events; Bypass; Fix overlaps behavior; native strength-result comparison; swing-grid intersection and remembered dialog settings remain open
+open_gaps	All events/Selected events; Bypass; Fix overlaps behavior; swing-grid intersection and remembered dialog settings remain open
