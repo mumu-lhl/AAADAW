@@ -90,8 +90,9 @@ mod view;
 mod x11_plugin_editor;
 
 pub(crate) use messages::{
-    MainMenu, MainWorkspace, MenuNavigation, Message, MidiEditorLane, MidiEditorTool, MobilePanel,
-    PathPickerTarget, PendingProjectTransition, SettingsCategory, TimeMapTab,
+    MainMenu, MainWorkspace, MenuNavigation, Message, MidiEditorChannelSelection, MidiEditorLane,
+    MidiEditorTool, MobilePanel, PathPickerTarget, PendingProjectTransition, SettingsCategory,
+    TimeMapTab,
 };
 
 #[derive(Clone)]
@@ -448,6 +449,11 @@ struct App {
     midi_editor_selected_notes: HashSet<aaadaw_core::NoteId>,
     midi_editor_lane: MidiEditorLane,
     midi_editor_tool: MidiEditorTool,
+    midi_editor_channel_selection: MidiEditorChannelSelection,
+    midi_editor_draw_channel: u8,
+    midi_editor_filter_enabled: bool,
+    midi_editor_filter_channels: u16,
+    midi_editor_filter_dialog_open: bool,
     midi_editor_origin_tick: u64,
     midi_editor_edit_cursor_tick: Option<u64>,
     midi_editor_high_pitch: u8,
@@ -1412,6 +1418,34 @@ fn duplicate_item_actions(
 }
 
 impl App {
+    fn visible_midi_note_ids(&self) -> HashSet<aaadaw_core::NoteId> {
+        let Some(item_id) = self.midi_editor_item_id else {
+            return HashSet::new();
+        };
+        let Some(item) = self
+            .project
+            .midi_items()
+            .iter()
+            .find(|item| item.id() == item_id)
+        else {
+            return HashSet::new();
+        };
+        let selection = self.midi_editor_channel_selection;
+        let filter_enabled = self.midi_editor_filter_enabled;
+        let filter_channels = self.midi_editor_filter_channels;
+        item.notes()
+            .iter()
+            .filter(|note| selection.shows_channel(note.channel(), filter_enabled, filter_channels))
+            .map(|note| note.id())
+            .collect()
+    }
+
+    fn retain_visible_midi_note_selection(&mut self) {
+        let visible = self.visible_midi_note_ids();
+        self.midi_editor_selected_notes
+            .retain(|note_id| visible.contains(note_id));
+    }
+
     fn is_mobile_main_window(&self) -> bool {
         self.shell_profile == ShellProfile::Touch
     }
@@ -3218,6 +3252,43 @@ impl App {
                 self.midi_editor_lane = lane;
             }
             Message::SelectMidiEditorTool(tool) => self.midi_editor_tool = tool,
+            Message::SelectMidiEditorChannel(selection) => {
+                self.midi_editor_channel_selection = selection;
+                match selection {
+                    MidiEditorChannelSelection::AllChannels => self.midi_editor_draw_channel = 0,
+                    MidiEditorChannelSelection::Channel(channel) => {
+                        let channel = channel.min(15);
+                        self.midi_editor_channel_selection =
+                            MidiEditorChannelSelection::Channel(channel);
+                        self.midi_editor_draw_channel = channel;
+                    }
+                    MidiEditorChannelSelection::Multichannel => {
+                        if self.midi_editor_filter_channels == 0 {
+                            self.midi_editor_filter_channels =
+                                1_u16 << self.midi_editor_draw_channel.min(15);
+                        }
+                        self.midi_editor_filter_dialog_open = true;
+                    }
+                }
+                self.retain_visible_midi_note_selection();
+            }
+            Message::SetMidiEditorDrawChannel(channel) => {
+                self.midi_editor_draw_channel = channel.min(15);
+            }
+            Message::ToggleMidiEditorChannelFilter => {
+                self.midi_editor_filter_enabled = !self.midi_editor_filter_enabled;
+                self.retain_visible_midi_note_selection();
+            }
+            Message::ToggleMidiEditorFilterChannel(channel) if channel < 16 => {
+                self.midi_editor_filter_channels ^= 1_u16 << channel;
+                self.retain_visible_midi_note_selection();
+            }
+            Message::ToggleMidiEditorFilterChannel(_) => {}
+            Message::SetMidiEditorFilterChannelsAll(all) => {
+                self.midi_editor_filter_channels = if all { u16::MAX } else { 0 };
+                self.retain_visible_midi_note_selection();
+            }
+            Message::CloseMidiEditorFilter => self.midi_editor_filter_dialog_open = false,
             Message::PreviewMidiNote(track_id, pitch) => {
                 #[cfg(feature = "audio-device")]
                 if self.midi_editor_window_id.is_some()
@@ -3235,7 +3306,11 @@ impl App {
             }
             Message::SelectMidiNotes(note_ids) => {
                 self.midi_editor_feedback = None;
-                self.midi_editor_selected_notes = note_ids;
+                let visible_note_ids = self.visible_midi_note_ids();
+                self.midi_editor_selected_notes = note_ids
+                    .into_iter()
+                    .filter(|note_id| visible_note_ids.contains(note_id))
+                    .collect();
             }
             Message::CopyMidiNotes(item_id, note_ids) => {
                 if let Some(item) = self

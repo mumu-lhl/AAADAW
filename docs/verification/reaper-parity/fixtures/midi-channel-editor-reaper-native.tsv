@@ -1,0 +1,18 @@
+version	7.82/linux-x86_64
+theme	Default_7.0.ReaperThemeZip
+notes_channel_pitch_tick	1,60,0.0;2,60,1920.0;3,60,3840.0;1,64,5760.0
+controller_and_pitch_bend_events	6
+setting_default_note_chan	true	0
+setting_channel_filter	true	-1
+setting_filter_channel	true	-1
+setting_note_channel	true	-1
+setting_last_clicked_cc_lane	true	512
+setting_color	true	-1
+setting_default_note_vel	true	96
+setting_default_note_len	true	0
+channel_filter_set	0	true	false	true	-1
+channel_filter_set	1	true	false	true	-1
+channel_filter_set	15	true	false	true	-1
+channel_filter_set	16	true	false	true	-1
+channel_filter_set	-1	true	false	true	-1
+selected_channel_filter	1	true	false	true	-1

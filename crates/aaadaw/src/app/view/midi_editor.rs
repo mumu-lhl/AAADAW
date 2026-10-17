@@ -1,4 +1,6 @@
-use super::super::{App, MIDI_EDITOR_KEY_WIDTH, Message, MidiEditorLane, MidiEditorTool};
+use super::super::{
+    App, MIDI_EDITOR_KEY_WIDTH, Message, MidiEditorChannelSelection, MidiEditorLane, MidiEditorTool,
+};
 use super::tokens::{PANEL_PADDING, ROW_GAP, SPACING_LG, SPACING_XS, TOUCH_TARGET_MIN};
 use crate::timeline::{SnapGrid, TimelineEvent, snap_tick_to_grid};
 use aaadaw_core::{
@@ -7,7 +9,7 @@ use aaadaw_core::{
 use iced::advanced::text::{Alignment as TextAlignment, LineHeight, Shaping};
 use iced::widget::canvas::{self, Text};
 use iced::widget::{
-    button, canvas as canvas_widget, column, container, pick_list, row, scrollable, text,
+    button, canvas as canvas_widget, checkbox, column, container, pick_list, row, scrollable, text,
 };
 use iced::{
     Color, Element, Event, Font, Length, Pixels, Point, Rectangle, Size, Theme, keyboard, mouse,
@@ -124,6 +126,7 @@ fn midi_note_insert_data(
     pitch: u8,
     requested_duration: u64,
     velocity: u8,
+    channel: u8,
 ) -> Option<MidiNoteData> {
     if local_tick >= item.length_ticks() {
         return None;
@@ -144,7 +147,7 @@ fn midi_note_insert_data(
         return None;
     }
     Some(MidiNoteData {
-        channel: 0,
+        channel: channel.min(15),
         pitch,
         tick,
         duration,
@@ -195,6 +198,20 @@ fn visible_edit_cursor_tick(app: &App) -> u64 {
     app.midi_editor_paste_target_tick(app.midi_editor_item_id)
 }
 
+fn midi_snap_for_app(app: &App) -> MidiSnap {
+    MidiSnap {
+        grid: app.timeline.midi_editor_snap_grid,
+        enabled: app.timeline.snap_enabled,
+        swing_amount_percent: app.timeline.active_snap_swing_amount_percent(),
+        cursor_tick: visible_edit_cursor_tick(app),
+        context_menu_epoch: app.midi_expression_context_menu_epoch,
+        channel_selection: app.midi_editor_channel_selection,
+        draw_channel: app.midi_editor_draw_channel.min(15),
+        filter_enabled: app.midi_editor_filter_enabled,
+        filter_channels: app.midi_editor_filter_channels,
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct MidiSnap {
     grid: SnapGrid,
@@ -202,6 +219,10 @@ struct MidiSnap {
     swing_amount_percent: i16,
     cursor_tick: u64,
     context_menu_epoch: u64,
+    channel_selection: MidiEditorChannelSelection,
+    draw_channel: u8,
+    filter_enabled: bool,
+    filter_channels: u16,
 }
 
 impl Default for MidiSnap {
@@ -212,7 +233,18 @@ impl Default for MidiSnap {
             swing_amount_percent: 0,
             cursor_tick: 0,
             context_menu_epoch: 0,
+            channel_selection: MidiEditorChannelSelection::AllChannels,
+            draw_channel: 0,
+            filter_enabled: false,
+            filter_channels: 0,
         }
+    }
+}
+
+impl MidiSnap {
+    fn channel_visible(self, channel: u8) -> bool {
+        self.channel_selection
+            .shows_channel(channel, self.filter_enabled, self.filter_channels)
     }
 }
 
@@ -249,9 +281,20 @@ fn view_with_profile(app: &App, touch_targets: bool) -> Element<'_, Message> {
         .find(|track| track.id() == item.track_id())
         .map_or("Track", |track| track.name());
     let playhead_tick = app.midi_editor_playhead_tick(item);
+    let visible_note_count = item
+        .notes()
+        .iter()
+        .filter(|note| {
+            app.midi_editor_channel_selection.shows_channel(
+                note.channel(),
+                app.midi_editor_filter_enabled,
+                app.midi_editor_filter_channels,
+            )
+        })
+        .count();
     let edit_toolbar: Element<'_, Message> = if touch_targets {
         row![
-            text(format!("Piano roll · {} notes", item.notes().len())).width(Length::Fill),
+            text(format!("Piano roll · {visible_note_count} notes")).width(Length::Fill),
             button("Done")
                 .height(Length::Fixed(TOUCH_TARGET_MIN))
                 .on_press(Message::CloseMidiEditor),
@@ -262,7 +305,7 @@ fn view_with_profile(app: &App, touch_targets: bool) -> Element<'_, Message> {
         row![
             text(format!(
                 "Piano roll · Track {title} · {} notes",
-                item.notes().len()
+                visible_note_count
             ))
             .width(Length::Fill),
             button("Copy")
@@ -418,6 +461,37 @@ fn view_with_profile(app: &App, touch_targets: bool) -> Element<'_, Message> {
         .align_y(iced::Alignment::Center)
         .into()
     };
+    let filter_control: Element<'_, Message> =
+        if app.midi_editor_channel_selection == MidiEditorChannelSelection::AllChannels {
+            iced::widget::Space::new().into()
+        } else {
+            checkbox(app.midi_editor_filter_enabled)
+                .label("Filter")
+                .on_toggle(|_| Message::ToggleMidiEditorChannelFilter)
+                .into()
+        };
+    let channel_toolbar = row![
+        text("MIDI channel").size(if touch_targets { 14 } else { 12 }),
+        pick_list(
+            &MidiEditorChannelSelection::OPTIONS[..],
+            Some(app.midi_editor_channel_selection),
+            Message::SelectMidiEditorChannel,
+        )
+        .width(Length::Fixed(if touch_targets { 180.0 } else { 164.0 }))
+        .padding(if touch_targets {
+            SPACING_LG
+        } else {
+            SPACING_XS
+        }),
+        filter_control,
+    ]
+    .spacing(ROW_GAP)
+    .align_y(iced::Alignment::Center);
+    let channel_filter_dialog = if app.midi_editor_filter_dialog_open {
+        Some(channel_filter_dialog(app, touch_targets))
+    } else {
+        None
+    };
     let gesture_hints: Element<'_, Message> = if touch_targets {
         iced::widget::Space::new().into()
     } else {
@@ -432,13 +506,7 @@ fn view_with_profile(app: &App, touch_targets: bool) -> Element<'_, Message> {
         .spacing(2)
         .into()
     };
-    let midi_snap = MidiSnap {
-        grid: app.timeline.midi_editor_snap_grid,
-        enabled: app.timeline.snap_enabled,
-        swing_amount_percent: app.timeline.active_snap_swing_amount_percent(),
-        cursor_tick: visible_edit_cursor_tick(app),
-        context_menu_epoch: app.midi_expression_context_menu_epoch,
-    };
+    let midi_snap = midi_snap_for_app(app);
     let ticks_per_beat = u64::from(app.project.settings().ppq());
     let pitch_canvas = canvas_widget::Canvas::new(PianoRoll {
         project: &app.project,
@@ -451,13 +519,7 @@ fn view_with_profile(app: &App, touch_targets: bool) -> Element<'_, Message> {
         pitch_row_height: app.midi_editor_pitch_row_height,
         pixels_per_beat: app.midi_editor_pixels_per_beat,
         ticks_per_beat,
-        snap: MidiSnap {
-            grid: app.timeline.midi_editor_snap_grid,
-            enabled: app.timeline.snap_enabled,
-            swing_amount_percent: app.timeline.active_snap_swing_amount_percent(),
-            cursor_tick: visible_edit_cursor_tick(app),
-            context_menu_epoch: app.midi_expression_context_menu_epoch,
-        },
+        snap: midi_snap,
         playhead_tick,
         region: RollRegion::Pitch,
         tool: app.midi_editor_tool,
@@ -599,8 +661,11 @@ fn view_with_profile(app: &App, touch_targets: bool) -> Element<'_, Message> {
     if touch_targets {
         content = content.push(touch_tool_toolbar);
     }
+    let mut content = content.push(grid_toolbar).push(channel_toolbar);
+    if let Some(channel_filter_dialog) = channel_filter_dialog {
+        content = content.push(channel_filter_dialog);
+    }
     content
-        .push(grid_toolbar)
         .push(gesture_hints)
         .push(lane_toolbar)
         .push(pitch_canvas)
@@ -614,6 +679,87 @@ fn view_with_profile(app: &App, touch_targets: bool) -> Element<'_, Message> {
         .width(Length::Fill)
         .height(Length::Fill)
         .into()
+}
+
+fn channel_filter_dialog(app: &App, touch_targets: bool) -> Element<'_, Message> {
+    let mut first_row = row![].spacing(SPACING_XS);
+    let mut second_row = row![].spacing(SPACING_XS);
+    for channel in 0..16_u8 {
+        let option = checkbox(app.midi_editor_filter_channels & (1_u16 << channel) != 0)
+            .label(format!("Channel {}", channel + 1))
+            .on_toggle(move |_| Message::ToggleMidiEditorFilterChannel(channel));
+        if channel < 8 {
+            first_row = first_row.push(option);
+        } else {
+            second_row = second_row.push(option);
+        }
+    }
+    let first_row: Element<'_, Message> = if touch_targets {
+        scrollable(first_row)
+            .direction(scrollable::Direction::Horizontal(
+                scrollable::Scrollbar::default(),
+            ))
+            .height(Length::Fixed(TOUCH_TARGET_MIN))
+            .into()
+    } else {
+        first_row.into()
+    };
+    let second_row: Element<'_, Message> = if touch_targets {
+        scrollable(second_row)
+            .direction(scrollable::Direction::Horizontal(
+                scrollable::Scrollbar::default(),
+            ))
+            .height(Length::Fixed(TOUCH_TARGET_MIN))
+            .into()
+    } else {
+        second_row.into()
+    };
+    let all_channels = app.midi_editor_filter_channels == u16::MAX;
+    let header = row![
+        text("MIDI channel filter").width(Length::Fill),
+        checkbox(all_channels)
+            .label("All")
+            .on_toggle(Message::SetMidiEditorFilterChannelsAll),
+        button("Done")
+            .height(Length::Fixed(if touch_targets {
+                TOUCH_TARGET_MIN
+            } else {
+                28.0
+            }))
+            .on_press(Message::CloseMidiEditorFilter),
+    ]
+    .spacing(ROW_GAP)
+    .align_y(iced::Alignment::Center);
+    container(
+        column![
+            header,
+            first_row,
+            second_row,
+            row![
+                text("Draw events on channel").size(11),
+                pick_list(
+                    &MidiEditorChannelSelection::OPTIONS[1..17],
+                    Some(MidiEditorChannelSelection::Channel(
+                        app.midi_editor_draw_channel.min(15)
+                    )),
+                    |selection| match selection {
+                        MidiEditorChannelSelection::Channel(channel) => {
+                            Message::SetMidiEditorDrawChannel(channel)
+                        }
+                        _ => Message::SetMidiEditorDrawChannel(0),
+                    },
+                )
+                .width(Length::Fixed(150.0)),
+            ]
+            .spacing(ROW_GAP)
+            .align_y(iced::Alignment::Center),
+        ]
+        .spacing(SPACING_XS),
+    )
+    .padding(SPACING_XS)
+    .width(Length::Fill)
+    .style(container::bordered_box)
+    .into()
 }
 
 fn lane_button(
@@ -696,13 +842,7 @@ fn controller_lane<'a>(
         pixels_per_beat: app.midi_editor_pixels_per_beat,
         ticks_per_beat,
         playhead_tick: app.midi_editor_playhead_tick(item),
-        snap: MidiSnap {
-            grid: app.timeline.midi_editor_snap_grid,
-            enabled: app.timeline.snap_enabled,
-            swing_amount_percent: app.timeline.active_snap_swing_amount_percent(),
-            cursor_tick: visible_edit_cursor_tick(app),
-            context_menu_epoch: app.midi_expression_context_menu_epoch,
-        },
+        snap: midi_snap_for_app(app),
     })
     .width(Length::Fill)
     .height(Length::Fixed(lane_height));
@@ -724,13 +864,7 @@ fn pitch_bend_lane<'a>(
         pixels_per_beat: app.midi_editor_pixels_per_beat,
         ticks_per_beat,
         playhead_tick: app.midi_editor_playhead_tick(item),
-        snap: MidiSnap {
-            grid: app.timeline.midi_editor_snap_grid,
-            enabled: app.timeline.snap_enabled,
-            swing_amount_percent: app.timeline.active_snap_swing_amount_percent(),
-            cursor_tick: visible_edit_cursor_tick(app),
-            context_menu_epoch: app.midi_expression_context_menu_epoch,
-        },
+        snap: midi_snap_for_app(app),
     })
     .width(Length::Fill)
     .height(Length::Fixed(lane_height));
@@ -834,7 +968,10 @@ impl ControllerLane<'_> {
             .controllers()
             .iter()
             .enumerate()
-            .filter(|(_, controller)| controller.controller == self.controller)
+            .filter(|(_, controller)| {
+                controller.controller == self.controller
+                    && self.snap.channel_visible(controller.channel)
+            })
             .flat_map(|(index, controller)| {
                 source_event_occurrences(self.item, controller.tick, item_start, item_end)
                     .map(move |tick| (index, tick, controller.value))
@@ -922,7 +1059,9 @@ impl canvas::Program<Message> for ControllerLane<'_> {
         if let Event::Keyboard(keyboard::Event::ModifiersChanged(modifiers)) = event {
             state.modifiers = *modifiers;
             if let (Some(point), Some(drag)) = (cursor.position_in(bounds), state.drag.as_mut()) {
-                let channel = drag.original.map_or(0, |original| original.channel);
+                let channel = drag
+                    .original
+                    .map_or(self.snap.draw_channel, |original| original.channel);
                 (drag.current, drag.display_tick) =
                     self.point_data(point, state.modifiers.shift(), channel);
                 return Some(canvas::Action::request_redraw());
@@ -969,7 +1108,7 @@ impl canvas::Program<Message> for ControllerLane<'_> {
                     });
                 } else {
                     let (current, display_tick) =
-                        self.point_data(point, state.modifiers.shift(), 0);
+                        self.point_data(point, state.modifiers.shift(), self.snap.draw_channel);
                     state.drag = Some(ControllerDrag {
                         controllers,
                         index: None,
@@ -1002,7 +1141,9 @@ impl canvas::Program<Message> for ControllerLane<'_> {
                 let Some(drag) = &mut state.drag else {
                     return None;
                 };
-                let channel = drag.original.map_or(0, |original| original.channel);
+                let channel = drag
+                    .original
+                    .map_or(self.snap.draw_channel, |original| original.channel);
                 (drag.current, drag.display_tick) =
                     self.point_data(point, state.modifiers.shift(), channel);
                 Some(canvas::Action::request_redraw())
@@ -1010,7 +1151,9 @@ impl canvas::Program<Message> for ControllerLane<'_> {
             Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
                 let mut drag = state.drag.take()?;
                 if let Some(point) = cursor.position_in(bounds) {
-                    let channel = drag.original.map_or(0, |original| original.channel);
+                    let channel = drag
+                        .original
+                        .map_or(self.snap.draw_channel, |original| original.channel);
                     (drag.current, drag.display_tick) =
                         self.point_data(point, state.modifiers.shift(), channel);
                 }
@@ -1089,7 +1232,10 @@ impl canvas::Program<Message> for ControllerLane<'_> {
         };
         let mut prior_events = controllers
             .iter()
-            .filter(|controller| controller.controller == self.controller)
+            .filter(|controller| {
+                controller.controller == self.controller
+                    && self.snap.channel_visible(controller.channel)
+            })
             .flat_map(|controller| {
                 source_event_occurrences(
                     self.item,
@@ -1105,7 +1251,10 @@ impl canvas::Program<Message> for ControllerLane<'_> {
         let mut segment_start = 0.0;
         let mut visible_events = controllers
             .iter()
-            .filter(|controller| controller.controller == self.controller)
+            .filter(|controller| {
+                controller.controller == self.controller
+                    && self.snap.channel_visible(controller.channel)
+            })
             .flat_map(|controller| {
                 source_event_occurrences(
                     self.item,
@@ -1309,6 +1458,7 @@ impl PitchBendLane<'_> {
             .pitch_bends()
             .iter()
             .enumerate()
+            .filter(|(_, bend)| self.snap.channel_visible(bend.channel))
             .flat_map(|(index, bend)| {
                 source_event_occurrences(self.item, bend.tick, item_start, item_end)
                     .map(move |tick| (index, tick, bend.value))
@@ -1347,7 +1497,9 @@ impl canvas::Program<Message> for PitchBendLane<'_> {
         if let Event::Keyboard(keyboard::Event::ModifiersChanged(modifiers)) = event {
             state.modifiers = *modifiers;
             if let (Some(point), Some(drag)) = (cursor.position_in(bounds), state.drag.as_mut()) {
-                let channel = drag.original.map_or(0, |original| original.channel);
+                let channel = drag
+                    .original
+                    .map_or(self.snap.draw_channel, |original| original.channel);
                 (drag.current, drag.display_tick) =
                     self.point_data(point, state.modifiers.shift(), channel);
                 return Some(canvas::Action::request_redraw());
@@ -1394,7 +1546,7 @@ impl canvas::Program<Message> for PitchBendLane<'_> {
                     });
                 } else {
                     let (current, display_tick) =
-                        self.point_data(point, state.modifiers.shift(), 0);
+                        self.point_data(point, state.modifiers.shift(), self.snap.draw_channel);
                     state.drag = Some(PitchBendDrag {
                         bends,
                         index: None,
@@ -1427,7 +1579,9 @@ impl canvas::Program<Message> for PitchBendLane<'_> {
                 let Some(drag) = &mut state.drag else {
                     return None;
                 };
-                let channel = drag.original.map_or(0, |original| original.channel);
+                let channel = drag
+                    .original
+                    .map_or(self.snap.draw_channel, |original| original.channel);
                 (drag.current, drag.display_tick) =
                     self.point_data(point, state.modifiers.shift(), channel);
                 Some(canvas::Action::request_redraw())
@@ -1435,7 +1589,9 @@ impl canvas::Program<Message> for PitchBendLane<'_> {
             Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
                 let mut drag = state.drag.take()?;
                 if let Some(point) = cursor.position_in(bounds) {
-                    let channel = drag.original.map_or(0, |original| original.channel);
+                    let channel = drag
+                        .original
+                        .map_or(self.snap.draw_channel, |original| original.channel);
                     (drag.current, drag.display_tick) =
                         self.point_data(point, state.modifiers.shift(), channel);
                 }
@@ -1527,6 +1683,7 @@ impl canvas::Program<Message> for PitchBendLane<'_> {
             .item
             .pitch_bends()
             .iter()
+            .filter(|bend| self.snap.channel_visible(bend.channel))
             .flat_map(|bend| {
                 source_event_occurrences(
                     self.item,
@@ -1544,6 +1701,7 @@ impl canvas::Program<Message> for PitchBendLane<'_> {
             .item
             .pitch_bends()
             .iter()
+            .filter(|bend| self.snap.channel_visible(bend.channel))
             .flat_map(|bend| {
                 source_event_occurrences(
                     self.item,
@@ -2029,8 +2187,9 @@ impl canvas::Program<Message> for PianoRoll<'_> {
                 if self.region == RollRegion::Velocity {
                     state.last_empty_click = None;
                     let lane_y = point.y;
+                    let visible_notes = self.visible_notes();
                     let Some(note_id) = velocity_note_at_x(
-                        self.item.notes(),
+                        &visible_notes,
                         self.content_mapping(),
                         self.item.source_offset_ticks(),
                         self.item
@@ -2040,7 +2199,7 @@ impl canvas::Program<Message> for PianoRoll<'_> {
                     ) else {
                         return Some(canvas::Action::capture());
                     };
-                    let note = self.item.notes().iter().find(|note| note.id() == note_id)?;
+                    let note = visible_notes.iter().find(|note| note.id() == note_id)?;
                     let selected = selection_after_click(
                         self.selected,
                         note.id(),
@@ -2103,6 +2262,7 @@ impl canvas::Program<Message> for PianoRoll<'_> {
                         mapping.pitch_at_y(point.y),
                         mapping.grid_ticks(),
                         96,
+                        self.snap.draw_channel,
                     ) {
                         return Some(canvas::Action::publish(Message::AddMidiNoteAt(
                             self.item_id,
@@ -2130,6 +2290,7 @@ impl canvas::Program<Message> for PianoRoll<'_> {
                             mapping.pitch_at_y(point.y),
                             mapping.grid_ticks(),
                             96,
+                            self.snap.draw_channel,
                         ) {
                             return Some(canvas::Action::publish(Message::AddMidiNoteAt(
                                 self.item_id,
@@ -2216,8 +2377,9 @@ impl canvas::Program<Message> for PianoRoll<'_> {
                 }
                 if state.drag.is_none() {
                     let hovered = if self.region == RollRegion::Velocity {
+                        let visible_notes = self.visible_notes();
                         velocity_note_at_x(
-                            self.item.notes(),
+                            &visible_notes,
                             self.content_mapping(),
                             self.item.source_offset_ticks(),
                             self.item
@@ -2266,7 +2428,12 @@ impl canvas::Program<Message> for PianoRoll<'_> {
                         } else {
                             HashSet::new()
                         };
-                        for note in self.item.notes() {
+                        for note in self
+                            .item
+                            .notes()
+                            .iter()
+                            .filter(|note| self.snap.channel_visible(note.channel()))
+                        {
                             let y = mapping.y_at_pitch(note.pitch());
                             let note_bottom = y + self.pitch_row_height;
                             let note_duration = visible_note_duration(self.item, note, note.tick());
@@ -2585,7 +2752,12 @@ impl canvas::Program<Message> for PianoRoll<'_> {
         }
         let content_mapping = self.content_mapping();
         let (view_start, view_end) = self.content_tick_range(bounds.width);
-        for note in self.item.notes() {
+        for note in self
+            .item
+            .notes()
+            .iter()
+            .filter(|note| self.snap.channel_visible(note.channel()))
+        {
             if note.pitch() > self.high_pitch
                 || note.pitch() < self.high_pitch.saturating_sub(self.pitch_rows - 1)
             {
@@ -2766,6 +2938,15 @@ fn wheel_navigation_message(
 }
 
 impl PianoRoll<'_> {
+    fn visible_notes(&self) -> Vec<aaadaw_core::MidiNote> {
+        self.item
+            .notes()
+            .iter()
+            .filter(|note| self.snap.channel_visible(note.channel()))
+            .cloned()
+            .collect()
+    }
+
     fn piano_key_pitch_at(&self, position: Point) -> Option<u8> {
         if position.x >= KEY_WIDTH || position.y < HEADER_HEIGHT {
             return None;
@@ -2833,7 +3014,13 @@ impl PianoRoll<'_> {
     ) -> Option<(&aaadaw_core::MidiNote, bool, u64)> {
         let mapping = self.content_mapping();
         let (view_start, view_end) = self.content_tick_range(width);
-        for note in self.item.notes().iter().rev() {
+        for note in self
+            .item
+            .notes()
+            .iter()
+            .rev()
+            .filter(|note| self.snap.channel_visible(note.channel()))
+        {
             let duration = visible_note_duration(self.item, note, note.tick());
             for occurrence_tick in source_event_occurrences(
                 self.item,
@@ -2868,6 +3055,7 @@ impl PianoRoll<'_> {
             .notes()
             .iter()
             .rev()
+            .filter(|note| self.snap.channel_visible(note.channel()))
             .flat_map(|note| {
                 let duration = visible_note_duration(self.item, note, note.tick());
                 source_event_occurrences(
@@ -2923,15 +3111,16 @@ impl PianoRoll<'_> {
                     .with_width(0.7),
             );
         }
+        let visible_notes = self.visible_notes();
         let velocity_positions = velocity_handle_positions(
-            self.item.notes(),
+            &visible_notes,
             self.content_mapping(),
             self.item.source_offset_ticks(),
             self.item
                 .source_offset_ticks()
                 .saturating_add(self.item.length_ticks()),
         );
-        for note in self.item.notes() {
+        for note in &visible_notes {
             if !source_tick_is_visible(self.item, note.tick()) {
                 continue;
             }
@@ -3314,6 +3503,138 @@ mod tests {
     }
 
     #[test]
+    fn piano_roll_channel_filter_hides_notes_from_hit_testing() {
+        let (project, item_id, _) = project_with_note(
+            3_840,
+            MidiNoteData {
+                channel: 2,
+                pitch: 60,
+                tick: 0,
+                duration: 240,
+                velocity: 96,
+            },
+        );
+        let selected = HashSet::new();
+        let mut roll = piano_roll_for_test(&project, item_id, &selected, MidiEditorTool::Select);
+        roll.snap = MidiSnap {
+            channel_selection: MidiEditorChannelSelection::Channel(1),
+            filter_enabled: true,
+            ..MidiSnap::default()
+        };
+        assert!(
+            roll.note_at_point(Point::new(2.0, 9.0), false, 500.0)
+                .is_none()
+        );
+
+        roll.snap.filter_enabled = false;
+        assert!(
+            roll.note_at_point(Point::new(2.0, 9.0), false, 500.0)
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn expression_lanes_filter_controller_and_pitch_bend_hit_targets_by_channel() {
+        let (mut project, item_id, _) = project_with_note(
+            3_840,
+            MidiNoteData {
+                channel: 0,
+                pitch: 60,
+                tick: 0,
+                duration: 240,
+                velocity: 96,
+            },
+        );
+        project
+            .apply(aaadaw_core::DawAction::SetMidiControllers {
+                item_id,
+                controllers: vec![
+                    MidiControllerData {
+                        channel: 0,
+                        controller: 1,
+                        tick: 0,
+                        value: 64,
+                    },
+                    MidiControllerData {
+                        channel: 1,
+                        controller: 1,
+                        tick: 960,
+                        value: 64,
+                    },
+                ],
+            })
+            .unwrap();
+        project
+            .apply(aaadaw_core::DawAction::SetMidiPitchBends {
+                item_id,
+                pitch_bends: vec![
+                    MidiPitchBendData {
+                        channel: 0,
+                        tick: 0,
+                        value: 8_192,
+                    },
+                    MidiPitchBendData {
+                        channel: 1,
+                        tick: 960,
+                        value: 8_192,
+                    },
+                ],
+            })
+            .unwrap();
+        let item = &project.midi_items()[0];
+        let snap = MidiSnap {
+            channel_selection: MidiEditorChannelSelection::Multichannel,
+            filter_enabled: true,
+            filter_channels: 0b10,
+            ..MidiSnap::default()
+        };
+        let controller_lane = ControllerLane {
+            item,
+            item_id,
+            controller: 1,
+            lane_height: 72.0,
+            origin_tick: 0,
+            pixels_per_beat: 96.0,
+            ticks_per_beat: 960,
+            playhead_tick: None,
+            snap,
+        };
+        assert!(
+            controller_lane
+                .closest_point(Point::new(0.0, controller_y(64, 72.0)))
+                .is_none()
+        );
+        assert_eq!(
+            controller_lane
+                .closest_point(Point::new(96.0, controller_y(64, 72.0)))
+                .map(|(index, _)| index),
+            Some(1)
+        );
+
+        let pitch_bend_lane = PitchBendLane {
+            item,
+            item_id,
+            lane_height: 72.0,
+            origin_tick: 0,
+            pixels_per_beat: 96.0,
+            ticks_per_beat: 960,
+            playhead_tick: None,
+            snap,
+        };
+        assert!(
+            pitch_bend_lane
+                .closest_point(Point::new(0.0, pitch_bend_y(8_192, 72.0)))
+                .is_none()
+        );
+        assert_eq!(
+            pitch_bend_lane
+                .closest_point(Point::new(96.0, pitch_bend_y(8_192, 72.0)))
+                .map(|(index, _)| index),
+            Some(1)
+        );
+    }
+
+    #[test]
     fn looped_source_occurrences_render_and_hit_test_after_wrapping_the_offset() {
         let (mut project, item_id, _) = project_with_note(
             9_600,
@@ -3362,7 +3683,7 @@ mod tests {
         );
         assert!(source_tick_is_visible(item, 960));
         assert_eq!(
-            midi_note_insert_data(item, 1_440, 64, 240, 96),
+            midi_note_insert_data(item, 1_440, 64, 240, 96, 0),
             Some(MidiNoteData {
                 channel: 0,
                 pitch: 64,
@@ -3372,7 +3693,13 @@ mod tests {
             })
         );
         assert_eq!(
-            midi_note_insert_data(item, 9_480, 64, 960, 96),
+            midi_note_insert_data(item, 1_440, 64, 240, 96, 7)
+                .expect("inserted note preserves the selected MIDI channel")
+                .channel,
+            7
+        );
+        assert_eq!(
+            midi_note_insert_data(item, 9_480, 64, 960, 96, 0),
             Some(MidiNoteData {
                 channel: 0,
                 pitch: 64,

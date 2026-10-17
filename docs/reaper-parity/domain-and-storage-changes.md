@@ -154,4 +154,4 @@ Schema 50 及更早工程默认迁移为 loop source 开启；源长推断为可
 
 `midi_notes` 增加受 `0..15` 检查约束的 `channel` 列；`midi_controllers` 和 `midi_pitch_bends` 增加同类列，并分别将唯一键扩展为 `(item_id, channel, controller, tick)` 与 `(item_id, channel, tick)`。schema 58 及更早工程迁移到通道 0；迁移逐表识别已有列或缺失表，兼容测试构造的部分旧 schema。Snapshot、复制/分割、MIDI 计划/chase、MCP 编辑与标准 MIDI 导出沿用通道身份。
 
-MIDI 编辑器当前没有通道选择器或分通道 lane 显示；新建 CC/Pitch Bend 使用通道 0，拖动既有事件保留原通道。普通 Send 仍 All→All 原样转发，源/目标通道过滤与重映射、MIDI Bus 和其他消息类型仍未实现。
+MIDI Editor 已提供 All/单通道/多通道筛选、Filter 开关及绘制目标通道；音符、CC 与 Pitch Bend 的显示和命中按当前筛选集合处理，新事件使用选择的绘制通道。多通道面板目前只覆盖通道集合与绘制目标，REAPER 的反转/独奏/参数值位置长度事件类型筛选和独立原生窗口仍未实现。普通 Send 仍 All→All 原样转发，源/目标通道过滤与重映射、MIDI Bus 和其他消息类型仍未实现。

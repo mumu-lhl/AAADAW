@@ -161,6 +161,65 @@ pub(crate) enum MidiEditorTool {
     Erase,
 }
 
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) enum MidiEditorChannelSelection {
+    #[default]
+    AllChannels,
+    Channel(u8),
+    Multichannel,
+}
+
+impl MidiEditorChannelSelection {
+    pub(crate) const OPTIONS: [Self; 18] = [
+        Self::AllChannels,
+        Self::Channel(0),
+        Self::Channel(1),
+        Self::Channel(2),
+        Self::Channel(3),
+        Self::Channel(4),
+        Self::Channel(5),
+        Self::Channel(6),
+        Self::Channel(7),
+        Self::Channel(8),
+        Self::Channel(9),
+        Self::Channel(10),
+        Self::Channel(11),
+        Self::Channel(12),
+        Self::Channel(13),
+        Self::Channel(14),
+        Self::Channel(15),
+        Self::Multichannel,
+    ];
+
+    pub(crate) fn shows_channel(
+        self,
+        channel: u8,
+        filter_enabled: bool,
+        filter_channels: u16,
+    ) -> bool {
+        if !filter_enabled {
+            return true;
+        }
+        match self {
+            Self::AllChannels => true,
+            Self::Channel(selected) => channel == selected,
+            Self::Multichannel => {
+                filter_channels & (1_u16.checked_shl(u32::from(channel)).unwrap_or(0)) != 0
+            }
+        }
+    }
+}
+
+impl std::fmt::Display for MidiEditorChannelSelection {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::AllChannels => formatter.write_str("All channels"),
+            Self::Channel(channel) => write!(formatter, "Channel {}", channel.saturating_add(1)),
+            Self::Multichannel => formatter.write_str("Multichannel"),
+        }
+    }
+}
+
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum TimeMapTab {
     #[default]
@@ -345,6 +404,12 @@ pub(crate) enum Message {
     ReleaseMidiPreview,
     SelectMidiEditorLane(MidiEditorLane),
     SelectMidiEditorTool(MidiEditorTool),
+    SelectMidiEditorChannel(MidiEditorChannelSelection),
+    SetMidiEditorDrawChannel(u8),
+    ToggleMidiEditorChannelFilter,
+    ToggleMidiEditorFilterChannel(u8),
+    SetMidiEditorFilterChannelsAll(bool),
+    CloseMidiEditorFilter,
     MidiEditorFeedback(String),
     SelectMidiNotes(HashSet<NoteId>),
     CopyMidiNotes(ItemId, Vec<NoteId>),
@@ -728,4 +793,40 @@ pub(crate) struct FreezeTrackResult {
     pub media_ref: String,
     pub start_sample: u64,
     pub length_samples: u64,
+}
+
+#[cfg(test)]
+mod midi_channel_selection_tests {
+    use super::MidiEditorChannelSelection;
+
+    #[test]
+    fn channel_filter_matches_all_single_and_multiple_channel_modes() {
+        assert!(MidiEditorChannelSelection::AllChannels.shows_channel(15, true, 0));
+        assert!(!MidiEditorChannelSelection::Channel(2).shows_channel(1, true, u16::MAX));
+        assert!(MidiEditorChannelSelection::Channel(2).shows_channel(2, true, 0));
+        assert!(!MidiEditorChannelSelection::Multichannel.shows_channel(1, true, 0b0101));
+        assert!(MidiEditorChannelSelection::Multichannel.shows_channel(2, true, 0b0100));
+        assert!(MidiEditorChannelSelection::Multichannel.shows_channel(15, false, 0));
+    }
+
+    #[test]
+    fn midi_channel_choices_cover_reaper_channel_menu() {
+        assert_eq!(MidiEditorChannelSelection::OPTIONS.len(), 18);
+        assert_eq!(
+            MidiEditorChannelSelection::OPTIONS[0].to_string(),
+            "All channels"
+        );
+        assert_eq!(
+            MidiEditorChannelSelection::OPTIONS[1].to_string(),
+            "Channel 1"
+        );
+        assert_eq!(
+            MidiEditorChannelSelection::OPTIONS[16].to_string(),
+            "Channel 16"
+        );
+        assert_eq!(
+            MidiEditorChannelSelection::OPTIONS[17].to_string(),
+            "Multichannel"
+        );
+    }
 }
