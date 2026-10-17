@@ -2088,6 +2088,130 @@ fn reaper_782_type_one_linear_tempo_ramp_matches_native_bytes() {
     );
 }
 
+#[test]
+fn reaper_782_type_zero_linear_tempo_ramp_matches_native_bytes() {
+    let mut project = native_midi_fixture_project_with_length(960);
+    project
+        .apply(DawAction::SetTempo {
+            start_tick: 7_680,
+            bpm: 60.0,
+        })
+        .unwrap();
+    project
+        .apply(DawAction::SetTempoCurve {
+            start_tick: 0,
+            curve: TempoCurve::Linear,
+        })
+        .unwrap();
+    let options = MidiExportOptions {
+        file_type: MidiFileType::Type0,
+        embed_tempo_and_time_signature: true,
+        ..MidiExportOptions::for_project(&project)
+    };
+    let actual = encode_standard_midi(&project, options).unwrap();
+    let native = include_bytes!(
+        "../../../docs/verification/reaper-parity/fixtures/menu-export-midi-native-tempo-ramp-type0.mid"
+    );
+
+    assert_eq!(
+        actual, native,
+        "Type 0 ramp events extend to the one-second horizon and match REAPER 7.82"
+    );
+}
+
+#[test]
+fn reaper_782_type_zero_linear_tempo_ramp_keeps_terminal_midi_grid_tick() {
+    let mut project = native_midi_fixture_with_note_duration(1_320, 1_320);
+    project
+        .apply(DawAction::SetTempo {
+            start_tick: 7_680,
+            bpm: 60.0,
+        })
+        .unwrap();
+    project
+        .apply(DawAction::SetTempoCurve {
+            start_tick: 0,
+            curve: TempoCurve::Linear,
+        })
+        .unwrap();
+    let options = MidiExportOptions {
+        file_type: MidiFileType::Type0,
+        embed_tempo_and_time_signature: true,
+        ..MidiExportOptions::for_project(&project)
+    };
+    let actual = encode_standard_midi(&project, options).unwrap();
+    let native = include_bytes!(
+        "../../../docs/verification/reaper-parity/fixtures/menu-export-midi-native-tempo-ramp-type0-terminal-grid.mid"
+    );
+
+    assert_eq!(
+        actual, native,
+        "REAPER keeps the tempo sample at the last MIDI event tick"
+    );
+}
+
+#[test]
+fn reaper_782_type_zero_linear_tempo_ramp_stops_at_exact_whole_second_boundary() {
+    let mut project = native_midi_fixture_with_note_duration(1_350, 1_350);
+    project
+        .apply(DawAction::SetTempo {
+            start_tick: 7_680,
+            bpm: 60.0,
+        })
+        .unwrap();
+    project
+        .apply(DawAction::SetTempoCurve {
+            start_tick: 0,
+            curve: TempoCurve::Linear,
+        })
+        .unwrap();
+    let options = MidiExportOptions {
+        file_type: MidiFileType::Type0,
+        embed_tempo_and_time_signature: true,
+        ..MidiExportOptions::for_project(&project)
+    };
+    let actual = encode_standard_midi(&project, options).unwrap();
+    let native = include_bytes!(
+        "../../../docs/verification/reaper-parity/fixtures/menu-export-midi-native-tempo-ramp-type0-exact-one-second.mid"
+    );
+
+    assert_eq!(
+        actual, native,
+        "REAPER stops ramp samples before a MIDI event at exactly one second"
+    );
+}
+
+#[test]
+fn reaper_782_type_zero_linear_tempo_ramp_stops_before_next_whole_second() {
+    let mut project = native_midi_fixture_with_note_duration(1_620, 1_620);
+    project
+        .apply(DawAction::SetTempo {
+            start_tick: 7_680,
+            bpm: 60.0,
+        })
+        .unwrap();
+    project
+        .apply(DawAction::SetTempoCurve {
+            start_tick: 0,
+            curve: TempoCurve::Linear,
+        })
+        .unwrap();
+    let options = MidiExportOptions {
+        file_type: MidiFileType::Type0,
+        embed_tempo_and_time_signature: true,
+        ..MidiExportOptions::for_project(&project)
+    };
+    let actual = encode_standard_midi(&project, options).unwrap();
+    let native = include_bytes!(
+        "../../../docs/verification/reaper-parity/fixtures/menu-export-midi-native-tempo-ramp-type0-later-content.mid"
+    );
+
+    assert_eq!(
+        actual, native,
+        "REAPER keeps ramp samples before the next whole elapsed second"
+    );
+}
+
 fn native_midi_fixture_project() -> Project {
     native_midi_fixture_project_with_length(1920)
 }
@@ -2342,12 +2466,35 @@ fn native_midi_time_selection_boundary_fixture_project() -> Project {
 }
 
 fn native_midi_fixture_project_with_length(item_length_ticks: u64) -> Project {
-    native_midi_fixture_project_with_track_name(item_length_ticks, "Piano")
+    native_midi_fixture_with_note_duration(item_length_ticks, 960)
+}
+
+fn native_midi_fixture_with_note_duration(
+    item_length_ticks: u64,
+    note_duration_ticks: u64,
+) -> Project {
+    native_midi_fixture_project_with_track_name_and_note_duration(
+        item_length_ticks,
+        "Piano",
+        note_duration_ticks,
+    )
 }
 
 fn native_midi_fixture_project_with_track_name(
     item_length_ticks: u64,
     track_name: &str,
+) -> Project {
+    native_midi_fixture_project_with_track_name_and_note_duration(
+        item_length_ticks,
+        track_name,
+        960,
+    )
+}
+
+fn native_midi_fixture_project_with_track_name_and_note_duration(
+    item_length_ticks: u64,
+    track_name: &str,
+    note_duration_ticks: u64,
 ) -> Project {
     let mut project = Project::new();
     project
@@ -2371,7 +2518,7 @@ fn native_midi_fixture_project_with_track_name(
             notes: vec![MidiNoteData {
                 pitch: 60,
                 tick: 0,
-                duration: 960,
+                duration: note_duration_ticks,
                 velocity: 100,
             }],
         })

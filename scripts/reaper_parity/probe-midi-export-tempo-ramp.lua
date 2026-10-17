@@ -2,6 +2,11 @@
 -- Builds the note/CC/pitch-bend fixture inside a 120-to-60 BPM linear ramp,
 -- then opens Main action 40849 for a manual path and tempo/meter checkbox.
 local root = assert(os.getenv("AAADAW_REAPER_PROBE_DIR"), "Set AAADAW_REAPER_PROBE_DIR") .. "/"
+local requested_item_end_qn = tonumber(os.getenv("AAADAW_REAPER_ITEM_END_QN"))
+local requested_note_end_qn = tonumber(os.getenv("AAADAW_REAPER_NOTE_END_QN"))
+local requested_note_end_seconds = tonumber(os.getenv("AAADAW_REAPER_NOTE_END_SECONDS"))
+local export_type = os.getenv("AAADAW_REAPER_FILE_TYPE") or "Type 1"
+assert(export_type == "Type 0" or export_type == "Type 1")
 assert(reaper.GetAppVersion() == "7.82/linux-x86_64")
 assert(reaper.GetLastColorThemeFile():match("Default_7%.0%.ReaperThemeZip$"))
 assert(reaper.GetPlayStateEx(0) == 0)
@@ -14,8 +19,13 @@ local end_ok = reaper.SetTempoTimeSigMarker(0, -1, -1, 2, 0.0, 60.0, 4, 4, false
 assert(ramp_ok and end_ok, "Could not create the 120-to-60 BPM linear ramp")
 reaper.UpdateTimeline()
 
+local note_end_qn = requested_note_end_qn
+  or (requested_note_end_seconds and reaper.TimeMap2_timeToQN(0, requested_note_end_seconds))
+  or 1.5
+local item_end_qn = requested_item_end_qn or note_end_qn
 local item_start = reaper.TimeMap2_QNToTime(0, 0.5)
-local item_end = reaper.TimeMap2_QNToTime(0, 1.5)
+local item_end = reaper.TimeMap2_QNToTime(0, item_end_qn)
+assert(note_end_qn <= item_end_qn, "The MIDI note must end inside the item")
 reaper.InsertTrackAtIndex(0, true)
 local track = reaper.GetTrack(0, 0)
 reaper.GetSetMediaTrackInfo_String(track, "P_NAME", "Piano", true)
@@ -31,22 +41,26 @@ local item_loop_source = reaper.GetMediaItemInfo_Value(item, "B_LOOPSRC")
 local project_timebase = reaper.GetSetProjectInfo(0, "PROJECT_TIMEBASE", 0, false)
 local start_qn = reaper.TimeMap2_timeToQN(0, item_start)
 local start_ppq = reaper.MIDI_GetPPQPosFromProjQN(take, start_qn)
-local note_end_ppq = reaper.MIDI_GetPPQPosFromProjQN(take, start_qn + 1.0)
+local note_end_ppq = reaper.MIDI_GetPPQPosFromProjQN(take, note_end_qn)
 local cc_ppq = reaper.MIDI_GetPPQPosFromProjQN(take, start_qn + 0.25)
 local bend_ppq = reaper.MIDI_GetPPQPosFromProjQN(take, start_qn + 0.375)
 local project_ppq_at_item_start = math.floor(start_qn * 960 + 0.5)
-local project_ppq_at_note_end = math.floor((start_qn + 1.0) * 960 + 0.5)
+local project_ppq_at_note_end = math.floor(note_end_qn * 960 + 0.5)
 local project_ppq_at_cc = math.floor((start_qn + 0.25) * 960 + 0.5)
 local project_ppq_at_pitch_bend = math.floor((start_qn + 0.375) * 960 + 0.5)
 assert(reaper.MIDI_InsertNote(take, false, false, start_ppq, note_end_ppq, 0, 60, 100, false))
 assert(reaper.MIDI_InsertCC(take, false, false, cc_ppq, 0xB0, 0, 1, 64))
 assert(reaper.MIDI_InsertCC(take, false, false, bend_ppq, 0xE0, 0, 0, 96))
 reaper.MIDI_Sort(take)
+local save_project = os.getenv("AAADAW_REAPER_SAVE_PROJECT")
+if save_project then
+  reaper.Main_SaveProjectEx(0, save_project, 0)
+end
 
 local meta = assert(io.open(root .. "midi-export-tempo-ramp-native-meta.tsv", "w"))
 meta:write("version\t", reaper.GetAppVersion(), "\n")
 meta:write("theme\tDefault_7.0.ReaperThemeZip\n")
-meta:write("fixture\ttrack Piano; MIDI source spans project QN 0.5-1.5; C4 note, CC1, pitch bend\n")
+meta:write("fixture\ttrack Piano; MIDI source spans project QN 0.5-", string.format("%.6f", item_end_qn), "; C4 note, CC1, pitch bend\n")
 meta:write("take_ppq_at_item_start\t", string.format("%.6f", start_ppq), "\n")
 meta:write("take_ppq_at_note_end\t", string.format("%.6f", note_end_ppq), "\n")
 meta:write("take_ppq_at_cc\t", string.format("%.6f", cc_ppq), "\n")
@@ -74,6 +88,9 @@ for _, event in ipairs({
   ), "\n")
 end
 meta:write("tempo_ramp\t120 BPM at QN 0; linear to 60 BPM at QN 8\n")
+if requested_note_end_seconds then
+  meta:write("requested_note_end_seconds\t", string.format("%.9f", requested_note_end_seconds), "\n")
+end
 local tempo_marker_count = reaper.CountTempoTimeSigMarkers(0)
 meta:write("tempo_marker_count\t", tempo_marker_count, "\n")
 for index = 0, tempo_marker_count - 1 do
@@ -92,7 +109,7 @@ for _, tick in ipairs({ 0, 60, 120, 180, 7680 }) do
   ), "\n")
 end
 meta:write("export_action\t40849\n")
-meta:write("export_settings_to_use\tType 1; PPQN 960; tempo/meter checked; SMPTE/markers unchecked\n")
+meta:write("export_settings_to_use\t", export_type, "; PPQN 960; tempo/meter checked; SMPTE/markers unchecked\n")
 meta:close()
 
 if os.getenv("AAADAW_REAPER_METADATA_ONLY") == "1" then

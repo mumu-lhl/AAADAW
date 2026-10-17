@@ -471,27 +471,70 @@ pub fn encode_standard_midi_with_selection(
                 options.embed_tempo_and_time_signature,
                 time_selection,
             )?;
-            if let Some(last_conductor_order_at_start) = events
+            let midi_order_offset = events
                 .iter()
-                .filter(|event| event.tick == 0)
                 .map(|event| event.order)
                 .max()
-            {
-                let midi_order_offset = last_conductor_order_at_start.saturating_add(1);
+                .map(|last_conductor_order| last_conductor_order.saturating_add(1));
+            if let Some(midi_order_offset) = midi_order_offset {
                 for event in events_by_track
                     .iter_mut()
                     .flat_map(|track_events| track_events.iter_mut())
-                    .filter(|event| event.tick == 0)
                 {
                     event.order = event.order.saturating_add(midi_order_offset);
                 }
             }
             if let Some(last_midi_event_tick) = last_midi_event_tick {
-                // REAPER's merged Type 0 exporter stops writing tempo-map events after
-                // the final MIDI event, while Type 1 keeps the full selected map.
+                let ramp_sample_ticks = if options.embed_tempo_and_time_signature {
+                    linear_tempo_ramp_sample_ticks(
+                        project,
+                        project_ppq,
+                        options.ppq,
+                        time_selection,
+                    )?
+                } else {
+                    HashSet::new()
+                };
+                let ramp_cutoff_seconds = type_zero_ramp_cutoff_seconds(
+                    project,
+                    last_midi_event_tick,
+                    project_ppq,
+                    options.ppq,
+                    time_selection,
+                )?;
+                let mut ramp_sample_ticks_until_cutoff = HashSet::new();
+                for tick in ramp_sample_ticks {
+                    let elapsed = type_zero_event_elapsed_seconds(
+                        project,
+                        tick,
+                        project_ppq,
+                        options.ppq,
+                        time_selection,
+                    )?;
+                    if elapsed < ramp_cutoff_seconds - 1.0e-9 {
+                        ramp_sample_ticks_until_cutoff.insert(tick);
+                    }
+                }
                 events.retain(|event| {
-                    !is_tempo_map_event(event) || event.tick <= last_midi_event_tick
+                    !is_tempo_map_event(event)
+                        || event.tick <= last_midi_event_tick
+                        || (event.bytes.get(1) == Some(&0x51)
+                            && ramp_sample_ticks_until_cutoff.contains(&event.tick))
                 });
+                let final_conductor_tick = events.iter().map(|event| event.tick).max();
+                if final_conductor_tick == Some(last_midi_event_tick)
+                    && let Some(midi_order_offset) = midi_order_offset
+                {
+                    // At the terminal tick, REAPER places MIDI events before the
+                    // conductor event; earlier same-tick events remain conductor-first.
+                    for event in events_by_track
+                        .iter_mut()
+                        .flat_map(|track_events| track_events.iter_mut())
+                        .filter(|event| event.tick == last_midi_event_tick)
+                    {
+                        event.order = event.order.saturating_sub(midi_order_offset);
+                    }
+                }
             }
             for track_events in &mut events_by_track {
                 events.append(track_events);
@@ -554,6 +597,87 @@ fn ensure_midi_event_capacity(count: &mut usize, additional: usize) -> Result<()
 
 fn is_tempo_map_event(event: &Event) -> bool {
     event.bytes.len() >= 2 && event.bytes[0] == 0xff && matches!(event.bytes[1], 0x01 | 0x51 | 0x58)
+}
+
+fn linear_tempo_ramp_sample_ticks(
+    project: &Project,
+    project_ppq: u32,
+    export_ppq: u16,
+    time_selection: Option<(f64, f64)>,
+) -> Result<HashSet<u64>, String> {
+    let tempo_points = project.tempo_points().collect::<Vec<_>>();
+    let interval_ticks = (u64::from(project_ppq) / 8).max(1);
+    let mut sample_ticks = HashSet::new();
+    for (index, &(start_tick, _, curve)) in tempo_points.iter().enumerate() {
+        if curve != TempoCurve::Linear {
+            continue;
+        }
+        let Some(&(end_tick, _, _)) = tempo_points.get(index + 1) else {
+            continue;
+        };
+        if end_tick <= start_tick {
+            continue;
+        }
+        let mut interval_start = start_tick;
+        while interval_start < end_tick {
+            if let Some(output_tick) =
+                time_selection_output_tick(interval_start, time_selection, false)
+            {
+                sample_ticks.insert(scale_tick(output_tick, project_ppq, export_ppq)?);
+            }
+            interval_start = interval_start.saturating_add(interval_ticks);
+        }
+    }
+    Ok(sample_ticks)
+}
+
+fn type_zero_ramp_cutoff_seconds(
+    project: &Project,
+    last_midi_event_tick: u64,
+    project_ppq: u32,
+    export_ppq: u16,
+    time_selection: Option<(f64, f64)>,
+) -> Result<f64, String> {
+    let elapsed = type_zero_event_elapsed_seconds(
+        project,
+        last_midi_event_tick,
+        project_ppq,
+        export_ppq,
+        time_selection,
+    )?;
+    // REAPER 7.82's merged Type 0 tempo-ramp track stops before the next whole
+    // elapsed second, with a one-second minimum even for short MIDI content.
+    Ok((elapsed - 1.0e-9).ceil().max(1.0))
+}
+
+fn type_zero_event_elapsed_seconds(
+    project: &Project,
+    output_tick: u64,
+    project_ppq: u32,
+    export_ppq: u16,
+    time_selection: Option<(f64, f64)>,
+) -> Result<f64, String> {
+    if export_ppq == 0 {
+        return Err("MIDI export PPQN must be greater than zero".to_owned());
+    }
+    let selection_start_tick = time_selection.map_or(0.0, |(start_tick, _)| start_tick);
+    let event_project_tick =
+        selection_start_tick + output_tick as f64 * f64::from(project_ppq) / f64::from(export_ppq);
+    if !event_project_tick.is_finite() || event_project_tick < selection_start_tick {
+        return Err("MIDI event lies beyond the supported project timeline".to_owned());
+    }
+    let start_sample = project
+        .sample_at_tick_position(selection_start_tick)
+        .map_err(|error| error.to_string())?;
+    let event_sample = project
+        .sample_at_tick_position(event_project_tick)
+        .map_err(|error| error.to_string())?;
+    let settings = project.settings();
+    let elapsed = (event_sample - start_sample) / f64::from(settings.sample_rate());
+    if !elapsed.is_finite() || elapsed < 0.0 {
+        return Err("MIDI event lies beyond the supported project timeline".to_owned());
+    }
+    Ok(elapsed)
 }
 
 fn project_midi_item_event_tick(
@@ -807,7 +931,11 @@ fn conductor_events(
             }
             match curve {
                 TempoCurve::Linear => {
-                    let ramp_start = format!("REAPER gradual tempo change start {bpm:.6}");
+                    let ramp_start = if options.file_type == MidiFileType::Type0 {
+                        format!(",REAPER gradual tempo change start {bpm:.6}")
+                    } else {
+                        format!("REAPER gradual tempo change start {bpm:.6}")
+                    };
                     events.push(Event {
                         tick: scale_tick(start_tick, project_ppq, options.ppq)?,
                         order: starting_tempo_order,
