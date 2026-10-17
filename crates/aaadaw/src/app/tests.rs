@@ -12,7 +12,7 @@ use super::shortcut;
 use super::{ActiveRecording, SharedRecordingStart};
 use super::{
     App, ItemSnapDirection, MainMenu, MainWorkspace, MenuNavigation, Message, MidiEditorTool,
-    MidiQuantizeOperation, MidiQuantizeScope, MobilePanel, PathPickerTarget,
+    MidiHumanizeScope, MidiQuantizeOperation, MidiQuantizeScope, MobilePanel, PathPickerTarget,
     fx_chain_plugin_drag_event, keyboard_shortcut_event, menu_navigation_event,
     midi_editor_shortcut_event, midi_expression_context_menu_event, midi_item_swing_snap_target,
     mobile_back_event, shortcut_message,
@@ -12130,6 +12130,131 @@ fn midi_editor_quantize_moves_only_selected_notes_on_the_default_editor_grid() {
     assert_eq!(app.project.midi_items()[0].notes()[1].tick(), 170);
     let _ = app.update(Message::Redo);
     assert_eq!(app.project.midi_items()[0].notes()[1].tick(), 120);
+}
+
+#[test]
+fn midi_editor_humanize_dialog_defaults_to_selected_notes_and_is_undoable() {
+    let mut app = App::default();
+    let _ = app.update(Message::AddTrack);
+    let track_id = app.project.tracks()[0].id();
+    app.project
+        .apply(DawAction::InsertMidiItem {
+            track_id,
+            start_tick: 0,
+            length_ticks: 3_840,
+        })
+        .expect("test MIDI item should be inserted");
+    let item_id = app.project.midi_items()[0].id();
+    app.project
+        .apply(DawAction::AddMidiNotes {
+            item_id,
+            notes: vec![
+                MidiNoteData {
+                    channel: 0,
+                    pitch: 60,
+                    tick: 170,
+                    duration: 90,
+                    velocity: 70,
+                },
+                MidiNoteData {
+                    channel: 2,
+                    pitch: 64,
+                    tick: 350,
+                    duration: 110,
+                    velocity: 80,
+                },
+                MidiNoteData {
+                    channel: 0,
+                    pitch: 67,
+                    tick: 550,
+                    duration: 150,
+                    velocity: 90,
+                },
+            ],
+        })
+        .expect("test notes should be inserted");
+    let selected_id = app.project.midi_items()[0].notes()[0].id();
+    app.midi_editor_selected_notes = HashSet::from([selected_id]);
+    let original = app.project.midi_items()[0]
+        .notes()
+        .iter()
+        .map(|note| (note.tick(), note.duration(), note.velocity()))
+        .collect::<Vec<_>>();
+
+    let _ = app.update(Message::OpenMidiHumanizeDialog(item_id));
+    let dialog = app
+        .midi_humanize_dialog
+        .expect("humanize dialog should open");
+    assert_eq!(dialog.scope, MidiHumanizeScope::SelectedNotes);
+    assert_eq!(dialog.timing_amount_percent, 0);
+    assert_eq!(dialog.velocity_amount_percent, 0);
+    assert_eq!(dialog.timing_bias_percent, 0);
+    let first_seed = dialog.seed;
+    let _ = app.update(Message::NewMidiHumanizeSeed);
+    assert_ne!(
+        app.midi_humanize_dialog.expect("dialog stays open").seed,
+        first_seed
+    );
+    let _ = app.update(Message::SetMidiHumanizeTiming(100));
+    let _ = app.update(Message::SetMidiHumanizeVelocity(100));
+    app.midi_humanize_dialog
+        .as_mut()
+        .expect("dialog stays open")
+        .seed = 0x43b0_1a52_74c9_203f;
+    let _ = app.update(Message::AcceptMidiHumanize);
+
+    assert!(app.midi_humanize_dialog.is_none());
+    let after_selected = app.project.midi_items()[0]
+        .notes()
+        .iter()
+        .map(|note| (note.tick(), note.duration(), note.velocity()))
+        .collect::<Vec<_>>();
+    assert_ne!(after_selected[0], original[0]);
+    assert_eq!(&after_selected[1..], &original[1..]);
+    let _ = app.update(Message::Undo);
+    assert_eq!(
+        app.project.midi_items()[0]
+            .notes()
+            .iter()
+            .map(|note| (note.tick(), note.duration(), note.velocity()))
+            .collect::<Vec<_>>(),
+        original
+    );
+    let _ = app.update(Message::Redo);
+    assert_eq!(
+        app.project.midi_items()[0]
+            .notes()
+            .iter()
+            .map(|note| (note.tick(), note.duration(), note.velocity()))
+            .collect::<Vec<_>>(),
+        after_selected
+    );
+
+    let _ = app.update(Message::OpenMidiHumanizeDialog(item_id));
+    let _ = app.update(Message::SetMidiHumanizeScope(MidiHumanizeScope::AllNotes));
+    let _ = app.update(Message::SetMidiHumanizeVelocity(100));
+    app.midi_humanize_dialog
+        .as_mut()
+        .expect("dialog stays open")
+        .seed = 0x710e_527d_1443_2819;
+    let _ = app.update(Message::AcceptMidiHumanize);
+    let after_all = app.project.midi_items()[0]
+        .notes()
+        .iter()
+        .map(|note| note.velocity())
+        .collect::<Vec<_>>();
+    let after_selected_velocities = after_selected.iter().map(|note| note.2).collect::<Vec<_>>();
+    assert_ne!(after_all[1], after_selected_velocities[1]);
+    assert_ne!(after_all[2], after_selected_velocities[2]);
+    let _ = app.update(Message::Undo);
+    assert_eq!(
+        app.project.midi_items()[0]
+            .notes()
+            .iter()
+            .map(|note| (note.tick(), note.duration(), note.velocity()))
+            .collect::<Vec<_>>(),
+        after_selected
+    );
 }
 
 #[test]

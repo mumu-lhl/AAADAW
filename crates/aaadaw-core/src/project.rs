@@ -25,6 +25,16 @@ struct QuantizedMidiNoteChange {
     after_duration: u64,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct HumanizedMidiNoteChange {
+    note_id: NoteId,
+    before_tick: u64,
+    before_duration: u64,
+    before_velocity: u8,
+    after_tick: u64,
+    after_velocity: u8,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct MidiQuantizeSettings {
     grid: crate::GridFraction,
@@ -33,6 +43,16 @@ struct MidiQuantizeSettings {
     operation: MidiNoteQuantizeOperation,
     swing_amount_percent: i16,
     fix_overlaps: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct MidiHumanizeSettings {
+    grid: crate::GridFraction,
+    ppq: u32,
+    timing_amount_percent: u8,
+    velocity_amount_percent: u8,
+    timing_bias_percent: i16,
+    seed: u64,
 }
 
 fn quantized_midi_note_changes(
@@ -118,6 +138,89 @@ fn quantized_midi_note_changes(
     }
     if fix_overlaps {
         fix_quantized_midi_note_overlaps(item, &mut changes);
+    }
+    Ok(changes)
+}
+
+fn humanized_midi_note_changes(
+    item: &MidiItem,
+    selected_note_ids: &HashSet<NoteId>,
+    settings: MidiHumanizeSettings,
+) -> Result<Vec<HumanizedMidiNoteChange>, ActionError> {
+    let MidiHumanizeSettings {
+        grid,
+        ppq,
+        timing_amount_percent,
+        velocity_amount_percent,
+        timing_bias_percent,
+        seed,
+    } = settings;
+    if timing_amount_percent > 100
+        || velocity_amount_percent > 100
+        || !(-100..=100).contains(&timing_bias_percent)
+    {
+        return Err(ActionError::InvalidMidiHumanizeSettings);
+    }
+    let grid_ticks = grid
+        .ticks(ppq)
+        .map_err(|_| ActionError::InvalidQuantizeGrid)?;
+    let timing_scale = u64::from(timing_amount_percent);
+    let grid_timing_span = grid_ticks.saturating_mul(timing_scale) / 200;
+    let biased_timing_span = u64::from(ppq)
+        .saturating_mul(timing_scale)
+        .saturating_mul(timing_bias_percent.unsigned_abs() as u64)
+        / 20_000;
+    let maximum_timing_offset = grid_timing_span.saturating_add(biased_timing_span);
+    let mut random_state = seed;
+    let mut changes = Vec::new();
+    for note in item
+        .notes
+        .iter()
+        .filter(|note| selected_note_ids.contains(&note.id))
+    {
+        let mut next_unit = || {
+            random_state = random_state.wrapping_add(0x9e37_79b9_7f4a_7c15);
+            let mut value = random_state;
+            value = (value ^ (value >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+            value = (value ^ (value >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+            value ^= value >> 31;
+            let unit = (value >> 11) as f64 / ((1_u64 << 53) as f64);
+            unit * 2.0 - 1.0
+        };
+        let centered_timing = next_unit();
+        let bias = f64::from(timing_bias_percent) / 100.0;
+        let biased_timing =
+            (centered_timing + bias * (1.0 - centered_timing * centered_timing)).clamp(-1.0, 1.0);
+        let timing_offset = (biased_timing * maximum_timing_offset as f64).round() as i64;
+        let absolute_tick = item
+            .project_tick_at_content_tick(note.data.tick)
+            .ok_or(ActionError::InvalidMidiNote)?;
+        let target_absolute_tick = if timing_offset < 0 {
+            absolute_tick.saturating_sub(timing_offset.unsigned_abs())
+        } else {
+            absolute_tick
+                .checked_add(timing_offset as u64)
+                .ok_or(ActionError::InvalidMidiNote)?
+        };
+        let after_tick = midi_source_tick_at_project_tick(item, target_absolute_tick)
+            .ok_or(ActionError::InvalidMidiNote)?;
+        let velocity_span =
+            (u16::from(note.data.velocity) * u16::from(velocity_amount_percent) / 200) as i16;
+        let velocity_offset = (next_unit() * f64::from(velocity_span)).round() as i16;
+        let after_velocity = (i16::from(note.data.velocity) + velocity_offset).clamp(1, 127) as u8;
+        if !valid_midi_note_source_range(item, after_tick, note.data.duration) {
+            return Err(ActionError::InvalidMidiNote);
+        }
+        if after_tick != note.data.tick || after_velocity != note.data.velocity {
+            changes.push(HumanizedMidiNoteChange {
+                note_id: note.id,
+                before_tick: note.data.tick,
+                before_duration: note.data.duration,
+                before_velocity: note.data.velocity,
+                after_tick,
+                after_velocity,
+            });
+        }
     }
     Ok(changes)
 }
@@ -1250,6 +1353,10 @@ enum ProjectEvent {
         item_id: ItemId,
         changes: Vec<QuantizedMidiNoteChange>,
     },
+    MidiNotesHumanized {
+        item_id: ItemId,
+        changes: Vec<HumanizedMidiNoteChange>,
+    },
     Transaction {
         tx_id: u64,
         events: Vec<ProjectEvent>,
@@ -1677,6 +1784,20 @@ impl ProjectEvent {
                         before_duration: change.after_duration,
                         after_tick: change.before_tick,
                         after_duration: change.before_duration,
+                    })
+                    .collect(),
+            },
+            Self::MidiNotesHumanized { item_id, changes } => Self::MidiNotesHumanized {
+                item_id: *item_id,
+                changes: changes
+                    .iter()
+                    .map(|change| HumanizedMidiNoteChange {
+                        note_id: change.note_id,
+                        before_tick: change.after_tick,
+                        before_duration: change.before_duration,
+                        before_velocity: change.after_velocity,
+                        after_tick: change.before_tick,
+                        after_velocity: change.before_velocity,
                     })
                     .collect(),
             },
@@ -2209,6 +2330,9 @@ impl Project {
         if matches!(
             &event,
             ProjectEvent::MidiNotesQuantized { changes, .. } if changes.is_empty()
+        ) || matches!(
+            &event,
+            ProjectEvent::MidiNotesHumanized { changes, .. } if changes.is_empty()
         ) || matches!(
             &event,
             ProjectEvent::ProjectMarkersChanged { before, after } if before == after
@@ -5051,6 +5175,35 @@ impl Project {
                 }
                 ProjectEvent::MidiNotesQuantized { item_id, changes }
             }
+            DawAction::HumanizeMidiNotes {
+                item_id,
+                note_ids,
+                grid,
+                timing_amount_percent,
+                velocity_amount_percent,
+                timing_bias_percent,
+                seed,
+            } => {
+                let selected_note_ids = note_ids.into_iter().collect::<HashSet<_>>();
+                let item = state
+                    .midi_items
+                    .iter()
+                    .find(|item| item.id == item_id)
+                    .ok_or(ActionError::MidiItemNotFound { item_id })?;
+                let changes = humanized_midi_note_changes(
+                    item,
+                    &selected_note_ids,
+                    MidiHumanizeSettings {
+                        grid,
+                        ppq: state.tempo_map.settings().ppq(),
+                        timing_amount_percent,
+                        velocity_amount_percent,
+                        timing_bias_percent,
+                        seed,
+                    },
+                )?;
+                ProjectEvent::MidiNotesHumanized { item_id, changes }
+            }
             DawAction::QuantizeMidiEventsWithOperation {
                 item_id,
                 grid,
@@ -6130,6 +6283,35 @@ impl Project {
                     note.data.duration = change.after_duration;
                 }
             }
+            ProjectEvent::MidiNotesHumanized { item_id, changes } => {
+                let item = state
+                    .midi_items
+                    .iter_mut()
+                    .find(|item| item.id == *item_id)
+                    .ok_or(ActionError::HistoryInvariantViolation)?;
+                let source_bounds = midi_item_source_tick_bounds(item);
+                let current_notes = Arc::make_mut(&mut item.notes);
+                for change in changes {
+                    let note = current_notes
+                        .iter_mut()
+                        .find(|note| note.id == change.note_id)
+                        .ok_or(ActionError::HistoryInvariantViolation)?;
+                    if note.data.tick != change.before_tick
+                        || note.data.duration != change.before_duration
+                        || note.data.velocity != change.before_velocity
+                        || !(1..=127).contains(&change.after_velocity)
+                        || !valid_midi_note_range_in_bounds(
+                            source_bounds,
+                            change.after_tick,
+                            change.before_duration,
+                        )
+                    {
+                        return Err(ActionError::HistoryInvariantViolation);
+                    }
+                    note.data.tick = change.after_tick;
+                    note.data.velocity = change.after_velocity;
+                }
+            }
             ProjectEvent::Transaction { events, .. } => {
                 for event in events {
                     Self::apply_event(state, event)?;
@@ -6220,6 +6402,7 @@ fn source_track_for_action(state: &ProjectState, action: &DawAction) -> Option<T
         | DawAction::QuantizeMidiNotes { item_id, .. }
         | DawAction::QuantizeMidiNotesAndEnds { item_id, .. }
         | DawAction::QuantizeMidiNotesWithOperation { item_id, .. }
+        | DawAction::HumanizeMidiNotes { item_id, .. }
         | DawAction::QuantizeMidiEventsWithOperation { item_id, .. }
         | DawAction::QuantizeSelectedMidiEventsWithOperation { item_id, .. } => state
             .midi_items

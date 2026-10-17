@@ -534,6 +534,16 @@ pub enum DawAction {
         /// Shorten notes that overlap the next note with the same channel and pitch.
         fix_overlaps: bool,
     },
+    /// Randomize MIDI note positions and velocities as one undoable edit.
+    HumanizeMidiNotes {
+        item_id: ItemId,
+        note_ids: Vec<crate::NoteId>,
+        grid: GridFraction,
+        timing_amount_percent: u8,
+        velocity_amount_percent: u8,
+        timing_bias_percent: i16,
+        seed: u64,
+    },
     /// Quantize selected MIDI notes, controller events, and pitch bends as one edit.
     /// Controller and pitch-bend selections identify the source events by their current data.
     QuantizeSelectedMidiEventsWithOperation {

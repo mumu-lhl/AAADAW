@@ -340,6 +340,13 @@ fn view_with_profile(app: &App, touch_targets: bool) -> Element<'_, Message> {
                         .then_some(Message::OpenMidiQuantizeDialog(item_id),)
                 )
                 .padding([SPACING_XS / 2.0, SPACING_XS]),
+            button("Humanize…")
+                .style(iced::widget::button::secondary)
+                .on_press_maybe(
+                    (!item.notes().is_empty() && app.timeline.midi_editor_has_snap_grid())
+                        .then_some(Message::OpenMidiHumanizeDialog(item_id)),
+                )
+                .padding([SPACING_XS / 2.0, SPACING_XS]),
             button("Q pos")
                 .style(iced::widget::button::secondary)
                 .on_press_maybe(
@@ -704,8 +711,17 @@ fn view_with_profile(app: &App, touch_targets: bool) -> Element<'_, Message> {
         .width(Length::Fill)
         .height(Length::Fill)
         .into();
-    if app.midi_quantize_dialog.is_some() {
-        let dialog = midi_quantize_dialog(app, touch_targets);
+    if app.midi_quantize_dialog.is_some() || app.midi_humanize_dialog.is_some() {
+        let dialog = if app.midi_quantize_dialog.is_some() {
+            midi_quantize_dialog(app, touch_targets)
+        } else {
+            midi_humanize_dialog(app, touch_targets)
+        };
+        let cancel_message = if app.midi_quantize_dialog.is_some() {
+            Message::CancelMidiQuantize
+        } else {
+            Message::CancelMidiHumanize
+        };
         let backdrop = mouse_area(
             container(
                 iced::widget::Space::new()
@@ -721,7 +737,7 @@ fn view_with_profile(app: &App, touch_targets: bool) -> Element<'_, Message> {
                 ..iced::widget::container::Style::default()
             }),
         )
-        .on_press(Message::CancelMidiQuantize);
+        .on_press(cancel_message);
         let dialog = container(dialog)
             .width(Length::Fill)
             .height(Length::Fill)
@@ -733,6 +749,92 @@ fn view_with_profile(app: &App, touch_targets: bool) -> Element<'_, Message> {
     } else {
         content
     }
+}
+
+fn midi_humanize_dialog(app: &App, touch_targets: bool) -> Element<'_, Message> {
+    let Some(state) = app.midi_humanize_dialog else {
+        return iced::widget::Space::new().into();
+    };
+    let scope = pick_list(
+        super::super::MidiHumanizeScope::OPTIONS,
+        Some(state.scope),
+        Message::SetMidiHumanizeScope,
+    )
+    .width(Length::Fixed(160.0));
+    let timing = row![
+        text("Timing").width(Length::Fixed(92.0)),
+        slider(
+            0.0..=100.0,
+            f32::from(state.timing_amount_percent),
+            |value| { Message::SetMidiHumanizeTiming(value.round() as u8) }
+        )
+        .step(1.0_f32)
+        .width(Length::Fill),
+        text(format!("{}%", state.timing_amount_percent)).width(Length::Fixed(42.0)),
+    ]
+    .spacing(SPACING_XS)
+    .align_y(iced::Alignment::Center);
+    let velocity = row![
+        text("Velocity").width(Length::Fixed(92.0)),
+        slider(
+            0.0..=100.0,
+            f32::from(state.velocity_amount_percent),
+            |value| { Message::SetMidiHumanizeVelocity(value.round() as u8) }
+        )
+        .step(1.0_f32)
+        .width(Length::Fill),
+        text(format!("{}%", state.velocity_amount_percent)).width(Length::Fixed(42.0)),
+    ]
+    .spacing(SPACING_XS)
+    .align_y(iced::Alignment::Center);
+    let timing_bias = row![
+        text("Timing bias").width(Length::Fixed(92.0)),
+        slider(
+            -100.0..=100.0,
+            f32::from(state.timing_bias_percent),
+            |value| Message::SetMidiHumanizeTimingBias(value.round() as i16),
+        )
+        .step(1.0_f32)
+        .width(Length::Fill),
+        text(format!("{}%", state.timing_bias_percent)).width(Length::Fixed(42.0)),
+    ]
+    .spacing(SPACING_XS)
+    .align_y(iced::Alignment::Center);
+    let controls = row![
+        button("New random seed")
+            .style(iced::widget::button::secondary)
+            .on_press(Message::NewMidiHumanizeSeed),
+        iced::widget::Space::new().width(Length::Fill),
+        button("OK")
+            .style(iced::widget::button::primary)
+            .on_press(Message::AcceptMidiHumanize),
+        button("Cancel")
+            .style(iced::widget::button::secondary)
+            .on_press(Message::CancelMidiHumanize),
+    ]
+    .spacing(SPACING_XS)
+    .align_y(iced::Alignment::Center);
+    container(
+        column![
+            text("Humanize Notes").size(16),
+            row![text("Notes").width(Length::Fixed(92.0)), scope]
+                .spacing(SPACING_XS)
+                .align_y(iced::Alignment::Center),
+            timing,
+            velocity,
+            timing_bias,
+            controls,
+        ]
+        .spacing(if touch_targets {
+            SPACING_MD
+        } else {
+            SPACING_XS
+        }),
+    )
+    .width(Length::Fixed(if touch_targets { 480.0 } else { 448.0 }))
+    .padding(SPACING_MD)
+    .style(container::rounded_box)
+    .into()
 }
 
 fn midi_quantize_dialog(app: &App, touch_targets: bool) -> Element<'_, Message> {

@@ -147,6 +147,8 @@ pub enum ActionError {
     InvalidQuantizeStrength,
     /// The quantization grid cannot be represented at the project's PPQ.
     InvalidQuantizeGrid,
+    /// Humanize percentages must stay within the supported timing, velocity, and bias ranges.
+    InvalidMidiHumanizeSettings,
     /// The project has exhausted its available MIDI item identifiers.
     ItemIdExhausted,
     /// The project has exhausted its available MIDI note identifiers.
@@ -339,6 +341,9 @@ impl fmt::Display for ActionError {
             }
             Self::InvalidQuantizeGrid => {
                 formatter.write_str("quantization grid is invalid at the project PPQ")
+            }
+            Self::InvalidMidiHumanizeSettings => {
+                formatter.write_str("MIDI humanize settings are outside their supported ranges")
             }
             Self::ItemIdExhausted => formatter.write_str("item identifiers are exhausted"),
             Self::NoteIdExhausted => formatter.write_str("MIDI note identifiers are exhausted"),

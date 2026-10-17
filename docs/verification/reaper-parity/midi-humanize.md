@@ -1,0 +1,97 @@
+# MIDI Editor Humanize Notes
+
+This is an in-progress implementation of REAPER 7.82 action 40457, “Humanize
+notes”. It adds the native dialog controls and an undoable note-edit path. The
+random distribution is not yet considered parity-complete.
+
+## Native observations
+
+The Linux REAPER 7.82 / Default 7 probe uses a 960-PPQ project with a 1/32
+MIDI grid (120 ticks), zero swing, three selected notes, and one unselected
+note. The native dialog defaults to Selected notes with Timing, Velocity, and
+Timing bias at 0%. The dialog exposes a New random seed button, Timing and
+Velocity percentages from 0–100, and Timing bias from −100–100. It has no note
+length control.
+
+At Timing 100%, Velocity 100%, and bias 0%, the three selected notes changed
+from ticks/velocities `(170, 70)`, `(350, 80)`, `(550, 90)` to
+`(131, 68)`, `(288, 96)`, `(510, 92)`. Their durations stayed at 90, 110, and
+150 ticks. The unselected note stayed at `(730, 920, 100)`. This sample
+establishes that note starts and velocity change while note length and
+unselected note data remain fixed; it is one random draw, not an expected
+output fixture.
+
+After explicitly clicking New random seed with the same 100% / 100% / 0%
+settings, REAPER produced starts/velocities `(170, 41)`, `(381, 63)`, and
+`(557, 93)`. The largest observed velocity change in these two seeds is 29
+points from a starting velocity of 70. This supports a variation scale near
+half the original velocity, but more seeds and low/high velocity edge cases
+are still needed to confirm the exact rule.
+
+A separate Timing 100%, Velocity 0%, bias 100% run produced selected starts
+`60: 170→537`, `64: 350→264`, and `67: 550→816`; durations and velocities were
+unchanged, and the unselected note remained at ticks 730–920. Thus the bias
+setting can produce offsets larger than half the 1/32 grid. The native random
+stream and the bias distribution have not been characterized across enough
+seeds to derive an exact model.
+
+## AAADAW behavior in this slice
+
+The MIDI Editor now exposes Humanize Notes with All notes and Selected notes
+scope, Timing, Velocity, Timing bias, New random seed, OK, and Cancel. Defaults
+match the observed dialog. The Core edit stores the resolved note changes in
+one project-history event, so Undo and Redo replay the same positions and
+velocities rather than drawing new random values. Timing moves only starts;
+velocity changes remain in the MIDI velocity range; note durations and all
+unselected notes are preserved.
+
+AAADAW uses a local seeded generator. The current model uses a maximum velocity
+perturbation of half the original velocity at 100%, and expands timing range
+with bias using project PPQ; those curves are provisional. The native
+distribution, edge behavior, and New random seed sequence are not yet matched.
+Treat this row as `in_progress`; it does not count as completed parity coverage.
+
+## Verification artifacts
+
+- `fixtures/midi-humanize-reaper-native-dialog.png`: native default dialog.
+- `fixtures/midi-humanize-reaper-native-configured.png`: native 100% Timing,
+  100% Velocity, 0% bias dialog.
+- `fixtures/midi-humanize-native.tsv`: raw native note readbacks and grid data.
+- `fixtures/midi-humanize-probe-output.tsv`: direct output from the checked-in
+  ReaScript probe, including the explicitly re-seeded sample.
+- `fixtures/midi-humanize-reaper-native-bias100.png`: native 100% Timing,
+  0% Velocity, 100% Timing bias dialog during the boundary probe.
+- `fixtures/midi-humanize-reaper-native-applied.png`: native MIDI editor after
+  the explicitly re-seeded action.
+- `fixtures/midi-humanize-before.rpp` and `fixtures/midi-humanize-after.rpp`:
+  native project before and after the confirmed dialog action.
+- `fixtures/midi-humanize-aaadaw-dialog.png` and
+  `fixtures/midi-humanize-aaadaw-configured.png`: live Cranelift desktop
+  captures of the new dialog from Build ID
+  `9c3ab6f1bcbb98ccaa375fda51ad4aa5fbc5880f`.
+- `fixtures/midi-humanize-aaadaw-applied.png`: live editor after the All notes
+  action, captured from the same current build.
+- `scripts/reaper_parity/probe-midi-humanize-notes.lua`: creates the native
+  fixture and waits for a manual dialog confirmation before recording output.
+
+Core tests cover deterministic replay, selected-note isolation, timing and
+velocity bounds, unchanged durations, invalid settings, and Undo/Redo. App
+tests cover dialog defaults, selected/all scope, seed changes, apply, and
+Undo/Redo. Random output is deliberately checked by invariants rather than exact
+values.
+
+## Evidence hashes
+
+The screenshots below were captured from the current Cranelift build in the
+live Xorg dummy desktop (`:289`):
+
+| Artifact | SHA-256 |
+| --- | --- |
+| `fixtures/midi-humanize-aaadaw-dialog.png` | `2661100f5d06d9060de15b417e664eeacf25faa621ef5e5b5ac3e3d2c10e7cb9` |
+| `fixtures/midi-humanize-aaadaw-configured.png` | `7c00115b9d54d76f76c9f846a901d2649e9c6670e42f999e12ec4402dfa34bca` |
+| `fixtures/midi-humanize-aaadaw-applied.png` | `665fef4335a75c95d61567c12d60461fac9162f67e9022735700ed9111f76ae1` |
+
+Cranelift desktop executable SHA-256:
+`64b9aadc2e7ea42bf9f133c19072f9c649ab85023dc5d9f7bb5fe70ef70d0f4d`.
+The two RPP fixtures use LF line endings in the repository; only line endings
+were normalized from REAPER's saved files.

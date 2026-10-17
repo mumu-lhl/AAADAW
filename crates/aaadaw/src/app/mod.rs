@@ -36,10 +36,10 @@ use std::collections::{HashMap, HashSet, VecDeque};
 #[cfg(feature = "audio-device")]
 use std::ops::{Deref, DerefMut};
 use std::path::PathBuf;
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 pub(super) const MIDI_EDITOR_KEY_WIDTH: f32 = 84.0;
 pub(super) const MIDI_EDITOR_CONTENT_WIDTH_INSET: f32 = MIDI_EDITOR_KEY_WIDTH + 32.0;
@@ -63,6 +63,14 @@ fn midi_editor_grid_fraction(grid: timeline::SnapGrid) -> GridFraction {
         timeline::SnapGrid::ThirtySecondTriplet => (1, 48),
     };
     GridFraction::new(numerator, denominator).expect("snap grid maps to a positive fraction")
+}
+
+fn next_midi_humanize_seed() -> u64 {
+    static SEED_COUNTER: AtomicU64 = AtomicU64::new(0);
+    let time_seed = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |duration| duration.as_nanos() as u64);
+    time_seed ^ SEED_COUNTER.fetch_add(1, Ordering::Relaxed).rotate_left(17)
 }
 
 mod action_list;
@@ -113,8 +121,8 @@ mod x11_plugin_editor;
 
 pub(crate) use messages::{
     MainMenu, MainWorkspace, MenuNavigation, Message, MidiEditorChannelSelection, MidiEditorLane,
-    MidiEditorTool, MidiQuantizeOperation, MidiQuantizeScope, MobilePanel, PathPickerTarget,
-    PendingProjectTransition, SettingsCategory, TimeMapTab,
+    MidiEditorTool, MidiHumanizeScope, MidiQuantizeOperation, MidiQuantizeScope, MobilePanel,
+    PathPickerTarget, PendingProjectTransition, SettingsCategory, TimeMapTab,
 };
 
 #[derive(Clone)]
@@ -472,6 +480,7 @@ struct App {
     midi_editor_selected_controllers: HashSet<MidiControllerData>,
     midi_editor_selected_pitch_bends: HashSet<MidiPitchBendData>,
     midi_quantize_dialog: Option<MidiQuantizeDialogState>,
+    midi_humanize_dialog: Option<MidiHumanizeDialogState>,
     midi_editor_lane: MidiEditorLane,
     midi_editor_tool: MidiEditorTool,
     midi_editor_channel_selection: MidiEditorChannelSelection,
@@ -696,6 +705,16 @@ struct MidiQuantizeDialogState {
     strength_percent: u8,
     bypass: bool,
     fix_overlaps: bool,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct MidiHumanizeDialogState {
+    item_id: ItemId,
+    scope: MidiHumanizeScope,
+    timing_amount_percent: u8,
+    velocity_amount_percent: u8,
+    timing_bias_percent: i16,
+    seed: u64,
 }
 
 #[derive(Clone, Debug)]
@@ -1935,6 +1954,41 @@ impl App {
         ])
     }
 
+    fn commit_midi_humanize_dialog(&mut self) {
+        let Some(dialog) = self.midi_humanize_dialog.take() else {
+            return;
+        };
+        let Some(item) = self
+            .project
+            .midi_items()
+            .iter()
+            .find(|item| item.id() == dialog.item_id)
+        else {
+            return;
+        };
+        let note_ids: Vec<aaadaw_core::NoteId> = match dialog.scope {
+            MidiHumanizeScope::AllNotes => item.notes().iter().map(|note| note.id()).collect(),
+            MidiHumanizeScope::SelectedNotes => {
+                self.midi_editor_selected_notes.iter().copied().collect()
+            }
+        };
+        if note_ids.is_empty() {
+            return;
+        }
+        self.apply_action(
+            DawAction::HumanizeMidiNotes {
+                item_id: dialog.item_id,
+                note_ids,
+                grid: midi_editor_grid_fraction(self.timeline.midi_editor_snap_grid),
+                timing_amount_percent: dialog.timing_amount_percent,
+                velocity_amount_percent: dialog.velocity_amount_percent,
+                timing_bias_percent: dialog.timing_bias_percent,
+                seed: dialog.seed,
+            },
+            "MIDI notes humanized",
+        );
+    }
+
     fn commit_midi_quantize_dialog(&mut self, close_dialog: bool) {
         let Some(dialog) = self.midi_quantize_dialog else {
             return;
@@ -2065,6 +2119,28 @@ impl App {
     }
 
     fn update(&mut self, message: Message) -> Task<Message> {
+        if self.midi_humanize_dialog.is_some()
+            && !matches!(
+                &message,
+                Message::AcceptMidiHumanize
+                    | Message::CancelMidiHumanize
+                    | Message::SetMidiHumanizeScope(_)
+                    | Message::SetMidiHumanizeTiming(_)
+                    | Message::SetMidiHumanizeVelocity(_)
+                    | Message::SetMidiHumanizeTimingBias(_)
+                    | Message::NewMidiHumanizeSeed
+                    | Message::Escape
+                    | Message::RuntimeKeyboardEvent(..)
+                    | Message::BackgroundTick
+                    | Message::MeterTick
+                    | Message::WindowResized(..)
+                    | Message::WindowClosed(..)
+                    | Message::WindowCloseRequested(..)
+                    | Message::CloseMidiEditor
+            )
+        {
+            return Task::none();
+        }
         if self.midi_quantize_dialog.is_some()
             && !matches!(
                 &message,
@@ -3477,6 +3553,7 @@ impl App {
             Message::CloseMidiEditor => {
                 self.release_midi_preview();
                 self.midi_quantize_dialog = None;
+                self.midi_humanize_dialog = None;
                 if let Some(window_id) = self.midi_editor_window_id.take() {
                     self.midi_editor_item_id = None;
                     self.midi_editor_feedback = None;
@@ -4777,7 +4854,9 @@ impl App {
                 self.transport_details_open = !self.transport_details_open;
             }
             Message::Escape => {
-                if self.midi_quantize_dialog.take().is_some() {
+                if self.midi_quantize_dialog.take().is_some()
+                    || self.midi_humanize_dialog.take().is_some()
+                {
                     return Task::none();
                 }
                 if self.pending_empty_midi_export.is_some() {
@@ -5490,6 +5569,51 @@ impl App {
                     });
                 }
             }
+            Message::OpenMidiHumanizeDialog(item_id) => {
+                if self
+                    .project
+                    .midi_items()
+                    .iter()
+                    .any(|item| item.id() == item_id)
+                {
+                    self.midi_editor_filter_dialog_open = false;
+                    self.midi_humanize_dialog = Some(MidiHumanizeDialogState {
+                        item_id,
+                        scope: MidiHumanizeScope::SelectedNotes,
+                        timing_amount_percent: 0,
+                        velocity_amount_percent: 0,
+                        timing_bias_percent: 0,
+                        seed: next_midi_humanize_seed(),
+                    });
+                }
+            }
+            Message::SetMidiHumanizeScope(scope) => {
+                if let Some(dialog) = self.midi_humanize_dialog.as_mut() {
+                    dialog.scope = scope;
+                }
+            }
+            Message::SetMidiHumanizeTiming(value) => {
+                if let Some(dialog) = self.midi_humanize_dialog.as_mut() {
+                    dialog.timing_amount_percent = value.min(100);
+                }
+            }
+            Message::SetMidiHumanizeVelocity(value) => {
+                if let Some(dialog) = self.midi_humanize_dialog.as_mut() {
+                    dialog.velocity_amount_percent = value.min(100);
+                }
+            }
+            Message::SetMidiHumanizeTimingBias(value) => {
+                if let Some(dialog) = self.midi_humanize_dialog.as_mut() {
+                    dialog.timing_bias_percent = value.clamp(-100, 100);
+                }
+            }
+            Message::NewMidiHumanizeSeed => {
+                if let Some(dialog) = self.midi_humanize_dialog.as_mut() {
+                    dialog.seed = next_midi_humanize_seed();
+                }
+            }
+            Message::AcceptMidiHumanize => self.commit_midi_humanize_dialog(),
+            Message::CancelMidiHumanize => self.midi_humanize_dialog = None,
             Message::SetMidiQuantizeScope(scope) => {
                 if let Some(dialog) = self.midi_quantize_dialog.as_mut() {
                     dialog.scope = scope;
