@@ -147,26 +147,11 @@ fn midi_export_scope<'a>(
         .iter()
         .copied()
         .collect::<HashSet<_>>();
-    let tracks_by_id = project
-        .tracks()
-        .iter()
-        .map(|track| (track.id(), track))
-        .collect::<HashMap<_, _>>();
     let muted_track_ids = project
         .tracks()
         .iter()
-        .filter_map(|track| {
-            let mut ancestor = Some(track);
-            while let Some(current) = ancestor {
-                if current.is_muted() {
-                    return Some(track.id());
-                }
-                ancestor = current
-                    .parent_track()
-                    .and_then(|parent_id| tracks_by_id.get(&parent_id).copied());
-            }
-            None
-        })
+        .filter(|track| track.is_muted())
+        .map(|track| track.id())
         .collect::<HashSet<_>>();
     let included_midi_items = project
         .midi_items()

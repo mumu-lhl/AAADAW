@@ -404,6 +404,74 @@ fn reaper_782_export_skips_midi_items_on_muted_tracks() {
 }
 
 #[test]
+fn reaper_782_export_keeps_midi_items_on_unmuted_tracks_inside_muted_folders() {
+    let mut project = Project::new();
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Muted Folder".to_owned(),
+        })
+        .unwrap();
+    project
+        .apply(DawAction::CreateTrack {
+            index: 1,
+            name: "MIDI Child".to_owned(),
+        })
+        .unwrap();
+    let folder_id = project.tracks()[0].id();
+    let child_id = project.tracks()[1].id();
+    project
+        .apply(DawAction::SetTrackFolder {
+            track_id: folder_id,
+            enabled: true,
+        })
+        .unwrap();
+    project
+        .apply(DawAction::SetTrackParent {
+            track_id: child_id,
+            parent: Some(folder_id),
+        })
+        .unwrap();
+    project
+        .apply(DawAction::SetTrackMute {
+            track_id: folder_id,
+            muted: true,
+        })
+        .unwrap();
+    project
+        .apply(DawAction::InsertMidiItem {
+            track_id: child_id,
+            start_tick: 0,
+            length_ticks: 960,
+        })
+        .unwrap();
+    let item_id = project.midi_items()[0].id();
+    project
+        .apply(DawAction::AddMidiNotes {
+            item_id,
+            notes: vec![MidiNoteData {
+                pitch: 60,
+                tick: 0,
+                duration: 240,
+                velocity: 100,
+            }],
+        })
+        .unwrap();
+
+    let options = MidiExportOptions::for_project(&project);
+    assert!(
+        midi_export_has_items_in_scope(&project, options, &MidiExportSelection::default()).unwrap()
+    );
+    let actual =
+        encode_standard_midi_with_conductor_track_name(&project, options, "midi_export").unwrap();
+    let native = include_bytes!(
+        "../../../docs/verification/reaper-parity/fixtures/menu-export-midi-native-folder-muted-all.mid"
+    );
+
+    assert_eq!(actual, native);
+}
+
+#[test]
 fn reaper_782_export_skips_muted_midi_items() {
     let project = native_midi_muted_scope_fixture(false, true);
     let options = MidiExportOptions::for_project(&project);

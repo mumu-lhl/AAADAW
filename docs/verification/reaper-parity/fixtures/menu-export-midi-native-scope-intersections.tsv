@@ -24,20 +24,27 @@ muted_track_confirmed_export	fixtures/menu-export-midi-native-track-muted-all.mi
 muted_item_project	fixtures/menu-export-midi-native-item-muted.rpp; one muted note item on one unmuted track; SHA-256 3a8156f11637992ea71144ba77daac107223f520264cf528ec18368cd5cec613
 muted_item_warning	fixtures/menu-export-midi-native-item-muted-warning.png; 324x81; same unmuted-track warning as empty project; SHA-256 c9d63696aabde1b6dd91582a960a663c78e167cc4c8ad05298f6e9fb57659e11
 muted_item_confirmed_export	fixtures/menu-export-midi-native-item-muted-all.mid; 79 bytes; Type 1; 2 tracks; no MIDI note events; conductor name follows destination stem; SHA-256 9fcaa17624759b449adb5219395bb0b9d68ecf34ab5943099a66162131745988
-native_probe	scripts/reaper_parity/probe-midi-export-scope-intersections.lua; scripts/reaper_parity/probe-midi-export-muted-items.lua
+folder_muted_project	fixtures/menu-export-midi-native-folder-muted.rpp; muted folder parent, unmuted child track, unmuted/unselected C4 item; SHA-256 79a7faffd92d25f22984916eb9b1e6031cf753a5a83aa6fc8501e76074665f89
+folder_muted_export_scope	All / Entire project; isolated config midiexport=0; no tracks or items selected
+folder_muted_export	fixtures/menu-export-midi-native-folder-muted-all.mid; 91 bytes; Type 1; 2 tracks; MIDI Child contains C4; SHA-256 d9dbba18e770c5734008a6afd6a721a44097445f3b99b505bc5387787c964bac
+folder_muted_result_capture	fixtures/menu-export-midi-native-folder-muted-result.png; 1280x800; REAPER reports Wrote 1 track of MIDI to /tmp/midi_export.mid; SHA-256 9e0272acdb52397476ac8221c9d71d683d028532a678f48ad0459e91be8ff8a9
+folder_muted_native_behavior	A muted folder does not suppress export of MIDI items on its unmuted child; REAPER writes the MIDI track without the empty-scope warning
+folder_muted_core_regression	crates/aaadaw-core/tests/midi_file_export.rs::reaper_782_export_keeps_midi_items_on_unmuted_tracks_inside_muted_folders; full-file byte comparison passed
+folder_muted_probe	scripts/reaper_parity/probe-midi-export-muted-folder.lua; REAPER Build ID fb9ade2f211bc91a3ee6193630ef17bcf5f6528b; SHA-256 9976f5608068b7a58518969001b00b527fb0de6ed7459e0e5dda6f29878ee254
+native_probe	scripts/reaper_parity/probe-midi-export-scope-intersections.lua; scripts/reaper_parity/probe-midi-export-muted-items.lua; scripts/reaper_parity/probe-midi-export-muted-folder.lua; scripts/reaper_parity/probe-midi-export-empty-scopes.lua
 reaper_binary_build_id	fb9ade2f211bc91a3ee6193630ef17bcf5f6528b
 reaper_binary_sha256	9976f5608068b7a58518969001b00b527fb0de6ed7459e0e5dda6f29878ee254
-aaadaw_build_id	97c51ad7f32a2a6892e6e46506e6c9683c5abaec
-aaadaw_binary_sha256	ed03c3fe93950ea7efb298034f6456992cc987729c85143f3d6ccd0d0095f0e0
-aaadaw_empty_warning_full_screenshot	fixtures/menu-export-midi-aaadaw-empty-export-warning-full.png; 1280x800; SHA-256 8d140981a83fbd4e58b283b72e898dc7e9d71cdb78fc70b31a78810cd0cecc12
-aaadaw_empty_warning_crop	fixtures/menu-export-midi-aaadaw-empty-export-warning.png; 324x81; SHA-256 70cf8109d09d0f05f9f86b7b84bbd5fc07314fc5d037dad42c5694045eb3859e
-aaadaw_selected_tracks_warning_full	fixtures/menu-export-midi-aaadaw-selected-tracks-empty-warning-full.png; 1280x800; SHA-256 84b1c3a8738125fb41ba186c2c3e8ca0eb47fba52b239c469e05c55182de31de
-aaadaw_selected_tracks_warning_crop	fixtures/menu-export-midi-aaadaw-selected-tracks-empty-warning.png; 377x81; exact selected-track warning; SHA-256 b39ba19c938fe6a411c0d6165cf560193ede8e9c1a9493d1ef880e5bbec9f10d
-aaadaw_selected_items_warning_full	fixtures/menu-export-midi-aaadaw-selected-items-empty-warning-full.png; 1280x800; SHA-256 5ec46471102e830ef571fcd028bf113570c4fde309058ceca4e46a0ff0af6755
-aaadaw_selected_items_warning_crop	fixtures/menu-export-midi-aaadaw-selected-items-empty-warning.png; 377x81; exact selected-item warning; SHA-256 f1e2f7743bfd69f3ab39bac63179ca211a10c2432c6e21bf8eaa9b50197741c7
-aaadaw_cancel_screenshot	fixtures/menu-export-midi-aaadaw-empty-export-cancelled.png; 1280x800; MIDI export cancelled; SHA-256 359bed5630cb2e1574ffe766320ea72ecdefe54f6775e58ccf815d6cd450d6d7
-aaadaw_confirm_screenshot	fixtures/menu-export-midi-aaadaw-empty-export-confirmed.png; 1280x800; export completion status; SHA-256 e369c9a26ce8f618fe0761e2c4ff4113a5bc2e5316e1d923c080963560431dcd
+aaadaw_build_id	76c5a13da11f391ea5e6c69c459b3a3381c58136
+aaadaw_binary_sha256	7f41a1e165072622023b13ffe77604f5f19ec09619919130705602150a67cebb
+aaadaw_empty_warning_full_screenshot	fixtures/menu-export-midi-aaadaw-empty-export-warning-full.png; 1280x800; SHA-256 7407d24b98dd06a26c4fca4b6513f0fce7c44b657a8c4687107f71b970b05081
+aaadaw_empty_warning_crop	fixtures/menu-export-midi-aaadaw-empty-export-warning.png; 324x81; SHA-256 59b9c25eafc5d4769b82a62773c4d59f7163deebd570fbf46d14216f57b2d2eb
+aaadaw_selected_tracks_warning_full	fixtures/menu-export-midi-aaadaw-selected-tracks-empty-warning-full.png; 1280x800; SHA-256 c3a4d625581aa74cbbe2561d32e437a722a67564c3d0faba2f0bf40c2110cb18
+aaadaw_selected_tracks_warning_crop	fixtures/menu-export-midi-aaadaw-selected-tracks-empty-warning.png; 377x81; exact selected-track warning; SHA-256 67a2211443b94406c0ec65b2e8a55db33aacd0c72fff9736b7215d0e05d6859e
+aaadaw_selected_items_warning_full	fixtures/menu-export-midi-aaadaw-selected-items-empty-warning-full.png; 1280x800; SHA-256 278036ad497e87cffe913ae734fa8c7fbed735609aa6a9229b26b8f3248f6408
+aaadaw_selected_items_warning_crop	fixtures/menu-export-midi-aaadaw-selected-items-empty-warning.png; 377x81; exact selected-item warning; SHA-256 7f5e1533b8571e6b4734d90f18df64e11b34032dac3144676dfb592b6b2d35c2
+aaadaw_cancel_screenshot	fixtures/menu-export-midi-aaadaw-empty-export-cancelled.png; 1280x800; MIDI export cancelled; no file created; SHA-256 ef0e405189bb5ca5fec361ab2311335e5c8b1c5e3c0c82be8e1039821dd2eb6e
+aaadaw_confirm_screenshot	fixtures/menu-export-midi-aaadaw-empty-export-confirmed.png; 1280x800; export completion status; SHA-256 0877277d7c6f6c79a1fbd1d884caa4ec936d9dc66e17729fcd4d46baa262b42e
 aaadaw_confirmed_export	fixtures/menu-export-midi-aaadaw-empty-export.mid; 68 bytes; Type 1; 2 tracks; PPQN 960; SHA-256 5a8e0a82bb7c528a890ae1d9b7c91e4f126b391c25af0abfe881e8773fb9d583
 aaadaw_desktop_validation	Xvfb :1710; All/Entire project, Selected Tracks, and Selected Items empty-scope prompts captured; Cancel created no file; OK wrote a valid Standard MIDI file
-test_results	AAADAW 740 passed; Core 189 passed; strict all-target Clippy with -D warnings; cargo fmt check; CRLF-aware diff check
-open_gaps	Other time-scope/item-scope intersections, native parent-folder mute comparison, metadata combinations with scopes, exact full-window and keyboard-focus parity remain open
+test_results	AAADAW 740 passed; Core 190 passed; combined Nextest 930/930 across 45 binaries; strict all-target Clippy with -D warnings; cargo fmt check; CRLF-aware diff check; production desktop build
+open_gaps	Other time-scope/item-scope intersections, metadata combinations with scopes, exact full-window and keyboard-focus parity remain open
