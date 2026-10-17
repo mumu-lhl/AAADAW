@@ -192,3 +192,13 @@ Add 现在打开 387×229 的 Keyboard input 窗口，默认键入仅更新草�
 ## 2026-10-17 Named shortcut keys
 
 Keyboard shortcut capture now accepts all 295 non-modifier `Named` keys exposed by iced 0.14, and their names survive config serialization and reload. This includes F25–F35 and browser/media key identities in addition to the previously supported function, navigation, and numeric-keypad keys. The pure shortcut regression checks every accepted `Named` value with Ctrl+Alt+Shift+Super. The live Action List/Keyboard input capture of F35 is recorded in [the AAADAW fixture](fixtures/action-list-named-key-aaadaw.tsv) and [screenshot](fixtures/action-list-named-key-aaadaw.png); it verifies input capture only and is not a native comparison. The REAPER Special keys chooser, Scope, MIDI/OSC input, default-action and cross-section priority rules remain open; no new native probe was run.
+
+## 2026-10-17 Action List shortcut-map import and export
+
+The Action List `Options` button now exposes `Import key map...` and `Export key map...`. AAADAW uses a versioned `AAADAW_SHORTCUT_MAP` TSV format with stable AAADAW action IDs and the existing canonical shortcut syntax. Export writes only user overrides; imported maps replace that override layer, while actions omitted from the file return to their factory bindings. Custom actions/macros are not serialized as definitions.
+
+Import rejects unsupported versions, malformed or duplicate rows, invalid shortcuts, and unknown action IDs. Reads are bounded to 1 MiB. A valid map is fully checked against current action and macro definitions before the existing shortcut config is atomically replaced; parse, validation, or save failure leaves the active mapping unchanged. Export also writes through the existing atomic-config helper and refuses to replace the active `shortcuts.conf`.
+
+The live Linux desktop capture shows the actual 701×475 Action List with the Options menu expanded; binary ID, screenshot hash, dimensions, and exact import/export semantics are recorded in [the fixture](fixtures/action-list-keymap-import-export-aaadaw.tsv). The four map parser/writer tests and both transactional import tests passed, followed by the full AAADAW desktop test suite at 704/704 and a Stable `cargo check`/desktop build. This Xvfb environment has no `xdg-desktop-portal` or `zenity`, so the platform file chooser could not be completed by pointer automation; the file-format, atomic-write, and state-replacement paths were exercised through tests.
+
+This enables portable AAADAW shortcut backups, not REAPER keymap interchange. It does not parse or emit `.ReaperKeyMap`, and does not fill the remaining Sections, Scope, MIDI/OSC, complete factory action catalog, or native import/export semantics. `INPUT-BIND-001` remains `in_progress`.

@@ -83,6 +83,7 @@ mod region_render_matrix;
 mod render_wildcard_preferences;
 mod routing;
 mod shortcut;
+mod shortcut_map;
 #[cfg(test)]
 mod tests;
 mod view;
@@ -1821,6 +1822,9 @@ impl App {
                     | Message::ActionListDeleteBinding
                     | Message::ActionListFindShortcut
                     | Message::ActionListRun(_)
+                    | Message::ActionListOptionsToggled
+                    | Message::ActionListImportShortcutMap
+                    | Message::ActionListExportShortcutMap
                     | Message::OpenActionMacroEditor
             )
         {
@@ -2038,6 +2042,11 @@ impl App {
                     | Message::ActionListDeleteBinding
                     | Message::ActionListFindShortcut
                     | Message::ActionListRun(_)
+                    | Message::ActionListOptionsToggled
+                    | Message::ActionListImportShortcutMap
+                    | Message::ActionListExportShortcutMap
+                    | Message::ShortcutMapImported(_)
+                    | Message::ShortcutMapExported(_)
                     | Message::OpenSettings
                     | Message::OpenAbout
                     | Message::CloseAbout
@@ -2194,6 +2203,13 @@ impl App {
                     | Message::RemoveClapPluginPath(_)
                     | Message::RescanClapPlugins
                     | Message::ClapPluginsScanned(_)
+                    | Message::PickPath(
+                        PathPickerTarget::ImportShortcutMap | PathPickerTarget::ExportShortcutMap
+                    )
+                    | Message::PathPicked(
+                        PathPickerTarget::ImportShortcutMap | PathPickerTarget::ExportShortcutMap,
+                        _,
+                    )
                     | Message::PickPath(PathPickerTarget::AddClapPluginPath)
                     | Message::CancelOfflineRender
                     | Message::OfflineRenderFinished(_)
@@ -5326,6 +5342,42 @@ impl App {
             }
             Message::PickPath(target) => task = self.pick_path(target),
             Message::PathPicked(target, result) => task = self.path_picked(target, result),
+            Message::ActionListOptionsToggled => {
+                self.action_list.options_open = !self.action_list.options_open;
+            }
+            Message::ActionListImportShortcutMap => {
+                self.action_list.options_open = false;
+                task = self.pick_path(PathPickerTarget::ImportShortcutMap);
+            }
+            Message::ActionListExportShortcutMap => {
+                self.action_list.options_open = false;
+                task = self.pick_path(PathPickerTarget::ExportShortcutMap);
+            }
+            Message::ShortcutMapImported(result) => match result {
+                Ok(bindings) => {
+                    self.path_picker_busy = false;
+                    self.import_shortcut_map(bindings);
+                }
+                Err(error) => {
+                    self.path_picker_busy = false;
+                    let message = format!("Shortcut map was not imported: {error}");
+                    self.action_list.feedback = message.clone();
+                    self.status = message;
+                }
+            },
+            Message::ShortcutMapExported(result) => match result {
+                Ok(()) => {
+                    self.path_picker_busy = false;
+                    self.status = "Shortcut map exported".to_owned();
+                    self.action_list.feedback = self.status.clone();
+                }
+                Err(error) => {
+                    self.path_picker_busy = false;
+                    let message = format!("Shortcut map could not be exported: {error}");
+                    self.action_list.feedback = message.clone();
+                    self.status = message;
+                }
+            },
             Message::CancelOfflineRender => self.cancel_offline_render(),
             Message::RemoveQueuedOfflineJob(id) => self.remove_queued_offline_job(id),
             Message::OfflineRenderFinished(result) => {

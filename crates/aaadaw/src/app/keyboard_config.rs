@@ -34,7 +34,7 @@ pub(super) fn reset() -> Result<(), String> {
     }
 }
 
-fn config_path() -> Option<PathBuf> {
+pub(super) fn config_path() -> Option<PathBuf> {
     config_file_path(FILE_NAME)
 }
 

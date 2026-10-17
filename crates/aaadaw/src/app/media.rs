@@ -55,6 +55,17 @@ impl App {
                 .set_mime_type("audio/midi")
                 .add_filter("MIDI files", &["mid", "midi"])
                 .save_data(Vec::<u8>::new(), completion),
+            PathPickerTarget::ExportShortcutMap => robius_file_picker::FileDialog::new()
+                .set_title("Export AAADAW shortcut map")
+                .set_file_name("Shortcuts.aaadawkeymap")
+                .set_mime_type("text/plain")
+                .add_filter("AAADAW shortcut map", &["aaadawkeymap"])
+                .save_data(Vec::<u8>::new(), completion),
+            PathPickerTarget::ImportShortcutMap => robius_file_picker::FileDialog::new()
+                .set_title("Import AAADAW shortcut map")
+                .set_mime_type("text/plain")
+                .add_filter("AAADAW shortcut map", &["aaadawkeymap"])
+                .pick_file(completion),
             PathPickerTarget::ImportAudio
             | PathPickerTarget::ImportAudioToProject
             | PathPickerTarget::RelinkAudio => robius_file_picker::FileDialog::new()
@@ -93,7 +104,8 @@ impl App {
                         PathPickerTarget::SaveProject
                         | PathPickerTarget::SaveProjectTemplate
                         | PathPickerTarget::ExportWav
-                        | PathPickerTarget::ExportMidi => {
+                        | PathPickerTarget::ExportMidi
+                        | PathPickerTarget::ExportShortcutMap => {
                             crate::android_platform::prepare_saf_save(
                                 file,
                                 matches!(
@@ -185,6 +197,15 @@ impl App {
                         .set_file_name(midi_export_name)
                         .add_filter("MIDI files", &["mid", "midi"])
                         .save_file(),
+                    PathPickerTarget::ExportShortcutMap => rfd::FileDialog::new()
+                        .set_title("Export AAADAW shortcut map")
+                        .set_file_name("Shortcuts.aaadawkeymap")
+                        .add_filter("AAADAW shortcut map", &["aaadawkeymap"])
+                        .save_file(),
+                    PathPickerTarget::ImportShortcutMap => rfd::FileDialog::new()
+                        .set_title("Import AAADAW shortcut map")
+                        .add_filter("AAADAW shortcut map", &["aaadawkeymap"])
+                        .pick_file(),
                     PathPickerTarget::ImportAudio | PathPickerTarget::ImportAudioToProject => {
                         rfd::FileDialog::new()
                             .set_title("Choose audio to import")
@@ -236,6 +257,34 @@ impl App {
                         dialog.destination = path.to_string_lossy().into_owned();
                     }
                     Task::none()
+                }
+                PathPickerTarget::ImportShortcutMap => {
+                    self.path_picker_busy = true;
+                    Task::perform(
+                        super::run_blocking("aaadaw-shortcut-map-import", move || {
+                            super::shortcut_map::read(&path)
+                        }),
+                        Message::ShortcutMapImported,
+                    )
+                }
+                PathPickerTarget::ExportShortcutMap => {
+                    let path = if path.extension().is_none() {
+                        path.with_extension("aaadawkeymap")
+                    } else {
+                        path
+                    };
+                    let bindings = self
+                        .shortcut_bindings
+                        .read()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner)
+                        .clone();
+                    self.path_picker_busy = true;
+                    Task::perform(
+                        super::run_blocking("aaadaw-shortcut-map-export", move || {
+                            super::shortcut_map::write(&path, &bindings)
+                        }),
+                        Message::ShortcutMapExported,
+                    )
                 }
                 PathPickerTarget::ImportAudio => {
                     self.audio_file_path_query = path.to_string_lossy().into_owned();

@@ -18,6 +18,7 @@ pub(super) enum CaptureMode {
 #[derive(Debug, Default)]
 pub(super) struct ActionListState {
     pub(super) query: String,
+    pub(super) options_open: bool,
     pub(super) selected: Option<String>,
     pub(super) selected_binding: Option<usize>,
     pub(super) capture: Option<CaptureMode>,
@@ -186,6 +187,7 @@ impl App {
             return iced::window::gain_focus(id);
         }
         self.active_menu = None;
+        self.action_list.options_open = false;
         self.action_list.capture = None;
         self.action_list.results_viewport_height = 475.0 - RESULTS_VIEWPORT_CHROME_HEIGHT;
         let (id, task) = iced::window::open(iced::window::Settings {
@@ -263,6 +265,7 @@ impl App {
     pub(super) fn close_action_list(&mut self) -> Task<Message> {
         let parent_window = self.action_list_window_id.take();
         let child = self.close_action_input();
+        self.action_list.options_open = false;
         self.action_list.capture = None;
         let parent = parent_window.map_or_else(Task::none, |id| {
             let close = iced::window::close(id);
@@ -294,6 +297,41 @@ impl App {
 
     fn persist_action_list_bindings(&mut self, id: &str, values: &[shortcut::Shortcut]) -> bool {
         self.commit_action_list_bindings(id, values, keyboard_config::save)
+    }
+
+    pub(super) fn import_shortcut_map(&mut self, imported: commands::ShortcutBindings) {
+        self.import_shortcut_map_with(imported, keyboard_config::save);
+    }
+
+    fn import_shortcut_map_with(
+        &mut self,
+        imported: commands::ShortcutBindings,
+        persist: impl FnOnce(&commands::ShortcutBindings) -> Result<(), String>,
+    ) -> bool {
+        let action_count = imported.len();
+        let result = commands::validate_bindings_with_macros(&imported, &self.action_macros)
+            .and_then(|bindings| persist(&bindings).map(|()| bindings));
+        match result {
+            Ok(bindings) => {
+                *self
+                    .shortcut_bindings
+                    .write()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner) = bindings.clone();
+                self.shortcut_binding_edits = bindings;
+                self.shortcut_defaults_restored.clear();
+                self.shortcut_capture_id = None;
+                let message = format!("Imported shortcuts for {action_count} actions");
+                self.action_list.feedback = message.clone();
+                self.status = message;
+                true
+            }
+            Err(error) => {
+                let message = format!("Shortcut map was not imported: {error}");
+                self.action_list.feedback = message.clone();
+                self.status = message;
+                false
+            }
+        }
     }
 
     fn commit_action_list_bindings(
@@ -381,6 +419,13 @@ impl App {
             {
                 return self.confirm_action_input();
             }
+        }
+        if key == Key::Named(Named::Escape)
+            && modifiers == Modifiers::NONE
+            && self.action_list.options_open
+        {
+            self.action_list.options_open = false;
+            return Task::none();
         }
         if key == Key::Named(Named::Escape) && modifiers == Modifiers::NONE {
             if self.action_list.capture.take().is_some() {
@@ -523,6 +568,87 @@ mod tests {
         assert!(app.project.tracks().is_empty());
         app.action_list.set_query("no matching action".into());
         assert!(app.action_list_selected_entry().is_none());
+    }
+
+    #[test]
+    fn shortcut_map_import_replaces_custom_bindings_only_after_validation_and_save() {
+        let mut app = App::default();
+        app.shortcut_binding_edits
+            .insert("file.open-project".into(), "Alt+O".into());
+        *app.shortcut_bindings.write().unwrap() = app.shortcut_binding_edits.clone();
+        let imported = commands::ShortcutBindings::from([
+            ("edit.undo".to_owned(), "Alt+F12".to_owned()),
+            ("track.add".to_owned(), String::new()),
+        ]);
+
+        assert!(!app.import_shortcut_map_with(imported.clone(), |_| Err("disk full".into())));
+        assert_eq!(
+            app.shortcut_bindings.read().unwrap()["file.open-project"],
+            "Alt+O"
+        );
+        assert_eq!(app.shortcut_binding_edits["file.open-project"], "Alt+O");
+
+        assert!(app.import_shortcut_map_with(imported.clone(), |bindings| {
+            assert_eq!(bindings, &imported);
+            Ok(())
+        }));
+        assert_eq!(*app.shortcut_bindings.read().unwrap(), imported);
+        assert_eq!(app.shortcut_binding_edits["edit.undo"], "Alt+F12");
+        assert!(!app.shortcut_binding_edits.contains_key("file.open-project"));
+        assert_eq!(
+            commands::from_shortcut(
+                &Key::Named(Named::F12),
+                Modifiers::ALT,
+                &app.shortcut_bindings.read().unwrap(),
+                &[],
+            ),
+            Some(commands::CommandId::Undo)
+        );
+    }
+
+    #[test]
+    fn invalid_shortcut_map_import_does_not_persist_or_change_active_bindings() {
+        let mut app = App::default();
+        let existing = commands::ShortcutBindings::from([("edit.undo".into(), "Alt+F12".into())]);
+        *app.shortcut_bindings.write().unwrap() = existing.clone();
+        app.shortcut_binding_edits = existing.clone();
+        let invalid =
+            commands::ShortcutBindings::from([("missing.action".into(), "Ctrl+M".into())]);
+        let mut saved = false;
+        assert!(!app.import_shortcut_map_with(invalid, |_| {
+            saved = true;
+            Ok(())
+        }));
+        assert!(!saved);
+        assert_eq!(*app.shortcut_bindings.read().unwrap(), existing);
+        assert_eq!(app.shortcut_binding_edits, existing);
+        assert!(app.status.contains("unknown action ID"));
+    }
+
+    #[test]
+    fn action_list_options_escape_dismisses_options_before_closing_the_window() {
+        let mut app = App {
+            action_list_window_id: Some(iced::window::Id::unique()),
+            ..App::default()
+        };
+        app.action_list.options_open = true;
+        let task = app.action_list_keyboard_event(
+            iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
+                key: Key::Named(Named::Escape),
+                modified_key: Key::Named(Named::Escape),
+                physical_key: iced::keyboard::key::Physical::Code(
+                    iced::keyboard::key::Code::Escape,
+                ),
+                location: iced::keyboard::Location::Standard,
+                modifiers: Modifiers::NONE,
+                text: None,
+                repeat: false,
+            }),
+            iced::event::Status::Ignored,
+        );
+        assert!(!app.action_list.options_open);
+        assert!(app.action_list_window_id.is_some());
+        drop(task);
     }
 }
 

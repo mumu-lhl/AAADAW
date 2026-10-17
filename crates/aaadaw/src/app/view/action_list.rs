@@ -85,6 +85,20 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
     } else {
         app.action_list.feedback.clone()
     };
+    let options: Element<'_, Message> = if app.action_list.options_open {
+        row![
+            button(text("Import key map...").size(12)).on_press_maybe(
+                (!app.path_picker_busy).then_some(Message::ActionListImportShortcutMap),
+            ),
+            button(text("Export key map...").size(12)).on_press_maybe(
+                (!app.path_picker_busy).then_some(Message::ActionListExportShortcutMap),
+            ),
+        ]
+        .spacing(4)
+        .into()
+    } else {
+        iced::widget::Space::new().height(Length::Fixed(0.0)).into()
+    };
     container(
         column![
             row![
@@ -95,11 +109,13 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
                     .size(12),
                 button(text("Clear").size(12))
                     .on_press(Message::ActionListQueryChanged(String::new())),
+                button(text("Options").size(12)).on_press(Message::ActionListOptionsToggled),
                 button(text("Find shortcut...").size(12)).on_press(Message::ActionListFindShortcut),
                 text("Section: Main").size(12)
             ]
             .spacing(6)
             .align_y(Alignment::Center),
+            options,
             scrollable(actions)
                 .id(iced::widget::Id::new(action_list::RESULTS_SCROLL_ID))
                 .height(Length::Fill)

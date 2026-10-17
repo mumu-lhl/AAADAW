@@ -1,7 +1,7 @@
 #[cfg(feature = "audio-device")]
 use super::SharedPreparedPlayback;
 use super::audio_export::{RenderBounds, RenderFilenameWildcard, RenderSampleRate, RenderSource};
-use super::commands::CommandId;
+use super::commands::{CommandId, ShortcutBindings};
 use super::{SharedAudioAssetManagementWorker, SharedAudioImportWorker};
 use crate::timeline::TimelineEvent;
 use aaadaw_app::{
@@ -116,6 +116,8 @@ pub(crate) enum PathPickerTarget {
     ImportAudioToProject,
     RelinkAudio,
     AddClapPluginPath,
+    ImportShortcutMap,
+    ExportShortcutMap,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -199,6 +201,7 @@ pub(crate) enum Message {
     ActionInputCancel,
     ActionListDeleteBinding,
     ActionListFindShortcut,
+    ActionListOptionsToggled,
     ActionListRun(bool),
     OpenClapPluginSettings,
     OpenRenderWindow,
@@ -421,6 +424,10 @@ pub(crate) enum Message {
     },
     PickPath(PathPickerTarget),
     PathPicked(PathPickerTarget, Result<Option<PathBuf>, String>),
+    ActionListImportShortcutMap,
+    ActionListExportShortcutMap,
+    ShortcutMapImported(Result<ShortcutBindings, String>),
+    ShortcutMapExported(Result<(), String>),
     AddTrack,
     AddBusTrack,
     SetTrackOutput(TrackId, Option<TrackId>),

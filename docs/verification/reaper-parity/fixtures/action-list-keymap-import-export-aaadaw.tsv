@@ -1,0 +1,18 @@
+field	value
+reference	AAADAW desktop build, Linux / REAPER 7.82 parity branch; AAADAW-only interaction evidence
+build_id	3d7d11d5467ac672ec378abdf063fcfc8d2c1529
+binary_sha256	fc02392b0ef1e0d8fef46ac62291aea5e9f48edab6cbb52a288c157a7d3b2f4a
+display	Xvfb :798, 1280x800x24; isolated XDG_CONFIG_HOME/DATA_HOME/CACHE_HOME/STATE_HOME
+action_list_client	701x475
+options_steps	Help > Action list and shortcuts... > Options
+options_items	Import key map...; Export key map...
+options_screenshot	docs/verification/reaper-parity/fixtures/action-list-keymap-options-aaadaw.png
+options_screenshot_sha256	c85570d8163a9a55d975225d8098a8e34751cf343e1672558386ee18007167a8
+options_screenshot_size	701x475
+map_format	AAADAW_SHORTCUT_MAP tab-separated v1; stable action ID plus canonical shortcut alternatives
+import_semantics	Replaces the custom shortcut override layer; omitted actions use factory shortcuts; macros themselves are not transferred
+validation	Strict version/header, 1 MiB bounded read, known action IDs, valid shortcut parsing, duplicate IDs rejected, config replacement is atomic
+test_result	AAADAW desktop test binary: 704 passed, 0 failed, 0 ignored; cargo check -p aaadaw --bin aaadaw --no-default-features passed
+file_dialog_limit	The Xvfb image has no xdg-desktop-portal or zenity service, so native chooser interaction could not be exercised here; parser/writer and transactional import paths were tested directly
+native_keymap_compatibility	Not compatible with REAPER .ReaperKeyMap files; native numeric action IDs, Sections, Scope, MIDI/OSC, and full REAPER keymap export remain open
+matrix_status	INPUT-BIND-001 remains in_progress
