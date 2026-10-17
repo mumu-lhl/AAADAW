@@ -1,0 +1,16 @@
+key	value
+captured_at_utc	2026-10-17
+platform	Linux x86_64; Xvfb :125; X11; WGPU_BACKEND=gl
+screen_size	1280x800
+project_fixture	Generated project with one MIDI item at 964.8 PPQ, length 3840 ticks, and one C4 note
+project_generator	crates/aaadaw-storage/examples/generate_fractional_midi_demo.rs
+project_regeneration	cargo run --locked -p aaadaw-storage --example generate_fractional_midi_demo -- <project.aaadaw>
+project_sha256	d5eb5e1d4e9bd8d4415b84a745c0a0d86ba5ffd19b4bab146aa3de7f1652a742
+binary	target/debug/aaadaw
+binary_build_id	426d85ec10679bcdf61a1e753f2f6d0489e02e5e
+binary_sha256	dd7c85a74205a3f5fb170212c8923ee0bf30cef04aee4ade33639385562b7334
+launch_command	target/debug/aaadaw <project.aaadaw>
+action	Selected the MIDI item in Arrangement at Xvfb coordinate 550,195
+observed	Arrangement Inspector displays “Tick 964.8 · length 3840”
+screenshot	midi-item-fractional-inspector-aaadaw.png; 1280x800; SHA-256 df8c01110242b44737bb387a77a2b95e2860420c74b4c7ecdd317f48d4d074a1
+validation_scope	AAADAW own-window rendering only; not a REAPER screenshot comparison or full visual-parity acceptance

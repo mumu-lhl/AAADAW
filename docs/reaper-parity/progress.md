@@ -648,7 +648,7 @@ nightly + Cranelift AAADAW binary suite 688/688 通过；Stable `cargo clippy -p
 
 Position Nudge 现在从精确 MIDI PPQ 起点换算连续 sample、应用整数 sample 位移后再恢复 1/200-PPQ 子刻度；所选 MIDI 的 Nudge anchor 和末端 sample 同样使用精确起止位置。混合 Audio/MIDI 的 1 ms Nudge、fractional item 的 480-sample Nudge 与 Undo 均有 App 回归。Arrangement Inspector 将 1/200 PPQ 格式化为最多三位小数，例如 `964.8`、`964.995`，不通过浮点字符串舍入。
 
-nightly + Cranelift AAADAW binary suite 690/690 通过；Stable aaadaw all-target Clippy `-D warnings`、fmt 与 diff 检查通过。尚无包含 fractional MIDI item 的 Inspector 实窗截图；Item Nudge 的更多 targets/units 及完整原厂交互仍未验收，`ITEM-NUDGE-SET-001` 和相关选择/属性行维持 `in_progress`。
+nightly + Cranelift AAADAW binary suite 690/690 通过；Stable aaadaw all-target Clippy `-D warnings`、fmt 与 diff 检查通过。Xvfb 中以 964.8 PPQ MIDI fixture 打开最新桌面二进制并选中 item，AAADAW 实窗截图确认 Inspector 显示 `Tick 964.8 · length 3840`；[截图和 binary/project hashes](../verification/reaper-parity/fixtures/midi-item-fractional-inspector-aaadaw.tsv)。这张图仅验证 AAADAW 自身渲染，尚未与 REAPER 原厂窗口做像素或逐项截图对比。Item Nudge 的更多 targets/units 及完整原厂交互仍未验收，`ITEM-NUDGE-SET-001` 和相关选择/属性行维持 `in_progress`。
 
 ### 2026-10-13 Render Bounds：All project regions 批量输出
 
