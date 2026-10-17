@@ -867,7 +867,7 @@ fn conductor_events(
         events.push(Event {
             tick: 0,
             order: 1,
-            bytes: encode_smpte_offset(project)?,
+            bytes: encode_smpte_offset(project, time_selection)?,
         });
     }
 
@@ -999,7 +999,10 @@ fn scale_tick_position(tick: f64, project_ppq: u32, export_ppq: u16) -> Result<u
     Ok(scaled.round() as u64)
 }
 
-fn encode_smpte_offset(project: &Project) -> Result<Vec<u8>, String> {
+fn encode_smpte_offset(
+    project: &Project,
+    time_selection: Option<(f64, f64)>,
+) -> Result<Vec<u8>, String> {
     let frame_rate = project.settings().frame_rate();
     let rate_code: u8 = match frame_rate {
         FrameRate::Fps23976 | FrameRate::Fps24 => 0,
@@ -1013,7 +1016,17 @@ fn encode_smpte_offset(project: &Project) -> Result<Vec<u8>, String> {
             ));
         }
     };
-    let seconds = project.settings().project_start_time_offset_seconds();
+    let settings = project.settings();
+    let selection_start_seconds = match time_selection {
+        Some((start_tick, _)) => {
+            project
+                .sample_at_tick_position(start_tick)
+                .map_err(|error| error.to_string())?
+                / f64::from(settings.sample_rate())
+        }
+        None => 0.0,
+    };
+    let seconds = settings.project_start_time_offset_seconds() + selection_start_seconds;
     let timecode = frame_rate
         .format_timecode(seconds)
         .map_err(|error| format!("project SMPTE offset cannot be represented: {error}"))?;
