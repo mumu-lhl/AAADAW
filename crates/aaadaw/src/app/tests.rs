@@ -10193,14 +10193,64 @@ fn empty_midi_export_warning_matches_native_project_and_scoped_prompts() {
         file_type: aaadaw_core::MidiFileType::Type0,
         ..project
     };
-    assert_eq!(
-        super::midi_export::empty_export_warning(type_zero),
-        "MIDI export failed!\nNo unmuted tracks containing MIDI items were found"
-    );
-    assert_eq!(
-        super::midi_export::empty_export_warning_width(type_zero),
-        324.0
-    );
+    let type_zero_all_time = aaadaw_core::MidiExportOptions {
+        time_scope: aaadaw_core::MidiExportTimeScope::TimeSelectionOnly,
+        ..type_zero
+    };
+    let type_zero_selected_tracks = aaadaw_core::MidiExportOptions {
+        item_scope: aaadaw_core::MidiExportItemScope::SelectedTracksOnly,
+        ..type_zero
+    };
+    let type_zero_selected_items = aaadaw_core::MidiExportOptions {
+        item_scope: aaadaw_core::MidiExportItemScope::SelectedItemsOnly,
+        ..type_zero
+    };
+    let type_zero_selected_tracks_time = aaadaw_core::MidiExportOptions {
+        time_scope: aaadaw_core::MidiExportTimeScope::TimeSelectionOnly,
+        ..type_zero_selected_tracks
+    };
+    let type_zero_selected_items_time = aaadaw_core::MidiExportOptions {
+        time_scope: aaadaw_core::MidiExportTimeScope::TimeSelectionOnly,
+        ..type_zero_selected_items
+    };
+    for (options, expected, width) in [
+        (
+            type_zero,
+            "MIDI export failed!\nNo unmuted tracks containing MIDI items were found",
+            324.0,
+        ),
+        (
+            type_zero_all_time,
+            "MIDI export failed!\nNo unmuted tracks containing MIDI items within the time selection were found",
+            468.0,
+        ),
+        (
+            type_zero_selected_tracks,
+            "MIDI export failed!\nNo unmuted selected tracks containing MIDI items were found",
+            377.0,
+        ),
+        (
+            type_zero_selected_items,
+            "MIDI export failed!\nNo unmuted tracks containing selected MIDI items were found",
+            377.0,
+        ),
+        (
+            type_zero_selected_tracks_time,
+            "MIDI export failed!\nNo unmuted selected tracks containing MIDI items within the time selection were found",
+            521.0,
+        ),
+        (
+            type_zero_selected_items_time,
+            "MIDI export failed!\nNo unmuted tracks containing selected MIDI items within the time selection were found",
+            521.0,
+        ),
+    ] {
+        assert_eq!(super::midi_export::empty_export_warning(options), expected);
+        assert_eq!(
+            super::midi_export::empty_export_warning_width(options),
+            width
+        );
+    }
 
     let scoped = aaadaw_core::MidiExportOptions {
         item_scope: aaadaw_core::MidiExportItemScope::SelectedItemsOnly,
