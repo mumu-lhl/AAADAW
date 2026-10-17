@@ -12247,6 +12247,7 @@ fn midi_quantize_dialog_commits_selected_notes_with_strength_and_cancel_discards
     assert_eq!(dialog.scope, MidiQuantizeScope::SelectedNotes);
     assert_eq!(dialog.operation, MidiQuantizeOperation::Position);
     assert_eq!(dialog.strength_percent, 100);
+    assert!(!dialog.bypass);
     let _ = app.update(Message::CancelMidiQuantize);
     assert_eq!(app.project.midi_items()[0].notes()[0].tick(), 170);
 
@@ -12267,6 +12268,48 @@ fn midi_quantize_dialog_commits_selected_notes_with_strength_and_cancel_discards
     assert_eq!(app.project.midi_items()[0].notes()[0].tick(), 145);
     let _ = app.update(Message::Undo);
     assert_eq!(app.project.midi_items()[0].notes()[0].tick(), 170);
+}
+
+#[test]
+fn midi_quantize_dialog_bypass_skips_commit_and_ok_without_recording_an_edit() {
+    let mut app = App::default();
+    let _ = app.update(Message::AddTrack);
+    let track_id = app.project.tracks()[0].id();
+    app.project
+        .apply(DawAction::InsertMidiItem {
+            track_id,
+            start_tick: 0,
+            length_ticks: 3_840,
+        })
+        .expect("test MIDI item should be inserted");
+    let item_id = app.project.midi_items()[0].id();
+    app.project
+        .apply(DawAction::AddMidiNotes {
+            item_id,
+            notes: vec![MidiNoteData {
+                channel: 0,
+                pitch: 60,
+                tick: 100,
+                duration: 180,
+                velocity: 96,
+            }],
+        })
+        .expect("test note should be inserted");
+    let before = app.project.snapshot();
+
+    let _ = app.update(Message::OpenMidiQuantizeDialog(item_id));
+    let _ = app.update(Message::SetMidiQuantizeScope(MidiQuantizeScope::AllNotes));
+    let _ = app.update(Message::SetMidiQuantizeBypass(true));
+    assert!(app.midi_quantize_dialog.is_some());
+    let _ = app.update(Message::CommitMidiQuantize);
+    assert!(app.midi_quantize_dialog.is_some());
+    assert_eq!(app.project.snapshot(), before);
+    let _ = app.update(Message::AcceptMidiQuantize);
+    assert!(app.midi_quantize_dialog.is_none());
+    assert_eq!(app.project.snapshot(), before);
+
+    let _ = app.update(Message::Undo);
+    assert!(app.project.midi_items()[0].notes().is_empty());
 }
 
 #[test]

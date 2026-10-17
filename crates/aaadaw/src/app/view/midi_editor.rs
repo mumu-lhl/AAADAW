@@ -756,6 +756,9 @@ fn midi_quantize_dialog(app: &App, touch_targets: bool) -> Element<'_, Message> 
     ]
     .spacing(SPACING_XS)
     .align_y(iced::Alignment::Center);
+    let bypass = checkbox(state.bypass)
+        .label("Bypass")
+        .on_toggle(Message::SetMidiQuantizeBypass);
     let action_buttons = row![
         iced::widget::Space::new().width(Length::Fill),
         button("Commit")
@@ -776,6 +779,8 @@ fn midi_quantize_dialog(app: &App, touch_targets: bool) -> Element<'_, Message> 
             row![
                 text("Settings").width(Length::Fixed(72.0)),
                 text(format!("Use grid · {grid}")),
+                iced::widget::Space::new().width(Length::Fill),
+                bypass,
             ]
             .spacing(SPACING_XS)
             .align_y(iced::Alignment::Center),

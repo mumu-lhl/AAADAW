@@ -592,6 +592,7 @@ pub(crate) enum Message {
     SetMidiQuantizeScope(MidiQuantizeScope),
     SetMidiQuantizeOperation(MidiQuantizeOperation),
     SetMidiQuantizeStrength(u8),
+    SetMidiQuantizeBypass(bool),
     CommitMidiQuantize,
     AcceptMidiQuantize,
     CancelMidiQuantize,

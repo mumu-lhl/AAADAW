@@ -9,24 +9,27 @@ reference_operation_results	midi-quantize-operations-native.tsv; five native ope
 reference_all_events_results	midi-quantize-all-events-native.tsv; All events at Position and 100% quantizes note, CC, and pitch-bend positions without changing event values or lengths
 reference_all_events_collision_results	midi-quantize-all-events-collisions-native.tsv; same-channel same-controller CC and same-channel pitch-bend collisions retain the latest pre-quantize event and value
 reference_all_events_collision_probe	scripts/reaper_parity/probe-midi-quantize-dialog-all-events-collisions.lua; reproducible REAPER 7.82 event readback probe
+reference_bypass_results	midi-quantize-bypass-native.tsv; with Bypass checked, scope All events, and OK, note/CC/Pitch Bend state remains unchanged
+reference_bypass_capture	midi-quantize-bypass-checked-reaper-native.png; 1280x800; SHA-256 6bb816ddf25967dddc357bed3a67319750cd41fdaccad24d7edb69b33ca6bfc9
+reference_bypass_probe	scripts/reaper_parity/probe-midi-quantize-dialog-bypass.lua; reproducible REAPER 7.82 event readback probe
 reference_strength_capture	midi-quantize-strength-50-reaper-native.png; 1280x800; SHA-256 681ced3006e0582671c3c87939a7e1d572d240cbd113b7365fcd3e985ad64a18
 reference_strength_behavior	At Strength 50%, REAPER moves selected note starts halfway toward the nearest grid line while preserving lengths; event output is recorded in midi-quantize-strength-native.tsv
-
 aaadaw_run	Linux x86_64; isolated Xvfb :247, 1280x800x24; project midi-note-quantize-aaadaw.aaadaw; built desktop executable Build ID 47fa05819b658ce13bc224f016433d57e2e36c0c; binary SHA-256 91e894d07d07a12530240010e21c02b48be46d0b2f75afa61cbef644913e25b7
-aaadaw_operation_capture_run	Linux x86_64; isolated Xvfb :248, 1280x800x24; fresh project with one open MIDI item; build ID 9116634819f2da650808936a13f0918d462eb8db; binary SHA-256 f801715cfc4842886abf310d7272e361f7fee2cc01b0b345a6404a1d0f06dfe0
-aaadaw_all_events_capture_run	Linux x86_64; isolated Xvfb :248, 1280x800x24; fresh project with one open MIDI item; Build ID 9b8d3083d1fb8c85d3bb5c57f0ee8755a871016d; binary SHA-256 83b0c072859e5216e8446a1be224783c15b43560f517c3c0dbd84a7ecf5b1884
-aaadaw_dialog_capture	midi-quantize-dialog-aaadaw.png; 1280x800; SHA-256 4d8b242e5b2905533252be5861d2a2fb3b61eb1e764d8f04127b15144841eb0d
-aaadaw_scope_capture	midi-quantize-scope-menu-aaadaw.png; 1280x800; SHA-256 c93982bd7c36986ddfa1d0a6afbf61568087a31d839c8b3e54ebf253133799d1
-aaadaw_all_events_capture	midi-quantize-dialog-all-events-aaadaw.png; 1280x800; SHA-256 9b5fb83ca592541dc51cb164e8c993cadb6156ca5c14f18efd3985760c0e7a50
-aaadaw_operation_capture	midi-quantize-operation-menu-aaadaw.png; 1280x800; SHA-256 0d70662cab9ecffeba9062ac6d947cd4b60a169ab93526bb904acddfb5c2f4f0
-aaadaw_note_length_only_capture	midi-quantize-dialog-note-length-only-aaadaw.png; 1280x800; SHA-256 67e335a00b19d86b1790e984ddbd61797966c0c1e27db6562366ed759252759e
+aaadaw_quantize_ui_capture_run	Linux x86_64; isolated Xvfb :250, 1280x800x24; fresh project with one open MIDI item; Build ID 95aa3786a7a68c31f780d6c8723d2d0d0742fc6e; binary SHA-256 415de83dd850be9bbbffe1e4fa23f223fdcefc6147a1c1b98a2dafba49e50231; Nightly Cranelift desktop executable
+aaadaw_dialog_capture	midi-quantize-dialog-aaadaw.png; 1280x800; SHA-256 b5b1404089bfc8f4d1616f6ec7d3726cc0d0e217d5cabfe2c9f59c91c065a7b4
+aaadaw_scope_capture	midi-quantize-scope-menu-aaadaw.png; 1280x800; SHA-256 e7b3e3623051d2e6b198dd02490529c83fc26ef6de9e81e5e67d0e9bb3c22b31
+aaadaw_all_events_capture	midi-quantize-dialog-all-events-aaadaw.png; 1280x800; SHA-256 6c25258856105d8787a25bc041f312ddb8bdfc37b6dde8e4016ad2409d8e28c5
+aaadaw_operation_capture	midi-quantize-operation-menu-aaadaw.png; 1280x800; SHA-256 cfb9f95fe298d1f088567c475db3a5cddd6ff1b237d40b8ede712ecddcbe37a3
+aaadaw_note_length_only_capture	midi-quantize-dialog-note-length-only-aaadaw.png; 1280x800; SHA-256 d3ca17cc2a223419dfb489cce28db2727f0e63a7ac95f5d196c18d8b343e4f7d
+aaadaw_bypass_capture	midi-quantize-dialog-bypass-aaadaw.png; 1280x800; SHA-256 ff6af2bd90a1ad775f884b21ee7a0bc2311c71e2c10faa1ebd15f60e959f53a2
 aaadaw_note_length_only_interaction	Selected Note length only in the live Quantize Events dialog, verified the label, then canceled; selected-note application and Undo/Redo are covered by App regression
 aaadaw_apply_before_capture	midi-quantize-dialog-all-note-ends-aaadaw.png; 1280x800; SHA-256 21fa6e34e073eb39b5f3c53acd9ac53829bff7b44f5f0a8c03d716e916925852
 aaadaw_apply_capture	midi-quantize-dialog-apply-aaadaw.png; 1280x800; SHA-256 0d96cc81d0b7e81a272b06f2d9bdcada2dc98c36e12fcd502abe4c8c4b1f6a8b
 aaadaw_interaction	Opened Quantize... from the Piano Roll, selected All notes and Position and note end, applied at 100% on 1/32, and observed the editor status update; regression asserts note ticks/durations and Undo/Redo
 aaadaw_dialog_default	Selected notes; Position; 100%; current grid displayed as Use grid · 1/32
 aaadaw_strength_test	App regression sets 50% and verifies a selected note at tick 170 moves to 145 while an unselected note stays at 350
-aaadaw_all_events_interaction	Selected All events in the live Quantize Events dialog and verified the label; Core/App regressions cover notes, CC, Pitch Bend and one-step Undo/Redo
+aaadaw_all_events_interaction	Selected All events in the live Quantize Events dialog with Bypass off and verified the label; Core/App regressions cover notes, CC, Pitch Bend and one-step Undo/Redo
 aaadaw_all_events_collision_probe	Quantized distinct CC1 and pitch-bend positions that landed on duplicate ticks; the Core/App path matches REAPER's latest-original-event-wins result and Undo restores both events
-aaadaw_supported_subset	All notes/Selected notes/All events (notes, CC, and pitch bends); Position/Position and note end/Position and note length/Note end only/Note length only for notes; 0–100% strength; Commit, OK, Cancel and Escape
-open_gaps	Selected events; Program Change/channel pressure/SysEx event types; Bypass; Fix overlaps behavior; swing-grid intersection and remembered dialog settings remain open
+aaadaw_bypass_interaction	With All events selected, enabled Bypass in the live dialog and canceled; App regression confirms Commit keeps the dialog open, OK closes it, and neither records an edit
+aaadaw_supported_subset	All notes/Selected notes/All events (notes, CC, and pitch bends); Position/Position and note end/Position and note length/Note end only/Note length only for notes; 0–100% strength; Bypass skips all edits; Commit, OK, Cancel and Escape
+open_gaps	Selected events; Program Change/channel pressure/SysEx event types; Fix overlaps behavior; swing-grid intersection and remembered dialog settings remain open

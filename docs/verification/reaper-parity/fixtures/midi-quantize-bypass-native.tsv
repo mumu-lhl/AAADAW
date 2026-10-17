@@ -1,0 +1,7 @@
+reference	Linux REAPER 7.82 / Default 7; Quantize Events scope All events; operation Position; Bypass checked; 1/32 grid = 120 PPQ ticks; Strength 100%
+before_notes	selected C4 100-280; unselected D4 350-430
+after_notes	selected C4 100-280; unselected D4 350-430
+before_events	unselected CC1 ch1 value64 @475; unselected CC7 ch2 value96 @730; unselected Pitch Bend ch1 value8192 @850
+after_events	unselected CC1 ch1 value64 @475; unselected CC7 ch2 value96 @730; unselected Pitch Bend ch1 value8192 @850
+behavior	With Bypass checked, OK closes the dialog and leaves note and MIDI event positions and values unchanged
+capture	midi-quantize-bypass-checked-reaper-native.png; 1280x800; SHA-256 6bb816ddf25967dddc357bed3a67319750cd41fdaccad24d7edb69b33ca6bfc9

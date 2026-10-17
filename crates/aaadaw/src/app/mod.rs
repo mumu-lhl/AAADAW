@@ -692,6 +692,7 @@ struct MidiQuantizeDialogState {
     scope: MidiQuantizeScope,
     operation: MidiQuantizeOperation,
     strength_percent: u8,
+    bypass: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -1893,6 +1894,9 @@ impl App {
             self.midi_quantize_dialog = None;
             return;
         };
+        if dialog.bypass {
+            return;
+        }
         let note_ids: Vec<aaadaw_core::NoteId> = match dialog.scope {
             MidiQuantizeScope::SelectedNotes => {
                 self.midi_editor_selected_notes.iter().copied().collect()
@@ -1962,6 +1966,7 @@ impl App {
                     | Message::SetMidiQuantizeScope(_)
                     | Message::SetMidiQuantizeOperation(_)
                     | Message::SetMidiQuantizeStrength(_)
+                    | Message::SetMidiQuantizeBypass(_)
                     | Message::Escape
                     | Message::RuntimeKeyboardEvent(..)
                     | Message::BackgroundTick
@@ -5296,6 +5301,7 @@ impl App {
                         scope: MidiQuantizeScope::SelectedNotes,
                         operation: MidiQuantizeOperation::Position,
                         strength_percent: 100,
+                        bypass: false,
                     });
                 }
             }
@@ -5312,6 +5318,11 @@ impl App {
             Message::SetMidiQuantizeStrength(strength_percent) => {
                 if let Some(dialog) = self.midi_quantize_dialog.as_mut() {
                     dialog.strength_percent = strength_percent.min(100);
+                }
+            }
+            Message::SetMidiQuantizeBypass(bypass) => {
+                if let Some(dialog) = self.midi_quantize_dialog.as_mut() {
+                    dialog.bypass = bypass;
                 }
             }
             Message::CommitMidiQuantize => self.commit_midi_quantize_dialog(false),
