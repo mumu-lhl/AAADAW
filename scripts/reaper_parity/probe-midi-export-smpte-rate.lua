@@ -1,5 +1,5 @@
 -- Run in an isolated Linux REAPER 7.82 / Default 7 instance.
--- Creates the standard MIDI fixture with a 10.5-second offset at 23.976, 24, 25, or 29.97DF fps.
+-- Creates the standard MIDI fixture with a 10.5-second offset at the supported REAPER SMPTE presets.
 local root = assert(os.getenv("AAADAW_REAPER_PROBE_DIR"), "Set AAADAW_REAPER_PROBE_DIR") .. "/"
 local requested_rate = os.getenv("AAADAW_REAPER_FRAME_RATE") or "24"
 local rates = {
@@ -31,8 +31,15 @@ local rates = {
     time_mode = "TIMEMODE 1 3 -1 30 1 0 -1 0",
     expected_smpte_event = "FF 54 05 40 00 0A 0E 00",
   },
+  ["29.97ND"] = {
+    fps = 30000 / 1001,
+    case_name = "2997nd",
+    drop_frame = false,
+    time_mode = "TIMEMODE 1 4 -1 30 2 0 -1 0",
+    expected_smpte_event = "FF 54 05 60 00 0A 0E 00",
+  },
 }
-local rate_spec = assert(rates[requested_rate], "AAADAW_REAPER_FRAME_RATE must be 23.976, 24, 25, or 29.97DF")
+local rate_spec = assert(rates[requested_rate], "AAADAW_REAPER_FRAME_RATE must be 23.976, 24, 25, 29.97DF, or 29.97ND")
 local case_name = rate_spec.case_name
 assert(reaper.GetAppVersion() == "7.82/linux-x86_64")
 assert(reaper.GetLastColorThemeFile():match("Default_7%.0%.ReaperThemeZip$"))

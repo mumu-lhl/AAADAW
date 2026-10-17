@@ -719,10 +719,8 @@ fn encode_smpte_offset(project: &Project) -> Result<Vec<u8>, String> {
         FrameRate::Fps23976 | FrameRate::Fps24 => 0,
         FrameRate::Fps25 => 1,
         FrameRate::Fps2997Drop => 2,
-        FrameRate::Fps2997 => {
-            return Err("29.97 non-drop is not representable in an SMF SMPTE offset".to_owned());
-        }
-        FrameRate::Fps30 => 3,
+        // REAPER 7.82 emits the SMF 30 fps code for its 29.97 non-drop preset.
+        FrameRate::Fps2997 | FrameRate::Fps30 => 3,
         FrameRate::Fps48 | FrameRate::Fps50 | FrameRate::Fps60 | FrameRate::Fps75 => {
             return Err(format!(
                 "{frame_rate} FPS is not a supported MIDI SMPTE rate"

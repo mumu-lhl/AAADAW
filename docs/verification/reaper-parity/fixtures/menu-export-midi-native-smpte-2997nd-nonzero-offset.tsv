@@ -1,0 +1,33 @@
+version	7.82/linux-x86_64
+theme	Default_7.0.ReaperThemeZip
+fixture	track Piano; item 0.25-1.25 seconds; C4 note, CC1, pitch bend
+project_frame_rate	29.970029970030 fps; drop-frame false; selected native Project Settings > Video preset 29.97ND
+project_time_offset_seconds	10.500000000
+take_local_ppq_events	note-on 0; CC1 240; pitch bend 360; note-off 960
+project_ppq_events	note-on 480; CC1 720; pitch bend 840; note-off 1440
+export_action	40849
+export_mode	Multitrack MIDI file (type 1 MIDI file)
+export_ppqn	960
+export_tempo_meter_changes	unchecked
+export_smpte_offset	checked (verified in native dialog screenshot)
+export_markers	unchecked
+native_smpte_offset_event	FF 54 05 60 00 0A 0E 00 (REAPER maps 29.97 non-drop to SMF 30 fps rate code; 00:00:10:14)
+native_conductor_events	name at tick 0; SMPTE offset, 4/4, and 120 BPM at tick 0; End-of-Track tick 0
+native_event_order	track name; SMPTE offset; time signature; tempo
+native_midi_track_events	Piano note-on tick 480, CC1 tick 720, pitch bend tick 840, note-off and End-of-Track tick 1440
+native_project_fixture	fixtures/menu-export-midi-native-smpte-2997nd-nonzero-offset.rpp
+native_project_sha256	c15d8bb613e5108fb5a4a364fd91f5444dffb68a16603ccfe65f46085fd1d1f1
+native_project_settings_start_offset_screenshot	fixtures/menu-export-midi-native-smpte-2997nd-project-settings-start-offset.png (Project start time 0:10.500)
+native_project_settings_start_offset_screenshot_sha256	ed1ce37d39b0e0fef3f86509c9725b32a708ebab2a1f323a6a48e5413d9ad5c8
+native_project_settings_video_screenshot	fixtures/menu-export-midi-native-smpte-2997nd-video-frame-rate.png (29.97ND)
+native_project_settings_video_screenshot_sha256	2cd51e7204977101dbe08089df06e0d793918ce1d050608167efb375ad32818c
+native_export_fixture	fixtures/menu-export-midi-native-smpte-2997nd-nonzero-offset.mid
+native_export_bytes	108
+native_export_sha256	40e742120fb6ebfa27ee0164e50c32613a282fdefbdafccb859ae83638ce2f3a
+native_dialog_screenshot	fixtures/menu-export-midi-native-smpte-2997nd-nonzero-offset-dialog.png
+native_dialog_screenshot_sha256	c22ff58a190d669b7c21f5c0580d4fcd59c0ad143df68a94f15b9827ed2a2e85
+native_probe_environment	Linux REAPER 7.82 / Default 7; Main action 40849
+native_project_settings_readback	29.970029970030 fps; drop-frame false; project offset 10.500000000 seconds; one track and one MIDI item
+native_project_timemode	TIMEMODE 1 4 -1 30 2 0 -1 0
+reaper_binary_build_id	fb9ade2f211bc91a3ee6193630ef17bcf5f6528b
+reaper_binary_sha256	9976f5608068b7a58518969001b00b527fb0de6ed7459e0e5dda6f29878ee254

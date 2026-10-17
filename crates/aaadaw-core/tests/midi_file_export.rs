@@ -686,6 +686,34 @@ fn reaper_782_type_one_2997drop_nonzero_smpte_offset_matches_native_bytes() {
 }
 
 #[test]
+fn reaper_782_type_one_2997nd_nonzero_smpte_offset_matches_native_bytes() {
+    let mut project = native_midi_fixture_project();
+    project
+        .apply(DawAction::SetProjectStartTimeOffsetSeconds { seconds: 10.5 })
+        .unwrap();
+    project
+        .apply(DawAction::SetFrameRate {
+            rate: FrameRate::Fps2997,
+        })
+        .unwrap();
+    let options = MidiExportOptions {
+        embed_smpte_offset: true,
+        ..MidiExportOptions::for_project(&project)
+    };
+    let actual =
+        encode_standard_midi_with_conductor_track_name(&project, options, "project-2997nd")
+            .unwrap();
+    let native = include_bytes!(
+        "../../../docs/verification/reaper-parity/fixtures/menu-export-midi-native-smpte-2997nd-nonzero-offset.mid"
+    );
+
+    assert_eq!(
+        actual, native,
+        "29.97 fps non-drop SMPTE offset metadata and MIDI tracks match REAPER 7.82"
+    );
+}
+
+#[test]
 fn reaper_782_type_zero_export_matches_native_event_bytes() {
     let project = native_midi_fixture_project();
     let mut options = MidiExportOptions::for_project(&project);
@@ -1115,11 +1143,16 @@ fn ppq_rounding_never_turns_a_note_into_a_zero_length_event() {
 }
 
 #[test]
-fn embeds_smpte_offset_and_rejects_non_drop_2997() {
+fn embeds_smpte_offset_for_2997_non_drop_with_native_30fps_rate_code() {
     let mut project = Project::new();
     project
         .apply(DawAction::SetProjectStartTimeOffsetSeconds { seconds: 12.5 })
         .expect("project start offset should be accepted");
+    project
+        .apply(DawAction::SetFrameRate {
+            rate: FrameRate::Fps2997,
+        })
+        .expect("29.97 non-drop project rate should be accepted");
     let options = MidiExportOptions {
         embed_smpte_offset: true,
         ..MidiExportOptions::for_project(&project)
@@ -1129,15 +1162,8 @@ fn embeds_smpte_offset_and_rejects_non_drop_2997() {
     assert!(
         bytes
             .windows(8)
-            .any(|window| window == [0xff, 0x54, 0x05, 0x60, 0, 12, 15, 0])
+            .any(|window| window == [0xff, 0x54, 0x05, 0x60, 0, 12, 14, 0])
     );
-
-    project
-        .apply(DawAction::SetFrameRate {
-            rate: FrameRate::Fps2997,
-        })
-        .expect("29.97 non-drop project rate should be accepted");
-    assert!(encode_standard_midi(&project, options).is_err());
 }
 
 #[test]
