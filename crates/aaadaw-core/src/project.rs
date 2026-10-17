@@ -187,7 +187,7 @@ fn fix_quantized_midi_note_overlaps(item: &MidiItem, changes: &mut Vec<Quantized
 fn preserve_selected_overlapped_note_ends(
     item: &MidiItem,
     selected_note_ids: &HashSet<NoteId>,
-    changes: &mut [QuantizedMidiNoteChange],
+    changes: &mut Vec<QuantizedMidiNoteChange>,
 ) {
     let mut notes_by_id = HashMap::with_capacity(item.notes.len());
     let mut unselected_ends_by_key: HashMap<(u8, u8), Vec<(u64, u64)>> = HashMap::new();
@@ -212,7 +212,8 @@ fn preserve_selected_overlapped_note_ends(
         }
     }
 
-    for change in changes {
+    let mut moved_note_ends = Vec::new();
+    for change in changes.iter_mut() {
         let Some(note) = notes_by_id.get(&change.note_id) else {
             continue;
         };
@@ -229,7 +230,52 @@ fn preserve_selected_overlapped_note_ends(
             continue;
         }
         let original_end = note.data.tick.saturating_add(note.data.duration);
+        let quantized_end = change.after_tick.saturating_add(change.after_duration);
+        moved_note_ends.push((change.note_id, original_end, quantized_end));
         change.after_duration = original_end.saturating_sub(change.after_tick).max(1);
+    }
+
+    for (selected_note_id, original_end, quantized_end) in moved_note_ends {
+        if quantized_end <= original_end {
+            continue;
+        }
+        let Some(selected_note) = notes_by_id.get(&selected_note_id) else {
+            continue;
+        };
+        // REAPER moves the selected raw note-off with its note. When that event
+        // sorts after a later same-key note-on, its note-table readback assigns
+        // the moved end to the unselected neighbor that spans the new end.
+        let recipient = item
+            .notes
+            .iter()
+            .filter(|note| {
+                note.id != selected_note_id
+                    && !selected_note_ids.contains(&note.id)
+                    && note.data.channel == selected_note.data.channel
+                    && note.data.pitch == selected_note.data.pitch
+                    && note.data.tick >= original_end
+                    && note.data.tick < quantized_end
+                    && note.data.tick.saturating_add(note.data.duration) > quantized_end
+            })
+            .max_by_key(|note| note.data.tick);
+        let Some(recipient) = recipient else {
+            continue;
+        };
+        let after_duration = quantized_end.saturating_sub(recipient.data.tick).max(1);
+        if let Some(change) = changes
+            .iter_mut()
+            .find(|change| change.note_id == recipient.id)
+        {
+            change.after_duration = change.after_duration.min(after_duration);
+        } else {
+            changes.push(QuantizedMidiNoteChange {
+                note_id: recipient.id,
+                before_tick: recipient.data.tick,
+                before_duration: recipient.data.duration,
+                after_tick: recipient.data.tick,
+                after_duration,
+            });
+        }
     }
 }
 
@@ -4990,7 +5036,11 @@ impl Project {
                     },
                 )?;
                 if !fix_overlaps
-                    && operation == MidiNoteQuantizeOperation::PositionAndNoteLength
+                    && matches!(
+                        operation,
+                        MidiNoteQuantizeOperation::Position
+                            | MidiNoteQuantizeOperation::PositionAndNoteLength
+                    )
                     && selected_note_ids.len() < item.notes.len()
                 {
                     preserve_selected_overlapped_note_ends(item, &selected_note_ids, &mut changes);
