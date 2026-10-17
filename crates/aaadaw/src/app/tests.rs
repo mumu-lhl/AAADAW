@@ -12,9 +12,10 @@ use super::shortcut;
 use super::{ActiveRecording, SharedRecordingStart};
 use super::{
     App, ItemSnapDirection, MainMenu, MainWorkspace, MenuNavigation, Message, MidiEditorTool,
-    MobilePanel, PathPickerTarget, fx_chain_plugin_drag_event, keyboard_shortcut_event,
-    menu_navigation_event, midi_editor_shortcut_event, midi_expression_context_menu_event,
-    midi_item_swing_snap_target, mobile_back_event, shortcut_message,
+    MidiQuantizeOperation, MidiQuantizeScope, MobilePanel, PathPickerTarget,
+    fx_chain_plugin_drag_event, keyboard_shortcut_event, menu_navigation_event,
+    midi_editor_shortcut_event, midi_expression_context_menu_event, midi_item_swing_snap_target,
+    mobile_back_event, shortcut_message,
 };
 #[cfg(feature = "audio-device")]
 use super::{prepare_project_playback_file, prepare_project_playback_file_with_loop_points};
@@ -12200,6 +12201,130 @@ fn midi_editor_quantize_positions_and_ends_changes_only_selected_notes() {
         ),
         (120, 120)
     );
+}
+
+#[test]
+fn midi_quantize_dialog_commits_selected_notes_with_strength_and_cancel_discards_settings() {
+    let mut app = App::default();
+    let _ = app.update(Message::AddTrack);
+    let track_id = app.project.tracks()[0].id();
+    app.project
+        .apply(DawAction::InsertMidiItem {
+            track_id,
+            start_tick: 0,
+            length_ticks: 3_840,
+        })
+        .expect("test MIDI item should be inserted");
+    let item_id = app.project.midi_items()[0].id();
+    app.project
+        .apply(DawAction::AddMidiNotes {
+            item_id,
+            notes: vec![
+                MidiNoteData {
+                    channel: 0,
+                    pitch: 60,
+                    tick: 170,
+                    duration: 90,
+                    velocity: 96,
+                },
+                MidiNoteData {
+                    channel: 2,
+                    pitch: 64,
+                    tick: 350,
+                    duration: 80,
+                    velocity: 100,
+                },
+            ],
+        })
+        .expect("test notes should be inserted");
+    let selected_id = app.project.midi_items()[0].notes()[0].id();
+    app.midi_editor_selected_notes = HashSet::from([selected_id]);
+
+    let _ = app.update(Message::OpenMidiQuantizeDialog(item_id));
+    let dialog = app
+        .midi_quantize_dialog
+        .expect("quantize dialog should open");
+    assert_eq!(dialog.scope, MidiQuantizeScope::SelectedNotes);
+    assert_eq!(dialog.operation, MidiQuantizeOperation::Position);
+    assert_eq!(dialog.strength_percent, 100);
+    let _ = app.update(Message::CancelMidiQuantize);
+    assert_eq!(app.project.midi_items()[0].notes()[0].tick(), 170);
+
+    let _ = app.update(Message::OpenMidiQuantizeDialog(item_id));
+    let _ = app.update(Message::SetMidiQuantizeStrength(50));
+    let _ = app.update(Message::CommitMidiQuantize);
+    assert!(app.midi_quantize_dialog.is_some());
+    let notes = app.project.midi_items()[0].notes();
+    assert_eq!((notes[0].tick(), notes[0].duration()), (145, 90));
+    assert_eq!(notes[1].tick(), 350);
+
+    let _ = app.update(Message::SetMidiQuantizeOperation(
+        MidiQuantizeOperation::PositionAndNoteEnd,
+    ));
+    let _ = app.update(Message::SetMidiQuantizeStrength(100));
+    let _ = app.update(Message::Escape);
+    assert!(app.midi_quantize_dialog.is_none());
+    assert_eq!(app.project.midi_items()[0].notes()[0].tick(), 145);
+    let _ = app.update(Message::Undo);
+    assert_eq!(app.project.midi_items()[0].notes()[0].tick(), 170);
+}
+
+#[test]
+fn midi_quantize_dialog_applies_all_notes_and_note_ends_as_one_undoable_edit() {
+    let mut app = App::default();
+    let _ = app.update(Message::AddTrack);
+    let track_id = app.project.tracks()[0].id();
+    app.project
+        .apply(DawAction::InsertMidiItem {
+            track_id,
+            start_tick: 0,
+            length_ticks: 3_840,
+        })
+        .expect("test MIDI item should be inserted");
+    let item_id = app.project.midi_items()[0].id();
+    app.project
+        .apply(DawAction::AddMidiNotes {
+            item_id,
+            notes: vec![
+                MidiNoteData {
+                    channel: 0,
+                    pitch: 60,
+                    tick: 100,
+                    duration: 120,
+                    velocity: 96,
+                },
+                MidiNoteData {
+                    channel: 2,
+                    pitch: 64,
+                    tick: 350,
+                    duration: 80,
+                    velocity: 100,
+                },
+            ],
+        })
+        .expect("test notes should be inserted");
+    let selected_id = app.project.midi_items()[0].notes()[0].id();
+    app.midi_editor_selected_notes = HashSet::from([selected_id]);
+
+    let _ = app.update(Message::OpenMidiQuantizeDialog(item_id));
+    let _ = app.update(Message::SetMidiQuantizeScope(MidiQuantizeScope::AllNotes));
+    let _ = app.update(Message::SetMidiQuantizeOperation(
+        MidiQuantizeOperation::PositionAndNoteEnd,
+    ));
+    let _ = app.update(Message::AcceptMidiQuantize);
+
+    assert!(app.midi_quantize_dialog.is_none());
+    let notes = app.project.midi_items()[0].notes();
+    assert_eq!((notes[0].tick(), notes[0].duration()), (120, 120));
+    assert_eq!((notes[1].tick(), notes[1].duration()), (360, 120));
+    let _ = app.update(Message::Undo);
+    let notes = app.project.midi_items()[0].notes();
+    assert_eq!((notes[0].tick(), notes[0].duration()), (100, 120));
+    assert_eq!((notes[1].tick(), notes[1].duration()), (350, 80));
+    let _ = app.update(Message::Redo);
+    let notes = app.project.midi_items()[0].notes();
+    assert_eq!((notes[0].tick(), notes[0].duration()), (120, 120));
+    assert_eq!((notes[1].tick(), notes[1].duration()), (360, 120));
 }
 
 #[test]

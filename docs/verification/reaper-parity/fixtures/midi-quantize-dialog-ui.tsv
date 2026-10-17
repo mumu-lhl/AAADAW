@@ -1,0 +1,20 @@
+reference	Linux REAPER 7.82 / Default 7, MIDI Editor action 40009 (Quantize...)
+reference_dialog	Quantize Events; default Settings=Use grid, scope=Selected notes, operation=Position, Strength=100%; Fix overlaps is checked and Bypass is unchecked
+reference_scope_options	All notes; Selected notes; All events; Selected events
+reference_operation_options	Position; Position and note end; Position and note length; Note end only; Note length only
+reference_dialog_capture	midi-quantize-dialog-reaper-native.png; 1280x800; SHA-256 967cf69734561fa5e169eb6111a1c53dd42804255a32159552ae64d4ba5d3b68
+reference_scope_capture	midi-quantize-scope-menu-reaper-native.png; 1280x800; SHA-256 04177db53c22e9bfafa6c700e019d240f4fe52c6081dda4126ecadf6dc2b9bc1
+reference_operation_capture	midi-quantize-operation-menu-reaper-native.png; 1280x800; SHA-256 471b1c1b0de775c97606511c05be1da2cd02a4d820d5e70d709bb468a93a2466
+reference_strength_behavior	Not probed; REAPER's slider range and default were captured, but no native 50% event result is claimed
+
+aaadaw_run	Linux x86_64; isolated Xvfb :247, 1280x800x24; project midi-note-quantize-aaadaw.aaadaw; built desktop executable Build ID 47fa05819b658ce13bc224f016433d57e2e36c0c; binary SHA-256 91e894d07d07a12530240010e21c02b48be46d0b2f75afa61cbef644913e25b7
+aaadaw_dialog_capture	midi-quantize-dialog-aaadaw.png; 1280x800; SHA-256 4d8b242e5b2905533252be5861d2a2fb3b61eb1e764d8f04127b15144841eb0d
+aaadaw_scope_capture	midi-quantize-scope-menu-aaadaw.png; 1280x800; SHA-256 9e89b7c7dff0098715ac00ae6d63c70ecf1e165616e85e6c22db41a80c0ca079
+aaadaw_operation_capture	midi-quantize-operation-menu-aaadaw.png; 1280x800; SHA-256 ee3a3e6e5eb6bbed7d906e9f69d2545cd9db4bdafb513966817beabae5b28b75
+aaadaw_apply_before_capture	midi-quantize-dialog-all-note-ends-aaadaw.png; 1280x800; SHA-256 21fa6e34e073eb39b5f3c53acd9ac53829bff7b44f5f0a8c03d716e916925852
+aaadaw_apply_capture	midi-quantize-dialog-apply-aaadaw.png; 1280x800; SHA-256 0d96cc81d0b7e81a272b06f2d9bdcada2dc98c36e12fcd502abe4c8c4b1f6a8b
+aaadaw_interaction	Opened Quantize... from the Piano Roll, selected All notes and Position and note end, applied at 100% on 1/32, and observed the editor status update; regression asserts note ticks/durations and Undo/Redo
+aaadaw_dialog_default	Selected notes; Position; 100%; current grid displayed as Use grid · 1/32
+aaadaw_strength_test	App regression sets 50% and verifies a selected note at tick 170 moves to 145 while an unselected note stays at 350
+aaadaw_supported_subset	All notes/Selected notes; Position/Position and note end; 0–100% strength; Commit, OK, Cancel and Escape
+open_gaps	All events/Selected events; Position and note length/Note end only/Note length only; Bypass; Fix overlaps; native strength-result comparison; swing-grid intersection and remembered dialog settings remain open

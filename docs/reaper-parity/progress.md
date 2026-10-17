@@ -2103,3 +2103,11 @@ AAADAW Piano Roll 新增 Quantize 按钮，以当前编辑网格和 100% 力度�
 Linux REAPER 7.82 / Default 7 原厂 probe 调用 MIDI Editor action 40729，确认 1/32 网格下选中音符的起点与结束分别吸附：100–220→120–240、350–430→360–480。短音符 900–970 若两端落在同一网格线，原厂将结束扩至下一格，得到 960–1080；未选音符 550–670 保持不变，通道和 velocity 不变。完整 native event TSV、量化前后工程、ReaScript、AAADAW 工程/源码及两端截图哈希见[起点与结尾量化验证](../verification/reaper-parity/midi-note-quantize-ends.md)。
 
 AAADAW MIDI Editor 工具栏新增 `Q pos+end`，仅处理选中音符；起点、时值一起保存为单个 `MidiNotesQuantized` 事件，单步 Undo/Redo 同时恢复/重做两者。Core 回归比较原厂三组端点并覆盖被选择集合过滤、最小一格音长、音符通道/velocity 和历史；App 回归验证真实消息路径。夜间 Cranelift 桌面实窗截图确认按钮显示于 MIDI Editor 1/32 网格旁，Build ID `b3d8d140ee86c079c427beb934e7d2cd6fa4baf8`。workspace Nextest **1409 tests，74 binaries** 通过，严格 workspace all-target Clippy、格式/差异检查、105 行唯一 ID/15 列 parity matrix 校验及本切片 8 项 SHA-256 检查通过。完整 Quantize dialog/力度设置、Swing 网格交集、事件量化与 Humanize 仍未覆盖；`MIDI-NOTE-QUANTIZE-END-001`、UI-018/UI-019 与 P7 继续为 `in_progress`。
+
+### 2026-10-17 MIDI Editor Quantize Events 对话框（部分覆盖）
+
+Linux REAPER 7.82 / Default 7 action 40009 的实窗截图确认 Quantize Events 默认 `Use grid`、`Selected notes`、`Position`、Strength 100%，并记录 scope 四项和 operation 五项原厂菜单。AAADAW MIDI Editor 新增 `Quantize…` 对话框，按当前网格提供 Selected/All notes、Position/Position and note end、0–100% strength 与 Commit/OK/Cancel/Escape；原有快速 `Q pos`、`Q pos+end` 仍保留。Commit 会提交一个可 Undo 的编辑并留在对话框；OK 提交并关闭；Cancel/Escape 丢弃尚未提交的设置。原厂、AAADAW 默认窗、菜单和真实操作截图及 hash 见[对话框验证资料](../verification/reaper-parity/midi-note-quantize-dialog.md)。
+
+App 回归覆盖原厂默认值、选中范围的 50% 力度插值、Commit、Cancel/Escape、全音符起点/结尾操作及单步 Undo/Redo。真实 AAADAW Xvfb 窗口完成菜单选择和 100% 全音符起止量化。workspace Nextest **1411 tests，74 binaries**（隔离 Xvfb）通过；严格 workspace all-target Clippy (`-D warnings`)、格式检查、差异检查、106 行唯一 ID/15 列 parity matrix 和对话框证据 hash 检查通过。
+
+`MIDI-QUANTIZE-DIALOG-001`、UI-019 与 P7 仍为 `in_progress`：All/Selected events、note length/end-only 操作、Bypass、Fix overlaps、原厂非满力度结果对照、Swing 交集与已记忆对话框设置尚未覆盖。

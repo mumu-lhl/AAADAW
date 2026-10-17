@@ -221,6 +221,46 @@ impl std::fmt::Display for MidiEditorChannelSelection {
 }
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum MidiQuantizeScope {
+    #[default]
+    SelectedNotes,
+    AllNotes,
+}
+
+impl MidiQuantizeScope {
+    pub(crate) const OPTIONS: [Self; 2] = [Self::AllNotes, Self::SelectedNotes];
+}
+
+impl std::fmt::Display for MidiQuantizeScope {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(match self {
+            Self::AllNotes => "All notes",
+            Self::SelectedNotes => "Selected notes",
+        })
+    }
+}
+
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum MidiQuantizeOperation {
+    #[default]
+    Position,
+    PositionAndNoteEnd,
+}
+
+impl MidiQuantizeOperation {
+    pub(crate) const OPTIONS: [Self; 2] = [Self::Position, Self::PositionAndNoteEnd];
+}
+
+impl std::fmt::Display for MidiQuantizeOperation {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(match self {
+            Self::Position => "Position",
+            Self::PositionAndNoteEnd => "Position and note end",
+        })
+    }
+}
+
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum TimeMapTab {
     #[default]
     Tempo,
@@ -534,6 +574,13 @@ pub(crate) enum Message {
     QuantizeMidiItem(ItemId),
     QuantizeSelectedMidiNotes(ItemId),
     QuantizeSelectedMidiNotesAndEnds(ItemId),
+    OpenMidiQuantizeDialog(ItemId),
+    SetMidiQuantizeScope(MidiQuantizeScope),
+    SetMidiQuantizeOperation(MidiQuantizeOperation),
+    SetMidiQuantizeStrength(u8),
+    CommitMidiQuantize,
+    AcceptMidiQuantize,
+    CancelMidiQuantize,
     DeleteTrack(TrackId),
     DeleteByFocus,
     DeleteByFocusNoPrompting,

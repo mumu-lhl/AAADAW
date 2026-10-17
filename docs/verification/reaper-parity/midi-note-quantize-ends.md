@@ -6,6 +6,6 @@ AAADAW adds `Q pos+end` to the MIDI Editor toolbar. It uses the current editor g
 
 The [REAPER Piano Roll capture](fixtures/midi-note-quantize-reaper-native.png) shows the `1/32` editor grid and the final note layout produced by the native action; the action-specific before/after ticks are recorded in the TSV. The [AAADAW live-window capture](fixtures/midi-note-end-quantize-aaadaw.png) shows the new toolbar command beside the existing selected-note quantize command. Its Cranelift desktop binary had ELF Build ID `b3d8d140ee86c079c427beb934e7d2cd6fa4baf8`.
 
-The full Quantize dialog and strength choices, swing-grid intersection, general event quantization, and Humanize remain open. This slice implements REAPER's direct action 40729 only.
+The partial Quantize Events dialog and its remaining scope/operation gaps are documented in [MIDI Editor Quantize Events dialog](midi-note-quantize-dialog.md). Native strength output, swing-grid intersection, general MIDI event quantization, and Humanize remain open. This slice implements REAPER's direct action 40729 only.
 
 Full workspace Nextest passed **1409 tests across 74 binaries**. Strict workspace all-target Clippy (`-D warnings`), formatting, `git diff --check`, the 105-row/15-column unique-ID parity matrix check, and all 8 fixture manifest hashes passed.

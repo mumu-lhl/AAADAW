@@ -1,7 +1,7 @@
 use super::super::{
     App, MIDI_EDITOR_KEY_WIDTH, Message, MidiEditorChannelSelection, MidiEditorLane, MidiEditorTool,
 };
-use super::tokens::{PANEL_PADDING, ROW_GAP, SPACING_LG, SPACING_XS, TOUCH_TARGET_MIN};
+use super::tokens::{PANEL_PADDING, ROW_GAP, SPACING_LG, SPACING_MD, SPACING_XS, TOUCH_TARGET_MIN};
 use crate::timeline::{SnapGrid, TimelineEvent, snap_tick_to_grid};
 use aaadaw_core::{
     ItemId, MidiControllerData, MidiItem, MidiNoteData, MidiPitchBendData, NoteId, Project,
@@ -9,7 +9,8 @@ use aaadaw_core::{
 use iced::advanced::text::{Alignment as TextAlignment, LineHeight, Shaping};
 use iced::widget::canvas::{self, Text};
 use iced::widget::{
-    button, canvas as canvas_widget, checkbox, column, container, pick_list, row, scrollable, text,
+    button, canvas as canvas_widget, checkbox, column, container, mouse_area, pick_list, row,
+    scrollable, slider, stack, text,
 };
 use iced::{
     Color, Element, Event, Font, Length, Pixels, Point, Rectangle, Size, Theme, keyboard, mouse,
@@ -331,7 +332,15 @@ fn view_with_profile(app: &App, touch_targets: bool) -> Element<'_, Message> {
                         .then_some(Message::DuplicateMidiNotes(item_id)),
                 )
                 .padding([SPACING_XS / 2.0, SPACING_XS]),
-            button("Quantize")
+            button("Quantize…")
+                .style(iced::widget::button::secondary)
+                .on_press_maybe(
+                    app.timeline
+                        .midi_editor_has_snap_grid()
+                        .then_some(Message::OpenMidiQuantizeDialog(item_id),)
+                )
+                .padding([SPACING_XS / 2.0, SPACING_XS]),
+            button("Q pos")
                 .style(iced::widget::button::secondary)
                 .on_press_maybe(
                     (!app.midi_editor_selected_notes.is_empty()
@@ -681,7 +690,7 @@ fn view_with_profile(app: &App, touch_targets: bool) -> Element<'_, Message> {
     if let Some(channel_filter_dialog) = channel_filter_dialog {
         content = content.push(channel_filter_dialog);
     }
-    content
+    let content: Element<'_, Message> = content
         .push(gesture_hints)
         .push(lane_toolbar)
         .push(pitch_canvas)
@@ -694,7 +703,102 @@ fn view_with_profile(app: &App, touch_targets: bool) -> Element<'_, Message> {
         })
         .width(Length::Fill)
         .height(Length::Fill)
-        .into()
+        .into();
+    if app.midi_quantize_dialog.is_some() {
+        let dialog = midi_quantize_dialog(app, touch_targets);
+        let backdrop = mouse_area(
+            container(dialog)
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .center(Length::Fill)
+                .style(|_| iced::widget::container::Style {
+                    background: Some(iced::Background::Color(iced::Color::from_rgba8(
+                        0, 0, 0, 0.66,
+                    ))),
+                    ..iced::widget::container::Style::default()
+                }),
+        )
+        .on_press(Message::CancelMidiQuantize);
+        stack![content, backdrop]
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .into()
+    } else {
+        content
+    }
+}
+
+fn midi_quantize_dialog(app: &App, touch_targets: bool) -> Element<'_, Message> {
+    let Some(state) = app.midi_quantize_dialog else {
+        return iced::widget::Space::new().into();
+    };
+    let grid = app.timeline.midi_editor_snap_grid;
+    let scope = pick_list(
+        super::super::MidiQuantizeScope::OPTIONS,
+        Some(state.scope),
+        Message::SetMidiQuantizeScope,
+    )
+    .width(Length::Fixed(136.0));
+    let operation = pick_list(
+        super::super::MidiQuantizeOperation::OPTIONS,
+        Some(state.operation),
+        Message::SetMidiQuantizeOperation,
+    )
+    .width(Length::Fill);
+    let strength = row![
+        text("Strength").width(Length::Fixed(72.0)),
+        slider(0.0..=100.0, f32::from(state.strength_percent), |value| {
+            Message::SetMidiQuantizeStrength(value.round() as u8)
+        })
+        .step(1.0_f32)
+        .width(Length::Fill),
+        text(format!("{}%", state.strength_percent)).width(Length::Fixed(42.0)),
+    ]
+    .spacing(SPACING_XS)
+    .align_y(iced::Alignment::Center);
+    let action_buttons = row![
+        iced::widget::Space::new().width(Length::Fill),
+        button("Commit")
+            .style(iced::widget::button::secondary)
+            .on_press(Message::CommitMidiQuantize),
+        button("OK")
+            .style(iced::widget::button::primary)
+            .on_press(Message::AcceptMidiQuantize),
+        button("Cancel")
+            .style(iced::widget::button::secondary)
+            .on_press(Message::CancelMidiQuantize),
+    ]
+    .spacing(SPACING_XS)
+    .align_y(iced::Alignment::Center);
+    container(
+        column![
+            text("Quantize Events").size(16),
+            row![
+                text("Settings").width(Length::Fixed(72.0)),
+                text(format!("Use grid · {grid}")),
+            ]
+            .spacing(SPACING_XS)
+            .align_y(iced::Alignment::Center),
+            row![
+                text("Quantize").width(Length::Fixed(72.0)),
+                scope,
+                operation,
+            ]
+            .spacing(SPACING_XS)
+            .align_y(iced::Alignment::Center),
+            strength,
+            action_buttons,
+        ]
+        .spacing(if touch_targets {
+            SPACING_MD
+        } else {
+            SPACING_XS
+        }),
+    )
+    .width(Length::Fixed(if touch_targets { 480.0 } else { 448.0 }))
+    .padding(SPACING_MD)
+    .style(container::rounded_box)
+    .into()
 }
 
 fn channel_filter_dialog(app: &App, touch_targets: bool) -> Element<'_, Message> {

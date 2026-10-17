@@ -113,8 +113,8 @@ mod x11_plugin_editor;
 
 pub(crate) use messages::{
     MainMenu, MainWorkspace, MenuNavigation, Message, MidiEditorChannelSelection, MidiEditorLane,
-    MidiEditorTool, MobilePanel, PathPickerTarget, PendingProjectTransition, SettingsCategory,
-    TimeMapTab,
+    MidiEditorTool, MidiQuantizeOperation, MidiQuantizeScope, MobilePanel, PathPickerTarget,
+    PendingProjectTransition, SettingsCategory, TimeMapTab,
 };
 
 #[derive(Clone)]
@@ -469,6 +469,7 @@ struct App {
     midi_editor_item_id: Option<ItemId>,
     midi_editor_feedback: Option<String>,
     midi_editor_selected_notes: HashSet<aaadaw_core::NoteId>,
+    midi_quantize_dialog: Option<MidiQuantizeDialogState>,
     midi_editor_lane: MidiEditorLane,
     midi_editor_tool: MidiEditorTool,
     midi_editor_channel_selection: MidiEditorChannelSelection,
@@ -683,6 +684,14 @@ struct App {
     clap_instrument_helper_targets: HashMap<u64, (TrackId, String)>,
     #[cfg(feature = "audio-device")]
     clap_plugin_warnings: Vec<String>,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct MidiQuantizeDialogState {
+    item_id: ItemId,
+    scope: MidiQuantizeScope,
+    operation: MidiQuantizeOperation,
+    strength_percent: u8,
 }
 
 #[derive(Clone, Debug)]
@@ -1868,7 +1877,78 @@ impl App {
         ])
     }
 
+    fn commit_midi_quantize_dialog(&mut self, close_dialog: bool) {
+        let Some(dialog) = self.midi_quantize_dialog else {
+            return;
+        };
+        if close_dialog {
+            self.midi_quantize_dialog = None;
+        }
+        let Some(item) = self
+            .project
+            .midi_items()
+            .iter()
+            .find(|item| item.id() == dialog.item_id)
+        else {
+            self.midi_quantize_dialog = None;
+            return;
+        };
+        let note_ids: Vec<aaadaw_core::NoteId> = match dialog.scope {
+            MidiQuantizeScope::SelectedNotes => {
+                self.midi_editor_selected_notes.iter().copied().collect()
+            }
+            MidiQuantizeScope::AllNotes => item.notes().iter().map(|note| note.id()).collect(),
+        };
+        if note_ids.is_empty() {
+            return;
+        }
+        let grid = midi_editor_grid_fraction(self.timeline.midi_editor_snap_grid);
+        let strength = f32::from(dialog.strength_percent) / 100.0;
+        let (action, label) = match dialog.operation {
+            MidiQuantizeOperation::Position => (
+                DawAction::QuantizeMidiNotes {
+                    item_id: dialog.item_id,
+                    note_ids,
+                    grid,
+                    strength,
+                },
+                "MIDI notes quantized to editor grid",
+            ),
+            MidiQuantizeOperation::PositionAndNoteEnd => (
+                DawAction::QuantizeMidiNotesAndEnds {
+                    item_id: dialog.item_id,
+                    note_ids,
+                    grid,
+                    strength,
+                },
+                "MIDI note positions and ends quantized to editor grid",
+            ),
+        };
+        self.apply_action(action, label);
+    }
+
     fn update(&mut self, message: Message) -> Task<Message> {
+        if self.midi_quantize_dialog.is_some()
+            && !matches!(
+                &message,
+                Message::CommitMidiQuantize
+                    | Message::AcceptMidiQuantize
+                    | Message::CancelMidiQuantize
+                    | Message::SetMidiQuantizeScope(_)
+                    | Message::SetMidiQuantizeOperation(_)
+                    | Message::SetMidiQuantizeStrength(_)
+                    | Message::Escape
+                    | Message::RuntimeKeyboardEvent(..)
+                    | Message::BackgroundTick
+                    | Message::MeterTick
+                    | Message::WindowResized(..)
+                    | Message::WindowClosed(..)
+                    | Message::WindowCloseRequested(..)
+                    | Message::CloseMidiEditor
+            )
+        {
+            return Task::none();
+        }
         if self.action_input_window_id.is_some()
             && matches!(
                 &message,
@@ -3255,6 +3335,7 @@ impl App {
             Message::OpenMidiEditor(item_id) => task = self.open_midi_editor(item_id),
             Message::CloseMidiEditor => {
                 self.release_midi_preview();
+                self.midi_quantize_dialog = None;
                 if let Some(window_id) = self.midi_editor_window_id.take() {
                     self.midi_editor_item_id = None;
                     self.midi_editor_feedback = None;
@@ -4482,6 +4563,9 @@ impl App {
                 self.transport_details_open = !self.transport_details_open;
             }
             Message::Escape => {
+                if self.midi_quantize_dialog.take().is_some() {
+                    return Task::none();
+                }
                 if self.pending_empty_midi_export.is_some() {
                     self.dismiss_empty_midi_export();
                     return Task::none();
@@ -5174,6 +5258,40 @@ impl App {
                     "Selected MIDI note positions and ends quantized to editor grid",
                 );
             }
+            Message::OpenMidiQuantizeDialog(item_id) => {
+                if self
+                    .project
+                    .midi_items()
+                    .iter()
+                    .any(|item| item.id() == item_id)
+                {
+                    self.midi_editor_filter_dialog_open = false;
+                    self.midi_quantize_dialog = Some(MidiQuantizeDialogState {
+                        item_id,
+                        scope: MidiQuantizeScope::SelectedNotes,
+                        operation: MidiQuantizeOperation::Position,
+                        strength_percent: 100,
+                    });
+                }
+            }
+            Message::SetMidiQuantizeScope(scope) => {
+                if let Some(dialog) = self.midi_quantize_dialog.as_mut() {
+                    dialog.scope = scope;
+                }
+            }
+            Message::SetMidiQuantizeOperation(operation) => {
+                if let Some(dialog) = self.midi_quantize_dialog.as_mut() {
+                    dialog.operation = operation;
+                }
+            }
+            Message::SetMidiQuantizeStrength(strength_percent) => {
+                if let Some(dialog) = self.midi_quantize_dialog.as_mut() {
+                    dialog.strength_percent = strength_percent.min(100);
+                }
+            }
+            Message::CommitMidiQuantize => self.commit_midi_quantize_dialog(false),
+            Message::AcceptMidiQuantize => self.commit_midi_quantize_dialog(true),
+            Message::CancelMidiQuantize => self.midi_quantize_dialog = None,
             Message::DeleteTrack(track_id) => self.delete_track(track_id),
             Message::DeleteByFocus => task = self.delete_by_focus(false),
             Message::DeleteByFocusNoPrompting => task = self.delete_by_focus(true),
