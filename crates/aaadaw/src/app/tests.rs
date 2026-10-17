@@ -7061,12 +7061,12 @@ fn project_templates_open_isolated_working_copies_and_never_overwrite_the_templa
             .all(|entry| !matches!(entry.id, CommandId::OpenProjectTemplate(_)))
     );
     let template_entries = commands::project_template_entries(&app);
-    assert_eq!(template_entries[0].id, CommandId::OpenProjectTemplate(0));
-    assert_eq!(template_entries[0].label, "First Project");
-    assert_eq!(
-        template_entries.last().map(|entry| entry.id),
-        Some(CommandId::SaveProjectAsTemplate)
-    );
+    assert_eq!(template_entries[0].id, CommandId::SaveProjectAsTemplate);
+    assert_eq!(template_entries[1].id, CommandId::ShowProjectTemplatesPath);
+    assert_eq!(template_entries[2].id, CommandId::ProjectTemplateHeader);
+    assert!(!template_entries[2].enabled);
+    assert_eq!(template_entries[3].id, CommandId::OpenProjectTemplate(0));
+    assert_eq!(template_entries[3].label, "First Project");
     assert!(
         commands::for_mobile_menu(&app, MainMenu::File)
             .iter()
@@ -7083,12 +7083,17 @@ fn project_templates_open_isolated_working_copies_and_never_overwrite_the_templa
     let _ = app.update(Message::MenuKeyboard(MenuNavigation::NextCommand));
     assert_eq!(
         app.menu_selected_command,
-        Some(CommandId::OpenProjectTemplate(0))
+        Some(CommandId::SaveProjectAsTemplate)
     );
     let _ = app.update(Message::MenuKeyboard(MenuNavigation::NextCommand));
     assert_eq!(
         app.menu_selected_command,
-        Some(CommandId::SaveProjectAsTemplate)
+        Some(CommandId::ShowProjectTemplatesPath)
+    );
+    let _ = app.update(Message::MenuKeyboard(MenuNavigation::NextCommand));
+    assert_eq!(
+        app.menu_selected_command,
+        Some(CommandId::OpenProjectTemplate(0))
     );
     let _ = app.update(Message::MenuKeyboard(MenuNavigation::PreviousMenu));
     assert!(!app.project_templates_menu_open);
@@ -7158,6 +7163,23 @@ fn project_templates_open_isolated_working_copies_and_never_overwrite_the_templa
     );
     let _ = app.update(Message::PathPicked(PathPickerTarget::SaveProject, Ok(None)));
     assert!(!app.path_picker_busy);
+}
+
+#[test]
+fn empty_project_templates_menu_has_native_disabled_header_and_empty_state() {
+    let app = App::default();
+    let entries = commands::project_template_entries(&app);
+
+    assert_eq!(entries[0].id, CommandId::SaveProjectAsTemplate);
+    assert_eq!(entries[0].label, "Save project as template...");
+    assert_eq!(entries[1].id, CommandId::ShowProjectTemplatesPath);
+    assert_eq!(entries[2].id, CommandId::ProjectTemplateHeader);
+    assert_eq!(entries[2].label, "Load project template:");
+    assert!(entries[2].separator_before);
+    assert!(!entries[2].enabled);
+    assert_eq!(entries[3].id, CommandId::NoProjectTemplates);
+    assert_eq!(entries[3].label, "(no project templates)");
+    assert!(!entries[3].enabled);
 }
 
 #[test]

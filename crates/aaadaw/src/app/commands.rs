@@ -22,6 +22,9 @@ pub(crate) enum CommandId {
     OpenProjectTemplates,
     OpenProjectTemplate(usize),
     SaveProjectAsTemplate,
+    ShowProjectTemplatesPath,
+    ProjectTemplateHeader,
+    NoProjectTemplates,
     OpenRecentProjects,
     OpenRecentProject(usize),
     CloseProject,
@@ -1852,33 +1855,74 @@ pub(super) fn recent_project_entries(app: &App) -> Vec<CommandEntry> {
 }
 
 pub(super) fn project_template_entries(app: &App) -> Vec<CommandEntry> {
-    let mut template_entries = app
-        .project_template_paths
-        .iter()
-        .enumerate()
-        .map(|(index, path)| CommandEntry {
-            id: CommandId::OpenProjectTemplate(index),
-            category: "File",
-            label: path.file_stem().map_or_else(
-                || path.display().to_string(),
-                |name| name.to_string_lossy().into_owned(),
-            ),
-            shortcut: None,
-            enabled: !project_file_busy(app),
-            checked: false,
-            destructive: false,
-            separator_before: false,
-            aliases: vec![path.to_string_lossy().into_owned()],
-        })
-        .collect::<Vec<_>>();
-    if let Some(mut save_template) = entries(app)
+    let mut template_entries = Vec::with_capacity(app.project_template_paths.len() + 3);
+    if let Some(save_template) = entries(app)
         .into_iter()
         .find(|entry| entry.command.id == CommandId::SaveProjectAsTemplate)
         .map(|entry| entry.command)
     {
-        save_template.separator_before = !template_entries.is_empty();
         template_entries.push(save_template);
     }
+    template_entries.push(CommandEntry {
+        id: CommandId::ShowProjectTemplatesPath,
+        category: "File",
+        label: "Show project template path in explorer/finder".to_owned(),
+        shortcut: None,
+        enabled: cfg!(any(
+            target_os = "linux",
+            target_os = "macos",
+            target_os = "windows"
+        )),
+        checked: false,
+        destructive: false,
+        separator_before: false,
+        aliases: vec!["show project template folder".to_owned()],
+    });
+    template_entries.push(CommandEntry {
+        id: CommandId::ProjectTemplateHeader,
+        category: "File",
+        label: "Load project template:".to_owned(),
+        shortcut: None,
+        enabled: false,
+        checked: false,
+        destructive: false,
+        separator_before: true,
+        aliases: Vec::new(),
+    });
+    if app.project_template_paths.is_empty() {
+        template_entries.push(CommandEntry {
+            id: CommandId::NoProjectTemplates,
+            category: "File",
+            label: "(no project templates)".to_owned(),
+            shortcut: None,
+            enabled: false,
+            checked: false,
+            destructive: false,
+            separator_before: false,
+            aliases: Vec::new(),
+        });
+        return template_entries;
+    }
+
+    template_entries.extend(
+        app.project_template_paths
+            .iter()
+            .enumerate()
+            .map(|(index, path)| CommandEntry {
+                id: CommandId::OpenProjectTemplate(index),
+                category: "File",
+                label: path.file_stem().map_or_else(
+                    || path.display().to_string(),
+                    |name| name.to_string_lossy().into_owned(),
+                ),
+                shortcut: None,
+                enabled: !project_file_busy(app),
+                checked: false,
+                destructive: false,
+                separator_before: false,
+                aliases: vec![path.to_string_lossy().into_owned()],
+            }),
+    );
     template_entries
 }
 
@@ -2333,6 +2377,14 @@ pub(super) fn is_enabled(app: &App, command: CommandId) -> bool {
         CommandId::OpenProjectTemplate(index) => {
             index < app.project_template_paths.len() && !project_file_busy(app)
         }
+        CommandId::ShowProjectTemplatesPath => {
+            cfg!(any(
+                target_os = "linux",
+                target_os = "macos",
+                target_os = "windows"
+            ))
+        }
+        CommandId::ProjectTemplateHeader | CommandId::NoProjectTemplates => false,
         CommandId::OpenRecentProject(index) => {
             index < app.recent_project_paths.len() && !project_file_busy(app)
         }
@@ -2684,6 +2736,11 @@ pub(super) fn dispatch(app: &mut App, command: CommandId) -> Task<Message> {
         CommandId::OpenProjectTemplate(_) => {
             unreachable!("project template dispatch returned above")
         }
+        CommandId::ShowProjectTemplatesPath => {
+            show_project_templates_path(app);
+            return Task::none();
+        }
+        CommandId::ProjectTemplateHeader | CommandId::NoProjectTemplates => return Task::none(),
         CommandId::OpenRecentProject(_) => unreachable!("recent project dispatch returned above"),
         CommandId::NewProject => Message::NewProject,
         CommandId::CloseProject => Message::CloseProject,
@@ -2911,6 +2968,52 @@ pub(super) fn dispatch(app: &mut App, command: CommandId) -> Task<Message> {
         CommandId::Macro(_) => unreachable!("macros are dispatched before built-in commands"),
     };
     app.update(message)
+}
+
+fn show_project_templates_path(app: &mut App) {
+    let Some(directory) = super::project_templates::directory() else {
+        app.status = "Could not locate the project template folder".to_owned();
+        return;
+    };
+    if let Err(error) = std::fs::create_dir_all(&directory) {
+        app.status = format!("Could not create project template folder: {error}");
+        return;
+    }
+    match open_directory(&directory) {
+        Ok(()) => app.status = format!("Opened {}", directory.display()),
+        Err(error) => app.status = format!("Could not open {}: {error}", directory.display()),
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn open_directory(path: &std::path::Path) -> std::io::Result<()> {
+    std::process::Command::new("xdg-open")
+        .arg(path)
+        .spawn()
+        .map(|_| ())
+}
+
+#[cfg(target_os = "macos")]
+fn open_directory(path: &std::path::Path) -> std::io::Result<()> {
+    std::process::Command::new("open")
+        .arg(path)
+        .spawn()
+        .map(|_| ())
+}
+
+#[cfg(target_os = "windows")]
+fn open_directory(path: &std::path::Path) -> std::io::Result<()> {
+    std::process::Command::new("explorer")
+        .arg(path)
+        .spawn()
+        .map(|_| ())
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+fn open_directory(_path: &std::path::Path) -> std::io::Result<()> {
+    Err(std::io::Error::other(
+        "opening the project template folder is not supported on this platform",
+    ))
 }
 
 fn command_for_action_id(id: &str) -> Option<CommandId> {
