@@ -6,7 +6,9 @@
 
 实际 REAPER 离线探针：Source 为常量 0.125，Receiver 为常量 0.25，Other 无媒体；Source 主输出开启并分别发送到 Receiver、Other。48 kHz、1 秒、stereo PCM，中间样本：Solo Receiver 左右各 0.375，只开放通往 Receiver 的上游路径；Solo Source 左右各 0.375，开放三条输出路径并抑制接收轨道自身媒体。单输出探针见 [前一切片](ordinary-track-routing.md)。未覆盖硬件录音与第三方插件。
 
-实现稳定 SendId 的多条独立音频发送，包括相同目标、Post-fader / Pre-FX / Pre-fader 三种 Tap、音量、线性声像、静音、反相、主输出独立开关和重定向。Receive 是同一连接的反向视图。Project/DawAction 维护引用、参数和整个 DAG；禁用连接也参与环路检查，禁止删除仍被引用的目标。撤销、批量失败与 Snapshot 分配器恢复均有回归。三种 Tap 的原厂 PCM 测量、schema 20 迁移、GUI 控件和引擎缓冲边界验证见 [Audio Send Taps](audio-send-taps.md)。
+实现稳定 SendId 的多条独立音频发送，包括相同目标、Post-fader / Pre-FX / Pre-fader 三种 Tap、音量、线性声像、静音、反相、主输出独立开关和重定向。Receive 是同一连接的反向视图；每条 Receive 现可直接 Remove 对应发送，撤销与重做只影响该连接。Project/DawAction 维护引用、参数和整个 DAG；禁用连接也参与环路检查，禁止删除仍被引用的目标。撤销、批量失败与 Snapshot 分配器恢复均有回归。三种 Tap 的原厂 PCM 测量、schema 20 迁移、GUI 控件和引擎缓冲边界验证见 [Audio Send Taps](audio-send-taps.md)。
+
+Linux REAPER 7.82 / Default 7 的接收路由窗为每个 Receive 提供独立 Delete；删除 Audio 1 后 Audio 2 保留。原厂探针与[前后截图](fixtures/audio-receives-remove-native.tsv)记录了该交互。AAADAW 的 Receive 行新增 Remove 按钮，实窗工程得到相同的连接删除结果；Routing 窗口聚焦时按 Ctrl+Z 可恢复两条接收。初始、删除后和撤销后的 1280×800 截图及二进制身份见[AAADAW 实窗 fixture](fixtures/audio-receives-remove-aaadaw.tsv)。应用回归覆盖只删除指定 Send、单步 Undo/Redo，以及 Routing 窗口内 Ctrl+Z 的快捷键分发。AAADAW 截图用于状态验证，不代表与 REAPER 的像素对齐；REAPER 对该删除是否进入 Undo 历史仍待探测。
 
 引擎按主输出与所有 Send 拓扑排序。每轨 FX 后的 fader/pan、automation、ramp、meter 只计算一次，再扇出到各路径；回调使用预分配 scratch。Solo 区分上游来源与下游接收，避免无关 Master/Other 路径漏音。冻结单轨时清除隔离快照的外部 Send，并恢复该快照主输出，不改原工程路由。
 

@@ -210,11 +210,23 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
         {
             receive_count += 1;
             let sender_id = sender.id();
+            let send_id = send.id();
             let parameters = send.parameters();
             receives = receives.push(
                 container(
                     column![
-                        button(sender.name()).on_press(Message::OpenTrackRouting(sender_id)),
+                        row![
+                            button(sender.name())
+                                .on_press(Message::OpenTrackRouting(sender_id))
+                                .width(Length::Fill),
+                            button("Remove").on_press(Message::RoutingChange(
+                                DawAction::DeleteAudioSend {
+                                    track_id: sender_id,
+                                    send_id,
+                                },
+                            )),
+                        ]
+                        .spacing(tokens::ROW_GAP),
                         text(format!(
                             "{} · {} dB · Pan {}",
                             Tap(parameters.tap),

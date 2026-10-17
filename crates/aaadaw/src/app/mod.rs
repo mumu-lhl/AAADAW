@@ -4258,6 +4258,16 @@ impl App {
                     ) {
                         return self.close_track_routing();
                     }
+                    if let Some(message) = keyboard_shortcut_event(
+                        event,
+                        status,
+                        window_id,
+                        Some(window_id),
+                        None,
+                        None,
+                    ) {
+                        return self.update(message);
+                    }
                     return Task::none();
                 }
                 if self.action_input_window_id == Some(window_id) {

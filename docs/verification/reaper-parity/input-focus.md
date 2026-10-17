@@ -35,3 +35,5 @@ REAPER 原厂 Filter 有焦点时，↑/↓不会移动结果选择；按 Enter 
 AAADAW 现在在 Filter 未消费键盘事件后以↑/↓选择相邻动作，并在选择离开视口时滚动列表以保持其可见；Home/End 选择首项和末项并滚到相应边界。Filter 仍有焦点时被捕获的方向键不改变选择。`action_list_result_navigation_selects_visible_actions_and_clamps_at_bounds` 覆盖过滤结果、焦点分流、方向移动与边界选择。实窗截图确认输入 `item` 后 Enter 选择首项；End 选中并滚到末项，Home 回到首项，均未运行动作。截图与 SHA-256 见 [AAADAW 方向键 fixture](fixtures/action-list-arrow-aaadaw.tsv)、[方向滚动 fixture](fixtures/action-list-arrow-scroll-aaadaw.tsv)和[边界键 fixture](fixtures/action-list-boundary-aaadaw.tsv)。
 
 原厂长列表滚动和 AAADAW 双向滚动截图见[长列表方向键 fixture](fixtures/action-list-arrow-scroll-native.tsv)与[AAADAW 长列表 fixture](fixtures/action-list-arrow-scroll-aaadaw.tsv)。其它文本字段、AltGr 与非 US 键盘、脚本编辑区、插件窗口、浮动工具、每个 Action Section 对文本焦点的穿透例外尚未逐项验证；INPUT-FOCUS-001 继续 `in_progress`。
+
+Routing 子窗口现将未被控件消费的快捷键交给全局动作分发。Receive 行删除 Send 后，Routing 窗口仍聚焦时 Ctrl+Z 会恢复该连接；应用回归 `undo_shortcut_works_while_the_routing_window_has_focus` 和[实窗 fixture](fixtures/audio-receives-remove-aaadaw.tsv)记录了这一行为。它只验证 AAADAW 的子窗口事件路由；REAPER Routing 窗口对此删除的 Undo 历史行为还没有结论。

@@ -1,0 +1,9 @@
+key	value
+reference	REAPER 7.82/linux-x86_64; Default 7
+configuration	isolated REAPER profile; transport stopped; audio device closed
+probe	scripts/reaper_parity/probe-routing-receive-remove.lua; SHA-256 2e6194b75c820e08d27052e8423ad74c99ff3ac40042356f7a48eb69683a7142; creates Audio 1 and Audio 2 sends to Receiver
+routing_window	Receiver routing window 792x349 with two Receive rows and a Delete button per row
+initial_screenshot	images/audio-receives-remove-native.png; SHA-256 d1726a88c330fdcd39dbb3fa63f215a218671b7aef96b59786a2b041f8fa6b7d
+remove	Clicked Delete on Receive from track 1 "Audio 1"; only Receive from track 2 "Audio 2" remained
+after_delete_screenshot	images/audio-receives-remove-native-after-delete.png; SHA-256 9a177aaaac1b07c79533d51986db5dd32b67c9fadfc4c61fccf12353af8bc028
+scope	Native reference for receive-side deletion affordance and result; does not establish Undo behavior or pixel parity

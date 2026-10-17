@@ -19092,6 +19092,70 @@ fn routing_send_drafts_commit_atomically_and_invalid_values_preserve_project() {
 }
 
 #[test]
+fn receive_list_removal_deletes_only_that_send_and_undo_restores_it() {
+    let mut app = App::default();
+    let _ = app.update(Message::AddTrack);
+    let _ = app.update(Message::AddTrack);
+    let _ = app.update(Message::AddTrack);
+    let first_sender = app.project.tracks()[0].id();
+    let second_sender = app.project.tracks()[1].id();
+    let receiver = app.project.tracks()[2].id();
+    for track_id in [first_sender, second_sender] {
+        let _ = app.update(Message::RoutingChange(DawAction::CreateAudioSend {
+            track_id,
+            destination: receiver,
+            parameters: Default::default(),
+        }));
+    }
+    let first_send = app.project.tracks()[0].sends()[0].id();
+    let before = app.project.snapshot();
+    app.routing_track_id = Some(receiver);
+
+    // This is the action wired to Remove in the receiver's Receive list.
+    let _ = app.update(Message::RoutingChange(DawAction::DeleteAudioSend {
+        track_id: first_sender,
+        send_id: first_send,
+    }));
+    assert!(app.project.tracks()[0].sends().is_empty());
+    assert_eq!(app.project.tracks()[1].sends().len(), 1);
+    assert_eq!(app.project.tracks()[2].id(), receiver);
+    let _ = app.update(Message::Undo);
+    assert_eq!(app.project.snapshot(), before);
+    let _ = app.update(Message::Redo);
+    assert!(app.project.tracks()[0].sends().is_empty());
+    assert_eq!(app.project.tracks()[1].sends().len(), 1);
+}
+
+#[test]
+fn undo_shortcut_works_while_the_routing_window_has_focus() {
+    let mut app = App::default();
+    let _ = app.update(Message::AddTrack);
+    let _ = app.update(Message::AddTrack);
+    let source = app.project.tracks()[0].id();
+    let destination = app.project.tracks()[1].id();
+    let _ = app.update(Message::RoutingChange(DawAction::CreateAudioSend {
+        track_id: source,
+        destination,
+        parameters: Default::default(),
+    }));
+    assert_eq!(app.project.tracks()[0].sends().len(), 1);
+    let window_id = iced::window::Id::unique();
+    app.routing_window_id = Some(window_id);
+
+    let _ = app.update(Message::RuntimeKeyboardEvent(
+        test_input_event(test_shortcut_input(
+            Key::Character("z".into()),
+            Modifiers::CTRL,
+        )),
+        iced::event::Status::Ignored,
+        window_id,
+    ));
+
+    assert!(app.project.tracks()[0].sends().is_empty());
+    assert_eq!(app.project.tracks()[1].id(), destination);
+}
+
+#[test]
 fn touch_track_routing_uses_panel_navigation_and_close_keeps_project() {
     let mut app = App {
         shell_profile: super::ShellProfile::Touch,
