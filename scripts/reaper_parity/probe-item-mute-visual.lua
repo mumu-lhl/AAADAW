@@ -1,0 +1,27 @@
+-- Creates a minimal muted MIDI item for Linux REAPER 7.82 / Default 7 captures.
+local root = assert(os.getenv("AAADAW_REAPER_PROBE_DIR"), "Set AAADAW_REAPER_PROBE_DIR") .. "/"
+assert(reaper.GetAppVersion() == "7.82/linux-x86_64")
+assert(reaper.GetLastColorThemeFile():match("Default_7%.0%.ReaperThemeZip$"))
+assert(reaper.GetPlayStateEx(0) == 0)
+local _, project_path = reaper.EnumProjects(-1, "")
+assert(project_path == "")
+assert(reaper.CountTracks(0) == 0)
+
+reaper.InsertTrackAtIndex(0, true)
+local track = assert(reaper.GetTrack(0, 0))
+reaper.GetSetMediaTrackInfo_String(track, "P_NAME", "Mute probe", true)
+local item = assert(reaper.CreateNewMIDIItemInProj(track, 0, 4, false))
+local take = assert(reaper.GetActiveTake(item))
+assert(reaper.MIDI_InsertNote(take, false, false, 0, 960, 0, 60, 100, false))
+reaper.MIDI_Sort(take)
+reaper.SetMediaItemInfo_Value(item, "B_MUTE", 1)
+reaper.SetMediaItemSelected(item, true)
+reaper.UpdateArrange()
+
+local meta = assert(io.open(root .. "item-mute-native-meta.tsv", "w"))
+meta:write("version\t", reaper.GetAppVersion(), "\n")
+meta:write("theme\t", reaper.GetLastColorThemeFile(), "\n")
+meta:write("fixture\tOne selected C4 MIDI item, 4 quarter notes; item mute enabled\n")
+meta:write("item_muted\t", reaper.GetMediaItemInfo_Value(item, "B_MUTE"), "\n")
+meta:write("transport\t", reaper.GetPlayStateEx(0), "\n")
+meta:close()

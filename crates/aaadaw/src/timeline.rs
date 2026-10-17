@@ -360,6 +360,7 @@ struct TimelineItem {
     end_tick: u64,
     end_tick_subtick: u8,
     kind: ItemKind,
+    muted: bool,
     label: String,
     media_ref: Option<String>,
     midi_notes: Vec<MidiNotePreview>,
@@ -504,6 +505,7 @@ impl TimelineCache {
                 end_tick: end_tick.max(start_tick),
                 end_tick_subtick: 0,
                 kind: ItemKind::Audio,
+                muted: item.is_muted(),
                 label: if item.name().is_empty() {
                     media_label(item.media_ref())
                 } else {
@@ -534,6 +536,7 @@ impl TimelineCache {
                 end_tick: item.start_tick().saturating_add(item.length_ticks()),
                 end_tick_subtick: item.start_position().subtick(),
                 kind: ItemKind::Midi,
+                muted: item.is_muted(),
                 label: item.name().to_owned(),
                 media_ref: None,
                 midi_notes: item
@@ -5922,6 +5925,32 @@ impl canvas::Program<crate::app::Message> for ItemLabelsProgram<'_> {
             if row.base_height < 12.0 {
                 continue;
             }
+            if item.muted {
+                let badge_left = left + 23.0;
+                if badge_left >= 0.0
+                    && badge_left + 13.0 <= right
+                    && badge_left < f64::from(bounds.width)
+                {
+                    let badge_top = row.top + 2.0;
+                    frame.fill_rectangle(
+                        Point::new(badge_left as f32, badge_top),
+                        Size::new(13.0, 14.0),
+                        Color::from_rgb8(77, 25, 33),
+                    );
+                    frame.fill_text(Text {
+                        content: "M".to_owned(),
+                        position: Point::new(badge_left as f32 + 6.5, badge_top + 7.0),
+                        max_width: 13.0,
+                        color: Color::from_rgb8(244, 39, 63),
+                        size: Pixels(10.0),
+                        line_height: LineHeight::Relative(1.0),
+                        font: Font::default(),
+                        align_x: TextAlignment::Center,
+                        align_y: iced::alignment::Vertical::Center,
+                        shaping: Shaping::Basic,
+                    });
+                }
+            }
             if row.base_height >= 43.0 && item.kind == ItemKind::Midi && !item.midi_notes.is_empty()
             {
                 let preview_top = row.top + 34.0;
@@ -7550,6 +7579,60 @@ mod tests {
             item_trim_edge_at_x(&cache, 0, 1_924.8, 0, 1.0),
             Some((item_id, ItemTrimEdge::End))
         );
+    }
+
+    #[test]
+    fn timeline_cache_preserves_audio_and_midi_item_mute_states() {
+        let mut project = Project::new();
+        project
+            .apply(DawAction::CreateTrack {
+                index: 0,
+                name: "Mute states".to_owned(),
+            })
+            .unwrap();
+        let track_id = project.tracks()[0].id();
+        project
+            .apply(DawAction::InsertAudioItem {
+                track_id,
+                media_ref: "asset://muted-audio".to_owned(),
+                start_sample: 0,
+                source_offset_samples: 0,
+                length_samples: 48_000,
+            })
+            .unwrap();
+        project
+            .apply(DawAction::InsertMidiItem {
+                track_id,
+                start_tick: 0,
+                length_ticks: 960,
+            })
+            .unwrap();
+        let audio_id = project.audio_items()[0].id();
+        let midi_id = project.midi_items()[0].id();
+        project
+            .apply(DawAction::SetAudioItemMute {
+                item_id: audio_id,
+                muted: true,
+            })
+            .unwrap();
+        project
+            .apply(DawAction::SetMidiItemMute {
+                item_id: midi_id,
+                muted: true,
+            })
+            .unwrap();
+
+        let mut cache = TimelineCache::default();
+        cache.rebuild(&project, SnapGrid::Quarter);
+
+        assert!(
+            cache
+                .items
+                .iter()
+                .filter(|item| item.id == audio_id || item.id == midi_id)
+                .all(|item| item.muted)
+        );
+        assert_eq!(cache.items.len(), 2);
     }
 
     #[test]
