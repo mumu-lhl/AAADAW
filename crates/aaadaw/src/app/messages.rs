@@ -118,6 +118,8 @@ pub(crate) enum PathPickerTarget {
     AddClapPluginPath,
     ImportShortcutMap,
     ExportShortcutMap,
+    ImportReaperKeyMap,
+    ExportReaperKeyMap,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -428,6 +430,10 @@ pub(crate) enum Message {
     ActionListExportShortcutMap,
     ShortcutMapImported(Result<ShortcutBindings, String>),
     ShortcutMapExported(Result<(), String>),
+    ActionListImportReaperKeyMap,
+    ActionListExportReaperKeyMap,
+    ReaperKeyMapImported(Result<ShortcutBindings, String>),
+    ReaperKeyMapExported(Result<(), String>),
     AddTrack,
     AddBusTrack,
     SetTrackOutput(TrackId, Option<TrackId>),

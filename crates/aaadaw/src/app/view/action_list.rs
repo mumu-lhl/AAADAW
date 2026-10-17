@@ -87,11 +87,17 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
     };
     let options: Element<'_, Message> = if app.action_list.options_open {
         row![
-            button(text("Import key map...").size(12)).on_press_maybe(
+            button(text("Import AAADAW map...").size(12)).on_press_maybe(
                 (!app.path_picker_busy).then_some(Message::ActionListImportShortcutMap),
             ),
-            button(text("Export key map...").size(12)).on_press_maybe(
+            button(text("Export AAADAW map...").size(12)).on_press_maybe(
                 (!app.path_picker_busy).then_some(Message::ActionListExportShortcutMap),
+            ),
+            button(text("Import REAPER Main...").size(12)).on_press_maybe(
+                (!app.path_picker_busy).then_some(Message::ActionListImportReaperKeyMap),
+            ),
+            button(text("Export REAPER Main...").size(12)).on_press_maybe(
+                (!app.path_picker_busy).then_some(Message::ActionListExportReaperKeyMap),
             ),
         ]
         .spacing(4)

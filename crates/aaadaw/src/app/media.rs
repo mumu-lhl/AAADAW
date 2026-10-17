@@ -61,10 +61,21 @@ impl App {
                 .set_mime_type("text/plain")
                 .add_filter("AAADAW shortcut map", &["aaadawkeymap"])
                 .save_data(Vec::<u8>::new(), completion),
+            PathPickerTarget::ExportReaperKeyMap => robius_file_picker::FileDialog::new()
+                .set_title("Export REAPER 7.82 Main key map")
+                .set_file_name("Shortcuts.ReaperKeyMap")
+                .set_mime_type("text/plain")
+                .add_filter("REAPER key map", &["ReaperKeyMap"])
+                .save_data(Vec::<u8>::new(), completion),
             PathPickerTarget::ImportShortcutMap => robius_file_picker::FileDialog::new()
                 .set_title("Import AAADAW shortcut map")
                 .set_mime_type("text/plain")
                 .add_filter("AAADAW shortcut map", &["aaadawkeymap"])
+                .pick_file(completion),
+            PathPickerTarget::ImportReaperKeyMap => robius_file_picker::FileDialog::new()
+                .set_title("Import REAPER 7.82 Main key map")
+                .set_mime_type("text/plain")
+                .add_filter("REAPER key map", &["ReaperKeyMap"])
                 .pick_file(completion),
             PathPickerTarget::ImportAudio
             | PathPickerTarget::ImportAudioToProject
@@ -105,7 +116,8 @@ impl App {
                         | PathPickerTarget::SaveProjectTemplate
                         | PathPickerTarget::ExportWav
                         | PathPickerTarget::ExportMidi
-                        | PathPickerTarget::ExportShortcutMap => {
+                        | PathPickerTarget::ExportShortcutMap
+                        | PathPickerTarget::ExportReaperKeyMap => {
                             crate::android_platform::prepare_saf_save(
                                 file,
                                 matches!(
@@ -202,9 +214,18 @@ impl App {
                         .set_file_name("Shortcuts.aaadawkeymap")
                         .add_filter("AAADAW shortcut map", &["aaadawkeymap"])
                         .save_file(),
+                    PathPickerTarget::ExportReaperKeyMap => rfd::FileDialog::new()
+                        .set_title("Export REAPER 7.82 Main key map")
+                        .set_file_name("Shortcuts.ReaperKeyMap")
+                        .add_filter("REAPER key map", &["ReaperKeyMap"])
+                        .save_file(),
                     PathPickerTarget::ImportShortcutMap => rfd::FileDialog::new()
                         .set_title("Import AAADAW shortcut map")
                         .add_filter("AAADAW shortcut map", &["aaadawkeymap"])
+                        .pick_file(),
+                    PathPickerTarget::ImportReaperKeyMap => rfd::FileDialog::new()
+                        .set_title("Import REAPER 7.82 Main key map")
+                        .add_filter("REAPER key map", &["ReaperKeyMap"])
                         .pick_file(),
                     PathPickerTarget::ImportAudio | PathPickerTarget::ImportAudioToProject => {
                         rfd::FileDialog::new()
@@ -284,6 +305,34 @@ impl App {
                             super::shortcut_map::write(&path, &bindings)
                         }),
                         Message::ShortcutMapExported,
+                    )
+                }
+                PathPickerTarget::ImportReaperKeyMap => {
+                    self.path_picker_busy = true;
+                    Task::perform(
+                        super::run_blocking("aaadaw-reaper-keymap-import", move || {
+                            super::shortcut_map::read_reaper(&path)
+                        }),
+                        Message::ReaperKeyMapImported,
+                    )
+                }
+                PathPickerTarget::ExportReaperKeyMap => {
+                    let path = if path.extension().is_none() {
+                        path.with_extension("ReaperKeyMap")
+                    } else {
+                        path
+                    };
+                    let bindings = self
+                        .shortcut_bindings
+                        .read()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner)
+                        .clone();
+                    self.path_picker_busy = true;
+                    Task::perform(
+                        super::run_blocking("aaadaw-reaper-keymap-export", move || {
+                            super::shortcut_map::write_reaper(&path, &bindings)
+                        }),
+                        Message::ReaperKeyMapExported,
                     )
                 }
                 PathPickerTarget::ImportAudio => {

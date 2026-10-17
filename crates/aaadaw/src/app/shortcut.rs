@@ -593,6 +593,390 @@ impl Shortcut {
             ShortcutKey::Named(Named::Escape) | ShortcutKey::StandardNamed(Named::Escape)
         ) && self.modifiers == Modifiers::NONE
     }
+
+    /// Convert the Main-section keyboard subset used by REAPER's `.ReaperKeyMap` files.
+    /// REAPER writes Windows virtual-key codes and modifier bits even on Linux.
+    pub(super) fn reaper_key_codes(self) -> Result<(u32, Vec<u32>), String> {
+        let mut flags = 1; // REAPER's base KEY flag, present on every exported binding.
+        if self.modifiers.shift() {
+            flags |= 4;
+        }
+        if self.modifiers.contains(Modifiers::CTRL)
+            || (!cfg!(target_os = "macos") && self.modifiers.contains(Modifiers::COMMAND))
+        {
+            flags |= 8;
+        }
+        if self.modifiers.alt() {
+            flags |= 16;
+        }
+        if self.modifiers.contains(Modifiers::LOGO)
+            || (cfg!(target_os = "macos") && self.modifiers.contains(Modifiers::COMMAND))
+        {
+            flags |= 32;
+        }
+
+        let codes = match self.key {
+            ShortcutKey::Character(key) | ShortcutKey::StandardCharacter(key) => {
+                vec![reaper_character_code(key, self.modifiers.shift())?]
+            }
+            ShortcutKey::Named(key) | ShortcutKey::StandardNamed(key) => {
+                vec![reaper_named_key_code(key)?]
+            }
+            ShortcutKey::NumPad(code) => vec![reaper_numpad_key_code(code)?],
+            ShortcutKey::DeleteBackspace => vec![8, 46],
+        };
+        Ok((flags, codes))
+    }
+
+    pub(super) fn from_reaper_key(flags: u32, code: u32) -> Result<Self, String> {
+        const BASE_FLAG: u32 = 1;
+        const SHIFT_FLAG: u32 = 4;
+        const CTRL_FLAG: u32 = 8;
+        const ALT_FLAG: u32 = 16;
+        const LOGO_FLAG: u32 = 32;
+        const SUPPORTED_FLAGS: u32 = BASE_FLAG | SHIFT_FLAG | CTRL_FLAG | ALT_FLAG | LOGO_FLAG;
+        if flags & BASE_FLAG == 0 || flags & !SUPPORTED_FLAGS != 0 {
+            return Err(format!("unsupported REAPER key flags: {flags}"));
+        }
+
+        let mut modifiers = Modifiers::NONE;
+        if flags & SHIFT_FLAG != 0 {
+            modifiers.insert(Modifiers::SHIFT);
+        }
+        if flags & CTRL_FLAG != 0 {
+            modifiers.insert(Modifiers::CTRL);
+        }
+        if flags & ALT_FLAG != 0 {
+            modifiers.insert(Modifiers::ALT);
+        }
+        if flags & LOGO_FLAG != 0 {
+            modifiers.insert(Modifiers::LOGO);
+        }
+
+        let key = reaper_key(code, flags & SHIFT_FLAG != 0)?;
+        Ok(Self { key, modifiers })
+    }
+}
+
+fn reaper_character_code(key: char, shifted: bool) -> Result<u32, String> {
+    if key.is_ascii_alphabetic() {
+        return Ok(key.to_ascii_uppercase() as u32);
+    }
+    if key.is_ascii_digit() {
+        return Ok(key as u32);
+    }
+    let (code, requires_shift) = match key {
+        ' ' => return Ok(32),
+        '-' => (189, false),
+        '_' => (189, true),
+        '=' => (187, false),
+        '+' => (187, true),
+        '[' => (219, false),
+        '{' => (219, true),
+        ']' => (221, false),
+        '}' => (221, true),
+        ';' => (186, false),
+        ':' => (186, true),
+        '\'' => (222, false),
+        '"' => (222, true),
+        ',' => (188, false),
+        '<' => (188, true),
+        '.' => (190, false),
+        '>' => (190, true),
+        '/' => (191, false),
+        '?' => (191, true),
+        '\\' => (220, false),
+        '|' => (220, true),
+        '`' => (192, false),
+        '~' => (192, true),
+        '!' => (49, true),
+        '@' => (50, true),
+        '#' => (51, true),
+        '$' => (52, true),
+        '%' => (53, true),
+        '^' => (54, true),
+        '&' => (55, true),
+        '*' => (56, true),
+        '(' => (57, true),
+        ')' => (48, true),
+        _ => return Err(format!("unsupported REAPER virtual key for {key:?}")),
+    };
+    if shifted != requires_shift {
+        return Err(format!(
+            "REAPER key map cannot preserve {key:?} with this Shift state"
+        ));
+    }
+    Ok(code)
+}
+
+fn reaper_named_key_code(key: Named) -> Result<u32, String> {
+    let code = match key {
+        Named::Backspace => 8,
+        Named::Tab => 9,
+        Named::Enter => 13,
+        Named::Pause => 19,
+        Named::CapsLock => 20,
+        Named::Escape => 27,
+        Named::Space => 32,
+        Named::PageUp => 33,
+        Named::PageDown => 34,
+        Named::End => 35,
+        Named::Home => 36,
+        Named::ArrowLeft => 37,
+        Named::ArrowUp => 38,
+        Named::ArrowRight => 39,
+        Named::ArrowDown => 40,
+        Named::PrintScreen => 44,
+        Named::Insert => 45,
+        Named::Delete => 46,
+        Named::NumLock => 144,
+        Named::ScrollLock => 145,
+        Named::ContextMenu => 93,
+        Named::F1 => 112,
+        Named::F2 => 113,
+        Named::F3 => 114,
+        Named::F4 => 115,
+        Named::F5 => 116,
+        Named::F6 => 117,
+        Named::F7 => 118,
+        Named::F8 => 119,
+        Named::F9 => 120,
+        Named::F10 => 121,
+        Named::F11 => 122,
+        Named::F12 => 123,
+        Named::F13 => 124,
+        Named::F14 => 125,
+        Named::F15 => 126,
+        Named::F16 => 127,
+        Named::F17 => 128,
+        Named::F18 => 129,
+        Named::F19 => 130,
+        Named::F20 => 131,
+        Named::F21 => 132,
+        Named::F22 => 133,
+        Named::F23 => 134,
+        Named::F24 => 135,
+        Named::Clear => 12,
+        _ => return Err(format!("unsupported REAPER named key: {key:?}")),
+    };
+    Ok(code)
+}
+
+fn reaper_numpad_key_code(code: Code) -> Result<u32, String> {
+    let code = match code {
+        Code::Numpad0 => 96,
+        Code::Numpad1 => 97,
+        Code::Numpad2 => 98,
+        Code::Numpad3 => 99,
+        Code::Numpad4 => 100,
+        Code::Numpad5 => 101,
+        Code::Numpad6 => 102,
+        Code::Numpad7 => 103,
+        Code::Numpad8 => 104,
+        Code::Numpad9 => 105,
+        Code::NumpadAdd => 107,
+        Code::NumpadSubtract => 109,
+        Code::NumpadMultiply => 106,
+        Code::NumpadDivide => 111,
+        Code::NumpadDecimal => 110,
+        _ => return Err(format!("unsupported REAPER numeric keypad key: {code:?}")),
+    };
+    Ok(code)
+}
+
+fn reaper_key(code: u32, shifted: bool) -> Result<ShortcutKey, String> {
+    if (65..=90).contains(&code) {
+        return Ok(ShortcutKey::Character(
+            (code as u8 as char).to_ascii_lowercase(),
+        ));
+    }
+    if (48..=57).contains(&code) {
+        let base = code as u8 as char;
+        let key = if shifted {
+            match base {
+                '1' => '!',
+                '2' => '@',
+                '3' => '#',
+                '4' => '$',
+                '5' => '%',
+                '6' => '^',
+                '7' => '&',
+                '8' => '*',
+                '9' => '(',
+                '0' => ')',
+                _ => unreachable!(),
+            }
+        } else {
+            base
+        };
+        return Ok(ShortcutKey::Character(key));
+    }
+    if (96..=105).contains(&code) {
+        return Ok(ShortcutKey::NumPad(match code {
+            96 => Code::Numpad0,
+            97 => Code::Numpad1,
+            98 => Code::Numpad2,
+            99 => Code::Numpad3,
+            100 => Code::Numpad4,
+            101 => Code::Numpad5,
+            102 => Code::Numpad6,
+            103 => Code::Numpad7,
+            104 => Code::Numpad8,
+            105 => Code::Numpad9,
+            _ => unreachable!(),
+        }));
+    }
+    if matches!(code, 106 | 107 | 109 | 110 | 111) {
+        return Ok(ShortcutKey::NumPad(match code {
+            106 => Code::NumpadMultiply,
+            107 => Code::NumpadAdd,
+            109 => Code::NumpadSubtract,
+            110 => Code::NumpadDecimal,
+            111 => Code::NumpadDivide,
+            _ => unreachable!(),
+        }));
+    }
+    if (112..=135).contains(&code) {
+        return Ok(ShortcutKey::Named(match code {
+            112 => Named::F1,
+            113 => Named::F2,
+            114 => Named::F3,
+            115 => Named::F4,
+            116 => Named::F5,
+            117 => Named::F6,
+            118 => Named::F7,
+            119 => Named::F8,
+            120 => Named::F9,
+            121 => Named::F10,
+            122 => Named::F11,
+            123 => Named::F12,
+            124 => Named::F13,
+            125 => Named::F14,
+            126 => Named::F15,
+            127 => Named::F16,
+            128 => Named::F17,
+            129 => Named::F18,
+            130 => Named::F19,
+            131 => Named::F20,
+            132 => Named::F21,
+            133 => Named::F22,
+            134 => Named::F23,
+            135 => Named::F24,
+            _ => unreachable!(),
+        }));
+    }
+    if matches!(
+        code,
+        186 | 187 | 188 | 189 | 190 | 191 | 192 | 219 | 220 | 221 | 222
+    ) {
+        return Ok(ShortcutKey::Character(match code {
+            186 => {
+                if shifted {
+                    ':'
+                } else {
+                    ';'
+                }
+            }
+            187 => {
+                if shifted {
+                    '+'
+                } else {
+                    '='
+                }
+            }
+            188 => {
+                if shifted {
+                    '<'
+                } else {
+                    ','
+                }
+            }
+            189 => {
+                if shifted {
+                    '_'
+                } else {
+                    '-'
+                }
+            }
+            190 => {
+                if shifted {
+                    '>'
+                } else {
+                    '.'
+                }
+            }
+            191 => {
+                if shifted {
+                    '?'
+                } else {
+                    '/'
+                }
+            }
+            192 => {
+                if shifted {
+                    '~'
+                } else {
+                    '`'
+                }
+            }
+            219 => {
+                if shifted {
+                    '{'
+                } else {
+                    '['
+                }
+            }
+            220 => {
+                if shifted {
+                    '|'
+                } else {
+                    '\\'
+                }
+            }
+            221 => {
+                if shifted {
+                    '}'
+                } else {
+                    ']'
+                }
+            }
+            222 => {
+                if shifted {
+                    '"'
+                } else {
+                    '\''
+                }
+            }
+            _ => unreachable!(),
+        }));
+    }
+
+    let named = match code {
+        8 => Named::Backspace,
+        9 => Named::Tab,
+        12 => Named::Clear,
+        13 => Named::Enter,
+        19 => Named::Pause,
+        20 => Named::CapsLock,
+        27 => Named::Escape,
+        32 => Named::Space,
+        33 => Named::PageUp,
+        34 => Named::PageDown,
+        35 => Named::End,
+        36 => Named::Home,
+        37 => Named::ArrowLeft,
+        38 => Named::ArrowUp,
+        39 => Named::ArrowRight,
+        40 => Named::ArrowDown,
+        44 => Named::PrintScreen,
+        45 => Named::Insert,
+        46 => Named::Delete,
+        93 => Named::ContextMenu,
+        144 => Named::NumLock,
+        145 => Named::ScrollLock,
+        _ => return Err(format!("unsupported REAPER virtual-key code: {code}")),
+    };
+    Ok(ShortcutKey::Named(named))
 }
 
 fn modifier_labels(modifiers: Modifiers) -> Vec<String> {
@@ -933,5 +1317,47 @@ mod tests {
         for invalid in ["Ctrl+Ctrl+S", "Ctrl+", "F36", "Hyper+S", "F1;", "F1;;F2"] {
             assert!(parse_bindings(invalid).is_err(), "{invalid}");
         }
+    }
+
+    #[test]
+    fn reaper_virtual_keys_round_trip_main_keyboard_modifiers_and_numpad() {
+        for value in [
+            "F11",
+            "Shift+F11",
+            "Ctrl+F11",
+            "Alt+F11",
+            "Super+F11",
+            "Ctrl+Alt+Shift+F12",
+            "Shift+Plus",
+            "Mod+Z",
+            "NumPad7",
+            "NumPadAdd",
+        ] {
+            let shortcut = Shortcut::parse(value).unwrap().unwrap();
+            let (flags, codes) = shortcut.reaper_key_codes().unwrap();
+            assert_eq!(codes.len(), 1, "{value}");
+            assert_eq!(
+                Shortcut::from_reaper_key(flags, codes[0]).unwrap(),
+                shortcut,
+                "{value}"
+            );
+        }
+        let (flags, codes) = Shortcut::delete_backspace().reaper_key_codes().unwrap();
+        assert_eq!(flags, 1);
+        assert_eq!(codes, [8, 46]);
+    }
+
+    #[test]
+    fn reaper_virtual_key_conversion_rejects_unsupported_scope_bits_and_layout_keys() {
+        for (flags, code) in [(0, 90), (3, 90), (64 | 1, 90), (1, 255)] {
+            assert!(Shortcut::from_reaper_key(flags, code).is_err());
+        }
+        assert!(
+            Shortcut::parse("F35")
+                .unwrap()
+                .unwrap()
+                .reaper_key_codes()
+                .is_err()
+        );
     }
 }

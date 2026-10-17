@@ -303,10 +303,29 @@ impl App {
         self.import_shortcut_map_with(imported, keyboard_config::save);
     }
 
+    pub(super) fn import_reaper_key_map(&mut self, imported: commands::ShortcutBindings) {
+        self.import_shortcut_map_with_labels(
+            imported,
+            keyboard_config::save,
+            "REAPER 7.82 Main key map",
+            "REAPER 7.82 Main key map",
+        );
+    }
+
     fn import_shortcut_map_with(
         &mut self,
         imported: commands::ShortcutBindings,
         persist: impl FnOnce(&commands::ShortcutBindings) -> Result<(), String>,
+    ) -> bool {
+        self.import_shortcut_map_with_labels(imported, persist, "shortcuts", "Shortcut map")
+    }
+
+    fn import_shortcut_map_with_labels(
+        &mut self,
+        imported: commands::ShortcutBindings,
+        persist: impl FnOnce(&commands::ShortcutBindings) -> Result<(), String>,
+        success_label: &str,
+        failure_label: &str,
     ) -> bool {
         let action_count = imported.len();
         let result = commands::validate_bindings_with_macros(&imported, &self.action_macros)
@@ -320,13 +339,13 @@ impl App {
                 self.shortcut_binding_edits = bindings;
                 self.shortcut_defaults_restored.clear();
                 self.shortcut_capture_id = None;
-                let message = format!("Imported shortcuts for {action_count} actions");
+                let message = format!("Imported {success_label} for {action_count} actions");
                 self.action_list.feedback = message.clone();
                 self.status = message;
                 true
             }
             Err(error) => {
-                let message = format!("Shortcut map was not imported: {error}");
+                let message = format!("{failure_label} was not imported: {error}");
                 self.action_list.feedback = message.clone();
                 self.status = message;
                 false

@@ -1,9 +1,45 @@
 use super::{commands::ShortcutBindings, config_paths::write_atomic, keyboard_config, shortcut};
+use std::collections::HashMap;
 use std::io::Read;
 use std::path::Path;
 
 const HEADER: &str = "AAADAW_SHORTCUT_MAP\t1";
 const MAX_FILE_BYTES: u64 = 1024 * 1024;
+
+/// Linux REAPER 7.82 Main-section actions with an exact AAADAW action counterpart.
+/// Other REAPER actions are rejected instead of being silently discarded.
+const REAPER_ACTIONS: &[(&str, u32, &str)] = &[
+    ("file.quit", 40004, "File: Quit REAPER"),
+    ("item.delete-selected", 40006, "Item: Remove items"),
+    (
+        "item.split-at-cursor",
+        40012,
+        "Item: Split items at edit or play cursor (select right)",
+    ),
+    (
+        "item.copy-loop-selected-area",
+        40014,
+        "Item: Copy loop of selected area of audio items",
+    ),
+    ("audio.export-wav", 40015, "File: Render project to disk..."),
+    ("file.settings", 40016, "Options: Preferences..."),
+    ("file.project-settings", 40021, "File: Project settings..."),
+    ("file.save-project-as", 40022, "File: Save project as..."),
+    ("file.new-project", 40023, "File: New project"),
+    ("file.open-project", 40025, "File: Open project"),
+    ("file.save-project", 40026, "File: Save project"),
+    ("edit.undo", 40029, "Edit: Undo"),
+    ("edit.redo", 40030, "Edit: Redo"),
+    ("transport.play-stop", 40044, "Transport: Play/stop"),
+    (
+        "item.split-at-selection",
+        40061,
+        "Item: Split items at time selection or razor edit",
+    ),
+    ("transport.toggle-playback", 40073, "Transport: Play/pause"),
+    ("view.toggle-mixer", 40078, "View: Toggle mixer visible"),
+    ("transport.toggle-repeat", 1068, "Transport: Toggle repeat"),
+];
 
 pub(super) fn read(path: &Path) -> Result<ShortcutBindings, String> {
     let metadata = std::fs::metadata(path).map_err(|error| error.to_string())?;
@@ -27,9 +63,57 @@ pub(super) fn write(path: &Path, bindings: &ShortcutBindings) -> Result<(), Stri
     write_to(path, bindings, active_config_path.as_deref())
 }
 
+pub(super) fn read_reaper(path: &Path) -> Result<ShortcutBindings, String> {
+    let contents = read_bounded(path)?;
+    parse_reaper(&contents)
+}
+
+pub(super) fn write_reaper(path: &Path, bindings: &ShortcutBindings) -> Result<(), String> {
+    let active_config_path = keyboard_config::config_path();
+    write_reaper_to(path, bindings, active_config_path.as_deref())
+}
+
+fn write_reaper_to(
+    path: &Path,
+    bindings: &ShortcutBindings,
+    active_config_path: Option<&Path>,
+) -> Result<(), String> {
+    let contents = serialize_reaper(bindings)?;
+    write_contents(path, &contents, active_config_path)
+}
+
+fn read_bounded(path: &Path) -> Result<String, String> {
+    let metadata = std::fs::metadata(path).map_err(|error| error.to_string())?;
+    if !metadata.is_file() {
+        return Err("shortcut map must be a regular file".to_owned());
+    }
+    if metadata.len() > MAX_FILE_BYTES {
+        return Err("shortcut map exceeds the 1 MiB size limit".to_owned());
+    }
+    let mut contents = String::new();
+    std::fs::File::open(path)
+        .map_err(|error| error.to_string())?
+        .take(MAX_FILE_BYTES + 1)
+        .read_to_string(&mut contents)
+        .map_err(|error| error.to_string())?;
+    if contents.len() > MAX_FILE_BYTES as usize {
+        return Err("shortcut map exceeds the 1 MiB size limit".to_owned());
+    }
+    Ok(contents)
+}
+
 fn write_to(
     path: &Path,
     bindings: &ShortcutBindings,
+    active_config_path: Option<&Path>,
+) -> Result<(), String> {
+    let contents = serialize(bindings);
+    write_contents(path, &contents, active_config_path)
+}
+
+fn write_contents(
+    path: &Path,
+    contents: &str,
     active_config_path: Option<&Path>,
 ) -> Result<(), String> {
     if let Some(config_path) = active_config_path
@@ -37,7 +121,6 @@ fn write_to(
     {
         return Err("cannot export a key map over AAADAW's active shortcut settings".to_owned());
     }
-    let contents = serialize(bindings);
     write_atomic(path, contents.as_bytes()).map_err(|error| error.to_string())
 }
 
@@ -105,6 +188,102 @@ fn serialize(bindings: &ShortcutBindings) -> String {
     output
 }
 
+fn parse_reaper(contents: &str) -> Result<ShortcutBindings, String> {
+    if contents.len() > MAX_FILE_BYTES as usize {
+        return Err("shortcut map exceeds the 1 MiB size limit".to_owned());
+    }
+    let mut shortcuts = HashMap::<String, Vec<shortcut::Shortcut>>::new();
+    for (index, line) in contents.lines().enumerate() {
+        let line_number = index + 1;
+        let record = line.split('#').next().unwrap_or_default().trim();
+        if record.is_empty() {
+            continue;
+        }
+        let mut fields = record.split_whitespace();
+        if fields.next() != Some("KEY") {
+            return Err(format!(
+                "unsupported REAPER key map record on line {line_number}"
+            ));
+        }
+        let values = fields.collect::<Vec<_>>();
+        if values.len() != 4 {
+            return Err(format!("invalid REAPER KEY record on line {line_number}"));
+        }
+        let parse_number = |value: &str, field: &str| {
+            value
+                .parse::<u32>()
+                .map_err(|_| format!("invalid REAPER {field} on key map line {line_number}"))
+        };
+        let flags = parse_number(values[0], "modifier flags")?;
+        let key_code = parse_number(values[1], "virtual-key code")?;
+        let action_id = parse_number(values[2], "action ID")?;
+        let section_id = parse_number(values[3], "section ID")?;
+        if section_id != 0 {
+            return Err(format!(
+                "REAPER section {section_id} is not supported (only Main section 0 is supported)"
+            ));
+        }
+        let Some((action, _, _)) = REAPER_ACTIONS
+            .iter()
+            .find(|(_, native_id, _)| *native_id == action_id)
+        else {
+            return Err(format!(
+                "REAPER action ID {action_id} has no AAADAW action mapping"
+            ));
+        };
+        let binding = shortcut::Shortcut::from_reaper_key(flags, key_code)
+            .map_err(|error| format!("invalid REAPER key map line {line_number}: {error}"))?;
+        let entries = shortcuts.entry((*action).to_owned()).or_default();
+        if entries.contains(&binding) {
+            return Err(format!(
+                "duplicate REAPER shortcut on key map line {line_number}"
+            ));
+        }
+        entries.push(binding);
+    }
+    Ok(shortcuts
+        .into_iter()
+        .map(|(action, bindings)| (action, shortcut::serialize_bindings(&bindings)))
+        .collect())
+}
+
+fn serialize_reaper(bindings: &ShortcutBindings) -> Result<String, String> {
+    let mut entries = bindings.iter().collect::<Vec<_>>();
+    entries.sort_unstable_by_key(|(id, _)| (*id).clone());
+    let mut output = String::new();
+    for (id, value) in entries {
+        let Some((_, action_id, action_name)) =
+            REAPER_ACTIONS.iter().find(|(action, _, _)| action == id)
+        else {
+            return Err(format!(
+                "AAADAW action {id} has no REAPER 7.82 Main-section mapping"
+            ));
+        };
+        let bindings = shortcut::parse_bindings(value)
+            .map_err(|error| format!("invalid shortcut for {id}: {error}"))?;
+        if bindings.is_empty() {
+            return Err(format!(
+                "REAPER key maps cannot express cleared shortcuts for {id}"
+            ));
+        }
+        for binding in bindings {
+            let (flags, key_codes) = binding
+                .reaper_key_codes()
+                .map_err(|error| format!("cannot export {id}: {error}"))?;
+            let label = binding
+                .config_label()
+                .replace("Mod+", "Ctrl+")
+                .replace("Super+", "Logo+");
+            for key_code in key_codes {
+                output.push_str(&format!(
+                    "KEY {flags} {key_code} {action_id} 0\t\t # Main : {label} : {action_name}\n"
+                ));
+            }
+        }
+    }
+    Ok(output)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -137,6 +316,84 @@ mod tests {
                 "accepted malformed map {contents:?}"
             );
         }
+    }
+
+    #[test]
+    fn reaper_782_key_records_round_trip_observed_main_section_modifiers() {
+        let contents = concat!(
+            "KEY 29 123 40029 0\t\t # Main : Ctrl+Alt+Shift+F12 : Edit: Undo\n",
+            "KEY 17 122 40029 0\t\t # Main : Alt+F11 : Edit: Undo\n",
+            "KEY 5 122 40029 0\t\t # Main : Shift+F11 : Edit: Undo\n",
+            "KEY 9 122 40029 0\t\t # Main : Ctrl+F11 : Edit: Undo\n",
+            "KEY 33 122 40029 0\t\t # Main : Logo+F11 : Edit: Undo\n",
+        );
+        let bindings = parse_reaper(contents).unwrap();
+        assert_eq!(
+            bindings["edit.undo"],
+            "Mod+Alt+Shift+F12; Alt+F11; Shift+F11; Mod+F11; Super+F11"
+        );
+        assert_eq!(serialize_reaper(&bindings).unwrap(), contents);
+    }
+
+    #[test]
+    fn reaper_key_map_rejects_sections_actions_directives_and_unknown_flags() {
+        for contents in [
+            "KEY 9 90 40029 32060\n",
+            "KEY 9 90 999999 0\n",
+            "KEY 2 90 40029 0\n",
+            "SCR 4 0 RS1abc \"Custom action\" action.lua\n",
+            "KEY 9 90 40029\n",
+        ] {
+            assert!(
+                parse_reaper(contents).is_err(),
+                "accepted unsupported REAPER map {contents:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn reaper_export_refuses_unmapped_actions_cleared_keys_and_unrepresentable_keys() {
+        assert!(
+            serialize_reaper(&ShortcutBindings::from([(
+                "unmapped.action".to_owned(),
+                "Mod+Z".to_owned()
+            )]))
+            .is_err()
+        );
+        assert!(
+            serialize_reaper(&ShortcutBindings::from([(
+                "edit.undo".to_owned(),
+                String::new()
+            )]))
+            .is_err()
+        );
+        assert!(
+            serialize_reaper(&ShortcutBindings::from([(
+                "edit.undo".to_owned(),
+                "F35".to_owned()
+            )]))
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn reaper_export_refuses_to_replace_active_shortcut_config() {
+        let parent = std::env::temp_dir().join(format!(
+            "aaadaw-reaper-keymap-active-config-{}-{}",
+            std::process::id(),
+            std::thread::current().name().unwrap_or("test")
+        ));
+        std::fs::create_dir_all(&parent).unwrap();
+        let active_config = parent.join("shortcuts.conf");
+        std::fs::write(&active_config, b"active shortcut settings").unwrap();
+        let bindings = ShortcutBindings::from([("edit.undo".to_owned(), "Mod+Z".to_owned())]);
+
+        assert!(write_reaper_to(&active_config, &bindings, Some(&active_config)).is_err());
+        assert_eq!(
+            std::fs::read(&active_config).unwrap(),
+            b"active shortcut settings"
+        );
+        let _ = std::fs::remove_dir_all(parent);
     }
 
     #[test]

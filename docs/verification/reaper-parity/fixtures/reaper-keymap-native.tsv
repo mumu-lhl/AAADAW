@@ -1,0 +1,19 @@
+field	value
+reference_app	REAPER 7.82/linux-x86_64 rev 338578 (2026-10-04; About window title)
+reference_binary	target/reaper_linux_x86_64/REAPER/reaper
+reference_binary_sha256	9976f5608068b7a58518969001b00b527fb0de6ed7459e0e5dda6f29878ee254
+reference_profile	isolated -cfgfile target/reaper-action-options-probe/config/REAPER/reaper.ini; no third-party extensions or custom themes
+native_export_action	Actions > Key map... > Export shortcuts/custom actions for this section only... (Section Main)
+native_export_records	KEY flags vk action_id section_id; sample fixture retains native KEY rows for action 40029/Edit: Undo; SCR records from the full export are excluded from this KEY-only fixture
+modifier_flags	base=1; Shift=4; Ctrl=8; Alt=16; Logo=32
+virtual_key_samples	Z=90; F11=122; F12=123
+native_export_file	reaper-keymap-main-export-native.ReaperKeyMap
+native_export_file_sha256	6aedd58cfec72130d762fdf251eaa77139528ee82fd040ac75930fb08ed19187
+aaadaw_serialized_import_row	KEY 17 122 40029 0 # Main : Alt+F11 : Edit: Undo
+aaadaw_import_fixture	reaper-keymap-main-import-aaadaw.ReaperKeyMap; exact serializer output syntax covered by reaper_782_key_records_round_trip_observed_main_section_modifiers
+aaadaw_import_fixture_sha256	05b3757424393042babcd79192986b9f1dbb0a5a039d93f08536205dc94ff7f9
+native_import_path	copy fixture into profile REAPER/KeyMaps, Actions > Key map... > Import shortcuts/custom actions, import all sections...
+native_import_observed	Main Action List filtered to Undo showed Ctrl+Z, Alt+F11 after import; original Ctrl+Z factory binding remained
+native_import_screenshot	reaper-keymap-main-import-native.png; 701x475; sha256=275ca57fc3aa623f6f74f32cc7c1121123be1564224ef41b5e46ea107072eb04
+native_menu_screenshot	reaper-keymap-native-menu.png; 1280x800; sha256=0a39833fe50b262269fdcc398dc0d003c420cadaa30dea7adb1b8513d367bb65
+semantic_boundary	verified Main-section keyboard subset only; unknown action IDs, other Section IDs, action_id=0 layout rows, SCR/custom actions, MIDI/OSC, Scope and non-round-trippable keys are rejected

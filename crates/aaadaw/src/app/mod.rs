@@ -1825,6 +1825,8 @@ impl App {
                     | Message::ActionListOptionsToggled
                     | Message::ActionListImportShortcutMap
                     | Message::ActionListExportShortcutMap
+                    | Message::ActionListImportReaperKeyMap
+                    | Message::ActionListExportReaperKeyMap
                     | Message::OpenActionMacroEditor
             )
         {
@@ -2045,8 +2047,12 @@ impl App {
                     | Message::ActionListOptionsToggled
                     | Message::ActionListImportShortcutMap
                     | Message::ActionListExportShortcutMap
+                    | Message::ActionListImportReaperKeyMap
+                    | Message::ActionListExportReaperKeyMap
                     | Message::ShortcutMapImported(_)
                     | Message::ShortcutMapExported(_)
+                    | Message::ReaperKeyMapImported(_)
+                    | Message::ReaperKeyMapExported(_)
                     | Message::OpenSettings
                     | Message::OpenAbout
                     | Message::CloseAbout
@@ -2204,10 +2210,16 @@ impl App {
                     | Message::RescanClapPlugins
                     | Message::ClapPluginsScanned(_)
                     | Message::PickPath(
-                        PathPickerTarget::ImportShortcutMap | PathPickerTarget::ExportShortcutMap
+                        PathPickerTarget::ImportShortcutMap
+                            | PathPickerTarget::ExportShortcutMap
+                            | PathPickerTarget::ImportReaperKeyMap
+                            | PathPickerTarget::ExportReaperKeyMap
                     )
                     | Message::PathPicked(
-                        PathPickerTarget::ImportShortcutMap | PathPickerTarget::ExportShortcutMap,
+                        PathPickerTarget::ImportShortcutMap
+                            | PathPickerTarget::ExportShortcutMap
+                            | PathPickerTarget::ImportReaperKeyMap
+                            | PathPickerTarget::ExportReaperKeyMap,
                         _,
                     )
                     | Message::PickPath(PathPickerTarget::AddClapPluginPath)
@@ -5353,6 +5365,14 @@ impl App {
                 self.action_list.options_open = false;
                 task = self.pick_path(PathPickerTarget::ExportShortcutMap);
             }
+            Message::ActionListImportReaperKeyMap => {
+                self.action_list.options_open = false;
+                task = self.pick_path(PathPickerTarget::ImportReaperKeyMap);
+            }
+            Message::ActionListExportReaperKeyMap => {
+                self.action_list.options_open = false;
+                task = self.pick_path(PathPickerTarget::ExportReaperKeyMap);
+            }
             Message::ShortcutMapImported(result) => match result {
                 Ok(bindings) => {
                     self.path_picker_busy = false;
@@ -5374,6 +5394,31 @@ impl App {
                 Err(error) => {
                     self.path_picker_busy = false;
                     let message = format!("Shortcut map could not be exported: {error}");
+                    self.action_list.feedback = message.clone();
+                    self.status = message;
+                }
+            },
+            Message::ReaperKeyMapImported(result) => match result {
+                Ok(bindings) => {
+                    self.path_picker_busy = false;
+                    self.import_reaper_key_map(bindings);
+                }
+                Err(error) => {
+                    self.path_picker_busy = false;
+                    let message = format!("REAPER key map was not imported: {error}");
+                    self.action_list.feedback = message.clone();
+                    self.status = message;
+                }
+            },
+            Message::ReaperKeyMapExported(result) => match result {
+                Ok(()) => {
+                    self.path_picker_busy = false;
+                    self.status = "REAPER key map exported".to_owned();
+                    self.action_list.feedback = self.status.clone();
+                }
+                Err(error) => {
+                    self.path_picker_busy = false;
+                    let message = format!("REAPER key map could not be exported: {error}");
                     self.action_list.feedback = message.clone();
                     self.status = message;
                 }
