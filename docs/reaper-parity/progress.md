@@ -1880,3 +1880,9 @@ AAADAW 主测试目标 678/678 passed；`cargo clippy --locked -p aaadaw -p aaad
 Copy loop clipboard 保留 Take rate。原厂探针的 1.25x 示例在 AAADAW 回归中验证：3–7 秒时间选区仍粘贴为 4 秒，但源区段位置和长度按 1.25x 映射为 3.75–8.75 秒；Paste、Undo、Redo 保留速率。媒体端到端回归以 1 kHz WAV 验证 1.25x feeder 输出约 1.25 kHz。最新 Cranelift 二进制在 Linux Xvfb 中实际打开 Audio Item Properties，窗口显示加载的 1.25 Take rate；[截图、窗口大小和精确二进制 hashes](../verification/reaper-parity/fixtures/audio-take-rate-properties-aaadaw.tsv)。Apply/Undo/Redo 与音频输出活动时拒绝速率修改另由 App 回归验证。属性窗从 526×500 调整为 526×526，截图确认 Apply 按钮完整可见。这张图只验 AAADAW 界面，不是 REAPER 原厂对照。
 
 Cranelift 1.101 workspace Nextest 全量 1306/1306、0 skipped 通过，X11 测试运行于 Xvfb :335；Stable 五 crate audio-device all-target Clippy `-D warnings`、fmt 和 diff 检查通过。两个 parity 条目保持 `in_progress`：重采样以整数 Hz 表示有效输入采样率，任意小数播放率存在轻微量化；Preserve pitch 模式、原厂速率范围、完整媒体边界组合和 UI 原厂窗口对照仍未覆盖。还没有新增 REAPER 原厂截图，也没有把属性窗口或 Copy loop 目标标记为完成。
+
+### 2026-10-17 Action List 快捷键：Named key 往返
+
+扩展 Action List 快捷键捕获与配置解析，支持 iced 0.14 暴露的全部 295 个非修饰 `Named` 键：F1–F35、导航与编辑键、浏览器/媒体/音量、启动和输入法键等。Alt、AltGraph、Control、Fn、FnLock、Shift、Symbol、SymbolLock、Meta、Hyper、Super 仍作为修饰键处理，不能单独成为组合主键。逐键回归以 Ctrl+Alt+Shift+Super 验证实际捕获、精确匹配、标签序列化和配置解析；同时把原 `F25` 负例更新为 `F36`。
+
+Cranelift 1.101 AAADAW binary tests 694/694 passed；新增逐键测试 1/1 passed；Stable `cargo clippy -p aaadaw --bin aaadaw --all-targets -- -D warnings`、fmt 和 diff 检查通过。Xvfb 实窗中从 Actions 为 Edit: Undo 打开 Keyboard input 并输入 F35，窗口显示录入草稿；[截图 fixture](../verification/reaper-parity/fixtures/action-list-named-key-aaadaw.tsv) 记录窗口大小、Build ID、二进制和截图哈希。这只证明 AAADAW 捕获可用，不是 REAPER 对照；本轮未新增原厂探针。REAPER Special keys 对话框、Scope、MIDI/OSC、Action Section 和重复绑定完整优先级仍未对齐，`INPUT-BIND-001` 继续 `in_progress`。

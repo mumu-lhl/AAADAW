@@ -39,3 +39,7 @@ Openbox/X11 可优先截获某些组合；本次 Ctrl+Alt+F12 未到达捕获框
 ## 剩余差距
 
 参照目录见 [LNX-782-ACTIONS-001](linux-7.82/README.md)。数字键盘位置、物理键/键盘布局语义、左右 Modifier、全部 Action Sections、单独移除某个绑定、原厂冲突确认行为、完整 Action List 和默认动作映射仍待实现/实测。现有跨动作冲突拒绝策略尚未宣称与 REAPER 一致。矩阵保持 `in_progress`，不计入通过率。
+
+## 2026-10-17 iced Named key coverage
+
+Shortcut capture and config parsing now round-trip all 295 non-modifier `iced 0.14` `Named` keys, including F1–F35, browser, audio/media, launch, and input-method key identities. Modifier-only key values remain modifiers and cannot be selected as a shortcut's primary key. The regression iterates every supported name through capture, exact event matching, display/config serialization, and parsing; it also rejects each modifier-only name. An Xvfb Action List capture shows F35 in the live Keyboard input draft; its window sizes, Build ID, binary and screenshot hashes are in [the AAADAW fixture](fixtures/action-list-named-key-aaadaw.tsv) and [screenshot](fixtures/action-list-named-key-aaadaw.png). This is not a REAPER comparison and does not add REAPER's Special keys picker, Scope, MIDI/OSC capture, cross-section precedence, or an `INPUT-BIND-001` completion claim.

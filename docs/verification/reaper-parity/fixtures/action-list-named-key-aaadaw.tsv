@@ -1,0 +1,8 @@
+field	value
+date	2026-10-17
+binary	target/cranelift/debug/aaadaw; Build ID 1f9abf9487e4087720a69a8ce5876b4f3a085c06; SHA-256 a7ed042d2701e8fcae301adfb6efbda688115da79e1f0b0dbd792bd8dafc54a6
+desktop	Linux X11; Xvfb :792; 1280x800; no window manager; WGPU_BACKEND=gl; isolated XDG profile; audio-device feature disabled
+interaction	Opened Actions with ?, filtered to Edit: Undo, clicked Add, pressed F35 in Keyboard input; the capture draft displayed F35 before confirmation
+windows	Actions 701x475; Keyboard input 387x229
+screenshot	action-list-named-key-aaadaw.png; 1280x800; SHA-256 53228939e4ffbfd8dfee32ef95de89643995ebc481213e2df32126a824290c02
+comparison	AAADAW live UI capture only; this is not a native REAPER comparison

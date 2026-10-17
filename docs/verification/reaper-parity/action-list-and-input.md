@@ -188,3 +188,7 @@ Add 现在打开 387×229 的 Keyboard input 窗口，默认键入仅更新草�
 ![确认保存](images/action-input-saved.png)
 
 窗口只实现键盘基础输入；特殊键入口、Enter 本身的特殊录入方式、Scope、MIDI/OSC、自动关闭选项和原厂完整布局仍缺。重复分配优先级不能由单次实测推断，继续保持未完成。
+
+## 2026-10-17 Named shortcut keys
+
+Keyboard shortcut capture now accepts all 295 non-modifier `Named` keys exposed by iced 0.14, and their names survive config serialization and reload. This includes F25–F35 and browser/media key identities in addition to the previously supported function, navigation, and numeric-keypad keys. The pure shortcut regression checks every accepted `Named` value with Ctrl+Alt+Shift+Super. The live Action List/Keyboard input capture of F35 is recorded in [the AAADAW fixture](fixtures/action-list-named-key-aaadaw.tsv) and [screenshot](fixtures/action-list-named-key-aaadaw.png); it verifies input capture only and is not a native comparison. The REAPER Special keys chooser, Scope, MIDI/OSC input, default-action and cross-section priority rules remain open; no new native probe was run.
