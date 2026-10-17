@@ -1921,6 +1921,12 @@ Extended the isolated Linux REAPER 7.82 / Default 7 probe to load a 25 fps non-d
 
 Added `reaper_782_type_one_25fps_nonzero_smpte_offset_matches_native_bytes`. Stable `aaadaw-core` Nextest passed 160/160; strict all-target Core Clippy with `-D warnings`, rustfmt, and `git -c core.whitespace=cr-at-eol diff --check` passed (the native RPP fixture retains REAPER's CRLF line endings). `FILE-MIDI-EXPORT-001` remains `in_progress`: 23.976/29.97 fps, drop-frame offsets, remaining option combinations, and full dialog alignment still need native comparison.
 
+### 2026-10-17 MIDI export: 23.976 fps SMPTE offset byte parity
+
+In Linux REAPER 7.82 / Default 7, Project Settings > Video was set to the native 23.976 preset and Project Settings shows a 10.5-second start offset. After reopening the saved project, REAPER's API reports 23.976023976024 fps, non-drop, and exactly 10.500000000 seconds. The Type 1 / PPQN 960 export with `Embed SMPTE offset` checked contains `FF 54 05 00 00 0A 0B 00` (00:00:10:11); AAADAW now matches the complete 110-byte native file. The checked export dialog, project, MIDI, both Project Settings pages, binary identity and hashes are recorded in the [23.976 fps fixture](../verification/reaper-parity/fixtures/menu-export-midi-native-smpte-23976-nonzero-offset.tsv).
+
+Extended the reusable SMPTE-rate probe to accept 23.976, 24, and 25 fps; a second isolated REAPER run generated the 23.976 project and verified the saved RPP/API readback. Added `reaper_782_type_one_23976fps_nonzero_smpte_offset_matches_native_bytes`. Full `aaadaw-core` Nextest passed 161/161, strict all-target Core Clippy with `-D warnings`, and rustfmt check passed. `FILE-MIDI-EXPORT-001` remains `in_progress`: 29.97 fps/drop-frame offsets, other export combinations, and full dialog alignment still need native comparison.
+
 ### 2026-10-17 Action List shortcut-map import/export
 
 AAADAW Action List `Options` now opens import/export entries for a versioned `AAADAW_SHORTCUT_MAP` file. The portable file contains stable AAADAW action IDs and canonical shortcut alternatives, preserving explicit empty overrides; importing replaces only the user override layer and returns omitted actions to factory bindings. Import validates version, size, rows, shortcut syntax, IDs, and macro conflicts before one atomic write, so invalid maps or save failures leave active shortcuts intact. Export uses atomic replacement and refuses to overwrite the application’s active `shortcuts.conf`.
