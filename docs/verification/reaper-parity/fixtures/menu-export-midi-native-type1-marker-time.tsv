@@ -1,0 +1,19 @@
+version	7.82/linux-x86_64
+theme	Default_7.0.ReaperThemeZip
+export_action	40849 / File: Export project MIDI...
+export_scope	All MIDI items; Time selection only; Type 1 / Multitrack MIDI file; PPQN 960
+project_endpoint	fixtures/menu-export-midi-native-scope-markers-time.rpp; SHA-256 6697a8b4203ab4cf075f1dd1743ea00351a5a8e93a425128c85e3e9daa01bcdf; selection 0.5-1.0 sec, ticks 960-1920
+project_interior	fixtures/menu-export-midi-native-type0-marker-time-interior.rpp; SHA-256 37ecfff1ec04956393888b240ed63fc21d93f857090a5e08266afc3020125a3e; selection 0.5-1.25 sec, ticks 960-2400
+project_fixture	Piano MIDI item 0.25-1.25 seconds; C4 note, CC1, pitch bend; #Intro visible at 0 sec; Verse visible at 0.5 sec; #Hidden individually hidden at 1 sec (flags 24); project marker ruler hidden (RULERLANECFG 4)
+export_markers	checked; marker mode; name filter off
+export_hidden_markers	checked
+native_endpoint_file	fixtures/menu-export-midi-native-type1-marker-time-endpoint.mid; 145 bytes; destination track name marker-type1-endpoint-hidden-on; SHA-256 61b4f93fa4341459e319ec4c08e5e9b1e2901fced6d14d77507a8a224f0e51dd
+native_endpoint_events	Conductor: #Intro at tick 0, 4/4 and 120 BPM at tick 0, Verse at tick 0, #Hidden at inclusive endpoint tick 960, End-of-Track tick 960; Piano: pitch bend, CC1, and clipped C4 Note On at tick 0 in that order, Note Off and End-of-Track tick 480
+native_endpoint_dialog	fixtures/menu-export-midi-native-type1-marker-time-endpoint-dialog.png; 1280x800; Type 1, hidden markers checked; SHA-256 7a48be1df93684d8662d794597f7564d0bdc0a0b1459a62abdf314ba29439d83
+native_endpoint_result	fixtures/menu-export-midi-native-type1-marker-time-endpoint-result.png; REAPER confirms output path; 1280x800; SHA-256 2357264b60d732bd79d483488ba4c60fb27d97ee5845a4cbd0cbb32ad45dfb61
+native_interior_file	fixtures/menu-export-midi-native-type1-marker-time-interior.mid; 145 bytes; destination track name marker-type1-interior-hidden-on; SHA-256 9b24722e4a2730b02917a7cfd521ba9ad3744233733bf0f28219d05b27da0520
+native_interior_events	Same event ticks/order as the endpoint output; #Intro remains at tick 0 although it precedes the range; #Hidden remains at tick 960 inside the extended range
+native_interior_dialog	fixtures/menu-export-midi-native-type1-marker-time-interior-dialog.png; 1280x800; Type 1, hidden markers checked; SHA-256 b53d1ff1c4aa3bc04c14fc671647af16fc07aa3a919277e7d4a61393f2708c63
+native_interior_result	fixtures/menu-export-midi-native-type1-marker-time-interior-result.png; REAPER confirms output path; 1280x800; SHA-256 dab2115b8a1a05a80a0d7df747aaf24a8f742b2eaedeaf3d886adf5486af6169
+observation	Type 1 time-selection exports clamp markers before the range to tick 0, preserve their project ordering relative to base time-signature/tempo events, include both endpoints, and include individually hidden markers when Export hidden markers is checked.
+core_regressions	crates/aaadaw-core/tests/midi_file_export.rs::reaper_782_type_one_time_selection_includes_pre_range_markers_and_hidden_endpoint; ::reaper_782_type_one_time_selection_includes_pre_range_and_interior_hidden_markers

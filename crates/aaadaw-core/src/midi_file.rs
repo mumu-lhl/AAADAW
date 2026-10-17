@@ -83,8 +83,8 @@ pub struct MidiExportOptions {
     pub export_markers: bool,
     pub marker_type: MidiMarkerType,
     pub only_markers_starting_with_hash: bool,
-    /// Include individually or ruler-hidden markers in Type 1 exports.
-    /// REAPER 7.82 ignores this option for Type 0 exports.
+    /// Include individually or ruler-hidden markers in Type 1 and time-scoped Type 0 exports.
+    /// REAPER 7.82's entire-project Type 0 path still omits individually hidden markers.
     pub export_hidden_markers: bool,
 }
 
@@ -338,7 +338,15 @@ pub fn encode_standard_midi_with_selection(
                 for project_position in item.project_positions_at_content_tick(controller.tick) {
                     let project_tick =
                         project_midi_item_event_tick(project, item, project_position)?;
-                    let Some(project_tick) = time_selection_tick(project_tick, time_selection)
+                    let order = if time_selection
+                        .is_some_and(|(selection_start, _)| project_tick < selection_start)
+                    {
+                        2
+                    } else {
+                        1
+                    };
+                    let Some(project_tick) =
+                        time_selection_state_event_tick(project_tick, time_selection)
                     else {
                         continue;
                     };
@@ -346,7 +354,7 @@ pub fn encode_standard_midi_with_selection(
                     let tick = scale_tick_position(project_tick, project_ppq, options.ppq)?;
                     events_by_track[track_index].push(Event {
                         tick,
-                        order: 1,
+                        order,
                         bytes: vec![0xb0, controller.controller, controller.value],
                     });
                 }
@@ -367,7 +375,15 @@ pub fn encode_standard_midi_with_selection(
                     })?;
                     let project_tick =
                         project_midi_item_event_tick(project, item, project_position)?;
-                    let Some(project_tick) = time_selection_tick(project_tick, time_selection)
+                    let order = if time_selection
+                        .is_some_and(|(selection_start, _)| project_tick < selection_start)
+                    {
+                        2
+                    } else {
+                        1
+                    };
+                    let Some(project_tick) =
+                        time_selection_state_event_tick(project_tick, time_selection)
                     else {
                         continue;
                     };
@@ -375,7 +391,7 @@ pub fn encode_standard_midi_with_selection(
                     let tick = scale_tick_position(project_tick, project_ppq, options.ppq)?;
                     events_by_track[track_index].push(Event {
                         tick,
-                        order: 1,
+                        order,
                         bytes: vec![0xb0, controller.controller, controller.value],
                     });
                 }
@@ -387,7 +403,8 @@ pub fn encode_standard_midi_with_selection(
                 for project_position in item.project_positions_at_content_tick(bend.tick) {
                     let project_tick =
                         project_midi_item_event_tick(project, item, project_position)?;
-                    let Some(project_tick) = time_selection_tick(project_tick, time_selection)
+                    let Some(project_tick) =
+                        time_selection_state_event_tick(project_tick, time_selection)
                     else {
                         continue;
                     };
@@ -418,7 +435,8 @@ pub fn encode_standard_midi_with_selection(
                         })?;
                     let project_tick =
                         project_midi_item_event_tick(project, item, project_position)?;
-                    let Some(project_tick) = time_selection_tick(project_tick, time_selection)
+                    let Some(project_tick) =
+                        time_selection_state_event_tick(project_tick, time_selection)
                     else {
                         continue;
                     };
@@ -604,9 +622,14 @@ fn push_midi_note_events_in_time_selection(
         project_ppq,
         export_ppq,
     )?;
+    let order = if project_start_tick < selection_start {
+        3
+    } else {
+        2
+    };
     events.push(Event {
         tick: start_tick,
-        order: 2,
+        order,
         bytes: vec![0x90, note.pitch(), note.velocity()],
     });
     if project_end_tick < selection_end {
@@ -628,12 +651,21 @@ fn push_midi_note_events_in_time_selection(
     }
 }
 
-fn time_selection_tick(project_tick: f64, time_selection: Option<(f64, f64)>) -> Option<f64> {
+// REAPER carries controller and pitch-bend state from an overlapping item into tick zero.
+fn time_selection_state_event_tick(
+    project_tick: f64,
+    time_selection: Option<(f64, f64)>,
+) -> Option<f64> {
     let Some((selection_start, selection_end)) = time_selection else {
         return Some(project_tick);
     };
-    (project_tick >= selection_start && project_tick < selection_end)
-        .then_some(project_tick - selection_start)
+    if project_tick < selection_start {
+        Some(0.0)
+    } else if project_tick < selection_end {
+        Some(project_tick - selection_start)
+    } else {
+        None
+    }
 }
 
 fn time_selection_output_tick(
@@ -652,6 +684,23 @@ fn time_selection_output_tick(
     } else {
         None
     }
+}
+
+fn marker_time_selection_output_tick(
+    project_tick: u64,
+    time_selection: Option<(f64, f64)>,
+    include_pre_selection_markers: bool,
+) -> Option<u64> {
+    let Some((selection_start, selection_end)) = time_selection else {
+        return Some(project_tick);
+    };
+    let project_tick_f64 = project_tick as f64;
+    if project_tick_f64 < selection_start {
+        return include_pre_selection_markers.then_some(0);
+    }
+    // REAPER includes markers at both time-selection boundaries; MIDI item events remain half-open.
+    (project_tick_f64 >= selection_start && project_tick_f64 <= selection_end)
+        .then_some((project_tick_f64 - selection_start) as u64)
 }
 
 /// REAPER replaces each non-ASCII character in exported track names with `_`.
@@ -876,11 +925,11 @@ fn conductor_events(
             MidiMarkerType::Markers => 0x06,
             MidiMarkerType::Cues => 0x07,
         };
-        // REAPER 7.82 Type 0 includes markers hidden by the project ruler when
-        // requested, but ignores the same option for individually hidden markers.
+        // REAPER 7.82's entire-project Type 0 path ignores individual marker visibility,
+        // while its time-selection path includes individually hidden markers when requested.
         let include_ruler_hidden_markers = options.export_hidden_markers;
-        let include_individually_hidden_markers =
-            options.export_hidden_markers && options.file_type == MidiFileType::Type1;
+        let include_individually_hidden_markers = options.export_hidden_markers
+            && (options.file_type == MidiFileType::Type1 || time_selection.is_some());
         for marker in project.markers() {
             let hidden_by_ruler = !project.show_project_markers();
             let individually_hidden = !marker.is_visible();
@@ -893,14 +942,26 @@ fn conductor_events(
             if options.only_markers_starting_with_hash && !marker.name().starts_with('#') {
                 continue;
             }
-            let Some(tick) =
-                time_selection_output_tick(marker.position_ticks(), time_selection, false)
-            else {
+            let marker_position = marker.position_ticks();
+            let Some(tick) = marker_time_selection_output_tick(
+                marker_position,
+                time_selection,
+                options.file_type == MidiFileType::Type1,
+            ) else {
                 continue;
             };
+            let precedes_time_selection = time_selection
+                .is_some_and(|(selection_start, _)| (marker_position as f64) < selection_start);
             events.push(Event {
                 tick: scale_tick(tick, project_ppq, options.ppq)?,
-                order: ramp_tempo_order + 1,
+                order: match (
+                    options.file_type,
+                    time_selection.is_some(),
+                    precedes_time_selection,
+                ) {
+                    (MidiFileType::Type0, true, _) | (MidiFileType::Type1, true, true) => 0,
+                    _ => ramp_tempo_order + 1,
+                },
                 bytes: meta_event(marker_kind, marker.name().as_bytes())?,
             });
         }

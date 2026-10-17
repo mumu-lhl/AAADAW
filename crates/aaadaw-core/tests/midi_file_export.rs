@@ -1520,6 +1520,158 @@ fn reaper_782_type_zero_hidden_marker_opt_in_matches_native_bytes() {
 }
 
 #[test]
+fn reaper_782_type_zero_time_selection_hidden_marker_opt_in_matches_native_bytes() {
+    let project = native_midi_marker_ruler_and_individually_hidden_fixture_project();
+    let options = MidiExportOptions {
+        file_type: MidiFileType::Type0,
+        time_scope: MidiExportTimeScope::TimeSelectionOnly,
+        export_markers: true,
+        export_hidden_markers: true,
+        ..MidiExportOptions::for_project(&project)
+    };
+    let selection = MidiExportSelection {
+        time_selection_ticks: Some((960, 1920)),
+        ..MidiExportSelection::default()
+    };
+    let actual = encode_standard_midi_with_selection(
+        &project,
+        options,
+        "type0-marker-time-selection",
+        &selection,
+    )
+    .unwrap();
+    let native = include_bytes!(
+        "../../../docs/verification/reaper-parity/fixtures/menu-export-midi-native-type0-marker-time.mid"
+    );
+
+    assert_eq!(
+        actual, native,
+        "Type 0 time-selection export includes an individually hidden marker at the range end"
+    );
+}
+
+#[test]
+fn reaper_782_type_zero_time_selection_hidden_marker_inside_range_matches_native_bytes() {
+    let project = native_midi_marker_ruler_and_individually_hidden_fixture_project();
+    let options = MidiExportOptions {
+        file_type: MidiFileType::Type0,
+        time_scope: MidiExportTimeScope::TimeSelectionOnly,
+        export_markers: true,
+        export_hidden_markers: true,
+        ..MidiExportOptions::for_project(&project)
+    };
+    let selection = MidiExportSelection {
+        time_selection_ticks: Some((960, 2400)),
+        ..MidiExportSelection::default()
+    };
+    let actual = encode_standard_midi_with_selection(
+        &project,
+        options,
+        "type0-marker-time-selection-interior",
+        &selection,
+    )
+    .unwrap();
+    let native = include_bytes!(
+        "../../../docs/verification/reaper-parity/fixtures/menu-export-midi-native-type0-marker-time.mid"
+    );
+
+    assert_eq!(
+        actual, native,
+        "Type 0 time-selection export includes an individually hidden marker inside the range"
+    );
+}
+
+#[test]
+fn reaper_782_type_zero_time_selection_hidden_ruler_checkbox_off_matches_native_bytes() {
+    let project = native_midi_marker_ruler_and_individually_hidden_fixture_project();
+    let options = MidiExportOptions {
+        file_type: MidiFileType::Type0,
+        time_scope: MidiExportTimeScope::TimeSelectionOnly,
+        export_markers: true,
+        ..MidiExportOptions::for_project(&project)
+    };
+    let selection = MidiExportSelection {
+        time_selection_ticks: Some((960, 1920)),
+        ..MidiExportSelection::default()
+    };
+    let actual = encode_standard_midi_with_selection(
+        &project,
+        options,
+        "type0-marker-time-selection-hidden-off",
+        &selection,
+    )
+    .unwrap();
+    let native = include_bytes!(
+        "../../../docs/verification/reaper-parity/fixtures/menu-export-midi-native-type0-marker-time-nohidden.mid"
+    );
+
+    assert_eq!(
+        actual, native,
+        "Type 0 time-selection export excludes markers when the hidden-marker option is off"
+    );
+}
+
+#[test]
+fn reaper_782_type_one_time_selection_includes_pre_range_markers_and_hidden_endpoint() {
+    let project = native_midi_marker_ruler_and_individually_hidden_fixture_project();
+    let options = MidiExportOptions {
+        time_scope: MidiExportTimeScope::TimeSelectionOnly,
+        export_markers: true,
+        export_hidden_markers: true,
+        ..MidiExportOptions::for_project(&project)
+    };
+    let selection = MidiExportSelection {
+        time_selection_ticks: Some((960, 1920)),
+        ..MidiExportSelection::default()
+    };
+    let actual = encode_standard_midi_with_selection(
+        &project,
+        options,
+        "marker-type1-endpoint-hidden-on",
+        &selection,
+    )
+    .unwrap();
+    let native = include_bytes!(
+        "../../../docs/verification/reaper-parity/fixtures/menu-export-midi-native-type1-marker-time-endpoint.mid"
+    );
+
+    assert_eq!(
+        actual, native,
+        "Type 1 time-selection export rebases pre-range markers and includes the hidden endpoint"
+    );
+}
+
+#[test]
+fn reaper_782_type_one_time_selection_includes_pre_range_and_interior_hidden_markers() {
+    let project = native_midi_marker_ruler_and_individually_hidden_fixture_project();
+    let options = MidiExportOptions {
+        time_scope: MidiExportTimeScope::TimeSelectionOnly,
+        export_markers: true,
+        export_hidden_markers: true,
+        ..MidiExportOptions::for_project(&project)
+    };
+    let selection = MidiExportSelection {
+        time_selection_ticks: Some((960, 2400)),
+        ..MidiExportSelection::default()
+    };
+    let actual = encode_standard_midi_with_selection(
+        &project,
+        options,
+        "marker-type1-interior-hidden-on",
+        &selection,
+    )
+    .unwrap();
+    let native = include_bytes!(
+        "../../../docs/verification/reaper-parity/fixtures/menu-export-midi-native-type1-marker-time-interior.mid"
+    );
+
+    assert_eq!(
+        actual, native,
+        "Type 1 time-selection export preserves pre-range markers and includes hidden markers inside the range"
+    );
+}
+
+#[test]
 fn reaper_782_type_zero_hidden_cue_is_excluded_by_default() {
     let project = native_midi_marker_filter_fixture_project();
     let options = MidiExportOptions {
