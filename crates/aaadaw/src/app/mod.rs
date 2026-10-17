@@ -1904,27 +1904,38 @@ impl App {
         }
         let grid = midi_editor_grid_fraction(self.timeline.midi_editor_snap_grid);
         let strength = f32::from(dialog.strength_percent) / 100.0;
-        let (action, label) = match dialog.operation {
+        let (operation, label) = match dialog.operation {
             MidiQuantizeOperation::Position => (
-                DawAction::QuantizeMidiNotes {
-                    item_id: dialog.item_id,
-                    note_ids,
-                    grid,
-                    strength,
-                },
+                aaadaw_core::MidiNoteQuantizeOperation::Position,
                 "MIDI notes quantized to editor grid",
             ),
             MidiQuantizeOperation::PositionAndNoteEnd => (
-                DawAction::QuantizeMidiNotesAndEnds {
-                    item_id: dialog.item_id,
-                    note_ids,
-                    grid,
-                    strength,
-                },
+                aaadaw_core::MidiNoteQuantizeOperation::PositionAndNoteEnd,
                 "MIDI note positions and ends quantized to editor grid",
             ),
+            MidiQuantizeOperation::PositionAndNoteLength => (
+                aaadaw_core::MidiNoteQuantizeOperation::PositionAndNoteLength,
+                "MIDI note positions and lengths quantized to editor grid",
+            ),
+            MidiQuantizeOperation::NoteEndOnly => (
+                aaadaw_core::MidiNoteQuantizeOperation::NoteEndOnly,
+                "MIDI note ends quantized to editor grid",
+            ),
+            MidiQuantizeOperation::NoteLengthOnly => (
+                aaadaw_core::MidiNoteQuantizeOperation::NoteLengthOnly,
+                "MIDI note lengths quantized to editor grid",
+            ),
         };
-        self.apply_action(action, label);
+        self.apply_action(
+            DawAction::QuantizeMidiNotesWithOperation {
+                item_id: dialog.item_id,
+                note_ids,
+                grid,
+                strength,
+                operation,
+            },
+            label,
+        );
     }
 
     fn update(&mut self, message: Message) -> Task<Message> {

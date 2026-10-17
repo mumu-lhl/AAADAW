@@ -245,10 +245,19 @@ pub(crate) enum MidiQuantizeOperation {
     #[default]
     Position,
     PositionAndNoteEnd,
+    PositionAndNoteLength,
+    NoteEndOnly,
+    NoteLengthOnly,
 }
 
 impl MidiQuantizeOperation {
-    pub(crate) const OPTIONS: [Self; 2] = [Self::Position, Self::PositionAndNoteEnd];
+    pub(crate) const OPTIONS: [Self; 5] = [
+        Self::Position,
+        Self::PositionAndNoteEnd,
+        Self::PositionAndNoteLength,
+        Self::NoteEndOnly,
+        Self::NoteLengthOnly,
+    ];
 }
 
 impl std::fmt::Display for MidiQuantizeOperation {
@@ -256,6 +265,9 @@ impl std::fmt::Display for MidiQuantizeOperation {
         formatter.write_str(match self {
             Self::Position => "Position",
             Self::PositionAndNoteEnd => "Position and note end",
+            Self::PositionAndNoteLength => "Position and note length",
+            Self::NoteEndOnly => "Note end only",
+            Self::NoteLengthOnly => "Note length only",
         })
     }
 }

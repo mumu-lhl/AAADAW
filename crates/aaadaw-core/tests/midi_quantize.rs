@@ -1,4 +1,4 @@
-use aaadaw_core::{DawAction, GridFraction, MidiNoteData, Project};
+use aaadaw_core::{DawAction, GridFraction, MidiNoteData, MidiNoteQuantizeOperation, Project};
 
 #[test]
 fn midi_quantize_moves_note_starts_to_the_grid_and_is_undoable() {
@@ -246,4 +246,122 @@ fn midi_quantize_selected_positions_and_ends_match_reaper_and_are_undoable() {
     let notes = project.midi_items()[0].notes();
     assert_eq!((notes[1].tick(), notes[1].duration()), (360, 120));
     assert_eq!((notes[3].tick(), notes[3].duration()), (960, 120));
+}
+
+#[test]
+fn midi_quantize_dialog_operations_match_reaper_ticks_and_round_trip_history() {
+    let grid = GridFraction::new(1, 32).expect("1/32 is a valid grid");
+    let cases = [
+        (
+            MidiNoteQuantizeOperation::Position,
+            [(120, 180), (360, 80), (550, 120), (960, 70)],
+        ),
+        (
+            MidiNoteQuantizeOperation::PositionAndNoteEnd,
+            [(120, 120), (360, 120), (550, 120), (960, 120)],
+        ),
+        (
+            MidiNoteQuantizeOperation::PositionAndNoteLength,
+            [(120, 240), (360, 120), (550, 120), (960, 120)],
+        ),
+        (
+            MidiNoteQuantizeOperation::NoteEndOnly,
+            [(100, 140), (350, 130), (550, 120), (900, 60)],
+        ),
+        (
+            MidiNoteQuantizeOperation::NoteLengthOnly,
+            [(100, 240), (350, 120), (550, 120), (900, 120)],
+        ),
+    ];
+
+    for (operation, expected) in cases {
+        let mut project = Project::new();
+        project
+            .apply(DawAction::CreateTrack {
+                index: 0,
+                name: "Piano".to_owned(),
+            })
+            .expect("test track should be created");
+        let track_id = project.tracks()[0].id();
+        project
+            .apply(DawAction::InsertMidiItem {
+                track_id,
+                start_tick: 0,
+                length_ticks: 4_000,
+            })
+            .expect("test MIDI item should be inserted");
+        let item_id = project.midi_items()[0].id();
+        project
+            .apply(DawAction::AddMidiNotes {
+                item_id,
+                notes: vec![
+                    MidiNoteData {
+                        channel: 0,
+                        pitch: 60,
+                        tick: 100,
+                        duration: 180,
+                        velocity: 96,
+                    },
+                    MidiNoteData {
+                        channel: 2,
+                        pitch: 62,
+                        tick: 350,
+                        duration: 80,
+                        velocity: 80,
+                    },
+                    MidiNoteData {
+                        channel: 1,
+                        pitch: 67,
+                        tick: 550,
+                        duration: 120,
+                        velocity: 72,
+                    },
+                    MidiNoteData {
+                        channel: 15,
+                        pitch: 64,
+                        tick: 900,
+                        duration: 70,
+                        velocity: 110,
+                    },
+                ],
+            })
+            .expect("test notes should be inserted");
+        let notes = project.midi_items()[0].notes();
+        let note_ids = [notes[0].id(), notes[1].id(), notes[3].id()];
+        let original = notes
+            .iter()
+            .map(|note| (note.tick(), note.duration()))
+            .collect::<Vec<_>>();
+
+        project
+            .apply(DawAction::QuantizeMidiNotesWithOperation {
+                item_id,
+                note_ids: note_ids.to_vec(),
+                grid,
+                strength: 1.0,
+                operation,
+            })
+            .expect("dialog operation should quantize selected notes");
+        let actual = project.midi_items()[0]
+            .notes()
+            .iter()
+            .map(|note| (note.tick(), note.duration()))
+            .collect::<Vec<_>>();
+        assert_eq!(actual, expected, "unexpected result for {operation:?}");
+
+        assert!(project.undo().expect("dialog quantize should be undoable"));
+        let restored = project.midi_items()[0]
+            .notes()
+            .iter()
+            .map(|note| (note.tick(), note.duration()))
+            .collect::<Vec<_>>();
+        assert_eq!(restored, original, "undo failed for {operation:?}");
+        assert!(project.redo().expect("dialog quantize should be redoable"));
+        let redone = project.midi_items()[0]
+            .notes()
+            .iter()
+            .map(|note| (note.tick(), note.duration()))
+            .collect::<Vec<_>>();
+        assert_eq!(redone, expected, "redo failed for {operation:?}");
+    }
 }

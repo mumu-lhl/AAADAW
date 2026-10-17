@@ -2106,8 +2106,8 @@ AAADAW MIDI Editor 工具栏新增 `Q pos+end`，仅处理选中音符；起点�
 
 ### 2026-10-17 MIDI Editor Quantize Events 对话框（部分覆盖）
 
-Linux REAPER 7.82 / Default 7 action 40009 的实窗截图确认 Quantize Events 默认 `Use grid`、`Selected notes`、`Position`、Strength 100%，并记录 scope 四项和 operation 五项原厂菜单。AAADAW MIDI Editor 新增 `Quantize…` 对话框，按当前网格提供 Selected/All notes、Position/Position and note end、0–100% strength 与 Commit/OK/Cancel/Escape；原有快速 `Q pos`、`Q pos+end` 仍保留。Commit 会提交一个可 Undo 的编辑并留在对话框；OK 提交并关闭；Cancel/Escape 丢弃尚未提交的设置。原厂、AAADAW 默认窗、菜单和真实操作截图及 hash 见[对话框验证资料](../verification/reaper-parity/midi-note-quantize-dialog.md)。
+Linux REAPER 7.82 / Default 7 action 40009 的实窗截图确认默认设置，并记录全部 scope 与 operation 菜单。实测 1/32、100% 下五种原厂音符模式的 PPQ 输入/输出；尤其用 100–280 音符区分 `Position and note end`（120–240）与 `Position and note length`（120–360），另验证 `Note end only`、`Note length only` 会保持起点。读数、可复现 ReaScript 和操作数值见[对话框验证资料](../verification/reaper-parity/midi-note-quantize-dialog.md)。
 
-App 回归覆盖原厂默认值、选中范围的 50% 力度插值、Commit、Cancel/Escape、全音符起点/结尾操作及单步 Undo/Redo。真实 AAADAW Xvfb 窗口完成菜单选择和 100% 全音符起止量化。workspace Nextest **1411 tests，74 binaries**（隔离 Xvfb）通过；严格 workspace all-target Clippy (`-D warnings`)、格式检查、差异检查、106 行唯一 ID/15 列 parity matrix 和对话框证据 hash 检查通过。
+AAADAW 对话框现提供 Selected/All notes、全部五种原厂音符操作、0–100% strength 与 Commit/OK/Cancel/Escape；原有快速 `Q pos`、`Q pos+end` 仍保留。Core 通过一个量化操作动作记录位置和长度变化，所有五种模式的选中范围、tick 结果及 Undo/Redo 均有回归。Workspace Nextest **1414 tests，74 binaries** 全部通过，包含 Core 五模式 tick/Undo/Redo 与 App scope/operation/Commit/Cancel 路径；严格 workspace all-target Clippy (`-D warnings`)、fmt、diff 检查、106 ID/15 列 matrix 和 9 个量化截图哈希均通过。原厂、AAADAW 对话框、菜单与操作截图见[对话框验证资料](../verification/reaper-parity/midi-note-quantize-dialog.md)。
 
-`MIDI-QUANTIZE-DIALOG-001`、UI-019 与 P7 仍为 `in_progress`：All/Selected events、note length/end-only 操作、Bypass、Fix overlaps、原厂非满力度结果对照、Swing 交集与已记忆对话框设置尚未覆盖。
+`MIDI-QUANTIZE-DIALOG-001`、UI-019 与 P7 仍为 `in_progress`：All/Selected events、Bypass、Fix overlaps 行为、原厂非满力度结果对照、Swing 交集与已记忆对话框设置尚未覆盖。

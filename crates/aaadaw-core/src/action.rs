@@ -4,6 +4,16 @@ use crate::{
     TrackId, TrackInstrument, VolumeAutomationPoint,
 };
 
+/// Which note timing values a MIDI quantize action moves to the current grid.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MidiNoteQuantizeOperation {
+    Position,
+    PositionAndNoteEnd,
+    PositionAndNoteLength,
+    NoteEndOnly,
+    NoteLengthOnly,
+}
+
 /// A command that changes project state.
 #[derive(Clone, Debug, PartialEq)]
 pub enum DawAction {
@@ -500,6 +510,14 @@ pub enum DawAction {
         note_ids: Vec<crate::NoteId>,
         grid: GridFraction,
         strength: f32,
+    },
+    /// Quantize selected MIDI note positions, ends, or lengths using the dialog operation.
+    QuantizeMidiNotesWithOperation {
+        item_id: ItemId,
+        note_ids: Vec<crate::NoteId>,
+        grid: GridFraction,
+        strength: f32,
+        operation: MidiNoteQuantizeOperation,
     },
     /// Delete a track from the project.
     DeleteTrack {

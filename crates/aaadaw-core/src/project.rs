@@ -8,9 +8,10 @@ use crate::timebase::{MeterMap, TempoMap};
 use crate::{
     ActionError, AudioItem, DawAction, FxParameterAutomationLane, FxParameterAutomationPoint,
     ItemId, MAX_TRACK_FX_PARAMETER_AUTOMATION_LANES, MarkerId, MidiControllerData, MidiItem,
-    MidiNote, MidiPitchBendData, MusicalPosition, NoteId, ProjectMarker, ProjectMarkerSnapshot,
-    ProjectRegion, ProjectRegionSnapshot, ProjectSettings, RazorEditArea, RegionId, TempoCurve,
-    TimeSignature, TimebaseError, Track, TrackFxPlugin, TrackId, TrackInstrument,
+    MidiNote, MidiNoteQuantizeOperation, MidiPitchBendData, MusicalPosition, NoteId, ProjectMarker,
+    ProjectMarkerSnapshot, ProjectRegion, ProjectRegionSnapshot, ProjectSettings, RazorEditArea,
+    RegionId, TempoCurve, TimeSignature, TimebaseError, Track, TrackFxPlugin, TrackId,
+    TrackInstrument,
 };
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -30,7 +31,7 @@ fn quantized_midi_note_changes(
     grid: crate::GridFraction,
     strength: f32,
     ppq: u32,
-    quantize_ends: bool,
+    operation: MidiNoteQuantizeOperation,
 ) -> Result<Vec<QuantizedMidiNoteChange>, ActionError> {
     if !strength.is_finite() || !(0.0..=1.0).contains(&strength) {
         return Err(ActionError::InvalidQuantizeStrength);
@@ -52,6 +53,21 @@ fn quantized_midi_note_changes(
         u64::try_from(absolute_tick as i128 + adjustment).map_err(|_| ActionError::InvalidMidiNote)
     };
     let mut changes = Vec::new();
+    let quantize_position = matches!(
+        operation,
+        MidiNoteQuantizeOperation::Position
+            | MidiNoteQuantizeOperation::PositionAndNoteEnd
+            | MidiNoteQuantizeOperation::PositionAndNoteLength
+    );
+    let quantize_end = matches!(
+        operation,
+        MidiNoteQuantizeOperation::PositionAndNoteEnd | MidiNoteQuantizeOperation::NoteEndOnly
+    );
+    let quantize_length = matches!(
+        operation,
+        MidiNoteQuantizeOperation::PositionAndNoteLength
+            | MidiNoteQuantizeOperation::NoteLengthOnly
+    );
     for note in item.notes.iter() {
         if selected_note_ids.is_some_and(|selected| !selected.contains(&note.id)) {
             continue;
@@ -59,10 +75,14 @@ fn quantized_midi_note_changes(
         let absolute_tick = item
             .project_tick_at_content_tick(note.data.tick)
             .ok_or(ActionError::InvalidMidiNote)?;
-        let quantized_absolute = quantize_absolute_tick(absolute_tick)?;
+        let quantized_absolute = if quantize_position {
+            quantize_absolute_tick(absolute_tick)?
+        } else {
+            absolute_tick
+        };
         let tick = midi_source_tick_at_project_tick(item, quantized_absolute)
             .ok_or(ActionError::InvalidMidiNote)?;
-        let duration = if quantize_ends {
+        let duration = if quantize_end {
             let absolute_end = absolute_tick
                 .checked_add(note.data.duration)
                 .ok_or(ActionError::InvalidMidiNote)?;
@@ -73,6 +93,9 @@ fn quantized_midi_note_changes(
                     .ok_or(ActionError::InvalidMidiNote)?;
             }
             quantized_end - quantized_absolute
+        } else if quantize_length {
+            let duration = quantize_absolute_tick(note.data.duration)?;
+            duration.max(1)
         } else {
             note.data.duration
         };
@@ -4546,7 +4569,7 @@ impl Project {
                     grid,
                     strength,
                     state.tempo_map.settings().ppq(),
-                    false,
+                    MidiNoteQuantizeOperation::Position,
                 )?;
                 ProjectEvent::MidiNotesQuantized { item_id, changes }
             }
@@ -4568,7 +4591,7 @@ impl Project {
                     grid,
                     strength,
                     state.tempo_map.settings().ppq(),
-                    false,
+                    MidiNoteQuantizeOperation::Position,
                 )?;
                 ProjectEvent::MidiNotesQuantized { item_id, changes }
             }
@@ -4590,7 +4613,30 @@ impl Project {
                     grid,
                     strength,
                     state.tempo_map.settings().ppq(),
-                    true,
+                    MidiNoteQuantizeOperation::PositionAndNoteEnd,
+                )?;
+                ProjectEvent::MidiNotesQuantized { item_id, changes }
+            }
+            DawAction::QuantizeMidiNotesWithOperation {
+                item_id,
+                note_ids,
+                grid,
+                strength,
+                operation,
+            } => {
+                let selected_note_ids = note_ids.into_iter().collect::<HashSet<_>>();
+                let item = state
+                    .midi_items
+                    .iter()
+                    .find(|item| item.id == item_id)
+                    .ok_or(ActionError::MidiItemNotFound { item_id })?;
+                let changes = quantized_midi_note_changes(
+                    item,
+                    Some(&selected_note_ids),
+                    grid,
+                    strength,
+                    state.tempo_map.settings().ppq(),
+                    operation,
                 )?;
                 ProjectEvent::MidiNotesQuantized { item_id, changes }
             }
@@ -5701,7 +5747,8 @@ fn source_track_for_action(state: &ProjectState, action: &DawAction) -> Option<T
         | DawAction::SetMidiPitchBends { item_id, .. }
         | DawAction::QuantizeItem { item_id, .. }
         | DawAction::QuantizeMidiNotes { item_id, .. }
-        | DawAction::QuantizeMidiNotesAndEnds { item_id, .. } => state
+        | DawAction::QuantizeMidiNotesAndEnds { item_id, .. }
+        | DawAction::QuantizeMidiNotesWithOperation { item_id, .. } => state
             .midi_items
             .iter()
             .find(|item| item.id == *item_id)
