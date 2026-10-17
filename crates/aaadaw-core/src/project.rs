@@ -2299,6 +2299,7 @@ impl Project {
                 let data = note.data;
                 if !note_ids.insert(note.id)
                     || data.pitch > 127
+                    || data.channel >= crate::MIDI_CHANNEL_COUNT
                     || data.velocity > 127
                     || data.duration == 0
                     || data.tick.checked_add(data.duration).is_none()
@@ -2312,12 +2313,14 @@ impl Project {
                 });
             }
             let mut controllers = item.controllers;
-            controllers.sort_unstable_by_key(|controller| (controller.tick, controller.controller));
+            controllers.sort_unstable_by_key(|controller| {
+                (controller.tick, controller.channel, controller.controller)
+            });
             if !valid_midi_controllers(&controllers) {
                 return Err(SnapshotError::InvalidProjectData);
             }
             let mut pitch_bends = item.pitch_bends;
-            pitch_bends.sort_unstable_by_key(|bend| bend.tick);
+            pitch_bends.sort_unstable_by_key(|bend| (bend.tick, bend.channel));
             if !valid_midi_pitch_bends(&pitch_bends) {
                 return Err(SnapshotError::InvalidProjectData);
             }
@@ -4219,6 +4222,7 @@ impl Project {
                         segment_notes[segment_index].push(MidiNote {
                             id: note_id,
                             data: crate::MidiNoteData {
+                                channel: note.data.channel,
                                 pitch: note.data.pitch,
                                 tick: if segment_index == 0 {
                                     overlap_start
@@ -4310,6 +4314,7 @@ impl Project {
                 let mut next_note_id = ids.next_note_id;
                 for data in notes {
                     if data.pitch > 127
+                        || data.channel >= crate::MIDI_CHANNEL_COUNT
                         || data.velocity > 127
                         || !valid_midi_note_source_range(item, data.tick, data.duration)
                     {
@@ -4346,6 +4351,7 @@ impl Project {
                     .find(|item| item.id == item_id)
                     .ok_or(ActionError::MidiItemNotFound { item_id })?;
                 if data.pitch > 127
+                    || data.channel >= crate::MIDI_CHANNEL_COUNT
                     || data.velocity > 127
                     || !valid_midi_note_source_range(item, data.tick, data.duration)
                 {
@@ -4398,8 +4404,9 @@ impl Project {
                     .iter()
                     .find(|item| item.id == item_id)
                     .ok_or(ActionError::MidiItemNotFound { item_id })?;
-                controllers
-                    .sort_unstable_by_key(|controller| (controller.tick, controller.controller));
+                controllers.sort_unstable_by_key(|controller| {
+                    (controller.tick, controller.channel, controller.controller)
+                });
                 let (source_start_tick, source_end_tick) = midi_item_source_tick_bounds(item);
                 if !valid_midi_controllers(&controllers)
                     || controllers.iter().any(|controller| {
@@ -4424,7 +4431,7 @@ impl Project {
                     .iter()
                     .find(|item| item.id == item_id)
                     .ok_or(ActionError::MidiItemNotFound { item_id })?;
-                pitch_bends.sort_unstable_by_key(|bend| bend.tick);
+                pitch_bends.sort_unstable_by_key(|bend| (bend.tick, bend.channel));
                 let (source_start_tick, source_end_tick) = midi_item_source_tick_bounds(item);
                 if !valid_midi_pitch_bends(&pitch_bends)
                     || pitch_bends.iter().any(|bend| {
@@ -5354,6 +5361,7 @@ impl Project {
                             || !existing_item_ids.insert(item.id)
                             || item.notes.iter().any(|note| {
                                 note.data.pitch > 127
+                                    || note.data.channel >= crate::MIDI_CHANNEL_COUNT
                                     || note.data.velocity > 127
                                     || note.data.duration == 0
                                     || note.data.tick.checked_add(note.data.duration).is_none()
@@ -5377,6 +5385,7 @@ impl Project {
                     if *index > current_notes.len()
                         || current_notes.iter().any(|existing| existing.id == note.id)
                         || note.data.pitch > 127
+                        || note.data.channel >= crate::MIDI_CHANNEL_COUNT
                         || note.data.velocity > 127
                         || !valid_midi_note_range_in_bounds(
                             source_bounds,
@@ -5415,6 +5424,7 @@ impl Project {
                     .ok_or(ActionError::HistoryInvariantViolation)?;
                 if before.id != after.id
                     || after.data.pitch > 127
+                    || after.data.channel >= crate::MIDI_CHANNEL_COUNT
                     || after.data.velocity > 127
                     || !valid_midi_note_source_range(item, after.data.tick, after.data.duration)
                 {
@@ -5601,9 +5611,10 @@ fn source_track_for_action(state: &ProjectState, action: &DawAction) -> Option<T
 fn valid_midi_controllers(controllers: &[MidiControllerData]) -> bool {
     let mut positions = HashSet::with_capacity(controllers.len());
     controllers.iter().all(|controller| {
-        controller.controller <= 127
+        controller.channel < crate::MIDI_CHANNEL_COUNT
+            && controller.controller <= 127
             && controller.value <= 127
-            && positions.insert((controller.controller, controller.tick))
+            && positions.insert((controller.channel, controller.controller, controller.tick))
     })
 }
 
@@ -5641,9 +5652,11 @@ fn midi_source_tick_at_project_tick(item: &MidiItem, project_tick: u64) -> Optio
 
 fn valid_midi_pitch_bends(pitch_bends: &[MidiPitchBendData]) -> bool {
     let mut positions = HashSet::with_capacity(pitch_bends.len());
-    pitch_bends
-        .iter()
-        .all(|bend| bend.value <= 16_383 && positions.insert(bend.tick))
+    pitch_bends.iter().all(|bend| {
+        bend.channel < crate::MIDI_CHANNEL_COUNT
+            && bend.value <= 16_383
+            && positions.insert((bend.channel, bend.tick))
+    })
 }
 
 fn controllers_for_segment(
@@ -5662,13 +5675,13 @@ fn controllers_for_segment(
             ..*controller
         })
         .collect::<Vec<_>>();
-    let mut latest_by_controller = std::collections::HashMap::<u8, MidiControllerData>::new();
+    let mut latest_by_controller = std::collections::HashMap::<(u8, u8), MidiControllerData>::new();
     for controller in controllers
         .iter()
         .filter(|controller| controller.tick < start_tick)
     {
         latest_by_controller
-            .entry(controller.controller)
+            .entry((controller.channel, controller.controller))
             .and_modify(|latest| {
                 if latest.tick < controller.tick {
                     *latest = *controller;
@@ -5676,15 +5689,16 @@ fn controllers_for_segment(
             })
             .or_insert(*controller);
     }
-    for (number, latest) in latest_by_controller {
-        if !segment
-            .iter()
-            .any(|controller| controller.controller == number && controller.tick == 0)
-        {
+    for ((channel, number), latest) in latest_by_controller {
+        if !segment.iter().any(|controller| {
+            controller.channel == channel && controller.controller == number && controller.tick == 0
+        }) {
             segment.push(MidiControllerData { tick: 0, ..latest });
         }
     }
-    segment.sort_unstable_by_key(|controller| (controller.tick, controller.controller));
+    segment.sort_unstable_by_key(|controller| {
+        (controller.tick, controller.channel, controller.controller)
+    });
     segment
 }
 
@@ -5695,12 +5709,16 @@ fn pitch_bends_for_segment(
     preserve_tail: bool,
 ) -> Vec<MidiPitchBendData> {
     let mut result = Vec::new();
-    if let Some(latest) = pitch_bends
-        .iter()
-        .filter(|bend| bend.tick <= start_tick)
-        .max_by_key(|bend| bend.tick)
-    {
+    let mut latest_by_channel = [None; crate::MIDI_CHANNEL_COUNT as usize];
+    for bend in pitch_bends.iter().filter(|bend| bend.tick <= start_tick) {
+        let latest = &mut latest_by_channel[usize::from(bend.channel)];
+        if latest.is_none_or(|current: MidiPitchBendData| current.tick < bend.tick) {
+            *latest = Some(*bend);
+        }
+    }
+    for latest in latest_by_channel.into_iter().flatten() {
         result.push(MidiPitchBendData {
+            channel: latest.channel,
             tick: 0,
             value: latest.value,
         });
@@ -5710,6 +5728,7 @@ fn pitch_bends_for_segment(
             .iter()
             .filter(|bend| bend.tick > start_tick && (preserve_tail || bend.tick < end_tick))
             .map(|bend| MidiPitchBendData {
+                channel: bend.channel,
                 tick: bend.tick - start_tick,
                 value: bend.value,
             }),

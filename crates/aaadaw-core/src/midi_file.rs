@@ -355,7 +355,11 @@ pub fn encode_standard_midi_with_selection(
                     events_by_track[track_index].push(Event {
                         tick,
                         order,
-                        bytes: vec![0xb0, controller.controller, controller.value],
+                        bytes: vec![
+                            0xb0 | controller.channel,
+                            controller.controller,
+                            controller.value,
+                        ],
                     });
                 }
             } else {
@@ -392,7 +396,11 @@ pub fn encode_standard_midi_with_selection(
                     events_by_track[track_index].push(Event {
                         tick,
                         order,
-                        bytes: vec![0xb0, controller.controller, controller.value],
+                        bytes: vec![
+                            0xb0 | controller.channel,
+                            controller.controller,
+                            controller.value,
+                        ],
                     });
                 }
             }
@@ -414,7 +422,7 @@ pub fn encode_standard_midi_with_selection(
                         tick,
                         order: 1,
                         bytes: vec![
-                            0xe0,
+                            0xe0 | bend.channel,
                             (bend.value & 0x7f) as u8,
                             ((bend.value >> 7) & 0x7f) as u8,
                         ],
@@ -446,7 +454,7 @@ pub fn encode_standard_midi_with_selection(
                         tick,
                         order: 1,
                         bytes: vec![
-                            0xe0,
+                            0xe0 | bend.channel,
                             (bend.value & 0x7f) as u8,
                             ((bend.value >> 7) & 0x7f) as u8,
                         ],
@@ -721,8 +729,7 @@ fn push_midi_note_events(
     project_end_tick: f64,
     project_ppq: u32,
     export_ppq: u16,
-    pitch: u8,
-    velocity: u8,
+    note: &MidiNote,
 ) -> Result<(), String> {
     let start_tick = scale_tick_position(project_start_tick, project_ppq, export_ppq)?;
     let mut end_tick = scale_tick_position(project_end_tick, project_ppq, export_ppq)?;
@@ -736,12 +743,12 @@ fn push_midi_note_events(
     events.push(Event {
         tick: end_tick,
         order: 0,
-        bytes: vec![0x80, pitch, 0],
+        bytes: vec![0x80 | note.channel(), note.pitch(), 0],
     });
     events.push(Event {
         tick: start_tick,
         order: 2,
-        bytes: vec![0x90, pitch, velocity],
+        bytes: vec![0x90 | note.channel(), note.pitch(), note.velocity()],
     });
     Ok(())
 }
@@ -762,8 +769,7 @@ fn push_midi_note_events_in_time_selection(
             project_end_tick,
             project_ppq,
             export_ppq,
-            note.pitch(),
-            note.velocity(),
+            note,
         )?;
         return Ok(2);
     };
@@ -784,7 +790,7 @@ fn push_midi_note_events_in_time_selection(
     events.push(Event {
         tick: start_tick,
         order,
-        bytes: vec![0x90, note.pitch(), note.velocity()],
+        bytes: vec![0x90 | note.channel(), note.pitch(), note.velocity()],
     });
     if project_end_tick < selection_end {
         let mut end_tick =
@@ -797,7 +803,7 @@ fn push_midi_note_events_in_time_selection(
         events.push(Event {
             tick: end_tick,
             order: 0,
-            bytes: vec![0x80, note.pitch(), 0],
+            bytes: vec![0x80 | note.channel(), note.pitch(), 0],
         });
         Ok(2)
     } else {

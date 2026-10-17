@@ -23,6 +23,7 @@ fn midi_notes_can_be_added_queried_and_undone() {
         .apply(DawAction::AddMidiNotes {
             item_id,
             notes: vec![MidiNoteData {
+                channel: 0,
                 pitch: 60,
                 tick: 0,
                 duration: 960,
@@ -62,6 +63,7 @@ fn midi_item_mute_is_undoable_and_survives_snapshot_and_duplicate() {
         .apply(DawAction::AddMidiNotes {
             item_id,
             notes: vec![MidiNoteData {
+                channel: 0,
                 pitch: 60,
                 tick: 0,
                 duration: 960,
@@ -115,6 +117,7 @@ fn midi_note_edits_change_timing_and_velocity_with_undo_redo() {
         .apply(DawAction::AddMidiNotes {
             item_id,
             notes: vec![MidiNoteData {
+                channel: 0,
                 pitch: 60,
                 tick: 0,
                 duration: 960,
@@ -125,6 +128,7 @@ fn midi_note_edits_change_timing_and_velocity_with_undo_redo() {
     let note_id = project.midi_items()[0].notes()[0].id();
 
     let edited = MidiNoteData {
+        channel: 0,
         pitch: 67,
         tick: 120,
         duration: 480,

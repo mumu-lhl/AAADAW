@@ -7658,12 +7658,14 @@ mod tests {
                 item_id,
                 notes: vec![
                     aaadaw_core::MidiNoteData {
+                        channel: 0,
                         pitch: 60,
                         tick: 120,
                         duration: 120,
                         velocity: 90,
                     },
                     aaadaw_core::MidiNoteData {
+                        channel: 0,
                         pitch: 64,
                         tick: 720,
                         duration: 240,
@@ -8790,12 +8792,14 @@ mod tests {
                 item_id,
                 notes: vec![
                     aaadaw_core::MidiNoteData {
+                        channel: 0,
                         pitch: 60,
                         tick: 0,
                         duration: 240,
                         velocity: 100,
                     },
                     aaadaw_core::MidiNoteData {
+                        channel: 0,
                         pitch: 67,
                         tick: 480,
                         duration: 360,

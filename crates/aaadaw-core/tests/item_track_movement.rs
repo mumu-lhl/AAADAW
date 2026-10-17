@@ -44,6 +44,7 @@ fn moving_audio_and_midi_items_preserves_content_and_is_undoable() {
         .apply(DawAction::AddMidiNotes {
             item_id: midi_id,
             notes: vec![MidiNoteData {
+                channel: 0,
                 pitch: 67,
                 tick: 480,
                 duration: 720,

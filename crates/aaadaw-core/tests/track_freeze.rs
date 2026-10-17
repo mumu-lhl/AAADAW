@@ -27,6 +27,7 @@ fn project_with_instrument_midi() -> (Project, aaadaw_core::TrackId) {
         .apply(DawAction::AddMidiNotes {
             item_id,
             notes: vec![MidiNoteData {
+                channel: 0,
                 pitch: 60,
                 tick: 0,
                 duration: 480,
@@ -140,6 +141,7 @@ fn failed_freeze_and_frozen_source_edits_leave_the_project_unchanged() {
             .apply(DawAction::AddMidiNotes {
                 item_id: midi_item_id,
                 notes: vec![MidiNoteData {
+                    channel: 0,
                     pitch: 64,
                     tick: 0,
                     duration: 120,

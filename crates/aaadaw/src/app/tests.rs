@@ -219,6 +219,7 @@ fn item_nudge_set_edge_test_app() -> (App, PathBuf) {
         .apply(DawAction::AddMidiNotes {
             item_id: midi_id,
             notes: vec![MidiNoteData {
+                channel: 0,
                 pitch: 60,
                 tick: 960,
                 duration: 960,
@@ -1106,6 +1107,7 @@ fn item_nudge_edge_targets_support_snap_for_mixed_audio_midi_selection() {
                 .apply(DawAction::SetMidiControllers {
                     item_id: original_midi.id(),
                     controllers: vec![MidiControllerData {
+                        channel: 0,
                         controller: 1,
                         tick: 1_920,
                         value: 80,
@@ -1116,6 +1118,7 @@ fn item_nudge_edge_targets_support_snap_for_mixed_audio_midi_selection() {
                 .apply(DawAction::SetMidiPitchBends {
                     item_id: original_midi.id(),
                     pitch_bends: vec![aaadaw_core::MidiPitchBendData {
+                        channel: 0,
                         tick: 2_880,
                         value: 9_000,
                     }],
@@ -1288,6 +1291,7 @@ fn item_nudge_nonloop_midi_left_trim_edits_the_source_at_its_boundary() {
             .apply(DawAction::SetMidiControllers {
                 item_id: midi_id,
                 controllers: vec![MidiControllerData {
+                    channel: 0,
                     controller: 1,
                     tick: 1_920,
                     value: 80,
@@ -1298,6 +1302,7 @@ fn item_nudge_nonloop_midi_left_trim_edits_the_source_at_its_boundary() {
             .apply(DawAction::SetMidiPitchBends {
                 item_id: midi_id,
                 pitch_bends: vec![aaadaw_core::MidiPitchBendData {
+                    channel: 0,
                     tick: 2_880,
                     value: 9_000,
                 }],
@@ -1423,6 +1428,7 @@ fn item_nudge_nonloop_midi_left_trim_uses_offset_until_source_zero() {
             .apply(DawAction::SetMidiControllers {
                 item_id: midi_id,
                 controllers: vec![MidiControllerData {
+                    channel: 0,
                     controller: 1,
                     tick: 1_920,
                     value: 80,
@@ -1433,6 +1439,7 @@ fn item_nudge_nonloop_midi_left_trim_uses_offset_until_source_zero() {
             .apply(DawAction::SetMidiPitchBends {
                 item_id: midi_id,
                 pitch_bends: vec![aaadaw_core::MidiPitchBendData {
+                    channel: 0,
                     tick: 2_880,
                     value: 9_000,
                 }],
@@ -1510,6 +1517,7 @@ fn item_nudge_nonloop_midi_left_trim_preserves_events_at_source_zero() {
         .apply(DawAction::AddMidiNotes {
             item_id: midi_id,
             notes: vec![MidiNoteData {
+                channel: 0,
                 pitch: 60,
                 tick: 0,
                 duration: 960,
@@ -1521,6 +1529,7 @@ fn item_nudge_nonloop_midi_left_trim_preserves_events_at_source_zero() {
         .apply(DawAction::SetMidiControllers {
             item_id: midi_id,
             controllers: vec![MidiControllerData {
+                channel: 0,
                 controller: 1,
                 tick: 0,
                 value: 80,
@@ -1531,6 +1540,7 @@ fn item_nudge_nonloop_midi_left_trim_preserves_events_at_source_zero() {
         .apply(DawAction::SetMidiPitchBends {
             item_id: midi_id,
             pitch_bends: vec![aaadaw_core::MidiPitchBendData {
+                channel: 0,
                 tick: 240,
                 value: 9_000,
             }],
@@ -1938,6 +1948,7 @@ fn item_nudge_set_duplicate_uses_absolute_target_and_copies_mixed_selection() {
         .apply(DawAction::AddMidiNotes {
             item_id: source_midi.id(),
             notes: vec![MidiNoteData {
+                channel: 0,
                 pitch: 60,
                 tick: 120,
                 duration: 240,
@@ -2213,6 +2224,7 @@ fn item_nudge_set_edge_targets_match_native_staggered_mixed_audio_midi_selection
             .apply(DawAction::SetMidiControllers {
                 item_id: midi_id,
                 controllers: vec![aaadaw_core::MidiControllerData {
+                    channel: 0,
                     controller: 1,
                     tick: 2_880,
                     value: 80,
@@ -2223,6 +2235,7 @@ fn item_nudge_set_edge_targets_match_native_staggered_mixed_audio_midi_selection
             .apply(DawAction::SetMidiPitchBends {
                 item_id: midi_id,
                 pitch_bends: vec![aaadaw_core::MidiPitchBendData {
+                    channel: 0,
                     tick: 3_840,
                     value: 9_000,
                 }],
@@ -2489,12 +2502,14 @@ fn item_nudge_set_edge_targets_match_native_staggered_looped_midi_selection() {
                 item_id: last_id,
                 notes: vec![
                     MidiNoteData {
+                        channel: 0,
                         pitch: 60,
                         tick: 960,
                         duration: 960,
                         velocity: 96,
                     },
                     MidiNoteData {
+                        channel: 0,
                         pitch: 64,
                         tick: 2_880,
                         duration: 960,
@@ -2587,6 +2602,7 @@ fn item_nudge_set_left_trim_matches_native_staggered_non_loop_midi_selection() {
                 .apply(DawAction::AddMidiNotes {
                     item_id,
                     notes: vec![MidiNoteData {
+                        channel: 0,
                         pitch: 64,
                         tick: 2_880,
                         duration: 960,
@@ -2600,12 +2616,14 @@ fn item_nudge_set_left_trim_matches_native_staggered_non_loop_midi_selection() {
                     item_id,
                     notes: vec![
                         MidiNoteData {
+                            channel: 0,
                             pitch: 60,
                             tick: 960,
                             duration: 960,
                             velocity: 96,
                         },
                         MidiNoteData {
+                            channel: 0,
                             pitch: 64,
                             tick: 2_880,
                             duration: 960,
@@ -2619,6 +2637,7 @@ fn item_nudge_set_left_trim_matches_native_staggered_non_loop_midi_selection() {
             .apply(DawAction::SetMidiControllers {
                 item_id,
                 controllers: vec![MidiControllerData {
+                    channel: 0,
                     controller: 1,
                     tick: 1_920,
                     value: 80,
@@ -2629,6 +2648,7 @@ fn item_nudge_set_left_trim_matches_native_staggered_non_loop_midi_selection() {
             .apply(DawAction::SetMidiPitchBends {
                 item_id,
                 pitch_bends: vec![aaadaw_core::MidiPitchBendData {
+                    channel: 0,
                     tick: 3_840,
                     value: 9_000,
                 }],
@@ -2756,6 +2776,7 @@ fn item_nudge_set_edge_targets_match_native_staggered_non_loop_midi_selection() 
                 .apply(DawAction::AddMidiNotes {
                     item_id,
                     notes: vec![MidiNoteData {
+                        channel: 0,
                         pitch: 64,
                         tick: 2_880,
                         duration: 960,
@@ -2767,6 +2788,7 @@ fn item_nudge_set_edge_targets_match_native_staggered_non_loop_midi_selection() 
                 .apply(DawAction::SetMidiControllers {
                     item_id,
                     controllers: vec![MidiControllerData {
+                        channel: 0,
                         controller: 1,
                         tick: 1_920,
                         value: 80,
@@ -2777,6 +2799,7 @@ fn item_nudge_set_edge_targets_match_native_staggered_non_loop_midi_selection() 
                 .apply(DawAction::SetMidiPitchBends {
                     item_id,
                     pitch_bends: vec![aaadaw_core::MidiPitchBendData {
+                        channel: 0,
                         tick: 3_840,
                         value: 9_000,
                     }],
@@ -3117,12 +3140,14 @@ fn item_nudge_set_looped_midi_contents_matches_native_across_tempo_change() {
             item_id,
             notes: vec![
                 MidiNoteData {
+                    channel: 0,
                     pitch: 60,
                     tick: 960,
                     duration: 960,
                     velocity: 96,
                 },
                 MidiNoteData {
+                    channel: 0,
                     pitch: 64,
                     tick: 2_880,
                     duration: 960,
@@ -3209,12 +3234,14 @@ fn item_nudge_set_looped_midi_contents_matches_native_linear_tempo_phase() {
             item_id,
             notes: vec![
                 MidiNoteData {
+                    channel: 0,
                     pitch: 60,
                     tick: 960,
                     duration: 960,
                     velocity: 96,
                 },
                 MidiNoteData {
+                    channel: 0,
                     pitch: 64,
                     tick: 2_880,
                     duration: 960,
@@ -3296,12 +3323,14 @@ fn item_nudge_set_contents_rebases_non_loop_midi_and_preserves_undoable_source_d
             item_id,
             notes: vec![
                 MidiNoteData {
+                    channel: 0,
                     pitch: 60,
                     tick: 960,
                     duration: 1_920,
                     velocity: 96,
                 },
                 MidiNoteData {
+                    channel: 0,
                     pitch: 64,
                     tick: 4_800,
                     duration: 1_920,
@@ -3314,6 +3343,7 @@ fn item_nudge_set_contents_rebases_non_loop_midi_and_preserves_undoable_source_d
         .apply(DawAction::SetMidiControllers {
             item_id,
             controllers: vec![MidiControllerData {
+                channel: 0,
                 controller: 1,
                 tick: 2_400,
                 value: 80,
@@ -3324,6 +3354,7 @@ fn item_nudge_set_contents_rebases_non_loop_midi_and_preserves_undoable_source_d
         .apply(DawAction::SetMidiPitchBends {
             item_id,
             pitch_bends: vec![MidiPitchBendData {
+                channel: 0,
                 tick: 3_600,
                 value: 9_000,
             }],
@@ -3591,12 +3622,14 @@ fn item_nudge_non_looped_midi_contents_matches_native_source_boundary_and_undoes
             item_id,
             notes: vec![
                 MidiNoteData {
+                    channel: 0,
                     pitch: 60,
                     tick: 2_880,
                     duration: 1_920,
                     velocity: 96,
                 },
                 MidiNoteData {
+                    channel: 0,
                     pitch: 64,
                     tick: 6_720,
                     duration: 1_920,
@@ -3609,6 +3642,7 @@ fn item_nudge_non_looped_midi_contents_matches_native_source_boundary_and_undoes
         .apply(DawAction::SetMidiControllers {
             item_id,
             controllers: vec![MidiControllerData {
+                channel: 0,
                 controller: 1,
                 tick: 2_400,
                 value: 80,
@@ -3619,6 +3653,7 @@ fn item_nudge_non_looped_midi_contents_matches_native_source_boundary_and_undoes
         .apply(DawAction::SetMidiPitchBends {
             item_id,
             pitch_bends: vec![MidiPitchBendData {
+                channel: 0,
                 tick: 3_600,
                 value: 9_000,
             }],
@@ -3718,12 +3753,14 @@ fn item_nudge_non_looped_midi_contents_rebases_left_from_zero_offset() {
             item_id,
             notes: vec![
                 MidiNoteData {
+                    channel: 0,
                     pitch: 60,
                     tick: 2_880,
                     duration: 1_920,
                     velocity: 96,
                 },
                 MidiNoteData {
+                    channel: 0,
                     pitch: 64,
                     tick: 6_720,
                     duration: 1_920,
@@ -3736,6 +3773,7 @@ fn item_nudge_non_looped_midi_contents_rebases_left_from_zero_offset() {
         .apply(DawAction::SetMidiControllers {
             item_id,
             controllers: vec![MidiControllerData {
+                channel: 0,
                 controller: 1,
                 tick: 2_400,
                 value: 80,
@@ -3746,6 +3784,7 @@ fn item_nudge_non_looped_midi_contents_rebases_left_from_zero_offset() {
         .apply(DawAction::SetMidiPitchBends {
             item_id,
             pitch_bends: vec![MidiPitchBendData {
+                channel: 0,
                 tick: 3_600,
                 value: 9_000,
             }],
@@ -3807,12 +3846,14 @@ fn item_nudge_non_looped_midi_contents_clamps_events_at_source_zero_and_offsets_
             item_id,
             notes: vec![
                 MidiNoteData {
+                    channel: 0,
                     pitch: 60,
                     tick: 100,
                     duration: 300,
                     velocity: 96,
                 },
                 MidiNoteData {
+                    channel: 0,
                     pitch: 64,
                     tick: 6_720,
                     duration: 1_920,
@@ -3825,6 +3866,7 @@ fn item_nudge_non_looped_midi_contents_clamps_events_at_source_zero_and_offsets_
         .apply(DawAction::SetMidiControllers {
             item_id,
             controllers: vec![MidiControllerData {
+                channel: 0,
                 controller: 1,
                 tick: 50,
                 value: 80,
@@ -3835,6 +3877,7 @@ fn item_nudge_non_looped_midi_contents_clamps_events_at_source_zero_and_offsets_
         .apply(DawAction::SetMidiPitchBends {
             item_id,
             pitch_bends: vec![MidiPitchBendData {
+                channel: 0,
                 tick: 300,
                 value: 9_000,
             }],
@@ -4083,12 +4126,14 @@ fn item_nudge_nonloop_midi_left_trim_matches_linear_tempo_event_edges() {
             item_id: midi_id,
             notes: vec![
                 MidiNoteData {
+                    channel: 0,
                     pitch: 60,
                     tick: 960,
                     duration: 960,
                     velocity: 96,
                 },
                 MidiNoteData {
+                    channel: 0,
                     pitch: 64,
                     tick: 2_880,
                     duration: 960,
@@ -4101,6 +4146,7 @@ fn item_nudge_nonloop_midi_left_trim_matches_linear_tempo_event_edges() {
         .apply(DawAction::SetMidiControllers {
             item_id: midi_id,
             controllers: vec![MidiControllerData {
+                channel: 0,
                 controller: 1,
                 tick: 4_800,
                 value: 80,
@@ -4111,6 +4157,7 @@ fn item_nudge_nonloop_midi_left_trim_matches_linear_tempo_event_edges() {
         .apply(DawAction::SetMidiPitchBends {
             item_id: midi_id,
             pitch_bends: vec![aaadaw_core::MidiPitchBendData {
+                channel: 0,
                 tick: 4_500,
                 value: 6_000,
             }],
@@ -11989,6 +12036,7 @@ fn midi_item_creation_and_note_editing_use_undoable_actions() {
             item_id,
             note_id,
             data: MidiNoteData {
+                channel: 0,
                 pitch: 60,
                 tick: 40,
                 duration: 960,
@@ -12031,6 +12079,7 @@ fn piano_roll_copy_drag_adds_fresh_notes_and_undoes_as_one_action() {
     let _ = app.update(Message::AddMidiNoteAt(
         item_id,
         MidiNoteData {
+            channel: 0,
             pitch: 60,
             tick: 240,
             duration: 240,
@@ -12046,6 +12095,7 @@ fn piano_roll_copy_drag_adds_fresh_notes_and_undoes_as_one_action() {
     let _ = app.update(Message::CopyDragMidiNotes(
         item_id,
         vec![MidiNoteData {
+            channel: 0,
             pitch: 61,
             tick: 480,
             duration: 240,
@@ -12091,18 +12141,21 @@ fn midi_editor_fit_uses_only_visible_notes_after_start_trim() {
             item_id,
             notes: vec![
                 MidiNoteData {
+                    channel: 0,
                     pitch: 20,
                     tick: 300,
                     duration: 240,
                     velocity: 90,
                 },
                 MidiNoteData {
+                    channel: 0,
                     pitch: 64,
                     tick: 1_200,
                     duration: 240,
                     velocity: 100,
                 },
                 MidiNoteData {
+                    channel: 0,
                     pitch: 120,
                     tick: 0,
                     duration: 120,
@@ -12137,6 +12190,7 @@ fn piano_roll_copy_paste_and_velocity_edits_are_grouped_undoable_actions() {
     let _ = app.update(Message::AddMidiNoteAt(
         item_id,
         MidiNoteData {
+            channel: 0,
             pitch: 60,
             tick: 240,
             duration: 240,
@@ -12146,6 +12200,7 @@ fn piano_roll_copy_paste_and_velocity_edits_are_grouped_undoable_actions() {
     let _ = app.update(Message::AddMidiNoteAt(
         item_id,
         MidiNoteData {
+            channel: 0,
             pitch: 64,
             tick: 960,
             duration: 480,
@@ -12188,6 +12243,7 @@ fn piano_roll_copy_paste_and_velocity_edits_are_grouped_undoable_actions() {
             (
                 note.id(),
                 MidiNoteData {
+                    channel: 0,
                     pitch: note.pitch(),
                     tick: note.tick(),
                     duration: note.duration(),
@@ -12223,6 +12279,7 @@ fn piano_roll_copying_a_late_phrase_pastes_after_it_instead_of_near_item_start()
     let _ = app.update(Message::AddMidiNoteAt(
         item_id,
         MidiNoteData {
+            channel: 0,
             pitch: 60,
             tick: 2_880,
             duration: 120,
@@ -12249,6 +12306,7 @@ fn piano_roll_paste_uses_the_caret_and_duplicate_does_not_replace_the_clipboard(
     let _ = app.update(Message::AddMidiNoteAt(
         item_id,
         MidiNoteData {
+            channel: 0,
             pitch: 60,
             tick: 2_880,
             duration: 120,
@@ -12287,6 +12345,7 @@ fn piano_roll_cross_item_paste_uses_the_copied_phrase_position_when_no_caret_is_
     let _ = app.update(Message::AddMidiNoteAt(
         source_item_id,
         MidiNoteData {
+            channel: 0,
             pitch: 60,
             tick: 2_880,
             duration: 120,
@@ -12319,6 +12378,7 @@ fn piano_roll_paste_rejection_is_visible_as_editor_local_feedback() {
     let _ = app.update(Message::OpenMidiEditor(item_id));
     app.midi_editor_edit_cursor_tick = Some(3_600);
     app.midi_note_clipboard.notes = vec![MidiNoteData {
+        channel: 0,
         pitch: 60,
         tick: 0,
         duration: 480,
@@ -12351,6 +12411,7 @@ fn piano_roll_paste_uses_its_own_grid_division_and_respects_shared_snap_off() {
     )));
     app.midi_editor_edit_cursor_tick = Some(190);
     app.midi_note_clipboard.notes = vec![MidiNoteData {
+        channel: 0,
         pitch: 60,
         tick: 0,
         duration: 120,
@@ -12376,6 +12437,7 @@ fn piano_roll_navigation_zoom_keeps_its_anchor_and_fit_frames_the_notes() {
     let _ = app.update(Message::AddMidiNoteAt(
         item_id,
         MidiNoteData {
+            channel: 0,
             pitch: 60,
             tick: 960,
             duration: 240,
@@ -12385,6 +12447,7 @@ fn piano_roll_navigation_zoom_keeps_its_anchor_and_fit_frames_the_notes() {
     let _ = app.update(Message::AddMidiNoteAt(
         item_id,
         MidiNoteData {
+            channel: 0,
             pitch: 64,
             tick: 2_880,
             duration: 480,
@@ -12436,12 +12499,14 @@ fn piano_roll_fit_includes_long_phrases_and_wide_pitch_ranges() {
     let item_id = app.project.midi_items()[0].id();
     for note in [
         MidiNoteData {
+            channel: 0,
             pitch: 12,
             tick: 0,
             duration: 960,
             velocity: 96,
         },
         MidiNoteData {
+            channel: 0,
             pitch: 110,
             tick: 40_000,
             duration: 960,
@@ -12491,6 +12556,7 @@ fn piano_roll_insert_move_resize_and_delete_use_project_actions() {
     let _ = app.update(Message::AddMidiNoteAt(
         item_id,
         MidiNoteData {
+            channel: 0,
             pitch: 72,
             tick: 480,
             duration: 240,
@@ -12506,6 +12572,7 @@ fn piano_roll_insert_move_resize_and_delete_use_project_actions() {
         vec![(
             note_id,
             MidiNoteData {
+                channel: 0,
                 pitch: 74,
                 tick: 720,
                 duration: 480,
@@ -14221,6 +14288,7 @@ fn mixed_item_drag_moves_as_one_undoable_action_and_preserves_content() {
         .apply(DawAction::AddMidiNotes {
             item_id: midi_id,
             notes: vec![MidiNoteData {
+                channel: 0,
                 pitch: 67,
                 tick: 480,
                 duration: 720,
@@ -14323,6 +14391,7 @@ fn mixed_item_copy_drag_duplicates_audio_and_midi_as_one_undoable_action() {
         .apply(DawAction::AddMidiNotes {
             item_id: midi_id,
             notes: vec![MidiNoteData {
+                channel: 0,
                 pitch: 67,
                 tick: 120,
                 duration: 360,
@@ -14577,6 +14646,7 @@ fn midi_item_edge_trim_keeps_hidden_events_and_is_undoable() {
         .apply(DawAction::AddMidiNotes {
             item_id,
             notes: vec![MidiNoteData {
+                channel: 0,
                 pitch: 64,
                 tick: 1_200,
                 duration: 480,
@@ -14588,6 +14658,7 @@ fn midi_item_edge_trim_keeps_hidden_events_and_is_undoable() {
         .apply(DawAction::SetMidiControllers {
             item_id,
             controllers: vec![MidiControllerData {
+                channel: 0,
                 controller: 1,
                 tick: 1_680,
                 value: 80,
@@ -14643,6 +14714,7 @@ fn midi_item_start_trim_preserves_content_position_and_can_expand_back() {
         .apply(DawAction::AddMidiNotes {
             item_id,
             notes: vec![MidiNoteData {
+                channel: 0,
                 pitch: 64,
                 tick: 1_200,
                 duration: 240,
@@ -14898,6 +14970,7 @@ fn midi_item_duplicate_is_available_in_shared_command_surfaces_and_undoable() {
         .apply(DawAction::AddMidiNotes {
             item_id: source_id,
             notes: vec![MidiNoteData {
+                channel: 0,
                 pitch: 60,
                 tick: 120,
                 duration: 240,
@@ -18131,12 +18204,14 @@ fn time_selection_splits_mixed_items_once_and_preserves_audio_and_midi_content()
             item_id: midi_id,
             notes: vec![
                 MidiNoteData {
+                    channel: 0,
                     pitch: 60,
                     tick: 0,
                     duration: 1_200,
                     velocity: 100,
                 },
                 MidiNoteData {
+                    channel: 0,
                     pitch: 64,
                     tick: 1_600,
                     duration: 1_600,
@@ -18287,6 +18362,7 @@ fn cursor_split_runs_from_action_search_and_boundary_noops_do_not_change_history
         .apply(DawAction::AddMidiNotes {
             item_id,
             notes: vec![MidiNoteData {
+                channel: 0,
                 pitch: 60,
                 tick: 0,
                 duration: 1_440,
@@ -19716,6 +19792,7 @@ fn midi_item_properties_opens_applies_mute_and_keeps_notes_undoable() {
         .apply(DawAction::AddMidiNotes {
             item_id,
             notes: vec![MidiNoteData {
+                channel: 0,
                 pitch: 60,
                 tick: 0,
                 duration: 480,
@@ -19942,6 +20019,7 @@ fn midi_item_properties_edit_loop_source_length_preserves_events_and_undoes() {
         .apply(DawAction::AddMidiNotes {
             item_id,
             notes: vec![MidiNoteData {
+                channel: 0,
                 pitch: 60,
                 tick: 120,
                 duration: 240,

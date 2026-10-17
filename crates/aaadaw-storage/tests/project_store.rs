@@ -725,6 +725,7 @@ fn project_store_round_trips_frozen_track_and_its_render_item() {
         .apply(DawAction::AddMidiNotes {
             item_id,
             notes: vec![MidiNoteData {
+                channel: 7,
                 pitch: 60,
                 tick: 0,
                 duration: 480,
@@ -941,6 +942,111 @@ fn schema_57_audio_sends_migrate_with_native_all_midi_default() {
 }
 
 #[test]
+fn schema_58_migrates_stored_midi_events_to_channel_zero() {
+    let path = project_path();
+    let mut project = Project::new();
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Legacy channels".to_owned(),
+        })
+        .unwrap();
+    let track_id = project.tracks()[0].id();
+    project
+        .apply(DawAction::InsertMidiItem {
+            track_id,
+            start_tick: 0,
+            length_ticks: 960,
+        })
+        .unwrap();
+    let item_id = project.midi_items()[0].id();
+    project
+        .apply(DawAction::AddMidiNotes {
+            item_id,
+            notes: vec![MidiNoteData {
+                channel: 0,
+                pitch: 60,
+                tick: 0,
+                duration: 240,
+                velocity: 100,
+            }],
+        })
+        .unwrap();
+    project
+        .apply(DawAction::SetMidiControllers {
+            item_id,
+            controllers: vec![MidiControllerData {
+                channel: 0,
+                controller: 7,
+                tick: 120,
+                value: 80,
+            }],
+        })
+        .unwrap();
+    project
+        .apply(DawAction::SetMidiPitchBends {
+            item_id,
+            pitch_bends: vec![MidiPitchBendData {
+                channel: 0,
+                tick: 120,
+                value: 9_000,
+            }],
+        })
+        .unwrap();
+    let mut store = ProjectStore::open(&path).unwrap();
+    store.save(&project).unwrap();
+    store.close().unwrap();
+
+    let connection = Connection::open(&path).unwrap();
+    connection
+        .execute_batch(
+            "ALTER TABLE midi_notes DROP COLUMN channel;
+             CREATE TABLE midi_controllers_v58 (
+                 item_id INTEGER NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+                 position INTEGER NOT NULL CHECK (position >= 0),
+                 controller INTEGER NOT NULL CHECK (controller BETWEEN 0 AND 127),
+                 tick INTEGER NOT NULL CHECK (tick >= 0),
+                 value INTEGER NOT NULL CHECK (value BETWEEN 0 AND 127),
+                 PRIMARY KEY (item_id, position),
+                 UNIQUE (item_id, controller, tick)
+             );
+             INSERT INTO midi_controllers_v58(item_id, position, controller, tick, value)
+                 SELECT item_id, position, controller, tick, value FROM midi_controllers;
+             DROP TABLE midi_controllers;
+             ALTER TABLE midi_controllers_v58 RENAME TO midi_controllers;
+             CREATE INDEX midi_controllers_by_item_tick
+                 ON midi_controllers(item_id, tick, controller);
+             CREATE TABLE midi_pitch_bends_v58 (
+                 item_id INTEGER NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+                 position INTEGER NOT NULL CHECK (position >= 0),
+                 tick INTEGER NOT NULL CHECK (tick >= 0),
+                 value INTEGER NOT NULL CHECK (value BETWEEN 0 AND 16383),
+                 PRIMARY KEY (item_id, position),
+                 UNIQUE (item_id, tick)
+             );
+             INSERT INTO midi_pitch_bends_v58(item_id, position, tick, value)
+                 SELECT item_id, position, tick, value FROM midi_pitch_bends;
+             DROP TABLE midi_pitch_bends;
+             ALTER TABLE midi_pitch_bends_v58 RENAME TO midi_pitch_bends;
+             CREATE INDEX midi_pitch_bends_by_item_tick ON midi_pitch_bends(item_id, tick);
+             PRAGMA user_version = 58;",
+        )
+        .unwrap();
+    drop(connection);
+
+    let store = ProjectStore::open(&path).unwrap();
+    assert_eq!(store.schema_version().unwrap(), CURRENT_SCHEMA_VERSION);
+    let restored = store.load().unwrap();
+    assert_eq!(restored.snapshot(), project.snapshot());
+    let item = &restored.midi_items()[0];
+    assert_eq!(item.notes()[0].channel(), 0);
+    assert_eq!(item.controllers()[0].channel, 0);
+    assert_eq!(item.pitch_bends()[0].channel, 0);
+    store.close().unwrap();
+    remove_database(&path);
+}
+
+#[test]
 fn schema_thirteen_migrates_with_compatible_empty_arrangement_view_state() {
     let path = project_path();
     let mut project = Project::with_settings(
@@ -1132,6 +1238,7 @@ fn schema_migration_and_project_roundtrip_preserve_state() {
         .apply(DawAction::AddMidiNotes {
             item_id,
             notes: vec![MidiNoteData {
+                channel: 7,
                 pitch: 67,
                 tick: 120,
                 duration: 720,
@@ -1144,31 +1251,43 @@ fn schema_migration_and_project_roundtrip_preserve_state() {
             item_id,
             controllers: vec![
                 MidiControllerData {
+                    channel: 7,
                     controller: 64,
                     tick: 0,
                     value: 127,
                 },
                 MidiControllerData {
+                    channel: 7,
                     controller: 64,
                     tick: 960,
                     value: 0,
                 },
                 MidiControllerData {
+                    channel: 1,
                     controller: 1,
                     tick: 480,
                     value: 64,
                 },
                 MidiControllerData {
+                    channel: 11,
+                    controller: 1,
+                    tick: 480,
+                    value: 65,
+                },
+                MidiControllerData {
+                    channel: 7,
                     controller: 7,
                     tick: 360,
                     value: 88,
                 },
                 MidiControllerData {
+                    channel: 8,
                     controller: 10,
                     tick: 480,
                     value: 32,
                 },
                 MidiControllerData {
+                    channel: 9,
                     controller: 11,
                     tick: 720,
                     value: 96,
@@ -1181,12 +1300,19 @@ fn schema_migration_and_project_roundtrip_preserve_state() {
             item_id,
             pitch_bends: vec![
                 MidiPitchBendData {
+                    channel: 5,
                     tick: 0,
                     value: 8192,
                 },
                 MidiPitchBendData {
+                    channel: 5,
                     tick: 720,
                     value: 11_337,
+                },
+                MidiPitchBendData {
+                    channel: 14,
+                    tick: 720,
+                    value: 12_337,
                 },
             ],
         })
@@ -2413,6 +2539,7 @@ fn schema_seven_projects_migrate_controller_storage_without_changing_notes() {
         .apply(DawAction::AddMidiNotes {
             item_id,
             notes: vec![MidiNoteData {
+                channel: 0,
                 pitch: 60,
                 tick: 120,
                 duration: 240,

@@ -23,12 +23,14 @@ fn midi_quantize_moves_note_starts_to_the_grid_and_is_undoable() {
             item_id,
             notes: vec![
                 MidiNoteData {
+                    channel: 0,
                     pitch: 60,
                     tick: 110,
                     duration: 120,
                     velocity: 100,
                 },
                 MidiNoteData {
+                    channel: 0,
                     pitch: 64,
                     tick: 510,
                     duration: 120,

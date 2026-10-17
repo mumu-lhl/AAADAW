@@ -25,7 +25,7 @@ use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 /// Latest database schema version understood by this release.
-pub const CURRENT_SCHEMA_VERSION: u32 = 58;
+pub const CURRENT_SCHEMA_VERSION: u32 = 59;
 
 const MIGRATION_29: &str = "ALTER TABLE project_meta ADD COLUMN start_measure INTEGER NOT NULL DEFAULT 1 CHECK(start_measure BETWEEN -2147483648 AND 2147483647);";
 const MIGRATION_30: &str = "ALTER TABLE project_meta ADD COLUMN bpm_basis INTEGER NOT NULL DEFAULT 1 CHECK(bpm_basis BETWEEN 0 AND 5);";
@@ -464,6 +464,70 @@ SET source_loop_length_ticks = MAX(
 const MIGRATION_52: &str = r#"
 ALTER TABLE arrangement_view_meta ADD COLUMN repeat_enabled INTEGER NOT NULL DEFAULT 0
     CHECK(repeat_enabled IN (0, 1));
+"#;
+
+const MIGRATION_59_CONTROLLERS: &str = r#"
+CREATE TABLE midi_controllers_v59 (
+    item_id INTEGER NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+    position INTEGER NOT NULL CHECK (position >= 0),
+    controller INTEGER NOT NULL CHECK (controller BETWEEN 0 AND 127),
+    channel INTEGER NOT NULL DEFAULT 0 CHECK (channel BETWEEN 0 AND 15),
+    tick INTEGER NOT NULL CHECK (tick >= 0),
+    value INTEGER NOT NULL CHECK (value BETWEEN 0 AND 127),
+    PRIMARY KEY (item_id, position),
+    UNIQUE (item_id, channel, controller, tick)
+);
+INSERT INTO midi_controllers_v59(item_id, position, controller, channel, tick, value)
+    SELECT item_id, position, controller, 0, tick, value FROM midi_controllers;
+DROP TABLE midi_controllers;
+ALTER TABLE midi_controllers_v59 RENAME TO midi_controllers;
+CREATE INDEX midi_controllers_by_item_tick
+    ON midi_controllers(item_id, tick, channel, controller);
+"#;
+
+const MIGRATION_59_PITCH_BENDS: &str = r#"
+CREATE TABLE midi_pitch_bends_v59 (
+    item_id INTEGER NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+    position INTEGER NOT NULL CHECK (position >= 0),
+    channel INTEGER NOT NULL DEFAULT 0 CHECK (channel BETWEEN 0 AND 15),
+    tick INTEGER NOT NULL CHECK (tick >= 0),
+    value INTEGER NOT NULL CHECK (value BETWEEN 0 AND 16383),
+    PRIMARY KEY (item_id, position),
+    UNIQUE (item_id, channel, tick)
+);
+INSERT INTO midi_pitch_bends_v59(item_id, position, channel, tick, value)
+    SELECT item_id, position, 0, tick, value FROM midi_pitch_bends;
+DROP TABLE midi_pitch_bends;
+ALTER TABLE midi_pitch_bends_v59 RENAME TO midi_pitch_bends;
+CREATE INDEX midi_pitch_bends_by_item_tick
+    ON midi_pitch_bends(item_id, tick, channel);
+"#;
+
+const CREATE_MIDI_CONTROLLERS_59: &str = r#"
+CREATE TABLE midi_controllers (
+    item_id INTEGER NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+    position INTEGER NOT NULL CHECK (position >= 0),
+    controller INTEGER NOT NULL CHECK (controller BETWEEN 0 AND 127),
+    channel INTEGER NOT NULL DEFAULT 0 CHECK (channel BETWEEN 0 AND 15),
+    tick INTEGER NOT NULL CHECK (tick >= 0),
+    value INTEGER NOT NULL CHECK (value BETWEEN 0 AND 127),
+    PRIMARY KEY (item_id, position),
+    UNIQUE (item_id, channel, controller, tick)
+);
+CREATE INDEX midi_controllers_by_item_tick ON midi_controllers(item_id, tick, channel, controller);
+"#;
+
+const CREATE_MIDI_PITCH_BENDS_59: &str = r#"
+CREATE TABLE midi_pitch_bends (
+    item_id INTEGER NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+    position INTEGER NOT NULL CHECK (position >= 0),
+    channel INTEGER NOT NULL DEFAULT 0 CHECK (channel BETWEEN 0 AND 15),
+    tick INTEGER NOT NULL CHECK (tick >= 0),
+    value INTEGER NOT NULL CHECK (value BETWEEN 0 AND 16383),
+    PRIMARY KEY (item_id, position),
+    UNIQUE (item_id, channel, tick)
+);
+CREATE INDEX midi_pitch_bends_by_item_tick ON midi_pitch_bends(item_id, tick, channel);
 "#;
 
 /// SQLite persistence failures, including incompatible project files.
@@ -3461,6 +3525,23 @@ fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
                     )?;
                 }
             }
+            59 => {
+                if !table_has_column(&transaction, "midi_notes", "channel")? {
+                    transaction.execute_batch(
+                        "ALTER TABLE midi_notes ADD COLUMN channel INTEGER NOT NULL DEFAULT 0 CHECK(channel BETWEEN 0 AND 15);",
+                    )?;
+                }
+                if !table_exists(&transaction, "midi_controllers")? {
+                    transaction.execute_batch(CREATE_MIDI_CONTROLLERS_59)?;
+                } else if !table_has_column(&transaction, "midi_controllers", "channel")? {
+                    transaction.execute_batch(MIGRATION_59_CONTROLLERS)?;
+                }
+                if !table_exists(&transaction, "midi_pitch_bends")? {
+                    transaction.execute_batch(CREATE_MIDI_PITCH_BENDS_59)?;
+                } else if !table_has_column(&transaction, "midi_pitch_bends", "channel")? {
+                    transaction.execute_batch(MIGRATION_59_PITCH_BENDS)?;
+                }
+            }
             missing => return Err(StorageError::MissingMigration(missing - 1)),
         }
         transaction.pragma_update(None, "user_version", next_version)?;
@@ -3713,13 +3794,14 @@ fn write_snapshot(
         )?;
         for (position, note) in item.notes.iter().enumerate() {
             transaction.execute(
-                "INSERT INTO midi_notes(id, item_id, position, pitch, tick, duration, velocity) \
-                 VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                "INSERT INTO midi_notes(id, item_id, position, pitch, channel, tick, duration, velocity) \
+                 VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
                 params![
                     to_sql_integer(note.id)?,
                     to_sql_integer(item.id)?,
                     usize_to_sql(position)?,
                     i64::from(note.data.pitch),
+                    i64::from(note.data.channel),
                     to_sql_integer(note.data.tick)?,
                     to_sql_integer(note.data.duration)?,
                     i64::from(note.data.velocity)
@@ -3728,12 +3810,13 @@ fn write_snapshot(
         }
         for (position, controller) in item.controllers.iter().enumerate() {
             transaction.execute(
-                "INSERT INTO midi_controllers(item_id, position, controller, tick, value) \
-                 VALUES(?1, ?2, ?3, ?4, ?5)",
+                "INSERT INTO midi_controllers(item_id, position, controller, channel, tick, value) \
+                 VALUES(?1, ?2, ?3, ?4, ?5, ?6)",
                 params![
                     to_sql_integer(item.id)?,
                     usize_to_sql(position)?,
                     i64::from(controller.controller),
+                    i64::from(controller.channel),
                     to_sql_integer(controller.tick)?,
                     i64::from(controller.value)
                 ],
@@ -3741,11 +3824,12 @@ fn write_snapshot(
         }
         for (position, bend) in item.pitch_bends.iter().enumerate() {
             transaction.execute(
-                "INSERT INTO midi_pitch_bends(item_id, position, tick, value) \
-                 VALUES(?1, ?2, ?3, ?4)",
+                "INSERT INTO midi_pitch_bends(item_id, position, channel, tick, value) \
+                 VALUES(?1, ?2, ?3, ?4, ?5)",
                 params![
                     to_sql_integer(item.id)?,
                     usize_to_sql(position)?,
+                    i64::from(bend.channel),
                     to_sql_integer(bend.tick)?,
                     i64::from(bend.value)
                 ],
@@ -4469,7 +4553,7 @@ fn read_audio_items(connection: &Connection) -> Result<Vec<AudioItemSnapshot>, S
 
 fn read_midi_items(connection: &Connection) -> Result<(Vec<MidiItemSnapshot>, bool), StorageError> {
     let mut note_statement = connection.prepare(
-        "SELECT item_id, id, position, pitch, tick, duration, velocity \
+        "SELECT item_id, id, position, pitch, channel, tick, duration, velocity \
          FROM midi_notes ORDER BY item_id, position",
     )?;
     let note_rows = note_statement
@@ -4482,14 +4566,16 @@ fn read_midi_items(connection: &Connection) -> Result<(Vec<MidiItemSnapshot>, bo
                 row.get::<_, i64>(4)?,
                 row.get::<_, i64>(5)?,
                 row.get::<_, i64>(6)?,
+                row.get::<_, i64>(7)?,
             ))
         })?
         .collect::<Result<Vec<_>, _>>()?;
     let mut notes_by_item: HashMap<u64, Vec<(u64, MidiNoteSnapshot)>> = HashMap::new();
-    for (item_id, note_id, position, pitch, tick, duration, velocity) in note_rows {
+    for (item_id, note_id, position, pitch, channel, tick, duration, velocity) in note_rows {
         let note = MidiNoteSnapshot {
             id: from_sql_u64(note_id)?,
             data: MidiNoteData {
+                channel: from_sql_u8(channel)?,
                 pitch: from_sql_u8(pitch)?,
                 tick: from_sql_u64(tick)?,
                 duration: from_sql_u64(duration)?,
@@ -4503,7 +4589,7 @@ fn read_midi_items(connection: &Connection) -> Result<(Vec<MidiItemSnapshot>, bo
     }
 
     let mut controller_statement = connection.prepare(
-        "SELECT item_id, position, controller, tick, value \
+        "SELECT item_id, position, controller, channel, tick, value \
          FROM midi_controllers ORDER BY item_id, position",
     )?;
     let controller_rows = controller_statement
@@ -4514,17 +4600,19 @@ fn read_midi_items(connection: &Connection) -> Result<(Vec<MidiItemSnapshot>, bo
                 row.get::<_, i64>(2)?,
                 row.get::<_, i64>(3)?,
                 row.get::<_, i64>(4)?,
+                row.get::<_, i64>(5)?,
             ))
         })?
         .collect::<Result<Vec<_>, _>>()?;
     let mut controllers_by_item: HashMap<u64, Vec<(u64, MidiControllerData)>> = HashMap::new();
-    for (item_id, position, controller, tick, value) in controller_rows {
+    for (item_id, position, controller, channel, tick, value) in controller_rows {
         controllers_by_item
             .entry(from_sql_u64(item_id)?)
             .or_default()
             .push((
                 from_sql_u64(position)?,
                 MidiControllerData {
+                    channel: from_sql_u8(channel)?,
                     controller: from_sql_u8(controller)?,
                     tick: from_sql_u64(tick)?,
                     value: from_sql_u8(value)?,
@@ -4533,7 +4621,7 @@ fn read_midi_items(connection: &Connection) -> Result<(Vec<MidiItemSnapshot>, bo
     }
 
     let mut bend_statement = connection.prepare(
-        "SELECT item_id, position, tick, value \
+        "SELECT item_id, position, channel, tick, value \
          FROM midi_pitch_bends ORDER BY item_id, position",
     )?;
     let bend_rows = bend_statement
@@ -4543,17 +4631,19 @@ fn read_midi_items(connection: &Connection) -> Result<(Vec<MidiItemSnapshot>, bo
                 row.get::<_, i64>(1)?,
                 row.get::<_, i64>(2)?,
                 row.get::<_, i64>(3)?,
+                row.get::<_, i64>(4)?,
             ))
         })?
         .collect::<Result<Vec<_>, _>>()?;
     let mut bends_by_item: HashMap<u64, Vec<(u64, MidiPitchBendData)>> = HashMap::new();
-    for (item_id, position, tick, value) in bend_rows {
+    for (item_id, position, channel, tick, value) in bend_rows {
         bends_by_item
             .entry(from_sql_u64(item_id)?)
             .or_default()
             .push((
                 from_sql_u64(position)?,
                 MidiPitchBendData {
+                    channel: from_sql_u8(channel)?,
                     tick: from_sql_u64(tick)?,
                     value: from_sql_u16(value)?,
                 },
@@ -5496,6 +5586,7 @@ mod loop_source_storage_tests {
             .apply(DawAction::AddMidiNotes {
                 item_id,
                 notes: vec![MidiNoteData {
+                    channel: 0,
                     pitch: 60,
                     tick: 1_080,
                     duration: 120,

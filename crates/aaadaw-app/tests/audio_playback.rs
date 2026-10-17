@@ -1264,6 +1264,7 @@ fn transport_loop_preparation_repeats_midi_notes_at_the_project_loop_boundary() 
         .apply(DawAction::AddMidiNotes {
             item_id: project.midi_items()[0].id(),
             notes: vec![aaadaw_core::MidiNoteData {
+                channel: 0,
                 pitch: 64,
                 tick: 0,
                 duration: 480,
@@ -1359,6 +1360,7 @@ fn transport_loop_playback_started_after_the_range_keeps_advancing_linearly() {
         .apply(DawAction::AddMidiNotes {
             item_id: project.midi_items()[0].id(),
             notes: vec![aaadaw_core::MidiNoteData {
+                channel: 0,
                 pitch: 64,
                 tick: 0,
                 duration: 480,

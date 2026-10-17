@@ -2079,3 +2079,9 @@ Linux REAPER 7.82 / Default 7 的新建普通 Send 经 Lua API 实测 `I_MIDIFLA
 ### 2026-10-17 实时 MIDI 通道身份
 
 实时 MIDI 解码和 `ScheduledMidiEvent` 现保留 0–15 通道；CLAP Note PCKN、CC/Pitch Bend 原始消息、活动音符清理和固定大小 helper IPC 都使用相同通道。隔离 helper 协议升为版本 4，但 MIDI 记录仍为 16 字节；Android MIDI 状态字节保留通道并拒绝非法值。既有工程计划事件仍为通道 0，持久化 MIDI channel、通道编辑及 Send 映射继续未实现，P3 未关闭。回归验证包括跨通道同音高音符配对、CC/Pitch Bend 与 IPC；Nextest **1396/1396、0 skipped**，严格 workspace Clippy、格式、差异检查通过。细节见[实时 MIDI 通道验证](../verification/reaper-parity/live-midi-channels.md)。
+
+### 2026-10-17 工程 MIDI 通道身份与 schema 59
+
+工程 Note、CC、Pitch Bend 数据新增 0..15 通道身份，Core 快照校验、复制/分割、控制器与 Pitch Bend chase、MIDI 计划、Send All→All 路径及标准 MIDI 导出均保留通道。SQLite schema 59 为旧工程迁移出通道 0，并扩展 CC/Pitch Bend 的唯一键，逐表兼容已有列和迁移夹具中的缺失旧表。MCP 的 Note/表达式查询返回通道，Note 编辑支持显式切换且省略时保留原通道；Note 插入和 CC/Pitch Bend upsert 支持可选通道，缺省兼容通道 0。无通道选择器的 MIDI 编辑器仍以通道 0 新建事件，拖动已有 CC/Pitch Bend 保留事件原通道，重复位置校验按通道区分。
+
+专项回归覆盖同 tick 多通道事件、标准 MIDI 通道状态字节、计划/seek-chase、快照重开、schema 58→59 及更旧/部分旧表迁移、MCP 持久化编辑和编辑器通道键控。workspace Nextest **1400/1400、0 skipped，74 binaries**（限制 4 个并行 worker）通过；workspace all-target Clippy `-D warnings`、格式检查、`git diff --check` 以及 nightly Cranelift 桌面构建通过。Cranelift 编译保留 iced/WGPU auto-trait 的既有未来兼容警告。该数据模型切片没有新增视觉控件，因此未做 AAADAW/REAPER 截图比对或原厂 UI probe。Send 通道筛选/重映射、MIDI Bus、编辑器通道选择、其他 MIDI 消息和 P3 完整路由/界面验收仍未完成；`ROUTE-SEND-001` 继续为 `in_progress`。

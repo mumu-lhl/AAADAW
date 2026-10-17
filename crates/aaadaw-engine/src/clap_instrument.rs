@@ -2159,6 +2159,7 @@ mod tests {
             .apply(DawAction::AddMidiNotes {
                 item_id,
                 notes: vec![MidiNoteData {
+                    channel: 0,
                     pitch: 64,
                     tick: 0,
                     duration: note_duration,

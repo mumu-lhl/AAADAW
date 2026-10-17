@@ -1,6 +1,6 @@
 use aaadaw_core::{
-    DawAction, GridFraction, MidiControllerData, MidiItem, MidiNoteData, MidiPitchBendData,
-    Project, TempoCurve, TimeSignature, TrackId, VolumeAutomationPoint,
+    DawAction, GridFraction, MIDI_CHANNEL_COUNT, MidiControllerData, MidiItem, MidiNoteData,
+    MidiPitchBendData, Project, TempoCurve, TimeSignature, TrackId, VolumeAutomationPoint,
 };
 use aaadaw_storage::{ProjectSessionLock, ProjectStore};
 use rmcp::{
@@ -327,7 +327,9 @@ impl ServerHandler for ProjectMcpServer {
             EDIT_MIDI_NOTE_TOOL if self.writable => parse_edit_midi_note_arguments(
                 request.arguments.as_ref(),
             )
-            .and_then(|(item_id, note_id, data)| self.edit_midi_note(item_id, note_id, data)),
+            .and_then(|(item_id, note_id, channel, data)| {
+                self.edit_midi_note(item_id, note_id, channel, data)
+            }),
             DELETE_MIDI_NOTES_TOOL if self.writable => {
                 parse_delete_midi_notes_arguments(request.arguments.as_ref())
                     .and_then(|(item_id, note_ids)| self.delete_midi_notes(item_id, note_ids))
@@ -615,7 +617,8 @@ impl ProjectMcpServer {
         &self,
         raw_item_id: u64,
         raw_note_id: u64,
-        data: MidiNoteData,
+        channel: Option<u8>,
+        mut data: MidiNoteData,
     ) -> Result<Value, String> {
         let mut project = self
             .project
@@ -634,12 +637,15 @@ impl ProjectMcpServer {
             .find(|item| item.id().value() == raw_item_id)
             .ok_or_else(|| "unknown MIDI item id".to_owned())?;
         let item_id = item.id();
-        let note_id = item
+        let note = item
             .notes()
             .iter()
             .find(|note| note.id().value() == raw_note_id)
-            .map(|note| note.id())
             .ok_or_else(|| "unknown MIDI note id for this item".to_owned())?;
+        let note_id = note.id();
+        if channel.is_none() {
+            data.channel = note.channel();
+        }
         project
             .apply(DawAction::EditMidiNote {
                 item_id,
@@ -656,6 +662,7 @@ impl ProjectMcpServer {
         let result = json!({
             "item_id": item_id.value(),
             "note_id": note.id().value(),
+            "channel": note.channel(),
             "pitch": note.pitch(),
             "tick": note.tick(),
             "duration": note.duration(),
@@ -735,10 +742,11 @@ impl ProjectMcpServer {
                     update.tick
                 ));
             }
-            if let Some(existing) = controllers
-                .iter_mut()
-                .find(|event| event.controller == update.controller && event.tick == update.tick)
-            {
+            if let Some(existing) = controllers.iter_mut().find(|event| {
+                event.channel == update.channel
+                    && event.controller == update.controller
+                    && event.tick == update.tick
+            }) {
                 *existing = *update;
             } else {
                 controllers.push(*update);
@@ -754,6 +762,7 @@ impl ProjectMcpServer {
             .iter()
             .map(|point| {
                 json!({
+                    "channel": point.channel,
                     "controller": point.controller,
                     "tick": point.tick,
                     "value": point.value,
@@ -797,7 +806,7 @@ impl ProjectMcpServer {
             }
             if let Some(existing) = pitch_bends
                 .iter_mut()
-                .find(|event| event.tick == update.tick)
+                .find(|event| event.channel == update.channel && event.tick == update.tick)
             {
                 *existing = *update;
             } else {
@@ -812,7 +821,9 @@ impl ProjectMcpServer {
             .map_err(|error| error.to_string())?;
         let points = updates
             .iter()
-            .map(|point| json!({"tick": point.tick, "value": point.value}))
+            .map(
+                |point| json!({"channel": point.channel, "tick": point.tick, "value": point.value}),
+            )
             .collect::<Vec<_>>();
         persist_project_edit(&mut project, store, "upserted MIDI pitch bends")?;
         Ok(json!({"item_id": item_id.value(), "points": points}))
@@ -1244,7 +1255,7 @@ fn edit_midi_item_tool() -> Tool {
 fn insert_midi_notes_tool() -> Tool {
     Tool::new(
         INSERT_MIDI_NOTES_TOOL,
-        "Insert a bounded batch of notes into an existing MIDI item.",
+        "Insert a bounded batch of notes into an existing MIDI item; channel defaults to 0.",
         rmcp::model::object(json!({
             "type": "object",
             "properties": {
@@ -1257,6 +1268,7 @@ fn insert_midi_notes_tool() -> Tool {
                     "items": {
                         "type": "object",
                         "properties": {
+                            "channel": {"type": "integer", "minimum": 0, "maximum": 15},
                             "pitch": {"type": "integer", "minimum": 0, "maximum": 127},
                             "tick": {"type": "integer", "minimum": 0},
                             "duration": {"type": "integer", "minimum": 1},
@@ -1282,12 +1294,13 @@ fn insert_midi_notes_tool() -> Tool {
 fn edit_midi_note_tool() -> Tool {
     Tool::new(
         EDIT_MIDI_NOTE_TOOL,
-        "Replace the timing, pitch, duration, and velocity of one note in a MIDI item.",
+        "Replace the timing, pitch, duration, and velocity of one note; an omitted channel preserves its current channel.",
         rmcp::model::object(json!({
             "type": "object",
             "properties": {
                 "item_id": {"type": "integer", "minimum": 0},
                 "note_id": {"type": "integer", "minimum": 0},
+                "channel": {"type": "integer", "minimum": 0, "maximum": 15},
                 "pitch": {"type": "integer", "minimum": 0, "maximum": 127},
                 "tick": {"type": "integer", "minimum": 0},
                 "duration": {"type": "integer", "minimum": 1},
@@ -1336,7 +1349,7 @@ fn delete_midi_notes_tool() -> Tool {
 fn upsert_midi_controllers_tool() -> Tool {
     Tool::new(
         UPSERT_MIDI_CONTROLLERS_TOOL,
-        "Insert or update a bounded batch of MIDI controller points, preserving other events.",
+        "Insert or update MIDI controller points by channel/controller/tick; channel defaults to 0.",
         rmcp::model::object(json!({
             "type": "object",
             "properties": {
@@ -1348,6 +1361,7 @@ fn upsert_midi_controllers_tool() -> Tool {
                     "items": {
                         "type": "object",
                         "properties": {
+                            "channel": {"type": "integer", "minimum": 0, "maximum": 15},
                             "controller": {"type": "integer", "minimum": 0, "maximum": 127},
                             "tick": {"type": "integer", "minimum": 0},
                             "value": {"type": "integer", "minimum": 0, "maximum": 127}
@@ -1372,7 +1386,7 @@ fn upsert_midi_controllers_tool() -> Tool {
 fn upsert_midi_pitch_bends_tool() -> Tool {
     Tool::new(
         UPSERT_MIDI_PITCH_BENDS_TOOL,
-        "Insert or update a bounded batch of MIDI pitch-bend points, preserving other ticks.",
+        "Insert or update MIDI pitch-bend points by channel/tick; channel defaults to 0.",
         rmcp::model::object(json!({
             "type": "object",
             "properties": {
@@ -1384,6 +1398,7 @@ fn upsert_midi_pitch_bends_tool() -> Tool {
                     "items": {
                         "type": "object",
                         "properties": {
+                            "channel": {"type": "integer", "minimum": 0, "maximum": 15},
                             "tick": {"type": "integer", "minimum": 0},
                             "value": {"type": "integer", "minimum": 0, "maximum": 16383}
                         },
@@ -1836,6 +1851,25 @@ fn parse_edit_midi_item_arguments(
     Ok((item_id, start_tick, length_ticks))
 }
 
+fn parse_optional_midi_channel(
+    fields: &serde_json::Map<String, Value>,
+    label: &str,
+) -> Result<Option<u8>, String> {
+    let Some(value) = fields.get("channel") else {
+        return Ok(None);
+    };
+    let channel = value
+        .as_u64()
+        .ok_or_else(|| format!("{label}.channel must be an integer in 0..15"))?;
+    if channel >= u64::from(MIDI_CHANNEL_COUNT) {
+        return Err(format!(
+            "{label}.channel must be in 0..{}",
+            MIDI_CHANNEL_COUNT - 1
+        ));
+    }
+    Ok(Some(channel as u8))
+}
+
 fn parse_insert_midi_notes_arguments(
     arguments: Option<&serde_json::Map<String, Value>>,
 ) -> Result<(u64, u64, Vec<MidiNoteData>), String> {
@@ -1873,10 +1907,12 @@ fn parse_insert_midi_notes_arguments(
             let note = note
                 .as_object()
                 .ok_or_else(|| format!("notes[{index}] must be an object"))?;
-            if note
-                .keys()
-                .any(|key| !matches!(key.as_str(), "pitch" | "tick" | "duration" | "velocity"))
-            {
+            if note.keys().any(|key| {
+                !matches!(
+                    key.as_str(),
+                    "channel" | "pitch" | "tick" | "duration" | "velocity"
+                )
+            }) {
                 return Err(format!("notes[{index}] contains an unknown field"));
             }
             let unsigned = |key: &str| {
@@ -1890,7 +1926,10 @@ fn parse_insert_midi_notes_arguments(
             let duration = unsigned("duration")?;
             let velocity = u8::try_from(unsigned("velocity")?)
                 .map_err(|_| format!("notes[{index}].velocity must be in 0..=127"))?;
+            let channel =
+                parse_optional_midi_channel(note, &format!("notes[{index}]"))?.unwrap_or(0);
             Ok(MidiNoteData {
+                channel,
                 pitch,
                 tick,
                 duration,
@@ -1903,12 +1942,12 @@ fn parse_insert_midi_notes_arguments(
 
 fn parse_edit_midi_note_arguments(
     arguments: Option<&serde_json::Map<String, Value>>,
-) -> Result<(u64, u64, MidiNoteData), String> {
+) -> Result<(u64, u64, Option<u8>, MidiNoteData), String> {
     let arguments = arguments.ok_or_else(|| "arguments are required".to_owned())?;
     if arguments.keys().any(|key| {
         !matches!(
             key.as_str(),
-            "item_id" | "note_id" | "pitch" | "tick" | "duration" | "velocity"
+            "item_id" | "note_id" | "channel" | "pitch" | "tick" | "duration" | "velocity"
         )
     }) {
         return Err("arguments contain an unknown field".to_owned());
@@ -1936,10 +1975,13 @@ fn parse_edit_midi_note_arguments(
     if velocity > 127 {
         return Err("velocity must be in 0..=127".to_owned());
     }
+    let channel = parse_optional_midi_channel(arguments, "note")?;
     Ok((
         item_id,
         note_id,
+        channel,
         MidiNoteData {
+            channel: channel.unwrap_or(0),
             pitch,
             tick,
             duration,
@@ -2020,7 +2062,7 @@ fn parse_upsert_midi_controllers_arguments(
                 .ok_or_else(|| format!("controllers[{index}] must be an object"))?;
             if point
                 .keys()
-                .any(|key| !matches!(key.as_str(), "controller" | "tick" | "value"))
+                .any(|key| !matches!(key.as_str(), "channel" | "controller" | "tick" | "value"))
             {
                 return Err(format!("controllers[{index}] contains an unknown field"));
             }
@@ -2042,10 +2084,13 @@ fn parse_upsert_midi_controllers_arguments(
             if value > 127 {
                 return Err(format!("controllers[{index}].value must be in 0..=127"));
             }
-            if !positions.insert((controller, tick)) {
-                return Err("controllers must not repeat a controller/tick pair".to_owned());
+            let channel =
+                parse_optional_midi_channel(point, &format!("controllers[{index}]"))?.unwrap_or(0);
+            if !positions.insert((channel, controller, tick)) {
+                return Err("controllers must not repeat a channel/controller/tick pair".to_owned());
             }
             Ok(MidiControllerData {
+                channel,
                 controller,
                 tick,
                 value,
@@ -2088,7 +2133,7 @@ fn parse_upsert_midi_pitch_bends_arguments(
                 .ok_or_else(|| format!("pitch_bends[{index}] must be an object"))?;
             if point
                 .keys()
-                .any(|key| !matches!(key.as_str(), "tick" | "value"))
+                .any(|key| !matches!(key.as_str(), "channel" | "tick" | "value"))
             {
                 return Err(format!("pitch_bends[{index}] contains an unknown field"));
             }
@@ -2103,10 +2148,13 @@ fn parse_upsert_midi_pitch_bends_arguments(
             if bend_value > 16_383 {
                 return Err(format!("pitch_bends[{index}].value must be in 0..=16383"));
             }
-            if !ticks.insert(tick) {
-                return Err("pitch_bends must not repeat a tick".to_owned());
+            let channel =
+                parse_optional_midi_channel(point, &format!("pitch_bends[{index}]"))?.unwrap_or(0);
+            if !ticks.insert((channel, tick)) {
+                return Err("pitch_bends must not repeat a channel/tick pair".to_owned());
             }
             Ok(MidiPitchBendData {
+                channel,
                 tick,
                 value: bend_value,
             })
@@ -2246,6 +2294,7 @@ fn parse_bounded_range_query_arguments(
 struct MidiExpressionCandidate {
     absolute_tick: u64,
     item_id: u64,
+    channel: u8,
     kind: MidiExpressionKind,
     item_start_tick: u64,
     item_tick: u64,
@@ -2287,6 +2336,7 @@ fn scoped_query_midi_expression(
             let candidate = MidiExpressionCandidate {
                 absolute_tick,
                 item_id: item.id().value(),
+                channel: event.channel,
                 kind: MidiExpressionKind::Controller {
                     controller: event.controller,
                     value: event.value,
@@ -2304,6 +2354,7 @@ fn scoped_query_midi_expression(
             let candidate = MidiExpressionCandidate {
                 absolute_tick,
                 item_id: item.id().value(),
+                channel: event.channel,
                 kind: MidiExpressionKind::PitchBend { value: event.value },
                 item_start_tick: item.start_tick(),
                 item_tick: event.tick,
@@ -2325,6 +2376,7 @@ fn scoped_query_midi_expression(
             };
             json!({
                 "item_id": event.item_id,
+                "channel": event.channel,
                 "item_start_tick": event.item_start_tick,
                 "item_tick": event.item_tick,
                 "tick": event.absolute_tick,
@@ -2439,6 +2491,7 @@ fn scoped_query_notes(
                 absolute_tick,
                 item_id: item.id().value(),
                 note_id: note.id().value(),
+                channel: note.channel(),
                 pitch: note.pitch(),
                 duration: note.duration().min(item_end_tick - absolute_tick),
                 velocity: note.velocity(),
@@ -2461,6 +2514,7 @@ fn scoped_query_notes(
             json!({
                 "item_id": note.item_id,
                 "note_id": note.note_id,
+                "channel": note.channel,
                 "tick": note.absolute_tick,
                 "pitch": note.pitch,
                 "duration": note.duration,
@@ -2514,6 +2568,7 @@ struct NoteCandidate {
     absolute_tick: u64,
     item_id: u64,
     note_id: u64,
+    channel: u8,
     pitch: u8,
     duration: u64,
     velocity: u8,
@@ -2766,6 +2821,21 @@ mod tests {
         assert_eq!(parsed.0, 1);
         assert_eq!(parsed.1, 2);
         assert_eq!(parsed.2.len(), 1);
+        assert_eq!(parsed.2[0].channel, 0);
+        let channel_15 = json!([{
+            "channel": 15,
+            "pitch": 60,
+            "tick": 0,
+            "duration": 480,
+            "velocity": 100
+        }]);
+        assert_eq!(
+            parse_insert_midi_notes_arguments(Some(&arguments(channel_15)))
+                .unwrap()
+                .2[0]
+                .channel,
+            15
+        );
         assert!(parse_insert_midi_notes_arguments(Some(&arguments(json!([])))).is_err());
         assert!(
             parse_insert_midi_notes_arguments(Some(&arguments(json!(vec![
@@ -2779,6 +2849,7 @@ mod tests {
             json!({"pitch": -1, "tick": 0, "duration": 1, "velocity": 1}),
             json!({"pitch": 60, "tick": 0, "duration": 1}),
             json!({"pitch": 60, "tick": 0, "duration": 1, "velocity": 1, "extra": true}),
+            json!({"channel": 16, "pitch": 60, "tick": 0, "duration": 1, "velocity": 1}),
         ] {
             assert!(parse_insert_midi_notes_arguments(Some(&arguments(json!([invalid])))).is_err());
         }
@@ -2799,7 +2870,9 @@ mod tests {
             (
                 2,
                 9,
+                None,
                 MidiNoteData {
+                    channel: 0,
                     pitch: 64,
                     tick: 120,
                     duration: 240,
@@ -2808,6 +2881,7 @@ mod tests {
             )
         );
         for invalid in [
+            json!({"item_id": 2, "note_id": 9, "channel": 16, "pitch": 60, "tick": 0, "duration": 1, "velocity": 1}),
             json!({"item_id": 2, "note_id": 9, "pitch": 128, "tick": 0, "duration": 1, "velocity": 1}),
             json!({"item_id": 2, "note_id": 9, "pitch": 60, "tick": 0, "duration": 0, "velocity": 1}),
             json!({"item_id": 2, "note_id": 9, "pitch": 60, "tick": -1, "duration": 1, "velocity": 1}),
@@ -2857,21 +2931,30 @@ mod tests {
         assert_eq!(
             parse(json!([
                 {"controller": 11, "tick": 0, "value": 100},
-                {"controller": 10, "tick": 0, "value": 64}
+                {"controller": 10, "tick": 0, "value": 64},
+                {"channel": 1, "controller": 11, "tick": 0, "value": 80}
             ]))
             .unwrap(),
             (
                 2,
                 vec![
                     MidiControllerData {
+                        channel: 0,
                         controller: 11,
                         tick: 0,
                         value: 100,
                     },
                     MidiControllerData {
+                        channel: 0,
                         controller: 10,
                         tick: 0,
                         value: 64,
+                    },
+                    MidiControllerData {
+                        channel: 1,
+                        controller: 11,
+                        tick: 0,
+                        value: 80,
                     }
                 ]
             )
@@ -2879,6 +2962,7 @@ mod tests {
         for invalid in [
             json!([]),
             json!([{"controller": 128, "tick": 0, "value": 1}]),
+            json!([{"channel": 16, "controller": 11, "tick": 0, "value": 1}]),
             json!([{"controller": 11, "tick": 0, "value": 128}]),
             json!([{"controller": 11, "tick": -1, "value": 1}]),
             json!([{"controller": 11, "tick": 0, "value": 1, "extra": true}]),
@@ -2907,17 +2991,29 @@ mod tests {
                 .collect(),
         );
         assert_eq!(
-            parse(json!([{"tick": 0, "value": 8192}, {"tick": 480, "value": 16383}])).unwrap(),
+            parse(json!([
+                {"tick": 0, "value": 8192},
+                {"tick": 480, "value": 16383},
+                {"channel": 5, "tick": 0, "value": 9000}
+            ]))
+            .unwrap(),
             (
                 2,
                 vec![
                     MidiPitchBendData {
+                        channel: 0,
                         tick: 0,
                         value: 8192,
                     },
                     MidiPitchBendData {
+                        channel: 0,
                         tick: 480,
                         value: 16383,
+                    },
+                    MidiPitchBendData {
+                        channel: 5,
+                        tick: 0,
+                        value: 9000,
                     }
                 ]
             )
@@ -2925,6 +3021,7 @@ mod tests {
         for invalid in [
             json!([]),
             json!([{"tick": -1, "value": 8192}]),
+            json!([{"channel": 16, "tick": 0, "value": 8192}]),
             json!([{"tick": 0, "value": 16384}]),
             json!([{"tick": 0, "value": "8192"}]),
             json!([{"tick": 0, "value": 8192, "extra": true}]),
@@ -3144,12 +3241,14 @@ mod tests {
                 item_id,
                 notes: vec![
                     MidiNoteData {
+                        channel: 0,
                         pitch: 60,
                         tick: 120,
                         duration: 240,
                         velocity: 100,
                     },
                     MidiNoteData {
+                        channel: 0,
                         pitch: 64,
                         tick: 480,
                         duration: 480,
@@ -3190,30 +3289,35 @@ mod tests {
                 item_id,
                 notes: vec![
                     MidiNoteData {
+                        channel: 0,
                         pitch: 55,
                         tick: 50,
                         duration: 100,
                         velocity: 90,
                     },
                     MidiNoteData {
+                        channel: 0,
                         pitch: 60,
                         tick: 150,
                         duration: 100,
                         velocity: 100,
                     },
                     MidiNoteData {
+                        channel: 0,
                         pitch: 64,
                         tick: 200,
                         duration: 200,
                         velocity: 100,
                     },
                     MidiNoteData {
+                        channel: 0,
                         pitch: 67,
                         tick: 1_100,
                         duration: 300,
                         velocity: 100,
                     },
                     MidiNoteData {
+                        channel: 0,
                         pitch: 72,
                         tick: 1_300,
                         duration: 100,
@@ -3277,18 +3381,21 @@ mod tests {
     fn scoped_query_uses_half_open_project_ranges_and_stable_ordering() {
         let (project, track_id) = project_with_notes(vec![
             MidiNoteData {
+                channel: 0,
                 pitch: 67,
                 tick: 480,
                 duration: 120,
                 velocity: 90,
             },
             MidiNoteData {
+                channel: 0,
                 pitch: 60,
                 tick: 0,
                 duration: 240,
                 velocity: 100,
             },
             MidiNoteData {
+                channel: 0,
                 pitch: 64,
                 tick: 240,
                 duration: 120,
@@ -3330,21 +3437,25 @@ mod tests {
                 item_id: first_item_id,
                 controllers: vec![
                     MidiControllerData {
+                        channel: 0,
                         controller: 9,
                         tick: 19,
                         value: 10,
                     },
                     MidiControllerData {
+                        channel: 0,
                         controller: 11,
                         tick: 20,
                         value: 70,
                     },
                     MidiControllerData {
+                        channel: 0,
                         controller: 1,
                         tick: 20,
                         value: 50,
                     },
                     MidiControllerData {
+                        channel: 0,
                         controller: 7,
                         tick: 30,
                         value: 90,
@@ -3356,6 +3467,7 @@ mod tests {
             .apply(DawAction::SetMidiPitchBends {
                 item_id: first_item_id,
                 pitch_bends: vec![MidiPitchBendData {
+                    channel: 0,
                     tick: 20,
                     value: 10_000,
                 }],
@@ -3365,6 +3477,7 @@ mod tests {
             .apply(DawAction::SetMidiControllers {
                 item_id: second_item_id,
                 controllers: vec![MidiControllerData {
+                    channel: 0,
                     controller: 11,
                     tick: 10,
                     value: 80,
@@ -3539,12 +3652,14 @@ mod tests {
     fn scoped_query_breaks_equal_tick_ties_by_item_then_note_id() {
         let (mut project, track_id) = project_with_notes(vec![
             MidiNoteData {
+                channel: 0,
                 pitch: 67,
                 tick: 480,
                 duration: 120,
                 velocity: 90,
             },
             MidiNoteData {
+                channel: 0,
                 pitch: 60,
                 tick: 480,
                 duration: 120,
@@ -3563,6 +3678,7 @@ mod tests {
             .apply(DawAction::AddMidiNotes {
                 item_id: second_item_id,
                 notes: vec![MidiNoteData {
+                    channel: 0,
                     pitch: 72,
                     tick: 480,
                     duration: 120,
@@ -3585,6 +3701,7 @@ mod tests {
         let notes = (0..600)
             .rev()
             .map(|tick| MidiNoteData {
+                channel: 0,
                 pitch: 60,
                 tick,
                 duration: 1,

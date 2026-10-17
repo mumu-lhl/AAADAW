@@ -148,4 +148,10 @@ Schema 50 及更早工程默认迁移为 loop source 开启；源长推断为可
 
 `track_sends.midi_enabled` 是每条 Audio Send 独立的 MIDI 转发开关，严格限制为 0/1；新建 Send 默认开启，以匹配 Linux REAPER 7.82 / Default 7 的 `I_MIDIFLAGS=0`（MIDI All→All）。schema 57 及更早的 Send 迁移时默认开启，避免旧工程打开后丢失原厂默认 MIDI 路径。Snapshot、Undo/Redo 与保存事务共同保留此字段。
 
-目前 MIDI note、CC 与 pitch-bend 事件是无通道字段的工程模型；本切片只实现 All→All 转发，不能表达源/目标通道重映射。事件计划在控制线程按未静音的 Send 路径生成目标轨道事件与 seek/chase 状态；回调读取预编译列表，不枚举路由、不分配、不锁、不做 I/O。通道过滤/映射、MIDI Bus 与硬件端口仍是 P3 后续工作。
+工程 MIDI note、CC 与 pitch-bend 事件已各自保存 0..15 通道；All→All Send 按原通道转发。事件计划在控制线程按未静音的 Send 路径生成目标轨道事件与 seek/chase 状态；回调读取预编译列表，不枚举路由、不分配、不锁、不做 I/O。Send 通道过滤/映射、MIDI Bus 与硬件端口仍是 P3 后续工作。
+
+## schema 59 — MIDI channel identity
+
+`midi_notes` 增加受 `0..15` 检查约束的 `channel` 列；`midi_controllers` 和 `midi_pitch_bends` 增加同类列，并分别将唯一键扩展为 `(item_id, channel, controller, tick)` 与 `(item_id, channel, tick)`。schema 58 及更早工程迁移到通道 0；迁移逐表识别已有列或缺失表，兼容测试构造的部分旧 schema。Snapshot、复制/分割、MIDI 计划/chase、MCP 编辑与标准 MIDI 导出沿用通道身份。
+
+MIDI 编辑器当前没有通道选择器或分通道 lane 显示；新建 CC/Pitch Bend 使用通道 0，拖动既有事件保留原通道。普通 Send 仍 All→All 原样转发，源/目标通道过滤与重映射、MIDI Bus 和其他消息类型仍未实现。

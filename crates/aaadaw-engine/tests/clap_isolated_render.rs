@@ -36,6 +36,7 @@ fn add_track_with_note(project: &mut Project, name: &str) -> aaadaw_core::TrackI
         .apply(DawAction::AddMidiNotes {
             item_id,
             notes: vec![MidiNoteData {
+                channel: 0,
                 pitch: 60,
                 tick: 0,
                 duration: 960,

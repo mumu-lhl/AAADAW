@@ -7,6 +7,76 @@ use aaadaw_core::{
 };
 
 #[test]
+fn exports_note_controller_and_pitch_bend_channels_as_midi_status_nibbles() {
+    let mut project = Project::new();
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Channels".to_owned(),
+        })
+        .unwrap();
+    let track_id = project.tracks()[0].id();
+    project
+        .apply(DawAction::InsertMidiItem {
+            track_id,
+            start_tick: 0,
+            length_ticks: 960,
+        })
+        .unwrap();
+    let item_id = project.midi_items()[0].id();
+    project
+        .apply(DawAction::AddMidiNotes {
+            item_id,
+            notes: vec![MidiNoteData {
+                pitch: 60,
+                channel: 3,
+                tick: 0,
+                duration: 240,
+                velocity: 100,
+            }],
+        })
+        .unwrap();
+    project
+        .apply(DawAction::SetMidiControllers {
+            item_id,
+            controllers: vec![MidiControllerData {
+                controller: 7,
+                channel: 4,
+                tick: 0,
+                value: 96,
+            }],
+        })
+        .unwrap();
+    project
+        .apply(DawAction::SetMidiPitchBends {
+            item_id,
+            pitch_bends: vec![MidiPitchBendData {
+                channel: 5,
+                tick: 0,
+                value: 8_192,
+            }],
+        })
+        .unwrap();
+
+    let bytes = encode_standard_midi(
+        &project,
+        MidiExportOptions {
+            file_type: MidiFileType::Type0,
+            ..MidiExportOptions::for_project(&project)
+        },
+    )
+    .unwrap();
+    for expected in [[0x93, 60, 100], [0x83, 60, 0], [0xb4, 7, 96], [0xe5, 0, 64]] {
+        assert!(
+            bytes
+                .windows(expected.len())
+                .any(|window| window == expected),
+            "export is missing channel status bytes {expected:?}"
+        );
+    }
+}
+
+#[test]
 fn exports_tracks_notes_controllers_pitch_bends_tempo_meter_and_markers() {
     let mut project = Project::new();
     project
@@ -28,6 +98,7 @@ fn exports_tracks_notes_controllers_pitch_bends_tempo_meter_and_markers() {
         .apply(DawAction::AddMidiNotes {
             item_id,
             notes: vec![MidiNoteData {
+                channel: 0,
                 pitch: 60,
                 tick: 0,
                 duration: 960,
@@ -39,6 +110,7 @@ fn exports_tracks_notes_controllers_pitch_bends_tempo_meter_and_markers() {
         .apply(DawAction::SetMidiControllers {
             item_id,
             controllers: vec![MidiControllerData {
+                channel: 0,
                 controller: 1,
                 tick: 240,
                 value: 64,
@@ -49,6 +121,7 @@ fn exports_tracks_notes_controllers_pitch_bends_tempo_meter_and_markers() {
         .apply(DawAction::SetMidiPitchBends {
             item_id,
             pitch_bends: vec![MidiPitchBendData {
+                channel: 0,
                 tick: 360,
                 value: 12_288,
             }],
@@ -128,6 +201,7 @@ fn midi_export_keeps_fractional_item_position_until_output_ppq_rounding() {
         .apply(DawAction::AddMidiNotes {
             item_id,
             notes: vec![MidiNoteData {
+                channel: 0,
                 pitch: 60,
                 tick: 0,
                 duration: 120,
@@ -231,6 +305,7 @@ fn midi_export_repeats_loop_source_events_to_fill_the_visible_item() {
         .apply(DawAction::AddMidiNotes {
             item_id,
             notes: vec![MidiNoteData {
+                channel: 0,
                 pitch: 60,
                 tick: 120,
                 duration: 120,
@@ -242,6 +317,7 @@ fn midi_export_repeats_loop_source_events_to_fill_the_visible_item() {
         .apply(DawAction::SetMidiControllers {
             item_id,
             controllers: vec![MidiControllerData {
+                channel: 0,
                 controller: 1,
                 tick: 240,
                 value: 64,
@@ -252,6 +328,7 @@ fn midi_export_repeats_loop_source_events_to_fill_the_visible_item() {
         .apply(DawAction::SetMidiPitchBends {
             item_id,
             pitch_bends: vec![MidiPitchBendData {
+                channel: 0,
                 tick: 360,
                 value: 12_288,
             }],
@@ -450,6 +527,7 @@ fn reaper_782_export_keeps_midi_items_on_unmuted_tracks_inside_muted_folders() {
         .apply(DawAction::AddMidiNotes {
             item_id,
             notes: vec![MidiNoteData {
+                channel: 0,
                 pitch: 60,
                 tick: 0,
                 duration: 240,
@@ -493,6 +571,7 @@ fn reaper_782_selected_track_time_scope_without_overlap_exports_empty_header() {
         .apply(DawAction::AddMidiNotes {
             item_id,
             notes: vec![MidiNoteData {
+                channel: 0,
                 pitch: 60,
                 tick: 0,
                 duration: 240,
@@ -543,6 +622,7 @@ fn reaper_782_all_time_scope_without_overlap_exports_empty_header() {
         .apply(DawAction::AddMidiNotes {
             item_id,
             notes: vec![MidiNoteData {
+                channel: 0,
                 pitch: 60,
                 tick: 0,
                 duration: 240,
@@ -2360,6 +2440,7 @@ fn native_midi_muted_scope_fixture(track_muted: bool, item_muted: bool) -> Proje
         .apply(DawAction::AddMidiNotes {
             item_id,
             notes: vec![MidiNoteData {
+                channel: 0,
                 pitch: 60,
                 tick: 0,
                 duration: 240,
@@ -2404,6 +2485,7 @@ fn add_native_consolidation_item(
         .apply(DawAction::AddMidiNotes {
             item_id,
             notes: vec![MidiNoteData {
+                channel: 0,
                 pitch,
                 tick: 0,
                 duration: 240,
@@ -2436,24 +2518,28 @@ fn native_midi_time_selection_boundary_fixture_project() -> Project {
             item_id,
             notes: vec![
                 MidiNoteData {
+                    channel: 0,
                     pitch: 60,
                     tick: 0,
                     duration: 960,
                     velocity: 100,
                 },
                 MidiNoteData {
+                    channel: 0,
                     pitch: 61,
                     tick: 960,
                     duration: 1920,
                     velocity: 100,
                 },
                 MidiNoteData {
+                    channel: 0,
                     pitch: 62,
                     tick: 3000,
                     duration: 1080,
                     velocity: 100,
                 },
                 MidiNoteData {
+                    channel: 0,
                     pitch: 63,
                     tick: 3360,
                     duration: 480,
@@ -2516,6 +2602,7 @@ fn native_midi_fixture_project_with_track_name_and_note_duration(
         .apply(DawAction::AddMidiNotes {
             item_id,
             notes: vec![MidiNoteData {
+                channel: 0,
                 pitch: 60,
                 tick: 0,
                 duration: note_duration_ticks,
@@ -2527,6 +2614,7 @@ fn native_midi_fixture_project_with_track_name_and_note_duration(
         .apply(DawAction::SetMidiControllers {
             item_id,
             controllers: vec![MidiControllerData {
+                channel: 0,
                 controller: 1,
                 tick: 240,
                 value: 64,
@@ -2537,6 +2625,7 @@ fn native_midi_fixture_project_with_track_name_and_note_duration(
         .apply(DawAction::SetMidiPitchBends {
             item_id,
             pitch_bends: vec![MidiPitchBendData {
+                channel: 0,
                 tick: 360,
                 value: 12_288,
             }],
@@ -2573,6 +2662,7 @@ fn native_midi_tempo_selection_fixture_project(include_post_tempo_note: bool) ->
             .apply(DawAction::AddMidiNotes {
                 item_id,
                 notes: vec![MidiNoteData {
+                    channel: 0,
                     pitch: 62,
                     tick: 0,
                     duration: 360,
@@ -2606,6 +2696,7 @@ fn type_zero_merges_tracks_scales_ppq_and_exports_filtered_cues() {
         .apply(DawAction::AddMidiNotes {
             item_id,
             notes: vec![MidiNoteData {
+                channel: 0,
                 pitch: 60,
                 tick: 0,
                 duration: 240,
@@ -2674,6 +2765,7 @@ fn ppq_rounding_never_turns_a_note_into_a_zero_length_event() {
         .apply(DawAction::AddMidiNotes {
             item_id,
             notes: vec![MidiNoteData {
+                channel: 0,
                 pitch: 64,
                 tick: 10,
                 duration: 1,

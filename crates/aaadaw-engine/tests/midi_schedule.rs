@@ -31,6 +31,7 @@ fn project_with_note(pitch: u8, tick: u64, duration: u64) -> (Project, aaadaw_co
         .apply(DawAction::AddMidiNotes {
             item_id,
             notes: vec![MidiNoteData {
+                channel: 0,
                 pitch,
                 tick,
                 duration,
@@ -39,6 +40,117 @@ fn project_with_note(pitch: u8, tick: u64, duration: u64) -> (Project, aaadaw_co
         })
         .expect("MIDI note insertion should succeed");
     (project, track_id)
+}
+
+#[test]
+fn event_plan_preserves_note_controller_and_pitch_bend_channels_through_chase() {
+    let (mut project, track_id) = project_with_note(60, 0, 480);
+    let item_id = project.midi_items()[0].id();
+    project
+        .apply(DawAction::AddMidiNotes {
+            item_id,
+            notes: vec![MidiNoteData {
+                pitch: 60,
+                channel: 7,
+                tick: 0,
+                duration: 480,
+                velocity: 90,
+            }],
+        })
+        .unwrap();
+    project
+        .apply(DawAction::SetMidiControllers {
+            item_id,
+            controllers: vec![
+                MidiControllerData {
+                    controller: 7,
+                    channel: 2,
+                    tick: 0,
+                    value: 80,
+                },
+                MidiControllerData {
+                    controller: 7,
+                    channel: 9,
+                    tick: 0,
+                    value: 96,
+                },
+            ],
+        })
+        .unwrap();
+    project
+        .apply(DawAction::SetMidiPitchBends {
+            item_id,
+            pitch_bends: vec![
+                MidiPitchBendData {
+                    channel: 3,
+                    tick: 0,
+                    value: 8_000,
+                },
+                MidiPitchBendData {
+                    channel: 12,
+                    tick: 0,
+                    value: 9_000,
+                },
+            ],
+        })
+        .unwrap();
+    let plan = MidiEventPlan::compile(&project).unwrap();
+    let mut events = [None; 6];
+    assert_eq!(plan.events_for_block(0, 1, &mut events).unwrap(), 6);
+    let events = events.map(Option::unwrap);
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| event.kind == MidiEventKind::NoteOn)
+            .map(|event| (event.track_id, event.channel))
+            .collect::<Vec<_>>(),
+        [(track_id, 0), (track_id, 7)]
+    );
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| event.kind == MidiEventKind::ControllerChange)
+            .map(|event| event.channel)
+            .collect::<Vec<_>>(),
+        [2, 9]
+    );
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| event.kind == MidiEventKind::PitchBend)
+            .map(|event| event.channel)
+            .collect::<Vec<_>>(),
+        [3, 12]
+    );
+
+    let mut chased = [None; 6];
+    assert_eq!(plan.active_controllers_at(1, &mut chased).unwrap(), 2);
+    assert_eq!(
+        chased[..2]
+            .iter()
+            .flatten()
+            .map(|event| event.channel)
+            .collect::<Vec<_>>(),
+        [2, 9]
+    );
+    assert_eq!(plan.active_pitch_bends_at(1, &mut chased).unwrap(), 2);
+    assert_eq!(
+        chased[..2]
+            .iter()
+            .flatten()
+            .map(|event| event.channel)
+            .collect::<Vec<_>>(),
+        [3, 12]
+    );
+    assert_eq!(plan.active_notes_at(1, &mut chased).unwrap(), 2);
+    assert_eq!(
+        chased[..2]
+            .iter()
+            .flatten()
+            .map(|event| event.channel)
+            .collect::<Vec<_>>(),
+        [0, 7]
+    );
 }
 
 #[test]
@@ -177,11 +289,13 @@ fn segmented_event_plan_chases_controller_and_pitch_bend_after_a_loop_wrap() {
             item_id,
             controllers: vec![
                 MidiControllerData {
+                    channel: 0,
                     controller: 1,
                     tick: 0,
                     value: 64,
                 },
                 MidiControllerData {
+                    channel: 0,
                     controller: 64,
                     tick: 0,
                     value: 127,
@@ -193,6 +307,7 @@ fn segmented_event_plan_chases_controller_and_pitch_bend_after_a_loop_wrap() {
         .apply(DawAction::SetMidiPitchBends {
             item_id,
             pitch_bends: vec![MidiPitchBendData {
+                channel: 0,
                 tick: 0,
                 value: 10_000,
             }],
@@ -332,6 +447,7 @@ fn event_plan_clips_notes_and_excludes_events_outside_the_midi_item() {
         .apply(DawAction::AddMidiNotes {
             item_id,
             notes: vec![MidiNoteData {
+                channel: 0,
                 pitch: 72,
                 tick: 1_200,
                 duration: 120,
@@ -344,11 +460,13 @@ fn event_plan_clips_notes_and_excludes_events_outside_the_midi_item() {
             item_id,
             controllers: vec![
                 MidiControllerData {
+                    channel: 0,
                     controller: 1,
                     tick: 840,
                     value: 64,
                 },
                 MidiControllerData {
+                    channel: 0,
                     controller: 1,
                     tick: 1_200,
                     value: 100,
@@ -361,10 +479,12 @@ fn event_plan_clips_notes_and_excludes_events_outside_the_midi_item() {
             item_id,
             pitch_bends: vec![
                 MidiPitchBendData {
+                    channel: 0,
                     tick: 840,
                     value: 9_000,
                 },
                 MidiPitchBendData {
+                    channel: 0,
                     tick: 1_200,
                     value: 10_000,
                 },
@@ -511,12 +631,14 @@ fn event_plan_applies_midi_source_offset_at_the_visible_start() {
             item_id,
             notes: vec![
                 MidiNoteData {
+                    channel: 0,
                     pitch: 60,
                     tick: 120,
                     duration: 240,
                     velocity: 90,
                 },
                 MidiNoteData {
+                    channel: 0,
                     pitch: 64,
                     tick: 600,
                     duration: 720,
@@ -530,11 +652,13 @@ fn event_plan_applies_midi_source_offset_at_the_visible_start() {
             item_id,
             controllers: vec![
                 MidiControllerData {
+                    channel: 0,
                     controller: 1,
                     tick: 120,
                     value: 10,
                 },
                 MidiControllerData {
+                    channel: 0,
                     controller: 1,
                     tick: 600,
                     value: 80,
@@ -547,10 +671,12 @@ fn event_plan_applies_midi_source_offset_at_the_visible_start() {
             item_id,
             pitch_bends: vec![
                 MidiPitchBendData {
+                    channel: 0,
                     tick: 120,
                     value: 9_000,
                 },
                 MidiPitchBendData {
+                    channel: 0,
                     tick: 600,
                     value: 11_000,
                 },
@@ -604,10 +730,12 @@ fn pitch_bend_schedule_preserves_14_bit_values_and_chases_the_latest_state() {
             item_id,
             pitch_bends: vec![
                 MidiPitchBendData {
+                    channel: 0,
                     tick: 0,
                     value: 8192,
                 },
                 MidiPitchBendData {
+                    channel: 0,
                     tick: 960,
                     value: 16_383,
                 },
@@ -726,31 +854,37 @@ fn midi_controller_schedule_is_sample_accurate_and_chases_latest_state() {
             item_id,
             controllers: vec![
                 MidiControllerData {
+                    channel: 0,
                     controller: 64,
                     tick: 0,
                     value: 127,
                 },
                 MidiControllerData {
+                    channel: 0,
                     controller: 64,
                     tick: 960,
                     value: 0,
                 },
                 MidiControllerData {
+                    channel: 0,
                     controller: 1,
                     tick: 480,
                     value: 64,
                 },
                 MidiControllerData {
+                    channel: 0,
                     controller: 11,
                     tick: 240,
                     value: 96,
                 },
                 MidiControllerData {
+                    channel: 0,
                     controller: 7,
                     tick: 120,
                     value: 88,
                 },
                 MidiControllerData {
+                    channel: 0,
                     controller: 10,
                     tick: 360,
                     value: 32,
@@ -901,6 +1035,7 @@ fn active_note_interval_index_matches_brute_force_for_overlapping_ranges() {
     let item_id = project.midi_items()[0].id();
     let notes: Vec<_> = (0..64)
         .map(|index| MidiNoteData {
+            channel: 0,
             pitch: index,
             tick: u64::from(index) * 37,
             duration: 83 + u64::from(index % 11) * 41,
@@ -980,6 +1115,7 @@ fn event_plan_filters_muted_and_non_solo_tracks() {
             .apply(DawAction::AddMidiNotes {
                 item_id,
                 notes: vec![MidiNoteData {
+                    channel: 0,
                     pitch: 60,
                     tick: 0,
                     duration: 480,
@@ -1040,6 +1176,7 @@ fn event_plan_omits_muted_midi_items_without_changing_other_items() {
             .apply(DawAction::AddMidiNotes {
                 item_id,
                 notes: vec![MidiNoteData {
+                    channel: 0,
                     pitch,
                     tick: 0,
                     duration: 480,
@@ -1108,6 +1245,7 @@ fn soloed_bus_keeps_midi_events_on_tracks_routed_into_it() {
         .apply(DawAction::AddMidiNotes {
             item_id,
             notes: vec![MidiNoteData {
+                channel: 0,
                 pitch: 60,
                 tick: 0,
                 duration: 240,
@@ -1202,6 +1340,7 @@ fn folder_parent_midi_forwarding_obeys_each_main_send_switch() {
             .apply(DawAction::AddMidiNotes {
                 item_id,
                 notes: vec![MidiNoteData {
+                    channel: 0,
                     pitch: 60,
                     tick: 0,
                     duration: 240,
@@ -1308,6 +1447,7 @@ fn soloed_audio_send_receiver_routes_midi_to_source_and_destination_tracks() {
         .apply(DawAction::AddMidiNotes {
             item_id,
             notes: vec![MidiNoteData {
+                channel: 0,
                 pitch: 60,
                 tick: 0,
                 duration: 240,
@@ -1429,6 +1569,7 @@ fn midi_send_routes_notes_controls_and_bends_over_nested_paths() {
             .apply(DawAction::SetMidiControllers {
                 item_id,
                 controllers: vec![MidiControllerData {
+                    channel: 0,
                     controller: 64,
                     tick: 0,
                     value: 127,
@@ -1439,6 +1580,7 @@ fn midi_send_routes_notes_controls_and_bends_over_nested_paths() {
             .apply(DawAction::SetMidiPitchBends {
                 item_id,
                 pitch_bends: vec![MidiPitchBendData {
+                    channel: 0,
                     tick: 0,
                     value: 9000,
                 }],
@@ -1549,6 +1691,7 @@ fn soloed_folder_keeps_events_on_child_instruments_through_parent_send() {
         .apply(DawAction::AddMidiNotes {
             item_id,
             notes: vec![MidiNoteData {
+                channel: 0,
                 pitch: 60,
                 tick: 0,
                 duration: 240,

@@ -24,6 +24,7 @@ fn midi_source_loop_length_and_offset_map_events_across_the_visible_clip() {
         .apply(DawAction::AddMidiNotes {
             item_id,
             notes: vec![MidiNoteData {
+                channel: 0,
                 pitch: 60,
                 tick: 120,
                 duration: 90,
@@ -79,6 +80,7 @@ fn fractional_midi_item_positions_survive_moves_and_event_mapping() {
         .apply(DawAction::AddMidiNotes {
             item_id,
             notes: vec![MidiNoteData {
+                channel: 0,
                 pitch: 60,
                 tick: 0,
                 duration: 120,
@@ -140,6 +142,7 @@ fn loop_source_edits_use_source_bounds_after_the_item_offset_wraps() {
         .apply(DawAction::AddMidiNotes {
             item_id,
             notes: vec![MidiNoteData {
+                channel: 0,
                 pitch: 60,
                 tick: 120,
                 duration: 90,
@@ -168,6 +171,7 @@ fn loop_source_edits_use_source_bounds_after_the_item_offset_wraps() {
         .apply(DawAction::AddMidiNotes {
             item_id,
             notes: vec![MidiNoteData {
+                channel: 0,
                 pitch: 64,
                 tick: 900,
                 duration: 60,
@@ -179,6 +183,7 @@ fn loop_source_edits_use_source_bounds_after_the_item_offset_wraps() {
         .apply(DawAction::SetMidiControllers {
             item_id,
             controllers: vec![MidiControllerData {
+                channel: 0,
                 controller: 1,
                 tick: 120,
                 value: 64,
@@ -189,6 +194,7 @@ fn loop_source_edits_use_source_bounds_after_the_item_offset_wraps() {
         .apply(DawAction::SetMidiPitchBends {
             item_id,
             pitch_bends: vec![MidiPitchBendData {
+                channel: 0,
                 tick: 360,
                 value: 12_000,
             }],
@@ -220,6 +226,7 @@ fn loop_source_edits_use_source_bounds_after_the_item_offset_wraps() {
             item_id,
             note_id,
             data: MidiNoteData {
+                channel: 0,
                 pitch: 60,
                 tick: 480,
                 duration: 120,
@@ -233,6 +240,7 @@ fn loop_source_edits_use_source_bounds_after_the_item_offset_wraps() {
             item_id,
             note_id,
             data: MidiNoteData {
+                channel: 0,
                 pitch: 60,
                 tick: 930,
                 duration: 60,

@@ -121,6 +121,7 @@ fn stdio_server_lists_and_reads_bounded_project_resources() {
         .apply(DawAction::AddMidiNotes {
             item_id,
             notes: vec![MidiNoteData {
+                channel: 0,
                 pitch: 60,
                 tick: 960,
                 duration: 480,
@@ -132,6 +133,7 @@ fn stdio_server_lists_and_reads_bounded_project_resources() {
         .apply(DawAction::SetMidiControllers {
             item_id,
             controllers: vec![MidiControllerData {
+                channel: 0,
                 controller: 11,
                 tick: 120,
                 value: 80,
@@ -142,6 +144,7 @@ fn stdio_server_lists_and_reads_bounded_project_resources() {
         .apply(DawAction::SetMidiPitchBends {
             item_id,
             pitch_bends: vec![MidiPitchBendData {
+                channel: 0,
                 tick: 240,
                 value: 10_000,
             }],
@@ -1450,12 +1453,14 @@ fn explicitly_authorized_mcp_quantize_is_undoable_validated_and_persistent() {
             item_id,
             notes: vec![
                 MidiNoteData {
+                    channel: 0,
                     pitch: 60,
                     tick: 110,
                     duration: 120,
                     velocity: 100,
                 },
                 MidiNoteData {
+                    channel: 0,
                     pitch: 64,
                     tick: 510,
                     duration: 120,
@@ -1481,6 +1486,7 @@ fn explicitly_authorized_mcp_quantize_is_undoable_validated_and_persistent() {
         .apply(DawAction::AddMidiNotes {
             item_id: boundary_item_id,
             notes: vec![MidiNoteData {
+                channel: 0,
                 pitch: 67,
                 tick: 3800,
                 duration: 30,
@@ -2484,18 +2490,21 @@ fn explicitly_authorized_mcp_edits_and_deletes_midi_notes_undoably_and_atomicall
             item_id,
             notes: vec![
                 MidiNoteData {
+                    channel: 3,
                     pitch: 60,
                     tick: 0,
                     duration: 480,
                     velocity: 100,
                 },
                 MidiNoteData {
+                    channel: 0,
                     pitch: 64,
                     tick: 960,
                     duration: 480,
                     velocity: 90,
                 },
                 MidiNoteData {
+                    channel: 0,
                     pitch: 67,
                     tick: 1920,
                     duration: 480,
@@ -2632,6 +2641,7 @@ fn explicitly_authorized_mcp_edits_and_deletes_midi_notes_undoably_and_atomicall
     let edited = &response_for(3)["result"]["structuredContent"];
     assert_eq!(edited["item_id"], item_id.value());
     assert_eq!(edited["note_id"], note_ids[0]);
+    assert_eq!(edited["channel"], 3);
     assert_eq!(edited["pitch"], 72);
     assert_eq!(edited["tick"], 120);
     assert_eq!(edited["duration"], 960);
@@ -2645,6 +2655,7 @@ fn explicitly_authorized_mcp_edits_and_deletes_midi_notes_undoably_and_atomicall
             {
                 "item_id": item_id.value(),
                 "note_id": note_ids[0],
+                "channel": 3,
                 "tick": 120,
                 "pitch": 72,
                 "duration": 960,
@@ -2653,6 +2664,7 @@ fn explicitly_authorized_mcp_edits_and_deletes_midi_notes_undoably_and_atomicall
             {
                 "item_id": item_id.value(),
                 "note_id": note_ids[1],
+                "channel": 0,
                 "tick": 960,
                 "pitch": 64,
                 "duration": 480,
@@ -2661,6 +2673,7 @@ fn explicitly_authorized_mcp_edits_and_deletes_midi_notes_undoably_and_atomicall
             {
                 "item_id": item_id.value(),
                 "note_id": note_ids[2],
+                "channel": 0,
                 "tick": 1920,
                 "pitch": 67,
                 "duration": 480,
@@ -2724,6 +2737,7 @@ fn explicitly_authorized_mcp_edits_and_deletes_midi_notes_undoably_and_atomicall
     assert_eq!(saved_note.tick(), 120);
     assert_eq!(saved_note.duration(), 960);
     assert_eq!(saved_note.velocity(), 80);
+    assert_eq!(saved_note.channel(), 3);
 }
 
 #[test]
@@ -2751,12 +2765,14 @@ fn explicitly_authorized_mcp_moves_and_resizes_midi_items_without_losing_notes()
             item_id,
             notes: vec![
                 MidiNoteData {
+                    channel: 0,
                     pitch: 60,
                     tick: 120,
                     duration: 480,
                     velocity: 100,
                 },
                 MidiNoteData {
+                    channel: 0,
                     pitch: 64,
                     tick: 1920,
                     duration: 960,
@@ -2895,6 +2911,7 @@ fn explicitly_authorized_mcp_moves_and_resizes_midi_items_without_losing_notes()
             {
                 "item_id": item_id.value(),
                 "note_id": note_ids[0],
+                "channel": 0,
                 "tick": 1080,
                 "pitch": 60,
                 "duration": 480,
@@ -2903,6 +2920,7 @@ fn explicitly_authorized_mcp_moves_and_resizes_midi_items_without_losing_notes()
             {
                 "item_id": item_id.value(),
                 "note_id": note_ids[1],
+                "channel": 0,
                 "tick": 2880,
                 "pitch": 64,
                 "duration": 480,
@@ -2916,6 +2934,7 @@ fn explicitly_authorized_mcp_moves_and_resizes_midi_items_without_losing_notes()
             {
                 "item_id": item_id.value(),
                 "note_id": note_ids[0],
+                "channel": 0,
                 "tick": 1080,
                 "pitch": 60,
                 "duration": 480,
@@ -2924,6 +2943,7 @@ fn explicitly_authorized_mcp_moves_and_resizes_midi_items_without_losing_notes()
             {
                 "item_id": item_id.value(),
                 "note_id": note_ids[1],
+                "channel": 0,
                 "tick": 2880,
                 "pitch": 64,
                 "duration": 960,
@@ -3017,6 +3037,7 @@ fn explicitly_authorized_mcp_upserts_midi_expression_points_without_losing_other
         .apply(DawAction::AddMidiNotes {
             item_id,
             notes: vec![MidiNoteData {
+                channel: 0,
                 pitch: 60,
                 tick: 960,
                 duration: 480,
@@ -3029,16 +3050,19 @@ fn explicitly_authorized_mcp_upserts_midi_expression_points_without_losing_other
             item_id,
             controllers: vec![
                 aaadaw_core::MidiControllerData {
+                    channel: 0,
                     controller: 11,
                     tick: 0,
                     value: 80,
                 },
                 aaadaw_core::MidiControllerData {
+                    channel: 0,
                     controller: 10,
                     tick: 120,
                     value: 60,
                 },
                 aaadaw_core::MidiControllerData {
+                    channel: 0,
                     controller: 11,
                     tick: 240,
                     value: 70,
@@ -3051,10 +3075,12 @@ fn explicitly_authorized_mcp_upserts_midi_expression_points_without_losing_other
             item_id,
             pitch_bends: vec![
                 aaadaw_core::MidiPitchBendData {
+                    channel: 0,
                     tick: 0,
                     value: 8192,
                 },
                 aaadaw_core::MidiPitchBendData {
+                    channel: 0,
                     tick: 240,
                     value: 10_000,
                 },
@@ -3104,7 +3130,8 @@ fn explicitly_authorized_mcp_upserts_midi_expression_points_without_losing_other
             "daw_upsert_midi_controllers",
             json!({"item_id": item_id.value(), "controllers": [
                 {"controller": 11, "tick": 0, "value": 100},
-                {"controller": 74, "tick": 120, "value": 64}
+                {"controller": 74, "tick": 120, "value": 64},
+                {"channel": 2, "controller": 11, "tick": 0, "value": 88}
             ]}),
         ),
         call(
@@ -3135,7 +3162,8 @@ fn explicitly_authorized_mcp_upserts_midi_expression_points_without_losing_other
             "daw_upsert_midi_pitch_bends",
             json!({"item_id": item_id.value(), "pitch_bends": [
                 {"tick": 240, "value": 12000},
-                {"tick": 480, "value": 8192}
+                {"tick": 480, "value": 8192},
+                {"channel": 5, "tick": 240, "value": 9000}
             ]}),
         ),
         call(
@@ -3207,13 +3235,18 @@ fn explicitly_authorized_mcp_upserts_midi_expression_points_without_losing_other
     assert_eq!(
         response_for(3)["result"]["structuredContent"]["points"],
         json!([
-            {"controller": 11, "tick": 0, "value": 100},
-            {"controller": 74, "tick": 120, "value": 64}
+            {"channel": 0, "controller": 11, "tick": 0, "value": 100},
+            {"channel": 0, "controller": 74, "tick": 120, "value": 64},
+            {"channel": 2, "controller": 11, "tick": 0, "value": 88}
         ])
     );
     assert_eq!(
         response_for(7)["result"]["structuredContent"]["points"],
-        json!([{"tick": 240, "value": 12000}, {"tick": 480, "value": 8192}])
+        json!([
+            {"channel": 0, "tick": 240, "value": 12000},
+            {"channel": 0, "tick": 480, "value": 8192},
+            {"channel": 5, "tick": 240, "value": 9000}
+        ])
     );
     for id in [4, 5, 6, 8, 9] {
         assert_eq!(response_for(id)["result"]["isError"], true);
@@ -3251,21 +3284,31 @@ fn explicitly_authorized_mcp_upserts_midi_expression_points_without_losing_other
         saved_item.controllers(),
         [
             aaadaw_core::MidiControllerData {
+                channel: 0,
                 controller: 11,
                 tick: 0,
                 value: 100,
             },
             aaadaw_core::MidiControllerData {
+                channel: 2,
+                controller: 11,
+                tick: 0,
+                value: 88,
+            },
+            aaadaw_core::MidiControllerData {
+                channel: 0,
                 controller: 10,
                 tick: 120,
                 value: 60,
             },
             aaadaw_core::MidiControllerData {
+                channel: 0,
                 controller: 74,
                 tick: 120,
                 value: 64,
             },
             aaadaw_core::MidiControllerData {
+                channel: 0,
                 controller: 11,
                 tick: 240,
                 value: 70,
@@ -3276,14 +3319,22 @@ fn explicitly_authorized_mcp_upserts_midi_expression_points_without_losing_other
         saved_item.pitch_bends(),
         [
             aaadaw_core::MidiPitchBendData {
+                channel: 0,
                 tick: 0,
                 value: 8192,
             },
             aaadaw_core::MidiPitchBendData {
+                channel: 0,
                 tick: 240,
                 value: 12000,
             },
             aaadaw_core::MidiPitchBendData {
+                channel: 5,
+                tick: 240,
+                value: 9000,
+            },
+            aaadaw_core::MidiPitchBendData {
+                channel: 0,
                 tick: 480,
                 value: 8192,
             },

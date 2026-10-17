@@ -25,6 +25,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     project.apply(DawAction::AddMidiNotes {
         item_id,
         notes: vec![MidiNoteData {
+            channel: 0,
             pitch: 60,
             tick: 0,
             duration: 960,

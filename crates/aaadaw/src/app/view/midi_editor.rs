@@ -144,6 +144,7 @@ fn midi_note_insert_data(
         return None;
     }
     Some(MidiNoteData {
+        channel: 0,
         pitch,
         tick,
         duration,
@@ -790,7 +791,12 @@ impl ControllerLane<'_> {
         }
     }
 
-    fn point_data(&self, point: Point, ignore_snap: bool) -> (MidiControllerData, u64) {
+    fn point_data(
+        &self,
+        point: Point,
+        ignore_snap: bool,
+        channel: u8,
+    ) -> (MidiControllerData, u64) {
         let mapping = self.mapping();
         let display_tick = mapping
             .snap_tick(mapping.tick_at_x(point.x), ignore_snap)
@@ -803,6 +809,7 @@ impl ControllerLane<'_> {
             );
         (
             MidiControllerData {
+                channel,
                 controller: self.controller,
                 tick: source_edit_tick(self.item, display_tick),
                 value: self.value_at_y(point.y),
@@ -850,6 +857,7 @@ fn controller_target_is_duplicate(
 ) -> bool {
     controllers.iter().enumerate().any(|(index, point)| {
         Some(index) != moving_index
+            && point.channel == target.channel
             && point.controller == target.controller
             && point.tick == target.tick
     })
@@ -860,10 +868,9 @@ fn pitch_bend_target_is_duplicate(
     moving_index: Option<usize>,
     target: MidiPitchBendData,
 ) -> bool {
-    bends
-        .iter()
-        .enumerate()
-        .any(|(index, bend)| Some(index) != moving_index && bend.tick == target.tick)
+    bends.iter().enumerate().any(|(index, bend)| {
+        Some(index) != moving_index && bend.channel == target.channel && bend.tick == target.tick
+    })
 }
 
 fn is_escape_key(event: &Event) -> bool {
@@ -915,7 +922,9 @@ impl canvas::Program<Message> for ControllerLane<'_> {
         if let Event::Keyboard(keyboard::Event::ModifiersChanged(modifiers)) = event {
             state.modifiers = *modifiers;
             if let (Some(point), Some(drag)) = (cursor.position_in(bounds), state.drag.as_mut()) {
-                (drag.current, drag.display_tick) = self.point_data(point, state.modifiers.shift());
+                let channel = drag.original.map_or(0, |original| original.channel);
+                (drag.current, drag.display_tick) =
+                    self.point_data(point, state.modifiers.shift(), channel);
                 return Some(canvas::Action::request_redraw());
             }
             return None;
@@ -959,7 +968,8 @@ impl canvas::Program<Message> for ControllerLane<'_> {
                         display_tick,
                     });
                 } else {
-                    let (current, display_tick) = self.point_data(point, state.modifiers.shift());
+                    let (current, display_tick) =
+                        self.point_data(point, state.modifiers.shift(), 0);
                     state.drag = Some(ControllerDrag {
                         controllers,
                         index: None,
@@ -992,14 +1002,17 @@ impl canvas::Program<Message> for ControllerLane<'_> {
                 let Some(drag) = &mut state.drag else {
                     return None;
                 };
-                (drag.current, drag.display_tick) = self.point_data(point, state.modifiers.shift());
+                let channel = drag.original.map_or(0, |original| original.channel);
+                (drag.current, drag.display_tick) =
+                    self.point_data(point, state.modifiers.shift(), channel);
                 Some(canvas::Action::request_redraw())
             }
             Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
                 let mut drag = state.drag.take()?;
                 if let Some(point) = cursor.position_in(bounds) {
+                    let channel = drag.original.map_or(0, |original| original.channel);
                     (drag.current, drag.display_tick) =
-                        self.point_data(point, state.modifiers.shift());
+                        self.point_data(point, state.modifiers.shift(), channel);
                 }
                 let mut controllers = drag.controllers;
                 if let Some(index) = drag.index {
@@ -1012,7 +1025,7 @@ impl canvas::Program<Message> for ControllerLane<'_> {
                     controller_target_is_duplicate(&controllers, Some(changed_index), drag.current);
                 if duplicate_position {
                     return Some(canvas::Action::publish(Message::MidiEditorFeedback(
-                        "CC points cannot share the same tick".to_owned(),
+                        "CC points on the same channel cannot share the same tick".to_owned(),
                     )));
                 }
                 if drag.original == Some(drag.current) {
@@ -1267,7 +1280,7 @@ impl PitchBendLane<'_> {
         }
     }
 
-    fn point_data(&self, point: Point, ignore_snap: bool) -> (MidiPitchBendData, u64) {
+    fn point_data(&self, point: Point, ignore_snap: bool, channel: u8) -> (MidiPitchBendData, u64) {
         let mapping = self.mapping();
         let display_tick = mapping
             .snap_tick(mapping.tick_at_x(point.x), ignore_snap)
@@ -1280,6 +1293,7 @@ impl PitchBendLane<'_> {
             );
         (
             MidiPitchBendData {
+                channel,
                 tick: source_edit_tick(self.item, display_tick),
                 value: pitch_bend_value_at_y(point.y, self.lane_height),
             },
@@ -1333,7 +1347,9 @@ impl canvas::Program<Message> for PitchBendLane<'_> {
         if let Event::Keyboard(keyboard::Event::ModifiersChanged(modifiers)) = event {
             state.modifiers = *modifiers;
             if let (Some(point), Some(drag)) = (cursor.position_in(bounds), state.drag.as_mut()) {
-                (drag.current, drag.display_tick) = self.point_data(point, state.modifiers.shift());
+                let channel = drag.original.map_or(0, |original| original.channel);
+                (drag.current, drag.display_tick) =
+                    self.point_data(point, state.modifiers.shift(), channel);
                 return Some(canvas::Action::request_redraw());
             }
             return None;
@@ -1377,7 +1393,8 @@ impl canvas::Program<Message> for PitchBendLane<'_> {
                         display_tick,
                     });
                 } else {
-                    let (current, display_tick) = self.point_data(point, state.modifiers.shift());
+                    let (current, display_tick) =
+                        self.point_data(point, state.modifiers.shift(), 0);
                     state.drag = Some(PitchBendDrag {
                         bends,
                         index: None,
@@ -1410,14 +1427,17 @@ impl canvas::Program<Message> for PitchBendLane<'_> {
                 let Some(drag) = &mut state.drag else {
                     return None;
                 };
-                (drag.current, drag.display_tick) = self.point_data(point, state.modifiers.shift());
+                let channel = drag.original.map_or(0, |original| original.channel);
+                (drag.current, drag.display_tick) =
+                    self.point_data(point, state.modifiers.shift(), channel);
                 Some(canvas::Action::request_redraw())
             }
             Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
                 let mut drag = state.drag.take()?;
                 if let Some(point) = cursor.position_in(bounds) {
+                    let channel = drag.original.map_or(0, |original| original.channel);
                     (drag.current, drag.display_tick) =
-                        self.point_data(point, state.modifiers.shift());
+                        self.point_data(point, state.modifiers.shift(), channel);
                 }
                 let mut bends = drag.bends;
                 if let Some(index) = drag.index {
@@ -1431,7 +1451,8 @@ impl canvas::Program<Message> for PitchBendLane<'_> {
                 if duplicate_position || drag.original == Some(drag.current) {
                     if duplicate_position {
                         return Some(canvas::Action::publish(Message::MidiEditorFeedback(
-                            "Pitch-bend points cannot share the same tick".to_owned(),
+                            "Pitch-bend points on the same channel cannot share the same tick"
+                                .to_owned(),
                         )));
                     }
                     return Some(canvas::Action::capture());
@@ -3036,6 +3057,7 @@ fn snap_tick(tick: u64, grid_ticks: Option<u64>, enabled: bool, ignore_snap: boo
 
 fn note_data(note: &aaadaw_core::MidiNote) -> MidiNoteData {
     MidiNoteData {
+        channel: note.channel(),
         pitch: note.pitch(),
         tick: note.tick(),
         duration: note.duration(),
@@ -3296,6 +3318,7 @@ mod tests {
         let (mut project, item_id, _) = project_with_note(
             9_600,
             MidiNoteData {
+                channel: 0,
                 pitch: 60,
                 tick: 960,
                 duration: 120,
@@ -3314,6 +3337,7 @@ mod tests {
             .apply(aaadaw_core::DawAction::SetMidiControllers {
                 item_id,
                 controllers: vec![MidiControllerData {
+                    channel: 0,
                     controller: 1,
                     tick: 960,
                     value: 64,
@@ -3324,6 +3348,7 @@ mod tests {
             .apply(aaadaw_core::DawAction::SetMidiPitchBends {
                 item_id,
                 pitch_bends: vec![MidiPitchBendData {
+                    channel: 0,
                     tick: 1_920,
                     value: 12_000,
                 }],
@@ -3339,6 +3364,7 @@ mod tests {
         assert_eq!(
             midi_note_insert_data(item, 1_440, 64, 240, 96),
             Some(MidiNoteData {
+                channel: 0,
                 pitch: 64,
                 tick: 960,
                 duration: 240,
@@ -3348,6 +3374,7 @@ mod tests {
         assert_eq!(
             midi_note_insert_data(item, 9_480, 64, 960, 96),
             Some(MidiNoteData {
+                channel: 0,
                 pitch: 64,
                 tick: 9_000,
                 duration: 600,
@@ -3379,7 +3406,7 @@ mod tests {
             Some((0, 10_560))
         );
         let (controller_edit, controller_display_tick) =
-            controller_lane.point_data(Point::new(168.0, controller_y(96, 72.0)), true);
+            controller_lane.point_data(Point::new(168.0, controller_y(96, 72.0)), true, 0);
         assert_eq!(controller_display_tick, 10_800);
         assert_eq!(controller_edit.tick, 1_200);
         let pitch_bend_lane = PitchBendLane {
@@ -3397,7 +3424,7 @@ mod tests {
             Some((0, 11_520))
         );
         let (pitch_bend_edit, pitch_bend_display_tick) =
-            pitch_bend_lane.point_data(Point::new(264.0, pitch_bend_y(10_000, 72.0)), true);
+            pitch_bend_lane.point_data(Point::new(264.0, pitch_bend_y(10_000, 72.0)), true, 0);
         assert_eq!(pitch_bend_display_tick, 11_760);
         assert_eq!(pitch_bend_edit.tick, 2_160);
     }
@@ -3407,6 +3434,7 @@ mod tests {
         let (project, item_id, _) = project_with_note(
             3_840,
             MidiNoteData {
+                channel: 0,
                 pitch: 60,
                 tick: 480,
                 duration: 120,
@@ -3426,6 +3454,7 @@ mod tests {
         let (project, item_id, _) = project_with_note(
             3_840,
             MidiNoteData {
+                channel: 0,
                 pitch: 60,
                 tick: 2_880,
                 duration: 240,
@@ -3457,6 +3486,7 @@ mod tests {
         let (project, item_id, note_id) = project_with_note(
             3_840,
             MidiNoteData {
+                channel: 0,
                 pitch: 60,
                 tick: 480,
                 duration: 240,
@@ -3491,6 +3521,7 @@ mod tests {
         let (project, item_id, _) = project_with_note(
             960,
             MidiNoteData {
+                channel: 0,
                 pitch: 60,
                 tick: 0,
                 duration: 120,
@@ -3584,6 +3615,7 @@ mod tests {
         let _ = app.update(Message::Timeline(TimelineEvent::ToggleMidiEditorSnap));
         app.midi_editor_edit_cursor_tick = Some(190);
         app.midi_note_clipboard.notes = vec![MidiNoteData {
+            channel: 0,
             pitch: 60,
             tick: 0,
             duration: 120,
@@ -3607,6 +3639,7 @@ mod tests {
     #[test]
     fn piano_roll_wheel_maps_to_pitch_and_modifier_navigation() {
         let note = MidiNoteData {
+            channel: 0,
             pitch: 60,
             tick: 480,
             duration: 240,
@@ -3694,6 +3727,7 @@ mod tests {
     #[test]
     fn resizing_preview_keeps_the_note_start_and_marks_item_overflow() {
         let note = MidiNoteData {
+            channel: 0,
             pitch: 60,
             tick: 720,
             duration: 240,
@@ -3723,6 +3757,7 @@ mod tests {
     #[test]
     fn short_notes_keep_a_move_area_beside_the_resize_handle() {
         let note = MidiNoteData {
+            channel: 0,
             pitch: 60,
             tick: 0,
             duration: 24,
@@ -3776,6 +3811,7 @@ mod tests {
     #[test]
     fn note_resize_reports_an_invalid_release_and_edge_cursor_is_distinct() {
         let note = MidiNoteData {
+            channel: 0,
             pitch: 60,
             tick: 720,
             duration: 240,
@@ -3869,6 +3905,7 @@ mod tests {
     #[test]
     fn escape_cancels_active_note_controller_and_pitch_bend_gestures() {
         let note = MidiNoteData {
+            channel: 0,
             pitch: 60,
             tick: 0,
             duration: 240,
@@ -3950,6 +3987,7 @@ mod tests {
                 index: None,
                 original: None,
                 current: MidiControllerData {
+                    channel: 0,
                     controller: 1,
                     tick: 0,
                     value: 64,
@@ -3986,6 +4024,7 @@ mod tests {
                 index: None,
                 original: None,
                 current: MidiPitchBendData {
+                    channel: 0,
                     tick: 0,
                     value: 8192,
                 },
@@ -4008,7 +4047,45 @@ mod tests {
 
     #[test]
     fn controller_and_pitch_bend_duplicate_targets_explain_rejection() {
+        let channel_one_controller = MidiControllerData {
+            channel: 1,
+            controller: 1,
+            tick: 960,
+            value: 64,
+        };
+        assert!(!controller_target_is_duplicate(
+            &[channel_one_controller],
+            None,
+            MidiControllerData {
+                channel: 0,
+                ..channel_one_controller
+            }
+        ));
+        assert!(controller_target_is_duplicate(
+            &[channel_one_controller],
+            None,
+            channel_one_controller
+        ));
+        let channel_one_bend = MidiPitchBendData {
+            channel: 1,
+            tick: 960,
+            value: 8192,
+        };
+        assert!(!pitch_bend_target_is_duplicate(
+            &[channel_one_bend],
+            None,
+            MidiPitchBendData {
+                channel: 0,
+                ..channel_one_bend
+            }
+        ));
+        assert!(pitch_bend_target_is_duplicate(
+            &[channel_one_bend],
+            None,
+            channel_one_bend
+        ));
         let note = MidiNoteData {
+            channel: 0,
             pitch: 60,
             tick: 0,
             duration: 240,
@@ -4020,11 +4097,13 @@ mod tests {
                 item_id,
                 controllers: vec![
                     MidiControllerData {
+                        channel: 0,
                         controller: 1,
                         tick: 0,
                         value: 64,
                     },
                     MidiControllerData {
+                        channel: 0,
                         controller: 1,
                         tick: 960,
                         value: 64,
@@ -4037,10 +4116,12 @@ mod tests {
                 item_id,
                 pitch_bends: vec![
                     MidiPitchBendData {
+                        channel: 0,
                         tick: 0,
                         value: 8192,
                     },
                     MidiPitchBendData {
+                        channel: 0,
                         tick: 960,
                         value: 8192,
                     },
@@ -4151,6 +4232,7 @@ mod tests {
             .apply(aaadaw_core::DawAction::AddMidiNotes {
                 item_id,
                 notes: vec![MidiNoteData {
+                    channel: 0,
                     pitch: 60,
                     tick: 0,
                     duration: 240,
@@ -4243,6 +4325,7 @@ mod tests {
         assert_eq!(
             bends,
             [MidiPitchBendData {
+                channel: 0,
                 tick: 960,
                 value: 8192
             }]
@@ -4296,6 +4379,7 @@ mod tests {
         assert_eq!(
             bends,
             [MidiPitchBendData {
+                channel: 0,
                 tick: 1_440,
                 value: 16_383,
             }]
@@ -4470,6 +4554,7 @@ mod tests {
     #[test]
     fn clicking_the_piano_roll_ruler_sets_the_snapped_edit_cursor() {
         let note = MidiNoteData {
+            channel: 0,
             pitch: 60,
             tick: 0,
             duration: 240,
@@ -4522,6 +4607,7 @@ mod tests {
     #[test]
     fn piano_roll_blank_click_positions_cursor_and_double_click_inserts_note() {
         let note = MidiNoteData {
+            channel: 0,
             pitch: 60,
             tick: 0,
             duration: 240,
@@ -4605,6 +4691,7 @@ mod tests {
     #[test]
     fn piano_roll_blank_drag_marquees_notes_and_escape_cancels() {
         let note = MidiNoteData {
+            channel: 0,
             pitch: 60,
             tick: 480,
             duration: 240,
@@ -4700,6 +4787,7 @@ mod tests {
     #[test]
     fn command_drag_on_selected_note_previews_and_emits_a_copy() {
         let note = MidiNoteData {
+            channel: 0,
             pitch: 60,
             tick: 480,
             duration: 240,
@@ -4803,6 +4891,7 @@ mod tests {
     #[test]
     fn shift_changes_recompute_active_note_and_controller_drag_previews() {
         let note = MidiNoteData {
+            channel: 0,
             pitch: 60,
             tick: 0,
             duration: 480,
@@ -5016,6 +5105,7 @@ mod tests {
         assert_eq!(
             controllers,
             vec![MidiControllerData {
+                channel: 0,
                 controller: 64,
                 tick: 960,
                 value: 127,
@@ -5072,6 +5162,7 @@ mod tests {
         assert_eq!(
             controllers,
             vec![MidiControllerData {
+                channel: 0,
                 controller: 64,
                 tick: 1_920,
                 value: 0,
@@ -5152,16 +5243,19 @@ mod tests {
 
             playhead_tick: None,
         };
-        let (point, display_tick) = lane.point_data(Point::new(96.0, 36.0), false);
+        let (point, display_tick) = lane.point_data(Point::new(96.0, 36.0), false, 0);
         assert_eq!(display_tick, 960);
         assert_eq!(
             point,
             MidiControllerData {
+                channel: 0,
                 controller: 1,
                 tick: 960,
                 value: 64,
             }
         );
+        let (channel_five_point, _) = lane.point_data(Point::new(96.0, 36.0), false, 5);
+        assert_eq!(channel_five_point.channel, 5);
         assert_eq!(value_at_y(10.0, MODULATION_LANE_HEIGHT), 127);
         assert_eq!(value_at_y(62.0, MODULATION_LANE_HEIGHT), 0);
 
@@ -5240,6 +5334,7 @@ mod tests {
         assert_eq!(
             controllers,
             vec![MidiControllerData {
+                channel: 0,
                 controller: 1,
                 tick: 1_920,
                 value: 103,
@@ -5309,6 +5404,7 @@ mod tests {
             .apply(aaadaw_core::DawAction::AddMidiNotes {
                 item_id,
                 notes: vec![MidiNoteData {
+                    channel: 0,
                     pitch: 60,
                     tick: 120,
                     duration: 240,
@@ -5318,11 +5414,13 @@ mod tests {
             .unwrap();
         let existing_controllers = vec![
             MidiControllerData {
+                channel: 0,
                 controller: 1,
                 tick: 0,
                 value: 50,
             },
             MidiControllerData {
+                channel: 0,
                 controller: 64,
                 tick: 0,
                 value: 127,
@@ -5374,6 +5472,7 @@ mod tests {
             [
                 existing_controllers.clone(),
                 vec![MidiControllerData {
+                    channel: 0,
                     controller: 11,
                     tick: 960,
                     value: 64,
@@ -5393,6 +5492,7 @@ mod tests {
             [
                 existing_controllers,
                 vec![MidiControllerData {
+                    channel: 0,
                     controller: 11,
                     tick: 960,
                     value: 64,
@@ -5421,6 +5521,7 @@ mod tests {
             .unwrap();
         let item_id = project.midi_items()[0].id();
         let existing = vec![MidiControllerData {
+            channel: 0,
             controller: 11,
             tick: 0,
             value: 100,
@@ -5469,6 +5570,7 @@ mod tests {
         let expected = [
             existing,
             vec![MidiControllerData {
+                channel: 0,
                 controller: 7,
                 tick: 960,
                 value: 64,
@@ -5511,6 +5613,7 @@ mod tests {
             .apply(aaadaw_core::DawAction::AddMidiNotes {
                 item_id,
                 notes: vec![MidiNoteData {
+                    channel: 0,
                     pitch: 60,
                     tick: 120,
                     duration: 240,
@@ -5519,6 +5622,7 @@ mod tests {
             })
             .unwrap();
         let other_controllers = vec![MidiControllerData {
+            channel: 0,
             controller: 1,
             tick: 0,
             value: 50,
@@ -5568,6 +5672,7 @@ mod tests {
         let expected = [
             other_controllers.clone(),
             vec![MidiControllerData {
+                channel: 0,
                 controller: 10,
                 tick: 960,
                 value: 64,
@@ -5626,6 +5731,7 @@ mod tests {
         let moved = [
             other_controllers.clone(),
             vec![MidiControllerData {
+                channel: 0,
                 controller: 10,
                 tick: 1_920,
                 value: 115,
@@ -5720,6 +5826,7 @@ mod tests {
             (
                 NoteId::from_value(1).unwrap(),
                 MidiNoteData {
+                    channel: 0,
                     pitch: 5,
                     tick: 20,
                     duration: 10,
@@ -5729,6 +5836,7 @@ mod tests {
             (
                 NoteId::from_value(2).unwrap(),
                 MidiNoteData {
+                    channel: 0,
                     pitch: 100,
                     tick: 50,
                     duration: 20,
@@ -5764,12 +5872,14 @@ mod tests {
                 item_id,
                 notes: vec![
                     MidiNoteData {
+                        channel: 0,
                         pitch: 0,
                         tick: 500,
                         duration: 100,
                         velocity: 90,
                     },
                     MidiNoteData {
+                        channel: 0,
                         pitch: 5,
                         tick: 1_000,
                         duration: 100,
@@ -5891,12 +6001,14 @@ mod tests {
                 item_id,
                 notes: vec![
                     MidiNoteData {
+                        channel: 0,
                         pitch: 60,
                         tick: 0,
                         duration: 240,
                         velocity: 90,
                     },
                     MidiNoteData {
+                        channel: 0,
                         pitch: 64,
                         tick: 0,
                         duration: 240,

@@ -3,9 +3,10 @@ use aaadaw_core::{MidiItemPosition, NoteId, Project, TimebaseError, Track, Track
 use std::collections::HashMap;
 use std::fmt;
 
+pub use aaadaw_core::MIDI_CHANNEL_COUNT;
+
 const MAX_COMPILED_MIDI_EVENTS: usize = 1_000_000;
 const FIRST_LIVE_MIDI_NOTE_ID: u64 = 1 << 30;
-pub const MIDI_CHANNEL_COUNT: u8 = 16;
 
 fn sample_at_midi_position(
     project: &Project,
@@ -205,6 +206,7 @@ impl MidiInputDecoder {
 struct CompiledMidiEvent {
     absolute_sample: u64,
     track_id: TrackId,
+    channel: u8,
     note_id: Option<NoteId>,
     pitch: u8,
     velocity: u8,
@@ -222,6 +224,7 @@ struct CompiledControllerValue {
 #[derive(Clone, Debug)]
 struct ControllerTimeline {
     track_id: TrackId,
+    channel: u8,
     controller: u8,
     values: Vec<CompiledControllerValue>,
 }
@@ -235,6 +238,7 @@ struct CompiledPitchBendValue {
 #[derive(Clone, Debug)]
 struct PitchBendTimeline {
     track_id: TrackId,
+    channel: u8,
     values: Vec<CompiledPitchBendValue>,
 }
 
@@ -243,6 +247,7 @@ struct CompiledMidiNote {
     start_sample: u64,
     end_sample: u64,
     track_id: TrackId,
+    channel: u8,
     note_id: NoteId,
     pitch: u8,
     velocity: u8,
@@ -530,6 +535,7 @@ impl MidiEventPlan {
                             start_sample,
                             end_sample,
                             track_id: *routed_track,
+                            channel: note.channel(),
                             note_id: routed_note_id,
                             pitch: note.pitch(),
                             velocity: note.velocity(),
@@ -537,6 +543,7 @@ impl MidiEventPlan {
                         events.push(CompiledMidiEvent {
                             absolute_sample: start_sample,
                             track_id: *routed_track,
+                            channel: note.channel(),
                             note_id: Some(routed_note_id),
                             pitch: note.pitch(),
                             velocity: note.velocity(),
@@ -547,6 +554,7 @@ impl MidiEventPlan {
                         events.push(CompiledMidiEvent {
                             absolute_sample: end_sample,
                             track_id: *routed_track,
+                            channel: note.channel(),
                             note_id: Some(routed_note_id),
                             pitch: note.pitch(),
                             velocity: 0,
@@ -566,6 +574,7 @@ impl MidiEventPlan {
                         }
                         let timeline = controller_timelines.iter_mut().find(|timeline| {
                             timeline.track_id == *routed_track
+                                && timeline.channel == controller.channel
                                 && timeline.controller == controller.controller
                         });
                         let timeline = if let Some(timeline) = timeline {
@@ -573,6 +582,7 @@ impl MidiEventPlan {
                         } else {
                             controller_timelines.push(ControllerTimeline {
                                 track_id: *routed_track,
+                                channel: controller.channel,
                                 controller: controller.controller,
                                 values: Vec::new(),
                             });
@@ -587,6 +597,7 @@ impl MidiEventPlan {
                         events.push(CompiledMidiEvent {
                             absolute_sample,
                             track_id: *routed_track,
+                            channel: controller.channel,
                             note_id: None,
                             pitch: controller.controller,
                             velocity: controller.value,
@@ -604,14 +615,15 @@ impl MidiEventPlan {
                         if events.len() == MAX_COMPILED_MIDI_EVENTS {
                             return Err(MidiScheduleError::EventLimitExceeded);
                         }
-                        let timeline = pitch_bend_timelines
-                            .iter_mut()
-                            .find(|timeline| timeline.track_id == *routed_track);
+                        let timeline = pitch_bend_timelines.iter_mut().find(|timeline| {
+                            timeline.track_id == *routed_track && timeline.channel == bend.channel
+                        });
                         let timeline = if let Some(timeline) = timeline {
                             timeline
                         } else {
                             pitch_bend_timelines.push(PitchBendTimeline {
                                 track_id: *routed_track,
+                                channel: bend.channel,
                                 values: Vec::new(),
                             });
                             pitch_bend_timelines
@@ -625,6 +637,7 @@ impl MidiEventPlan {
                         events.push(CompiledMidiEvent {
                             absolute_sample,
                             track_id: *routed_track,
+                            channel: bend.channel,
                             note_id: None,
                             pitch: 0,
                             velocity: 0,
@@ -642,6 +655,7 @@ impl MidiEventPlan {
                 event.absolute_sample,
                 midi_event_priority(event.kind, event.controller, event.velocity),
                 event.track_id.value(),
+                event.channel,
                 event.pitch,
                 event.note_id.map_or(0, NoteId::value),
                 event.pitch_bend.unwrap_or(0),
@@ -657,6 +671,7 @@ impl MidiEventPlan {
             (
                 note.start_sample,
                 note.track_id.value(),
+                note.channel,
                 note.note_id.value(),
             )
         });
@@ -740,7 +755,7 @@ impl MidiEventPlan {
                 output[written] = Some(ScheduledMidiEvent {
                     sample_offset: 0,
                     track_id: timeline.track_id,
-                    channel: 0,
+                    channel: timeline.channel,
                     note_id: None,
                     pitch: timeline.controller,
                     velocity: value.value,
@@ -797,7 +812,7 @@ impl MidiEventPlan {
             output[written] = Some(ScheduledMidiEvent {
                 sample_offset: 0,
                 track_id: timeline.track_id,
-                channel: 0,
+                channel: timeline.channel,
                 note_id: None,
                 pitch: 0,
                 velocity: 0,
@@ -875,7 +890,7 @@ impl MidiEventPlan {
             output[*written] = Some(ScheduledMidiEvent {
                 sample_offset: 0,
                 track_id: note.track_id,
-                channel: 0,
+                channel: note.channel,
                 note_id: Some(note.note_id),
                 pitch: note.pitch,
                 velocity: note.velocity,
@@ -939,7 +954,7 @@ impl MidiEventPlan {
             *destination = Some(ScheduledMidiEvent {
                 sample_offset: (event.absolute_sample - start_sample) as usize,
                 track_id: event.track_id,
-                channel: 0,
+                channel: event.channel,
                 note_id: event.note_id,
                 pitch: event.pitch,
                 velocity: event.velocity,
@@ -1297,6 +1312,7 @@ mod item_mute_tests {
             .apply(DawAction::AddMidiNotes {
                 item_id,
                 notes: vec![MidiNoteData {
+                    channel: 0,
                     pitch: 60,
                     tick: 0,
                     duration: 480,

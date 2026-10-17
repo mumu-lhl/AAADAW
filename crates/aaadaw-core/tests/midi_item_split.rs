@@ -24,18 +24,21 @@ fn project_with_midi_item() -> (Project, aaadaw_core::TrackId, aaadaw_core::Item
             item_id,
             notes: vec![
                 MidiNoteData {
+                    channel: 0,
                     pitch: 60,
                     tick: 240,
                     duration: 1_200,
                     velocity: 100,
                 },
                 MidiNoteData {
+                    channel: 0,
                     pitch: 64,
                     tick: 1_440,
                     duration: 1_680,
                     velocity: 90,
                 },
                 MidiNoteData {
+                    channel: 0,
                     pitch: 67,
                     tick: 3_500,
                     duration: 100,
@@ -108,6 +111,7 @@ fn splitting_a_trimmed_clip_keeps_hidden_events_in_the_final_segment() {
         .apply(DawAction::AddMidiNotes {
             item_id,
             notes: vec![MidiNoteData {
+                channel: 0,
                 pitch: 72,
                 tick: 3_600,
                 duration: 240,
@@ -119,6 +123,7 @@ fn splitting_a_trimmed_clip_keeps_hidden_events_in_the_final_segment() {
         .apply(DawAction::SetMidiControllers {
             item_id,
             controllers: vec![MidiControllerData {
+                channel: 0,
                 controller: 1,
                 tick: 3_700,
                 value: 80,
@@ -129,6 +134,7 @@ fn splitting_a_trimmed_clip_keeps_hidden_events_in_the_final_segment() {
         .apply(DawAction::SetMidiPitchBends {
             item_id,
             pitch_bends: vec![MidiPitchBendData {
+                channel: 0,
                 tick: 3_750,
                 value: 12_000,
             }],
@@ -170,12 +176,14 @@ fn splitting_a_left_trimmed_clip_keeps_source_offsets_and_hidden_leading_events(
             item_id,
             notes: vec![
                 MidiNoteData {
+                    channel: 0,
                     pitch: 60,
                     tick: 120,
                     duration: 240,
                     velocity: 90,
                 },
                 MidiNoteData {
+                    channel: 0,
                     pitch: 72,
                     tick: 2_100,
                     duration: 480,

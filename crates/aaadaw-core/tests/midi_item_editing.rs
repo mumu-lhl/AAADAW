@@ -22,6 +22,7 @@ fn midi_items_can_be_deleted_and_restored_with_their_notes() {
         .apply(DawAction::AddMidiNotes {
             item_id,
             notes: vec![MidiNoteData {
+                channel: 0,
                 pitch: 60,
                 tick: 240,
                 duration: 960,
@@ -71,6 +72,7 @@ fn midi_items_can_be_moved_and_resized_without_losing_notes() {
         .apply(DawAction::AddMidiNotes {
             item_id,
             notes: vec![MidiNoteData {
+                channel: 0,
                 pitch: 64,
                 tick: 480,
                 duration: 960,
@@ -156,6 +158,7 @@ fn midi_item_placement_edits_source_offset_with_timing_in_one_undo_step() {
         .apply(DawAction::AddMidiNotes {
             item_id,
             notes: vec![MidiNoteData {
+                channel: 0,
                 pitch: 60,
                 tick: 240,
                 duration: 480,
@@ -167,6 +170,7 @@ fn midi_item_placement_edits_source_offset_with_timing_in_one_undo_step() {
         .apply(DawAction::SetMidiControllers {
             item_id,
             controllers: vec![aaadaw_core::MidiControllerData {
+                channel: 0,
                 controller: 1,
                 tick: 360,
                 value: 64,
@@ -177,6 +181,7 @@ fn midi_item_placement_edits_source_offset_with_timing_in_one_undo_step() {
         .apply(DawAction::SetMidiPitchBends {
             item_id,
             pitch_bends: vec![aaadaw_core::MidiPitchBendData {
+                channel: 0,
                 tick: 480,
                 value: 10_000,
             }],
@@ -249,6 +254,7 @@ fn shortening_a_midi_clip_keeps_hidden_events_for_later_expansion() {
         .apply(DawAction::AddMidiNotes {
             item_id,
             notes: vec![MidiNoteData {
+                channel: 0,
                 pitch: 64,
                 tick: 1_440,
                 duration: 480,
@@ -260,6 +266,7 @@ fn shortening_a_midi_clip_keeps_hidden_events_for_later_expansion() {
         .apply(DawAction::SetMidiControllers {
             item_id,
             controllers: vec![aaadaw_core::MidiControllerData {
+                channel: 0,
                 controller: 1,
                 tick: 1_680,
                 value: 80,
@@ -322,6 +329,7 @@ fn trimming_a_midi_clip_start_preserves_event_positions_and_source_bounds() {
         .apply(DawAction::AddMidiNotes {
             item_id,
             notes: vec![MidiNoteData {
+                channel: 0,
                 pitch: 64,
                 tick: 960,
                 duration: 480,

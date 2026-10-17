@@ -129,6 +129,7 @@ fn render_callback_does_not_allocate_on_the_rendering_thread() {
     let notes = (0..512)
         .step_by(16)
         .map(|tick| MidiNoteData {
+            channel: 0,
             pitch: 48 + (tick % 36) as u8,
             tick,
             duration: 8,

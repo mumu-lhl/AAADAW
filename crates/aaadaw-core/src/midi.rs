@@ -7,6 +7,8 @@ use std::sync::Arc;
 /// Its swing grid is expressed as an integer percentage of half a grid interval,
 /// so 200 subdivisions represent every such snap point exactly.
 pub const MIDI_ITEM_SUBTICKS_PER_TICK: u16 = 200;
+/// Number of addressable MIDI 1.0 channels in one event.
+pub const MIDI_CHANNEL_COUNT: u8 = 16;
 
 /// An exact MIDI item position measured in project ticks and 1/200-tick units.
 #[derive(Clone, Copy, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -112,6 +114,8 @@ impl NoteId {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct MidiNoteData {
     pub pitch: u8,
+    /// Zero-based MIDI channel in the inclusive range `0..16`.
+    pub channel: u8,
     pub tick: u64,
     pub duration: u64,
     pub velocity: u8,
@@ -121,6 +125,8 @@ pub struct MidiNoteData {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct MidiControllerData {
     pub controller: u8,
+    /// Zero-based MIDI channel in the inclusive range `0..16`.
+    pub channel: u8,
     pub tick: u64,
     pub value: u8,
 }
@@ -129,6 +135,8 @@ pub struct MidiControllerData {
 /// The neutral pitch-bend value is 8192.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct MidiPitchBendData {
+    /// Zero-based MIDI channel in the inclusive range `0..16`.
+    pub channel: u8,
     pub tick: u64,
     pub value: u16,
 }
@@ -149,6 +157,11 @@ impl MidiNote {
     /// Returns the MIDI pitch in the range `0..=127`.
     pub fn pitch(&self) -> u8 {
         self.data.pitch
+    }
+
+    /// Returns the zero-based MIDI channel in the range `0..16`.
+    pub fn channel(&self) -> u8 {
+        self.data.channel
     }
 
     /// Returns the note's start tick relative to its item.

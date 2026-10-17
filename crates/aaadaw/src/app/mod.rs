@@ -3253,6 +3253,7 @@ impl App {
                         self.midi_note_clipboard.notes = selected
                             .iter()
                             .map(|note| aaadaw_core::MidiNoteData {
+                                channel: note.channel(),
                                 pitch: note.pitch(),
                                 tick: note.tick() - first_tick,
                                 duration: note.duration(),
@@ -3261,7 +3262,7 @@ impl App {
                             .collect();
                         self.midi_note_clipboard
                             .notes
-                            .sort_by_key(|note| (note.tick, note.pitch));
+                            .sort_by_key(|note| (note.tick, note.channel, note.pitch));
                         self.midi_note_clipboard.span_ticks = self
                             .midi_note_clipboard
                             .notes
@@ -9957,7 +9958,7 @@ impl App {
         if selected.len() != self.midi_note_clipboard.notes.len() {
             return None;
         }
-        selected.sort_by_key(|note| (note.tick(), note.pitch()));
+        selected.sort_by_key(|note| (note.tick(), note.channel(), note.pitch()));
         let start_tick = selected.iter().map(|note| note.tick()).min()?;
         let matches_clipboard =
             selected
@@ -9965,6 +9966,7 @@ impl App {
                 .zip(&self.midi_note_clipboard.notes)
                 .all(|(note, copied)| {
                     note.tick() - start_tick == copied.tick
+                        && note.channel() == copied.channel
                         && note.pitch() == copied.pitch
                         && note.duration() == copied.duration
                         && note.velocity() == copied.velocity
@@ -9992,6 +9994,7 @@ impl App {
                 (
                     note.id(),
                     aaadaw_core::MidiNoteData {
+                        channel: note.channel(),
                         pitch: note.pitch(),
                         tick: note.tick(),
                         duration: note.duration(),

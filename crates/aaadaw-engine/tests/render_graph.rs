@@ -1232,6 +1232,7 @@ fn render_graph_schedules_midi_atomically_with_the_audio_block() {
         .apply(DawAction::AddMidiNotes {
             item_id,
             notes: vec![aaadaw_core::MidiNoteData {
+                channel: 0,
                 pitch: 64,
                 tick: 0,
                 duration: 1,
@@ -1310,6 +1311,7 @@ fn playback_start_and_restart_chase_sustained_midi_notes() {
         .apply(DawAction::AddMidiNotes {
             item_id,
             notes: vec![aaadaw_core::MidiNoteData {
+                channel: 0,
                 pitch: 64,
                 tick: 0,
                 duration: 480,
@@ -1408,6 +1410,7 @@ fn render_graph_repeats_midi_across_loop_boundaries_in_one_callback() {
         .apply(DawAction::AddMidiNotes {
             item_id: midi_item_id,
             notes: vec![aaadaw_core::MidiNoteData {
+                channel: 0,
                 pitch: 64,
                 tick: 0,
                 duration: 480,
@@ -1584,6 +1587,7 @@ fn seek_chases_sustain_state_before_resuming_sustained_notes() {
         .apply(DawAction::AddMidiNotes {
             item_id,
             notes: vec![aaadaw_core::MidiNoteData {
+                channel: 0,
                 pitch: 64,
                 tick: 0,
                 duration: 960,
@@ -1596,21 +1600,25 @@ fn seek_chases_sustain_state_before_resuming_sustained_notes() {
             item_id,
             controllers: vec![
                 aaadaw_core::MidiControllerData {
+                    channel: 0,
                     controller: 64,
                     tick: 0,
                     value: 127,
                 },
                 aaadaw_core::MidiControllerData {
+                    channel: 0,
                     controller: 64,
                     tick: 1200,
                     value: 0,
                 },
                 aaadaw_core::MidiControllerData {
+                    channel: 0,
                     controller: 1,
                     tick: 240,
                     value: 80,
                 },
                 aaadaw_core::MidiControllerData {
+                    channel: 0,
                     controller: 11,
                     tick: 360,
                     value: 96,
@@ -1623,10 +1631,12 @@ fn seek_chases_sustain_state_before_resuming_sustained_notes() {
             item_id,
             pitch_bends: vec![
                 aaadaw_core::MidiPitchBendData {
+                    channel: 0,
                     tick: 0,
                     value: 8192,
                 },
                 aaadaw_core::MidiPitchBendData {
+                    channel: 0,
                     tick: 720,
                     value: 12_288,
                 },
@@ -2115,12 +2125,14 @@ fn midi_output_uses_live_audibility_and_keeps_release_events() {
             item_id: item,
             notes: vec![
                 aaadaw_core::MidiNoteData {
+                    channel: 0,
                     pitch: 60,
                     tick: 0,
                     duration: 1,
                     velocity: 100,
                 },
                 aaadaw_core::MidiNoteData {
+                    channel: 0,
                     pitch: 62,
                     tick: 2,
                     duration: 1,
