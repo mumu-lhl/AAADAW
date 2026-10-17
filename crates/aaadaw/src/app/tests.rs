@@ -6970,6 +6970,16 @@ fn recent_projects_submenu_opens_the_selected_path_through_project_transition_gu
         app.menu_selected_command,
         Some(CommandId::OpenRecentProject(0))
     );
+    let _ = app.update(Message::MenuKeyboard(MenuNavigation::LastCommand));
+    assert_eq!(
+        app.menu_selected_command,
+        Some(CommandId::OpenRecentProject(1))
+    );
+    let _ = app.update(Message::MenuKeyboard(MenuNavigation::FirstCommand));
+    assert_eq!(
+        app.menu_selected_command,
+        Some(CommandId::OpenRecentProject(0))
+    );
     let _ = app.update(Message::MenuKeyboard(MenuNavigation::PreviousMenu));
     assert!(
         !app.recent_projects_menu_open,
@@ -7091,6 +7101,16 @@ fn project_templates_open_isolated_working_copies_and_never_overwrite_the_templa
         Some(CommandId::ShowProjectTemplatesPath)
     );
     let _ = app.update(Message::MenuKeyboard(MenuNavigation::NextCommand));
+    assert_eq!(
+        app.menu_selected_command,
+        Some(CommandId::OpenProjectTemplate(0))
+    );
+    let _ = app.update(Message::MenuKeyboard(MenuNavigation::FirstCommand));
+    assert_eq!(
+        app.menu_selected_command,
+        Some(CommandId::SaveProjectAsTemplate)
+    );
+    let _ = app.update(Message::MenuKeyboard(MenuNavigation::LastCommand));
     assert_eq!(
         app.menu_selected_command,
         Some(CommandId::OpenProjectTemplate(0))
@@ -10526,6 +10546,46 @@ fn menu_keyboard_uses_native_alt_mnemonics_and_accepts_enter_while_actions_searc
         Some(Message::MenuKeyboard(MenuNavigation::NextMenu))
     ));
 
+    for (key, expected) in [
+        (
+            iced::keyboard::key::Named::Home,
+            MenuNavigation::FirstCommand,
+        ),
+        (iced::keyboard::key::Named::End, MenuNavigation::LastCommand),
+    ] {
+        let event = iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
+            key: Key::Named(key),
+            modified_key: Key::Named(key),
+            physical_key: iced::keyboard::key::Physical::Unidentified(
+                iced::keyboard::key::NativeCode::Unidentified,
+            ),
+            location: iced::keyboard::Location::Standard,
+            modifiers: Modifiers::NONE,
+            text: None,
+            repeat: false,
+        });
+        assert!(matches!(
+            menu_navigation_event(
+                &event,
+                iced::event::Status::Ignored,
+                window_id,
+                Some(window_id),
+                Some(MainMenu::File),
+            ),
+            Some(Message::MenuKeyboard(navigation)) if navigation == expected
+        ));
+        assert!(
+            menu_navigation_event(
+                &event,
+                iced::event::Status::Captured,
+                window_id,
+                Some(window_id),
+                Some(MainMenu::File),
+            )
+            .is_none()
+        );
+    }
+
     let enter = iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
         key: Key::Named(iced::keyboard::key::Named::Enter),
         modified_key: Key::Named(iced::keyboard::key::Named::Enter),
@@ -10590,6 +10650,14 @@ fn keyboard_navigation_switches_menus_and_wraps_enabled_commands() {
     let first = app.menu_selected_command;
     assert!(first.is_some());
     assert_eq!(first, enabled_commands.first().copied());
+
+    let initial_revision = app.revision;
+    let _ = app.update(Message::MenuKeyboard(MenuNavigation::LastCommand));
+    assert_eq!(app.menu_selected_command, enabled_commands.last().copied());
+    assert_eq!(app.project.tracks().len(), 0);
+    assert_eq!(app.revision, initial_revision);
+    let _ = app.update(Message::MenuKeyboard(MenuNavigation::FirstCommand));
+    assert_eq!(app.menu_selected_command, first);
 
     let _ = app.update(Message::MenuKeyboard(MenuNavigation::PreviousCommand));
     assert_eq!(app.menu_selected_command, enabled_commands.last().copied());

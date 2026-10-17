@@ -61,6 +61,8 @@ pub(crate) enum MenuNavigation {
     OpenMenu(MainMenu),
     NextMenu,
     PreviousMenu,
+    FirstCommand,
+    LastCommand,
     NextCommand,
     PreviousCommand,
     Activate,

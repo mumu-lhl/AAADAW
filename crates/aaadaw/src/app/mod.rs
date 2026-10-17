@@ -2007,6 +2007,8 @@ impl App {
                     MenuNavigation::OpenMenu(_)
                         | MenuNavigation::NextMenu
                         | MenuNavigation::PreviousMenu
+                        | MenuNavigation::FirstCommand
+                        | MenuNavigation::LastCommand
                         | MenuNavigation::NextCommand
                         | MenuNavigation::PreviousCommand
                 )
@@ -10136,7 +10138,10 @@ impl App {
                 };
                 self.open_main_menu(MENUS[next])
             }
-            MenuNavigation::NextCommand | MenuNavigation::PreviousCommand => {
+            MenuNavigation::FirstCommand
+            | MenuNavigation::LastCommand
+            | MenuNavigation::NextCommand
+            | MenuNavigation::PreviousCommand => {
                 let Some(menu) = self.active_menu else {
                     return Task::none();
                 };
@@ -10161,32 +10166,12 @@ impl App {
                         self.menu_selected_command = Some(parent_command);
                         return Task::none();
                     }
-                    let direction = if navigation == MenuNavigation::NextCommand {
-                        1_isize
-                    } else {
-                        -1_isize
-                    };
                     let current = self.menu_selected_command.and_then(|selected| {
                         submenu_commands
                             .iter()
                             .position(|command| *command == selected)
                     });
-                    let next = current.map_or_else(
-                        || {
-                            if direction > 0 {
-                                0
-                            } else {
-                                submenu_commands.len() - 1
-                            }
-                        },
-                        |index| {
-                            if direction > 0 {
-                                (index + 1) % submenu_commands.len()
-                            } else {
-                                (index + submenu_commands.len() - 1) % submenu_commands.len()
-                            }
-                        },
-                    );
+                    let next = menu_command_index(current, submenu_commands.len(), navigation);
                     self.menu_selected_command = Some(submenu_commands[next]);
                     return Task::none();
                 }
@@ -10195,24 +10180,10 @@ impl App {
                     self.menu_selected_command = None;
                     return Task::none();
                 }
-                let direction = if navigation == MenuNavigation::NextCommand {
-                    1_isize
-                } else {
-                    -1_isize
-                };
                 let current = self
                     .menu_selected_command
                     .and_then(|selected| commands.iter().position(|command| *command == selected));
-                let next = current.map_or_else(
-                    || if direction > 0 { 0 } else { commands.len() - 1 },
-                    |index| {
-                        if direction > 0 {
-                            (index + 1) % commands.len()
-                        } else {
-                            (index + commands.len() - 1) % commands.len()
-                        }
-                    },
-                );
+                let next = menu_command_index(current, commands.len(), navigation);
                 self.menu_selected_command = Some(commands[next]);
                 if menu == MainMenu::Actions {
                     scroll_actions_menu_selection(self, commands[next])
@@ -13070,6 +13041,24 @@ fn scroll_actions_menu_selection(app: &mut App, selected: CommandId) -> Task<Mes
     scroll_widget_to("aaadaw-actions-menu-results", offset_y)
 }
 
+fn menu_command_index(
+    current: Option<usize>,
+    command_count: usize,
+    navigation: MenuNavigation,
+) -> usize {
+    debug_assert!(command_count > 0);
+    let last = command_count - 1;
+    match navigation {
+        MenuNavigation::FirstCommand => 0,
+        MenuNavigation::LastCommand => last,
+        MenuNavigation::NextCommand => current.map_or(0, |index| (index + 1) % command_count),
+        MenuNavigation::PreviousCommand => {
+            current.map_or(last, |index| (index + last) % command_count)
+        }
+        _ => unreachable!("only command navigation has a command index"),
+    }
+}
+
 fn actions_menu_selection_scroll_offset(
     entries: &[commands::CommandEntry],
     selected: CommandId,
@@ -13274,6 +13263,20 @@ fn menu_navigation_event(
     let navigation = match key.as_ref() {
         iced::keyboard::Key::Named(iced::keyboard::key::Named::Escape) if active_menu.is_some() => {
             return Some(Message::Escape);
+        }
+        iced::keyboard::Key::Named(iced::keyboard::key::Named::Home)
+            if active_menu.is_some()
+                && (status == iced::event::Status::Ignored
+                    || active_menu == Some(MainMenu::Actions)) =>
+        {
+            MenuNavigation::FirstCommand
+        }
+        iced::keyboard::Key::Named(iced::keyboard::key::Named::End)
+            if active_menu.is_some()
+                && (status == iced::event::Status::Ignored
+                    || active_menu == Some(MainMenu::Actions)) =>
+        {
+            MenuNavigation::LastCommand
         }
         iced::keyboard::Key::Named(iced::keyboard::key::Named::ArrowLeft)
             if active_menu.is_some()

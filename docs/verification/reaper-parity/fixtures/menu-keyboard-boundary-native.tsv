@@ -4,3 +4,5 @@ display	X11 Xvfb 1280x1024 with xfwm4; isolated REAPER configuration
 audio	device closed; transport remained stopped
 step	input_sequence	menu	selected_command	transport	project_effect	screenshot	sha256	observation
 wrap_up	open File menu; ArrowUp	File	Quit	stopped	no action executed	fixtures/menu-file-wrap-up-native.png	cc5df369f980a3bc3d46c15c47df097407f3c2c99ac697a3914b5604ed1a3d60	ArrowUp from the menu top selects its last command; the menu stays open and Quit is not activated
+home	open File menu; Home	File	New project	stopped	no action executed	fixtures/menu-keyboard-home-native.png	4633b6b7044b9defaec7047c582d8cc664dca150cccf67decb771f663fc7f558	Home selects the first enabled File command and leaves the menu open
+end	open File menu; End	File	Quit	stopped	no action executed	fixtures/menu-keyboard-end-native.png	3dc737dc6f496c181a916cd095df0d69fede0ba900ec0bc12a0257c738fa7d99	End selects the last enabled File command; Quit is not executed
