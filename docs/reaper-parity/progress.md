@@ -1987,3 +1987,7 @@ A second Linux REAPER 7.82 / Default 7 project combined `RULERLANECFG 4` with th
 ### 2026-10-17 Type 0 hidden-ruler name filtering
 
 With that combined project loaded in REAPER, Type 0 `Export hidden markers` and the `#` name filter were both checked. Marker mode retained only the `#Intro` `FF 06` event; cue mode retained only the `#Intro` `FF 07` event. Both 55-byte files match the established Type 0 filtered outputs exactly, excluding `Verse` by name and individually hidden `#Hidden` by visibility. Their independent dialog screenshots, native files, hashes, and settings are in [the filtered intersection manifest](../verification/reaper-parity/fixtures/menu-export-midi-native-type0-marker-ruler-individual-hidden-filtered.tsv). Two full-file tests cover marker and cue modes.
+
+### 2026-10-17 SMPTE 29.97DF hour boundary
+
+The native rate probe created and reopened a Linux REAPER 7.82 / Default 7 project at 29.97DF with a 3600-second project offset. The API readback confirmed the rate, drop-frame flag, and offset; Project Settings displays `1:00:00.000`. REAPER's Type 1 export writes `FF 54 05 41 00 00 00 00` (`01:00:00:00`) and the full 129-byte file matches AAADAW. Project/readback settings, screenshots, export, and hashes are in [the hour-boundary manifest](../verification/reaper-parity/fixtures/menu-export-midi-native-smpte-2997drop-hour-boundary.tsv). The new full-file regression passed; stable Core Nextest passed 174/174 and strict all-target Core Clippy passed.

@@ -714,6 +714,37 @@ fn reaper_782_type_one_2997drop_first_minute_boundary_matches_native_bytes() {
 }
 
 #[test]
+fn reaper_782_type_one_2997drop_hour_boundary_matches_native_bytes() {
+    let mut project = native_midi_fixture_project();
+    project
+        .apply(DawAction::SetProjectStartTimeOffsetSeconds { seconds: 3600.0 })
+        .unwrap();
+    project
+        .apply(DawAction::SetFrameRate {
+            rate: FrameRate::Fps2997Drop,
+        })
+        .unwrap();
+    let options = MidiExportOptions {
+        embed_smpte_offset: true,
+        ..MidiExportOptions::for_project(&project)
+    };
+    let actual = encode_standard_midi_with_conductor_track_name(
+        &project,
+        options,
+        "aaadaw-smpte-2997drop-hour-boundary",
+    )
+    .unwrap();
+    let native = include_bytes!(
+        "../../../docs/verification/reaper-parity/fixtures/menu-export-midi-native-smpte-2997drop-hour-boundary.mid"
+    );
+
+    assert_eq!(
+        actual, native,
+        "29.97 fps drop-frame hour-boundary offset and MIDI tracks match REAPER 7.82"
+    );
+}
+
+#[test]
 fn reaper_782_type_one_2997nd_nonzero_smpte_offset_matches_native_bytes() {
     let mut project = native_midi_fixture_project();
     project
