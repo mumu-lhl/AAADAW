@@ -39,26 +39,9 @@ fn quantized_midi_note_changes(
     let grid_ticks = grid
         .ticks(ppq)
         .map_err(|_| ActionError::InvalidQuantizeGrid)?;
-    let quantize_absolute_tick = |absolute_tick: u64| {
-        let lower = absolute_tick / grid_ticks * grid_ticks;
-        let remainder = absolute_tick - lower;
-        let round_up_threshold = grid_ticks / 2 + grid_ticks % 2;
-        let nearest = if remainder >= round_up_threshold {
-            lower.checked_add(grid_ticks).unwrap_or(lower)
-        } else {
-            lower
-        };
-        let distance = nearest as i128 - absolute_tick as i128;
-        let adjustment = (distance as f64 * f64::from(strength)).round() as i128;
-        u64::try_from(absolute_tick as i128 + adjustment).map_err(|_| ActionError::InvalidMidiNote)
-    };
+    let quantize_absolute_tick = |absolute_tick| quantize_tick(absolute_tick, grid_ticks, strength);
     let mut changes = Vec::new();
-    let quantize_position = matches!(
-        operation,
-        MidiNoteQuantizeOperation::Position
-            | MidiNoteQuantizeOperation::PositionAndNoteEnd
-            | MidiNoteQuantizeOperation::PositionAndNoteLength
-    );
+    let quantize_position = midi_quantize_includes_note_position(operation);
     let quantize_end = matches!(
         operation,
         MidiNoteQuantizeOperation::PositionAndNoteEnd | MidiNoteQuantizeOperation::NoteEndOnly
@@ -113,6 +96,42 @@ fn quantized_midi_note_changes(
         }
     }
     Ok(changes)
+}
+
+fn quantize_tick(tick: u64, grid_ticks: u64, strength: f32) -> Result<u64, ActionError> {
+    let lower = tick / grid_ticks * grid_ticks;
+    let remainder = tick - lower;
+    let round_up_threshold = grid_ticks / 2 + grid_ticks % 2;
+    let nearest = if remainder >= round_up_threshold {
+        lower.checked_add(grid_ticks).unwrap_or(lower)
+    } else {
+        lower
+    };
+    let distance = nearest as i128 - tick as i128;
+    let adjustment = (distance as f64 * f64::from(strength)).round() as i128;
+    u64::try_from(tick as i128 + adjustment).map_err(|_| ActionError::InvalidMidiNote)
+}
+
+fn midi_quantize_includes_note_position(operation: MidiNoteQuantizeOperation) -> bool {
+    matches!(
+        operation,
+        MidiNoteQuantizeOperation::Position
+            | MidiNoteQuantizeOperation::PositionAndNoteEnd
+            | MidiNoteQuantizeOperation::PositionAndNoteLength
+    )
+}
+
+fn quantized_midi_event_tick(
+    item: &MidiItem,
+    tick: u64,
+    grid_ticks: u64,
+    strength: f32,
+) -> Result<u64, ActionError> {
+    let absolute_tick = item
+        .project_tick_at_content_tick(tick)
+        .ok_or(ActionError::InvalidMidiNote)?;
+    let quantized_absolute = quantize_tick(absolute_tick, grid_ticks, strength)?;
+    midi_source_tick_at_project_tick(item, quantized_absolute).ok_or(ActionError::InvalidMidiNote)
 }
 
 fn valid_audio_source_offset(
@@ -4640,6 +4659,74 @@ impl Project {
                 )?;
                 ProjectEvent::MidiNotesQuantized { item_id, changes }
             }
+            DawAction::QuantizeMidiEventsWithOperation {
+                item_id,
+                grid,
+                strength,
+                operation,
+            } => {
+                let item = state
+                    .midi_items
+                    .iter()
+                    .find(|item| item.id == item_id)
+                    .ok_or(ActionError::MidiItemNotFound { item_id })?;
+                let ppq = state.tempo_map.settings().ppq();
+                let note_changes =
+                    quantized_midi_note_changes(item, None, grid, strength, ppq, operation)?;
+                let mut events = Vec::with_capacity(3);
+                if !note_changes.is_empty() {
+                    events.push(ProjectEvent::MidiNotesQuantized {
+                        item_id,
+                        changes: note_changes,
+                    });
+                }
+                if midi_quantize_includes_note_position(operation) {
+                    let grid_ticks = grid
+                        .ticks(ppq)
+                        .map_err(|_| ActionError::InvalidQuantizeGrid)?;
+                    let mut controllers = item.controllers.as_ref().clone();
+                    for controller in &mut controllers {
+                        controller.tick =
+                            quantized_midi_event_tick(item, controller.tick, grid_ticks, strength)?;
+                    }
+                    if !valid_midi_controllers(&controllers) {
+                        return Err(ActionError::InvalidMidiController);
+                    }
+                    if controllers.as_slice() != item.controllers.as_ref() {
+                        events.push(ProjectEvent::MidiControllersChanged {
+                            item_id,
+                            before: item.controllers.as_ref().clone(),
+                            after: controllers,
+                        });
+                    }
+                    let mut pitch_bends = item.pitch_bends.as_ref().clone();
+                    for bend in &mut pitch_bends {
+                        bend.tick =
+                            quantized_midi_event_tick(item, bend.tick, grid_ticks, strength)?;
+                    }
+                    if !valid_midi_pitch_bends(&pitch_bends) {
+                        return Err(ActionError::InvalidMidiPitchBend);
+                    }
+                    if pitch_bends.as_slice() != item.pitch_bends.as_ref() {
+                        events.push(ProjectEvent::MidiPitchBendsChanged {
+                            item_id,
+                            before: item.pitch_bends.as_ref().clone(),
+                            after: pitch_bends,
+                        });
+                    }
+                }
+                if events.is_empty() {
+                    ProjectEvent::MidiNotesQuantized {
+                        item_id,
+                        changes: Vec::new(),
+                    }
+                } else {
+                    ProjectEvent::Transaction {
+                        tx_id: item_id.value(),
+                        events,
+                    }
+                }
+            }
             DawAction::DeleteTrack { track_id } => {
                 let index = state
                     .tracks
@@ -5748,7 +5835,8 @@ fn source_track_for_action(state: &ProjectState, action: &DawAction) -> Option<T
         | DawAction::QuantizeItem { item_id, .. }
         | DawAction::QuantizeMidiNotes { item_id, .. }
         | DawAction::QuantizeMidiNotesAndEnds { item_id, .. }
-        | DawAction::QuantizeMidiNotesWithOperation { item_id, .. } => state
+        | DawAction::QuantizeMidiNotesWithOperation { item_id, .. }
+        | DawAction::QuantizeMidiEventsWithOperation { item_id, .. } => state
             .midi_items
             .iter()
             .find(|item| item.id == *item_id)

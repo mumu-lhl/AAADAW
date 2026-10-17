@@ -2108,6 +2108,8 @@ AAADAW MIDI Editor 工具栏新增 `Q pos+end`，仅处理选中音符；起点�
 
 Linux REAPER 7.82 / Default 7 action 40009 的实窗截图确认默认设置，并记录全部 scope 与 operation 菜单。实测 1/32、100% 下五种原厂音符模式的 PPQ 输入/输出；尤其用 100–280 音符区分 `Position and note end`（120–240）与 `Position and note length`（120–360），另验证 `Note end only`、`Note length only` 会保持起点。读数、可复现 ReaScript 和操作数值见[对话框验证资料](../verification/reaper-parity/midi-note-quantize-dialog.md)。
 
-AAADAW 对话框现提供 Selected/All notes、全部五种原厂音符操作、0–100% strength 与 Commit/OK/Cancel/Escape；原有快速 `Q pos`、`Q pos+end` 仍保留。Core 通过一个量化操作动作记录位置和长度变化，所有五种模式的选中范围、tick 结果及 Undo/Redo 均有回归。Workspace Nextest **1414 tests，74 binaries** 全部通过，包含 Core 五模式 tick/Undo/Redo 与 App scope/operation/Commit/Cancel 路径；严格 workspace all-target Clippy (`-D warnings`)、fmt、diff 检查、106 ID/15 列 matrix 和 9 个量化截图哈希均通过。原厂、AAADAW 对话框、菜单与操作截图见[对话框验证资料](../verification/reaper-parity/midi-note-quantize-dialog.md)。
+AAADAW 对话框现提供 Selected/All notes、全部五种原厂音符操作、0–100% strength 与 Commit/OK/Cancel/Escape；原有快速 `Q pos`、`Q pos+end` 仍保留。Core 通过一个量化操作动作记录位置和长度变化，所有五种模式的选中范围、tick 结果及 Undo/Redo 均有回归。
 
-`MIDI-QUANTIZE-DIALOG-001`、UI-019 与 P7 仍为 `in_progress`：All/Selected events、Bypass、Fix overlaps 行为、Swing 交集与已记忆对话框设置尚未覆盖。
+后续原厂 action 40009 probe 确认 All events 的 Position 操作会移动已选/未选音符、CC 与 Pitch Bend 的位置并保留值、通道、选中状态和音符长度。AAADAW 新增跨现有三种事件数据的单次可撤销编辑；当前数据模型拒绝同通道、同参数事件落在相同 tick，因此产生这类碰撞时仍不能完成量化。实时 Xvfb 截图记录了新增的 All events 菜单项与选中状态，Build ID `9b8d3083d1fb8c85d3bb5c57f0ee8755a871016d`，原厂事件读数和 app 截图 hash 见[对话框验证资料](../verification/reaper-parity/midi-note-quantize-dialog.md)。Workspace Nextest **1416 tests，74 binaries** 全部通过，包含 Core 五种音符模式/All events tick 与 Undo/Redo、App 五项对话框路径；严格 workspace all-target Clippy (`-D warnings`)、fmt、diff 检查、106 ID/15 列 matrix 和 11 个量化截图哈希均通过。
+
+`MIDI-QUANTIZE-DIALOG-001`、UI-019 与 P7 仍为 `in_progress`：Selected events、Program Change/channel pressure/SysEx 等未建模 MIDI 事件、量化碰撞处理、Bypass、Fix overlaps 行为、Swing 交集与已记忆对话框设置尚未覆盖。

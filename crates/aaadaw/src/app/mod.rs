@@ -1898,8 +1898,9 @@ impl App {
                 self.midi_editor_selected_notes.iter().copied().collect()
             }
             MidiQuantizeScope::AllNotes => item.notes().iter().map(|note| note.id()).collect(),
+            MidiQuantizeScope::AllEvents => Vec::new(),
         };
-        if note_ids.is_empty() {
+        if dialog.scope != MidiQuantizeScope::AllEvents && note_ids.is_empty() {
             return;
         }
         let grid = midi_editor_grid_fraction(self.timeline.midi_editor_snap_grid);
@@ -1926,16 +1927,29 @@ impl App {
                 "MIDI note lengths quantized to editor grid",
             ),
         };
-        self.apply_action(
-            DawAction::QuantizeMidiNotesWithOperation {
+        let action = match dialog.scope {
+            MidiQuantizeScope::AllEvents => DawAction::QuantizeMidiEventsWithOperation {
                 item_id: dialog.item_id,
-                note_ids,
                 grid,
                 strength,
                 operation,
             },
-            label,
-        );
+            MidiQuantizeScope::AllNotes | MidiQuantizeScope::SelectedNotes => {
+                DawAction::QuantizeMidiNotesWithOperation {
+                    item_id: dialog.item_id,
+                    note_ids,
+                    grid,
+                    strength,
+                    operation,
+                }
+            }
+        };
+        let label = if dialog.scope == MidiQuantizeScope::AllEvents {
+            "MIDI notes and events quantized to editor grid"
+        } else {
+            label
+        };
+        self.apply_action(action, label);
     }
 
     fn update(&mut self, message: Message) -> Task<Message> {

@@ -23,8 +23,8 @@ use crate::timeline::{SnapGrid, TimelineEvent};
 #[cfg(all(feature = "jack-backend", feature = "pipewire-backend"))]
 use aaadaw_app::PlaybackBackend;
 use aaadaw_core::{
-    DawAction, MidiControllerData, MidiItemPosition, MidiNoteData, Project, RazorEditArea,
-    TrackFxPlugin,
+    DawAction, MidiControllerData, MidiItemPosition, MidiNoteData, MidiPitchBendData, Project,
+    RazorEditArea, TrackFxPlugin,
 };
 use aaadaw_media::{AudioStreamDecoder, AudioWaveform};
 use aaadaw_storage::{ArrangementViewState, ProjectSessionLock, ProjectStore};
@@ -12445,6 +12445,88 @@ fn midi_quantize_dialog_routes_position_and_note_end_only_operations() {
         (100, 140)
     );
     assert_eq!(app.project.midi_items()[0].notes()[1].tick(), 350);
+}
+
+#[test]
+fn midi_quantize_dialog_all_events_quantizes_notes_controllers_and_pitch_bends_together() {
+    let mut app = App::default();
+    let _ = app.update(Message::AddTrack);
+    let track_id = app.project.tracks()[0].id();
+    app.project
+        .apply(DawAction::InsertMidiItem {
+            track_id,
+            start_tick: 0,
+            length_ticks: 4_000,
+        })
+        .expect("test MIDI item should be inserted");
+    let item_id = app.project.midi_items()[0].id();
+    app.project
+        .apply(DawAction::AddMidiNotes {
+            item_id,
+            notes: vec![
+                MidiNoteData {
+                    channel: 0,
+                    pitch: 60,
+                    tick: 100,
+                    duration: 180,
+                    velocity: 96,
+                },
+                MidiNoteData {
+                    channel: 0,
+                    pitch: 62,
+                    tick: 350,
+                    duration: 80,
+                    velocity: 96,
+                },
+            ],
+        })
+        .expect("test notes should be inserted");
+    app.project
+        .apply(DawAction::SetMidiControllers {
+            item_id,
+            controllers: vec![MidiControllerData {
+                controller: 1,
+                channel: 0,
+                tick: 475,
+                value: 64,
+            }],
+        })
+        .expect("test controller should be inserted");
+    app.project
+        .apply(DawAction::SetMidiPitchBends {
+            item_id,
+            pitch_bends: vec![MidiPitchBendData {
+                channel: 0,
+                tick: 850,
+                value: 8_192,
+            }],
+        })
+        .expect("test pitch bend should be inserted");
+
+    let _ = app.update(Message::OpenMidiQuantizeDialog(item_id));
+    let _ = app.update(Message::SetMidiQuantizeScope(MidiQuantizeScope::AllEvents));
+    let _ = app.update(Message::AcceptMidiQuantize);
+
+    let item = &app.project.midi_items()[0];
+    assert_eq!(
+        item.notes()
+            .iter()
+            .map(|note| (note.tick(), note.duration()))
+            .collect::<Vec<_>>(),
+        [(120, 180), (360, 80)]
+    );
+    assert_eq!(item.controllers()[0].tick, 480);
+    assert_eq!(item.pitch_bends()[0].tick, 840);
+    let _ = app.update(Message::Undo);
+    let item = &app.project.midi_items()[0];
+    assert_eq!(item.notes()[0].tick(), 100);
+    assert_eq!(item.controllers()[0].tick, 475);
+    assert_eq!(item.pitch_bends()[0].tick, 850);
+    let _ = app.update(Message::Redo);
+    let item = &app.project.midi_items()[0];
+    assert_eq!(item.notes()[0].tick(), 120);
+    assert_eq!(item.controllers()[0].tick, 480);
+    assert_eq!(item.pitch_bends()[0].tick, 840);
 }
 
 #[test]

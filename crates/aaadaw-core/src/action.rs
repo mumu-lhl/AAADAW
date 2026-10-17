@@ -519,6 +519,13 @@ pub enum DawAction {
         strength: f32,
         operation: MidiNoteQuantizeOperation,
     },
+    /// Quantize every MIDI note, controller, and pitch-bend event in an item as one edit.
+    QuantizeMidiEventsWithOperation {
+        item_id: ItemId,
+        grid: GridFraction,
+        strength: f32,
+        operation: MidiNoteQuantizeOperation,
+    },
     /// Delete a track from the project.
     DeleteTrack {
         track_id: TrackId,

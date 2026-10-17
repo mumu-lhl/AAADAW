@@ -1,4 +1,7 @@
-use aaadaw_core::{DawAction, GridFraction, MidiNoteData, MidiNoteQuantizeOperation, Project};
+use aaadaw_core::{
+    DawAction, GridFraction, MidiControllerData, MidiNoteData, MidiNoteQuantizeOperation,
+    MidiPitchBendData, Project,
+};
 
 #[test]
 fn midi_quantize_moves_note_starts_to_the_grid_and_is_undoable() {
@@ -364,4 +367,141 @@ fn midi_quantize_dialog_operations_match_reaper_ticks_and_round_trip_history() {
             .collect::<Vec<_>>();
         assert_eq!(redone, expected, "redo failed for {operation:?}");
     }
+}
+
+#[test]
+fn midi_quantize_all_events_matches_reaper_and_undoes_as_one_edit() {
+    let mut project = Project::new();
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Piano".to_owned(),
+        })
+        .expect("test track should be created");
+    let track_id = project.tracks()[0].id();
+    project
+        .apply(DawAction::InsertMidiItem {
+            track_id,
+            start_tick: 0,
+            length_ticks: 4_000,
+        })
+        .expect("test MIDI item should be inserted");
+    let item_id = project.midi_items()[0].id();
+    project
+        .apply(DawAction::AddMidiNotes {
+            item_id,
+            notes: vec![
+                MidiNoteData {
+                    channel: 0,
+                    pitch: 60,
+                    tick: 100,
+                    duration: 180,
+                    velocity: 96,
+                },
+                MidiNoteData {
+                    channel: 0,
+                    pitch: 62,
+                    tick: 350,
+                    duration: 80,
+                    velocity: 96,
+                },
+            ],
+        })
+        .expect("test notes should be inserted");
+    project
+        .apply(DawAction::SetMidiControllers {
+            item_id,
+            controllers: vec![
+                MidiControllerData {
+                    controller: 1,
+                    channel: 0,
+                    tick: 475,
+                    value: 64,
+                },
+                MidiControllerData {
+                    controller: 7,
+                    channel: 1,
+                    tick: 730,
+                    value: 96,
+                },
+            ],
+        })
+        .expect("test controllers should be inserted");
+    project
+        .apply(DawAction::SetMidiPitchBends {
+            item_id,
+            pitch_bends: vec![MidiPitchBendData {
+                channel: 0,
+                tick: 850,
+                value: 8_192,
+            }],
+        })
+        .expect("test pitch bend should be inserted");
+    let before_notes = project.midi_items()[0]
+        .notes()
+        .iter()
+        .map(|note| (note.tick(), note.duration()))
+        .collect::<Vec<_>>();
+    let before_controllers = project.midi_items()[0].controllers().to_vec();
+    let before_pitch_bends = project.midi_items()[0].pitch_bends().to_vec();
+
+    project
+        .apply(DawAction::QuantizeMidiEventsWithOperation {
+            item_id,
+            grid: GridFraction::new(1, 32).expect("1/32 is a valid grid"),
+            strength: 1.0,
+            operation: MidiNoteQuantizeOperation::Position,
+        })
+        .expect("all MIDI event positions should be quantized");
+
+    let item = &project.midi_items()[0];
+    assert_eq!(
+        item.notes()
+            .iter()
+            .map(|note| (note.tick(), note.duration()))
+            .collect::<Vec<_>>(),
+        [(120, 180), (360, 80)]
+    );
+    assert_eq!(
+        item.controllers()
+            .iter()
+            .map(|controller| (
+                controller.channel,
+                controller.controller,
+                controller.tick,
+                controller.value
+            ))
+            .collect::<Vec<_>>(),
+        [(0, 1, 480, 64), (1, 7, 720, 96)]
+    );
+    assert_eq!(
+        item.pitch_bends()
+            .iter()
+            .map(|bend| (bend.channel, bend.tick, bend.value))
+            .collect::<Vec<_>>(),
+        [(0, 840, 8_192)]
+    );
+
+    assert!(
+        project
+            .undo()
+            .expect("all-event quantize should be undoable")
+    );
+    let item = &project.midi_items()[0];
+    assert_eq!(
+        item.notes()
+            .iter()
+            .map(|note| (note.tick(), note.duration()))
+            .collect::<Vec<_>>(),
+        before_notes
+    );
+    assert_eq!(item.controllers(), before_controllers);
+    assert_eq!(item.pitch_bends(), before_pitch_bends);
+    assert!(
+        project
+            .redo()
+            .expect("all-event quantize should be redoable")
+    );
+    assert_eq!(project.midi_items()[0].controllers()[0].tick, 480);
+    assert_eq!(project.midi_items()[0].pitch_bends()[0].tick, 840);
 }

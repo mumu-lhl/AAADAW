@@ -225,10 +225,11 @@ pub(crate) enum MidiQuantizeScope {
     #[default]
     SelectedNotes,
     AllNotes,
+    AllEvents,
 }
 
 impl MidiQuantizeScope {
-    pub(crate) const OPTIONS: [Self; 2] = [Self::AllNotes, Self::SelectedNotes];
+    pub(crate) const OPTIONS: [Self; 3] = [Self::AllNotes, Self::SelectedNotes, Self::AllEvents];
 }
 
 impl std::fmt::Display for MidiQuantizeScope {
@@ -236,6 +237,7 @@ impl std::fmt::Display for MidiQuantizeScope {
         formatter.write_str(match self {
             Self::AllNotes => "All notes",
             Self::SelectedNotes => "Selected notes",
+            Self::AllEvents => "All events",
         })
     }
 }
