@@ -174,6 +174,7 @@ pub(crate) enum MidiEditorMode {
 pub(crate) enum MidiEditorEventListCursor {
     Note(NoteId),
     Controller(MidiControllerData),
+    BankSelect(MidiControllerData, MidiControllerData),
     PitchBend(MidiPitchBendData),
     ProgramChange(MidiProgramChangeData),
     PolyAftertouch(MidiPolyAftertouchData),
@@ -631,6 +632,7 @@ pub(crate) enum Message {
     SelectMidiNotes(HashSet<NoteId>),
     SelectMidiNoteEvent(NoteId, bool),
     SelectMidiControllerEvent(ItemId, MidiControllerData, bool),
+    SelectMidiBankSelectEvent(ItemId, MidiControllerData, MidiControllerData, bool),
     SelectMidiPitchBendEvent(ItemId, MidiPitchBendData, bool),
     SelectMidiProgramChangeEvent(ItemId, MidiProgramChangeData, bool),
     SelectMidiPolyAftertouchEvent(ItemId, MidiPolyAftertouchData, bool),

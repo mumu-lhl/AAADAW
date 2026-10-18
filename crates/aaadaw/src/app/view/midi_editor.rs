@@ -1,7 +1,7 @@
 use super::super::{
     App, MIDI_EDITOR_KEY_WIDTH, Message, MidiEditorChannelSelection, MidiEditorEventKind,
     MidiEditorEventListCursor, MidiEditorEventTypeFilter, MidiEditorLane, MidiEditorMode,
-    MidiEditorTool,
+    MidiEditorTool, effective_midi_bank_value,
 };
 use super::tokens::{PANEL_PADDING, ROW_GAP, SPACING_LG, SPACING_MD, SPACING_XS, TOUCH_TARGET_MIN};
 use crate::timeline::{SnapGrid, TimelineEvent, snap_tick_to_grid};
@@ -871,6 +871,7 @@ fn view_with_profile(app: &App, touch_targets: bool) -> Element<'_, Message> {
 enum MidiEventListEntry<'a> {
     Note(&'a MidiNote),
     Controller(MidiControllerData),
+    BankSelect(MidiControllerData, MidiControllerData),
     PitchBend(MidiPitchBendData),
     ProgramChange(MidiProgramChangeData),
     PolyAftertouch(MidiPolyAftertouchData),
@@ -883,6 +884,7 @@ impl MidiEventListEntry<'_> {
         match self {
             Self::Note(note) => note.tick(),
             Self::Controller(event) => event.tick,
+            Self::BankSelect(msb, _) => msb.tick,
             Self::PitchBend(event) => event.tick,
             Self::ProgramChange(event) => event.tick,
             Self::PolyAftertouch(event) => event.tick,
@@ -894,7 +896,7 @@ impl MidiEventListEntry<'_> {
     fn order(self) -> u8 {
         match self {
             Self::Note(_) => 0,
-            Self::Controller(_) => 1,
+            Self::Controller(_) | Self::BankSelect(_, _) => 1,
             Self::PitchBend(_) => 2,
             Self::ProgramChange(_) => 3,
             Self::PolyAftertouch(_) => 4,
@@ -907,6 +909,7 @@ impl MidiEventListEntry<'_> {
         match self {
             Self::Note(note) => MidiEditorEventListCursor::Note(note.id()),
             Self::Controller(event) => MidiEditorEventListCursor::Controller(event),
+            Self::BankSelect(msb, lsb) => MidiEditorEventListCursor::BankSelect(msb, lsb),
             Self::PitchBend(event) => MidiEditorEventListCursor::PitchBend(event),
             Self::ProgramChange(event) => MidiEditorEventListCursor::ProgramChange(event),
             Self::PolyAftertouch(event) => MidiEditorEventListCursor::PolyAftertouch(event),
@@ -917,18 +920,56 @@ impl MidiEventListEntry<'_> {
 }
 
 fn midi_event_list_entries(item: &MidiItem, snap: MidiSnap) -> Vec<MidiEventListEntry<'_>> {
+    let controllers = item
+        .controllers()
+        .iter()
+        .copied()
+        .filter(|event| snap.controller_visible(event.channel))
+        .collect::<Vec<_>>();
+    let mut paired_controllers = HashSet::new();
+    let mut bank_select_lsb_by_msb = HashMap::new();
+    for (index, msb) in controllers.iter().copied().enumerate() {
+        if msb.controller != 0 || paired_controllers.contains(&index) {
+            continue;
+        }
+        let Some((lsb_index, lsb)) =
+            controllers
+                .iter()
+                .copied()
+                .enumerate()
+                .find(|(candidate_index, candidate)| {
+                    candidate.controller == 32
+                        && candidate.channel == msb.channel
+                        && candidate.tick == msb.tick
+                        && !paired_controllers.contains(candidate_index)
+                })
+        else {
+            continue;
+        };
+        paired_controllers.insert(index);
+        paired_controllers.insert(lsb_index);
+        bank_select_lsb_by_msb.insert(index, lsb);
+    }
+    let controller_entries =
+        controllers
+            .iter()
+            .copied()
+            .enumerate()
+            .filter_map(|(index, event)| {
+                if let Some(lsb) = bank_select_lsb_by_msb.get(&index) {
+                    Some(MidiEventListEntry::BankSelect(event, *lsb))
+                } else if paired_controllers.contains(&index) {
+                    None
+                } else {
+                    Some(MidiEventListEntry::Controller(event))
+                }
+            });
     let mut events = item
         .notes()
         .iter()
         .filter(|note| snap.note_visible(note.channel()))
         .map(MidiEventListEntry::Note)
-        .chain(
-            item.controllers()
-                .iter()
-                .copied()
-                .filter(|event| snap.controller_visible(event.channel))
-                .map(MidiEventListEntry::Controller),
-        )
+        .chain(controller_entries)
         .chain(
             item.pitch_bends()
                 .iter()
@@ -961,6 +1002,19 @@ fn midi_event_list_entries(item: &MidiItem, snap: MidiSnap) -> Vec<MidiEventList
     events.sort_by_key(|event| (event.tick(), event.order()));
     events.push(MidiEventListEntry::End(item.length_ticks()));
     events
+}
+
+fn midi_event_bank_select_value(msb: MidiControllerData, lsb: MidiControllerData) -> u16 {
+    (u16::from(msb.value) << 7) | u16::from(lsb.value)
+}
+
+fn midi_event_program_change_parameter(item: &MidiItem, event: MidiProgramChangeData) -> String {
+    format!(
+        "{}-{}-{}",
+        effective_midi_bank_value(item, event.channel, event.tick, 0),
+        effective_midi_bank_value(item, event.channel, event.tick, 32),
+        event.program
+    )
 }
 
 pub(in crate::app) fn midi_event_list_cursors(
@@ -1080,11 +1134,28 @@ fn midi_event_list_view<'a>(
                     "CC",
                     midi_event_controller_name(event.controller),
                     event.value.to_string(),
-                    "0".to_owned(),
+                    String::new(),
                     app.midi_editor_selected_controllers.contains(&event),
                     Message::SelectMidiControllerEvent(
                         item_id,
                         event,
+                        app.keyboard_modifiers.command() || app.keyboard_modifiers.control(),
+                    ),
+                ),
+                MidiEventListEntry::BankSelect(msb, lsb) => (
+                    msb.tick,
+                    None,
+                    msb.channel,
+                    "CC",
+                    "Bank Select 14-bit (0/32)".to_owned(),
+                    midi_event_bank_select_value(msb, lsb).to_string(),
+                    String::new(),
+                    app.midi_editor_selected_controllers.contains(&msb)
+                        || app.midi_editor_selected_controllers.contains(&lsb),
+                    Message::SelectMidiBankSelectEvent(
+                        item_id,
+                        msb,
+                        lsb,
                         app.keyboard_modifiers.command() || app.keyboard_modifiers.control(),
                     ),
                 ),
@@ -1095,7 +1166,7 @@ fn midi_event_list_view<'a>(
                     "Pitch",
                     "Pitch Bend".to_owned(),
                     event.value.to_string(),
-                    "0".to_owned(),
+                    String::new(),
                     app.midi_editor_selected_pitch_bends.contains(&event),
                     Message::SelectMidiPitchBendEvent(
                         item_id,
@@ -1108,9 +1179,9 @@ fn midi_event_list_view<'a>(
                     None,
                     event.channel,
                     "PC",
-                    String::new(),
+                    midi_event_program_change_parameter(item, event),
                     event.program.to_string(),
-                    "0".to_owned(),
+                    String::new(),
                     app.midi_editor_selected_program_changes.contains(&event),
                     Message::SelectMidiProgramChangeEvent(
                         item_id,
@@ -1125,7 +1196,7 @@ fn midi_event_list_view<'a>(
                     "Poly Aftertouch",
                     pitch_name(event.note),
                     event.value.to_string(),
-                    "0".to_owned(),
+                    String::new(),
                     app.midi_editor_selected_poly_aftertouches.contains(&event),
                     Message::SelectMidiPolyAftertouchEvent(
                         item_id,
@@ -1140,7 +1211,7 @@ fn midi_event_list_view<'a>(
                     "Channel Pressure",
                     String::new(),
                     event.value.to_string(),
-                    "0".to_owned(),
+                    String::new(),
                     app.midi_editor_selected_channel_pressures.contains(&event),
                     Message::SelectMidiChannelPressureEvent(
                         item_id,
@@ -1283,7 +1354,7 @@ fn midi_event_list_row(row: MidiEventListRow) -> Element<'static, Message> {
         text(row.length).width(Length::Fixed(104.0)),
         text(row.channel).width(Length::Fixed(68.0)),
         text(row.event_type).width(Length::Fixed(100.0)),
-        text(row.parameter).width(Length::Fixed(150.0)),
+        text(row.parameter).width(Length::Fixed(204.0)),
         text(row.value).width(Length::Fixed(72.0)),
         text(row.off_value).width(Length::Fixed(80.0)),
     ]
@@ -1308,7 +1379,7 @@ fn midi_event_list_header() -> Element<'static, Message> {
             text("Length").width(Length::Fixed(104.0)),
             text("Channel").width(Length::Fixed(68.0)),
             text("Type").width(Length::Fixed(100.0)),
-            text("Parameter").width(Length::Fixed(150.0)),
+            text("Parameter").width(Length::Fixed(204.0)),
             text("Value").width(Length::Fixed(72.0)),
             text("Off Value").width(Length::Fixed(80.0)),
         ]
@@ -8070,6 +8141,95 @@ mod tests {
         assert_eq!(events.len(), 2);
         assert!(matches!(events[0], MidiEventListEntry::ChannelPressure(_)));
         assert!(matches!(events[1], MidiEventListEntry::End(3_840)));
+    }
+
+    #[test]
+    fn event_list_combines_same_tick_bank_select_and_labels_program_bank() {
+        let mut project = Project::new();
+        project
+            .apply(aaadaw_core::DawAction::CreateTrack {
+                index: 0,
+                name: "Track".to_owned(),
+            })
+            .unwrap();
+        let track_id = project.tracks()[0].id();
+        project
+            .apply(aaadaw_core::DawAction::InsertMidiItem {
+                track_id,
+                start_tick: 0,
+                length_ticks: 3_840,
+            })
+            .unwrap();
+        let item_id = project.midi_items()[0].id();
+        let bank_msb = MidiControllerData {
+            controller: 0,
+            channel: 2,
+            tick: 480,
+            value: 12,
+        };
+        let bank_lsb = MidiControllerData {
+            controller: 32,
+            value: 23,
+            ..bank_msb
+        };
+        let unrelated_cc = MidiControllerData {
+            controller: 7,
+            value: 90,
+            ..bank_msb
+        };
+        let unpaired_msb = MidiControllerData {
+            tick: 600,
+            value: 5,
+            ..bank_msb
+        };
+        project
+            .apply(aaadaw_core::DawAction::SetMidiControllers {
+                item_id,
+                controllers: vec![unrelated_cc, bank_msb, bank_lsb, unpaired_msb],
+            })
+            .unwrap();
+        let program = MidiProgramChangeData {
+            channel: 2,
+            tick: 480,
+            program: 42,
+        };
+        project
+            .apply(aaadaw_core::DawAction::SetMidiProgramChanges {
+                item_id,
+                program_changes: vec![program],
+            })
+            .unwrap();
+
+        let item = &project.midi_items()[0];
+        let events = midi_event_list_entries(item, MidiSnap::default());
+        assert_eq!(events.len(), 5);
+        assert!(events.iter().any(|entry| matches!(
+            entry,
+            MidiEventListEntry::BankSelect(msb, lsb) if *msb == bank_msb && *lsb == bank_lsb
+        )));
+        assert!(events.iter().any(|entry| matches!(
+            entry,
+            MidiEventListEntry::Controller(event) if *event == unrelated_cc
+        )));
+        assert!(events.iter().any(|entry| matches!(
+            entry,
+            MidiEventListEntry::Controller(event) if *event == unpaired_msb
+        )));
+        assert_eq!(midi_event_bank_select_value(bank_msb, bank_lsb), 1_559);
+        assert_eq!(
+            midi_event_program_change_parameter(item, program),
+            "12-23-42"
+        );
+        assert_eq!(
+            midi_event_program_change_parameter(
+                item,
+                MidiProgramChangeData {
+                    channel: 1,
+                    ..program
+                }
+            ),
+            "0-0-42"
+        );
     }
 
     #[test]

@@ -12880,6 +12880,93 @@ fn midi_event_list_mode_switches_by_reaper_shortcuts_and_deletes_selected_events
 }
 
 #[test]
+fn midi_event_list_bank_select_row_selects_and_deletes_both_controller_events() {
+    let mut app = App::default();
+    let _ = app.update(Message::AddTrack);
+    let track_id = app.project.tracks()[0].id();
+    app.project
+        .apply(DawAction::InsertMidiItem {
+            track_id,
+            start_tick: 0,
+            length_ticks: 3_840,
+        })
+        .expect("test MIDI item should be inserted");
+    let item_id = app.project.midi_items()[0].id();
+    let bank_msb = MidiControllerData {
+        controller: 0,
+        channel: 2,
+        tick: 480,
+        value: 12,
+    };
+    let bank_lsb = MidiControllerData {
+        controller: 32,
+        value: 23,
+        ..bank_msb
+    };
+    app.project
+        .apply(DawAction::SetMidiControllers {
+            item_id,
+            controllers: vec![bank_msb, bank_lsb],
+        })
+        .expect("bank select controllers should be inserted");
+    let program = MidiProgramChangeData {
+        channel: 2,
+        tick: 480,
+        program: 42,
+    };
+    app.project
+        .apply(DawAction::SetMidiProgramChanges {
+            item_id,
+            program_changes: vec![program],
+        })
+        .expect("test Program Change should be inserted");
+    app.midi_editor_item_id = Some(item_id);
+    app.midi_editor_mode = MidiEditorMode::EventList;
+
+    let _ = app.update(Message::SelectMidiBankSelectEvent(
+        item_id, bank_msb, bank_lsb, false,
+    ));
+    assert_eq!(
+        app.midi_editor_selected_controllers,
+        HashSet::from([bank_msb, bank_lsb])
+    );
+    assert_eq!(
+        app.midi_editor_event_list_cursor,
+        Some(super::MidiEditorEventListCursor::BankSelect(
+            bank_msb, bank_lsb
+        ))
+    );
+
+    let _ = app.update(Message::DeleteSelectedMidiEvents(item_id));
+    let item = &app.project.midi_items()[0];
+    assert!(item.controllers().is_empty());
+    assert_eq!(item.program_changes(), [program]);
+    let _ = app.update(Message::Undo);
+    let item = &app.project.midi_items()[0];
+    assert_eq!(item.controllers(), [bank_msb, bank_lsb]);
+    assert_eq!(item.program_changes(), [program]);
+
+    app.midi_editor_selected_controllers.clear();
+    app.midi_editor_event_list_cursor = None;
+    app.midi_editor_event_list_anchor = None;
+    let _ = app.update(Message::MoveMidiEditorEventListCursor(
+        super::messages::MidiEditorEventListCursorDirection::Next,
+        false,
+        false,
+    ));
+    assert_eq!(
+        app.midi_editor_event_list_cursor,
+        Some(super::MidiEditorEventListCursor::BankSelect(
+            bank_msb, bank_lsb
+        ))
+    );
+    assert_eq!(
+        app.midi_editor_selected_controllers,
+        HashSet::from([bank_msb, bank_lsb])
+    );
+}
+
+#[test]
 fn midi_event_list_arrow_keys_navigate_visible_events_and_keep_ctrl_multiselection() {
     let editor_window_id = iced::window::Id::unique();
     let mut app = App {

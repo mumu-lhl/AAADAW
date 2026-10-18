@@ -1950,6 +1950,10 @@ impl App {
             MidiEditorEventListCursor::Controller(event) => {
                 self.midi_editor_selected_controllers.contains(&event)
             }
+            MidiEditorEventListCursor::BankSelect(msb, lsb) => {
+                self.midi_editor_selected_controllers.contains(&msb)
+                    || self.midi_editor_selected_controllers.contains(&lsb)
+            }
             MidiEditorEventListCursor::PitchBend(event) => {
                 self.midi_editor_selected_pitch_bends.contains(&event)
             }
@@ -2059,6 +2063,10 @@ impl App {
                         MidiEditorEventListCursor::Controller(event) => {
                             self.midi_editor_selected_controllers.insert(event);
                         }
+                        MidiEditorEventListCursor::BankSelect(msb, lsb) => {
+                            self.midi_editor_selected_controllers.insert(msb);
+                            self.midi_editor_selected_controllers.insert(lsb);
+                        }
                         MidiEditorEventListCursor::PitchBend(event) => {
                             self.midi_editor_selected_pitch_bends.insert(event);
                         }
@@ -2081,6 +2089,10 @@ impl App {
                     }
                     MidiEditorEventListCursor::Controller(event) => {
                         self.midi_editor_selected_controllers.insert(event);
+                    }
+                    MidiEditorEventListCursor::BankSelect(msb, lsb) => {
+                        self.midi_editor_selected_controllers.insert(msb);
+                        self.midi_editor_selected_controllers.insert(lsb);
                     }
                     MidiEditorEventListCursor::PitchBend(event) => {
                         self.midi_editor_selected_pitch_bends.insert(event);
@@ -5341,6 +5353,10 @@ impl App {
                             MidiEditorEventListCursor::Controller(event) => {
                                 self.midi_editor_selected_controllers.insert(event);
                             }
+                            MidiEditorEventListCursor::BankSelect(msb, lsb) => {
+                                self.midi_editor_selected_controllers.insert(msb);
+                                self.midi_editor_selected_controllers.insert(lsb);
+                            }
                             MidiEditorEventListCursor::PitchBend(event) => {
                                 self.midi_editor_selected_pitch_bends.insert(event);
                             }
@@ -5773,6 +5789,43 @@ impl App {
                     self.midi_editor_selected_controllers.insert(event);
                 }
             }
+            Message::SelectMidiBankSelectEvent(item_id, msb, lsb, additive)
+                if self.midi_editor_item_id == Some(item_id) =>
+            {
+                let cursor = MidiEditorEventListCursor::BankSelect(msb, lsb);
+                let visible = self
+                    .project
+                    .midi_items()
+                    .iter()
+                    .find(|item| item.id() == item_id)
+                    .is_some_and(|item| {
+                        view::midi_event_list_cursors(self, item).contains(&cursor)
+                    });
+                if !visible {
+                    return task;
+                }
+                self.midi_editor_feedback = None;
+                self.midi_editor_event_list_cursor = Some(cursor);
+                if !additive || self.midi_editor_event_list_anchor.is_none() {
+                    self.midi_editor_event_list_anchor = Some(cursor);
+                }
+                if !additive {
+                    self.midi_editor_selected_notes.clear();
+                    self.midi_editor_selected_controllers.clear();
+                    self.midi_editor_selected_pitch_bends.clear();
+                    self.midi_editor_selected_program_changes.clear();
+                    self.midi_editor_selected_poly_aftertouches.clear();
+                    self.midi_editor_selected_channel_pressures.clear();
+                    self.midi_editor_selected_controllers.extend([msb, lsb]);
+                } else if self.midi_editor_selected_controllers.contains(&msb)
+                    || self.midi_editor_selected_controllers.contains(&lsb)
+                {
+                    self.midi_editor_selected_controllers.remove(&msb);
+                    self.midi_editor_selected_controllers.remove(&lsb);
+                } else {
+                    self.midi_editor_selected_controllers.extend([msb, lsb]);
+                }
+            }
             Message::SelectMidiPitchBendEvent(item_id, event, additive)
                 if self.midi_editor_item_id == Some(item_id) =>
             {
@@ -5896,6 +5949,7 @@ impl App {
                 }
             }
             Message::SelectMidiControllerEvent(..)
+            | Message::SelectMidiBankSelectEvent(..)
             | Message::SelectMidiPitchBendEvent(..)
             | Message::SelectMidiProgramChangeEvent(..)
             | Message::SelectMidiPolyAftertouchEvent(..)
