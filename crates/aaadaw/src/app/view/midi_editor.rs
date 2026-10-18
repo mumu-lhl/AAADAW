@@ -14,7 +14,7 @@ use iced::advanced::text::{Alignment as TextAlignment, LineHeight, Shaping};
 use iced::widget::canvas::{self, Text};
 use iced::widget::{
     button, canvas as canvas_widget, checkbox, column, container, mouse_area, pick_list, row,
-    scrollable, slider, stack, text,
+    scrollable, slider, stack, text, text_editor,
 };
 use iced::{
     Color, Element, Event, Font, Length, Pixels, Point, Rectangle, Size, Theme, keyboard, mouse,
@@ -1396,6 +1396,21 @@ fn midi_event_list_view<'a>(
             && app.midi_editor_selected_program_changes.is_empty()
             && app.midi_editor_selected_poly_aftertouches.is_empty()
             && app.midi_editor_selected_opaque_events.is_empty());
+    let has_single_opaque_editable_selection = app.midi_editor_selected_opaque_events.len() == 1
+        && app.midi_editor_selected_notes.is_empty()
+        && app.midi_editor_selected_controllers.is_empty()
+        && app.midi_editor_selected_pitch_bends.is_empty()
+        && app.midi_editor_selected_program_changes.is_empty()
+        && app.midi_editor_selected_poly_aftertouches.is_empty()
+        && app.midi_editor_selected_channel_pressures.is_empty()
+        && app
+            .midi_editor_selected_opaque_events
+            .iter()
+            .next()
+            .and_then(|index| item.opaque_events().get(*index as usize))
+            .is_some_and(|event| {
+                super::super::midi_opaque_event_properties_type_and_payload(&event.kind).is_some()
+            });
     let mut content = column![toolbar, channel_toolbar];
     if let Some(channel_filter_dialog) = channel_filter_dialog {
         content = content.push(channel_filter_dialog);
@@ -1415,7 +1430,8 @@ fn midi_event_list_view<'a>(
                 button("Edit event…")
                     .style(iced::widget::button::secondary)
                     .on_press_maybe(
-                        has_homogeneous_editable_selection
+                        (has_homogeneous_editable_selection
+                            || has_single_opaque_editable_selection)
                             .then_some(Message::OpenMidiEventProperties(item_id)),
                     ),
                 button("Delete selected")
@@ -1794,6 +1810,13 @@ fn midi_event_properties_dialog(app: &App, touch_targets: bool) -> Element<'_, M
         &state.target,
         super::super::MidiEventPropertiesTarget::ChannelPressures(_)
     );
+    let is_opaque = matches!(
+        &state.target,
+        super::super::MidiEventPropertiesTarget::Opaque(..)
+    );
+    let is_opaque_sysex =
+        state.opaque_type == Some(super::super::MidiOpaqueEventPropertiesType::SysEx);
+    let is_opaque_meta = is_opaque && !is_opaque_sysex;
     let position = iced::widget::text_input("1.1.00", &state.position)
         .on_input(Message::SetMidiEventPropertiesPosition)
         .width(Length::Fixed(if touch_targets { 148.0 } else { 116.0 }));
@@ -1825,11 +1848,92 @@ fn midi_event_properties_dialog(app: &App, touch_targets: bool) -> Element<'_, M
             .width(Length::Fixed(if touch_targets { 104.0 } else { 88.0 }));
     let title = if is_program_change {
         "Bank/Program Select"
+    } else if is_opaque_sysex {
+        "SysEx Properties"
     } else {
         "Event Properties"
     };
+    let opaque_meta_text: Element<'_, Message> = if state.opaque_multiline {
+        text_editor(&state.opaque_editor)
+            .on_action(Message::EditMidiOpaqueEventPropertiesText)
+            .height(Length::Fixed(if touch_targets { 128.0 } else { 96.0 }))
+            .into()
+    } else {
+        iced::widget::text_input("Text event", &state.opaque_payload)
+            .on_input(Message::SetMidiOpaqueEventPropertiesPayload)
+            .width(Length::Fill)
+            .into()
+    };
+    let opaque_sysex_data = text_editor(&state.opaque_editor)
+        .on_action(Message::EditMidiOpaqueEventPropertiesText)
+        .height(Length::Fixed(if touch_targets { 220.0 } else { 188.0 }));
     let mut content = column![text(title).size(16)];
-    if is_controller {
+    if is_opaque_sysex {
+        content = content
+            .push(
+                row![text("F0"), opaque_sysex_data, text("F7"),]
+                    .spacing(SPACING_XS)
+                    .align_y(iced::Alignment::Center),
+            )
+            .push(
+                row![
+                    text("Position").width(Length::Fixed(76.0)),
+                    position,
+                    iced::widget::Space::new().width(Length::Fill),
+                    button("Load…")
+                        .style(iced::widget::button::secondary)
+                        .on_press(Message::PickMidiOpaqueSysExFile(false)),
+                    button("Save…")
+                        .style(iced::widget::button::secondary)
+                        .on_press(Message::PickMidiOpaqueSysExFile(true)),
+                ]
+                .spacing(SPACING_XS)
+                .align_y(iced::Alignment::Center),
+            )
+            .push(text("Enter hexadecimal bytes separated by spaces.").size(11));
+    } else if is_opaque_meta {
+        content = content
+            .push(
+                row![text("Text").width(Length::Fixed(76.0)), opaque_meta_text]
+                    .spacing(SPACING_XS)
+                    .align_y(iced::Alignment::Center),
+            )
+            .push(
+                row![
+                    text("Type").width(Length::Fixed(76.0)),
+                    pick_list(
+                        &super::super::MidiOpaqueEventPropertiesType::META_OPTIONS[..],
+                        state.opaque_type,
+                        Message::SetMidiOpaqueEventPropertiesType,
+                    )
+                    .width(Length::Fill),
+                ]
+                .spacing(SPACING_XS)
+                .align_y(iced::Alignment::Center),
+            )
+            .push(
+                row![
+                    iced::widget::Space::new().width(Length::Fixed(76.0)),
+                    checkbox(state.opaque_multiline)
+                        .label("Multi-line text")
+                        .on_toggle(Message::SetMidiOpaqueEventPropertiesMultiline),
+                ]
+                .spacing(SPACING_XS)
+                .align_y(iced::Alignment::Center),
+            )
+            .push(
+                row![
+                    text("Position").width(Length::Fixed(76.0)),
+                    position,
+                    iced::widget::Space::new().width(Length::Fill),
+                    button("Load…")
+                        .style(iced::widget::button::secondary)
+                        .on_press(Message::PickMidiOpaqueMetaTextFile),
+                ]
+                .spacing(SPACING_XS)
+                .align_y(iced::Alignment::Center),
+            );
+    } else if is_controller {
         content =
             content
                 .push(
@@ -2069,7 +2173,19 @@ fn midi_event_properties_dialog(app: &App, touch_targets: bool) -> Element<'_, M
     if let Some(feedback) = app.midi_editor_feedback.as_deref() {
         content = content.push(text(feedback).size(12));
     }
-    content = content.push(
+    let actions = if is_opaque {
+        row![
+            iced::widget::Space::new().width(Length::Fill),
+            button("OK")
+                .style(iced::widget::button::primary)
+                .on_press(Message::AcceptMidiEventProperties),
+            button("Cancel")
+                .style(iced::widget::button::secondary)
+                .on_press(Message::CancelMidiEventProperties),
+        ]
+        .spacing(SPACING_XS)
+        .align_y(iced::Alignment::Center)
+    } else {
         row![
             iced::widget::Space::new().width(Length::Fill),
             button("OK")
@@ -2083,10 +2199,11 @@ fn midi_event_properties_dialog(app: &App, touch_targets: bool) -> Element<'_, M
                 .on_press(Message::ApplyMidiEventProperties),
         ]
         .spacing(SPACING_XS)
-        .align_y(iced::Alignment::Center),
-    );
+        .align_y(iced::Alignment::Center)
+    };
+    content = content.push(actions);
     container(content)
-        .width(Length::Fixed(if touch_targets { 424.0 } else { 388.0 }))
+        .width(Length::Fixed(if touch_targets { 560.0 } else { 520.0 }))
         .padding(SPACING_MD)
         .style(container::rounded_box)
         .into()

@@ -3449,18 +3449,48 @@ fn command_enabled(app: &App, kind: CommandKind, track: Option<TrackState>) -> b
             !project_edit_busy(app) && app.midi_editor_item_id.is_some()
         }
         CommandKind::MidiEventProperties => {
-            !project_edit_busy(app)
-                && app.midi_editor_item_id.is_some()
-                && app.midi_editor_selected_opaque_events.is_empty()
-                && ((!app.midi_editor_selected_notes.is_empty()
-                    && app.midi_editor_selected_controllers.is_empty()
-                    && app.midi_editor_selected_pitch_bends.is_empty())
-                    || (!app.midi_editor_selected_controllers.is_empty()
-                        && app.midi_editor_selected_notes.is_empty()
-                        && app.midi_editor_selected_pitch_bends.is_empty())
-                    || (!app.midi_editor_selected_pitch_bends.is_empty()
-                        && app.midi_editor_selected_notes.is_empty()
-                        && app.midi_editor_selected_controllers.is_empty()))
+            if project_edit_busy(app) {
+                return false;
+            }
+            let Some(item_id) = app.midi_editor_item_id else {
+                return false;
+            };
+            let selected_types = [
+                !app.midi_editor_selected_notes.is_empty(),
+                !app.midi_editor_selected_controllers.is_empty(),
+                !app.midi_editor_selected_pitch_bends.is_empty(),
+                !app.midi_editor_selected_program_changes.is_empty(),
+                !app.midi_editor_selected_poly_aftertouches.is_empty(),
+                !app.midi_editor_selected_channel_pressures.is_empty(),
+                !app.midi_editor_selected_opaque_events.is_empty(),
+            ];
+            if selected_types
+                .into_iter()
+                .filter(|selected| *selected)
+                .count()
+                != 1
+            {
+                return false;
+            }
+            if app.midi_editor_selected_opaque_events.is_empty() {
+                true
+            } else if app.midi_editor_selected_opaque_events.len() == 1 {
+                app.project
+                    .midi_items()
+                    .iter()
+                    .find(|item| item.id() == item_id)
+                    .and_then(|item| {
+                        app.midi_editor_selected_opaque_events
+                            .iter()
+                            .next()
+                            .and_then(|index| item.opaque_events().get(*index as usize))
+                    })
+                    .is_some_and(|event| {
+                        super::midi_opaque_event_properties_type_and_payload(&event.kind).is_some()
+                    })
+            } else {
+                false
+            }
         }
         CommandKind::AddProjectMarker => !project_edit_busy(app),
         CommandKind::InsertRegionFromTimeSelection => {

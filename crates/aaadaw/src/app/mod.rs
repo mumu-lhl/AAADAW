@@ -18,9 +18,9 @@ use aaadaw_core::ProjectSnapshot;
 use aaadaw_core::{
     AudioItem, DawAction, FxParameterChange, GridFraction, ItemId, MarkerId, MeterPointSnapshot,
     MidiChannelPressureData, MidiControllerData, MidiFileImportOptions, MidiFileProjectImport,
-    MidiItem, MidiItemPosition, MidiNoteData, MidiPitchBendData, MidiPolyAftertouchData,
-    MidiProgramChangeData, NoteId, Project, RazorEditArea, RegionId, TempoCurve, TimeSignature,
-    TrackId,
+    MidiItem, MidiItemPosition, MidiNoteData, MidiOpaqueEventData, MidiOpaqueEventKind,
+    MidiPitchBendData, MidiPolyAftertouchData, MidiProgramChangeData, NoteId, Project,
+    RazorEditArea, RegionId, TempoCurve, TimeSignature, TrackId,
 };
 #[cfg(feature = "audio-device")]
 use aaadaw_engine::{
@@ -770,6 +770,12 @@ struct MidiEventPropertiesDialogState {
     bank_lsb: String,
     bank_lsb_mixed: bool,
     bank_lsb_dirty: bool,
+    opaque_type: Option<MidiOpaqueEventPropertiesType>,
+    opaque_type_dirty: bool,
+    opaque_payload: String,
+    opaque_payload_dirty: bool,
+    opaque_multiline: bool,
+    opaque_editor: iced::widget::text_editor::Content,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -780,6 +786,140 @@ enum MidiEventPropertiesTarget {
     ProgramChanges(Vec<MidiProgramChangeData>),
     PolyAftertouches(Vec<MidiPolyAftertouchData>),
     ChannelPressures(Vec<MidiChannelPressureData>),
+    Opaque(u32, MidiOpaqueEventData),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum MidiOpaqueEventPropertiesType {
+    SysEx,
+    TextEvent,
+    CopyrightNotice,
+    TrackName,
+    InstrumentName,
+    Lyrics,
+    Marker,
+    Cue,
+    ProgramName,
+    DeviceName,
+}
+
+impl MidiOpaqueEventPropertiesType {
+    pub(crate) const META_OPTIONS: [Self; 9] = [
+        Self::TextEvent,
+        Self::CopyrightNotice,
+        Self::TrackName,
+        Self::InstrumentName,
+        Self::Lyrics,
+        Self::Marker,
+        Self::Cue,
+        Self::ProgramName,
+        Self::DeviceName,
+    ];
+
+    fn meta_kind(self) -> Option<u8> {
+        Some(match self {
+            Self::TextEvent => 0x01,
+            Self::CopyrightNotice => 0x02,
+            Self::TrackName => 0x03,
+            Self::InstrumentName => 0x04,
+            Self::Lyrics => 0x05,
+            Self::Marker => 0x06,
+            Self::Cue => 0x07,
+            Self::ProgramName => 0x08,
+            Self::DeviceName => 0x09,
+            Self::SysEx => return None,
+        })
+    }
+
+    fn from_meta_kind(kind: u8) -> Option<Self> {
+        Self::META_OPTIONS
+            .into_iter()
+            .find(|event_type| event_type.meta_kind() == Some(kind))
+    }
+}
+
+impl std::fmt::Display for MidiOpaqueEventPropertiesType {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(match self {
+            Self::SysEx => "SysEx",
+            Self::TextEvent => "Text event",
+            Self::CopyrightNotice => "Copyright notice",
+            Self::TrackName => "Track name",
+            Self::InstrumentName => "Instrument name",
+            Self::Lyrics => "Lyrics",
+            Self::Marker => "Marker",
+            Self::Cue => "Cue",
+            Self::ProgramName => "Program name",
+            Self::DeviceName => "Device name",
+        })
+    }
+}
+
+fn midi_opaque_event_properties_type_and_payload(
+    kind: &MidiOpaqueEventKind,
+) -> Option<(MidiOpaqueEventPropertiesType, String)> {
+    match kind {
+        MidiOpaqueEventKind::Meta { kind, data } => Some((
+            MidiOpaqueEventPropertiesType::from_meta_kind(*kind)?,
+            String::from_utf8_lossy(data)
+                .trim_end_matches('\0')
+                .to_owned(),
+        )),
+        MidiOpaqueEventKind::SystemExclusive { status, data } => {
+            let editable_data = if *status == 0xF0 && data.last() == Some(&0xF7) {
+                &data[..data.len().saturating_sub(1)]
+            } else {
+                data.as_slice()
+            };
+            Some((
+                MidiOpaqueEventPropertiesType::SysEx,
+                editable_data
+                    .iter()
+                    .map(|byte| format!("{byte:02X}"))
+                    .collect::<Vec<_>>()
+                    .join(" "),
+            ))
+        }
+    }
+}
+
+fn parse_midi_event_hex_bytes(value: &str) -> Option<Vec<u8>> {
+    value
+        .split_whitespace()
+        .map(|token| {
+            (token.len() == 2)
+                .then(|| u8::from_str_radix(token, 16).ok())
+                .flatten()
+        })
+        .collect()
+}
+
+fn midi_sysex_file_bytes(status: u8, payload: &[u8]) -> Vec<u8> {
+    let mut bytes = Vec::with_capacity(payload.len().saturating_add(2));
+    bytes.push(status);
+    bytes.extend_from_slice(payload);
+    if status == 0xF0 && bytes.last() != Some(&0xF7) {
+        bytes.push(0xF7);
+    }
+    bytes
+}
+
+fn midi_sysex_payload_from_file(status: u8, mut bytes: Vec<u8>) -> Vec<u8> {
+    if bytes.first() == Some(&status) {
+        bytes.remove(0);
+    }
+    if status == 0xF0 && bytes.last() == Some(&0xF7) {
+        bytes.pop();
+    }
+    bytes
+}
+
+fn format_midi_event_hex_bytes(bytes: &[u8]) -> String {
+    bytes
+        .iter()
+        .map(|byte| format!("{byte:02X}"))
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -2887,6 +3027,28 @@ impl App {
                     value_mixed,
                 )
             }
+            MidiEventPropertiesTarget::Opaque(index, target_event) => {
+                let event = item.opaque_events().get(*index as usize)?;
+                if event != target_event {
+                    return None;
+                }
+                let (position, position_mixed) =
+                    common_midi_event_property([view::midi_event_list_position(
+                        event.tick, ppq, meter,
+                    )]);
+                (
+                    position,
+                    position_mixed,
+                    String::new(),
+                    false,
+                    String::new(),
+                    false,
+                    String::new(),
+                    false,
+                    String::new(),
+                    false,
+                )
+            }
         };
         let (off_value, off_value_mixed) = match &target {
             MidiEventPropertiesTarget::Notes(note_ids) => {
@@ -2910,6 +3072,14 @@ impl App {
             }
             _ => (String::new(), false, String::new(), false),
         };
+        let (opaque_type, opaque_payload) = match &target {
+            MidiEventPropertiesTarget::Opaque(_, event) => {
+                let (event_type, payload) =
+                    midi_opaque_event_properties_type_and_payload(&event.kind)?;
+                (Some(event_type), payload)
+            }
+            _ => (None, String::new()),
+        };
         Some(MidiEventPropertiesDialogState {
             item_id,
             target,
@@ -2931,6 +3101,12 @@ impl App {
             bank_lsb,
             bank_lsb_mixed,
             bank_lsb_dirty: false,
+            opaque_type,
+            opaque_type_dirty: false,
+            opaque_editor: iced::widget::text_editor::Content::with_text(&opaque_payload),
+            opaque_payload,
+            opaque_payload_dirty: false,
+            opaque_multiline: false,
         })
     }
 
@@ -2950,6 +3126,9 @@ impl App {
         let Some(dialog) = self.midi_event_properties_dialog.clone() else {
             return Task::none();
         };
+        if matches!(&dialog.target, MidiEventPropertiesTarget::Opaque(..)) {
+            return self.commit_midi_opaque_event_properties(dialog, close_dialog);
+        }
         let item_id = dialog.item_id;
         let Some(item) = self
             .project
@@ -3652,7 +3831,216 @@ impl App {
                 }
                 task
             }
+            MidiEventPropertiesTarget::Opaque(..) => unreachable!("handled above"),
         }
+    }
+
+    fn commit_midi_opaque_event_properties(
+        &mut self,
+        dialog: MidiEventPropertiesDialogState,
+        close_dialog: bool,
+    ) -> Task<Message> {
+        let item_id = dialog.item_id;
+        let MidiEventPropertiesTarget::Opaque(index, original) = dialog.target else {
+            return Task::none();
+        };
+        let Some(item) = self
+            .project
+            .midi_items()
+            .iter()
+            .find(|item| item.id() == item_id)
+        else {
+            self.midi_event_properties_dialog = None;
+            return Task::none();
+        };
+        if item.opaque_events().get(index as usize) != Some(&original) {
+            self.midi_editor_feedback =
+                Some("The MIDI event changed while its properties were open".into());
+            return Task::none();
+        }
+        let ppq = u64::from(self.project.settings().ppq());
+        let meter = self.project.time_signature_at_tick(0);
+        let Some(position_edit) =
+            parse_midi_event_time_edit(&dialog.position, dialog.position_mixed, ppq, meter, false)
+        else {
+            self.midi_editor_feedback = Some("Position must use bar.beat.hundredths format".into());
+            return Task::none();
+        };
+        let Some(tick) = apply_midi_event_properties_edit(
+            i128::from(original.tick),
+            position_edit,
+            0,
+            i128::from(u64::MAX),
+        )
+        .map(|tick| tick as u64) else {
+            self.midi_editor_feedback = Some("Position is outside its valid range".into());
+            return Task::none();
+        };
+        let kind = match &original.kind {
+            MidiOpaqueEventKind::Meta { kind, data } => {
+                let event_type = if dialog.opaque_type_dirty {
+                    dialog
+                        .opaque_type
+                        .and_then(MidiOpaqueEventPropertiesType::meta_kind)
+                } else {
+                    Some(*kind)
+                };
+                let Some(kind) = event_type else {
+                    self.midi_editor_feedback = Some("Choose a valid Meta event type".into());
+                    return Task::none();
+                };
+                let data = if dialog.opaque_payload_dirty {
+                    dialog.opaque_payload.into_bytes()
+                } else {
+                    data.clone()
+                };
+                MidiOpaqueEventKind::Meta { kind, data }
+            }
+            MidiOpaqueEventKind::SystemExclusive { status, data } => {
+                let mut data = if dialog.opaque_payload_dirty {
+                    let Some(data) = parse_midi_event_hex_bytes(&dialog.opaque_payload) else {
+                        self.midi_editor_feedback =
+                            Some("SysEx data must be hexadecimal bytes separated by spaces".into());
+                        return Task::none();
+                    };
+                    data
+                } else {
+                    data.clone()
+                };
+                if *status == 0xF0 && data.last() != Some(&0xF7) {
+                    data.push(0xF7);
+                }
+                MidiOpaqueEventKind::SystemExclusive {
+                    status: *status,
+                    data,
+                }
+            }
+        };
+        let updated = MidiOpaqueEventData {
+            tick,
+            order: original.order,
+            kind,
+        };
+        if updated == original {
+            self.midi_editor_feedback = None;
+            if close_dialog {
+                self.midi_event_properties_dialog = None;
+            }
+            return Task::none();
+        }
+        let mut opaque_events = item.opaque_events().to_vec();
+        opaque_events[index as usize] = updated.clone();
+        let revision_before = self.revision;
+        self.midi_editor_feedback = None;
+        self.apply_action(
+            DawAction::SetMidiOpaqueEvents {
+                item_id,
+                events: opaque_events,
+            },
+            "MIDI opaque event edited",
+        );
+        if self.revision == revision_before {
+            if self.status.starts_with("Action failed:") {
+                self.midi_editor_feedback = Some(self.status.clone());
+            }
+            return Task::none();
+        }
+        if close_dialog {
+            self.midi_event_properties_dialog = None;
+        } else {
+            self.midi_event_properties_dialog = self.midi_event_properties_state(
+                item_id,
+                MidiEventPropertiesTarget::Opaque(index, updated),
+            );
+        }
+        Task::none()
+    }
+
+    fn pick_midi_opaque_sysex_file(&mut self, save: bool) -> Task<Message> {
+        let Some(dialog) = self.midi_event_properties_dialog.as_ref() else {
+            return Task::none();
+        };
+        let MidiEventPropertiesTarget::Opaque(_, event) = &dialog.target else {
+            return Task::none();
+        };
+        let MidiOpaqueEventKind::SystemExclusive { status, .. } = &event.kind else {
+            return Task::none();
+        };
+        let status = *status;
+        let bytes_to_save = if save {
+            let Some(payload) = parse_midi_event_hex_bytes(&dialog.opaque_payload) else {
+                self.midi_editor_feedback =
+                    Some("SysEx data must be hexadecimal bytes separated by spaces".into());
+                return Task::none();
+            };
+            Some(midi_sysex_file_bytes(status, &payload))
+        } else {
+            None
+        };
+        self.midi_editor_feedback = None;
+        Task::perform(
+            run_blocking("aaadaw-midi-sysex-file", move || {
+                let picker =
+                    rfd::FileDialog::new().add_filter("System Exclusive files", &["syx", "sysex"]);
+                let path = if save {
+                    picker
+                        .set_title("Save System Exclusive data")
+                        .set_file_name("sysex.syx")
+                        .save_file()
+                } else {
+                    picker.set_title("Load System Exclusive data").pick_file()
+                };
+                let Some(path) = path else {
+                    return Ok(None);
+                };
+                if let Some(bytes) = bytes_to_save {
+                    std::fs::write(&path, bytes)
+                        .map(|()| Some(String::new()))
+                        .map_err(|error| format!("Could not save SysEx data: {error}"))
+                } else {
+                    std::fs::read(&path)
+                        .map(|bytes| {
+                            Some(format_midi_event_hex_bytes(&midi_sysex_payload_from_file(
+                                status, bytes,
+                            )))
+                        })
+                        .map_err(|error| format!("Could not load SysEx data: {error}"))
+                }
+            }),
+            move |result| Message::MidiOpaqueSysExFileFinished(save, result),
+        )
+    }
+
+    fn pick_midi_opaque_meta_text_file(&mut self) -> Task<Message> {
+        if !self
+            .midi_event_properties_dialog
+            .as_ref()
+            .is_some_and(|dialog| {
+                matches!(
+                    &dialog.target,
+                    MidiEventPropertiesTarget::Opaque(_, event)
+                        if matches!(&event.kind, MidiOpaqueEventKind::Meta { .. })
+                )
+            })
+        {
+            return Task::none();
+        }
+        self.midi_editor_feedback = None;
+        Task::perform(
+            run_blocking("aaadaw-midi-meta-text-file", move || {
+                let path = rfd::FileDialog::new()
+                    .set_title("Load MIDI Meta text")
+                    .add_filter("Text files", &["txt"])
+                    .pick_file();
+                let Some(path) = path else {
+                    return Ok(None);
+                };
+                std::fs::read_to_string(&path)
+                    .map(Some)
+                    .map_err(|error| format!("Could not load Meta text: {error}"))
+            }),
+            Message::MidiOpaqueMetaTextFileFinished,
+        )
     }
 
     fn commit_midi_quantize_dialog(&mut self, close_dialog: bool) {
@@ -5642,6 +6030,22 @@ impl App {
                                     .copied()
                                     .collect(),
                             ))
+                        } else if self.midi_editor_selected_opaque_events.len() == 1
+                            && self.midi_editor_selected_notes.is_empty()
+                            && self.midi_editor_selected_controllers.is_empty()
+                            && self.midi_editor_selected_pitch_bends.is_empty()
+                            && self.midi_editor_selected_program_changes.is_empty()
+                            && self.midi_editor_selected_poly_aftertouches.is_empty()
+                            && self.midi_editor_selected_channel_pressures.is_empty()
+                        {
+                            let index = self
+                                .midi_editor_selected_opaque_events
+                                .iter()
+                                .next()
+                                .copied()?;
+                            let event = item.opaque_events().get(index as usize)?.clone();
+                            midi_opaque_event_properties_type_and_payload(&event.kind)?;
+                            Some(MidiEventPropertiesTarget::Opaque(index, event))
                         } else {
                             None
                         }
@@ -5708,6 +6112,93 @@ impl App {
                     dialog.bank_lsb_dirty = true;
                 }
             }
+            Message::SetMidiOpaqueEventPropertiesType(event_type) => {
+                if let Some(dialog) = self.midi_event_properties_dialog.as_mut()
+                    && dialog.opaque_type.is_some()
+                    && event_type.meta_kind().is_some()
+                {
+                    dialog.opaque_type = Some(event_type);
+                    dialog.opaque_type_dirty = true;
+                }
+            }
+            Message::SetMidiOpaqueEventPropertiesPayload(value) => {
+                if let Some(dialog) = self.midi_event_properties_dialog.as_mut()
+                    && dialog.opaque_type.is_some()
+                {
+                    dialog.opaque_payload = value;
+                    dialog.opaque_editor =
+                        iced::widget::text_editor::Content::with_text(&dialog.opaque_payload);
+                    dialog.opaque_payload_dirty = true;
+                }
+            }
+            Message::SetMidiOpaqueEventPropertiesMultiline(multiline) => {
+                if let Some(dialog) = self.midi_event_properties_dialog.as_mut()
+                    && dialog.opaque_type.is_some_and(|event_type| {
+                        event_type != MidiOpaqueEventPropertiesType::SysEx
+                    })
+                {
+                    if multiline {
+                        dialog.opaque_editor =
+                            iced::widget::text_editor::Content::with_text(&dialog.opaque_payload);
+                    } else {
+                        dialog.opaque_payload = dialog.opaque_editor.text();
+                    }
+                    dialog.opaque_multiline = multiline;
+                }
+            }
+            Message::EditMidiOpaqueEventPropertiesText(action) => {
+                if let Some(dialog) = self.midi_event_properties_dialog.as_mut()
+                    && dialog.opaque_type.is_some_and(|event_type| {
+                        dialog.opaque_multiline
+                            || event_type == MidiOpaqueEventPropertiesType::SysEx
+                    })
+                {
+                    dialog.opaque_editor.perform(action);
+                    dialog.opaque_payload = dialog.opaque_editor.text();
+                    dialog.opaque_payload_dirty = true;
+                }
+            }
+            Message::PickMidiOpaqueSysExFile(save) => {
+                task = self.pick_midi_opaque_sysex_file(save);
+            }
+            Message::MidiOpaqueSysExFileFinished(save, result) => match result {
+                Ok(Some(_payload)) if save => {
+                    self.midi_editor_feedback = Some("SysEx data saved".to_owned());
+                }
+                Ok(Some(payload)) => {
+                    if let Some(dialog) = self.midi_event_properties_dialog.as_mut()
+                        && dialog.opaque_type == Some(MidiOpaqueEventPropertiesType::SysEx)
+                    {
+                        dialog.opaque_payload = payload;
+                        dialog.opaque_editor =
+                            iced::widget::text_editor::Content::with_text(&dialog.opaque_payload);
+                        dialog.opaque_payload_dirty = true;
+                        self.midi_editor_feedback = None;
+                    }
+                }
+                Ok(None) => {}
+                Err(error) => self.midi_editor_feedback = Some(error),
+            },
+            Message::PickMidiOpaqueMetaTextFile => {
+                task = self.pick_midi_opaque_meta_text_file();
+            }
+            Message::MidiOpaqueMetaTextFileFinished(result) => match result {
+                Ok(Some(payload)) => {
+                    if let Some(dialog) = self.midi_event_properties_dialog.as_mut()
+                        && dialog.opaque_type.is_some_and(|event_type| {
+                            event_type != MidiOpaqueEventPropertiesType::SysEx
+                        })
+                    {
+                        dialog.opaque_payload = payload;
+                        dialog.opaque_editor =
+                            iced::widget::text_editor::Content::with_text(&dialog.opaque_payload);
+                        dialog.opaque_payload_dirty = true;
+                        self.midi_editor_feedback = None;
+                    }
+                }
+                Ok(None) => {}
+                Err(error) => self.midi_editor_feedback = Some(error),
+            },
             Message::ApplyMidiEventProperties => {
                 task = self.commit_midi_event_properties(false);
             }

@@ -74,3 +74,17 @@ fixtures/midi-bank-program-native-dialog-edited.png	9e5414f371b3095825ebfcc9cc07
 fixtures/midi-bank-program-native-event-list-edited.png	4bb46bfcc6a400ab03b777095f43871fa425a848b2551234aeaa67368ce5d8f7
 assertion	Linux REAPER 7.82 / Default 7 Bank/Program Select changes CC0/CC32/PC from 11/22/41 to 12/23/42; Event List displays the paired bank controllers as Bank Select 14-bit (0/32)=1559 and PC parameter 12-23-42.
 limitation	Patch-file selection, mixed event-type properties, and full Event List alignment remain open; MIDI-EVENT-PROPERTIES-001 stays in_progress.
+fixtures/midi-file-import-native/probe-type1.mid	38a38849f4a82ed615f2056bbd045c4673dff065e0a82fccd2737a231fc84f01
+fixtures/midi-event-properties-sysex-native.png	9f653ff784d21ea97a35b62f7f3fefe33f7f580d57e61654e67760b3e1ce7d15
+fixtures/midi-event-properties-meta-native.png	7b3688771ac56f0a7e16f7c870fc9e7691eac1b8132bfe3a40c460425d624f85
+fixtures/midi-event-properties-meta-types-native.png	1b2227a9827258a711db9695e725e539875bef0397bcd0ac71304f2e057b832f
+fixtures/midi-event-properties-opaque-sysex-aaadaw.png	a39d768130168725da438d14fe51a09126b2ed3acc4abca0a0b69fe5bddc8e6e
+fixtures/midi-event-properties-opaque-meta-aaadaw.png	174aa8683ec1d6eb38536741b23b618895c3576147ca1616c030127f15b7007a
+native_reaper_sha256	9976f5608068b7a58518969001b00b527fb0de6ed7459e0e5dda6f29878ee254
+native_reaper_build_id	fb9ade2f211bc91a3ee6193630ef17bcf5f6528b
+aaadaw_sha256	12e5c7b8e2d809e29a9a06a7d8af60ca66b09622467bfb06e25908129400362f
+aaadaw_build_id	45e1eacdcf55535084bfcc9cd0dacbe0d0c056dc
+opaque_environment	Linux Xvfb :451, Type 1 MIDI probe; native references from Linux REAPER 7.82 / Default 7; stable AAADAW desktop binary identified above.
+opaque_assertion	Native SysEx properties show F0/F7 framing, hex payload, Position, Save/Load, OK and Cancel; native text Meta properties show Text, nine Meta types, Multi-line text, Position, Load, OK and Cancel. AAADAW real-window captures confirm the current Meta and SysEx dialog layouts. Pointer probes did not visibly apply a Meta type, toggle Multi-line, or open Load, so those interactions remain unverified.
+opaque_verification	crates/aaadaw/src/app/tests.rs::midi_opaque_meta_properties_edit_text_type_and_position_with_undo_redo; crates/aaadaw/src/app/tests.rs::midi_opaque_sysex_properties_reject_invalid_hex_and_undo_valid_edit; crates/aaadaw/src/app/tests.rs::midi_sysex_file_data_preserves_framing_and_payload_for_f0_and_f7_packets; strict all-target Clippy and prior all-target cargo check passed. Targeted cargo test could not build its test binary: the filesystem filled and rustc could not create a temporary directory; tests were not executed.
+opaque_limitation	Meta type/text/multiline/load pointer interactions and SysEx file dialog read/write and byte-for-byte load/save remain unverified; also open are invalid UTF-8 Meta edits, F7 continuation events, structural Meta properties, and exact popup/button focus behavior. MIDI-EVENT-PROPERTIES-001 remains in_progress.

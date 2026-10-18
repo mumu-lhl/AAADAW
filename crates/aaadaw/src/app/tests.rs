@@ -13005,6 +13005,162 @@ fn midi_event_list_bank_select_row_selects_and_deletes_both_controller_events() 
 }
 
 #[test]
+fn midi_opaque_meta_properties_edit_text_type_and_position_with_undo_redo() {
+    let mut app = App::default();
+    let _ = app.update(Message::AddTrack);
+    let track_id = app.project.tracks()[0].id();
+    app.project
+        .apply(DawAction::InsertMidiItem {
+            track_id,
+            start_tick: 0,
+            length_ticks: 3_840,
+        })
+        .expect("test MIDI item should be inserted");
+    let item_id = app.project.midi_items()[0].id();
+    let original = MidiOpaqueEventData {
+        tick: 480,
+        order: 7,
+        kind: MidiOpaqueEventKind::Meta {
+            kind: 0x01,
+            data: b"verse text".to_vec(),
+        },
+    };
+    app.project
+        .apply(DawAction::SetMidiOpaqueEvents {
+            item_id,
+            events: vec![original.clone()],
+        })
+        .expect("test Meta event should be inserted");
+    app.midi_editor_item_id = Some(item_id);
+    app.midi_editor_mode = MidiEditorMode::EventList;
+
+    let _ = app.update(Message::SelectMidiOpaqueEvent(item_id, 0, false));
+    assert!(commands::is_enabled(&app, CommandId::MidiEventProperties));
+    let _ = commands::dispatch(&mut app, CommandId::MidiEventProperties);
+    assert!(app.midi_event_properties_dialog.is_some());
+    let _ = app.update(Message::SetMidiOpaqueEventPropertiesType(
+        super::MidiOpaqueEventPropertiesType::Marker,
+    ));
+    let _ = app.update(Message::SetMidiOpaqueEventPropertiesMultiline(true));
+    let _ = app.update(Message::EditMidiOpaqueEventPropertiesText(
+        iced::widget::text_editor::Action::SelectAll,
+    ));
+    let _ = app.update(Message::EditMidiOpaqueEventPropertiesText(
+        iced::widget::text_editor::Action::Edit(iced::widget::text_editor::Edit::Paste(
+            std::sync::Arc::new("Intro\nverse two".into()),
+        )),
+    ));
+    let _ = app.update(Message::SetMidiEventPropertiesPosition("1.2.00".into()));
+    let _ = app.update(Message::AcceptMidiEventProperties);
+
+    let edited = MidiOpaqueEventData {
+        tick: 960,
+        order: original.order,
+        kind: MidiOpaqueEventKind::Meta {
+            kind: 0x06,
+            data: b"Intro\nverse two".to_vec(),
+        },
+    };
+    assert_eq!(
+        app.project.midi_items()[0].opaque_events(),
+        std::slice::from_ref(&edited)
+    );
+    assert!(app.midi_event_properties_dialog.is_none());
+    let _ = app.update(Message::Undo);
+    assert_eq!(
+        app.project.midi_items()[0].opaque_events(),
+        std::slice::from_ref(&original)
+    );
+    let _ = app.update(Message::Redo);
+    assert_eq!(app.project.midi_items()[0].opaque_events(), [edited]);
+}
+
+#[test]
+fn midi_opaque_sysex_properties_reject_invalid_hex_and_undo_valid_edit() {
+    let mut app = App::default();
+    let _ = app.update(Message::AddTrack);
+    let track_id = app.project.tracks()[0].id();
+    app.project
+        .apply(DawAction::InsertMidiItem {
+            track_id,
+            start_tick: 0,
+            length_ticks: 3_840,
+        })
+        .expect("test MIDI item should be inserted");
+    let item_id = app.project.midi_items()[0].id();
+    let original = MidiOpaqueEventData {
+        tick: 480,
+        order: 9,
+        kind: MidiOpaqueEventKind::SystemExclusive {
+            status: 0xF0,
+            data: vec![0x43, 0x12, 0xF7],
+        },
+    };
+    app.project
+        .apply(DawAction::SetMidiOpaqueEvents {
+            item_id,
+            events: vec![original.clone()],
+        })
+        .expect("test SysEx event should be inserted");
+    app.midi_editor_item_id = Some(item_id);
+    app.midi_editor_mode = MidiEditorMode::EventList;
+
+    let _ = app.update(Message::SelectMidiOpaqueEvent(item_id, 0, false));
+    assert!(commands::is_enabled(&app, CommandId::MidiEventProperties));
+    let _ = commands::dispatch(&mut app, CommandId::MidiEventProperties);
+    let _ = app.update(Message::SetMidiOpaqueEventPropertiesPayload("GG 01".into()));
+    let _ = app.update(Message::AcceptMidiEventProperties);
+    assert_eq!(
+        app.project.midi_items()[0].opaque_events(),
+        std::slice::from_ref(&original)
+    );
+    assert!(app.midi_event_properties_dialog.is_some());
+    assert!(
+        app.midi_editor_feedback
+            .as_deref()
+            .is_some_and(|feedback| feedback.contains("hexadecimal bytes"))
+    );
+
+    let _ = app.update(Message::SetMidiOpaqueEventPropertiesPayload("7D 01".into()));
+    let _ = app.update(Message::AcceptMidiEventProperties);
+    let edited = MidiOpaqueEventData {
+        tick: original.tick,
+        order: original.order,
+        kind: MidiOpaqueEventKind::SystemExclusive {
+            status: 0xF0,
+            data: vec![0x7D, 0x01, 0xF7],
+        },
+    };
+    assert_eq!(
+        app.project.midi_items()[0].opaque_events(),
+        std::slice::from_ref(&edited)
+    );
+    let _ = app.update(Message::Undo);
+    assert_eq!(app.project.midi_items()[0].opaque_events(), [original]);
+    let _ = app.update(Message::Redo);
+    assert_eq!(app.project.midi_items()[0].opaque_events(), [edited]);
+}
+
+#[test]
+fn midi_sysex_file_data_preserves_framing_and_payload_for_f0_and_f7_packets() {
+    let payload = [0x43, 0x12, 0x7D];
+    let framed = super::midi_sysex_file_bytes(0xF0, &payload);
+    assert_eq!(framed, [0xF0, 0x43, 0x12, 0x7D, 0xF7]);
+    assert_eq!(
+        super::midi_sysex_payload_from_file(0xF0, framed.clone()),
+        payload
+    );
+    assert_eq!(
+        super::midi_sysex_payload_from_file(0xF0, vec![0x43, 0x12, 0x7D]),
+        payload
+    );
+    assert_eq!(
+        super::midi_sysex_payload_from_file(0xF7, vec![0xF7, 0x43, 0x12]),
+        [0x43, 0x12]
+    );
+}
+
+#[test]
 fn midi_event_list_opaque_event_can_be_deleted_and_undo_restores_it() {
     let mut app = App::default();
     let _ = app.update(Message::AddTrack);
@@ -14019,7 +14175,8 @@ fn midi_bank_program_properties_edit_cc0_and_cc32_atomically_with_program() {
     app.midi_editor_item_id = Some(item_id);
     app.midi_editor_selected_program_changes = HashSet::from([program]);
 
-    let _ = app.update(Message::OpenMidiEventProperties(item_id));
+    assert!(commands::is_enabled(&app, CommandId::MidiEventProperties));
+    let _ = commands::dispatch(&mut app, CommandId::MidiEventProperties);
     let dialog = app
         .midi_event_properties_dialog
         .as_ref()
