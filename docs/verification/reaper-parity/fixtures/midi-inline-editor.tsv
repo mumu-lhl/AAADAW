@@ -76,6 +76,11 @@ aaadaw_selection_history_app_regressions	app::tests::inline_midi_note_selection_
 aaadaw_selection_history_cranelift_test_suite	Cranelift cargo test -p aaadaw --bin aaadaw: 800 passed, 0 failed
 aaadaw_selection_history_nextest	Stable cargo xtest -p aaadaw --bin aaadaw: 800 passed, 0 skipped
 aaadaw_selection_history_clippy	Stable workspace all-target Clippy with -D warnings: no issues; cargo fmt --check and git diff --check pass
+aaadaw_piano_roll_selection_undo_regression	app::tests::piano_roll_note_selection_is_undoable_and_shared_with_inline_arrangement; two selection changes Undo/Redo in both views while the project snapshot remains unchanged
+aaadaw_piano_roll_selection_cranelift_test_suite	Cranelift cargo +nightly -Zcodegen-backend test -p aaadaw --bin aaadaw: 801 passed, 0 failed, 0 ignored
+aaadaw_piano_roll_selection_nextest	Stable cargo xtest -p aaadaw --bin aaadaw: 801 passed, 0 skipped
+aaadaw_piano_roll_selection_clippy	Stable workspace all-target Clippy with -D warnings: no issues; cargo fmt --check and git diff --check pass
+aaadaw_piano_roll_selection_screenshot	No standalone Piano Roll selection Undo/Redo screenshot captured for this slice; the regression is app-level and project-content preserving
 artifact	sha256
 midi-note-quantize-before.rpp	4bdbba8bcc46ff7bf74fabcb34031466898a81f74cf6497fd0ac2c8dd6f3174a
 midi-inline-editor-native-open.png	7210bf7c7948dedc1eeb5940f1233fc31c16bebda67a0de8de3f5337d1580b60
