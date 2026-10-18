@@ -1,9 +1,10 @@
 artifact	sha256
-fixtures/midi-event-filter-from-selection-aaadaw-before.png	eab5973518ebfcabc01d0119c8533450242bed635eac3c9799c6eab50f72843e
-fixtures/midi-event-filter-from-selection-aaadaw-after.png	79d884451879fa0c9dda6a02c6be229a2114b768d7bc182766fb8f3e45027621
-binary_sha256	405cf15586c1fecef8c79c571db475ced93997e7f868a59cdb358c42c9585550
-binary_build_id	83f83375618e9ad32fa2e9f6c33fbe160a048be7
+fixtures/midi-event-filter-from-selection-aaadaw-before.png	155a12fe43c8883a8806f0f8a80ab2de052adfb1c2bb014c9f89babe5b593c53
+fixtures/midi-event-filter-from-selection-aaadaw-after.png	3da09c5a06405df7bda6a83041693ea694ef0878b347c8fbc1545ad2f36cfc12
+fixtures/midi-event-filter-from-selection-aaadaw-show-only.png	ef165791ce78ec2553d857b18abd4bd581504e9ec00826ca817a572ca4722c9b
+binary_sha256	987ac3ec4b6d10aa6ce2e9d6674c13d53bbe9bca0b89d2185863bb1f9ad20104
+binary_build_id	db26d0b169b6ab003b5eeb14194227c42247564e
 environment	Linux Xvfb :510; Cranelift-built AAADAW; Event List with four Notes on channels 2–5 and terminal row
 starting_state	Notes on channels 2–4 selected; editor channel Channel 5; event type Note; event channel mask Channel 5; Show-only, Invert, and Solo off; draw channel 5
-assertion	Set filter from selection selects channels 2–4 and Note type; editor channel becomes Multichannel; draw channel resets to Channel 1; Show-only remains off; selection remains on the same three Notes; event rows and terminal row remain present
-limitation	AAADAW does not yet populate the native Note pitch, velocity, position-in-measure, or length ranges. Mixed and non-Note selections remain unimplemented and unprobed.
+assertion	Set filter from selection selects channels 2–4, Note type, pitch C4–G4, and velocity 91–93; editor channel becomes Multichannel; draw channel resets to Channel 1; Show-only remains off; the same three Notes stay selected. Enabling Show-only displays exactly those three rows and hides the channel 5 Note and terminal All Notes Off row.
+limitation	AAADAW does not yet populate the native position-in-measure or length ranges. Mixed and non-Note selections remain unimplemented and unprobed.

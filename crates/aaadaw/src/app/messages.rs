@@ -277,6 +277,78 @@ pub(crate) enum MidiEditorEventKind {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct MidiEditorNoteFilter {
+    pub(crate) pitch_enabled: bool,
+    pub(crate) pitch_range_initialized: bool,
+    pub(crate) pitch_low: u8,
+    pub(crate) pitch_high: u8,
+    pub(crate) velocity_enabled: bool,
+    pub(crate) velocity_range_initialized: bool,
+    pub(crate) velocity_low: u8,
+    pub(crate) velocity_high: u8,
+}
+
+impl MidiEditorNoteFilter {
+    pub(crate) const fn matches(self, pitch: u8, velocity: u8) -> bool {
+        (!self.pitch_enabled || (pitch >= self.pitch_low && pitch <= self.pitch_high))
+            && (!self.velocity_enabled
+                || (velocity >= self.velocity_low && velocity <= self.velocity_high))
+    }
+}
+
+impl Default for MidiEditorNoteFilter {
+    fn default() -> Self {
+        Self {
+            pitch_enabled: false,
+            pitch_range_initialized: false,
+            pitch_low: 0,
+            pitch_high: 127,
+            velocity_enabled: false,
+            velocity_range_initialized: false,
+            velocity_low: 0,
+            velocity_high: 127,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct MidiEditorPitchFilterValue(u8);
+
+impl MidiEditorPitchFilterValue {
+    pub(crate) const OPTIONS: [Self; 128] = {
+        let mut options = [Self(0); 128];
+        let mut pitch = 0;
+        while pitch < options.len() {
+            options[pitch] = Self(pitch as u8);
+            pitch += 1;
+        }
+        options
+    };
+
+    pub(crate) const fn new(pitch: u8) -> Self {
+        Self(if pitch > 127 { 127 } else { pitch })
+    }
+
+    pub(crate) const fn pitch(self) -> u8 {
+        self.0
+    }
+}
+
+impl std::fmt::Display for MidiEditorPitchFilterValue {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        const PITCH_CLASSES: [&str; 12] = [
+            "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B",
+        ];
+        write!(
+            formatter,
+            "{}{}",
+            PITCH_CLASSES[usize::from(self.0 % 12)],
+            i16::from(self.0) / 12 - 1
+        )
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct MidiEditorFilterState {
     pub(crate) channel_selection: MidiEditorChannelSelection,
     pub(crate) channel_filter_enabled: bool,
@@ -284,6 +356,7 @@ pub(crate) struct MidiEditorFilterState {
     pub(crate) channels: u16,
     pub(crate) inverted: bool,
     pub(crate) event_type: MidiEditorEventTypeFilter,
+    pub(crate) note: MidiEditorNoteFilter,
 }
 
 impl MidiEditorFilterState {
@@ -308,6 +381,35 @@ impl MidiEditorFilterState {
             if self.inverted { !passes } else { passes }
         };
         editor_channel_matches && event_filter_matches
+    }
+
+    pub(crate) fn note_visible(self, channel: u8, pitch: u8, velocity: u8) -> bool {
+        let editor_channel_matches = !self.channel_filter_enabled
+            || match self.channel_selection {
+                MidiEditorChannelSelection::AllChannels => true,
+                MidiEditorChannelSelection::Channel(selected) => channel == selected,
+                MidiEditorChannelSelection::Multichannel => {
+                    self.channels & (1_u16.checked_shl(u32::from(channel)).unwrap_or(0)) != 0
+                }
+            };
+        let event_filter_matches = !self.event_filter_enabled || {
+            let channel_matches =
+                self.channels & (1_u16.checked_shl(u32::from(channel)).unwrap_or(0)) != 0;
+            let passes = channel_matches
+                && self.event_type.matches(MidiEditorEventKind::Note)
+                && self.note.matches(pitch, velocity);
+            if self.inverted { !passes } else { passes }
+        };
+        editor_channel_matches && event_filter_matches
+    }
+
+    pub(crate) fn note_passes_event_filter(self, channel: u8, pitch: u8, velocity: u8) -> bool {
+        let channel_matches =
+            self.channels & (1_u16.checked_shl(u32::from(channel)).unwrap_or(0)) != 0;
+        let passes = channel_matches
+            && self.event_type.matches(MidiEditorEventKind::Note)
+            && self.note.matches(pitch, velocity);
+        if self.inverted { !passes } else { passes }
     }
 }
 
@@ -672,6 +774,12 @@ pub(crate) enum Message {
     OpenMidiEditorFilter,
     SetMidiEditorEventTypeFilter(MidiEditorEventTypeFilter),
     ToggleMidiEditorEventFilter,
+    SetMidiEditorFilterNotePitchEnabled(bool),
+    SetMidiEditorFilterNotePitchLow(u8),
+    SetMidiEditorFilterNotePitchHigh(u8),
+    SetMidiEditorFilterNoteVelocityEnabled(bool),
+    SetMidiEditorFilterNoteVelocityLow(u8),
+    SetMidiEditorFilterNoteVelocityHigh(u8),
     SetMidiEditorFilterFromSelection,
     ClearMidiEditorFilter,
     ApplyMidiEditorFilterSelection(MidiEditorFilterSelectionOperation),
@@ -1111,7 +1219,7 @@ pub(crate) struct FreezeTrackResult {
 mod midi_channel_selection_tests {
     use super::{
         MidiEditorChannelSelection, MidiEditorEventKind, MidiEditorEventTypeFilter,
-        MidiEditorFilterState,
+        MidiEditorFilterState, MidiEditorNoteFilter, MidiEditorPitchFilterValue,
     };
 
     #[test]
@@ -1128,6 +1236,7 @@ mod midi_channel_selection_tests {
                 channels,
                 inverted,
                 event_type: MidiEditorEventTypeFilter::AllEvents,
+                note: MidiEditorNoteFilter::default(),
             }
             .event_visible(Some(channel), MidiEditorEventKind::Note)
         };
@@ -1283,6 +1392,7 @@ mod midi_channel_selection_tests {
                 channels: 0b0010,
                 inverted,
                 event_type: MidiEditorEventTypeFilter::Notes,
+                note: MidiEditorNoteFilter::default(),
             }
             .event_visible(Some(channel), kind)
         };
@@ -1300,8 +1410,59 @@ mod midi_channel_selection_tests {
             channels: u16::MAX,
             inverted: true,
             event_type: MidiEditorEventTypeFilter::Notes,
+            note: MidiEditorNoteFilter::default(),
         };
         assert!(!inverted_filter.event_visible(Some(0), MidiEditorEventKind::Note,));
         assert!(inverted_filter.event_visible(Some(0), MidiEditorEventKind::Pitch,));
+    }
+
+    #[test]
+    fn note_filter_ranges_are_inclusive_and_inversion_covers_all_note_criteria() {
+        let filter = MidiEditorFilterState {
+            channel_selection: MidiEditorChannelSelection::AllChannels,
+            channel_filter_enabled: false,
+            event_filter_enabled: true,
+            channels: 0b0010,
+            inverted: false,
+            event_type: MidiEditorEventTypeFilter::Notes,
+            note: MidiEditorNoteFilter {
+                pitch_enabled: true,
+                pitch_range_initialized: true,
+                pitch_low: 60,
+                pitch_high: 67,
+                velocity_enabled: true,
+                velocity_range_initialized: true,
+                velocity_low: 91,
+                velocity_high: 93,
+            },
+        };
+        assert!(filter.note_visible(1, 60, 91));
+        assert!(filter.note_visible(1, 67, 93));
+        assert!(!filter.note_visible(1, 59, 92));
+        assert!(!filter.note_visible(1, 64, 90));
+        assert!(!filter.note_visible(2, 64, 92));
+
+        let inverted = MidiEditorFilterState {
+            inverted: true,
+            ..filter
+        };
+        assert!(!inverted.note_visible(1, 64, 92));
+        assert!(inverted.note_visible(1, 59, 92));
+        assert!(inverted.note_visible(2, 64, 92));
+
+        let channel_only = MidiEditorFilterState {
+            event_filter_enabled: false,
+            ..filter
+        };
+        assert!(channel_only.note_visible(1, 59, 1));
+    }
+
+    #[test]
+    fn midi_filter_pitch_choices_cover_the_full_keyboard_range() {
+        assert_eq!(MidiEditorPitchFilterValue::OPTIONS.len(), 128);
+        assert_eq!(MidiEditorPitchFilterValue::OPTIONS[0].to_string(), "C-1");
+        assert_eq!(MidiEditorPitchFilterValue::OPTIONS[60].to_string(), "C4");
+        assert_eq!(MidiEditorPitchFilterValue::OPTIONS[67].to_string(), "G4");
+        assert_eq!(MidiEditorPitchFilterValue::OPTIONS[127].to_string(), "G9");
     }
 }

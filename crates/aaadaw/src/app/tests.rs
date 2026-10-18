@@ -12903,6 +12903,16 @@ fn midi_editor_filter_clear_resets_filter_and_draw_channel_without_changing_sele
     app.midi_editor_filter_channels_initialized = true;
     app.midi_editor_filter_inverted = true;
     app.midi_editor_event_type_filter = super::messages::MidiEditorEventTypeFilter::Notes;
+    app.midi_editor_note_filter = super::messages::MidiEditorNoteFilter {
+        pitch_enabled: true,
+        pitch_range_initialized: true,
+        pitch_low: 60,
+        pitch_high: 67,
+        velocity_enabled: true,
+        velocity_range_initialized: true,
+        velocity_low: 90,
+        velocity_high: 100,
+    };
     app.midi_editor_draw_channel = 4;
     app.midi_editor_filter_dialog_open = true;
     let note_ids = app.project.midi_items()[0]
@@ -12932,6 +12942,10 @@ fn midi_editor_filter_clear_resets_filter_and_draw_channel_without_changing_sele
         super::messages::MidiEditorEventTypeFilter::AllEvents
     );
     assert_eq!(
+        app.midi_editor_note_filter,
+        super::messages::MidiEditorNoteFilter::default()
+    );
+    assert_eq!(
         app.midi_editor_channel_selection,
         super::messages::MidiEditorChannelSelection::AllChannels
     );
@@ -12955,7 +12969,8 @@ fn midi_editor_filter_clear_resets_filter_and_draw_channel_without_changing_sele
 }
 
 #[test]
-fn midi_editor_set_filter_from_selected_notes_sets_channel_and_event_type_without_mutation() {
+fn midi_editor_set_filter_from_selected_notes_derives_channel_type_pitch_velocity_without_mutation()
+{
     let mut app = App::default();
     let _ = app.update(Message::AddTrack);
     let track_id = app.project.tracks()[0].id();
@@ -12979,6 +12994,14 @@ fn midi_editor_set_filter_from_selected_notes_sets_channel_and_event_type_withou
                     velocity: 90 + channel,
                     off_velocity: 0,
                 })
+                .chain([MidiNoteData {
+                    channel: 2,
+                    pitch: 80,
+                    tick: 1_500,
+                    duration: 240,
+                    velocity: 100,
+                    off_velocity: 0,
+                }])
                 .collect(),
         })
         .expect("test MIDI notes should be inserted");
@@ -12997,6 +13020,12 @@ fn midi_editor_set_filter_from_selected_notes_sets_channel_and_event_type_withou
         .collect::<Vec<_>>();
     let selected = HashSet::from([note_ids[1], note_ids[2], note_ids[3]]);
     app.midi_editor_selected_notes = selected.clone();
+    let out_of_range_note = app.project.midi_items()[0]
+        .notes()
+        .iter()
+        .find(|note| note.pitch() == 80)
+        .expect("test item should include an out-of-range note on a selected channel")
+        .id();
     let project_snapshot = app.project.snapshot();
     let undo_history_len = app.app_undo_history.len();
     let redo_history_len = app.app_redo_history.len();
@@ -13009,6 +13038,19 @@ fn midi_editor_set_filter_from_selected_notes_sets_channel_and_event_type_withou
     );
     assert_eq!(app.midi_editor_filter_channels, 0b1110);
     assert_eq!(
+        app.midi_editor_note_filter,
+        super::messages::MidiEditorNoteFilter {
+            pitch_enabled: true,
+            pitch_range_initialized: true,
+            pitch_low: 61,
+            pitch_high: 63,
+            velocity_enabled: true,
+            velocity_range_initialized: true,
+            velocity_low: 91,
+            velocity_high: 93,
+        }
+    );
+    assert_eq!(
         app.midi_editor_event_type_filter,
         super::messages::MidiEditorEventTypeFilter::Notes
     );
@@ -13017,6 +13059,14 @@ fn midi_editor_set_filter_from_selected_notes_sets_channel_and_event_type_withou
     assert!(!app.midi_editor_event_filter_enabled);
     assert!(app.midi_editor_filter_dialog_open);
     assert_eq!(app.midi_editor_selected_notes, selected);
+    assert_eq!(
+        app.visible_midi_note_ids(),
+        selected
+            .union(&HashSet::from([out_of_range_note]))
+            .copied()
+            .collect()
+    );
+    app.midi_editor_event_filter_enabled = true;
     assert_eq!(app.visible_midi_note_ids(), selected);
     assert_eq!(app.project.snapshot(), project_snapshot);
     assert_eq!(app.app_undo_history.len(), undo_history_len);

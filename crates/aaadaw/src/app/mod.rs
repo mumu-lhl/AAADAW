@@ -128,9 +128,9 @@ pub(crate) use messages::{
     MidiEditorCursorBoundary, MidiEditorEventKind, MidiEditorEventListCursor,
     MidiEditorEventListCursorDirection, MidiEditorEventTypeFilter,
     MidiEditorFilterSelectionOperation, MidiEditorFilterState, MidiEditorLane, MidiEditorMode,
-    MidiEditorTool, MidiHumanizeScope, MidiQuantizeOperation, MidiQuantizeScope,
-    MidiTransposeScope, MobilePanel, PathPickerTarget, PendingProjectTransition, SettingsCategory,
-    TimeMapTab,
+    MidiEditorNoteFilter, MidiEditorPitchFilterValue, MidiEditorTool, MidiHumanizeScope,
+    MidiQuantizeOperation, MidiQuantizeScope, MidiTransposeScope, MobilePanel, PathPickerTarget,
+    PendingProjectTransition, SettingsCategory, TimeMapTab,
 };
 
 #[derive(Clone)]
@@ -537,6 +537,7 @@ struct App {
     midi_editor_filter_enabled: bool,
     midi_editor_event_filter_enabled: bool,
     midi_editor_filter_channels: u16,
+    midi_editor_note_filter: MidiEditorNoteFilter,
     midi_editor_filter_channels_initialized: bool,
     midi_editor_filter_inverted: bool,
     midi_editor_filter_dialog_open: bool,
@@ -2089,10 +2090,11 @@ impl App {
             channels: self.midi_editor_filter_channels,
             inverted: self.midi_editor_filter_inverted,
             event_type: self.midi_editor_event_type_filter,
+            note: self.midi_editor_note_filter,
         };
         item.notes()
             .iter()
-            .filter(|note| filter.event_visible(Some(note.channel()), MidiEditorEventKind::Note))
+            .filter(|note| filter.note_visible(note.channel(), note.pitch(), note.velocity()))
             .map(|note| note.id())
             .collect()
     }
@@ -6499,6 +6501,34 @@ impl App {
             }
             Message::ToggleMidiEditorEventFilter => {
                 self.midi_editor_event_filter_enabled = !self.midi_editor_event_filter_enabled;
+            }
+            Message::SetMidiEditorFilterNotePitchEnabled(enabled) => {
+                self.midi_editor_note_filter.pitch_enabled = enabled;
+            }
+            Message::SetMidiEditorFilterNotePitchLow(value) => {
+                self.midi_editor_note_filter.pitch_range_initialized = true;
+                self.midi_editor_note_filter.pitch_low =
+                    value.min(127).min(self.midi_editor_note_filter.pitch_high);
+            }
+            Message::SetMidiEditorFilterNotePitchHigh(value) => {
+                self.midi_editor_note_filter.pitch_range_initialized = true;
+                self.midi_editor_note_filter.pitch_high =
+                    value.min(127).max(self.midi_editor_note_filter.pitch_low);
+            }
+            Message::SetMidiEditorFilterNoteVelocityEnabled(enabled) => {
+                self.midi_editor_note_filter.velocity_enabled = enabled;
+            }
+            Message::SetMidiEditorFilterNoteVelocityLow(value) => {
+                self.midi_editor_note_filter.velocity_range_initialized = true;
+                self.midi_editor_note_filter.velocity_low = value
+                    .min(127)
+                    .min(self.midi_editor_note_filter.velocity_high);
+            }
+            Message::SetMidiEditorFilterNoteVelocityHigh(value) => {
+                self.midi_editor_note_filter.velocity_range_initialized = true;
+                self.midi_editor_note_filter.velocity_high = value
+                    .min(127)
+                    .max(self.midi_editor_note_filter.velocity_low);
             }
             Message::ToggleMidiEditorFilterChannel(channel) if channel < 16 => {
                 self.midi_editor_filter_channels ^= 1_u16 << channel;
@@ -14188,6 +14218,7 @@ impl App {
     fn clear_midi_editor_filter(&mut self) {
         self.midi_editor_channel_selection = MidiEditorChannelSelection::AllChannels;
         self.midi_editor_event_type_filter = MidiEditorEventTypeFilter::AllEvents;
+        self.midi_editor_note_filter = MidiEditorNoteFilter::default();
         self.midi_editor_draw_channel = 0;
         self.midi_editor_filter_enabled = false;
         self.midi_editor_event_filter_enabled = false;
@@ -14218,13 +14249,31 @@ impl App {
         else {
             return;
         };
-        let channels = item
+        let mut selected_notes = item
             .notes()
             .iter()
-            .filter(|note| self.midi_editor_selected_notes.contains(&note.id()))
-            .fold(0_u16, |channels, note| {
-                channels | (1_u16 << note.channel().min(15))
-            });
+            .filter(|note| self.midi_editor_selected_notes.contains(&note.id()));
+        let Some(first_note) = selected_notes.next() else {
+            return;
+        };
+        let (channels, pitch_low, pitch_high, velocity_low, velocity_high) = selected_notes.fold(
+            (
+                1_u16 << first_note.channel().min(15),
+                first_note.pitch(),
+                first_note.pitch(),
+                first_note.velocity(),
+                first_note.velocity(),
+            ),
+            |(channels, pitch_low, pitch_high, velocity_low, velocity_high), note| {
+                (
+                    channels | (1_u16 << note.channel().min(15)),
+                    pitch_low.min(note.pitch()),
+                    pitch_high.max(note.pitch()),
+                    velocity_low.min(note.velocity()),
+                    velocity_high.max(note.velocity()),
+                )
+            },
+        );
         if channels == 0 {
             return;
         }
@@ -14237,6 +14286,16 @@ impl App {
         self.midi_editor_filter_channels = channels;
         self.midi_editor_filter_channels_initialized = true;
         self.midi_editor_event_type_filter = MidiEditorEventTypeFilter::Notes;
+        self.midi_editor_note_filter = MidiEditorNoteFilter {
+            pitch_enabled: true,
+            pitch_range_initialized: true,
+            pitch_low,
+            pitch_high,
+            velocity_enabled: true,
+            velocity_range_initialized: true,
+            velocity_low,
+            velocity_high,
+        };
         self.midi_editor_draw_channel = 0;
     }
 
@@ -14253,12 +14312,7 @@ impl App {
         selection.notes.extend(
             item.notes()
                 .iter()
-                .filter(|note| {
-                    self.midi_editor_filter_event_matches(
-                        Some(note.channel()),
-                        MidiEditorEventKind::Note,
-                    )
-                })
+                .filter(|note| self.midi_editor_filter_note_matches(note))
                 .map(|note| note.id()),
         );
         selection
@@ -14329,8 +14383,22 @@ impl App {
             channels: self.midi_editor_filter_channels,
             inverted: self.midi_editor_filter_inverted,
             event_type: self.midi_editor_event_type_filter,
+            note: self.midi_editor_note_filter,
         }
         .event_visible(channel, event_kind)
+    }
+
+    fn midi_editor_filter_note_matches(&self, note: &aaadaw_core::MidiNote) -> bool {
+        MidiEditorFilterState {
+            channel_selection: MidiEditorChannelSelection::AllChannels,
+            channel_filter_enabled: false,
+            event_filter_enabled: false,
+            channels: self.midi_editor_filter_channels,
+            inverted: self.midi_editor_filter_inverted,
+            event_type: self.midi_editor_event_type_filter,
+            note: self.midi_editor_note_filter,
+        }
+        .note_passes_event_filter(note.channel(), note.pitch(), note.velocity())
     }
 
     fn select_midi_notes(&mut self, note_ids: HashSet<aaadaw_core::NoteId>) {
