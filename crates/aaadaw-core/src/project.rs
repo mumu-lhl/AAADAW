@@ -488,11 +488,64 @@ fn quantized_midi_event_tick(
 }
 
 #[allow(clippy::too_many_arguments)]
+fn quantized_midi_point_events<T, K>(
+    item: &MidiItem,
+    events: &[T],
+    selected_events: Option<&HashSet<T>>,
+    grid_ticks: u64,
+    strength: f32,
+    swing_amount_percent: i16,
+    event_tick: impl Fn(T) -> u64,
+    with_tick: impl Fn(T, u64) -> T,
+    position_key: impl Fn(T) -> K,
+) -> Result<Vec<T>, ActionError>
+where
+    T: Copy + Eq + Hash,
+    K: Eq + Hash,
+{
+    let mut destination_events = HashMap::with_capacity(events.len());
+    for event in events {
+        let original_tick = event_tick(*event);
+        let was_selected = selected_events.is_none_or(|selected| selected.contains(event));
+        let new_tick = if was_selected {
+            quantized_midi_event_tick(
+                item,
+                original_tick,
+                grid_ticks,
+                strength,
+                swing_amount_percent,
+            )?
+        } else {
+            original_tick
+        };
+        let moved_event = with_tick(*event, new_tick);
+        let position = position_key(moved_event);
+        let replace = destination_events.get(&position).is_none_or(
+            |(_, current_selected, current_original_tick): &(T, bool, u64)| {
+                (was_selected && !current_selected)
+                    || (was_selected == *current_selected
+                        && original_tick >= *current_original_tick)
+            },
+        );
+        if replace {
+            destination_events.insert(position, (moved_event, was_selected, original_tick));
+        }
+    }
+    Ok(destination_events
+        .into_values()
+        .map(|(event, _, _)| event)
+        .collect())
+}
+
+#[allow(clippy::too_many_arguments)]
 fn quantize_midi_events(
     item: &MidiItem,
     selected_note_ids: Option<&HashSet<NoteId>>,
     selected_controllers: Option<&HashSet<MidiControllerData>>,
     selected_pitch_bends: Option<&HashSet<MidiPitchBendData>>,
+    selected_program_changes: Option<&HashSet<MidiProgramChangeData>>,
+    selected_poly_aftertouches: Option<&HashSet<MidiPolyAftertouchData>>,
+    selected_channel_pressures: Option<&HashSet<MidiChannelPressureData>>,
     item_id: ItemId,
     grid: crate::GridFraction,
     strength: f32,
@@ -513,7 +566,7 @@ fn quantize_midi_events(
             fix_overlaps,
         },
     )?;
-    let mut events = Vec::with_capacity(3);
+    let mut events = Vec::with_capacity(6);
     if !note_changes.is_empty() {
         events.push(ProjectEvent::MidiNotesQuantized {
             item_id,
@@ -586,6 +639,84 @@ fn quantize_midi_events(
                 item_id,
                 before: item.pitch_bends.as_ref().clone(),
                 after: pitch_bends,
+            });
+        }
+
+        let mut program_changes = quantized_midi_point_events(
+            item,
+            item.program_changes.as_ref(),
+            selected_program_changes,
+            grid_ticks,
+            strength,
+            swing_amount_percent,
+            |event| event.tick,
+            |mut event, tick| {
+                event.tick = tick;
+                event
+            },
+            |event| (event.channel, event.tick),
+        )?;
+        program_changes.sort_unstable_by_key(|event| (event.tick, event.channel));
+        if !valid_midi_program_changes(&program_changes) {
+            return Err(ActionError::InvalidMidiProgramChange);
+        }
+        if program_changes.as_slice() != item.program_changes.as_ref() {
+            events.push(ProjectEvent::MidiProgramChangesChanged {
+                item_id,
+                before: item.program_changes.as_ref().clone(),
+                after: program_changes,
+            });
+        }
+
+        let mut poly_aftertouches = quantized_midi_point_events(
+            item,
+            item.poly_aftertouches.as_ref(),
+            selected_poly_aftertouches,
+            grid_ticks,
+            strength,
+            swing_amount_percent,
+            |event| event.tick,
+            |mut event, tick| {
+                event.tick = tick;
+                event
+            },
+            |event| (event.channel, event.note, event.tick),
+        )?;
+        poly_aftertouches.sort_unstable_by_key(|event| (event.tick, event.channel, event.note));
+        if !valid_midi_poly_aftertouches(&poly_aftertouches) {
+            return Err(ActionError::InvalidMidiPolyAftertouch);
+        }
+        if poly_aftertouches.as_slice() != item.poly_aftertouches.as_ref() {
+            events.push(ProjectEvent::MidiPolyAftertouchesChanged {
+                item_id,
+                before: item.poly_aftertouches.as_ref().clone(),
+                after: poly_aftertouches,
+            });
+        }
+
+        let mut channel_pressures = quantized_midi_point_events(
+            item,
+            item.channel_pressures.as_ref(),
+            selected_channel_pressures,
+            grid_ticks,
+            strength,
+            swing_amount_percent,
+            |event| event.tick,
+            |mut event, tick| {
+                event.tick = tick;
+                event
+            },
+            |event| (event.channel, event.tick),
+        )?;
+        channel_pressures.sort_unstable_by_key(|event| (event.tick, event.channel));
+        if !valid_midi_channel_pressures(&channel_pressures) {
+            return Err(ActionError::InvalidMidiChannelPressure);
+        }
+        if channel_pressures.as_slice() != item.channel_pressures.as_ref() {
+            events.push(ProjectEvent::MidiChannelPressuresChanged {
+                item_id,
+                before: item.channel_pressures.as_ref().clone(),
+                after: channel_pressures,
             });
         }
     }
@@ -5641,6 +5772,9 @@ impl Project {
                     None,
                     None,
                     None,
+                    None,
+                    None,
+                    None,
                     item_id,
                     grid,
                     strength,
@@ -5655,6 +5789,9 @@ impl Project {
                 note_ids,
                 controllers,
                 pitch_bends,
+                program_changes,
+                poly_aftertouches,
+                channel_pressures,
                 grid,
                 strength,
                 operation,
@@ -5669,11 +5806,19 @@ impl Project {
                 let selected_notes = note_ids.into_iter().collect::<HashSet<_>>();
                 let selected_controllers = controllers.into_iter().collect::<HashSet<_>>();
                 let selected_pitch_bends = pitch_bends.into_iter().collect::<HashSet<_>>();
+                let selected_program_changes = program_changes.into_iter().collect::<HashSet<_>>();
+                let selected_poly_aftertouches =
+                    poly_aftertouches.into_iter().collect::<HashSet<_>>();
+                let selected_channel_pressures =
+                    channel_pressures.into_iter().collect::<HashSet<_>>();
                 quantize_midi_events(
                     item,
                     Some(&selected_notes),
                     Some(&selected_controllers),
                     Some(&selected_pitch_bends),
+                    Some(&selected_program_changes),
+                    Some(&selected_poly_aftertouches),
+                    Some(&selected_channel_pressures),
                     item_id,
                     grid,
                     strength,

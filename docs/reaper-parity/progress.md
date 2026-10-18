@@ -2478,3 +2478,7 @@ MIDI 播放计划现在保留预编译的 F0/F7 字节区间，并将 SysEx 作�
 ### 2026-10-18 保留文本 Meta 中的无效 UTF-8 字节
 
 已知文本类型的 Meta 若含无效 UTF-8，Event List 和 Event Properties 现在以十六进制显示原始字节，属性编辑器仍保留其 Meta 类型；只改 Position 不会重写 payload，明确编辑十六进制时也会按原字节提交并支持 Undo/Redo。新增 App 回归覆盖显示、Position-only 提交、字节编辑及历史往返。当前未对 REAPER 7.82 的无效 UTF-8 呈现做原厂实测，因此这里只修复 AAADAW 的字节可见性与保真，不宣称语义已与原厂对齐；`.sysex` picker、结构性 Meta 原厂字段与 Event Properties BBT 边界仍开放，`MIDI-EVENT-PROPERTIES-001` 继续为 `in_progress`。
+
+### 2026-10-18 将 Quantize 扩展到三类已建模 MIDI 事件
+
+Quantize Events 的 All events 和 Selected events 现在还会处理 Program Change、Poly Aftertouch、Channel Pressure；与 notes、CC、Pitch Bend 一样，移动基于当前编辑器网格和 Swing，所有类型组成一次历史编辑。Selected events 保留未选事件，仅当选中事件与未选事件冲突时优先保留选中事件；All events 同一目标位置仍沿用较晚原始 tick 优先。更新的 Core/App 回归覆盖三类事件的位置、碰撞、选中状态、Undo/Redo。REAPER 原厂目前只有 notes、CC、Pitch Bend 的已记录 Quantize 数据，因此这次扩展尚未声称这些新类型与原厂一致；SysEx/Meta、复杂重叠链与已记忆对话框设置仍开放，`MIDI-QUANTIZE-DIALOG-001`、UI-019 和 P7 保持 `in_progress`。

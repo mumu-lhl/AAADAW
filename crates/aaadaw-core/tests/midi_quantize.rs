@@ -1,6 +1,7 @@
 use aaadaw_core::{
-    DawAction, GridFraction, MidiControllerData, MidiNoteData, MidiNoteQuantizeOperation,
-    MidiPitchBendData, Project,
+    DawAction, GridFraction, MidiChannelPressureData, MidiControllerData, MidiNoteData,
+    MidiNoteQuantizeOperation, MidiPitchBendData, MidiPolyAftertouchData, MidiProgramChangeData,
+    Project,
 };
 
 #[test]
@@ -883,7 +884,7 @@ fn midi_quantize_selected_overlapping_note_end_moves_to_next_unselected_neighbor
 }
 
 #[test]
-fn midi_quantize_all_events_matches_reaper_and_undoes_as_one_edit() {
+fn midi_quantize_all_modeled_events_and_undoes_as_one_edit() {
     let mut project = Project::new();
     project
         .apply(DawAction::CreateTrack {
@@ -965,6 +966,40 @@ fn midi_quantize_all_events_matches_reaper_and_undoes_as_one_edit() {
             ],
         })
         .expect("test pitch bend should be inserted");
+    let program_changes = [MidiProgramChangeData {
+        channel: 1,
+        tick: 475,
+        program: 42,
+    }];
+    project
+        .apply(DawAction::SetMidiProgramChanges {
+            item_id,
+            program_changes: program_changes.to_vec(),
+        })
+        .expect("test Program Change should be inserted");
+    let poly_aftertouches = [MidiPolyAftertouchData {
+        channel: 2,
+        tick: 835,
+        note: 60,
+        value: 72,
+    }];
+    project
+        .apply(DawAction::SetMidiPolyAftertouches {
+            item_id,
+            poly_aftertouches: poly_aftertouches.to_vec(),
+        })
+        .expect("test Poly Aftertouch should be inserted");
+    let channel_pressures = [MidiChannelPressureData {
+        channel: 3,
+        tick: 730,
+        value: 88,
+    }];
+    project
+        .apply(DawAction::SetMidiChannelPressures {
+            item_id,
+            channel_pressures: channel_pressures.to_vec(),
+        })
+        .expect("test Channel Pressure should be inserted");
     let before_notes = project.midi_items()[0]
         .notes()
         .iter()
@@ -972,6 +1007,9 @@ fn midi_quantize_all_events_matches_reaper_and_undoes_as_one_edit() {
         .collect::<Vec<_>>();
     let before_controllers = project.midi_items()[0].controllers().to_vec();
     let before_pitch_bends = project.midi_items()[0].pitch_bends().to_vec();
+    let before_program_changes = project.midi_items()[0].program_changes().to_vec();
+    let before_poly_aftertouches = project.midi_items()[0].poly_aftertouches().to_vec();
+    let before_channel_pressures = project.midi_items()[0].channel_pressures().to_vec();
 
     project
         .apply(DawAction::QuantizeMidiEventsWithOperation {
@@ -1011,6 +1049,27 @@ fn midi_quantize_all_events_matches_reaper_and_undoes_as_one_edit() {
             .collect::<Vec<_>>(),
         [(0, 870, 8_192)]
     );
+    assert_eq!(
+        item.program_changes(),
+        [MidiProgramChangeData {
+            tick: 480,
+            ..program_changes[0]
+        }]
+    );
+    assert_eq!(
+        item.poly_aftertouches(),
+        [MidiPolyAftertouchData {
+            tick: 870,
+            ..poly_aftertouches[0]
+        }]
+    );
+    assert_eq!(
+        item.channel_pressures(),
+        [MidiChannelPressureData {
+            tick: 720,
+            ..channel_pressures[0]
+        }]
+    );
 
     assert!(
         project
@@ -1027,6 +1086,9 @@ fn midi_quantize_all_events_matches_reaper_and_undoes_as_one_edit() {
     );
     assert_eq!(item.controllers(), before_controllers);
     assert_eq!(item.pitch_bends(), before_pitch_bends);
+    assert_eq!(item.program_changes(), before_program_changes);
+    assert_eq!(item.poly_aftertouches(), before_poly_aftertouches);
+    assert_eq!(item.channel_pressures(), before_channel_pressures);
     assert!(
         project
             .redo()
@@ -1036,6 +1098,9 @@ fn midi_quantize_all_events_matches_reaper_and_undoes_as_one_edit() {
     assert_eq!(project.midi_items()[0].controllers()[0].value, 65);
     assert_eq!(project.midi_items()[0].pitch_bends().len(), 1);
     assert_eq!(project.midi_items()[0].pitch_bends()[0].value, 8_192);
+    assert_eq!(project.midi_items()[0].program_changes()[0].tick, 480);
+    assert_eq!(project.midi_items()[0].poly_aftertouches()[0].tick, 870);
+    assert_eq!(project.midi_items()[0].channel_pressures()[0].tick, 720);
 }
 
 #[test]
@@ -1143,6 +1208,9 @@ fn midi_quantize_selected_events_only_changes_the_selected_note_cc_and_pitch_ben
             note_ids: vec![selected_note_id],
             controllers: vec![selected_controller],
             pitch_bends: vec![selected_pitch_bend],
+            program_changes: Vec::new(),
+            poly_aftertouches: Vec::new(),
+            channel_pressures: Vec::new(),
             grid: GridFraction::new(1, 32).expect("1/32 is a valid grid"),
             strength: 1.0,
             operation: MidiNoteQuantizeOperation::Position,

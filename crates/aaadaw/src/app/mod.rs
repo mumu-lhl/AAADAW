@@ -2131,6 +2131,31 @@ impl App {
         remapped
     }
 
+    fn remap_selected_midi_point_events<T: Copy + Eq + std::hash::Hash>(
+        selected: &HashSet<T>,
+        after: &[T],
+        same_payload: impl Fn(&T, &T) -> bool,
+        tick: impl Fn(&T) -> u64,
+    ) -> HashSet<T> {
+        let mut remaining = after.to_vec();
+        let mut remapped = HashSet::new();
+        for event in selected {
+            if remaining.contains(event) {
+                remapped.insert(*event);
+                remaining.retain(|candidate| candidate != event);
+            } else if let Some((index, candidate)) = remaining
+                .iter()
+                .enumerate()
+                .filter(|(_, candidate)| same_payload(event, candidate))
+                .min_by_key(|(_, candidate)| tick(candidate).abs_diff(tick(event)))
+            {
+                remapped.insert(*candidate);
+                remaining.remove(index);
+            }
+        }
+        remapped
+    }
+
     fn midi_event_list_cursor_is_selected(&self, cursor: MidiEditorEventListCursor) -> bool {
         match cursor {
             MidiEditorEventListCursor::Note(note_id) => {
@@ -4111,7 +4136,10 @@ impl App {
             && note_ids.is_empty()
             && (dialog.scope != MidiQuantizeScope::SelectedEvents
                 || (self.midi_editor_selected_controllers.is_empty()
-                    && self.midi_editor_selected_pitch_bends.is_empty()))
+                    && self.midi_editor_selected_pitch_bends.is_empty()
+                    && self.midi_editor_selected_program_changes.is_empty()
+                    && self.midi_editor_selected_poly_aftertouches.is_empty()
+                    && self.midi_editor_selected_channel_pressures.is_empty()))
         {
             return;
         }
@@ -4162,6 +4190,21 @@ impl App {
                         .iter()
                         .copied()
                         .collect(),
+                    program_changes: self
+                        .midi_editor_selected_program_changes
+                        .iter()
+                        .copied()
+                        .collect(),
+                    poly_aftertouches: self
+                        .midi_editor_selected_poly_aftertouches
+                        .iter()
+                        .copied()
+                        .collect(),
+                    channel_pressures: self
+                        .midi_editor_selected_channel_pressures
+                        .iter()
+                        .copied()
+                        .collect(),
                     grid,
                     strength,
                     operation,
@@ -4191,6 +4234,9 @@ impl App {
         };
         let selected_controllers = self.midi_editor_selected_controllers.clone();
         let selected_pitch_bends = self.midi_editor_selected_pitch_bends.clone();
+        let selected_program_changes = self.midi_editor_selected_program_changes.clone();
+        let selected_poly_aftertouches = self.midi_editor_selected_poly_aftertouches.clone();
+        let selected_channel_pressures = self.midi_editor_selected_channel_pressures.clone();
         let previous_revision = self.revision;
         self.apply_action(action, label);
         if self.revision != previous_revision
@@ -4204,6 +4250,28 @@ impl App {
                 Self::remap_selected_controller_events(&selected_controllers, item.controllers());
             self.midi_editor_selected_pitch_bends =
                 Self::remap_selected_pitch_bend_events(&selected_pitch_bends, item.pitch_bends());
+            self.midi_editor_selected_program_changes = Self::remap_selected_midi_point_events(
+                &selected_program_changes,
+                item.program_changes(),
+                |left, right| left.channel == right.channel && left.program == right.program,
+                |event| event.tick,
+            );
+            self.midi_editor_selected_poly_aftertouches = Self::remap_selected_midi_point_events(
+                &selected_poly_aftertouches,
+                item.poly_aftertouches(),
+                |left, right| {
+                    left.channel == right.channel
+                        && left.note == right.note
+                        && left.value == right.value
+                },
+                |event| event.tick,
+            );
+            self.midi_editor_selected_channel_pressures = Self::remap_selected_midi_point_events(
+                &selected_channel_pressures,
+                item.channel_pressures(),
+                |left, right| left.channel == right.channel && left.value == right.value,
+                |event| event.tick,
+            );
         }
     }
 

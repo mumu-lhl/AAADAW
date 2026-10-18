@@ -555,7 +555,8 @@ pub enum DawAction {
         /// Shorten notes that overlap the next note with the same channel and pitch.
         fix_overlaps: bool,
     },
-    /// Quantize every MIDI note, controller, and pitch-bend event in an item as one edit.
+    /// Quantize every modeled MIDI note, controller, pitch bend, Program Change, and pressure
+    /// event in an item as one edit.
     QuantizeMidiEventsWithOperation {
         item_id: ItemId,
         grid: GridFraction,
@@ -576,13 +577,16 @@ pub enum DawAction {
         timing_bias_percent: i16,
         seed: u64,
     },
-    /// Quantize selected MIDI notes, controller events, and pitch bends as one edit.
-    /// Controller and pitch-bend selections identify the source events by their current data.
+    /// Quantize selected modeled MIDI events as one edit. Event selections identify their
+    /// source events by their current data.
     QuantizeSelectedMidiEventsWithOperation {
         item_id: ItemId,
         note_ids: Vec<crate::NoteId>,
         controllers: Vec<MidiControllerData>,
         pitch_bends: Vec<crate::MidiPitchBendData>,
+        program_changes: Vec<MidiProgramChangeData>,
+        poly_aftertouches: Vec<MidiPolyAftertouchData>,
+        channel_pressures: Vec<MidiChannelPressureData>,
         grid: GridFraction,
         strength: f32,
         operation: MidiNoteQuantizeOperation,
