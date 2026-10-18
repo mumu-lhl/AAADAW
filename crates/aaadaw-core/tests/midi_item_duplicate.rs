@@ -28,6 +28,7 @@ fn duplicate_midi_item_copies_content_with_fresh_ids_and_is_undoable() {
                     tick: 0,
                     duration: 480,
                     velocity: 100,
+                    off_velocity: 0,
                 },
                 MidiNoteData {
                     channel: 0,
@@ -35,6 +36,7 @@ fn duplicate_midi_item_copies_content_with_fresh_ids_and_is_undoable() {
                     tick: 1_200,
                     duration: 720,
                     velocity: 82,
+                    off_velocity: 0,
                 },
             ],
         })
@@ -148,6 +150,7 @@ fn duplicate_midi_item_to_track_preserves_content_and_supports_undo_redo() {
                 tick: 240,
                 duration: 480,
                 velocity: 92,
+                off_velocity: 0,
             }],
         })
         .unwrap();

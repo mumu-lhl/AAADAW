@@ -27,6 +27,7 @@ fn midi_items_can_be_deleted_and_restored_with_their_notes() {
                 tick: 240,
                 duration: 960,
                 velocity: 100,
+                off_velocity: 0,
             }],
         })
         .expect("adding a note should succeed");
@@ -77,6 +78,7 @@ fn midi_items_can_be_moved_and_resized_without_losing_notes() {
                 tick: 480,
                 duration: 960,
                 velocity: 96,
+                off_velocity: 0,
             }],
         })
         .expect("adding a note should succeed");
@@ -163,6 +165,7 @@ fn midi_item_placement_edits_source_offset_with_timing_in_one_undo_step() {
                 tick: 240,
                 duration: 480,
                 velocity: 100,
+                off_velocity: 0,
             }],
         })
         .unwrap();
@@ -259,6 +262,7 @@ fn shortening_a_midi_clip_keeps_hidden_events_for_later_expansion() {
                 tick: 1_440,
                 duration: 480,
                 velocity: 96,
+                off_velocity: 0,
             }],
         })
         .expect("adding a note should succeed");
@@ -334,6 +338,7 @@ fn trimming_a_midi_clip_start_preserves_event_positions_and_source_bounds() {
                 tick: 960,
                 duration: 480,
                 velocity: 96,
+                off_velocity: 0,
             }],
         })
         .unwrap();

@@ -29,6 +29,7 @@ fn project_with_midi_item() -> (Project, aaadaw_core::TrackId, aaadaw_core::Item
                     tick: 240,
                     duration: 1_200,
                     velocity: 100,
+                    off_velocity: 37,
                 },
                 MidiNoteData {
                     channel: 0,
@@ -36,6 +37,7 @@ fn project_with_midi_item() -> (Project, aaadaw_core::TrackId, aaadaw_core::Item
                     tick: 1_440,
                     duration: 1_680,
                     velocity: 90,
+                    off_velocity: 0,
                 },
                 MidiNoteData {
                     channel: 0,
@@ -43,6 +45,7 @@ fn project_with_midi_item() -> (Project, aaadaw_core::TrackId, aaadaw_core::Item
                     tick: 3_500,
                     duration: 100,
                     velocity: 80,
+                    off_velocity: 0,
                 },
             ],
         })
@@ -80,6 +83,11 @@ fn splitting_midi_item_preserves_notes_clip_positions_and_one_step_undo_redo() {
         "the first note should stop at the first split"
     );
     assert_eq!(
+        items[0].notes()[0].off_velocity(),
+        0,
+        "a split-created note release uses the default velocity"
+    );
+    assert_eq!(
         items[1]
             .notes()
             .iter()
@@ -87,6 +95,7 @@ fn splitting_midi_item_preserves_notes_clip_positions_and_one_step_undo_redo() {
             .collect::<Vec<_>>(),
         [(60, 0, 480), (64, 480, 480)]
     );
+    assert_eq!(items[1].notes()[0].off_velocity(), 37);
     assert_eq!(
         items[2]
             .notes()
@@ -116,6 +125,7 @@ fn splitting_a_trimmed_clip_keeps_hidden_events_in_the_final_segment() {
                 tick: 3_600,
                 duration: 240,
                 velocity: 90,
+                off_velocity: 0,
             }],
         })
         .unwrap();
@@ -181,6 +191,7 @@ fn splitting_a_left_trimmed_clip_keeps_source_offsets_and_hidden_leading_events(
                     tick: 120,
                     duration: 240,
                     velocity: 90,
+                    off_velocity: 0,
                 },
                 MidiNoteData {
                     channel: 0,
@@ -188,6 +199,7 @@ fn splitting_a_left_trimmed_clip_keeps_source_offsets_and_hidden_leading_events(
                     tick: 2_100,
                     duration: 480,
                     velocity: 100,
+                    off_velocity: 0,
                 },
             ],
         })

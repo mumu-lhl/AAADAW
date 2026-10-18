@@ -28,6 +28,7 @@ fn midi_notes_can_be_added_queried_and_undone() {
                 tick: 0,
                 duration: 960,
                 velocity: 100,
+                off_velocity: 0,
             }],
         })
         .expect("adding an in-range MIDI note should succeed");
@@ -68,6 +69,7 @@ fn midi_item_mute_is_undoable_and_survives_snapshot_and_duplicate() {
                 tick: 0,
                 duration: 960,
                 velocity: 100,
+                off_velocity: 0,
             }],
         })
         .expect("adding a MIDI note should succeed");
@@ -122,6 +124,7 @@ fn midi_note_edits_change_timing_and_velocity_with_undo_redo() {
                 tick: 0,
                 duration: 960,
                 velocity: 100,
+                off_velocity: 0,
             }],
         })
         .expect("adding a MIDI note should succeed");
@@ -133,6 +136,7 @@ fn midi_note_edits_change_timing_and_velocity_with_undo_redo() {
         tick: 120,
         duration: 480,
         velocity: 80,
+        off_velocity: 37,
     };
     project
         .apply(DawAction::EditMidiNote {
@@ -147,6 +151,7 @@ fn midi_note_edits_change_timing_and_velocity_with_undo_redo() {
     assert_eq!(note.tick(), edited.tick);
     assert_eq!(note.duration(), edited.duration);
     assert_eq!(note.velocity(), edited.velocity);
+    assert_eq!(note.off_velocity(), edited.off_velocity);
 
     assert!(project.undo().expect("edit undo should succeed"));
     let note = &project.midi_items()[0].notes()[0];
@@ -154,8 +159,10 @@ fn midi_note_edits_change_timing_and_velocity_with_undo_redo() {
     assert_eq!(note.tick(), 0);
     assert_eq!(note.duration(), 960);
     assert_eq!(note.velocity(), 100);
+    assert_eq!(note.off_velocity(), 0);
     assert!(project.redo().expect("edit redo should succeed"));
     assert_eq!(project.midi_items()[0].notes()[0].pitch(), edited.pitch);
+    assert_eq!(project.midi_items()[0].notes()[0].off_velocity(), 37);
 
     let invalid = project.apply(DawAction::EditMidiNote {
         item_id,
@@ -163,6 +170,7 @@ fn midi_note_edits_change_timing_and_velocity_with_undo_redo() {
         data: MidiNoteData {
             tick: 3800,
             duration: 100,
+            off_velocity: 128,
             ..edited
         },
     });

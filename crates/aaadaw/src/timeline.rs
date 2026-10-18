@@ -7663,6 +7663,7 @@ mod tests {
                         tick: 120,
                         duration: 120,
                         velocity: 90,
+                        off_velocity: 0,
                     },
                     aaadaw_core::MidiNoteData {
                         channel: 0,
@@ -7670,6 +7671,7 @@ mod tests {
                         tick: 720,
                         duration: 240,
                         velocity: 90,
+                        off_velocity: 0,
                     },
                 ],
             })
@@ -8797,6 +8799,7 @@ mod tests {
                         tick: 0,
                         duration: 240,
                         velocity: 100,
+                        off_velocity: 0,
                     },
                     aaadaw_core::MidiNoteData {
                         channel: 0,
@@ -8804,6 +8807,7 @@ mod tests {
                         tick: 480,
                         duration: 360,
                         velocity: 100,
+                        off_velocity: 0,
                     },
                 ],
             })

@@ -324,12 +324,17 @@ impl ServerHandler for ProjectMcpServer {
                     |(track_id, item_id, notes)| self.insert_midi_notes(track_id, item_id, notes),
                 )
             }
-            EDIT_MIDI_NOTE_TOOL if self.writable => parse_edit_midi_note_arguments(
-                request.arguments.as_ref(),
-            )
-            .and_then(|(item_id, note_id, channel, data)| {
-                self.edit_midi_note(item_id, note_id, channel, data)
-            }),
+            EDIT_MIDI_NOTE_TOOL if self.writable => {
+                parse_edit_midi_note_arguments(request.arguments.as_ref()).and_then(|edit| {
+                    self.edit_midi_note(
+                        edit.item_id,
+                        edit.note_id,
+                        edit.channel,
+                        edit.off_velocity,
+                        edit.data,
+                    )
+                })
+            }
             DELETE_MIDI_NOTES_TOOL if self.writable => {
                 parse_delete_midi_notes_arguments(request.arguments.as_ref())
                     .and_then(|(item_id, note_ids)| self.delete_midi_notes(item_id, note_ids))
@@ -618,6 +623,7 @@ impl ProjectMcpServer {
         raw_item_id: u64,
         raw_note_id: u64,
         channel: Option<u8>,
+        off_velocity: Option<u8>,
         mut data: MidiNoteData,
     ) -> Result<Value, String> {
         let mut project = self
@@ -646,6 +652,7 @@ impl ProjectMcpServer {
         if channel.is_none() {
             data.channel = note.channel();
         }
+        data.off_velocity = off_velocity.unwrap_or(note.off_velocity());
         project
             .apply(DawAction::EditMidiNote {
                 item_id,
@@ -667,6 +674,7 @@ impl ProjectMcpServer {
             "tick": note.tick(),
             "duration": note.duration(),
             "velocity": note.velocity(),
+            "off_velocity": note.off_velocity(),
         });
         persist_project_edit(&mut project, store, "edited MIDI note")?;
         Ok(result)
@@ -1272,7 +1280,8 @@ fn insert_midi_notes_tool() -> Tool {
                             "pitch": {"type": "integer", "minimum": 0, "maximum": 127},
                             "tick": {"type": "integer", "minimum": 0},
                             "duration": {"type": "integer", "minimum": 1},
-                            "velocity": {"type": "integer", "minimum": 0, "maximum": 127}
+                            "velocity": {"type": "integer", "minimum": 0, "maximum": 127},
+                            "off_velocity": {"type": "integer", "minimum": 0, "maximum": 127}
                         },
                         "required": ["pitch", "tick", "duration", "velocity"],
                         "additionalProperties": false
@@ -1294,7 +1303,7 @@ fn insert_midi_notes_tool() -> Tool {
 fn edit_midi_note_tool() -> Tool {
     Tool::new(
         EDIT_MIDI_NOTE_TOOL,
-        "Replace the timing, pitch, duration, and velocity of one note; an omitted channel preserves its current channel.",
+        "Replace the timing, pitch, duration, and velocities of one note; omitted channel/off_velocity preserve their current values.",
         rmcp::model::object(json!({
             "type": "object",
             "properties": {
@@ -1304,7 +1313,8 @@ fn edit_midi_note_tool() -> Tool {
                 "pitch": {"type": "integer", "minimum": 0, "maximum": 127},
                 "tick": {"type": "integer", "minimum": 0},
                 "duration": {"type": "integer", "minimum": 1},
-                "velocity": {"type": "integer", "minimum": 0, "maximum": 127}
+                "velocity": {"type": "integer", "minimum": 0, "maximum": 127},
+                "off_velocity": {"type": "integer", "minimum": 0, "maximum": 127}
             },
             "required": ["item_id", "note_id", "pitch", "tick", "duration", "velocity"],
             "additionalProperties": false
@@ -1910,7 +1920,7 @@ fn parse_insert_midi_notes_arguments(
             if note.keys().any(|key| {
                 !matches!(
                     key.as_str(),
-                    "channel" | "pitch" | "tick" | "duration" | "velocity"
+                    "channel" | "pitch" | "tick" | "duration" | "velocity" | "off_velocity"
                 )
             }) {
                 return Err(format!("notes[{index}] contains an unknown field"));
@@ -1926,6 +1936,15 @@ fn parse_insert_midi_notes_arguments(
             let duration = unsigned("duration")?;
             let velocity = u8::try_from(unsigned("velocity")?)
                 .map_err(|_| format!("notes[{index}].velocity must be in 0..=127"))?;
+            let off_velocity = if note.contains_key("off_velocity") {
+                u8::try_from(unsigned("off_velocity")?)
+                    .map_err(|_| format!("notes[{index}].off_velocity must be in 0..=127"))?
+            } else {
+                0
+            };
+            if off_velocity > 127 {
+                return Err(format!("notes[{index}].off_velocity must be in 0..=127"));
+            }
             let channel =
                 parse_optional_midi_channel(note, &format!("notes[{index}]"))?.unwrap_or(0);
             Ok(MidiNoteData {
@@ -1934,20 +1953,37 @@ fn parse_insert_midi_notes_arguments(
                 tick,
                 duration,
                 velocity,
+                off_velocity,
             })
         })
         .collect::<Result<Vec<_>, String>>()?;
     Ok((track_id, item_id, notes))
 }
 
+#[derive(Debug, PartialEq, Eq)]
+struct ParsedMidiNoteEditArguments {
+    item_id: u64,
+    note_id: u64,
+    channel: Option<u8>,
+    off_velocity: Option<u8>,
+    data: MidiNoteData,
+}
+
 fn parse_edit_midi_note_arguments(
     arguments: Option<&serde_json::Map<String, Value>>,
-) -> Result<(u64, u64, Option<u8>, MidiNoteData), String> {
+) -> Result<ParsedMidiNoteEditArguments, String> {
     let arguments = arguments.ok_or_else(|| "arguments are required".to_owned())?;
     if arguments.keys().any(|key| {
         !matches!(
             key.as_str(),
-            "item_id" | "note_id" | "channel" | "pitch" | "tick" | "duration" | "velocity"
+            "item_id"
+                | "note_id"
+                | "channel"
+                | "pitch"
+                | "tick"
+                | "duration"
+                | "velocity"
+                | "off_velocity"
         )
     }) {
         return Err("arguments contain an unknown field".to_owned());
@@ -1976,18 +2012,31 @@ fn parse_edit_midi_note_arguments(
         return Err("velocity must be in 0..=127".to_owned());
     }
     let channel = parse_optional_midi_channel(arguments, "note")?;
-    Ok((
+    let off_velocity = arguments
+        .contains_key("off_velocity")
+        .then(|| unsigned("off_velocity"))
+        .transpose()?
+        .map(|velocity| {
+            u8::try_from(velocity).map_err(|_| "off_velocity must be in 0..=127".to_owned())
+        })
+        .transpose()?;
+    if off_velocity.is_some_and(|velocity| velocity > 127) {
+        return Err("off_velocity must be in 0..=127".to_owned());
+    }
+    Ok(ParsedMidiNoteEditArguments {
         item_id,
         note_id,
         channel,
-        MidiNoteData {
+        off_velocity,
+        data: MidiNoteData {
             channel: channel.unwrap_or(0),
             pitch,
             tick,
             duration,
             velocity,
+            off_velocity: off_velocity.unwrap_or(0),
         },
-    ))
+    })
 }
 
 fn parse_delete_midi_notes_arguments(
@@ -2495,6 +2544,7 @@ fn scoped_query_notes(
                 pitch: note.pitch(),
                 duration: note.duration().min(item_end_tick - absolute_tick),
                 velocity: note.velocity(),
+                off_velocity: note.off_velocity(),
             };
             if notes.len() < limit {
                 notes.push(candidate);
@@ -2519,6 +2569,7 @@ fn scoped_query_notes(
                 "pitch": note.pitch,
                 "duration": note.duration,
                 "velocity": note.velocity,
+                "off_velocity": note.off_velocity,
             })
         })
         .collect::<Vec<_>>();
@@ -2572,6 +2623,7 @@ struct NoteCandidate {
     pitch: u8,
     duration: u64,
     velocity: u8,
+    off_velocity: u8,
 }
 
 impl Ord for NoteCandidate {
@@ -2698,8 +2750,8 @@ mod tests {
         MAX_MIDI_EVENTS_PER_UPSERT, MAX_MIDI_EXPRESSION_RESULTS, MAX_MIDI_ITEM_LENGTH_TICKS,
         MAX_MIDI_NOTES_PER_DELETE, MAX_MIDI_NOTES_PER_INSERT, MAX_MIDI_QUERY_TICKS,
         MAX_NOTE_RESULTS, MAX_TRACK_NAME_CHARS, MAX_TRACKS, MAX_VOLUME_AUTOMATION_RESULTS,
-        ProjectMcpServer, REDO_TOOL, SET_TRACK_MIX_TOOL, STRUCTURE_URI, UNDO_TOOL,
-        parse_create_midi_item_arguments, parse_create_track_arguments,
+        ParsedMidiNoteEditArguments, ProjectMcpServer, REDO_TOOL, SET_TRACK_MIX_TOOL,
+        STRUCTURE_URI, UNDO_TOOL, parse_create_midi_item_arguments, parse_create_track_arguments,
         parse_delete_midi_notes_arguments, parse_edit_midi_item_arguments,
         parse_edit_midi_note_arguments, parse_insert_midi_notes_arguments,
         parse_midi_expression_query_arguments, parse_note_query_arguments,
@@ -2850,6 +2902,7 @@ mod tests {
             json!({"pitch": 60, "tick": 0, "duration": 1}),
             json!({"pitch": 60, "tick": 0, "duration": 1, "velocity": 1, "extra": true}),
             json!({"channel": 16, "pitch": 60, "tick": 0, "duration": 1, "velocity": 1}),
+            json!({"pitch": 60, "tick": 0, "duration": 1, "velocity": 1, "off_velocity": 128}),
         ] {
             assert!(parse_insert_midi_notes_arguments(Some(&arguments(json!([invalid])))).is_err());
         }
@@ -2867,18 +2920,46 @@ mod tests {
         });
         assert_eq!(
             parse_edit_midi_note_arguments(valid.as_object()).unwrap(),
-            (
-                2,
-                9,
-                None,
-                MidiNoteData {
+            ParsedMidiNoteEditArguments {
+                item_id: 2,
+                note_id: 9,
+                channel: None,
+                off_velocity: None,
+                data: MidiNoteData {
                     channel: 0,
                     pitch: 64,
                     tick: 120,
                     duration: 240,
                     velocity: 96,
+                    off_velocity: 0,
                 }
-            )
+            }
+        );
+        let explicit_off_velocity = json!({
+            "item_id": 2,
+            "note_id": 9,
+            "pitch": 64,
+            "tick": 120,
+            "duration": 240,
+            "velocity": 96,
+            "off_velocity": 37
+        });
+        assert_eq!(
+            parse_edit_midi_note_arguments(explicit_off_velocity.as_object()).unwrap(),
+            ParsedMidiNoteEditArguments {
+                item_id: 2,
+                note_id: 9,
+                channel: None,
+                off_velocity: Some(37),
+                data: MidiNoteData {
+                    channel: 0,
+                    pitch: 64,
+                    tick: 120,
+                    duration: 240,
+                    velocity: 96,
+                    off_velocity: 37,
+                }
+            }
         );
         for invalid in [
             json!({"item_id": 2, "note_id": 9, "channel": 16, "pitch": 60, "tick": 0, "duration": 1, "velocity": 1}),
@@ -2886,6 +2967,7 @@ mod tests {
             json!({"item_id": 2, "note_id": 9, "pitch": 60, "tick": 0, "duration": 0, "velocity": 1}),
             json!({"item_id": 2, "note_id": 9, "pitch": 60, "tick": -1, "duration": 1, "velocity": 1}),
             json!({"item_id": 2, "note_id": 9, "pitch": 60, "tick": 0, "duration": 1, "velocity": 128}),
+            json!({"item_id": 2, "note_id": 9, "pitch": 60, "tick": 0, "duration": 1, "velocity": 1, "off_velocity": 128}),
             json!({"item_id": 2, "note_id": 9, "pitch": 60, "tick": 0, "duration": 1, "velocity": 1, "extra": true}),
         ] {
             assert!(
@@ -3246,6 +3328,7 @@ mod tests {
                         tick: 120,
                         duration: 240,
                         velocity: 100,
+                        off_velocity: 0,
                     },
                     MidiNoteData {
                         channel: 0,
@@ -3253,6 +3336,7 @@ mod tests {
                         tick: 480,
                         duration: 480,
                         velocity: 90,
+                        off_velocity: 0,
                     },
                 ],
             })
@@ -3294,6 +3378,7 @@ mod tests {
                         tick: 50,
                         duration: 100,
                         velocity: 90,
+                        off_velocity: 0,
                     },
                     MidiNoteData {
                         channel: 0,
@@ -3301,6 +3386,7 @@ mod tests {
                         tick: 150,
                         duration: 100,
                         velocity: 100,
+                        off_velocity: 0,
                     },
                     MidiNoteData {
                         channel: 0,
@@ -3308,6 +3394,7 @@ mod tests {
                         tick: 200,
                         duration: 200,
                         velocity: 100,
+                        off_velocity: 0,
                     },
                     MidiNoteData {
                         channel: 0,
@@ -3315,6 +3402,7 @@ mod tests {
                         tick: 1_100,
                         duration: 300,
                         velocity: 100,
+                        off_velocity: 0,
                     },
                     MidiNoteData {
                         channel: 0,
@@ -3322,6 +3410,7 @@ mod tests {
                         tick: 1_300,
                         duration: 100,
                         velocity: 100,
+                        off_velocity: 0,
                     },
                 ],
             })
@@ -3386,6 +3475,7 @@ mod tests {
                 tick: 480,
                 duration: 120,
                 velocity: 90,
+                off_velocity: 0,
             },
             MidiNoteData {
                 channel: 0,
@@ -3393,6 +3483,7 @@ mod tests {
                 tick: 0,
                 duration: 240,
                 velocity: 100,
+                off_velocity: 0,
             },
             MidiNoteData {
                 channel: 0,
@@ -3400,6 +3491,7 @@ mod tests {
                 tick: 240,
                 duration: 120,
                 velocity: 80,
+                off_velocity: 0,
             },
         ]);
 
@@ -3657,6 +3749,7 @@ mod tests {
                 tick: 480,
                 duration: 120,
                 velocity: 90,
+                off_velocity: 0,
             },
             MidiNoteData {
                 channel: 0,
@@ -3664,6 +3757,7 @@ mod tests {
                 tick: 480,
                 duration: 120,
                 velocity: 90,
+                off_velocity: 0,
             },
         ]);
         project
@@ -3683,6 +3777,7 @@ mod tests {
                     tick: 480,
                     duration: 120,
                     velocity: 90,
+                    off_velocity: 0,
                 }],
             })
             .unwrap();
@@ -3706,6 +3801,7 @@ mod tests {
                 tick,
                 duration: 1,
                 velocity: 100,
+                off_velocity: 0,
             })
             .collect();
         let (project, track_id) = project_with_notes(notes);

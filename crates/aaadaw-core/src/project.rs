@@ -2963,6 +2963,7 @@ impl Project {
                     || data.pitch > 127
                     || data.channel >= crate::MIDI_CHANNEL_COUNT
                     || data.velocity > 127
+                    || data.off_velocity > 127
                     || data.duration == 0
                     || data.tick.checked_add(data.duration).is_none()
                 {
@@ -4962,6 +4963,13 @@ impl Project {
                                 },
                                 duration: overlap_end - overlap_start,
                                 velocity: note.data.velocity,
+                                off_velocity: if overlap_end
+                                    == note.data.tick.saturating_add(note.data.duration)
+                                {
+                                    note.data.off_velocity
+                                } else {
+                                    0
+                                },
                             },
                         });
                     }
@@ -5065,6 +5073,7 @@ impl Project {
                     if data.pitch > 127
                         || data.channel >= crate::MIDI_CHANNEL_COUNT
                         || data.velocity > 127
+                        || data.off_velocity > 127
                         || !valid_midi_note_source_range(item, data.tick, data.duration)
                     {
                         return Err(ActionError::InvalidMidiNote);
@@ -5102,6 +5111,7 @@ impl Project {
                 if data.pitch > 127
                     || data.channel >= crate::MIDI_CHANNEL_COUNT
                     || data.velocity > 127
+                    || data.off_velocity > 127
                     || !valid_midi_note_source_range(item, data.tick, data.duration)
                 {
                     return Err(ActionError::InvalidMidiNote);
@@ -6352,6 +6362,7 @@ impl Project {
                                 note.data.pitch > 127
                                     || note.data.channel >= crate::MIDI_CHANNEL_COUNT
                                     || note.data.velocity > 127
+                                    || note.data.off_velocity > 127
                                     || note.data.duration == 0
                                     || note.data.tick.checked_add(note.data.duration).is_none()
                                     || !existing_note_ids.insert(note.id)
@@ -6376,6 +6387,7 @@ impl Project {
                         || note.data.pitch > 127
                         || note.data.channel >= crate::MIDI_CHANNEL_COUNT
                         || note.data.velocity > 127
+                        || note.data.off_velocity > 127
                         || !valid_midi_note_range_in_bounds(
                             source_bounds,
                             note.data.tick,

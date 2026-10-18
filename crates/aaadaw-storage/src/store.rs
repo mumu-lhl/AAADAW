@@ -26,7 +26,7 @@ use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 /// Latest database schema version understood by this release.
-pub const CURRENT_SCHEMA_VERSION: u32 = 61;
+pub const CURRENT_SCHEMA_VERSION: u32 = 62;
 
 const MIGRATION_29: &str = "ALTER TABLE project_meta ADD COLUMN start_measure INTEGER NOT NULL DEFAULT 1 CHECK(start_measure BETWEEN -2147483648 AND 2147483647);";
 const MIGRATION_30: &str = "ALTER TABLE project_meta ADD COLUMN bpm_basis INTEGER NOT NULL DEFAULT 1 CHECK(bpm_basis BETWEEN 0 AND 5);";
@@ -570,6 +570,7 @@ CREATE TABLE IF NOT EXISTS midi_channel_pressures (
 CREATE INDEX IF NOT EXISTS midi_channel_pressures_by_item_tick
     ON midi_channel_pressures(item_id, tick, channel);
 "#;
+const MIGRATION_62_NOTE_OFF_VELOCITY: &str = "ALTER TABLE midi_notes ADD COLUMN off_velocity INTEGER NOT NULL DEFAULT 0 CHECK (off_velocity BETWEEN 0 AND 127);";
 
 /// SQLite persistence failures, including incompatible project files.
 #[derive(Debug)]
@@ -3589,6 +3590,11 @@ fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
                 }
             }
             61 => transaction.execute_batch(MIGRATION_61_MIDI_AFTERTOUCH)?,
+            62 => {
+                if !table_has_column(&transaction, "midi_notes", "off_velocity")? {
+                    transaction.execute_batch(MIGRATION_62_NOTE_OFF_VELOCITY)?;
+                }
+            }
             missing => return Err(StorageError::MissingMigration(missing - 1)),
         }
         transaction.pragma_update(None, "user_version", next_version)?;
@@ -3844,8 +3850,8 @@ fn write_snapshot(
         )?;
         for (position, note) in item.notes.iter().enumerate() {
             transaction.execute(
-                "INSERT INTO midi_notes(id, item_id, position, pitch, channel, tick, duration, velocity) \
-                 VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                "INSERT INTO midi_notes(id, item_id, position, pitch, channel, tick, duration, velocity, off_velocity) \
+                 VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
                 params![
                     to_sql_integer(note.id)?,
                     to_sql_integer(item.id)?,
@@ -3854,7 +3860,8 @@ fn write_snapshot(
                     i64::from(note.data.channel),
                     to_sql_integer(note.data.tick)?,
                     to_sql_integer(note.data.duration)?,
-                    i64::from(note.data.velocity)
+                    i64::from(note.data.velocity),
+                    i64::from(note.data.off_velocity)
                 ],
             )?;
         }
@@ -4643,7 +4650,7 @@ fn read_audio_items(connection: &Connection) -> Result<Vec<AudioItemSnapshot>, S
 
 fn read_midi_items(connection: &Connection) -> Result<(Vec<MidiItemSnapshot>, bool), StorageError> {
     let mut note_statement = connection.prepare(
-        "SELECT item_id, id, position, pitch, channel, tick, duration, velocity \
+        "SELECT item_id, id, position, pitch, channel, tick, duration, velocity, off_velocity \
          FROM midi_notes ORDER BY item_id, position",
     )?;
     let note_rows = note_statement
@@ -4657,11 +4664,14 @@ fn read_midi_items(connection: &Connection) -> Result<(Vec<MidiItemSnapshot>, bo
                 row.get::<_, i64>(5)?,
                 row.get::<_, i64>(6)?,
                 row.get::<_, i64>(7)?,
+                row.get::<_, i64>(8)?,
             ))
         })?
         .collect::<Result<Vec<_>, _>>()?;
     let mut notes_by_item: HashMap<u64, Vec<(u64, MidiNoteSnapshot)>> = HashMap::new();
-    for (item_id, note_id, position, pitch, channel, tick, duration, velocity) in note_rows {
+    for (item_id, note_id, position, pitch, channel, tick, duration, velocity, off_velocity) in
+        note_rows
+    {
         let note = MidiNoteSnapshot {
             id: from_sql_u64(note_id)?,
             data: MidiNoteData {
@@ -4670,6 +4680,7 @@ fn read_midi_items(connection: &Connection) -> Result<(Vec<MidiItemSnapshot>, bo
                 tick: from_sql_u64(tick)?,
                 duration: from_sql_u64(duration)?,
                 velocity: from_sql_u8(velocity)?,
+                off_velocity: from_sql_u8(off_velocity)?,
             },
         };
         notes_by_item
@@ -5793,6 +5804,7 @@ mod loop_source_storage_tests {
                     tick: 1_080,
                     duration: 120,
                     velocity: 100,
+                    off_velocity: 0,
                 }],
             })
             .unwrap();

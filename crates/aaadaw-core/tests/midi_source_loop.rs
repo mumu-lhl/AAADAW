@@ -29,6 +29,7 @@ fn midi_source_loop_length_and_offset_map_events_across_the_visible_clip() {
                 tick: 120,
                 duration: 90,
                 velocity: 100,
+                off_velocity: 0,
             }],
         })
         .unwrap();
@@ -85,6 +86,7 @@ fn fractional_midi_item_positions_survive_moves_and_event_mapping() {
                 tick: 0,
                 duration: 120,
                 velocity: 100,
+                off_velocity: 0,
             }],
         })
         .unwrap();
@@ -147,6 +149,7 @@ fn loop_source_edits_use_source_bounds_after_the_item_offset_wraps() {
                 tick: 120,
                 duration: 90,
                 velocity: 100,
+                off_velocity: 0,
             }],
         })
         .unwrap();
@@ -176,6 +179,7 @@ fn loop_source_edits_use_source_bounds_after_the_item_offset_wraps() {
                 tick: 900,
                 duration: 60,
                 velocity: 96,
+                off_velocity: 0,
             }],
         })
         .expect("loop source note insertion should use loop-relative bounds");
@@ -231,6 +235,7 @@ fn loop_source_edits_use_source_bounds_after_the_item_offset_wraps() {
                 tick: 480,
                 duration: 120,
                 velocity: 100,
+                off_velocity: 0,
             },
         })
         .expect("loop source note movement should use loop-relative bounds");
@@ -245,6 +250,7 @@ fn loop_source_edits_use_source_bounds_after_the_item_offset_wraps() {
                 tick: 930,
                 duration: 60,
                 velocity: 100,
+                off_velocity: 0,
             },
         }),
         Err(ActionError::InvalidMidiNote)

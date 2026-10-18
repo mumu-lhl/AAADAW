@@ -29,6 +29,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 tick: 20,
                 duration: 120,
                 velocity: 96,
+                off_velocity: 0,
             },
             MidiNoteData {
                 channel: 2,
@@ -36,6 +37,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 tick: 170,
                 duration: 90,
                 velocity: 100,
+                off_velocity: 0,
             },
             MidiNoteData {
                 channel: 0,
@@ -43,6 +45,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 tick: 350,
                 duration: 80,
                 velocity: 80,
+                off_velocity: 0,
             },
         ],
     })?;

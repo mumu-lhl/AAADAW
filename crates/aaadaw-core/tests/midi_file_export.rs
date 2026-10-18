@@ -34,6 +34,7 @@ fn exports_note_controller_and_pitch_bend_channels_as_midi_status_nibbles() {
                 tick: 0,
                 duration: 240,
                 velocity: 100,
+                off_velocity: 37,
             }],
         })
         .unwrap();
@@ -67,7 +68,12 @@ fn exports_note_controller_and_pitch_bend_channels_as_midi_status_nibbles() {
         },
     )
     .unwrap();
-    for expected in [[0x93, 60, 100], [0x83, 60, 0], [0xb4, 7, 96], [0xe5, 0, 64]] {
+    for expected in [
+        [0x93, 60, 100],
+        [0x83, 60, 37],
+        [0xb4, 7, 96],
+        [0xe5, 0, 64],
+    ] {
         assert!(
             bytes
                 .windows(expected.len())
@@ -205,6 +211,7 @@ fn exports_tracks_notes_controllers_pitch_bends_tempo_meter_and_markers() {
                 tick: 0,
                 duration: 960,
                 velocity: 100,
+                off_velocity: 0,
             }],
         })
         .expect("MIDI note should be inserted");
@@ -308,6 +315,7 @@ fn midi_export_keeps_fractional_item_position_until_output_ppq_rounding() {
                 tick: 0,
                 duration: 120,
                 velocity: 100,
+                off_velocity: 0,
             }],
         })
         .unwrap();
@@ -412,6 +420,7 @@ fn midi_export_repeats_loop_source_events_to_fill_the_visible_item() {
                 tick: 120,
                 duration: 120,
                 velocity: 100,
+                off_velocity: 0,
             }],
         })
         .unwrap();
@@ -634,6 +643,7 @@ fn reaper_782_export_keeps_midi_items_on_unmuted_tracks_inside_muted_folders() {
                 tick: 0,
                 duration: 240,
                 velocity: 100,
+                off_velocity: 0,
             }],
         })
         .unwrap();
@@ -678,6 +688,7 @@ fn reaper_782_selected_track_time_scope_without_overlap_exports_empty_header() {
                 tick: 0,
                 duration: 240,
                 velocity: 100,
+                off_velocity: 0,
             }],
         })
         .unwrap();
@@ -729,6 +740,7 @@ fn reaper_782_all_time_scope_without_overlap_exports_empty_header() {
                 tick: 0,
                 duration: 240,
                 velocity: 100,
+                off_velocity: 0,
             }],
         })
         .unwrap();
@@ -2547,6 +2559,7 @@ fn native_midi_muted_scope_fixture(track_muted: bool, item_muted: bool) -> Proje
                 tick: 0,
                 duration: 240,
                 velocity: 100,
+                off_velocity: 0,
             }],
         })
         .unwrap();
@@ -2592,6 +2605,7 @@ fn add_native_consolidation_item(
                 tick: 0,
                 duration: 240,
                 velocity: 100,
+                off_velocity: 0,
             }],
         })
         .unwrap();
@@ -2625,6 +2639,7 @@ fn native_midi_time_selection_boundary_fixture_project() -> Project {
                     tick: 0,
                     duration: 960,
                     velocity: 100,
+                    off_velocity: 0,
                 },
                 MidiNoteData {
                     channel: 0,
@@ -2632,6 +2647,7 @@ fn native_midi_time_selection_boundary_fixture_project() -> Project {
                     tick: 960,
                     duration: 1920,
                     velocity: 100,
+                    off_velocity: 0,
                 },
                 MidiNoteData {
                     channel: 0,
@@ -2639,6 +2655,7 @@ fn native_midi_time_selection_boundary_fixture_project() -> Project {
                     tick: 3000,
                     duration: 1080,
                     velocity: 100,
+                    off_velocity: 0,
                 },
                 MidiNoteData {
                     channel: 0,
@@ -2646,6 +2663,7 @@ fn native_midi_time_selection_boundary_fixture_project() -> Project {
                     tick: 3360,
                     duration: 480,
                     velocity: 100,
+                    off_velocity: 0,
                 },
             ],
         })
@@ -2709,6 +2727,7 @@ fn native_midi_fixture_project_with_track_name_and_note_duration(
                 tick: 0,
                 duration: note_duration_ticks,
                 velocity: 100,
+                off_velocity: 0,
             }],
         })
         .unwrap();
@@ -2769,6 +2788,7 @@ fn native_midi_tempo_selection_fixture_project(include_post_tempo_note: bool) ->
                     tick: 0,
                     duration: 360,
                     velocity: 100,
+                    off_velocity: 0,
                 }],
             })
             .unwrap();
@@ -2803,6 +2823,7 @@ fn type_zero_merges_tracks_scales_ppq_and_exports_filtered_cues() {
                 tick: 0,
                 duration: 240,
                 velocity: 100,
+                off_velocity: 0,
             }],
         })
         .unwrap();
@@ -2872,6 +2893,7 @@ fn ppq_rounding_never_turns_a_note_into_a_zero_length_event() {
                 tick: 10,
                 duration: 1,
                 velocity: 80,
+                off_velocity: 0,
             }],
         })
         .unwrap();

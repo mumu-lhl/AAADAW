@@ -757,6 +757,8 @@ struct MidiEventPropertiesDialogState {
     parameter_mixed: bool,
     value: String,
     value_mixed: bool,
+    off_value: String,
+    off_value_mixed: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -2550,6 +2552,7 @@ impl App {
                             tick: note.tick(),
                             duration: note.duration(),
                             velocity: note.velocity(),
+                            off_velocity: note.off_velocity(),
                         },
                     )
                 })
@@ -2806,6 +2809,16 @@ impl App {
                 )
             }
         };
+        let (off_value, off_value_mixed) = match &target {
+            MidiEventPropertiesTarget::Notes(note_ids) => {
+                let notes = note_ids
+                    .iter()
+                    .map(|note_id| item.notes().iter().find(|note| note.id() == *note_id))
+                    .collect::<Option<Vec<_>>>()?;
+                common_midi_event_property(notes.iter().map(|note| note.off_velocity().to_string()))
+            }
+            _ => (String::new(), false),
+        };
         Some(MidiEventPropertiesDialogState {
             item_id,
             target,
@@ -2819,6 +2832,8 @@ impl App {
             parameter_mixed,
             value,
             value_mixed,
+            off_value,
+            off_value_mixed,
         })
     }
 
@@ -2893,6 +2908,15 @@ impl App {
                     self.midi_editor_feedback = Some("Velocity must be from 0 to 127".into());
                     return Task::none();
                 };
+                let Some(off_velocity_edit) = parse_midi_event_property_edit(
+                    &dialog.off_value,
+                    dialog.off_value_mixed,
+                    |value| value.parse::<i128>().ok(),
+                    parse_midi_event_relative_numeric,
+                ) else {
+                    self.midi_editor_feedback = Some("Off value must be from 0 to 127".into());
+                    return Task::none();
+                };
                 let edits = note_ids
                     .iter()
                     .map(|note_id| {
@@ -2928,6 +2952,12 @@ impl App {
                             0,
                             127,
                         )? as u8;
+                        let off_velocity = apply_midi_event_properties_edit(
+                            i128::from(note.off_velocity()),
+                            off_velocity_edit,
+                            0,
+                            127,
+                        )? as u8;
                         Some((
                             note.id(),
                             MidiNoteData {
@@ -2936,13 +2966,14 @@ impl App {
                                 tick,
                                 duration,
                                 velocity,
+                                off_velocity,
                             },
                         ))
                     })
                     .collect::<Option<Vec<_>>>();
                 let Some(edits) = edits else {
                     self.midi_editor_feedback = Some(
-                        "Position, length, channel, pitch, or velocity is outside its valid range"
+                        "Position, length, channel, pitch, velocity, or off value is outside its valid range"
                             .into(),
                     );
                     return Task::none();
@@ -2957,6 +2988,7 @@ impl App {
                                 && note.tick() == data.tick
                                 && note.duration() == data.duration
                                 && note.velocity() == data.velocity
+                                && note.off_velocity() == data.off_velocity
                         })
                 });
                 if unchanged {
@@ -3622,6 +3654,7 @@ impl App {
                     | Message::SetMidiEventPropertiesChannel(_)
                     | Message::SetMidiEventPropertiesParameter(_)
                     | Message::SetMidiEventPropertiesValue(_)
+                    | Message::SetMidiEventPropertiesOffValue(_)
                     | Message::ApplyMidiEventProperties
                     | Message::AcceptMidiEventProperties
                     | Message::CancelMidiEventProperties
@@ -5341,6 +5374,12 @@ impl App {
                     dialog.value_mixed = false;
                 }
             }
+            Message::SetMidiEventPropertiesOffValue(value) => {
+                if let Some(dialog) = self.midi_event_properties_dialog.as_mut() {
+                    dialog.off_value = value;
+                    dialog.off_value_mixed = false;
+                }
+            }
             Message::ApplyMidiEventProperties => {
                 task = self.commit_midi_event_properties(false);
             }
@@ -5616,6 +5655,7 @@ impl App {
                                 tick: note.tick() - first_tick,
                                 duration: note.duration(),
                                 velocity: note.velocity(),
+                                off_velocity: note.off_velocity(),
                             })
                             .collect();
                         self.midi_note_clipboard
@@ -5854,6 +5894,7 @@ impl App {
                             tick: note.tick(),
                             duration: note.duration(),
                             velocity: note.velocity(),
+                            off_velocity: note.off_velocity(),
                         },
                     ));
                 }
@@ -12733,6 +12774,7 @@ impl App {
                         tick: note.tick(),
                         duration: note.duration(),
                         velocity: note.velocity(),
+                        off_velocity: note.off_velocity(),
                     },
                 )
             })

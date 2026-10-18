@@ -27,6 +27,7 @@ fn project_with_midi_notes() -> (Project, aaadaw_core::ItemId) {
                     tick: 170,
                     duration: 90,
                     velocity: 70,
+                    off_velocity: 0,
                 },
                 MidiNoteData {
                     channel: 2,
@@ -34,6 +35,7 @@ fn project_with_midi_notes() -> (Project, aaadaw_core::ItemId) {
                     tick: 350,
                     duration: 110,
                     velocity: 80,
+                    off_velocity: 0,
                 },
                 MidiNoteData {
                     channel: 0,
@@ -41,6 +43,7 @@ fn project_with_midi_notes() -> (Project, aaadaw_core::ItemId) {
                     tick: 550,
                     duration: 150,
                     velocity: 90,
+                    off_velocity: 0,
                 },
             ],
         })
@@ -79,6 +82,7 @@ fn project_with_humanize_notes(
                     tick: 2_000 + (index as u64) * 1_000,
                     duration: 90,
                     velocity: velocities[index % velocities.len()],
+                    off_velocity: 0,
                 })
                 .collect(),
         })

@@ -1,0 +1,11 @@
+version	7.82/linux-x86_64
+theme	Default_7.0.ReaperThemeZip
+probe	selected MIDI note in Event List with raw Note Off velocity 37
+raw_note_on	status 0x92; channel 3; pitch 60; velocity 91; tick 0
+raw_note_off	status 0x82; channel 3; pitch 60; velocity 37; tick 240
+midi_get_note	selected 1; muted 0; start 0; end 240; channel 3; pitch 60; note-on velocity 91
+mode	40056	Mode: Event List	Alt+3
+properties	40004	Edit: Event properties	Ctrl+F2
+native_event_list	1.1.00; length 0.0.25; channel 3; Type Note; Parameter C4; Value 91; Off Value 37
+native_event_properties	Type Note; Position 1.1.00; Length 0.0.25; Channel 3; Note 60 C4; Velocity 91; Off value 37
+terminal_row	(end) All Notes Off is displayed after the event

@@ -49,6 +49,7 @@ fn moving_audio_and_midi_items_preserves_content_and_is_undoable() {
                 tick: 480,
                 duration: 720,
                 velocity: 94,
+                off_velocity: 0,
             }],
         })
         .expect("MIDI note insertion should succeed");

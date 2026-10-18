@@ -41,6 +41,7 @@ fn add_track_with_note(project: &mut Project, name: &str) -> aaadaw_core::TrackI
                 tick: 0,
                 duration: 960,
                 velocity: 100,
+                off_velocity: 0,
             }],
         })
         .expect("MIDI note should be created");

@@ -92,6 +92,7 @@ fn benchmark(track_count: usize, block_frames: usize, with_midi: bool) {
                         tick,
                         duration: 16,
                         velocity: 96,
+                        off_velocity: 0,
                     })
                     .collect();
                 project

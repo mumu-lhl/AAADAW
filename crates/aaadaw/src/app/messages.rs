@@ -604,6 +604,7 @@ pub(crate) enum Message {
     SetMidiEventPropertiesChannel(String),
     SetMidiEventPropertiesParameter(String),
     SetMidiEventPropertiesValue(String),
+    SetMidiEventPropertiesOffValue(String),
     ApplyMidiEventProperties,
     AcceptMidiEventProperties,
     CancelMidiEventProperties,

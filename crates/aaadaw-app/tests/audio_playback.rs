@@ -1269,6 +1269,7 @@ fn transport_loop_preparation_repeats_midi_notes_at_the_project_loop_boundary() 
                 tick: 0,
                 duration: 480,
                 velocity: 100,
+                off_velocity: 0,
             }],
         })
         .expect("MIDI note should be added");
@@ -1365,6 +1366,7 @@ fn transport_loop_playback_started_after_the_range_keeps_advancing_linearly() {
                 tick: 0,
                 duration: 480,
                 velocity: 100,
+                off_velocity: 0,
             }],
         })
         .expect("MIDI note should be added");

@@ -1685,10 +1685,11 @@ impl ClapInstrumentProcessor {
                     pckn,
                     f64::from(event.velocity) / 127.0,
                 )),
-                MidiEventKind::NoteOff => {
-                    self.input_events
-                        .push(&NoteOffEvent::new(sample_offset, pckn, 0.0))
-                }
+                MidiEventKind::NoteOff => self.input_events.push(&NoteOffEvent::new(
+                    sample_offset,
+                    pckn,
+                    f64::from(event.velocity) / 127.0,
+                )),
                 MidiEventKind::ControllerChange => {
                     unreachable!("controller events were emitted as raw MIDI events above")
                 }
@@ -2196,6 +2197,7 @@ mod tests {
                     tick: 0,
                     duration: note_duration,
                     velocity: 127,
+                    off_velocity: 0,
                 }],
             })
             .expect("MIDI note insertion");

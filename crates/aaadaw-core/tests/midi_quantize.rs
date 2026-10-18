@@ -31,6 +31,7 @@ fn midi_quantize_moves_note_starts_to_the_grid_and_is_undoable() {
                     tick: 110,
                     duration: 120,
                     velocity: 100,
+                    off_velocity: 0,
                 },
                 MidiNoteData {
                     channel: 0,
@@ -38,6 +39,7 @@ fn midi_quantize_moves_note_starts_to_the_grid_and_is_undoable() {
                     tick: 510,
                     duration: 120,
                     velocity: 90,
+                    off_velocity: 0,
                 },
             ],
         })
@@ -100,6 +102,7 @@ fn midi_quantize_can_limit_changes_to_the_selected_note_ids() {
                     tick: 110,
                     duration: 120,
                     velocity: 100,
+                    off_velocity: 0,
                 },
                 MidiNoteData {
                     channel: 2,
@@ -107,6 +110,7 @@ fn midi_quantize_can_limit_changes_to_the_selected_note_ids() {
                     tick: 510,
                     duration: 180,
                     velocity: 90,
+                    off_velocity: 0,
                 },
                 MidiNoteData {
                     channel: 0,
@@ -114,6 +118,7 @@ fn midi_quantize_can_limit_changes_to_the_selected_note_ids() {
                     tick: 730,
                     duration: 240,
                     velocity: 80,
+                    off_velocity: 0,
                 },
             ],
         })
@@ -177,6 +182,7 @@ fn midi_quantize_selected_positions_and_ends_match_reaper_and_are_undoable() {
                     tick: 100,
                     duration: 120,
                     velocity: 96,
+                    off_velocity: 0,
                 },
                 MidiNoteData {
                     channel: 2,
@@ -184,6 +190,7 @@ fn midi_quantize_selected_positions_and_ends_match_reaper_and_are_undoable() {
                     tick: 350,
                     duration: 80,
                     velocity: 80,
+                    off_velocity: 0,
                 },
                 MidiNoteData {
                     channel: 0,
@@ -191,6 +198,7 @@ fn midi_quantize_selected_positions_and_ends_match_reaper_and_are_undoable() {
                     tick: 550,
                     duration: 120,
                     velocity: 72,
+                    off_velocity: 0,
                 },
                 MidiNoteData {
                     channel: 15,
@@ -198,6 +206,7 @@ fn midi_quantize_selected_positions_and_ends_match_reaper_and_are_undoable() {
                     tick: 900,
                     duration: 70,
                     velocity: 110,
+                    off_velocity: 0,
                 },
             ],
         })
@@ -304,6 +313,7 @@ fn midi_quantize_dialog_operations_match_reaper_ticks_and_round_trip_history() {
                         tick: 100,
                         duration: 180,
                         velocity: 96,
+                        off_velocity: 0,
                     },
                     MidiNoteData {
                         channel: 2,
@@ -311,6 +321,7 @@ fn midi_quantize_dialog_operations_match_reaper_ticks_and_round_trip_history() {
                         tick: 350,
                         duration: 80,
                         velocity: 80,
+                        off_velocity: 0,
                     },
                     MidiNoteData {
                         channel: 1,
@@ -318,6 +329,7 @@ fn midi_quantize_dialog_operations_match_reaper_ticks_and_round_trip_history() {
                         tick: 550,
                         duration: 120,
                         velocity: 72,
+                        off_velocity: 0,
                     },
                     MidiNoteData {
                         channel: 15,
@@ -325,6 +337,7 @@ fn midi_quantize_dialog_operations_match_reaper_ticks_and_round_trip_history() {
                         tick: 900,
                         duration: 70,
                         velocity: 110,
+                        off_velocity: 0,
                     },
                 ],
             })
@@ -399,6 +412,7 @@ fn midi_quantize_dialog_uses_swing_grid_for_note_positions_and_endpoints() {
                     tick: 75,
                     duration: 20,
                     velocity: 96,
+                    off_velocity: 0,
                 },
                 MidiNoteData {
                     channel: 0,
@@ -406,6 +420,7 @@ fn midi_quantize_dialog_uses_swing_grid_for_note_positions_and_endpoints() {
                     tick: 170,
                     duration: 90,
                     velocity: 96,
+                    off_velocity: 0,
                 },
                 MidiNoteData {
                     channel: 0,
@@ -413,6 +428,7 @@ fn midi_quantize_dialog_uses_swing_grid_for_note_positions_and_endpoints() {
                     tick: 350,
                     duration: 80,
                     velocity: 96,
+                    off_velocity: 0,
                 },
                 MidiNoteData {
                     channel: 0,
@@ -420,6 +436,7 @@ fn midi_quantize_dialog_uses_swing_grid_for_note_positions_and_endpoints() {
                     tick: 550,
                     duration: 120,
                     velocity: 96,
+                    off_velocity: 0,
                 },
             ],
         })
@@ -562,6 +579,7 @@ fn midi_quantize_fix_overlaps_matches_reaper_for_same_channel_and_pitch() {
                     tick: 100,
                     duration: 200,
                     velocity: 96,
+                    off_velocity: 0,
                 },
                 MidiNoteData {
                     channel: 0,
@@ -569,6 +587,7 @@ fn midi_quantize_fix_overlaps_matches_reaper_for_same_channel_and_pitch() {
                     tick: 180,
                     duration: 120,
                     velocity: 96,
+                    off_velocity: 0,
                 },
                 MidiNoteData {
                     channel: 0,
@@ -576,6 +595,7 @@ fn midi_quantize_fix_overlaps_matches_reaper_for_same_channel_and_pitch() {
                     tick: 330,
                     duration: 20,
                     velocity: 96,
+                    off_velocity: 0,
                 },
             ],
         })
@@ -675,6 +695,7 @@ fn midi_quantize_fix_overlaps_trims_unselected_predecessor_in_selected_scope() {
                     tick: 100,
                     duration: 200,
                     velocity: 96,
+                    off_velocity: 0,
                 },
                 MidiNoteData {
                     channel: 0,
@@ -682,6 +703,7 @@ fn midi_quantize_fix_overlaps_trims_unselected_predecessor_in_selected_scope() {
                     tick: 180,
                     duration: 120,
                     velocity: 96,
+                    off_velocity: 0,
                 },
             ],
         })
@@ -780,6 +802,7 @@ fn midi_quantize_selected_overlapping_note_end_moves_to_next_unselected_neighbor
                     tick: 100,
                     duration: 200,
                     velocity: 96,
+                    off_velocity: 0,
                 },
                 MidiNoteData {
                     channel: 0,
@@ -787,6 +810,7 @@ fn midi_quantize_selected_overlapping_note_end_moves_to_next_unselected_neighbor
                     tick: 180,
                     duration: 120,
                     velocity: 96,
+                    off_velocity: 0,
                 },
                 MidiNoteData {
                     channel: 0,
@@ -794,6 +818,7 @@ fn midi_quantize_selected_overlapping_note_end_moves_to_next_unselected_neighbor
                     tick: 330,
                     duration: 150,
                     velocity: 96,
+                    off_velocity: 0,
                 },
                 MidiNoteData {
                     channel: 0,
@@ -801,6 +826,7 @@ fn midi_quantize_selected_overlapping_note_end_moves_to_next_unselected_neighbor
                     tick: 400,
                     duration: 80,
                     velocity: 96,
+                    off_velocity: 0,
                 },
                 MidiNoteData {
                     channel: 0,
@@ -808,6 +834,7 @@ fn midi_quantize_selected_overlapping_note_end_moves_to_next_unselected_neighbor
                     tick: 530,
                     duration: 120,
                     velocity: 96,
+                    off_velocity: 0,
                 },
             ],
         })
@@ -883,6 +910,7 @@ fn midi_quantize_all_events_matches_reaper_and_undoes_as_one_edit() {
                     tick: 100,
                     duration: 180,
                     velocity: 96,
+                    off_velocity: 0,
                 },
                 MidiNoteData {
                     channel: 0,
@@ -890,6 +918,7 @@ fn midi_quantize_all_events_matches_reaper_and_undoes_as_one_edit() {
                     tick: 350,
                     duration: 80,
                     velocity: 96,
+                    off_velocity: 0,
                 },
             ],
         })
@@ -1037,6 +1066,7 @@ fn midi_quantize_selected_events_only_changes_the_selected_note_cc_and_pitch_ben
                     tick: 170,
                     duration: 80,
                     velocity: 96,
+                    off_velocity: 0,
                 },
                 MidiNoteData {
                     channel: 0,
@@ -1044,6 +1074,7 @@ fn midi_quantize_selected_events_only_changes_the_selected_note_cc_and_pitch_ben
                     tick: 350,
                     duration: 80,
                     velocity: 96,
+                    off_velocity: 0,
                 },
                 MidiNoteData {
                     channel: 0,
@@ -1051,6 +1082,7 @@ fn midi_quantize_selected_events_only_changes_the_selected_note_cc_and_pitch_ben
                     tick: 550,
                     duration: 80,
                     velocity: 96,
+                    off_velocity: 0,
                 },
             ],
         })

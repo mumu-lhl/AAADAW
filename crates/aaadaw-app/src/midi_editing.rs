@@ -95,6 +95,7 @@ pub fn add_quarter_note(project: &Project, item_id: ItemId) -> Result<DawAction,
             tick,
             duration,
             velocity: 100,
+            off_velocity: 0,
         }],
     })
 }
@@ -231,6 +232,7 @@ fn find_note(
         tick: note.tick(),
         duration: note.duration(),
         velocity: note.velocity(),
+        off_velocity: note.off_velocity(),
     })
 }
 

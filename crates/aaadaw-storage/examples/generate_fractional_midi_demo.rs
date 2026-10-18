@@ -30,6 +30,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             tick: 0,
             duration: 960,
             velocity: 100,
+            off_velocity: 0,
         }],
     })?;
     let mut store = ProjectStore::open(&path)?;

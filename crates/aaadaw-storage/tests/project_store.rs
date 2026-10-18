@@ -123,6 +123,76 @@ fn schema_60_migration_adds_aftertouch_tables_and_round_trips_events() {
 }
 
 #[test]
+fn schema_61_migration_adds_note_off_velocity_and_round_trips_values() {
+    let path = project_path();
+    let mut project = Project::new();
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Note Off velocity".into(),
+        })
+        .unwrap();
+    let track_id = project.tracks()[0].id();
+    project
+        .apply(DawAction::InsertMidiItem {
+            track_id,
+            start_tick: 0,
+            length_ticks: 960,
+        })
+        .unwrap();
+    let item_id = project.midi_items()[0].id();
+    project
+        .apply(DawAction::AddMidiNotes {
+            item_id,
+            notes: vec![MidiNoteData {
+                channel: 2,
+                pitch: 60,
+                tick: 120,
+                duration: 240,
+                velocity: 91,
+                off_velocity: 37,
+            }],
+        })
+        .unwrap();
+
+    let mut store = ProjectStore::open(&path).unwrap();
+    store.save(&project).unwrap();
+    store.close().unwrap();
+    Connection::open(&path)
+        .unwrap()
+        .execute_batch("ALTER TABLE midi_notes DROP COLUMN off_velocity; PRAGMA user_version = 61;")
+        .unwrap();
+
+    let mut store = ProjectStore::open(&path).unwrap();
+    assert_eq!(store.schema_version().unwrap(), CURRENT_SCHEMA_VERSION);
+    let loaded = store.load().unwrap();
+    assert_eq!(loaded.midi_items()[0].notes()[0].off_velocity(), 0);
+    let mut migrated = loaded;
+    let note = migrated.midi_items()[0].notes()[0].clone();
+    migrated
+        .apply(DawAction::EditMidiNote {
+            item_id,
+            note_id: note.id(),
+            data: MidiNoteData {
+                off_velocity: 37,
+                channel: note.channel(),
+                pitch: note.pitch(),
+                tick: note.tick(),
+                duration: note.duration(),
+                velocity: note.velocity(),
+            },
+        })
+        .unwrap();
+    store.save(&migrated).unwrap();
+    store.close().unwrap();
+
+    let store = ProjectStore::open(&path).unwrap();
+    assert_eq!(store.load().unwrap().snapshot(), migrated.snapshot());
+    store.close().unwrap();
+    remove_database(&path);
+}
+
+#[test]
 fn polyphonic_and_channel_pressure_events_round_trip() {
     let path = project_path();
     let mut project = Project::new();
@@ -858,6 +928,7 @@ fn project_store_round_trips_frozen_track_and_its_render_item() {
                 tick: 0,
                 duration: 480,
                 velocity: 100,
+                off_velocity: 0,
             }],
         })
         .unwrap();
@@ -1097,6 +1168,7 @@ fn schema_58_migrates_stored_midi_events_to_channel_zero() {
                 tick: 0,
                 duration: 240,
                 velocity: 100,
+                off_velocity: 0,
             }],
         })
         .unwrap();
@@ -1371,6 +1443,7 @@ fn schema_migration_and_project_roundtrip_preserve_state() {
                 tick: 120,
                 duration: 720,
                 velocity: 96,
+                off_velocity: 0,
             }],
         })
         .expect("MIDI note insertion should succeed");
@@ -2689,6 +2762,7 @@ fn schema_seven_projects_migrate_controller_storage_without_changing_notes() {
                 tick: 120,
                 duration: 240,
                 velocity: 100,
+                off_velocity: 0,
             }],
         })
         .expect("legacy note should be added");

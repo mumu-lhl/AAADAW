@@ -636,7 +636,7 @@ impl MidiEventPlan {
                             channel: note.channel(),
                             note_id: Some(routed_note_id),
                             pitch: note.pitch(),
-                            velocity: 0,
+                            velocity: note.off_velocity(),
                             controller: None,
                             pitch_bend: None,
                             program: None,
@@ -1698,6 +1698,7 @@ mod item_mute_tests {
                     tick: 0,
                     duration: 480,
                     velocity: 100,
+                    off_velocity: 0,
                 }],
             })
             .unwrap();

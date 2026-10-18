@@ -32,6 +32,7 @@ fn project_with_instrument_midi() -> (Project, aaadaw_core::TrackId) {
                 tick: 0,
                 duration: 480,
                 velocity: 100,
+                off_velocity: 0,
             }],
         })
         .unwrap();
@@ -146,6 +147,7 @@ fn failed_freeze_and_frozen_source_edits_leave_the_project_unchanged() {
                     tick: 0,
                     duration: 120,
                     velocity: 100,
+                    off_velocity: 0,
                 }],
             })
             .is_err()

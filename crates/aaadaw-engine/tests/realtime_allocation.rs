@@ -134,6 +134,7 @@ fn render_callback_does_not_allocate_on_the_rendering_thread() {
             tick,
             duration: 8,
             velocity: 100,
+            off_velocity: 0,
         })
         .collect();
     project

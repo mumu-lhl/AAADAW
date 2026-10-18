@@ -30,6 +30,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             tick: 0,
             duration: 480,
             velocity: 96,
+            off_velocity: 0,
         }],
     })?;
     project.apply(DawAction::SetMidiPolyAftertouches {

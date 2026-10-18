@@ -857,7 +857,7 @@ fn push_midi_note_events(
     events.push(Event {
         tick: end_tick,
         order: 0,
-        bytes: vec![0x80 | note.channel(), note.pitch(), 0],
+        bytes: vec![0x80 | note.channel(), note.pitch(), note.off_velocity()],
     });
     events.push(Event {
         tick: start_tick,
@@ -917,7 +917,7 @@ fn push_midi_note_events_in_time_selection(
         events.push(Event {
             tick: end_tick,
             order: 0,
-            bytes: vec![0x80 | note.channel(), note.pitch(), 0],
+            bytes: vec![0x80 | note.channel(), note.pitch(), note.off_velocity()],
         });
         Ok(2)
     } else {

@@ -227,6 +227,7 @@ fn item_nudge_set_edge_test_app() -> (App, PathBuf) {
                 tick: 960,
                 duration: 960,
                 velocity: 96,
+                off_velocity: 0,
             }],
         })
         .unwrap();
@@ -1525,6 +1526,7 @@ fn item_nudge_nonloop_midi_left_trim_preserves_events_at_source_zero() {
                 tick: 0,
                 duration: 960,
                 velocity: 96,
+                off_velocity: 0,
             }],
         })
         .unwrap();
@@ -1956,6 +1958,7 @@ fn item_nudge_set_duplicate_uses_absolute_target_and_copies_mixed_selection() {
                 tick: 120,
                 duration: 240,
                 velocity: 96,
+                off_velocity: 0,
             }],
         })
         .unwrap();
@@ -2510,6 +2513,7 @@ fn item_nudge_set_edge_targets_match_native_staggered_looped_midi_selection() {
                         tick: 960,
                         duration: 960,
                         velocity: 96,
+                        off_velocity: 0,
                     },
                     MidiNoteData {
                         channel: 0,
@@ -2517,6 +2521,7 @@ fn item_nudge_set_edge_targets_match_native_staggered_looped_midi_selection() {
                         tick: 2_880,
                         duration: 960,
                         velocity: 108,
+                        off_velocity: 0,
                     },
                 ],
             })
@@ -2610,6 +2615,7 @@ fn item_nudge_set_left_trim_matches_native_staggered_non_loop_midi_selection() {
                         tick: 2_880,
                         duration: 960,
                         velocity: 108,
+                        off_velocity: 0,
                     }],
                 })
                 .unwrap();
@@ -2624,6 +2630,7 @@ fn item_nudge_set_left_trim_matches_native_staggered_non_loop_midi_selection() {
                             tick: 960,
                             duration: 960,
                             velocity: 96,
+                            off_velocity: 0,
                         },
                         MidiNoteData {
                             channel: 0,
@@ -2631,6 +2638,7 @@ fn item_nudge_set_left_trim_matches_native_staggered_non_loop_midi_selection() {
                             tick: 2_880,
                             duration: 960,
                             velocity: 108,
+                            off_velocity: 0,
                         },
                     ],
                 })
@@ -2784,6 +2792,7 @@ fn item_nudge_set_edge_targets_match_native_staggered_non_loop_midi_selection() 
                         tick: 2_880,
                         duration: 960,
                         velocity: 108,
+                        off_velocity: 0,
                     }],
                 })
                 .unwrap();
@@ -3148,6 +3157,7 @@ fn item_nudge_set_looped_midi_contents_matches_native_across_tempo_change() {
                     tick: 960,
                     duration: 960,
                     velocity: 96,
+                    off_velocity: 0,
                 },
                 MidiNoteData {
                     channel: 0,
@@ -3155,6 +3165,7 @@ fn item_nudge_set_looped_midi_contents_matches_native_across_tempo_change() {
                     tick: 2_880,
                     duration: 960,
                     velocity: 108,
+                    off_velocity: 0,
                 },
             ],
         })
@@ -3242,6 +3253,7 @@ fn item_nudge_set_looped_midi_contents_matches_native_linear_tempo_phase() {
                     tick: 960,
                     duration: 960,
                     velocity: 96,
+                    off_velocity: 0,
                 },
                 MidiNoteData {
                     channel: 0,
@@ -3249,6 +3261,7 @@ fn item_nudge_set_looped_midi_contents_matches_native_linear_tempo_phase() {
                     tick: 2_880,
                     duration: 960,
                     velocity: 108,
+                    off_velocity: 0,
                 },
             ],
         })
@@ -3331,6 +3344,7 @@ fn item_nudge_set_contents_rebases_non_loop_midi_and_preserves_undoable_source_d
                     tick: 960,
                     duration: 1_920,
                     velocity: 96,
+                    off_velocity: 0,
                 },
                 MidiNoteData {
                     channel: 0,
@@ -3338,6 +3352,7 @@ fn item_nudge_set_contents_rebases_non_loop_midi_and_preserves_undoable_source_d
                     tick: 4_800,
                     duration: 1_920,
                     velocity: 108,
+                    off_velocity: 0,
                 },
             ],
         })
@@ -3630,6 +3645,7 @@ fn item_nudge_non_looped_midi_contents_matches_native_source_boundary_and_undoes
                     tick: 2_880,
                     duration: 1_920,
                     velocity: 96,
+                    off_velocity: 0,
                 },
                 MidiNoteData {
                     channel: 0,
@@ -3637,6 +3653,7 @@ fn item_nudge_non_looped_midi_contents_matches_native_source_boundary_and_undoes
                     tick: 6_720,
                     duration: 1_920,
                     velocity: 108,
+                    off_velocity: 0,
                 },
             ],
         })
@@ -3761,6 +3778,7 @@ fn item_nudge_non_looped_midi_contents_rebases_left_from_zero_offset() {
                     tick: 2_880,
                     duration: 1_920,
                     velocity: 96,
+                    off_velocity: 0,
                 },
                 MidiNoteData {
                     channel: 0,
@@ -3768,6 +3786,7 @@ fn item_nudge_non_looped_midi_contents_rebases_left_from_zero_offset() {
                     tick: 6_720,
                     duration: 1_920,
                     velocity: 108,
+                    off_velocity: 0,
                 },
             ],
         })
@@ -3854,6 +3873,7 @@ fn item_nudge_non_looped_midi_contents_clamps_events_at_source_zero_and_offsets_
                     tick: 100,
                     duration: 300,
                     velocity: 96,
+                    off_velocity: 0,
                 },
                 MidiNoteData {
                     channel: 0,
@@ -3861,6 +3881,7 @@ fn item_nudge_non_looped_midi_contents_clamps_events_at_source_zero_and_offsets_
                     tick: 6_720,
                     duration: 1_920,
                     velocity: 108,
+                    off_velocity: 0,
                 },
             ],
         })
@@ -4134,6 +4155,7 @@ fn item_nudge_nonloop_midi_left_trim_matches_linear_tempo_event_edges() {
                     tick: 960,
                     duration: 960,
                     velocity: 96,
+                    off_velocity: 0,
                 },
                 MidiNoteData {
                     channel: 0,
@@ -4141,6 +4163,7 @@ fn item_nudge_nonloop_midi_left_trim_matches_linear_tempo_event_edges() {
                     tick: 2_880,
                     duration: 960,
                     velocity: 108,
+                    off_velocity: 0,
                 },
             ],
         })
@@ -12044,6 +12067,7 @@ fn midi_item_creation_and_note_editing_use_undoable_actions() {
                 tick: 40,
                 duration: 960,
                 velocity: 100,
+                off_velocity: 0,
             },
         })
         .expect("test note should move off-grid");
@@ -12095,6 +12119,7 @@ fn midi_editor_quantize_moves_only_selected_notes_on_the_default_editor_grid() {
                     tick: 20,
                     duration: 120,
                     velocity: 96,
+                    off_velocity: 0,
                 },
                 MidiNoteData {
                     channel: 2,
@@ -12102,6 +12127,7 @@ fn midi_editor_quantize_moves_only_selected_notes_on_the_default_editor_grid() {
                     tick: 170,
                     duration: 90,
                     velocity: 100,
+                    off_velocity: 0,
                 },
                 MidiNoteData {
                     channel: 0,
@@ -12109,6 +12135,7 @@ fn midi_editor_quantize_moves_only_selected_notes_on_the_default_editor_grid() {
                     tick: 350,
                     duration: 80,
                     velocity: 80,
+                    off_velocity: 0,
                 },
             ],
         })
@@ -12157,6 +12184,7 @@ fn midi_editor_humanize_dialog_defaults_to_selected_notes_and_is_undoable() {
                     tick: 170,
                     duration: 90,
                     velocity: 70,
+                    off_velocity: 0,
                 },
                 MidiNoteData {
                     channel: 2,
@@ -12164,6 +12192,7 @@ fn midi_editor_humanize_dialog_defaults_to_selected_notes_and_is_undoable() {
                     tick: 350,
                     duration: 110,
                     velocity: 80,
+                    off_velocity: 0,
                 },
                 MidiNoteData {
                     channel: 0,
@@ -12171,6 +12200,7 @@ fn midi_editor_humanize_dialog_defaults_to_selected_notes_and_is_undoable() {
                     tick: 550,
                     duration: 150,
                     velocity: 90,
+                    off_velocity: 0,
                 },
             ],
         })
@@ -12319,6 +12349,7 @@ fn midi_editor_multichannel_invert_shows_the_complement_and_drops_hidden_selecti
                     tick: 100,
                     duration: 90,
                     velocity: 80,
+                    off_velocity: 0,
                 },
                 MidiNoteData {
                     channel: 1,
@@ -12326,6 +12357,7 @@ fn midi_editor_multichannel_invert_shows_the_complement_and_drops_hidden_selecti
                     tick: 300,
                     duration: 90,
                     velocity: 80,
+                    off_velocity: 0,
                 },
                 MidiNoteData {
                     channel: 2,
@@ -12333,6 +12365,7 @@ fn midi_editor_multichannel_invert_shows_the_complement_and_drops_hidden_selecti
                     tick: 500,
                     duration: 90,
                     velocity: 80,
+                    off_velocity: 0,
                 },
             ],
         })
@@ -12413,6 +12446,7 @@ fn midi_editor_transpose_actions_preserve_note_data_and_reject_out_of_range_batc
                     tick: 100,
                     duration: 90,
                     velocity: 80,
+                    off_velocity: 0,
                 },
                 MidiNoteData {
                     channel: 1,
@@ -12420,6 +12454,7 @@ fn midi_editor_transpose_actions_preserve_note_data_and_reject_out_of_range_batc
                     tick: 300,
                     duration: 90,
                     velocity: 81,
+                    off_velocity: 0,
                 },
                 MidiNoteData {
                     channel: 2,
@@ -12427,6 +12462,7 @@ fn midi_editor_transpose_actions_preserve_note_data_and_reject_out_of_range_batc
                     tick: 500,
                     duration: 90,
                     velocity: 82,
+                    off_velocity: 0,
                 },
                 MidiNoteData {
                     channel: 15,
@@ -12434,6 +12470,7 @@ fn midi_editor_transpose_actions_preserve_note_data_and_reject_out_of_range_batc
                     tick: 700,
                     duration: 90,
                     velocity: 83,
+                    off_velocity: 0,
                 },
             ],
         })
@@ -12559,6 +12596,7 @@ fn midi_transpose_dialog_previews_and_cancels_then_commits_all_notes_as_one_edit
                     tick: 100,
                     duration: 90,
                     velocity: 80,
+                    off_velocity: 0,
                 },
                 MidiNoteData {
                     channel: 1,
@@ -12566,6 +12604,7 @@ fn midi_transpose_dialog_previews_and_cancels_then_commits_all_notes_as_one_edit
                     tick: 300,
                     duration: 90,
                     velocity: 81,
+                    off_velocity: 0,
                 },
                 MidiNoteData {
                     channel: 15,
@@ -12573,6 +12612,7 @@ fn midi_transpose_dialog_previews_and_cancels_then_commits_all_notes_as_one_edit
                     tick: 700,
                     duration: 120,
                     velocity: 83,
+                    off_velocity: 0,
                 },
             ],
         })
@@ -12676,6 +12716,7 @@ fn midi_event_list_mode_switches_by_reaper_shortcuts_and_deletes_selected_events
                 tick: 120,
                 duration: 240,
                 velocity: 90,
+                off_velocity: 0,
             }],
         })
         .expect("test MIDI note should be inserted");
@@ -12825,6 +12866,7 @@ fn midi_event_list_arrow_keys_navigate_visible_events_and_keep_ctrl_multiselecti
                     tick: 120,
                     duration: 120,
                     velocity: 90,
+                    off_velocity: 0,
                 },
                 MidiNoteData {
                     channel: 1,
@@ -12832,6 +12874,7 @@ fn midi_event_list_arrow_keys_navigate_visible_events_and_keep_ctrl_multiselecti
                     tick: 180,
                     duration: 120,
                     velocity: 91,
+                    off_velocity: 0,
                 },
             ],
         })
@@ -13058,6 +13101,7 @@ fn midi_event_properties_edits_note_fields_with_apply_ok_cancel_and_undo() {
                 tick: 720,
                 duration: 240,
                 velocity: 91,
+                off_velocity: 37,
             }],
         })
         .expect("test MIDI note should be inserted");
@@ -13070,6 +13114,7 @@ fn midi_event_properties_edits_note_fields_with_apply_ok_cancel_and_undo() {
         tick: note.tick(),
         duration: note.duration(),
         velocity: note.velocity(),
+        off_velocity: note.off_velocity(),
     };
     let original = note_data(&app.project.midi_items()[0].notes()[0]);
 
@@ -13100,6 +13145,12 @@ fn midi_event_properties_edits_note_fields_with_apply_ok_cancel_and_undo() {
             .map(|dialog| dialog.parameter.as_str()),
         Some("60 C4")
     );
+    assert_eq!(
+        app.midi_event_properties_dialog
+            .as_ref()
+            .map(|dialog| dialog.off_value.as_str()),
+        Some("37")
+    );
 
     let _ = app.update(Message::SetMidiEventPropertiesPosition("1.5.00".to_owned()));
     let _ = app.update(Message::AcceptMidiEventProperties);
@@ -13113,6 +13164,7 @@ fn midi_event_properties_edits_note_fields_with_apply_ok_cancel_and_undo() {
     let _ = app.update(Message::SetMidiEventPropertiesChannel("3".to_owned()));
     let _ = app.update(Message::SetMidiEventPropertiesParameter("72".to_owned()));
     let _ = app.update(Message::SetMidiEventPropertiesValue("100".to_owned()));
+    let _ = app.update(Message::SetMidiEventPropertiesOffValue("42".to_owned()));
     let _ = app.update(Message::ApplyMidiEventProperties);
     let note = &app.project.midi_items()[0].notes()[0];
     assert_eq!(note.tick(), 1_440);
@@ -13120,21 +13172,27 @@ fn midi_event_properties_edits_note_fields_with_apply_ok_cancel_and_undo() {
     assert_eq!(note.channel(), 2);
     assert_eq!(note.pitch(), 72);
     assert_eq!(note.velocity(), 100);
+    assert_eq!(note.off_velocity(), 42);
     assert_eq!(app.project.history_cursor(), history_before + 1);
     assert!(app.midi_event_properties_dialog.is_some());
 
     let _ = app.update(Message::SetMidiEventPropertiesValue("101".to_owned()));
+    let _ = app.update(Message::SetMidiEventPropertiesOffValue("+1".to_owned()));
     let _ = app.update(Message::AcceptMidiEventProperties);
     assert!(app.midi_event_properties_dialog.is_none());
     assert_eq!(app.project.midi_items()[0].notes()[0].velocity(), 101);
+    assert_eq!(app.project.midi_items()[0].notes()[0].off_velocity(), 43);
     let _ = app.update(Message::Undo);
     assert_eq!(app.project.midi_items()[0].notes()[0].velocity(), 100);
+    assert_eq!(app.project.midi_items()[0].notes()[0].off_velocity(), 42);
     let _ = app.update(Message::Undo);
     assert_eq!(note_data(&app.project.midi_items()[0].notes()[0]), original);
     let _ = app.update(Message::Redo);
     assert_eq!(app.project.midi_items()[0].notes()[0].velocity(), 100);
+    assert_eq!(app.project.midi_items()[0].notes()[0].off_velocity(), 42);
     let _ = app.update(Message::Redo);
     assert_eq!(app.project.midi_items()[0].notes()[0].velocity(), 101);
+    assert_eq!(app.project.midi_items()[0].notes()[0].off_velocity(), 43);
 
     let history_before_cancel = app.project.history_cursor();
     let _ = app.update(Message::OpenMidiEventProperties(item_id));
@@ -13564,6 +13622,7 @@ fn midi_event_properties_edits_homogeneous_multiselections_and_preserves_mixed_f
                     tick: 240,
                     duration: 120,
                     velocity: 90,
+                    off_velocity: 0,
                 },
                 MidiNoteData {
                     channel: 2,
@@ -13571,6 +13630,7 @@ fn midi_event_properties_edits_homogeneous_multiselections_and_preserves_mixed_f
                     tick: 480,
                     duration: 240,
                     velocity: 100,
+                    off_velocity: 0,
                 },
             ],
         })
@@ -13584,6 +13644,7 @@ fn midi_event_properties_edits_homogeneous_multiselections_and_preserves_mixed_f
             tick: note.tick(),
             duration: note.duration(),
             velocity: note.velocity(),
+            off_velocity: 0,
         })
         .collect::<Vec<_>>();
     let note_ids = app.project.midi_items()[0]
@@ -13852,6 +13913,7 @@ fn midi_event_properties_applies_relative_edits_to_each_selected_event() {
             tick: 240,
             duration: 120,
             velocity: 90,
+            off_velocity: 0,
         },
         MidiNoteData {
             channel: 2,
@@ -13859,6 +13921,7 @@ fn midi_event_properties_applies_relative_edits_to_each_selected_event() {
             tick: 480,
             duration: 240,
             velocity: 100,
+            off_velocity: 0,
         },
     ];
     app.project
@@ -13932,6 +13995,7 @@ fn midi_event_properties_applies_relative_edits_to_each_selected_event() {
             tick: note.tick(),
             duration: note.duration(),
             velocity: note.velocity(),
+            off_velocity: 0,
         })
         .collect::<Vec<_>>();
     assert_eq!(
@@ -13943,6 +14007,7 @@ fn midi_event_properties_applies_relative_edits_to_each_selected_event() {
                 tick: 1_200,
                 duration: 240,
                 velocity: 100,
+                off_velocity: 0,
             },
             MidiNoteData {
                 channel: 3,
@@ -13950,6 +14015,7 @@ fn midi_event_properties_applies_relative_edits_to_each_selected_event() {
                 tick: 1_440,
                 duration: 480,
                 velocity: 110,
+                off_velocity: 0,
             },
         ]
     );
@@ -13966,6 +14032,7 @@ fn midi_event_properties_applies_relative_edits_to_each_selected_event() {
                 tick: note.tick(),
                 duration: note.duration(),
                 velocity: note.velocity(),
+                off_velocity: 0,
             })
             .collect::<Vec<_>>(),
         original_notes
@@ -14058,6 +14125,7 @@ fn midi_editor_quantize_positions_and_ends_changes_only_selected_notes() {
                     tick: 20,
                     duration: 40,
                     velocity: 96,
+                    off_velocity: 0,
                 },
                 MidiNoteData {
                     channel: 2,
@@ -14065,6 +14133,7 @@ fn midi_editor_quantize_positions_and_ends_changes_only_selected_notes() {
                     tick: 170,
                     duration: 90,
                     velocity: 100,
+                    off_velocity: 0,
                 },
                 MidiNoteData {
                     channel: 0,
@@ -14072,6 +14141,7 @@ fn midi_editor_quantize_positions_and_ends_changes_only_selected_notes() {
                     tick: 350,
                     duration: 40,
                     velocity: 80,
+                    off_velocity: 0,
                 },
             ],
         })
@@ -14129,6 +14199,7 @@ fn midi_quantize_dialog_commits_selected_notes_with_strength_and_cancel_discards
                     tick: 170,
                     duration: 90,
                     velocity: 96,
+                    off_velocity: 0,
                 },
                 MidiNoteData {
                     channel: 2,
@@ -14136,6 +14207,7 @@ fn midi_quantize_dialog_commits_selected_notes_with_strength_and_cancel_discards
                     tick: 350,
                     duration: 80,
                     velocity: 100,
+                    off_velocity: 0,
                 },
             ],
         })
@@ -14196,6 +14268,7 @@ fn midi_quantize_dialog_bypass_skips_commit_and_ok_without_recording_an_edit() {
                 tick: 100,
                 duration: 180,
                 velocity: 96,
+                off_velocity: 0,
             }],
         })
         .expect("test note should be inserted");
@@ -14239,6 +14312,7 @@ fn midi_quantize_dialog_applies_all_notes_and_note_ends_as_one_undoable_edit() {
                     tick: 100,
                     duration: 120,
                     velocity: 96,
+                    off_velocity: 0,
                 },
                 MidiNoteData {
                     channel: 2,
@@ -14246,6 +14320,7 @@ fn midi_quantize_dialog_applies_all_notes_and_note_ends_as_one_undoable_edit() {
                     tick: 350,
                     duration: 80,
                     velocity: 100,
+                    off_velocity: 0,
                 },
             ],
         })
@@ -14297,6 +14372,7 @@ fn midi_quantize_dialog_fix_overlaps_defaults_on_and_can_be_disabled() {
                     tick: 100,
                     duration: 200,
                     velocity: 96,
+                    off_velocity: 0,
                 },
                 MidiNoteData {
                     channel: 0,
@@ -14304,6 +14380,7 @@ fn midi_quantize_dialog_fix_overlaps_defaults_on_and_can_be_disabled() {
                     tick: 180,
                     duration: 120,
                     velocity: 96,
+                    off_velocity: 0,
                 },
                 MidiNoteData {
                     channel: 0,
@@ -14311,6 +14388,7 @@ fn midi_quantize_dialog_fix_overlaps_defaults_on_and_can_be_disabled() {
                     tick: 330,
                     duration: 20,
                     velocity: 96,
+                    off_velocity: 0,
                 },
             ],
         })
@@ -14393,6 +14471,7 @@ fn midi_quantize_dialog_keeps_selected_overlapped_note_end_when_fix_overlaps_is_
                     tick: 100,
                     duration: 200,
                     velocity: 96,
+                    off_velocity: 0,
                 },
                 MidiNoteData {
                     channel: 0,
@@ -14400,6 +14479,7 @@ fn midi_quantize_dialog_keeps_selected_overlapped_note_end_when_fix_overlaps_is_
                     tick: 180,
                     duration: 120,
                     velocity: 96,
+                    off_velocity: 0,
                 },
             ],
         })
@@ -14456,6 +14536,7 @@ fn midi_quantize_dialog_routes_selected_overlap_chain_end_to_next_neighbor() {
                     tick: 100,
                     duration: 200,
                     velocity: 96,
+                    off_velocity: 0,
                 },
                 MidiNoteData {
                     channel: 0,
@@ -14463,6 +14544,7 @@ fn midi_quantize_dialog_routes_selected_overlap_chain_end_to_next_neighbor() {
                     tick: 180,
                     duration: 120,
                     velocity: 96,
+                    off_velocity: 0,
                 },
                 MidiNoteData {
                     channel: 0,
@@ -14470,6 +14552,7 @@ fn midi_quantize_dialog_routes_selected_overlap_chain_end_to_next_neighbor() {
                     tick: 330,
                     duration: 150,
                     velocity: 96,
+                    off_velocity: 0,
                 },
                 MidiNoteData {
                     channel: 0,
@@ -14477,6 +14560,7 @@ fn midi_quantize_dialog_routes_selected_overlap_chain_end_to_next_neighbor() {
                     tick: 400,
                     duration: 80,
                     velocity: 96,
+                    off_velocity: 0,
                 },
                 MidiNoteData {
                     channel: 0,
@@ -14484,6 +14568,7 @@ fn midi_quantize_dialog_routes_selected_overlap_chain_end_to_next_neighbor() {
                     tick: 530,
                     duration: 120,
                     velocity: 96,
+                    off_velocity: 0,
                 },
             ],
         })
@@ -14540,6 +14625,7 @@ fn midi_quantize_dialog_uses_the_active_swing_grid_for_notes_and_all_events() {
                     tick: 170,
                     duration: 90,
                     velocity: 96,
+                    off_velocity: 0,
                 },
                 MidiNoteData {
                     channel: 0,
@@ -14547,6 +14633,7 @@ fn midi_quantize_dialog_uses_the_active_swing_grid_for_notes_and_all_events() {
                     tick: 350,
                     duration: 80,
                     velocity: 96,
+                    off_velocity: 0,
                 },
             ],
         })
@@ -14630,6 +14717,7 @@ fn midi_quantize_dialog_applies_note_length_only_to_selected_notes() {
                     tick: 100,
                     duration: 180,
                     velocity: 96,
+                    off_velocity: 0,
                 },
                 MidiNoteData {
                     channel: 2,
@@ -14637,6 +14725,7 @@ fn midi_quantize_dialog_applies_note_length_only_to_selected_notes() {
                     tick: 350,
                     duration: 80,
                     velocity: 100,
+                    off_velocity: 0,
                 },
             ],
         })
@@ -14683,6 +14772,7 @@ fn midi_quantize_dialog_routes_position_and_note_end_only_operations() {
                     tick: 100,
                     duration: 180,
                     velocity: 96,
+                    off_velocity: 0,
                 },
                 MidiNoteData {
                     channel: 2,
@@ -14690,6 +14780,7 @@ fn midi_quantize_dialog_routes_position_and_note_end_only_operations() {
                     tick: 350,
                     duration: 80,
                     velocity: 100,
+                    off_velocity: 0,
                 },
             ],
         })
@@ -14750,6 +14841,7 @@ fn midi_quantize_dialog_all_events_quantizes_notes_controllers_and_pitch_bends_t
                     tick: 100,
                     duration: 180,
                     velocity: 96,
+                    off_velocity: 0,
                 },
                 MidiNoteData {
                     channel: 0,
@@ -14757,6 +14849,7 @@ fn midi_quantize_dialog_all_events_quantizes_notes_controllers_and_pitch_bends_t
                     tick: 350,
                     duration: 80,
                     velocity: 96,
+                    off_velocity: 0,
                 },
             ],
         })
@@ -14857,6 +14950,7 @@ fn midi_quantize_dialog_selected_events_preserves_unselected_events_and_selectio
                     tick: 170,
                     duration: 80,
                     velocity: 96,
+                    off_velocity: 0,
                 },
                 MidiNoteData {
                     channel: 0,
@@ -14864,6 +14958,7 @@ fn midi_quantize_dialog_selected_events_preserves_unselected_events_and_selectio
                     tick: 350,
                     duration: 80,
                     velocity: 96,
+                    off_velocity: 0,
                 },
                 MidiNoteData {
                     channel: 0,
@@ -14871,6 +14966,7 @@ fn midi_quantize_dialog_selected_events_preserves_unselected_events_and_selectio
                     tick: 550,
                     duration: 80,
                     velocity: 96,
+                    off_velocity: 0,
                 },
             ],
         })
@@ -15039,6 +15135,7 @@ fn midi_editor_quantize_grid_conversion_matches_every_musical_division() {
                 tick: 0,
                 duration: 10,
                 velocity: 96,
+                off_velocity: 0,
             }],
         })
         .expect("test MIDI note should be inserted");
@@ -15059,6 +15156,7 @@ fn midi_editor_quantize_grid_conversion_matches_every_musical_division() {
                     tick: interval + 1,
                     duration: 10,
                     velocity: 96,
+                    off_velocity: 0,
                 },
             })
             .expect("moving the test note off-grid should succeed");
@@ -15093,6 +15191,7 @@ fn piano_roll_copy_drag_adds_fresh_notes_and_undoes_as_one_action() {
             tick: 240,
             duration: 240,
             velocity: 90,
+            off_velocity: 37,
         },
     ));
     let source_id = app.project.midi_items()[0].notes()[0].id();
@@ -15109,6 +15208,7 @@ fn piano_roll_copy_drag_adds_fresh_notes_and_undoes_as_one_action() {
             tick: 480,
             duration: 240,
             velocity: 90,
+            off_velocity: 37,
         }],
     ));
 
@@ -15117,6 +15217,7 @@ fn piano_roll_copy_drag_adds_fresh_notes_and_undoes_as_one_action() {
     assert_eq!(notes[0], source);
     assert_eq!(notes[1].pitch(), 61);
     assert_eq!(notes[1].tick(), 480);
+    assert_eq!(notes[1].off_velocity(), 37);
     assert_ne!(notes[1].id(), source_id);
     assert_eq!(
         app.midi_editor_selected_notes,
@@ -15155,6 +15256,7 @@ fn midi_editor_fit_uses_only_visible_notes_after_start_trim() {
                     tick: 300,
                     duration: 240,
                     velocity: 90,
+                    off_velocity: 0,
                 },
                 MidiNoteData {
                     channel: 0,
@@ -15162,6 +15264,7 @@ fn midi_editor_fit_uses_only_visible_notes_after_start_trim() {
                     tick: 1_200,
                     duration: 240,
                     velocity: 100,
+                    off_velocity: 0,
                 },
                 MidiNoteData {
                     channel: 0,
@@ -15169,6 +15272,7 @@ fn midi_editor_fit_uses_only_visible_notes_after_start_trim() {
                     tick: 0,
                     duration: 120,
                     velocity: 100,
+                    off_velocity: 0,
                 },
             ],
         })
@@ -15204,6 +15308,7 @@ fn piano_roll_copy_paste_and_velocity_edits_are_grouped_undoable_actions() {
             tick: 240,
             duration: 240,
             velocity: 90,
+            off_velocity: 37,
         },
     ));
     let _ = app.update(Message::AddMidiNoteAt(
@@ -15214,6 +15319,7 @@ fn piano_roll_copy_paste_and_velocity_edits_are_grouped_undoable_actions() {
             tick: 960,
             duration: 480,
             velocity: 110,
+            off_velocity: 26,
         },
     ));
     let source_ids = app.project.midi_items()[0]
@@ -15233,6 +15339,8 @@ fn piano_roll_copy_paste_and_velocity_edits_are_grouped_undoable_actions() {
     assert_eq!(notes.len(), 4);
     assert_eq!(notes[2].tick(), 1_440);
     assert_eq!(notes[3].tick(), 2_160);
+    assert_eq!(notes[2].off_velocity(), 37);
+    assert_eq!(notes[3].off_velocity(), 26);
     assert_ne!(notes[2].id(), source_ids[0]);
     assert_eq!(
         app.midi_editor_selected_notes,
@@ -15257,6 +15365,7 @@ fn piano_roll_copy_paste_and_velocity_edits_are_grouped_undoable_actions() {
                     tick: note.tick(),
                     duration: note.duration(),
                     velocity: 100,
+                    off_velocity: note.off_velocity(),
                 },
             )
         })
@@ -15267,9 +15376,13 @@ fn piano_roll_copy_paste_and_velocity_edits_are_grouped_undoable_actions() {
             .iter()
             .all(|note| note.velocity() == 100)
     );
+    assert_eq!(app.project.midi_items()[0].notes()[4].off_velocity(), 37);
+    assert_eq!(app.project.midi_items()[0].notes()[5].off_velocity(), 26);
     let _ = app.update(Message::Undo);
     assert_eq!(app.project.midi_items()[0].notes()[4].velocity(), 90);
     assert_eq!(app.project.midi_items()[0].notes()[5].velocity(), 110);
+    assert_eq!(app.project.midi_items()[0].notes()[4].off_velocity(), 37);
+    assert_eq!(app.project.midi_items()[0].notes()[5].off_velocity(), 26);
     let _ = app.update(Message::Redo);
     assert!(
         app.project.midi_items()[0].notes()[4..]
@@ -15294,6 +15407,7 @@ fn piano_roll_copying_a_late_phrase_pastes_after_it_instead_of_near_item_start()
             tick: 2_880,
             duration: 120,
             velocity: 96,
+            off_velocity: 0,
         },
     ));
     let source = &app.project.midi_items()[0].notes()[0];
@@ -15322,6 +15436,7 @@ fn piano_roll_paste_uses_the_caret_and_duplicate_does_not_replace_the_clipboard(
             tick: 2_880,
             duration: 120,
             velocity: 96,
+            off_velocity: 0,
         },
     ));
     let source_id = app.project.midi_items()[0].notes()[0].id();
@@ -15362,6 +15477,7 @@ fn piano_roll_cross_item_paste_uses_the_copied_phrase_position_when_no_caret_is_
             tick: 2_880,
             duration: 120,
             velocity: 96,
+            off_velocity: 0,
         },
     ));
     let source_id = app.project.midi_items()[0].notes()[0].id();
@@ -15395,6 +15511,7 @@ fn piano_roll_paste_rejection_is_visible_as_editor_local_feedback() {
         tick: 0,
         duration: 480,
         velocity: 96,
+        off_velocity: 0,
     }];
     app.status = "Main window status".to_owned();
 
@@ -15428,6 +15545,7 @@ fn piano_roll_paste_uses_its_own_grid_division_and_respects_shared_snap_off() {
         tick: 0,
         duration: 120,
         velocity: 96,
+        off_velocity: 0,
     }];
 
     let _ = app.update(Message::PasteMidiNotes(item_id));
@@ -15454,6 +15572,7 @@ fn piano_roll_navigation_zoom_keeps_its_anchor_and_fit_frames_the_notes() {
             tick: 960,
             duration: 240,
             velocity: 96,
+            off_velocity: 0,
         },
     ));
     let _ = app.update(Message::AddMidiNoteAt(
@@ -15464,6 +15583,7 @@ fn piano_roll_navigation_zoom_keeps_its_anchor_and_fit_frames_the_notes() {
             tick: 2_880,
             duration: 480,
             velocity: 96,
+            off_velocity: 0,
         },
     ));
     let _ = app.update(Message::OpenMidiEditor(item_id));
@@ -15516,6 +15636,7 @@ fn piano_roll_fit_includes_long_phrases_and_wide_pitch_ranges() {
             tick: 0,
             duration: 960,
             velocity: 96,
+            off_velocity: 0,
         },
         MidiNoteData {
             channel: 0,
@@ -15523,6 +15644,7 @@ fn piano_roll_fit_includes_long_phrases_and_wide_pitch_ranges() {
             tick: 40_000,
             duration: 960,
             velocity: 96,
+            off_velocity: 0,
         },
     ] {
         let _ = app.update(Message::AddMidiNoteAt(item_id, note));
@@ -15573,6 +15695,7 @@ fn piano_roll_insert_move_resize_and_delete_use_project_actions() {
             tick: 480,
             duration: 240,
             velocity: 96,
+            off_velocity: 0,
         },
     ));
     let note = &app.project.midi_items()[0].notes()[0];
@@ -15589,6 +15712,7 @@ fn piano_roll_insert_move_resize_and_delete_use_project_actions() {
                 tick: 720,
                 duration: 480,
                 velocity: 96,
+                off_velocity: 0,
             },
         )],
     ));
@@ -17305,6 +17429,7 @@ fn mixed_item_drag_moves_as_one_undoable_action_and_preserves_content() {
                 tick: 480,
                 duration: 720,
                 velocity: 94,
+                off_velocity: 0,
             }],
         })
         .unwrap();
@@ -17408,6 +17533,7 @@ fn mixed_item_copy_drag_duplicates_audio_and_midi_as_one_undoable_action() {
                 tick: 120,
                 duration: 360,
                 velocity: 88,
+                off_velocity: 0,
             }],
         })
         .unwrap();
@@ -17663,6 +17789,7 @@ fn midi_item_edge_trim_keeps_hidden_events_and_is_undoable() {
                 tick: 1_200,
                 duration: 480,
                 velocity: 96,
+                off_velocity: 0,
             }],
         })
         .unwrap();
@@ -17731,6 +17858,7 @@ fn midi_item_start_trim_preserves_content_position_and_can_expand_back() {
                 tick: 1_200,
                 duration: 240,
                 velocity: 96,
+                off_velocity: 0,
             }],
         })
         .unwrap();
@@ -17987,6 +18115,7 @@ fn midi_item_duplicate_is_available_in_shared_command_surfaces_and_undoable() {
                 tick: 120,
                 duration: 240,
                 velocity: 90,
+                off_velocity: 0,
             }],
         })
         .unwrap();
@@ -21221,6 +21350,7 @@ fn time_selection_splits_mixed_items_once_and_preserves_audio_and_midi_content()
                     tick: 0,
                     duration: 1_200,
                     velocity: 100,
+                    off_velocity: 0,
                 },
                 MidiNoteData {
                     channel: 0,
@@ -21228,6 +21358,7 @@ fn time_selection_splits_mixed_items_once_and_preserves_audio_and_midi_content()
                     tick: 1_600,
                     duration: 1_600,
                     velocity: 90,
+                    off_velocity: 0,
                 },
             ],
         })
@@ -21379,6 +21510,7 @@ fn cursor_split_runs_from_action_search_and_boundary_noops_do_not_change_history
                 tick: 0,
                 duration: 1_440,
                 velocity: 100,
+                off_velocity: 0,
             }],
         })
         .unwrap();
@@ -22809,6 +22941,7 @@ fn midi_item_properties_opens_applies_mute_and_keeps_notes_undoable() {
                 tick: 0,
                 duration: 480,
                 velocity: 100,
+                off_velocity: 0,
             }],
         })
         .unwrap();
@@ -23036,6 +23169,7 @@ fn midi_item_properties_edit_loop_source_length_preserves_events_and_undoes() {
                 tick: 120,
                 duration: 240,
                 velocity: 96,
+                off_velocity: 0,
             }],
         })
         .unwrap();

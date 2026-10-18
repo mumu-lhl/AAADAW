@@ -119,6 +119,8 @@ pub struct MidiNoteData {
     pub tick: u64,
     pub duration: u64,
     pub velocity: u8,
+    /// Velocity emitted by the paired Note Off event, in the inclusive range `0..=127`.
+    pub off_velocity: u8,
 }
 
 /// Input data for a MIDI control-change event; `tick` is relative to its item.
@@ -209,6 +211,11 @@ impl MidiNote {
     /// Returns the MIDI velocity in the range `0..=127`.
     pub fn velocity(&self) -> u8 {
         self.data.velocity
+    }
+
+    /// Returns the velocity emitted by this note's paired Note Off event.
+    pub fn off_velocity(&self) -> u8 {
+        self.data.off_velocity
     }
 }
 

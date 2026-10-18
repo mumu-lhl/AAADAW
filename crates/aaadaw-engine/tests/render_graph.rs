@@ -1237,6 +1237,7 @@ fn render_graph_schedules_midi_atomically_with_the_audio_block() {
                 tick: 0,
                 duration: 1,
                 velocity: 100,
+                off_velocity: 0,
             }],
         })
         .expect("MIDI note insertion should succeed");
@@ -1316,6 +1317,7 @@ fn playback_start_and_restart_chase_sustained_midi_notes() {
                 tick: 0,
                 duration: 480,
                 velocity: 100,
+                off_velocity: 0,
             }],
         })
         .expect("MIDI note insertion should succeed");
@@ -1415,6 +1417,7 @@ fn render_graph_repeats_midi_across_loop_boundaries_in_one_callback() {
                 tick: 0,
                 duration: 480,
                 velocity: 100,
+                off_velocity: 0,
             }],
         })
         .expect("sustained note should be added");
@@ -1592,6 +1595,7 @@ fn seek_chases_sustain_state_before_resuming_sustained_notes() {
                 tick: 0,
                 duration: 960,
                 velocity: 100,
+                off_velocity: 0,
             }],
         })
         .expect("MIDI note should be added");
@@ -2130,6 +2134,7 @@ fn midi_output_uses_live_audibility_and_keeps_release_events() {
                     tick: 0,
                     duration: 1,
                     velocity: 100,
+                    off_velocity: 0,
                 },
                 aaadaw_core::MidiNoteData {
                     channel: 0,
@@ -2137,6 +2142,7 @@ fn midi_output_uses_live_audibility_and_keeps_release_events() {
                     tick: 2,
                     duration: 1,
                     velocity: 100,
+                    off_velocity: 0,
                 },
             ],
         })

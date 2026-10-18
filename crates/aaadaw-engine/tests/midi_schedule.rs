@@ -36,6 +36,7 @@ fn project_with_note(pitch: u8, tick: u64, duration: u64) -> (Project, aaadaw_co
                 tick,
                 duration,
                 velocity: 100,
+                off_velocity: 0,
             }],
         })
         .expect("MIDI note insertion should succeed");
@@ -55,6 +56,7 @@ fn event_plan_preserves_note_controller_and_pitch_bend_channels_through_chase() 
                 tick: 0,
                 duration: 480,
                 velocity: 90,
+                off_velocity: 0,
             }],
         })
         .unwrap();
@@ -156,6 +158,22 @@ fn event_plan_preserves_note_controller_and_pitch_bend_channels_through_chase() 
 #[test]
 fn event_plan_uses_tempo_map_and_queries_half_open_sample_blocks() {
     let (mut project, track_id) = project_with_note(69, 480, 240);
+    let item_id = project.midi_items()[0].id();
+    let note = &project.midi_items()[0].notes()[0];
+    project
+        .apply(DawAction::EditMidiNote {
+            item_id,
+            note_id: note.id(),
+            data: MidiNoteData {
+                channel: note.channel(),
+                pitch: note.pitch(),
+                tick: note.tick(),
+                duration: note.duration(),
+                velocity: note.velocity(),
+                off_velocity: 37,
+            },
+        })
+        .expect("setting Note Off velocity should succeed");
     project
         .apply(DawAction::SetTempo {
             start_tick: 960,
@@ -192,7 +210,7 @@ fn event_plan_uses_tempo_map_and_queries_half_open_sample_blocks() {
     );
     let event = output[0].expect("the event should be initialized");
     assert_eq!(event.kind, MidiEventKind::NoteOff);
-    assert_eq!(event.velocity, 0);
+    assert_eq!(event.velocity, 37);
 }
 
 #[test]
@@ -453,6 +471,7 @@ fn event_plan_clips_notes_and_excludes_events_outside_the_midi_item() {
                 tick: 1_200,
                 duration: 120,
                 velocity: 90,
+                off_velocity: 0,
             }],
         })
         .expect("the second note should fit before shortening the clip");
@@ -637,6 +656,7 @@ fn event_plan_applies_midi_source_offset_at_the_visible_start() {
                     tick: 120,
                     duration: 240,
                     velocity: 90,
+                    off_velocity: 0,
                 },
                 MidiNoteData {
                     channel: 0,
@@ -644,6 +664,7 @@ fn event_plan_applies_midi_source_offset_at_the_visible_start() {
                     tick: 600,
                     duration: 720,
                     velocity: 90,
+                    off_velocity: 0,
                 },
             ],
         })
@@ -1217,6 +1238,7 @@ fn active_note_interval_index_matches_brute_force_for_overlapping_ranges() {
             tick: u64::from(index) * 37,
             duration: 83 + u64::from(index % 11) * 41,
             velocity: 90,
+            off_velocity: 0,
         })
         .collect();
     project
@@ -1297,6 +1319,7 @@ fn event_plan_filters_muted_and_non_solo_tracks() {
                     tick: 0,
                     duration: 480,
                     velocity: 100,
+                    off_velocity: 0,
                 }],
             })
             .expect("MIDI note insertion should succeed");
@@ -1358,6 +1381,7 @@ fn event_plan_omits_muted_midi_items_without_changing_other_items() {
                     tick: 0,
                     duration: 480,
                     velocity: 100,
+                    off_velocity: 0,
                 }],
             })
             .expect("MIDI note should insert");
@@ -1427,6 +1451,7 @@ fn soloed_bus_keeps_midi_events_on_tracks_routed_into_it() {
                 tick: 0,
                 duration: 240,
                 velocity: 100,
+                off_velocity: 0,
             }],
         })
         .unwrap();
@@ -1522,6 +1547,7 @@ fn folder_parent_midi_forwarding_obeys_each_main_send_switch() {
                     tick: 0,
                     duration: 240,
                     velocity: 100,
+                    off_velocity: 0,
                 }],
             })
             .unwrap();
@@ -1629,6 +1655,7 @@ fn soloed_audio_send_receiver_routes_midi_to_source_and_destination_tracks() {
                 tick: 0,
                 duration: 240,
                 velocity: 100,
+                off_velocity: 0,
             }],
         })
         .unwrap();
@@ -1873,6 +1900,7 @@ fn soloed_folder_keeps_events_on_child_instruments_through_parent_send() {
                 tick: 0,
                 duration: 240,
                 velocity: 100,
+                off_velocity: 0,
             }],
         })
         .unwrap();

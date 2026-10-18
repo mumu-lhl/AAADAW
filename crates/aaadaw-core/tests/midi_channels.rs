@@ -35,6 +35,7 @@ fn events_can_share_positions_on_distinct_channels_and_reject_invalid_channels()
                     tick: 0,
                     duration: 240,
                     velocity: 100,
+                    off_velocity: 0,
                 },
                 MidiNoteData {
                     pitch: 60,
@@ -42,6 +43,7 @@ fn events_can_share_positions_on_distinct_channels_and_reject_invalid_channels()
                     tick: 0,
                     duration: 240,
                     velocity: 100,
+                    off_velocity: 0,
                 },
             ],
         })
@@ -63,6 +65,7 @@ fn events_can_share_positions_on_distinct_channels_and_reject_invalid_channels()
             tick: 0,
             duration: 240,
             velocity: 100,
+            off_velocity: 0,
         }],
     });
     assert!(matches!(invalid_note, Err(ActionError::InvalidMidiNote)));

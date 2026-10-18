@@ -157,6 +157,7 @@ fn midi_note_insert_data(
         tick,
         duration,
         velocity,
+        off_velocity: 0,
     })
 }
 
@@ -1018,6 +1019,7 @@ fn midi_event_list_view<'a>(
                 event_type,
                 parameter,
                 value,
+                off_value,
                 selected,
                 message,
             ) = match *event {
@@ -1028,6 +1030,7 @@ fn midi_event_list_view<'a>(
                     "Note",
                     pitch_name(snap.note_pitch(item_id, &app.midi_editor_selected_notes, note)),
                     note.velocity().to_string(),
+                    note.off_velocity().to_string(),
                     app.midi_editor_selected_notes.contains(&note.id()),
                     Message::SelectMidiNoteEvent(
                         note.id(),
@@ -1041,6 +1044,7 @@ fn midi_event_list_view<'a>(
                     "CC",
                     midi_event_controller_name(event.controller),
                     event.value.to_string(),
+                    "0".to_owned(),
                     app.midi_editor_selected_controllers.contains(&event),
                     Message::SelectMidiControllerEvent(
                         item_id,
@@ -1055,6 +1059,7 @@ fn midi_event_list_view<'a>(
                     "Pitch",
                     "Pitch Bend".to_owned(),
                     event.value.to_string(),
+                    "0".to_owned(),
                     app.midi_editor_selected_pitch_bends.contains(&event),
                     Message::SelectMidiPitchBendEvent(
                         item_id,
@@ -1069,6 +1074,7 @@ fn midi_event_list_view<'a>(
                     "PC",
                     String::new(),
                     event.program.to_string(),
+                    "0".to_owned(),
                     app.midi_editor_selected_program_changes.contains(&event),
                     Message::SelectMidiProgramChangeEvent(
                         item_id,
@@ -1083,6 +1089,7 @@ fn midi_event_list_view<'a>(
                     "Poly Aftertouch",
                     pitch_name(event.note),
                     event.value.to_string(),
+                    "0".to_owned(),
                     app.midi_editor_selected_poly_aftertouches.contains(&event),
                     Message::SelectMidiPolyAftertouchEvent(
                         item_id,
@@ -1097,6 +1104,7 @@ fn midi_event_list_view<'a>(
                     "Channel Pressure",
                     String::new(),
                     event.value.to_string(),
+                    "0".to_owned(),
                     app.midi_editor_selected_channel_pressures.contains(&event),
                     Message::SelectMidiChannelPressureEvent(
                         item_id,
@@ -1113,7 +1121,7 @@ fn midi_event_list_view<'a>(
                 event_type: event_type.to_owned(),
                 parameter,
                 value,
-                off_value: "0".to_owned(),
+                off_value,
                 selected,
                 message,
             })
@@ -1573,6 +1581,12 @@ fn midi_event_properties_dialog(app: &App, touch_targets: bool) -> Element<'_, M
     let value = iced::widget::text_input("96", &state.value)
         .on_input(Message::SetMidiEventPropertiesValue)
         .width(Length::Fixed(if touch_targets { 104.0 } else { 88.0 }));
+    let off_value = iced::widget::text_input(
+        if state.off_value_mixed { "" } else { "0" },
+        &state.off_value,
+    )
+    .on_input(Message::SetMidiEventPropertiesOffValue)
+    .width(Length::Fixed(if touch_targets { 104.0 } else { 88.0 }));
     let title = if is_program_change {
         "Bank/Program Select"
     } else {
@@ -1789,7 +1803,8 @@ fn midi_event_properties_dialog(app: &App, touch_targets: bool) -> Element<'_, M
                 row![
                     text("Velocity").width(Length::Fixed(76.0)),
                     value,
-                    text("Off value 0 · not modeled").size(11),
+                    text("Off value").width(Length::Fixed(76.0)),
+                    off_value,
                 ]
                 .spacing(SPACING_XS)
                 .align_y(iced::Alignment::Center),
@@ -4564,6 +4579,7 @@ fn note_data(note: &aaadaw_core::MidiNote) -> MidiNoteData {
         tick: note.tick(),
         duration: note.duration(),
         velocity: note.velocity(),
+        off_velocity: note.off_velocity(),
     }
 }
 
@@ -4826,6 +4842,7 @@ mod tests {
                 tick: 0,
                 duration: 240,
                 velocity: 96,
+                off_velocity: 0,
             },
         );
         let selected = HashSet::new();
@@ -4884,6 +4901,7 @@ mod tests {
                 tick: 0,
                 duration: 240,
                 velocity: 96,
+                off_velocity: 0,
             },
         );
         project
@@ -5052,6 +5070,7 @@ mod tests {
                 tick: 960,
                 duration: 120,
                 velocity: 96,
+                off_velocity: 0,
             },
         );
         project
@@ -5098,6 +5117,7 @@ mod tests {
                 tick: 960,
                 duration: 240,
                 velocity: 96,
+                off_velocity: 0,
             })
         );
         assert_eq!(
@@ -5114,6 +5134,7 @@ mod tests {
                 tick: 9_000,
                 duration: 600,
                 velocity: 96,
+                off_velocity: 0,
             })
         );
 
@@ -5176,6 +5197,7 @@ mod tests {
                 tick: 480,
                 duration: 120,
                 velocity: 96,
+                off_velocity: 0,
             },
         );
         let selected = HashSet::new();
@@ -5196,6 +5218,7 @@ mod tests {
                 tick: 2_880,
                 duration: 240,
                 velocity: 96,
+                off_velocity: 0,
             },
         );
         let selected = HashSet::new();
@@ -5229,6 +5252,7 @@ mod tests {
                 tick: 480,
                 duration: 240,
                 velocity: 96,
+                off_velocity: 0,
             },
         );
         let selected = HashSet::new();
@@ -5264,6 +5288,7 @@ mod tests {
                 tick: 0,
                 duration: 120,
                 velocity: 96,
+                off_velocity: 0,
             },
         );
         let item = &project.midi_items()[0];
@@ -5358,6 +5383,7 @@ mod tests {
             tick: 0,
             duration: 120,
             velocity: 96,
+            off_velocity: 0,
         }];
         app.midi_note_clipboard.span_ticks = 120;
 
@@ -5382,6 +5408,7 @@ mod tests {
             tick: 480,
             duration: 240,
             velocity: 96,
+            off_velocity: 0,
         };
         let (project, item_id, _) = project_with_note(3_840, note);
         let item = &project.midi_items()[0];
@@ -5470,6 +5497,7 @@ mod tests {
             tick: 720,
             duration: 240,
             velocity: 96,
+            off_velocity: 0,
         };
         let (_project, _, note_id) = project_with_note(960, note);
         let drag = NoteDrag {
@@ -5500,6 +5528,7 @@ mod tests {
             tick: 0,
             duration: 24,
             velocity: 96,
+            off_velocity: 0,
         };
         let (project, item_id, _) = project_with_note(960, note);
         let roll = PianoRoll {
@@ -5554,6 +5583,7 @@ mod tests {
             tick: 720,
             duration: 240,
             velocity: 96,
+            off_velocity: 0,
         };
         let (project, item_id, _) = project_with_note(960, note);
         let item = &project.midi_items()[0];
@@ -5648,6 +5678,7 @@ mod tests {
             tick: 0,
             duration: 240,
             velocity: 96,
+            off_velocity: 0,
         };
         let (project, item_id, note_id) = project_with_note(960, note);
         let item = &project.midi_items()[0];
@@ -5830,6 +5861,7 @@ mod tests {
             tick: 0,
             duration: 240,
             velocity: 96,
+            off_velocity: 0,
         };
         let (mut project, item_id, _) = project_with_note(3_840, note);
         project
@@ -5979,6 +6011,7 @@ mod tests {
                     tick: 0,
                     duration: 240,
                     velocity: 96,
+                    off_velocity: 0,
                 }],
             })
             .unwrap();
@@ -6307,6 +6340,7 @@ mod tests {
             tick: 0,
             duration: 240,
             velocity: 96,
+            off_velocity: 0,
         };
         let (project, item_id, _) = project_with_note(3_840, note);
         let roll = PianoRoll {
@@ -6360,6 +6394,7 @@ mod tests {
             tick: 0,
             duration: 240,
             velocity: 96,
+            off_velocity: 0,
         };
         let (project, item_id, _) = project_with_note(3_840, note);
         let roll = PianoRoll {
@@ -6444,6 +6479,7 @@ mod tests {
             tick: 480,
             duration: 240,
             velocity: 96,
+            off_velocity: 0,
         };
         let (project, item_id, note_id) = project_with_note(3_840, note);
         let selected = HashSet::new();
@@ -6540,6 +6576,7 @@ mod tests {
             tick: 480,
             duration: 240,
             velocity: 96,
+            off_velocity: 0,
         };
         let (project, item_id, note_id) = project_with_note(3_840, note);
         let selected = HashSet::from([note_id]);
@@ -6644,6 +6681,7 @@ mod tests {
             tick: 0,
             duration: 480,
             velocity: 96,
+            off_velocity: 0,
         };
         let (project, item_id, note_id) = project_with_note(3_840, note);
         let item = &project.midi_items()[0];
@@ -7165,6 +7203,7 @@ mod tests {
                     tick: 120,
                     duration: 240,
                     velocity: 96,
+                    off_velocity: 0,
                 }],
             })
             .unwrap();
@@ -7376,6 +7415,7 @@ mod tests {
                     tick: 120,
                     duration: 240,
                     velocity: 96,
+                    off_velocity: 0,
                 }],
             })
             .unwrap();
@@ -7592,6 +7632,7 @@ mod tests {
                     tick: 20,
                     duration: 10,
                     velocity: 90,
+                    off_velocity: 0,
                 },
             ),
             (
@@ -7602,6 +7643,7 @@ mod tests {
                     tick: 50,
                     duration: 20,
                     velocity: 80,
+                    off_velocity: 0,
                 },
             ),
         ];
@@ -7638,6 +7680,7 @@ mod tests {
                         tick: 500,
                         duration: 100,
                         velocity: 90,
+                        off_velocity: 0,
                     },
                     MidiNoteData {
                         channel: 0,
@@ -7645,6 +7688,7 @@ mod tests {
                         tick: 1_000,
                         duration: 100,
                         velocity: 80,
+                        off_velocity: 0,
                     },
                 ],
             })
@@ -7767,6 +7811,7 @@ mod tests {
                         tick: 0,
                         duration: 240,
                         velocity: 90,
+                        off_velocity: 0,
                     },
                     MidiNoteData {
                         channel: 0,
@@ -7774,6 +7819,7 @@ mod tests {
                         tick: 0,
                         duration: 240,
                         velocity: 90,
+                        off_velocity: 0,
                     },
                 ],
             })
@@ -7836,6 +7882,7 @@ mod tests {
                     tick: 240,
                     duration: 120,
                     velocity: 90,
+                    off_velocity: 37,
                 }],
             })
             .unwrap();
@@ -7897,6 +7944,10 @@ mod tests {
         assert!(matches!(events[1], MidiEventListEntry::PitchBend(_)));
         assert!(matches!(events[2], MidiEventListEntry::ProgramChange(_)));
         assert!(matches!(events[3], MidiEventListEntry::Note(_)));
+        let MidiEventListEntry::Note(note) = events[3] else {
+            unreachable!()
+        };
+        assert_eq!(note.off_velocity(), 37);
         assert!(matches!(events[4], MidiEventListEntry::PolyAftertouch(_)));
         assert!(matches!(events[5], MidiEventListEntry::ChannelPressure(_)));
 
@@ -7968,6 +8019,7 @@ mod tests {
                         tick: 0,
                         duration: 120,
                         velocity: 90,
+                        off_velocity: 0,
                     },
                     MidiNoteData {
                         channel: 1,
@@ -7975,6 +8027,7 @@ mod tests {
                         tick: 240,
                         duration: 120,
                         velocity: 91,
+                        off_velocity: 0,
                     },
                 ],
             })
