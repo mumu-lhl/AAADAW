@@ -35,3 +35,6 @@ fixtures/midi-channel-event-type-note-inverted-aaadaw.png	bcaf9db72ddd987ef152e8
 fixtures/midi-channel-event-type-reaper-native.tsv	b0d44318a5a5931d08819293821ce4be57d2541a4126bb1bbb8da3459a3b6526
 fixtures/midi-channel-event-type-aaadaw.tsv	37c06b31deffb75aa4a4d2a65c4d6f0ccfbba75d67715cd7aad25a029dddbc6e
 crates/aaadaw/examples/midi_channel_filter_demo.rs	3b4f9f17442768f62cf54c4af3bd66e1191f4ae2889e56deb0da811357ba9e79
+aaadaw_sysex_meta_filter_assertion	Event List SysEx/Meta type filter displays opaque Meta/SysEx rows; opaque rows without a channel pass channel-only matching; Invert displays the complemented result.
+aaadaw_sysex_meta_filter_verification	crates/aaadaw/src/app/view/midi_editor.rs::event_list_shows_text_marker_and_sysex_item_events; automation test only, no current-build filter-result screenshot.
+sysex_meta_native_limit	REAPER 7.82 native menu includes Sysex/Meta; row-by-row visibility result has not yet been probed.

@@ -2485,4 +2485,8 @@ Quantize Events 的 All events 和 Selected events 现在还会处理 Program Ch
 
 ### 2026-10-18 MIDI Quantize 加入 SysEx/Meta 事件
 
-All events 和 Selected events 的 Position 路径现在也移动不透明的 SysEx/Meta 行；原始 payload 字节、类型及源顺序保留。Selected events 只移动选中 opaque 行，并在 tick 排序后按事件身份恢复行选择；App 的 Undo/Redo 同样重新映射行索引。Core/App 回归覆盖无效 UTF-8 Meta payload、F0/F7 SysEx payload、未选行保留、跨行排序、只选 opaque 行时的量化、选择恢复及单次 Undo/Redo。Core MIDI quantize 套件 10/10、AAADAW 全套 807/807，workspace strict all-target Clippy (`-D warnings`)、fmt、diff check 和 112 行/15 列唯一 ID parity matrix 均通过。没有 REAPER 7.82 对这些事件类型及同位置碰撞的 Quantize 原厂探测，故仅记录 AAADAW 自动化覆盖；本轮环境也没有 Xvfb/display，未新增桌面截图；`MIDI-QUANTIZE-DIALOG-001`、UI-019 和 P7 继续为 `in_progress`。
+All events 和 Selected events 的 Position 路径现在也移动不透明的 SysEx/Meta 行；原始 payload 字节、类型及源顺序保留。Selected events 只移动选中 opaque 行，并在 tick 排序后按事件身份恢复行选择；App 的 Undo/Redo 同样重新映射行索引。Core/App 回归覆盖无效 UTF-8 Meta payload、F0/F7 SysEx payload、未选行保留、跨行排序、只选 opaque 行时的量化、选择恢复及单次 Undo/Redo。Core MIDI quantize 套件 10/10、AAADAW 全套 808/808，workspace strict all-target Clippy (`-D warnings`)、fmt、diff check 和 112 行/15 列唯一 ID parity matrix 均通过。没有 REAPER 7.82 对这些事件类型及同位置碰撞的 Quantize 原厂探测，故仅记录 AAADAW 自动化覆盖；本轮环境也没有 Xvfb/display，未新增桌面截图；`MIDI-QUANTIZE-DIALOG-001`、UI-019 和 P7 继续为 `in_progress`。
+
+### 2026-10-18 补齐 MIDI Event List 的 SysEx/Meta 类型筛选记录
+
+复核发现 AAADAW 已有 `Sysex/Meta` 过滤选项和 Event List 谓词：Track Name、Text、Marker、SysEx opaque 行可单独显示，行不带 channel 时仍通过 channel-only 筛选，Invert 会显示取反结果。回归 `event_list_shows_text_marker_and_sysex_item_events` 覆盖四行 opaque 事件、Sysex/Meta-only、channel-independent 与 inverted 结果。REAPER 原厂探针已记录菜单有 Sysex/Meta 项，但尚未逐行验证该筛选结果；当前 AAADAW 结果证据为自动化测试，没有新增实窗截图。因此只从“功能缺失”移到“实现待原厂结果对照”，`MIDI-CHANNEL-VIEW-001`、UI-018 和 P7 保持 `in_progress`。
