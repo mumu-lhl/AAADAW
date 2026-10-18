@@ -1,0 +1,11 @@
+version	7.82/linux-x86_64
+theme	Default_7.0.ReaperThemeZip
+action	40056	Mode: Event List	Alt+3
+midi_item_start_seconds	4
+midi_item_end_seconds	8
+project_last_item_end_seconds	12
+initial_edit_cursor_seconds	6
+initial	note_count	4	selection	0,0,0,0
+state	0.000	6.000	4	0,0,0,0
+state	4.835	4.250	4	1,0,0,0
+state	10.140	8.000	4	1,0,0,0

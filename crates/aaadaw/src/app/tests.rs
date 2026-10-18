@@ -13062,6 +13062,85 @@ fn midi_event_list_arrow_keys_navigate_visible_events_and_keep_ctrl_multiselecti
 }
 
 #[test]
+fn midi_event_list_home_selects_first_event_and_end_preserves_selection_at_item_end() {
+    let editor_window_id = iced::window::Id::unique();
+    let mut app = App {
+        midi_editor_window_id: Some(editor_window_id),
+        midi_editor_mode: MidiEditorMode::EventList,
+        ..App::default()
+    };
+    let _ = app.update(Message::AddTrack);
+    let track_id = app.project.tracks()[0].id();
+    app.project
+        .apply(DawAction::InsertMidiItem {
+            track_id,
+            start_tick: 2_400,
+            length_ticks: 3_840,
+        })
+        .expect("test MIDI item should be inserted");
+    let item_id = app.project.midi_items()[0].id();
+    app.project
+        .apply(DawAction::AddMidiNotes {
+            item_id,
+            notes: vec![MidiNoteData {
+                channel: 0,
+                pitch: 60,
+                tick: 480,
+                duration: 240,
+                velocity: 96,
+                off_velocity: 0,
+            }],
+        })
+        .expect("test MIDI note should be inserted");
+    let first_note_id = app.project.midi_items()[0].notes()[0].id();
+    app.midi_editor_item_id = Some(item_id);
+    app.midi_editor_edit_cursor_tick = Some(720);
+    app.midi_note_clipboard.last_paste = Some((item_id, 960));
+    app.timeline.set_edit_cursor_tick(1_920);
+    let snapshot_before = app.project.snapshot();
+    let revision_before = app.revision;
+
+    let home = test_input_event(test_shortcut_input(
+        Key::Named(iced::keyboard::key::Named::Home),
+        Modifiers::NONE,
+    ));
+    let _ = app.update(Message::RuntimeKeyboardEvent(
+        home,
+        iced::event::Status::Ignored,
+        editor_window_id,
+    ));
+    assert_eq!(app.timeline.edit_cursor_tick, 2_880);
+    assert_eq!(app.midi_editor_edit_cursor_tick, Some(480));
+    assert_eq!(
+        app.midi_editor_event_list_cursor,
+        Some(super::MidiEditorEventListCursor::Note(first_note_id))
+    );
+    assert_eq!(
+        app.midi_editor_selected_notes,
+        HashSet::from([first_note_id])
+    );
+    assert_eq!(app.midi_note_clipboard.last_paste, None);
+
+    let end = test_input_event(test_shortcut_input(
+        Key::Named(iced::keyboard::key::Named::End),
+        Modifiers::NONE,
+    ));
+    let _ = app.update(Message::RuntimeKeyboardEvent(
+        end,
+        iced::event::Status::Ignored,
+        editor_window_id,
+    ));
+    assert_eq!(app.timeline.edit_cursor_tick, 6_240);
+    assert_eq!(app.midi_editor_edit_cursor_tick, Some(3_840));
+    assert_eq!(
+        app.midi_editor_selected_notes,
+        HashSet::from([first_note_id])
+    );
+    assert_eq!(app.project.snapshot(), snapshot_before);
+    assert_eq!(app.revision, revision_before);
+}
+
+#[test]
 fn midi_event_list_end_row_navigates_without_becoming_a_project_event() {
     let editor_window_id = iced::window::Id::unique();
     let mut app = App {
@@ -13195,7 +13274,12 @@ fn midi_event_list_end_row_navigates_without_becoming_a_project_event() {
 
 #[test]
 fn empty_midi_event_list_contains_the_terminal_cursor() {
-    let mut app = App::default();
+    let editor_window_id = iced::window::Id::unique();
+    let mut app = App {
+        midi_editor_window_id: Some(editor_window_id),
+        midi_editor_mode: MidiEditorMode::EventList,
+        ..App::default()
+    };
     let _ = app.update(Message::AddTrack);
     let track_id = app.project.tracks()[0].id();
     app.project
@@ -13205,12 +13289,31 @@ fn empty_midi_event_list_contains_the_terminal_cursor() {
             length_ticks: 7_680,
         })
         .unwrap();
+    let item_id = app.project.midi_items()[0].id();
+    app.midi_editor_item_id = Some(item_id);
     let item = &app.project.midi_items()[0];
 
     assert_eq!(
         super::view::midi_event_list_cursors(&app, item),
         [super::MidiEditorEventListCursor::End]
     );
+
+    let home = test_input_event(test_shortcut_input(
+        Key::Named(iced::keyboard::key::Named::Home),
+        Modifiers::NONE,
+    ));
+    let _ = app.update(Message::RuntimeKeyboardEvent(
+        home,
+        iced::event::Status::Ignored,
+        editor_window_id,
+    ));
+    assert_eq!(app.timeline.edit_cursor_tick, 7_680);
+    assert_eq!(app.midi_editor_edit_cursor_tick, Some(7_680));
+    assert_eq!(
+        app.midi_editor_event_list_cursor,
+        Some(super::MidiEditorEventListCursor::End)
+    );
+    assert!(app.midi_editor_selected_notes.is_empty());
 }
 
 #[test]

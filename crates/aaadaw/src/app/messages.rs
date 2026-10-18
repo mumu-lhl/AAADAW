@@ -186,6 +186,12 @@ pub(crate) enum MidiEditorEventListCursorDirection {
     Next,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum MidiEditorCursorBoundary {
+    FirstEvent,
+    End,
+}
+
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) enum MidiEditorChannelSelection {
     #[default]
@@ -628,6 +634,7 @@ pub(crate) enum Message {
     SelectMidiChannelPressureEvent(ItemId, MidiChannelPressureData, bool),
     SelectMidiEditorEventListEnd(bool),
     MoveMidiEditorEventListCursor(MidiEditorEventListCursorDirection, bool, bool),
+    MoveMidiEditorCursorToBoundary(MidiEditorCursorBoundary),
     CopyMidiNotes(ItemId, Vec<NoteId>),
     PasteMidiNotes(ItemId),
     DuplicateMidiNotes(ItemId),

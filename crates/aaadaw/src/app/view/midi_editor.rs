@@ -973,6 +973,37 @@ pub(in crate::app) fn midi_event_list_cursors(
         .collect()
 }
 
+pub(in crate::app) fn midi_event_list_home_target(
+    app: &App,
+    item: &MidiItem,
+) -> Option<(MidiEditorEventListCursor, u64, u64)> {
+    let entry = *midi_event_list_entries(item, midi_snap_for_app(app)).first()?;
+    match entry {
+        MidiEventListEntry::End(tick) => Some((
+            MidiEditorEventListCursor::End,
+            tick,
+            item.start_tick().saturating_add(item.length_ticks()),
+        )),
+        _ => {
+            let content_tick = entry.tick();
+            let position = item.project_position_at_content_tick(content_tick);
+            let local_tick = position.map_or_else(
+                || {
+                    content_tick
+                        .saturating_sub(item.source_offset_ticks())
+                        .min(item.length_ticks())
+                },
+                |position| position.tick().saturating_sub(item.start_tick()),
+            );
+            let project_tick = position.map_or_else(
+                || item.start_tick().saturating_add(local_tick),
+                |position| position.tick(),
+            );
+            Some((entry.cursor(), local_tick, project_tick))
+        }
+    }
+}
+
 fn midi_event_list_view<'a>(
     app: &'a App,
     item: &'a MidiItem,

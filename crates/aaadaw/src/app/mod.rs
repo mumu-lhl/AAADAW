@@ -123,10 +123,11 @@ mod x11_plugin_editor;
 
 pub(crate) use messages::{
     MainMenu, MainWorkspace, MenuNavigation, Message, MidiEditorChannelSelection,
-    MidiEditorEventKind, MidiEditorEventListCursor, MidiEditorEventListCursorDirection,
-    MidiEditorEventTypeFilter, MidiEditorLane, MidiEditorMode, MidiEditorTool, MidiHumanizeScope,
-    MidiQuantizeOperation, MidiQuantizeScope, MidiTransposeScope, MobilePanel, PathPickerTarget,
-    PendingProjectTransition, SettingsCategory, TimeMapTab,
+    MidiEditorCursorBoundary, MidiEditorEventKind, MidiEditorEventListCursor,
+    MidiEditorEventListCursorDirection, MidiEditorEventTypeFilter, MidiEditorLane, MidiEditorMode,
+    MidiEditorTool, MidiHumanizeScope, MidiQuantizeOperation, MidiQuantizeScope,
+    MidiTransposeScope, MobilePanel, PathPickerTarget, PendingProjectTransition, SettingsCategory,
+    TimeMapTab,
 };
 
 #[derive(Clone)]
@@ -5133,6 +5134,65 @@ impl App {
                     extend_selection,
                 );
             }
+            Message::MoveMidiEditorCursorToBoundary(boundary) => {
+                let Some(item_id) = self.midi_editor_item_id else {
+                    return task;
+                };
+                let Some(item) = self
+                    .project
+                    .midi_items()
+                    .iter()
+                    .find(|item| item.id() == item_id)
+                else {
+                    return task;
+                };
+                let (local_tick, project_tick) = match boundary {
+                    MidiEditorCursorBoundary::FirstEvent => {
+                        let Some((cursor, local_tick, project_tick)) =
+                            view::midi_event_list_home_target(self, item)
+                        else {
+                            return task;
+                        };
+                        self.midi_editor_event_list_cursor = Some(cursor);
+                        self.midi_editor_event_list_anchor = Some(cursor);
+                        self.midi_editor_selected_notes.clear();
+                        self.midi_editor_selected_controllers.clear();
+                        self.midi_editor_selected_pitch_bends.clear();
+                        self.midi_editor_selected_program_changes.clear();
+                        self.midi_editor_selected_poly_aftertouches.clear();
+                        self.midi_editor_selected_channel_pressures.clear();
+                        match cursor {
+                            MidiEditorEventListCursor::Note(note_id) => {
+                                self.midi_editor_selected_notes.insert(note_id);
+                            }
+                            MidiEditorEventListCursor::Controller(event) => {
+                                self.midi_editor_selected_controllers.insert(event);
+                            }
+                            MidiEditorEventListCursor::PitchBend(event) => {
+                                self.midi_editor_selected_pitch_bends.insert(event);
+                            }
+                            MidiEditorEventListCursor::ProgramChange(event) => {
+                                self.midi_editor_selected_program_changes.insert(event);
+                            }
+                            MidiEditorEventListCursor::PolyAftertouch(event) => {
+                                self.midi_editor_selected_poly_aftertouches.insert(event);
+                            }
+                            MidiEditorEventListCursor::ChannelPressure(event) => {
+                                self.midi_editor_selected_channel_pressures.insert(event);
+                            }
+                            MidiEditorEventListCursor::End => {}
+                        }
+                        (local_tick, project_tick)
+                    }
+                    MidiEditorCursorBoundary::End => (
+                        item.length_ticks(),
+                        item.start_tick().saturating_add(item.length_ticks()),
+                    ),
+                };
+                self.midi_editor_edit_cursor_tick = Some(local_tick);
+                self.midi_note_clipboard.last_paste = None;
+                self.set_edit_cursor_position(timeline::EditCursorPosition::Tick(project_tick));
+            }
             Message::DeleteSelectedMidiEvents(item_id) => {
                 let Some(item) = self
                     .project
@@ -6911,6 +6971,18 @@ impl App {
                                 modifiers == &iced::keyboard::Modifiers::CTRL,
                                 modifiers == &iced::keyboard::Modifiers::SHIFT,
                             ));
+                        }
+                    }
+                    if modifiers.is_empty() {
+                        let boundary = match key {
+                            iced::keyboard::key::Named::Home => {
+                                Some(MidiEditorCursorBoundary::FirstEvent)
+                            }
+                            iced::keyboard::key::Named::End => Some(MidiEditorCursorBoundary::End),
+                            _ => None,
+                        };
+                        if let Some(boundary) = boundary {
+                            return self.update(Message::MoveMidiEditorCursorToBoundary(boundary));
                         }
                     }
                 }

@@ -2316,3 +2316,12 @@ Linux REAPER 7.82 / Default 7 空 MIDI item 探针读取到 0 Note、0 CC、0 te
 AAADAW 现在为 MIDI item 的 `length_ticks()` 添加同位置的合成终点行，空 item 也显示它。该行不进入 MIDI 模型或导出，支持点击、上下键游标导航；Delete/Backspace 被限定在 Event List 删除事件的焦点上下文，不会冒泡成主窗口删除 item 的命令。点击终点行后 Delete 不改变工程；选中真实 Note 后 Delete 只删除该 Note，终点行保留。还修复了方向键导航没有清掉 Poly Aftertouch / Channel Pressure 旧选择的问题。原厂空 item 探针、空/四音符 AAADAW fixture 生成器、空白属性窗、空/非空 Event List、Delete no-op 与真实 Note 删除截图均登记在 manifest。REAPER 与 AAADAW 混合事件窗口复核后，非 Note 行（包括终点行）的 Length 现在留空；Aftertouch fixture 的 Note 长度已修正为原厂样例的 0.0.25，Poly Aftertouch/Channel Pressure 长度留空。
 
 稳定桌面二进制 SHA-256 `b0562fe90b2a72570024fddf50a2f275f3566dbf2e66f3bebad80cb852ec0564`，ELF Build ID `3044a174aeb547f866dc8c55ed43b1f585d30f2e`。MIDI Event List 定向测试 **4/4**；workspace Nextest **1472/1472，0 skipped**；strict all-target Clippy (`-D warnings`)、stable fmt、`git diff --check` 通过。Event List manifest **33/33 SHA-256 有效**，parity matrix **111 行 / 15 列 / 111 个唯一 ID**。Ctrl+F2 终点行的空白属性窗尚未实现；REAPER Data、未建模 SysEx/text/meta、Program Change bank/patch、混合类型属性、原厂排序/列与上下文菜单、精确 source-offset/loop BBT 等仍开放，`MIDI-EVENT-LIST-001`、`MIDI-EVENT-PROPERTIES-001`、UI-019 与 P7 继续 `in_progress`。
+
+
+### 2026-10-18 MIDI Event List Home/End 光标定位
+
+Linux REAPER 7.82 / Default 7 的隔离探针使用一个 4–8 秒 MIDI Item（首音符位于 item 内 0.25 秒）和一个延伸到 12 秒的后续 item，避免把 MIDI 边界与工程边界混淆。原厂读回显示初始光标 6 秒；Home 选中首条可见 Note 并移到 4.25 秒，End 移到 MIDI Item 末端 8 秒且保留 Note 选择。空 Item 只有合成 `(end) All Notes Off` 行，Home 会将光标放在该行末端。ReaScript、selection/cursor TSV 与两张原厂真实窗口截图已加入 Event List fixture manifest。
+
+AAADAW 的 Event List 现在以 Home 选中筛选后首条可见事件（包括空 Item 终点行），并将 MIDI 与工程编辑光标移到该事件位置；End 将两种光标移到 Item 末端，同时保留当前事件选择。应用窗口的 Home/End 截图显示首音符行保持选择，主工程读数分别为 `1.1.480 / 0:00.250` 与 `2.1.00 / 0:02.000`。桌面二进制 SHA-256 `a1a6bb936d43fc4219e511572d4533ded013c3204ec0bd2e4c0de6d1d5ba6f21`，ELF Build ID `8b355d36dc6e34b6e2005cc99083f13e63d46095`。
+
+Home/End 与空 Item 定向 App 测试 **2/2** 通过，包含首事件选择、End 保留选择、空 Item 合成行以及导航不修改工程快照/版本。workspace Nextest、严格 all-target Clippy、fixture manifest 哈希校验随后运行；`MIDI-EVENT-LIST-001`、UI-019 和 P7 继续 `in_progress`。REAPER Data、SysEx/text/meta、混合类型属性、排序/列操作、Shift+click 和 source-offset/loop 显示仍开放。
