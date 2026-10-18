@@ -13038,6 +13038,18 @@ fn midi_opaque_meta_properties_edit_text_type_and_position_with_undo_redo() {
     assert!(commands::is_enabled(&app, CommandId::MidiEventProperties));
     let _ = commands::dispatch(&mut app, CommandId::MidiEventProperties);
     assert!(app.midi_event_properties_dialog.is_some());
+    let _ = app.update(Message::MidiOpaqueMetaTextFileFinished(Ok(Some(
+        "Loaded line one\nLoaded line two".into(),
+    ))));
+    let loaded_dialog = app
+        .midi_event_properties_dialog
+        .as_ref()
+        .expect("Meta properties dialog should remain open after text load");
+    assert!(loaded_dialog.opaque_multiline);
+    assert_eq!(
+        loaded_dialog.opaque_payload,
+        "Loaded line one\nLoaded line two"
+    );
     let _ = app.update(Message::SetMidiOpaqueEventPropertiesType(
         super::MidiOpaqueEventPropertiesType::Marker,
     ));

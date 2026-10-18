@@ -78,13 +78,17 @@ fixtures/midi-file-import-native/probe-type1.mid	38a38849f4a82ed615f2056bbd045c4
 fixtures/midi-event-properties-sysex-native.png	9f653ff784d21ea97a35b62f7f3fefe33f7f580d57e61654e67760b3e1ce7d15
 fixtures/midi-event-properties-meta-native.png	7b3688771ac56f0a7e16f7c870fc9e7691eac1b8132bfe3a40c460425d624f85
 fixtures/midi-event-properties-meta-types-native.png	1b2227a9827258a711db9695e725e539875bef0397bcd0ac71304f2e057b832f
-fixtures/midi-event-properties-opaque-sysex-aaadaw.png	a39d768130168725da438d14fe51a09126b2ed3acc4abca0a0b69fe5bddc8e6e
+fixtures/midi-event-properties-opaque-sysex-aaadaw.png	5518bc24665f2ea359ae994afaa0df5463903b52bd830b89bf09004ec622059f
 fixtures/midi-event-properties-opaque-meta-aaadaw.png	174aa8683ec1d6eb38536741b23b618895c3576147ca1616c030127f15b7007a
+fixtures/midi-event-properties-opaque-meta-edited-aaadaw.png	aa29ce64d344e47b2b7640adec998fd7482c33c55844bc9e69fb1282d6a532b0
+fixtures/midi-event-properties-opaque-meta-applied-aaadaw.png	b9bd64aba061487b47df8fd0bb1cde3f7480cd5919a9018ad7f51bbfc780968f
+fixtures/midi-event-properties-opaque-sysex-applied-aaadaw.png	7fbb913dfff575b63dcf38579ef61b6202fe7ac03968c3acdcf2fa69261a0b59
+fixtures/midi-event-properties-opaque-sysex-undo-aaadaw.png	66a3aab571d3e6fde1dc6dce49bf0b3d08eae2067fa5d2a054f59450cc4ab3f5
 native_reaper_sha256	9976f5608068b7a58518969001b00b527fb0de6ed7459e0e5dda6f29878ee254
 native_reaper_build_id	fb9ade2f211bc91a3ee6193630ef17bcf5f6528b
-aaadaw_sha256	12e5c7b8e2d809e29a9a06a7d8af60ca66b09622467bfb06e25908129400362f
-aaadaw_build_id	45e1eacdcf55535084bfcc9cd0dacbe0d0c056dc
-opaque_environment	Linux Xvfb :451, Type 1 MIDI probe; native references from Linux REAPER 7.82 / Default 7; stable AAADAW desktop binary identified above.
-opaque_assertion	Native SysEx properties show F0/F7 framing, hex payload, Position, Save/Load, OK and Cancel; native text Meta properties show Text, nine Meta types, Multi-line text, Position, Load, OK and Cancel. AAADAW real-window captures confirm the current Meta and SysEx dialog layouts. Pointer probes did not visibly apply a Meta type, toggle Multi-line, or open Load, so those interactions remain unverified.
-opaque_verification	crates/aaadaw/src/app/tests.rs::midi_opaque_meta_properties_edit_text_type_and_position_with_undo_redo; crates/aaadaw/src/app/tests.rs::midi_opaque_sysex_properties_reject_invalid_hex_and_undo_valid_edit; crates/aaadaw/src/app/tests.rs::midi_sysex_file_data_preserves_framing_and_payload_for_f0_and_f7_packets; strict all-target Clippy and prior all-target cargo check passed. Targeted cargo test could not build its test binary: the filesystem filled and rustc could not create a temporary directory; tests were not executed.
-opaque_limitation	Meta type/text/multiline/load pointer interactions and SysEx file dialog read/write and byte-for-byte load/save remain unverified; also open are invalid UTF-8 Meta edits, F7 continuation events, structural Meta properties, and exact popup/button focus behavior. MIDI-EVENT-PROPERTIES-001 remains in_progress.
+aaadaw_sha256	10c992915ca62188a73d51df1398534466859bc57bc5c74e56c6c9320ca759e1
+aaadaw_build_id	98091bbc9cf7d861cd9ddde49f75d677c3d2e663
+opaque_environment	Linux Xvfb :455 with the Type 1 MIDI probe and a controlled desktop file portal; native references from Linux REAPER 7.82 / Default 7; stable AAADAW desktop binary identified above.
+opaque_assertion	Native references show the Meta and SysEx property fields. Current-build AAADAW captures show Meta Type=Marker, Multi-line enabled, two-line UTF-8 text loaded and applied to Event List; SysEx payload 43 12→43 12 34 commits as F0 43 12 34 F7 and Undo restores F0 43 12 F7.
+opaque_verification	crates/aaadaw/src/app/tests.rs::midi_opaque_meta_properties_edit_text_type_and_position_with_undo_redo; crates/aaadaw/src/app/tests.rs::midi_opaque_sysex_properties_reject_invalid_hex_and_undo_valid_edit; crates/aaadaw/src/app/tests.rs::midi_sysex_file_data_preserves_framing_and_payload_for_f0_and_f7_packets; crates/aaadaw/src/app/view/midi_editor.rs::tests::opaque_meta_text_keeps_readable_newlines; focused opaque_ App tests pass 5/5 and SysEx F0/F7 framing test passes 1/1; strict all-target Clippy (-D warnings), cargo build, fmt --check, and git diff --check pass; current-build Xvfb screenshots verify Meta load/type/multiline/edit/commit and SysEx edit/Undo.
+opaque_limitation	SysEx `.syx/.sysex` file-dialog read/write, F7 continuation property editing, invalid UTF-8 Meta, structural Meta properties, native multiline edge cases, and Event Properties meter-map/source-offset/loop BBT semantics remain open; MIDI-EVENT-PROPERTIES-001 remains in_progress.

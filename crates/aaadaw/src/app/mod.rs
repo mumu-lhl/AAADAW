@@ -4248,6 +4248,14 @@ impl App {
                     | Message::SetMidiEventPropertiesOffValue(_)
                     | Message::SetMidiEventPropertiesBankMsb(_)
                     | Message::SetMidiEventPropertiesBankLsb(_)
+                    | Message::SetMidiOpaqueEventPropertiesType(_)
+                    | Message::SetMidiOpaqueEventPropertiesPayload(_)
+                    | Message::SetMidiOpaqueEventPropertiesMultiline(_)
+                    | Message::EditMidiOpaqueEventPropertiesText(..)
+                    | Message::PickMidiOpaqueSysExFile(_)
+                    | Message::MidiOpaqueSysExFileFinished(..)
+                    | Message::PickMidiOpaqueMetaTextFile
+                    | Message::MidiOpaqueMetaTextFileFinished(..)
                     | Message::ApplyMidiEventProperties
                     | Message::AcceptMidiEventProperties
                     | Message::CancelMidiEventProperties
@@ -6189,6 +6197,7 @@ impl App {
                             event_type != MidiOpaqueEventPropertiesType::SysEx
                         })
                     {
+                        dialog.opaque_multiline = payload.contains('\n') || payload.contains('\r');
                         dialog.opaque_payload = payload;
                         dialog.opaque_editor =
                             iced::widget::text_editor::Content::with_text(&dialog.opaque_payload);

@@ -1064,7 +1064,7 @@ fn midi_opaque_meta_text(data: &[u8]) -> String {
     let text = String::from_utf8_lossy(data).trim_matches('\0').to_owned();
     if text
         .chars()
-        .all(|character| !character.is_control() || character == '\t')
+        .all(|character| !character.is_control() || matches!(character, '\t' | '\n' | '\r'))
     {
         text
     } else {
@@ -5143,6 +5143,18 @@ fn piano_key_rect(pitch: u8, row_y: f32, row_height: f32) -> Rectangle {
 mod tests {
     use super::*;
     use crate::app::MidiTransposeScope;
+
+    #[test]
+    fn opaque_meta_text_keeps_readable_newlines() {
+        assert_eq!(
+            midi_opaque_meta_text(b"Imported line one\nImported line two"),
+            "Imported line one\nImported line two"
+        );
+        assert_eq!(
+            midi_opaque_meta_text(b"bad\x01text"),
+            "62 61 64 01 74 65 78 74"
+        );
+    }
 
     fn piano_roll_for_test<'a>(
         project: &'a Project,
