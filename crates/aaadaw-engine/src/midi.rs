@@ -27,6 +27,8 @@ pub enum MidiEventKind {
     ControllerChange,
     PitchBend,
     ProgramChange,
+    PolyAftertouch,
+    ChannelPressure,
     NoteOff,
     NoteOn,
 }
@@ -104,6 +106,22 @@ impl MidiInputMessage {
                 None,
                 None,
                 Some(self.data1),
+            ),
+            0xA0 => (
+                MidiEventKind::PolyAftertouch,
+                self.data1,
+                self.data2,
+                None,
+                None,
+                None,
+            ),
+            0xD0 => (
+                MidiEventKind::ChannelPressure,
+                0,
+                self.data1,
+                None,
+                None,
+                None,
             ),
             0xE0 => (
                 MidiEventKind::PitchBend,
@@ -284,6 +302,21 @@ struct ProgramTimeline {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct CompiledPressureValue {
+    absolute_sample: u64,
+    value: u8,
+}
+
+#[derive(Clone, Debug)]
+struct PressureTimeline {
+    track_id: TrackId,
+    channel: u8,
+    note: Option<u8>,
+    kind: MidiEventKind,
+    values: Vec<CompiledPressureValue>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct CompiledMidiNote {
     start_sample: u64,
     end_sample: u64,
@@ -315,6 +348,7 @@ pub struct MidiEventPlan {
     controller_timelines: Vec<ControllerTimeline>,
     pitch_bend_timelines: Vec<PitchBendTimeline>,
     program_timelines: Vec<ProgramTimeline>,
+    pressure_timelines: Vec<PressureTimeline>,
     notes: Vec<CompiledMidiNote>,
     note_interval_nodes: Vec<MidiNoteIntervalNode>,
     note_interval_root: Option<usize>,
@@ -451,6 +485,7 @@ impl MidiEventPlan {
         let mut controller_timelines = Vec::<ControllerTimeline>::new();
         let mut pitch_bend_timelines = Vec::<PitchBendTimeline>::new();
         let mut program_timelines = Vec::<ProgramTimeline>::new();
+        let mut pressure_timelines = Vec::<PressureTimeline>::new();
         let mut midi_routes = HashMap::<TrackId, Vec<TrackId>>::new();
         let mut routed_note_ids = HashMap::<(TrackId, NoteId, usize), NoteId>::new();
         let mut used_note_ids: std::collections::HashSet<_> = project
@@ -736,6 +771,96 @@ impl MidiEventPlan {
                     }
                 }
             }
+            for pressure in item.poly_aftertouches() {
+                for position in item.project_positions_at_content_tick(pressure.tick) {
+                    let absolute_sample = sample_at_midi_position(project, position)?;
+                    for routed_track in routed_tracks {
+                        if events.len() == MAX_COMPILED_MIDI_EVENTS {
+                            return Err(MidiScheduleError::EventLimitExceeded);
+                        }
+                        let timeline = pressure_timelines.iter_mut().find(|timeline| {
+                            timeline.track_id == *routed_track
+                                && timeline.channel == pressure.channel
+                                && timeline.note == Some(pressure.note)
+                        });
+                        let timeline = if let Some(timeline) = timeline {
+                            timeline
+                        } else {
+                            pressure_timelines.push(PressureTimeline {
+                                track_id: *routed_track,
+                                channel: pressure.channel,
+                                note: Some(pressure.note),
+                                kind: MidiEventKind::PolyAftertouch,
+                                values: Vec::new(),
+                            });
+                            pressure_timelines
+                                .last_mut()
+                                .expect("pressure timeline was just inserted")
+                        };
+                        timeline.values.push(CompiledPressureValue {
+                            absolute_sample,
+                            value: pressure.value,
+                        });
+                        events.push(CompiledMidiEvent {
+                            absolute_sample,
+                            track_id: *routed_track,
+                            channel: pressure.channel,
+                            note_id: None,
+                            pitch: pressure.note,
+                            velocity: pressure.value,
+                            controller: None,
+                            pitch_bend: None,
+                            program: None,
+                            kind: MidiEventKind::PolyAftertouch,
+                        });
+                    }
+                }
+            }
+            for pressure in item.channel_pressures() {
+                for position in item.project_positions_at_content_tick(pressure.tick) {
+                    let absolute_sample = sample_at_midi_position(project, position)?;
+                    for routed_track in routed_tracks {
+                        if events.len() == MAX_COMPILED_MIDI_EVENTS {
+                            return Err(MidiScheduleError::EventLimitExceeded);
+                        }
+                        let timeline = pressure_timelines.iter_mut().find(|timeline| {
+                            timeline.track_id == *routed_track
+                                && timeline.channel == pressure.channel
+                                && timeline.note.is_none()
+                        });
+                        let timeline = if let Some(timeline) = timeline {
+                            timeline
+                        } else {
+                            pressure_timelines.push(PressureTimeline {
+                                track_id: *routed_track,
+                                channel: pressure.channel,
+                                note: None,
+                                kind: MidiEventKind::ChannelPressure,
+                                values: Vec::new(),
+                            });
+                            pressure_timelines
+                                .last_mut()
+                                .expect("pressure timeline was just inserted")
+                        };
+                        timeline.values.push(CompiledPressureValue {
+                            absolute_sample,
+                            value: pressure.value,
+                        });
+                        events.push(CompiledMidiEvent {
+                            absolute_sample,
+                            track_id: *routed_track,
+                            channel: pressure.channel,
+                            note_id: None,
+                            pitch: 0,
+                            velocity: pressure.value,
+                            controller: None,
+                            pitch_bend: None,
+                            program: None,
+                            kind: MidiEventKind::ChannelPressure,
+                        });
+                    }
+                }
+            }
         }
 
         events.sort_by_key(|event| {
@@ -759,6 +884,9 @@ impl MidiEventPlan {
         for timeline in &mut program_timelines {
             timeline.values.sort_by_key(|value| value.absolute_sample);
         }
+        for timeline in &mut pressure_timelines {
+            timeline.values.sort_by_key(|value| value.absolute_sample);
+        }
         notes.sort_unstable_by_key(|note| {
             (
                 note.start_sample,
@@ -773,6 +901,7 @@ impl MidiEventPlan {
             controller_timelines,
             pitch_bend_timelines,
             program_timelines,
+            pressure_timelines,
             notes,
             note_interval_nodes,
             note_interval_root,
@@ -967,6 +1096,52 @@ impl MidiEventPlan {
         Ok(written)
     }
 
+    /// Copies the latest per-note or per-channel aftertouch state before `sample` for seek chase.
+    pub fn active_aftertouches_at(
+        &self,
+        sample: u64,
+        output: &mut [Option<ScheduledMidiEvent>],
+    ) -> Result<usize, MidiScheduleError> {
+        let active = self
+            .pressure_timelines
+            .iter()
+            .filter(|timeline| {
+                timeline
+                    .values
+                    .partition_point(|value| value.absolute_sample < sample)
+                    > 0
+            })
+            .count();
+        if output.len() < active {
+            return Err(MidiScheduleError::OutputBufferTooSmall {
+                required: active,
+                available: output.len(),
+            });
+        }
+        let mut written = 0;
+        for timeline in &self.pressure_timelines {
+            let end = timeline
+                .values
+                .partition_point(|value| value.absolute_sample < sample);
+            if let Some(value) = end.checked_sub(1).map(|index| timeline.values[index]) {
+                output[written] = Some(ScheduledMidiEvent {
+                    sample_offset: 0,
+                    track_id: timeline.track_id,
+                    channel: timeline.channel,
+                    note_id: None,
+                    pitch: timeline.note.unwrap_or(0),
+                    velocity: value.value,
+                    controller: None,
+                    pitch_bend: None,
+                    program: None,
+                    kind: timeline.kind,
+                });
+                written += 1;
+            }
+        }
+        Ok(written)
+    }
+
     fn count_active_notes(&self, node_index: Option<usize>, sample: u64) -> usize {
         let Some(node_index) = node_index else {
             return 0;
@@ -1063,6 +1238,8 @@ impl MidiEventPlan {
                         MidiEventKind::ControllerChange
                             | MidiEventKind::PitchBend
                             | MidiEventKind::ProgramChange
+                            | MidiEventKind::PolyAftertouch
+                            | MidiEventKind::ChannelPressure
                     )
             })
             .count()
@@ -1258,6 +1435,16 @@ impl MidiEventPlan {
                 event.sample_offset = 0;
             }
             event_count += count;
+
+            let count =
+                self.active_aftertouches_at(segment.start_sample, &mut output[event_count..])?;
+            for event in output[event_count..event_count + count]
+                .iter_mut()
+                .flatten()
+            {
+                event.sample_offset = 0;
+            }
+            event_count += count;
         }
 
         let scheduled_count = self.events_for_block(
@@ -1365,6 +1552,8 @@ fn midi_event_priority(kind: MidiEventKind, controller: Option<u8>, value: u8) -
     match kind {
         MidiEventKind::PitchBend => 0,
         MidiEventKind::ProgramChange => 1,
+        MidiEventKind::ChannelPressure => 1,
+        MidiEventKind::PolyAftertouch => 4,
         MidiEventKind::ControllerChange if controller == Some(64) && value < 64 => 2,
         MidiEventKind::ControllerChange => 0,
         MidiEventKind::NoteOff => 1,
@@ -1457,6 +1646,24 @@ mod input_tests {
         assert_eq!(event.channel, 3);
         assert_eq!(event.program, Some(41));
         assert_eq!(event.note_id, None);
+    }
+
+    #[test]
+    fn live_midi_decoder_handles_poly_aftertouch_and_channel_pressure() {
+        let mut decoder = MidiInputDecoder::default();
+        let mut messages = Vec::new();
+        decoder.push_bytes(&[0xa3, 60, 37, 0xd3, 74], &mut messages);
+        assert_eq!(messages.len(), 2);
+        let track_id = TrackId::from_value(9).unwrap();
+        let poly = messages[0].scheduled_event(track_id).unwrap();
+        assert_eq!(poly.kind, MidiEventKind::PolyAftertouch);
+        assert_eq!(poly.channel, 3);
+        assert_eq!(poly.pitch, 60);
+        assert_eq!(poly.velocity, 37);
+        let channel = messages[1].scheduled_event(track_id).unwrap();
+        assert_eq!(channel.kind, MidiEventKind::ChannelPressure);
+        assert_eq!(channel.channel, 3);
+        assert_eq!(channel.velocity, 74);
     }
 }
 

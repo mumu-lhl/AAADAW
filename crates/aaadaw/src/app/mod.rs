@@ -17,9 +17,9 @@ use aaadaw_app::{
 use aaadaw_core::ProjectSnapshot;
 use aaadaw_core::{
     AudioItem, DawAction, FxParameterChange, GridFraction, ItemId, MarkerId, MeterPointSnapshot,
-    MidiControllerData, MidiItem, MidiItemPosition, MidiNoteData, MidiPitchBendData,
-    MidiProgramChangeData, NoteId, Project, RazorEditArea, RegionId, TempoCurve, TimeSignature,
-    TrackId,
+    MidiChannelPressureData, MidiControllerData, MidiItem, MidiItemPosition, MidiNoteData,
+    MidiPitchBendData, MidiPolyAftertouchData, MidiProgramChangeData, NoteId, Project,
+    RazorEditArea, RegionId, TempoCurve, TimeSignature, TrackId,
 };
 #[cfg(feature = "audio-device")]
 use aaadaw_engine::{
@@ -487,6 +487,8 @@ struct App {
     midi_editor_selected_controllers: HashSet<MidiControllerData>,
     midi_editor_selected_pitch_bends: HashSet<MidiPitchBendData>,
     midi_editor_selected_program_changes: HashSet<MidiProgramChangeData>,
+    midi_editor_selected_poly_aftertouches: HashSet<MidiPolyAftertouchData>,
+    midi_editor_selected_channel_pressures: HashSet<MidiChannelPressureData>,
     midi_editor_event_list_cursor: Option<MidiEditorEventListCursor>,
     midi_editor_event_list_anchor: Option<MidiEditorEventListCursor>,
     midi_quantize_dialog: Option<MidiQuantizeDialogState>,
@@ -763,6 +765,8 @@ enum MidiEventPropertiesTarget {
     Controllers(Vec<MidiControllerData>),
     PitchBends(Vec<MidiPitchBendData>),
     ProgramChanges(Vec<MidiProgramChangeData>),
+    PolyAftertouches(Vec<MidiPolyAftertouchData>),
+    ChannelPressures(Vec<MidiChannelPressureData>),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -1904,6 +1908,12 @@ impl App {
             MidiEditorEventListCursor::ProgramChange(event) => {
                 self.midi_editor_selected_program_changes.contains(&event)
             }
+            MidiEditorEventListCursor::PolyAftertouch(event) => {
+                self.midi_editor_selected_poly_aftertouches.contains(&event)
+            }
+            MidiEditorEventListCursor::ChannelPressure(event) => {
+                self.midi_editor_selected_channel_pressures.contains(&event)
+            }
         }
     }
 
@@ -1950,6 +1960,8 @@ impl App {
             + self.midi_editor_selected_controllers.len()
             + self.midi_editor_selected_pitch_bends.len()
             + self.midi_editor_selected_program_changes.len()
+            + self.midi_editor_selected_poly_aftertouches.len()
+            + self.midi_editor_selected_channel_pressures.len()
             > 1;
         let collapse_at_cursor = !preserve_selection && !extend_selection && has_multiselection;
         let default_index = match direction {
@@ -2002,6 +2014,12 @@ impl App {
                         MidiEditorEventListCursor::ProgramChange(event) => {
                             self.midi_editor_selected_program_changes.insert(event);
                         }
+                        MidiEditorEventListCursor::PolyAftertouch(event) => {
+                            self.midi_editor_selected_poly_aftertouches.insert(event);
+                        }
+                        MidiEditorEventListCursor::ChannelPressure(event) => {
+                            self.midi_editor_selected_channel_pressures.insert(event);
+                        }
                     }
                 }
             } else {
@@ -2017,6 +2035,12 @@ impl App {
                     }
                     MidiEditorEventListCursor::ProgramChange(event) => {
                         self.midi_editor_selected_program_changes.insert(event);
+                    }
+                    MidiEditorEventListCursor::PolyAftertouch(event) => {
+                        self.midi_editor_selected_poly_aftertouches.insert(event);
+                    }
+                    MidiEditorEventListCursor::ChannelPressure(event) => {
+                        self.midi_editor_selected_channel_pressures.insert(event);
                     }
                 }
             }
@@ -2706,6 +2730,81 @@ impl App {
                     value_mixed,
                 )
             }
+            MidiEventPropertiesTarget::PolyAftertouches(events) => {
+                if events.is_empty() {
+                    return None;
+                }
+                let events = events
+                    .iter()
+                    .map(|target| {
+                        item.poly_aftertouches()
+                            .iter()
+                            .find(|event| *event == target)
+                    })
+                    .collect::<Option<Vec<_>>>()?;
+                let (position, position_mixed) = common_midi_event_property(
+                    events
+                        .iter()
+                        .map(|event| view::midi_event_list_position(event.tick, ppq, meter)),
+                );
+                let (channel, channel_mixed) = common_midi_event_property(
+                    events.iter().map(|event| (event.channel + 1).to_string()),
+                );
+                let (parameter, parameter_mixed) = common_midi_event_property(
+                    events
+                        .iter()
+                        .map(|event| midi_event_pitch_label(event.note)),
+                );
+                let (value, value_mixed) =
+                    common_midi_event_property(events.iter().map(|event| event.value.to_string()));
+                (
+                    position,
+                    position_mixed,
+                    String::new(),
+                    false,
+                    channel,
+                    channel_mixed,
+                    parameter,
+                    parameter_mixed,
+                    value,
+                    value_mixed,
+                )
+            }
+            MidiEventPropertiesTarget::ChannelPressures(events) => {
+                if events.is_empty() {
+                    return None;
+                }
+                let events = events
+                    .iter()
+                    .map(|target| {
+                        item.channel_pressures()
+                            .iter()
+                            .find(|event| *event == target)
+                    })
+                    .collect::<Option<Vec<_>>>()?;
+                let (position, position_mixed) = common_midi_event_property(
+                    events
+                        .iter()
+                        .map(|event| view::midi_event_list_position(event.tick, ppq, meter)),
+                );
+                let (channel, channel_mixed) = common_midi_event_property(
+                    events.iter().map(|event| (event.channel + 1).to_string()),
+                );
+                let (value, value_mixed) =
+                    common_midi_event_property(events.iter().map(|event| event.value.to_string()));
+                (
+                    position,
+                    position_mixed,
+                    String::new(),
+                    false,
+                    channel,
+                    channel_mixed,
+                    String::new(),
+                    false,
+                    value,
+                    value_mixed,
+                )
+            }
         };
         Some(MidiEventPropertiesDialogState {
             item_id,
@@ -3141,6 +3240,183 @@ impl App {
                 }
                 task
             }
+            MidiEventPropertiesTarget::PolyAftertouches(events) => {
+                let Some(note_edit) =
+                    parse_midi_event_pitch_edit(&dialog.parameter, dialog.parameter_mixed)
+                else {
+                    self.midi_editor_feedback = Some("Note must be from 0 to 127".into());
+                    return Task::none();
+                };
+                let Some(value_edit) = parse_midi_event_property_edit(
+                    &dialog.value,
+                    dialog.value_mixed,
+                    |value| value.parse::<i128>().ok(),
+                    parse_midi_event_relative_numeric,
+                ) else {
+                    self.midi_editor_feedback = Some("Value must be from 0 to 127".into());
+                    return Task::none();
+                };
+                let mut poly_aftertouches = item.poly_aftertouches().to_vec();
+                let mut updated_events = Vec::with_capacity(events.len());
+                for event in &events {
+                    let Some(index) = poly_aftertouches
+                        .iter()
+                        .position(|candidate| candidate == event)
+                    else {
+                        self.midi_event_properties_dialog = None;
+                        return Task::none();
+                    };
+                    let Some(channel) = apply_midi_event_properties_edit(
+                        i128::from(event.channel) + 1,
+                        channel_edit,
+                        1,
+                        16,
+                    ) else {
+                        self.midi_editor_feedback = Some("Channel must be from 1 to 16".into());
+                        return Task::none();
+                    };
+                    let Some(tick) = apply_midi_event_properties_edit(
+                        i128::from(event.tick),
+                        position_edit,
+                        0,
+                        i128::from(u64::MAX),
+                    ) else {
+                        self.midi_editor_feedback =
+                            Some("Position is outside its valid range".into());
+                        return Task::none();
+                    };
+                    let Some(note) =
+                        apply_midi_event_properties_edit(i128::from(event.note), note_edit, 0, 127)
+                    else {
+                        self.midi_editor_feedback = Some("Note must be from 0 to 127".into());
+                        return Task::none();
+                    };
+                    let Some(value) = apply_midi_event_properties_edit(
+                        i128::from(event.value),
+                        value_edit,
+                        0,
+                        127,
+                    ) else {
+                        self.midi_editor_feedback = Some("Value must be from 0 to 127".into());
+                        return Task::none();
+                    };
+                    let candidate = MidiPolyAftertouchData {
+                        channel: channel as u8 - 1,
+                        tick: tick as u64,
+                        note: note as u8,
+                        value: value as u8,
+                    };
+                    poly_aftertouches[index] = candidate;
+                    updated_events.push(candidate);
+                }
+                if poly_aftertouches == item.poly_aftertouches() {
+                    self.midi_editor_feedback = None;
+                    if close_dialog {
+                        self.midi_event_properties_dialog = None;
+                    }
+                    return Task::none();
+                }
+                self.midi_editor_feedback = None;
+                let task =
+                    self.update(Message::SetMidiPolyAftertouches(item_id, poly_aftertouches));
+                if self.status.starts_with("Action failed:") {
+                    self.midi_editor_feedback = Some(self.status.clone());
+                    return task;
+                }
+                self.midi_editor_selected_poly_aftertouches =
+                    updated_events.iter().copied().collect();
+                if close_dialog {
+                    self.midi_event_properties_dialog = None;
+                } else {
+                    self.midi_event_properties_dialog = self.midi_event_properties_state(
+                        item_id,
+                        MidiEventPropertiesTarget::PolyAftertouches(updated_events),
+                    );
+                }
+                task
+            }
+            MidiEventPropertiesTarget::ChannelPressures(events) => {
+                let Some(value_edit) = parse_midi_event_property_edit(
+                    &dialog.value,
+                    dialog.value_mixed,
+                    |value| value.parse::<i128>().ok(),
+                    parse_midi_event_relative_numeric,
+                ) else {
+                    self.midi_editor_feedback = Some("Value must be from 0 to 127".into());
+                    return Task::none();
+                };
+                let mut channel_pressures = item.channel_pressures().to_vec();
+                let mut updated_events = Vec::with_capacity(events.len());
+                for event in &events {
+                    let Some(index) = channel_pressures
+                        .iter()
+                        .position(|candidate| candidate == event)
+                    else {
+                        self.midi_event_properties_dialog = None;
+                        return Task::none();
+                    };
+                    let Some(channel) = apply_midi_event_properties_edit(
+                        i128::from(event.channel) + 1,
+                        channel_edit,
+                        1,
+                        16,
+                    ) else {
+                        self.midi_editor_feedback = Some("Channel must be from 1 to 16".into());
+                        return Task::none();
+                    };
+                    let Some(tick) = apply_midi_event_properties_edit(
+                        i128::from(event.tick),
+                        position_edit,
+                        0,
+                        i128::from(u64::MAX),
+                    ) else {
+                        self.midi_editor_feedback =
+                            Some("Position is outside its valid range".into());
+                        return Task::none();
+                    };
+                    let Some(value) = apply_midi_event_properties_edit(
+                        i128::from(event.value),
+                        value_edit,
+                        0,
+                        127,
+                    ) else {
+                        self.midi_editor_feedback = Some("Value must be from 0 to 127".into());
+                        return Task::none();
+                    };
+                    let candidate = MidiChannelPressureData {
+                        channel: channel as u8 - 1,
+                        tick: tick as u64,
+                        value: value as u8,
+                    };
+                    channel_pressures[index] = candidate;
+                    updated_events.push(candidate);
+                }
+                if channel_pressures == item.channel_pressures() {
+                    self.midi_editor_feedback = None;
+                    if close_dialog {
+                        self.midi_event_properties_dialog = None;
+                    }
+                    return Task::none();
+                }
+                self.midi_editor_feedback = None;
+                let task =
+                    self.update(Message::SetMidiChannelPressures(item_id, channel_pressures));
+                if self.status.starts_with("Action failed:") {
+                    self.midi_editor_feedback = Some(self.status.clone());
+                    return task;
+                }
+                self.midi_editor_selected_channel_pressures =
+                    updated_events.iter().copied().collect();
+                if close_dialog {
+                    self.midi_event_properties_dialog = None;
+                } else {
+                    self.midi_event_properties_dialog = self.midi_event_properties_state(
+                        item_id,
+                        MidiEventPropertiesTarget::ChannelPressures(updated_events),
+                    );
+                }
+                task
+            }
         }
     }
 
@@ -3353,6 +3629,8 @@ impl App {
                     | Message::SetMidiControllers(..)
                     | Message::SetMidiPitchBends(..)
                     | Message::SetMidiProgramChanges(..)
+                    | Message::SetMidiPolyAftertouches(..)
+                    | Message::SetMidiChannelPressures(..)
                     | Message::Escape
                     | Message::RuntimeKeyboardEvent(..)
                     | Message::BackgroundTick
@@ -4739,6 +5017,8 @@ impl App {
                     self.midi_editor_selected_controllers.clear();
                     self.midi_editor_selected_pitch_bends.clear();
                     self.midi_editor_selected_program_changes.clear();
+                    self.midi_editor_selected_poly_aftertouches.clear();
+                    self.midi_editor_selected_channel_pressures.clear();
                     self.midi_editor_event_list_cursor = None;
                     self.midi_editor_event_list_anchor = None;
                 } else if self.main_window_id == Some(window_id) {
@@ -4780,6 +5060,8 @@ impl App {
                     self.midi_editor_selected_controllers.clear();
                     self.midi_editor_selected_pitch_bends.clear();
                     self.midi_editor_selected_program_changes.clear();
+                    self.midi_editor_selected_poly_aftertouches.clear();
+                    self.midi_editor_selected_channel_pressures.clear();
                     self.midi_editor_event_list_cursor = None;
                     self.midi_editor_event_list_anchor = None;
                     self.midi_editor_edit_cursor_tick = None;
@@ -4846,6 +5128,18 @@ impl App {
                     .filter(|event| !self.midi_editor_selected_program_changes.contains(event))
                     .copied()
                     .collect::<Vec<_>>();
+                let poly_aftertouches = item
+                    .poly_aftertouches()
+                    .iter()
+                    .filter(|event| !self.midi_editor_selected_poly_aftertouches.contains(event))
+                    .copied()
+                    .collect::<Vec<_>>();
+                let channel_pressures = item
+                    .channel_pressures()
+                    .iter()
+                    .filter(|event| !self.midi_editor_selected_channel_pressures.contains(event))
+                    .copied()
+                    .collect::<Vec<_>>();
                 let mut actions = Vec::new();
                 if !note_ids.is_empty() {
                     actions.push(DawAction::DeleteMidiNotes { item_id, note_ids });
@@ -4868,6 +5162,18 @@ impl App {
                         program_changes,
                     });
                 }
+                if poly_aftertouches.len() != item.poly_aftertouches().len() {
+                    actions.push(DawAction::SetMidiPolyAftertouches {
+                        item_id,
+                        poly_aftertouches,
+                    });
+                }
+                if channel_pressures.len() != item.channel_pressures().len() {
+                    actions.push(DawAction::SetMidiChannelPressures {
+                        item_id,
+                        channel_pressures,
+                    });
+                }
                 if !actions.is_empty() {
                     self.apply_action(
                         DawAction::BatchTransaction {
@@ -4881,6 +5187,8 @@ impl App {
                 self.midi_editor_selected_controllers.clear();
                 self.midi_editor_selected_pitch_bends.clear();
                 self.midi_editor_selected_program_changes.clear();
+                self.midi_editor_selected_poly_aftertouches.clear();
+                self.midi_editor_selected_channel_pressures.clear();
                 self.midi_editor_event_list_cursor = None;
                 self.midi_editor_event_list_anchor = None;
             }
@@ -4895,6 +5203,8 @@ impl App {
                             && self.midi_editor_selected_controllers.is_empty()
                             && self.midi_editor_selected_pitch_bends.is_empty()
                             && self.midi_editor_selected_program_changes.is_empty()
+                            && self.midi_editor_selected_poly_aftertouches.is_empty()
+                            && self.midi_editor_selected_channel_pressures.is_empty()
                         {
                             Some(MidiEventPropertiesTarget::Notes(
                                 item.notes()
@@ -4909,6 +5219,8 @@ impl App {
                             && self.midi_editor_selected_notes.is_empty()
                             && self.midi_editor_selected_pitch_bends.is_empty()
                             && self.midi_editor_selected_program_changes.is_empty()
+                            && self.midi_editor_selected_poly_aftertouches.is_empty()
+                            && self.midi_editor_selected_channel_pressures.is_empty()
                         {
                             Some(MidiEventPropertiesTarget::Controllers(
                                 item.controllers()
@@ -4923,6 +5235,8 @@ impl App {
                             && self.midi_editor_selected_notes.is_empty()
                             && self.midi_editor_selected_controllers.is_empty()
                             && self.midi_editor_selected_program_changes.is_empty()
+                            && self.midi_editor_selected_poly_aftertouches.is_empty()
+                            && self.midi_editor_selected_channel_pressures.is_empty()
                         {
                             Some(MidiEventPropertiesTarget::PitchBends(
                                 item.pitch_bends()
@@ -4937,12 +5251,46 @@ impl App {
                             && self.midi_editor_selected_notes.is_empty()
                             && self.midi_editor_selected_controllers.is_empty()
                             && self.midi_editor_selected_pitch_bends.is_empty()
+                            && self.midi_editor_selected_poly_aftertouches.is_empty()
+                            && self.midi_editor_selected_channel_pressures.is_empty()
                         {
                             Some(MidiEventPropertiesTarget::ProgramChanges(
                                 item.program_changes()
                                     .iter()
                                     .filter(|event| {
                                         self.midi_editor_selected_program_changes.contains(event)
+                                    })
+                                    .copied()
+                                    .collect(),
+                            ))
+                        } else if !self.midi_editor_selected_poly_aftertouches.is_empty()
+                            && self.midi_editor_selected_notes.is_empty()
+                            && self.midi_editor_selected_controllers.is_empty()
+                            && self.midi_editor_selected_pitch_bends.is_empty()
+                            && self.midi_editor_selected_program_changes.is_empty()
+                            && self.midi_editor_selected_channel_pressures.is_empty()
+                        {
+                            Some(MidiEventPropertiesTarget::PolyAftertouches(
+                                item.poly_aftertouches()
+                                    .iter()
+                                    .filter(|event| {
+                                        self.midi_editor_selected_poly_aftertouches.contains(event)
+                                    })
+                                    .copied()
+                                    .collect(),
+                            ))
+                        } else if !self.midi_editor_selected_channel_pressures.is_empty()
+                            && self.midi_editor_selected_notes.is_empty()
+                            && self.midi_editor_selected_controllers.is_empty()
+                            && self.midi_editor_selected_pitch_bends.is_empty()
+                            && self.midi_editor_selected_program_changes.is_empty()
+                            && self.midi_editor_selected_poly_aftertouches.is_empty()
+                        {
+                            Some(MidiEventPropertiesTarget::ChannelPressures(
+                                item.channel_pressures()
+                                    .iter()
+                                    .filter(|event| {
+                                        self.midi_editor_selected_channel_pressures.contains(event)
                                     })
                                     .copied()
                                     .collect(),
@@ -5079,6 +5427,8 @@ impl App {
                     self.midi_editor_selected_controllers.clear();
                     self.midi_editor_selected_pitch_bends.clear();
                     self.midi_editor_selected_program_changes.clear();
+                    self.midi_editor_selected_poly_aftertouches.clear();
+                    self.midi_editor_selected_channel_pressures.clear();
                 }
                 let visible_note_ids = self.visible_midi_note_ids();
                 self.midi_editor_selected_notes = note_ids
@@ -5105,6 +5455,8 @@ impl App {
                     self.midi_editor_selected_controllers.clear();
                     self.midi_editor_selected_pitch_bends.clear();
                     self.midi_editor_selected_program_changes.clear();
+                    self.midi_editor_selected_poly_aftertouches.clear();
+                    self.midi_editor_selected_channel_pressures.clear();
                     self.midi_editor_selected_notes = HashSet::from([note_id]);
                 }
             }
@@ -5123,6 +5475,8 @@ impl App {
                     self.midi_editor_selected_controllers.clear();
                     self.midi_editor_selected_pitch_bends.clear();
                     self.midi_editor_selected_program_changes.clear();
+                    self.midi_editor_selected_poly_aftertouches.clear();
+                    self.midi_editor_selected_channel_pressures.clear();
                     self.midi_editor_selected_controllers.insert(event);
                 } else if !self.midi_editor_selected_controllers.remove(&event) {
                     self.midi_editor_selected_controllers.insert(event);
@@ -5143,6 +5497,8 @@ impl App {
                     self.midi_editor_selected_controllers.clear();
                     self.midi_editor_selected_pitch_bends.clear();
                     self.midi_editor_selected_program_changes.clear();
+                    self.midi_editor_selected_poly_aftertouches.clear();
+                    self.midi_editor_selected_channel_pressures.clear();
                     self.midi_editor_selected_pitch_bends.insert(event);
                 } else if !self.midi_editor_selected_pitch_bends.remove(&event) {
                     self.midi_editor_selected_pitch_bends.insert(event);
@@ -5163,14 +5519,82 @@ impl App {
                     self.midi_editor_selected_controllers.clear();
                     self.midi_editor_selected_pitch_bends.clear();
                     self.midi_editor_selected_program_changes.clear();
+                    self.midi_editor_selected_poly_aftertouches.clear();
+                    self.midi_editor_selected_channel_pressures.clear();
                     self.midi_editor_selected_program_changes.insert(event);
                 } else if !self.midi_editor_selected_program_changes.remove(&event) {
                     self.midi_editor_selected_program_changes.insert(event);
                 }
             }
+            Message::SelectMidiPolyAftertouchEvent(item_id, event, additive)
+                if self.midi_editor_item_id == Some(item_id) =>
+            {
+                let cursor = MidiEditorEventListCursor::PolyAftertouch(event);
+                let visible = self
+                    .project
+                    .midi_items()
+                    .iter()
+                    .find(|item| item.id() == item_id)
+                    .is_some_and(|item| {
+                        view::midi_event_list_cursors(self, item).contains(&cursor)
+                    });
+                if !visible {
+                    return task;
+                }
+                self.midi_editor_feedback = None;
+                self.midi_editor_event_list_cursor = Some(cursor);
+                if !additive || self.midi_editor_event_list_anchor.is_none() {
+                    self.midi_editor_event_list_anchor = Some(cursor);
+                }
+                if !additive {
+                    self.midi_editor_selected_notes.clear();
+                    self.midi_editor_selected_controllers.clear();
+                    self.midi_editor_selected_pitch_bends.clear();
+                    self.midi_editor_selected_program_changes.clear();
+                    self.midi_editor_selected_poly_aftertouches.clear();
+                    self.midi_editor_selected_channel_pressures.clear();
+                    self.midi_editor_selected_poly_aftertouches.insert(event);
+                } else if !self.midi_editor_selected_poly_aftertouches.remove(&event) {
+                    self.midi_editor_selected_poly_aftertouches.insert(event);
+                }
+            }
+            Message::SelectMidiChannelPressureEvent(item_id, event, additive)
+                if self.midi_editor_item_id == Some(item_id) =>
+            {
+                let cursor = MidiEditorEventListCursor::ChannelPressure(event);
+                let visible = self
+                    .project
+                    .midi_items()
+                    .iter()
+                    .find(|item| item.id() == item_id)
+                    .is_some_and(|item| {
+                        view::midi_event_list_cursors(self, item).contains(&cursor)
+                    });
+                if !visible {
+                    return task;
+                }
+                self.midi_editor_feedback = None;
+                self.midi_editor_event_list_cursor = Some(cursor);
+                if !additive || self.midi_editor_event_list_anchor.is_none() {
+                    self.midi_editor_event_list_anchor = Some(cursor);
+                }
+                if !additive {
+                    self.midi_editor_selected_notes.clear();
+                    self.midi_editor_selected_controllers.clear();
+                    self.midi_editor_selected_pitch_bends.clear();
+                    self.midi_editor_selected_program_changes.clear();
+                    self.midi_editor_selected_poly_aftertouches.clear();
+                    self.midi_editor_selected_channel_pressures.clear();
+                    self.midi_editor_selected_channel_pressures.insert(event);
+                } else if !self.midi_editor_selected_channel_pressures.remove(&event) {
+                    self.midi_editor_selected_channel_pressures.insert(event);
+                }
+            }
             Message::SelectMidiControllerEvent(..)
             | Message::SelectMidiPitchBendEvent(..)
-            | Message::SelectMidiProgramChangeEvent(..) => {}
+            | Message::SelectMidiProgramChangeEvent(..)
+            | Message::SelectMidiPolyAftertouchEvent(..)
+            | Message::SelectMidiChannelPressureEvent(..) => {}
             Message::CopyMidiNotes(item_id, note_ids) => {
                 if let Some(item) = self
                     .project
@@ -5536,6 +5960,66 @@ impl App {
                 );
                 if self.revision != previous_revision && self.midi_editor_item_id == Some(item_id) {
                     self.midi_editor_selected_program_changes = selected;
+                }
+            }
+            Message::SetMidiPolyAftertouches(item_id, poly_aftertouches) => {
+                self.midi_editor_feedback = None;
+                let before = self
+                    .project
+                    .midi_items()
+                    .iter()
+                    .find(|item| item.id() == item_id)
+                    .map(|item| item.poly_aftertouches().to_vec())
+                    .unwrap_or_default();
+                let mut selected = self.midi_editor_selected_poly_aftertouches.clone();
+                if before.len() == poly_aftertouches.len() {
+                    for (old, new) in before.iter().zip(&poly_aftertouches) {
+                        if old != new && selected.remove(old) {
+                            selected.insert(*new);
+                        }
+                    }
+                }
+                selected.retain(|event| poly_aftertouches.contains(event));
+                let previous_revision = self.revision;
+                self.apply_action(
+                    DawAction::SetMidiPolyAftertouches {
+                        item_id,
+                        poly_aftertouches,
+                    },
+                    "MIDI Poly Aftertouch events edited",
+                );
+                if self.revision != previous_revision && self.midi_editor_item_id == Some(item_id) {
+                    self.midi_editor_selected_poly_aftertouches = selected;
+                }
+            }
+            Message::SetMidiChannelPressures(item_id, channel_pressures) => {
+                self.midi_editor_feedback = None;
+                let before = self
+                    .project
+                    .midi_items()
+                    .iter()
+                    .find(|item| item.id() == item_id)
+                    .map(|item| item.channel_pressures().to_vec())
+                    .unwrap_or_default();
+                let mut selected = self.midi_editor_selected_channel_pressures.clone();
+                if before.len() == channel_pressures.len() {
+                    for (old, new) in before.iter().zip(&channel_pressures) {
+                        if old != new && selected.remove(old) {
+                            selected.insert(*new);
+                        }
+                    }
+                }
+                selected.retain(|event| channel_pressures.contains(event));
+                let previous_revision = self.revision;
+                self.apply_action(
+                    DawAction::SetMidiChannelPressures {
+                        item_id,
+                        channel_pressures,
+                    },
+                    "MIDI Channel Pressure events edited",
+                );
+                if self.revision != previous_revision && self.midi_editor_item_id == Some(item_id) {
+                    self.midi_editor_selected_channel_pressures = selected;
                 }
             }
             Message::PianoRollPan(beats) => {

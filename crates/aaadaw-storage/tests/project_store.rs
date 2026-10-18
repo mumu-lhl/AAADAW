@@ -1,6 +1,7 @@
 use aaadaw_core::{
-    BpmBasis, DawAction, MeterPointSnapshot, MidiControllerData, MidiNoteData, MidiPitchBendData,
-    MidiProgramChangeData, Project, RazorEditArea, VolumeAutomationPoint,
+    BpmBasis, DawAction, MeterPointSnapshot, MidiChannelPressureData, MidiControllerData,
+    MidiNoteData, MidiPitchBendData, MidiPolyAftertouchData, MidiProgramChangeData, Project,
+    RazorEditArea, VolumeAutomationPoint,
 };
 use aaadaw_storage::{CURRENT_SCHEMA_VERSION, ProjectStore, StorageError};
 use rusqlite::Connection;
@@ -52,11 +53,118 @@ fn schema_59_migration_adds_the_program_change_table() {
 
     Connection::open(&path)
         .unwrap()
-        .execute_batch("DROP TABLE midi_program_changes; PRAGMA user_version = 59;")
+        .execute_batch("DROP TABLE midi_program_changes; DROP TABLE midi_poly_aftertouches; DROP TABLE midi_channel_pressures; PRAGMA user_version = 59;")
         .unwrap();
 
     let store = ProjectStore::open(&path).unwrap();
     assert_eq!(store.schema_version().unwrap(), CURRENT_SCHEMA_VERSION);
+    assert_eq!(store.load().unwrap().snapshot(), project.snapshot());
+    store.close().unwrap();
+    remove_database(&path);
+}
+
+#[test]
+fn schema_60_migration_adds_aftertouch_tables_and_round_trips_events() {
+    let path = project_path();
+    let mut project = Project::new();
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Aftertouch".into(),
+        })
+        .unwrap();
+    let track_id = project.tracks()[0].id();
+    project
+        .apply(DawAction::InsertMidiItem {
+            track_id,
+            start_tick: 0,
+            length_ticks: 960,
+        })
+        .unwrap();
+    let item_id = project.midi_items()[0].id();
+    let mut store = ProjectStore::open(&path).unwrap();
+    store.save(&project).unwrap();
+    store.close().unwrap();
+    Connection::open(&path)
+        .unwrap()
+        .execute_batch(
+            "DROP TABLE midi_poly_aftertouches; DROP TABLE midi_channel_pressures; PRAGMA user_version = 60;",
+        )
+        .unwrap();
+
+    let mut store = ProjectStore::open(&path).unwrap();
+    assert_eq!(store.schema_version().unwrap(), CURRENT_SCHEMA_VERSION);
+    assert_eq!(store.load().unwrap().snapshot(), project.snapshot());
+    project
+        .apply(DawAction::SetMidiPolyAftertouches {
+            item_id,
+            poly_aftertouches: vec![MidiPolyAftertouchData {
+                channel: 2,
+                tick: 240,
+                note: 60,
+                value: 37,
+            }],
+        })
+        .unwrap();
+    project
+        .apply(DawAction::SetMidiChannelPressures {
+            item_id,
+            channel_pressures: vec![MidiChannelPressureData {
+                channel: 2,
+                tick: 480,
+                value: 74,
+            }],
+        })
+        .unwrap();
+    store.save(&project).unwrap();
+    assert_eq!(store.load().unwrap().snapshot(), project.snapshot());
+    store.close().unwrap();
+    remove_database(&path);
+}
+
+#[test]
+fn polyphonic_and_channel_pressure_events_round_trip() {
+    let path = project_path();
+    let mut project = Project::new();
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Aftertouch".into(),
+        })
+        .unwrap();
+    let track_id = project.tracks()[0].id();
+    project
+        .apply(DawAction::InsertMidiItem {
+            track_id,
+            start_tick: 0,
+            length_ticks: 960,
+        })
+        .unwrap();
+    let item_id = project.midi_items()[0].id();
+    project
+        .apply(DawAction::SetMidiPolyAftertouches {
+            item_id,
+            poly_aftertouches: vec![MidiPolyAftertouchData {
+                channel: 4,
+                tick: 240,
+                note: 72,
+                value: 96,
+            }],
+        })
+        .unwrap();
+    project
+        .apply(DawAction::SetMidiChannelPressures {
+            item_id,
+            channel_pressures: vec![MidiChannelPressureData {
+                channel: 4,
+                tick: 480,
+                value: 88,
+            }],
+        })
+        .unwrap();
+
+    let mut store = ProjectStore::open(&path).unwrap();
+    store.save(&project).unwrap();
     assert_eq!(store.load().unwrap().snapshot(), project.snapshot());
     store.close().unwrap();
     remove_database(&path);

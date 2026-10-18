@@ -1,9 +1,10 @@
 use aaadaw_core::{
-    DawAction, FrameRate, MidiControllerData, MidiExportItemScope, MidiExportOptions,
-    MidiExportSelection, MidiExportTimeScope, MidiFileType, MidiItemPosition, MidiMarkerType,
-    MidiNoteData, MidiPitchBendData, MidiProgramChangeData, Project, TempoCurve, TimeSignature,
-    encode_standard_midi, encode_standard_midi_with_conductor_track_name,
-    encode_standard_midi_with_selection, midi_export_has_items_in_scope,
+    DawAction, FrameRate, MidiChannelPressureData, MidiControllerData, MidiExportItemScope,
+    MidiExportOptions, MidiExportSelection, MidiExportTimeScope, MidiFileType, MidiItemPosition,
+    MidiMarkerType, MidiNoteData, MidiPitchBendData, MidiPolyAftertouchData, MidiProgramChangeData,
+    Project, TempoCurve, TimeSignature, encode_standard_midi,
+    encode_standard_midi_with_conductor_track_name, encode_standard_midi_with_selection,
+    midi_export_has_items_in_scope,
 };
 
 #[test]
@@ -116,6 +117,64 @@ fn exports_program_change_status_and_zero_based_program_value() {
     assert!(
         bytes.windows(2).any(|window| window == [0xc5, 41]),
         "SMF should encode Program Change on channel 6 with its zero-based program byte"
+    );
+}
+
+#[test]
+fn exports_polyphonic_aftertouch_and_channel_pressure_status_bytes() {
+    let mut project = Project::new();
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Aftertouch".to_owned(),
+        })
+        .unwrap();
+    let track_id = project.tracks()[0].id();
+    project
+        .apply(DawAction::InsertMidiItem {
+            track_id,
+            start_tick: 0,
+            length_ticks: 960,
+        })
+        .unwrap();
+    let item_id = project.midi_items()[0].id();
+    project
+        .apply(DawAction::SetMidiPolyAftertouches {
+            item_id,
+            poly_aftertouches: vec![MidiPolyAftertouchData {
+                channel: 2,
+                tick: 0,
+                note: 60,
+                value: 37,
+            }],
+        })
+        .unwrap();
+    project
+        .apply(DawAction::SetMidiChannelPressures {
+            item_id,
+            channel_pressures: vec![MidiChannelPressureData {
+                channel: 2,
+                tick: 0,
+                value: 74,
+            }],
+        })
+        .unwrap();
+
+    let bytes = encode_standard_midi(
+        &project,
+        MidiExportOptions {
+            file_type: MidiFileType::Type0,
+            ..MidiExportOptions::for_project(&project)
+        },
+    )
+    .unwrap();
+    assert!(
+        bytes.windows(3).any(|window| window == [0xA2, 60, 37]),
+        "Poly Aftertouch should encode its note and pressure on channel 3"
+    );
+    assert!(
+        bytes.windows(2).any(|window| window == [0xD2, 74]),
+        "Channel Pressure should encode its one-byte pressure value on channel 3"
     );
 }
 

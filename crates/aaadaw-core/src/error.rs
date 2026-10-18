@@ -145,6 +145,8 @@ pub enum ActionError {
     InvalidMidiPitchBend,
     /// A Program Change value, channel, or item position is invalid.
     InvalidMidiProgramChange,
+    InvalidMidiPolyAftertouch,
+    InvalidMidiChannelPressure,
     /// Quantize strength must be finite and in `0.0..=1.0`.
     InvalidQuantizeStrength,
     /// The quantization grid cannot be represented at the project's PPQ.
@@ -340,6 +342,12 @@ impl fmt::Display for ActionError {
             Self::InvalidMidiPitchBend => formatter.write_str("MIDI pitch-bend data is invalid"),
             Self::InvalidMidiProgramChange => {
                 formatter.write_str("MIDI Program Change data is invalid")
+            }
+            Self::InvalidMidiPolyAftertouch => {
+                formatter.write_str("MIDI Polyphonic Aftertouch data is invalid")
+            }
+            Self::InvalidMidiChannelPressure => {
+                formatter.write_str("MIDI Channel Pressure data is invalid")
             }
             Self::InvalidQuantizeStrength => {
                 formatter.write_str("quantize strength must be finite and in 0..=1")

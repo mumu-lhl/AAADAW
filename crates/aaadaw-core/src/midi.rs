@@ -151,6 +151,28 @@ pub struct MidiProgramChangeData {
     pub program: u8,
 }
 
+/// Input data for a MIDI Polyphonic Aftertouch event; `tick` is relative to its item.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct MidiPolyAftertouchData {
+    /// Zero-based MIDI channel in the inclusive range `0..16`.
+    pub channel: u8,
+    pub tick: u64,
+    /// MIDI note number whose pressure is changed.
+    pub note: u8,
+    /// Polyphonic pressure in the range `0..=127`.
+    pub value: u8,
+}
+
+/// Input data for a MIDI Channel Pressure event; `tick` is relative to its item.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct MidiChannelPressureData {
+    /// Zero-based MIDI channel in the inclusive range `0..16`.
+    pub channel: u8,
+    pub tick: u64,
+    /// Channel pressure in the range `0..=127`.
+    pub value: u8,
+}
+
 /// A MIDI note stored in a project.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MidiNote {
@@ -207,6 +229,8 @@ pub struct MidiItem {
     pub(crate) controllers: Arc<Vec<MidiControllerData>>,
     pub(crate) pitch_bends: Arc<Vec<MidiPitchBendData>>,
     pub(crate) program_changes: Arc<Vec<MidiProgramChangeData>>,
+    pub(crate) poly_aftertouches: Arc<Vec<MidiPolyAftertouchData>>,
+    pub(crate) channel_pressures: Arc<Vec<MidiChannelPressureData>>,
 }
 
 impl MidiItem {
@@ -372,5 +396,15 @@ impl MidiItem {
     /// Returns Program Change events sorted by tick, then channel.
     pub fn program_changes(&self) -> &[MidiProgramChangeData] {
         &self.program_changes
+    }
+
+    /// Returns Polyphonic Aftertouch events sorted by tick, then channel and note.
+    pub fn poly_aftertouches(&self) -> &[MidiPolyAftertouchData] {
+        &self.poly_aftertouches
+    }
+
+    /// Returns Channel Pressure events sorted by tick, then channel.
+    pub fn channel_pressures(&self) -> &[MidiChannelPressureData] {
+        &self.channel_pressures
     }
 }

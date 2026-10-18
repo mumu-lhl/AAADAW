@@ -18,7 +18,7 @@ use tempfile::{NamedTempFile, TempPath};
 
 use memmap2::{MmapMut, MmapOptions};
 
-pub const CLAP_IPC_PROTOCOL_VERSION: u32 = 4;
+pub const CLAP_IPC_PROTOCOL_VERSION: u32 = 5;
 pub const CLAP_IPC_CHANNELS: usize = 2;
 pub const CLAP_IPC_MAX_BLOCK_FRAMES: usize = 1024;
 pub const CLAP_IPC_MAX_EVENTS: usize = 1024;
@@ -47,6 +47,8 @@ pub enum ClapIpcMidiKind {
     ControllerChange = 3,
     PitchBend = 4,
     ProgramChange = 5,
+    PolyAftertouch = 6,
+    ChannelPressure = 7,
 }
 
 struct ClapIpcMappingInner {
@@ -690,6 +692,12 @@ fn midi_kind_from_wire(kind: u8) -> Option<crate::MidiEventKind> {
         value if value == ClapIpcMidiKind::ProgramChange as u8 => {
             Some(crate::MidiEventKind::ProgramChange)
         }
+        value if value == ClapIpcMidiKind::PolyAftertouch as u8 => {
+            Some(crate::MidiEventKind::PolyAftertouch)
+        }
+        value if value == ClapIpcMidiKind::ChannelPressure as u8 => {
+            Some(crate::MidiEventKind::ChannelPressure)
+        }
         _ => None,
     }
 }
@@ -723,6 +731,8 @@ impl ClapIpcMidiEvent {
             crate::MidiEventKind::ControllerChange => ClapIpcMidiKind::ControllerChange,
             crate::MidiEventKind::PitchBend => ClapIpcMidiKind::PitchBend,
             crate::MidiEventKind::ProgramChange => ClapIpcMidiKind::ProgramChange,
+            crate::MidiEventKind::PolyAftertouch => ClapIpcMidiKind::PolyAftertouch,
+            crate::MidiEventKind::ChannelPressure => ClapIpcMidiKind::ChannelPressure,
         };
         let note_id = event
             .note_id
@@ -779,6 +789,13 @@ impl ClapIpcMidiEvent {
                     && self.pitch_bend <= 16_383
             }
             kind if kind == ClapIpcMidiKind::ProgramChange as u8 => {
+                self.note_id == Self::NO_NOTE_ID
+                    && self.controller == Self::NO_CONTROLLER
+                    && self.pitch_bend == Self::NO_PITCH_BEND
+            }
+            kind if kind == ClapIpcMidiKind::PolyAftertouch as u8
+                || kind == ClapIpcMidiKind::ChannelPressure as u8 =>
+            {
                 self.note_id == Self::NO_NOTE_ID
                     && self.controller == Self::NO_CONTROLLER
                     && self.pitch_bend == Self::NO_PITCH_BEND
@@ -2018,6 +2035,41 @@ mod tests {
             midi_kind_from_wire(encoded.kind),
             Some(crate::MidiEventKind::ProgramChange)
         );
+
+        for (kind, wire_kind, pitch, velocity) in [
+            (
+                crate::MidiEventKind::PolyAftertouch,
+                ClapIpcMidiKind::PolyAftertouch,
+                60,
+                37,
+            ),
+            (
+                crate::MidiEventKind::ChannelPressure,
+                ClapIpcMidiKind::ChannelPressure,
+                0,
+                74,
+            ),
+        ] {
+            let event = crate::ScheduledMidiEvent {
+                sample_offset: 1,
+                track_id,
+                note_id: None,
+                channel: 3,
+                pitch,
+                velocity,
+                controller: None,
+                pitch_bend: None,
+                program: None,
+                kind,
+            };
+            let encoded = ClapIpcMidiEvent::from_scheduled(event, 8).unwrap();
+            assert_eq!(encoded.kind, wire_kind as u8);
+            assert_eq!(encoded.pitch, pitch);
+            assert_eq!(encoded.velocity, velocity);
+            assert_eq!(encoded.note_id, ClapIpcMidiEvent::NO_NOTE_ID);
+            assert!(encoded.is_valid(8));
+            assert_eq!(midi_kind_from_wire(encoded.kind), Some(kind));
+        }
 
         let mut invalid_offset = note;
         invalid_offset.sample_offset = 8;

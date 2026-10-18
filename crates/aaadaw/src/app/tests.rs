@@ -24,8 +24,9 @@ use crate::timeline::{SnapGrid, TimelineEvent};
 #[cfg(all(feature = "jack-backend", feature = "pipewire-backend"))]
 use aaadaw_app::PlaybackBackend;
 use aaadaw_core::{
-    DawAction, MidiControllerData, MidiItemPosition, MidiNoteData, MidiPitchBendData,
-    MidiProgramChangeData, Project, RazorEditArea, TrackFxPlugin,
+    DawAction, MidiChannelPressureData, MidiControllerData, MidiItemPosition, MidiNoteData,
+    MidiPitchBendData, MidiPolyAftertouchData, MidiProgramChangeData, Project, RazorEditArea,
+    TrackFxPlugin,
 };
 use aaadaw_media::{AudioStreamDecoder, AudioWaveform};
 use aaadaw_storage::{ArrangementViewState, ProjectSessionLock, ProjectStore};
@@ -12362,6 +12363,7 @@ fn midi_editor_multichannel_invert_shows_the_complement_and_drops_hidden_selecti
     );
     assert!(app.midi_editor_selected_notes.is_empty());
 
+    app.midi_editor_mode = MidiEditorMode::EventList;
     let _ = app.update(Message::OpenMidiEditorFilter);
     assert!(app.midi_editor_filter_dialog_open);
     assert_eq!(app.midi_editor_filter_channels, u16::MAX);
@@ -13408,6 +13410,135 @@ fn midi_event_properties_edits_program_changes_using_reaper_zero_based_values() 
     assert!(app.midi_editor_feedback.is_some());
     assert_eq!(app.project.midi_items()[0].program_changes(), [accepted]);
     assert_eq!(app.project.history_cursor(), history_before_invalid);
+}
+
+#[test]
+fn midi_event_properties_edit_poly_aftertouch_and_channel_pressure() {
+    let mut app = App::default();
+    let _ = app.update(Message::AddTrack);
+    let track_id = app.project.tracks()[0].id();
+    app.project
+        .apply(DawAction::InsertMidiItem {
+            track_id,
+            start_tick: 0,
+            length_ticks: 3_840,
+        })
+        .expect("test MIDI item should be inserted");
+    let item_id = app.project.midi_items()[0].id();
+
+    let original_poly = MidiPolyAftertouchData {
+        channel: 2,
+        tick: 480,
+        note: 60,
+        value: 37,
+    };
+    app.project
+        .apply(DawAction::SetMidiPolyAftertouches {
+            item_id,
+            poly_aftertouches: vec![original_poly],
+        })
+        .expect("poly aftertouch should be inserted");
+    app.midi_editor_item_id = Some(item_id);
+    app.midi_editor_selected_poly_aftertouches = HashSet::from([original_poly]);
+    let _ = app.update(Message::OpenMidiEventProperties(item_id));
+    let dialog = app
+        .midi_event_properties_dialog
+        .as_ref()
+        .expect("selected poly aftertouch should open properties");
+    assert_eq!(dialog.position, "1.1.50");
+    assert_eq!(dialog.channel, "3");
+    assert_eq!(dialog.parameter, "60 C4");
+    assert_eq!(dialog.value, "37");
+
+    let history_before = app.project.history_cursor();
+    let _ = app.update(Message::SetMidiEventPropertiesPosition("1.2.50".to_owned()));
+    let _ = app.update(Message::SetMidiEventPropertiesChannel("4".to_owned()));
+    let _ = app.update(Message::SetMidiEventPropertiesParameter("62".to_owned()));
+    let _ = app.update(Message::SetMidiEventPropertiesValue("42".to_owned()));
+    let _ = app.update(Message::ApplyMidiEventProperties);
+    let edited_poly = MidiPolyAftertouchData {
+        channel: 3,
+        tick: 1_440,
+        note: 62,
+        value: 42,
+    };
+    assert_eq!(
+        app.project.midi_items()[0].poly_aftertouches(),
+        [edited_poly]
+    );
+    assert_eq!(app.project.history_cursor(), history_before + 1);
+    assert!(app.midi_event_properties_dialog.is_some());
+    let _ = app.update(Message::CancelMidiEventProperties);
+    let _ = app.update(Message::Undo);
+    assert_eq!(
+        app.project.midi_items()[0].poly_aftertouches(),
+        [original_poly]
+    );
+    let _ = app.update(Message::Redo);
+    assert_eq!(
+        app.project.midi_items()[0].poly_aftertouches(),
+        [edited_poly]
+    );
+
+    let history_before_invalid = app.project.history_cursor();
+    app.midi_editor_selected_poly_aftertouches = HashSet::from([edited_poly]);
+    let _ = app.update(Message::OpenMidiEventProperties(item_id));
+    let _ = app.update(Message::SetMidiEventPropertiesValue("128".to_owned()));
+    let _ = app.update(Message::AcceptMidiEventProperties);
+    assert!(app.midi_event_properties_dialog.is_some());
+    assert!(app.midi_editor_feedback.is_some());
+    assert_eq!(
+        app.project.midi_items()[0].poly_aftertouches(),
+        [edited_poly]
+    );
+    assert_eq!(app.project.history_cursor(), history_before_invalid);
+    let _ = app.update(Message::CancelMidiEventProperties);
+
+    let original_channel = MidiChannelPressureData {
+        channel: 1,
+        tick: 720,
+        value: 74,
+    };
+    app.project
+        .apply(DawAction::SetMidiChannelPressures {
+            item_id,
+            channel_pressures: vec![original_channel],
+        })
+        .expect("channel pressure should be inserted");
+    app.midi_editor_selected_poly_aftertouches.clear();
+    app.midi_editor_selected_channel_pressures = HashSet::from([original_channel]);
+    let _ = app.update(Message::OpenMidiEventProperties(item_id));
+    let dialog = app
+        .midi_event_properties_dialog
+        .as_ref()
+        .expect("selected channel pressure should open properties");
+    assert_eq!(dialog.position, "1.1.75");
+    assert_eq!(dialog.channel, "2");
+    assert_eq!(dialog.parameter, "");
+    assert_eq!(dialog.value, "74");
+    let _ = app.update(Message::SetMidiEventPropertiesPosition("1.3.00".to_owned()));
+    let _ = app.update(Message::SetMidiEventPropertiesChannel("2".to_owned()));
+    let _ = app.update(Message::SetMidiEventPropertiesValue("127".to_owned()));
+    let _ = app.update(Message::AcceptMidiEventProperties);
+    let edited_channel = MidiChannelPressureData {
+        channel: 1,
+        tick: 1_920,
+        value: 127,
+    };
+    assert_eq!(
+        app.project.midi_items()[0].channel_pressures(),
+        [edited_channel]
+    );
+    let _ = app.update(Message::Undo);
+    assert_eq!(
+        app.project.midi_items()[0].channel_pressures(),
+        [original_channel]
+    );
+    let _ = app.update(Message::Redo);
+    assert_eq!(
+        app.project.midi_items()[0].channel_pressures(),
+        [edited_channel]
+    );
 }
 
 #[test]

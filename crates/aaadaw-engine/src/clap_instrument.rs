@@ -1561,6 +1561,8 @@ impl ClapInstrumentProcessor {
                 MidiEventKind::ControllerChange
                     | MidiEventKind::PitchBend
                     | MidiEventKind::ProgramChange
+                    | MidiEventKind::PolyAftertouch
+                    | MidiEventKind::ChannelPressure
             ) {
                 continue;
             }
@@ -1609,6 +1611,9 @@ impl ClapInstrumentProcessor {
                 MidiEventKind::ProgramChange => {
                     unreachable!("program changes were skipped while updating active note state")
                 }
+                MidiEventKind::PolyAftertouch | MidiEventKind::ChannelPressure => {
+                    unreachable!("aftertouch events were skipped while updating active note state")
+                }
             }
         }
 
@@ -1622,6 +1627,8 @@ impl ClapInstrumentProcessor {
                 MidiEventKind::ControllerChange
                     | MidiEventKind::PitchBend
                     | MidiEventKind::ProgramChange
+                    | MidiEventKind::PolyAftertouch
+                    | MidiEventKind::ChannelPressure
             ) {
                 let port = self.input_midi_port.ok_or_else(|| {
                     ClapInstrumentError::new(
@@ -1643,6 +1650,10 @@ impl ClapInstrumentProcessor {
                         event.program.expect("program-change value"),
                         0,
                     ],
+                    MidiEventKind::PolyAftertouch => {
+                        [0xa0 | event.channel, event.pitch, event.velocity]
+                    }
+                    MidiEventKind::ChannelPressure => [0xd0 | event.channel, event.velocity, 0],
                     MidiEventKind::NoteOff | MidiEventKind::NoteOn => {
                         unreachable!("only control events are handled in this branch")
                     }
@@ -1686,6 +1697,12 @@ impl ClapInstrumentProcessor {
                 }
                 MidiEventKind::ProgramChange => {
                     unreachable!("program changes were emitted as raw MIDI events above")
+                }
+                MidiEventKind::PolyAftertouch => {
+                    unreachable!("aftertouch was emitted as raw MIDI events above")
+                }
+                MidiEventKind::ChannelPressure => {
+                    unreachable!("channel pressure was emitted as raw MIDI events above")
                 }
             }
         }

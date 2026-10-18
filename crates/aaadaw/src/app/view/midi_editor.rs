@@ -6,8 +6,9 @@ use super::super::{
 use super::tokens::{PANEL_PADDING, ROW_GAP, SPACING_LG, SPACING_MD, SPACING_XS, TOUCH_TARGET_MIN};
 use crate::timeline::{SnapGrid, TimelineEvent, snap_tick_to_grid};
 use aaadaw_core::{
-    ItemId, MidiControllerData, MidiItem, MidiNote, MidiNoteData, MidiPitchBendData,
-    MidiProgramChangeData, NoteId, Project, TimeSignature,
+    ItemId, MidiChannelPressureData, MidiControllerData, MidiItem, MidiNote, MidiNoteData,
+    MidiPitchBendData, MidiPolyAftertouchData, MidiProgramChangeData, NoteId, Project,
+    TimeSignature,
 };
 use iced::advanced::text::{Alignment as TextAlignment, LineHeight, Shaping};
 use iced::widget::canvas::{self, Text};
@@ -310,6 +311,14 @@ impl MidiSnap {
 
     fn program_change_visible(self, channel: u8) -> bool {
         self.event_visible(channel, MidiEditorEventKind::ProgramChange)
+    }
+
+    fn poly_aftertouch_visible(self, channel: u8) -> bool {
+        self.event_visible(channel, MidiEditorEventKind::PolyAftertouch)
+    }
+
+    fn channel_pressure_visible(self, channel: u8) -> bool {
+        self.event_visible(channel, MidiEditorEventKind::ChannelPressure)
     }
 
     fn note_pitch(
@@ -769,7 +778,14 @@ fn view_with_profile(app: &App, touch_targets: bool) -> Element<'_, Message> {
         ),
     };
     let content: Element<'_, Message> = if app.midi_editor_mode == MidiEditorMode::EventList {
-        midi_event_list_view(app, item, item_id, title, touch_targets)
+        midi_event_list_view(
+            app,
+            item,
+            item_id,
+            title,
+            touch_targets,
+            channel_filter_dialog,
+        )
     } else {
         let mut content = column![edit_toolbar];
         if let Some(feedback) = app.midi_editor_feedback.as_deref() {
@@ -856,6 +872,8 @@ enum MidiEventListEntry<'a> {
     Controller(MidiControllerData),
     PitchBend(MidiPitchBendData),
     ProgramChange(MidiProgramChangeData),
+    PolyAftertouch(MidiPolyAftertouchData),
+    ChannelPressure(MidiChannelPressureData),
 }
 
 impl MidiEventListEntry<'_> {
@@ -865,6 +883,8 @@ impl MidiEventListEntry<'_> {
             Self::Controller(event) => event.tick,
             Self::PitchBend(event) => event.tick,
             Self::ProgramChange(event) => event.tick,
+            Self::PolyAftertouch(event) => event.tick,
+            Self::ChannelPressure(event) => event.tick,
         }
     }
 
@@ -874,6 +894,8 @@ impl MidiEventListEntry<'_> {
             Self::Controller(_) => 1,
             Self::PitchBend(_) => 2,
             Self::ProgramChange(_) => 3,
+            Self::PolyAftertouch(_) => 4,
+            Self::ChannelPressure(_) => 5,
         }
     }
 
@@ -883,6 +905,8 @@ impl MidiEventListEntry<'_> {
             Self::Controller(event) => MidiEditorEventListCursor::Controller(event),
             Self::PitchBend(event) => MidiEditorEventListCursor::PitchBend(event),
             Self::ProgramChange(event) => MidiEditorEventListCursor::ProgramChange(event),
+            Self::PolyAftertouch(event) => MidiEditorEventListCursor::PolyAftertouch(event),
+            Self::ChannelPressure(event) => MidiEditorEventListCursor::ChannelPressure(event),
         }
     }
 }
@@ -914,6 +938,20 @@ fn midi_event_list_entries(item: &MidiItem, snap: MidiSnap) -> Vec<MidiEventList
                 .filter(|event| snap.program_change_visible(event.channel))
                 .map(MidiEventListEntry::ProgramChange),
         )
+        .chain(
+            item.poly_aftertouches()
+                .iter()
+                .copied()
+                .filter(|event| snap.poly_aftertouch_visible(event.channel))
+                .map(MidiEventListEntry::PolyAftertouch),
+        )
+        .chain(
+            item.channel_pressures()
+                .iter()
+                .copied()
+                .filter(|event| snap.channel_pressure_visible(event.channel))
+                .map(MidiEventListEntry::ChannelPressure),
+        )
         .collect::<Vec<_>>();
     events.sort_by_key(|event| (event.tick(), event.order()));
     events
@@ -935,6 +973,7 @@ fn midi_event_list_view<'a>(
     item_id: ItemId,
     track_name: &'a str,
     touch_targets: bool,
+    channel_filter_dialog: Option<Element<'a, Message>>,
 ) -> Element<'a, Message> {
     let snap = midi_snap_for_app(app);
     let events = midi_event_list_entries(item, snap);
@@ -1037,6 +1076,34 @@ fn midi_event_list_view<'a>(
                         app.keyboard_modifiers.command() || app.keyboard_modifiers.control(),
                     ),
                 ),
+                MidiEventListEntry::PolyAftertouch(event) => (
+                    event.tick,
+                    0,
+                    event.channel,
+                    "Poly Aftertouch",
+                    pitch_name(event.note),
+                    event.value.to_string(),
+                    app.midi_editor_selected_poly_aftertouches.contains(&event),
+                    Message::SelectMidiPolyAftertouchEvent(
+                        item_id,
+                        event,
+                        app.keyboard_modifiers.command() || app.keyboard_modifiers.control(),
+                    ),
+                ),
+                MidiEventListEntry::ChannelPressure(event) => (
+                    event.tick,
+                    0,
+                    event.channel,
+                    "Channel Pressure",
+                    String::new(),
+                    event.value.to_string(),
+                    app.midi_editor_selected_channel_pressures.contains(&event),
+                    Message::SelectMidiChannelPressureEvent(
+                        item_id,
+                        event,
+                        app.keyboard_modifiers.command() || app.keyboard_modifiers.control(),
+                    ),
+                ),
             };
             midi_event_list_row(MidiEventListRow {
                 index: (index + 1).to_string(),
@@ -1062,24 +1129,49 @@ fn midi_event_list_view<'a>(
     let has_selection = !app.midi_editor_selected_notes.is_empty()
         || !app.midi_editor_selected_controllers.is_empty()
         || !app.midi_editor_selected_pitch_bends.is_empty()
-        || !app.midi_editor_selected_program_changes.is_empty();
+        || !app.midi_editor_selected_program_changes.is_empty()
+        || !app.midi_editor_selected_poly_aftertouches.is_empty()
+        || !app.midi_editor_selected_channel_pressures.is_empty();
     let has_homogeneous_editable_selection = (!app.midi_editor_selected_notes.is_empty()
         && app.midi_editor_selected_controllers.is_empty()
         && app.midi_editor_selected_pitch_bends.is_empty()
-        && app.midi_editor_selected_program_changes.is_empty())
+        && app.midi_editor_selected_program_changes.is_empty()
+        && app.midi_editor_selected_poly_aftertouches.is_empty()
+        && app.midi_editor_selected_channel_pressures.is_empty())
         || (!app.midi_editor_selected_controllers.is_empty()
             && app.midi_editor_selected_notes.is_empty()
             && app.midi_editor_selected_pitch_bends.is_empty()
-            && app.midi_editor_selected_program_changes.is_empty())
+            && app.midi_editor_selected_program_changes.is_empty()
+            && app.midi_editor_selected_poly_aftertouches.is_empty()
+            && app.midi_editor_selected_channel_pressures.is_empty())
         || (!app.midi_editor_selected_pitch_bends.is_empty()
             && app.midi_editor_selected_notes.is_empty()
             && app.midi_editor_selected_controllers.is_empty()
-            && app.midi_editor_selected_program_changes.is_empty())
+            && app.midi_editor_selected_program_changes.is_empty()
+            && app.midi_editor_selected_poly_aftertouches.is_empty()
+            && app.midi_editor_selected_channel_pressures.is_empty())
         || (!app.midi_editor_selected_program_changes.is_empty()
             && app.midi_editor_selected_notes.is_empty()
             && app.midi_editor_selected_controllers.is_empty()
-            && app.midi_editor_selected_pitch_bends.is_empty());
+            && app.midi_editor_selected_pitch_bends.is_empty()
+            && app.midi_editor_selected_poly_aftertouches.is_empty()
+            && app.midi_editor_selected_channel_pressures.is_empty())
+        || (!app.midi_editor_selected_poly_aftertouches.is_empty()
+            && app.midi_editor_selected_notes.is_empty()
+            && app.midi_editor_selected_controllers.is_empty()
+            && app.midi_editor_selected_pitch_bends.is_empty()
+            && app.midi_editor_selected_program_changes.is_empty()
+            && app.midi_editor_selected_channel_pressures.is_empty())
+        || (!app.midi_editor_selected_channel_pressures.is_empty()
+            && app.midi_editor_selected_notes.is_empty()
+            && app.midi_editor_selected_controllers.is_empty()
+            && app.midi_editor_selected_pitch_bends.is_empty()
+            && app.midi_editor_selected_program_changes.is_empty()
+            && app.midi_editor_selected_poly_aftertouches.is_empty());
     let mut content = column![toolbar, channel_toolbar];
+    if let Some(channel_filter_dialog) = channel_filter_dialog {
+        content = content.push(channel_filter_dialog);
+    }
     if let Some(feedback) = app.midi_editor_feedback.as_deref() {
         content = content.push(text(feedback).size(12));
     }
@@ -1458,6 +1550,14 @@ fn midi_event_properties_dialog(app: &App, touch_targets: bool) -> Element<'_, M
         &state.target,
         super::super::MidiEventPropertiesTarget::ProgramChanges(_)
     );
+    let is_poly_aftertouch = matches!(
+        &state.target,
+        super::super::MidiEventPropertiesTarget::PolyAftertouches(_)
+    );
+    let is_channel_pressure = matches!(
+        &state.target,
+        super::super::MidiEventPropertiesTarget::ChannelPressures(_)
+    );
     let position = iced::widget::text_input("1.1.00", &state.position)
         .on_input(Message::SetMidiEventPropertiesPosition)
         .width(Length::Fixed(if touch_targets { 148.0 } else { 116.0 }));
@@ -1588,6 +1688,76 @@ fn midi_event_properties_dialog(app: &App, touch_targets: bool) -> Element<'_, M
                     .align_y(iced::Alignment::Center),
             )
             .push(text("Program number range: 0–127.").size(11));
+    } else if is_poly_aftertouch {
+        content = content
+            .push(
+                row![
+                    text("Type").width(Length::Fixed(76.0)),
+                    text("Poly Aftertouch"),
+                ]
+                .spacing(SPACING_XS)
+                .align_y(iced::Alignment::Center),
+            )
+            .push(
+                row![text("Position").width(Length::Fixed(76.0)), position]
+                    .spacing(SPACING_XS)
+                    .align_y(iced::Alignment::Center),
+            )
+            .push(
+                row![text("Channel").width(Length::Fixed(76.0)), channel]
+                    .spacing(SPACING_XS)
+                    .align_y(iced::Alignment::Center),
+            )
+            .push(
+                row![
+                    text("Note").width(Length::Fixed(76.0)),
+                    iced::widget::text_input("60 C4", &state.parameter)
+                        .on_input(Message::SetMidiEventPropertiesParameter)
+                        .width(Length::Fixed(if touch_targets { 176.0 } else { 152.0 })),
+                ]
+                .spacing(SPACING_XS)
+                .align_y(iced::Alignment::Center),
+            )
+            .push(
+                row![text("Value").width(Length::Fixed(76.0)), value]
+                    .spacing(SPACING_XS)
+                    .align_y(iced::Alignment::Center),
+            )
+            .push(text("CC shape and Bezier tension · not modeled").size(11))
+            .push(
+                text("Use +, -, *, / for relative changes; position uses bar.beat.hundredths.")
+                    .size(11),
+            );
+    } else if is_channel_pressure {
+        content = content
+            .push(
+                row![
+                    text("Type").width(Length::Fixed(76.0)),
+                    text("Channel Pressure"),
+                ]
+                .spacing(SPACING_XS)
+                .align_y(iced::Alignment::Center),
+            )
+            .push(
+                row![text("Position").width(Length::Fixed(76.0)), position]
+                    .spacing(SPACING_XS)
+                    .align_y(iced::Alignment::Center),
+            )
+            .push(
+                row![text("Channel").width(Length::Fixed(76.0)), channel]
+                    .spacing(SPACING_XS)
+                    .align_y(iced::Alignment::Center),
+            )
+            .push(
+                row![text("Value").width(Length::Fixed(76.0)), value]
+                    .spacing(SPACING_XS)
+                    .align_y(iced::Alignment::Center),
+            )
+            .push(text("CC shape and Bezier tension · not modeled").size(11))
+            .push(
+                text("Use +, -, *, / for relative changes; position uses bar.beat.hundredths.")
+                    .size(11),
+            );
     } else {
         content = content
             .push(
@@ -7700,12 +7870,35 @@ mod tests {
                 }],
             })
             .unwrap();
+        project
+            .apply(aaadaw_core::DawAction::SetMidiPolyAftertouches {
+                item_id,
+                poly_aftertouches: vec![MidiPolyAftertouchData {
+                    channel: 1,
+                    tick: 240,
+                    note: 64,
+                    value: 37,
+                }],
+            })
+            .unwrap();
+        project
+            .apply(aaadaw_core::DawAction::SetMidiChannelPressures {
+                item_id,
+                channel_pressures: vec![MidiChannelPressureData {
+                    channel: 2,
+                    tick: 360,
+                    value: 74,
+                }],
+            })
+            .unwrap();
         let item = &project.midi_items()[0];
         let events = midi_event_list_entries(item, MidiSnap::default());
         assert!(matches!(events[0], MidiEventListEntry::Controller(_)));
         assert!(matches!(events[1], MidiEventListEntry::PitchBend(_)));
         assert!(matches!(events[2], MidiEventListEntry::ProgramChange(_)));
         assert!(matches!(events[3], MidiEventListEntry::Note(_)));
+        assert!(matches!(events[4], MidiEventListEntry::PolyAftertouch(_)));
+        assert!(matches!(events[5], MidiEventListEntry::ChannelPressure(_)));
 
         let channel_one = MidiSnap {
             channel_selection: MidiEditorChannelSelection::Channel(1),
@@ -7713,10 +7906,11 @@ mod tests {
             ..MidiSnap::default()
         };
         let events = midi_event_list_entries(item, channel_one);
-        assert_eq!(events.len(), 3);
+        assert_eq!(events.len(), 4);
         assert!(matches!(events[0], MidiEventListEntry::PitchBend(_)));
         assert!(matches!(events[1], MidiEventListEntry::ProgramChange(_)));
         assert!(matches!(events[2], MidiEventListEntry::Note(_)));
+        assert!(matches!(events[3], MidiEventListEntry::PolyAftertouch(_)));
 
         let programs_only = MidiSnap {
             filter_enabled: true,
@@ -7726,6 +7920,24 @@ mod tests {
         let events = midi_event_list_entries(item, programs_only);
         assert_eq!(events.len(), 1);
         assert!(matches!(events[0], MidiEventListEntry::ProgramChange(_)));
+
+        let poly_only = MidiSnap {
+            filter_enabled: true,
+            event_type_filter: MidiEditorEventTypeFilter::PolyAftertouch,
+            ..MidiSnap::default()
+        };
+        let events = midi_event_list_entries(item, poly_only);
+        assert_eq!(events.len(), 1);
+        assert!(matches!(events[0], MidiEventListEntry::PolyAftertouch(_)));
+
+        let pressure_only = MidiSnap {
+            filter_enabled: true,
+            event_type_filter: MidiEditorEventTypeFilter::ChannelPressure,
+            ..MidiSnap::default()
+        };
+        let events = midi_event_list_entries(item, pressure_only);
+        assert_eq!(events.len(), 1);
+        assert!(matches!(events[0], MidiEventListEntry::ChannelPressure(_)));
     }
 
     #[test]

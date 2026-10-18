@@ -7,11 +7,12 @@ use crate::snapshot::{
 use crate::timebase::{MeterMap, TempoMap};
 use crate::{
     ActionError, AudioItem, DawAction, FxParameterAutomationLane, FxParameterAutomationPoint,
-    ItemId, MAX_TRACK_FX_PARAMETER_AUTOMATION_LANES, MarkerId, MidiControllerData, MidiItem,
-    MidiNote, MidiNoteQuantizeOperation, MidiPitchBendData, MidiProgramChangeData, MusicalPosition,
-    NoteId, ProjectMarker, ProjectMarkerSnapshot, ProjectRegion, ProjectRegionSnapshot,
-    ProjectSettings, RazorEditArea, RegionId, TempoCurve, TimeSignature, TimebaseError, Track,
-    TrackFxPlugin, TrackId, TrackInstrument,
+    ItemId, MAX_TRACK_FX_PARAMETER_AUTOMATION_LANES, MarkerId, MidiChannelPressureData,
+    MidiControllerData, MidiItem, MidiNote, MidiNoteQuantizeOperation, MidiPitchBendData,
+    MidiPolyAftertouchData, MidiProgramChangeData, MusicalPosition, NoteId, ProjectMarker,
+    ProjectMarkerSnapshot, ProjectRegion, ProjectRegionSnapshot, ProjectSettings, RazorEditArea,
+    RegionId, TempoCurve, TimeSignature, TimebaseError, Track, TrackFxPlugin, TrackId,
+    TrackInstrument,
 };
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -1358,6 +1359,16 @@ enum ProjectEvent {
         before: Vec<MidiProgramChangeData>,
         after: Vec<MidiProgramChangeData>,
     },
+    MidiPolyAftertouchesChanged {
+        item_id: ItemId,
+        before: Vec<MidiPolyAftertouchData>,
+        after: Vec<MidiPolyAftertouchData>,
+    },
+    MidiChannelPressuresChanged {
+        item_id: ItemId,
+        before: Vec<MidiChannelPressureData>,
+        after: Vec<MidiChannelPressureData>,
+    },
     MidiNotesQuantized {
         item_id: ItemId,
         changes: Vec<QuantizedMidiNoteChange>,
@@ -1792,6 +1803,24 @@ impl ProjectEvent {
                 before: after.clone(),
                 after: before.clone(),
             },
+            Self::MidiPolyAftertouchesChanged {
+                item_id,
+                before,
+                after,
+            } => Self::MidiPolyAftertouchesChanged {
+                item_id: *item_id,
+                before: after.clone(),
+                after: before.clone(),
+            },
+            Self::MidiChannelPressuresChanged {
+                item_id,
+                before,
+                after,
+            } => Self::MidiChannelPressuresChanged {
+                item_id: *item_id,
+                before: after.clone(),
+                after: before.clone(),
+            },
             Self::MidiNotesQuantized { item_id, changes } => Self::MidiNotesQuantized {
                 item_id: *item_id,
                 changes: changes
@@ -1941,6 +1970,8 @@ fn duplicate_midi_item_to_track_at_position(
         controllers: Arc::clone(&original.controllers),
         pitch_bends: Arc::clone(&original.pitch_bends),
         program_changes: Arc::clone(&original.program_changes),
+        poly_aftertouches: Arc::clone(&original.poly_aftertouches),
+        channel_pressures: Arc::clone(&original.channel_pressures),
     };
     ids.next_item_id = next_item_id;
     ids.next_note_id = next_note_id;
@@ -2594,6 +2625,8 @@ impl Project {
                     controllers: item.controllers.as_ref().clone(),
                     pitch_bends: item.pitch_bends.as_ref().clone(),
                     program_changes: item.program_changes.as_ref().clone(),
+                    poly_aftertouches: item.poly_aftertouches.as_ref().clone(),
+                    channel_pressures: item.channel_pressures.as_ref().clone(),
                 })
                 .collect(),
             markers: self
@@ -2958,6 +2991,16 @@ impl Project {
             if !valid_midi_program_changes(&program_changes) {
                 return Err(SnapshotError::InvalidProjectData);
             }
+            let mut poly_aftertouches = item.poly_aftertouches;
+            poly_aftertouches.sort_unstable_by_key(|event| (event.tick, event.channel, event.note));
+            if !valid_midi_poly_aftertouches(&poly_aftertouches) {
+                return Err(SnapshotError::InvalidProjectData);
+            }
+            let mut channel_pressures = item.channel_pressures;
+            channel_pressures.sort_unstable_by_key(|event| (event.tick, event.channel));
+            if !valid_midi_channel_pressures(&channel_pressures) {
+                return Err(SnapshotError::InvalidProjectData);
+            }
             midi_items.push(MidiItem {
                 id: ItemId::from_raw(item.id),
                 track_id: TrackId::from_raw(item.track_id),
@@ -2973,6 +3016,8 @@ impl Project {
                 controllers: Arc::new(controllers),
                 pitch_bends: Arc::new(pitch_bends),
                 program_changes: Arc::new(program_changes),
+                poly_aftertouches: Arc::new(poly_aftertouches),
+                channel_pressures: Arc::new(channel_pressures),
             });
         }
 
@@ -4517,6 +4562,8 @@ impl Project {
                     controllers: Arc::new(Vec::new()),
                     pitch_bends: Arc::new(Vec::new()),
                     program_changes: Arc::new(Vec::new()),
+                    poly_aftertouches: Arc::new(Vec::new()),
+                    channel_pressures: Arc::new(Vec::new()),
                 };
                 ids.next_item_id = next_id;
                 ProjectEvent::MidiItemInserted {
@@ -4711,6 +4758,32 @@ impl Project {
                         })
                     })
                     .collect::<Result<Vec<_>, ActionError>>()?;
+                let poly_aftertouches = before
+                    .poly_aftertouches
+                    .iter()
+                    .map(|event| {
+                        Ok(MidiPolyAftertouchData {
+                            tick: event
+                                .tick
+                                .checked_add_signed(content_shift_ticks)
+                                .ok_or(ActionError::InvalidMidiItemPosition)?,
+                            ..*event
+                        })
+                    })
+                    .collect::<Result<Vec<_>, ActionError>>()?;
+                let channel_pressures = before
+                    .channel_pressures
+                    .iter()
+                    .map(|event| {
+                        Ok(MidiChannelPressureData {
+                            tick: event
+                                .tick
+                                .checked_add_signed(content_shift_ticks)
+                                .ok_or(ActionError::InvalidMidiItemPosition)?,
+                            ..*event
+                        })
+                    })
+                    .collect::<Result<Vec<_>, ActionError>>()?;
                 let after = MidiItem {
                     source_offset_ticks,
                     source_loop_length_ticks,
@@ -4718,6 +4791,8 @@ impl Project {
                     controllers: Arc::new(controllers),
                     pitch_bends: Arc::new(pitch_bends),
                     program_changes: Arc::new(program_changes),
+                    poly_aftertouches: Arc::new(poly_aftertouches),
+                    channel_pressures: Arc::new(channel_pressures),
                     ..before.clone()
                 };
                 ProjectEvent::MidiItemChanged { before, after }
@@ -4945,6 +5020,18 @@ impl Project {
                             content_points[index + 1],
                             index + 1 == segment_count,
                         )),
+                        poly_aftertouches: Arc::new(poly_aftertouches_for_segment(
+                            &original.poly_aftertouches,
+                            if index == 0 { 0 } else { content_points[index] },
+                            content_points[index + 1],
+                            index + 1 == segment_count,
+                        )),
+                        channel_pressures: Arc::new(channel_pressures_for_segment(
+                            &original.channel_pressures,
+                            if index == 0 { 0 } else { content_points[index] },
+                            content_points[index + 1],
+                            index + 1 == segment_count,
+                        )),
                     });
                 }
                 ids.next_item_id = next_item_id;
@@ -5132,6 +5219,57 @@ impl Project {
                     item_id,
                     before: item.program_changes.as_ref().clone(),
                     after: program_changes,
+                }
+            }
+            DawAction::SetMidiPolyAftertouches {
+                item_id,
+                mut poly_aftertouches,
+            } => {
+                let item = state
+                    .midi_items
+                    .iter()
+                    .find(|item| item.id == item_id)
+                    .ok_or(ActionError::MidiItemNotFound { item_id })?;
+                poly_aftertouches
+                    .sort_unstable_by_key(|event| (event.tick, event.channel, event.note));
+                let (source_start_tick, source_end_tick) = midi_item_source_tick_bounds(item);
+                if !valid_midi_poly_aftertouches(&poly_aftertouches)
+                    || poly_aftertouches.iter().any(|event| {
+                        (event.tick < source_start_tick || event.tick >= source_end_tick)
+                            && !item.poly_aftertouches.contains(event)
+                    })
+                {
+                    return Err(ActionError::InvalidMidiPolyAftertouch);
+                }
+                ProjectEvent::MidiPolyAftertouchesChanged {
+                    item_id,
+                    before: item.poly_aftertouches.as_ref().clone(),
+                    after: poly_aftertouches,
+                }
+            }
+            DawAction::SetMidiChannelPressures {
+                item_id,
+                mut channel_pressures,
+            } => {
+                let item = state
+                    .midi_items
+                    .iter()
+                    .find(|item| item.id == item_id)
+                    .ok_or(ActionError::MidiItemNotFound { item_id })?;
+                channel_pressures.sort_unstable_by_key(|event| (event.tick, event.channel));
+                let (source_start_tick, source_end_tick) = midi_item_source_tick_bounds(item);
+                if !valid_midi_channel_pressures(&channel_pressures)
+                    || channel_pressures.iter().any(|event| {
+                        (event.tick < source_start_tick || event.tick >= source_end_tick)
+                            && !item.channel_pressures.contains(event)
+                    })
+                {
+                    return Err(ActionError::InvalidMidiChannelPressure);
+                }
+                ProjectEvent::MidiChannelPressuresChanged {
+                    item_id,
+                    before: item.channel_pressures.as_ref().clone(),
+                    after: channel_pressures,
                 }
             }
             DawAction::QuantizeItem {
@@ -6356,6 +6494,50 @@ impl Project {
                 }
                 item.program_changes = Arc::new(after.clone());
             }
+            ProjectEvent::MidiPolyAftertouchesChanged {
+                item_id,
+                before,
+                after,
+            } => {
+                let item = state
+                    .midi_items
+                    .iter_mut()
+                    .find(|item| item.id == *item_id)
+                    .ok_or(ActionError::HistoryInvariantViolation)?;
+                let (source_start, source_end) = midi_item_source_tick_bounds(item);
+                if item.poly_aftertouches.as_ref() != before
+                    || !valid_midi_poly_aftertouches(after)
+                    || after.iter().any(|event| {
+                        (event.tick < source_start || event.tick >= source_end)
+                            && !before.contains(event)
+                    })
+                {
+                    return Err(ActionError::HistoryInvariantViolation);
+                }
+                item.poly_aftertouches = Arc::new(after.clone());
+            }
+            ProjectEvent::MidiChannelPressuresChanged {
+                item_id,
+                before,
+                after,
+            } => {
+                let item = state
+                    .midi_items
+                    .iter_mut()
+                    .find(|item| item.id == *item_id)
+                    .ok_or(ActionError::HistoryInvariantViolation)?;
+                let (source_start, source_end) = midi_item_source_tick_bounds(item);
+                if item.channel_pressures.as_ref() != before
+                    || !valid_midi_channel_pressures(after)
+                    || after.iter().any(|event| {
+                        (event.tick < source_start || event.tick >= source_end)
+                            && !before.contains(event)
+                    })
+                {
+                    return Err(ActionError::HistoryInvariantViolation);
+                }
+                item.channel_pressures = Arc::new(after.clone());
+            }
             ProjectEvent::MidiNotesQuantized { item_id, changes } => {
                 let item = state
                     .midi_items
@@ -6499,6 +6681,8 @@ fn source_track_for_action(state: &ProjectState, action: &DawAction) -> Option<T
         | DawAction::SetMidiControllers { item_id, .. }
         | DawAction::SetMidiPitchBends { item_id, .. }
         | DawAction::SetMidiProgramChanges { item_id, .. }
+        | DawAction::SetMidiPolyAftertouches { item_id, .. }
+        | DawAction::SetMidiChannelPressures { item_id, .. }
         | DawAction::QuantizeItem { item_id, .. }
         | DawAction::QuantizeMidiNotes { item_id, .. }
         | DawAction::QuantizeMidiNotesAndEnds { item_id, .. }
@@ -6616,6 +6800,25 @@ fn valid_midi_program_changes(program_changes: &[MidiProgramChangeData]) -> bool
     program_changes.iter().all(|event| {
         event.channel < crate::MIDI_CHANNEL_COUNT
             && event.program <= 127
+            && positions.insert((event.channel, event.tick))
+    })
+}
+
+fn valid_midi_poly_aftertouches(events: &[MidiPolyAftertouchData]) -> bool {
+    let mut positions = HashSet::with_capacity(events.len());
+    events.iter().all(|event| {
+        event.channel < crate::MIDI_CHANNEL_COUNT
+            && event.note <= 127
+            && event.value <= 127
+            && positions.insert((event.channel, event.note, event.tick))
+    })
+}
+
+fn valid_midi_channel_pressures(events: &[MidiChannelPressureData]) -> bool {
+    let mut positions = HashSet::with_capacity(events.len());
+    events.iter().all(|event| {
+        event.channel < crate::MIDI_CHANNEL_COUNT
+            && event.value <= 127
             && positions.insert((event.channel, event.tick))
     })
 }
@@ -6768,6 +6971,72 @@ fn program_changes_for_segment(
             }),
     );
     result.sort_unstable_by_key(|event| (event.tick, event.channel));
+    result
+}
+
+fn poly_aftertouches_for_segment(
+    events: &[MidiPolyAftertouchData],
+    start_tick: u64,
+    end_tick: u64,
+    preserve_tail: bool,
+) -> Vec<MidiPolyAftertouchData> {
+    let mut result = Vec::new();
+    let mut latest_by_note = HashMap::new();
+    for event in events.iter().filter(|event| event.tick <= start_tick) {
+        let latest = latest_by_note
+            .entry((event.channel, event.note))
+            .or_insert(None::<MidiPolyAftertouchData>);
+        if latest.is_none_or(|current| current.tick <= event.tick) {
+            *latest = Some(*event);
+        }
+    }
+    result.extend(
+        latest_by_note
+            .into_values()
+            .flatten()
+            .map(|event| MidiPolyAftertouchData { tick: 0, ..event }),
+    );
+    result.extend(
+        events
+            .iter()
+            .filter(|event| event.tick > start_tick && (preserve_tail || event.tick < end_tick))
+            .map(|event| MidiPolyAftertouchData {
+                tick: event.tick - start_tick,
+                ..*event
+            }),
+    );
+    result
+}
+
+fn channel_pressures_for_segment(
+    events: &[MidiChannelPressureData],
+    start_tick: u64,
+    end_tick: u64,
+    preserve_tail: bool,
+) -> Vec<MidiChannelPressureData> {
+    let mut result = Vec::new();
+    let mut latest_by_channel = [None; crate::MIDI_CHANNEL_COUNT as usize];
+    for event in events.iter().filter(|event| event.tick <= start_tick) {
+        let latest = &mut latest_by_channel[usize::from(event.channel)];
+        if latest.is_none_or(|current: MidiChannelPressureData| current.tick <= event.tick) {
+            *latest = Some(*event);
+        }
+    }
+    result.extend(
+        latest_by_channel
+            .into_iter()
+            .flatten()
+            .map(|event| MidiChannelPressureData { tick: 0, ..event }),
+    );
+    result.extend(
+        events
+            .iter()
+            .filter(|event| event.tick > start_tick && (preserve_tail || event.tick < end_tick))
+            .map(|event| MidiChannelPressureData {
+                tick: event.tick - start_tick,
+                ..*event
+            }),
+    );
     result
 }
 

@@ -328,6 +328,10 @@ impl Callback {
                         MidiEventKind::ProgramChange => {
                             (0xC0 | event.channel, event.program.unwrap_or(0), 0)
                         }
+                        MidiEventKind::PolyAftertouch => {
+                            (0xA0 | event.channel, event.pitch, event.velocity)
+                        }
+                        MidiEventKind::ChannelPressure => (0xD0 | event.channel, event.velocity, 0),
                     };
                     if self
                         .midi_output

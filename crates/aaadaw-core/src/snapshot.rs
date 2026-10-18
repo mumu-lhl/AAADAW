@@ -1,7 +1,8 @@
 use crate::{
-    FxParameterAutomationLane, FxParameterAutomationPoint, MidiControllerData, MidiNoteData,
-    MidiPitchBendData, MidiProgramChangeData, ProjectMarker, ProjectRegion, ProjectSettings,
-    RazorEditArea, TempoCurve, TimebaseError, VolumeAutomationPoint,
+    FxParameterAutomationLane, FxParameterAutomationPoint, MidiChannelPressureData,
+    MidiControllerData, MidiNoteData, MidiPitchBendData, MidiPolyAftertouchData,
+    MidiProgramChangeData, ProjectMarker, ProjectRegion, ProjectSettings, RazorEditArea,
+    TempoCurve, TimebaseError, VolumeAutomationPoint,
 };
 use std::fmt;
 
@@ -206,6 +207,8 @@ pub struct MidiItemSnapshot {
     pub controllers: Vec<MidiControllerData>,
     pub pitch_bends: Vec<MidiPitchBendData>,
     pub program_changes: Vec<MidiProgramChangeData>,
+    pub poly_aftertouches: Vec<MidiPolyAftertouchData>,
+    pub channel_pressures: Vec<MidiChannelPressureData>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

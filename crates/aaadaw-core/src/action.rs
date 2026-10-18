@@ -1,7 +1,8 @@
 use crate::{
-    GridFraction, ItemId, MarkerId, MeterPointSnapshot, MidiControllerData, MidiItemPosition,
-    MidiNoteData, MidiPitchBendData, MidiProgramChangeData, NoteId, RegionId, TempoCurve,
-    TimeSignature, TrackFxPlugin, TrackId, TrackInstrument, VolumeAutomationPoint,
+    GridFraction, ItemId, MarkerId, MeterPointSnapshot, MidiChannelPressureData,
+    MidiControllerData, MidiItemPosition, MidiNoteData, MidiPitchBendData, MidiPolyAftertouchData,
+    MidiProgramChangeData, NoteId, RegionId, TempoCurve, TimeSignature, TrackFxPlugin, TrackId,
+    TrackInstrument, VolumeAutomationPoint,
 };
 
 /// Which note timing values a MIDI quantize action moves to the current grid.
@@ -495,6 +496,16 @@ pub enum DawAction {
     SetMidiProgramChanges {
         item_id: ItemId,
         program_changes: Vec<MidiProgramChangeData>,
+    },
+    /// Replace Polyphonic Aftertouch events belonging to a MIDI item.
+    SetMidiPolyAftertouches {
+        item_id: ItemId,
+        poly_aftertouches: Vec<MidiPolyAftertouchData>,
+    },
+    /// Replace Channel Pressure events belonging to a MIDI item.
+    SetMidiChannelPressures {
+        item_id: ItemId,
+        channel_pressures: Vec<MidiChannelPressureData>,
     },
     /// Move note starts toward the nearest musical grid position.
     QuantizeItem {

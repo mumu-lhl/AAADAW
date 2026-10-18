@@ -1,6 +1,6 @@
 use aaadaw_core::{
-    DawAction, MidiControllerData, MidiItemPosition, MidiNoteData, MidiPitchBendData,
-    MidiProgramChangeData, Project, TempoCurve,
+    DawAction, MidiChannelPressureData, MidiControllerData, MidiItemPosition, MidiNoteData,
+    MidiPitchBendData, MidiPolyAftertouchData, MidiProgramChangeData, Project, TempoCurve,
 };
 use aaadaw_engine::{
     MidiEventKind, MidiEventPlan, MidiScheduleError, MidiSegmentCursor, ScheduledMidiEvent,
@@ -811,6 +811,85 @@ fn program_change_schedule_uses_channel_status_and_chases_the_latest_program() {
     assert_eq!(chased.kind, MidiEventKind::ProgramChange);
     assert_eq!(chased.program, Some(41));
     assert_eq!(chased.sample_offset, 0);
+}
+
+#[test]
+fn aftertouch_schedule_preserves_message_data_and_chases_latest_pressure() {
+    let (mut project, track_id) = project_with_note(60, 960, 240);
+    let item_id = project.midi_items()[0].id();
+    project
+        .apply(DawAction::SetMidiPolyAftertouches {
+            item_id,
+            poly_aftertouches: vec![
+                MidiPolyAftertouchData {
+                    channel: 6,
+                    tick: 0,
+                    note: 60,
+                    value: 7,
+                },
+                MidiPolyAftertouchData {
+                    channel: 6,
+                    tick: 960,
+                    note: 60,
+                    value: 41,
+                },
+            ],
+        })
+        .expect("Poly Aftertouch events should be accepted");
+    project
+        .apply(DawAction::SetMidiChannelPressures {
+            item_id,
+            channel_pressures: vec![
+                MidiChannelPressureData {
+                    channel: 6,
+                    tick: 0,
+                    value: 13,
+                },
+                MidiChannelPressureData {
+                    channel: 6,
+                    tick: 960,
+                    value: 74,
+                },
+            ],
+        })
+        .expect("Channel Pressure events should be accepted");
+
+    let sample = project.sample_at_tick(960).unwrap();
+    let plan = MidiEventPlan::compile(&project).unwrap();
+    let mut events = [None; 8];
+    assert_eq!(plan.events_for_block(sample, 1, &mut events).unwrap(), 3);
+    let scheduled = events[..3]
+        .iter()
+        .map(|event| event.unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(scheduled[0].kind, MidiEventKind::ChannelPressure);
+    assert_eq!(scheduled[0].velocity, 74);
+    assert_eq!(scheduled[1].kind, MidiEventKind::NoteOn);
+    assert_eq!(scheduled[2].kind, MidiEventKind::PolyAftertouch);
+    assert_eq!(scheduled[2].pitch, 60);
+    assert_eq!(scheduled[2].velocity, 41);
+
+    let mut chased = [None; 8];
+    assert_eq!(
+        plan.active_aftertouches_at(sample + 1, &mut chased)
+            .unwrap(),
+        2
+    );
+    assert!(chased[..2].iter().flatten().any(|event| {
+        event.kind == MidiEventKind::PolyAftertouch && event.pitch == 60 && event.velocity == 41
+    }));
+    assert!(
+        chased[..2]
+            .iter()
+            .flatten()
+            .any(|event| { event.kind == MidiEventKind::ChannelPressure && event.velocity == 74 })
+    );
+    assert!(
+        chased[..2]
+            .iter()
+            .flatten()
+            .all(|event| event.track_id == track_id && event.sample_offset == 0)
+    );
 }
 
 #[test]

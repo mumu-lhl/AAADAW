@@ -8,8 +8,9 @@ use aaadaw_app::{
     AudioAssetManagementOperation, AudioAssetManagementResult, WavChannelCount, WavSampleFormat,
 };
 use aaadaw_core::{
-    DawAction, ItemId, MarkerId, MidiControllerData, MidiNoteData, MidiPitchBendData,
-    MidiProgramChangeData, NoteId, Project, RegionId, TrackId,
+    DawAction, ItemId, MarkerId, MidiChannelPressureData, MidiControllerData, MidiNoteData,
+    MidiPitchBendData, MidiPolyAftertouchData, MidiProgramChangeData, NoteId, Project, RegionId,
+    TrackId,
 };
 use aaadaw_engine::MasterOutputCeiling;
 use aaadaw_storage::{ArrangementViewState, ProjectSessionLock};
@@ -174,6 +175,8 @@ pub(crate) enum MidiEditorEventListCursor {
     Controller(MidiControllerData),
     PitchBend(MidiPitchBendData),
     ProgramChange(MidiProgramChangeData),
+    PolyAftertouch(MidiPolyAftertouchData),
+    ChannelPressure(MidiChannelPressureData),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -198,15 +201,19 @@ pub(crate) enum MidiEditorEventTypeFilter {
     ControlChange,
     Pitch,
     ProgramChange,
+    PolyAftertouch,
+    ChannelPressure,
 }
 
 impl MidiEditorEventTypeFilter {
-    pub(crate) const OPTIONS: [Self; 5] = [
+    pub(crate) const OPTIONS: [Self; 7] = [
         Self::AllEvents,
         Self::Notes,
         Self::ControlChange,
         Self::Pitch,
         Self::ProgramChange,
+        Self::PolyAftertouch,
+        Self::ChannelPressure,
     ];
 
     pub(crate) fn matches(self, kind: MidiEditorEventKind) -> bool {
@@ -217,6 +224,8 @@ impl MidiEditorEventTypeFilter {
                 | (Self::ControlChange, MidiEditorEventKind::ControlChange)
                 | (Self::Pitch, MidiEditorEventKind::Pitch)
                 | (Self::ProgramChange, MidiEditorEventKind::ProgramChange)
+                | (Self::PolyAftertouch, MidiEditorEventKind::PolyAftertouch)
+                | (Self::ChannelPressure, MidiEditorEventKind::ChannelPressure)
         )
     }
 }
@@ -229,6 +238,8 @@ impl std::fmt::Display for MidiEditorEventTypeFilter {
             Self::ControlChange => "Control Change (CC)",
             Self::Pitch => "Pitch",
             Self::ProgramChange => "Program Change",
+            Self::PolyAftertouch => "Poly Aftertouch",
+            Self::ChannelPressure => "Channel Pressure",
         })
     }
 }
@@ -239,6 +250,8 @@ pub(crate) enum MidiEditorEventKind {
     ControlChange,
     Pitch,
     ProgramChange,
+    PolyAftertouch,
+    ChannelPressure,
 }
 
 impl MidiEditorChannelSelection {
@@ -609,6 +622,8 @@ pub(crate) enum Message {
     SelectMidiControllerEvent(ItemId, MidiControllerData, bool),
     SelectMidiPitchBendEvent(ItemId, MidiPitchBendData, bool),
     SelectMidiProgramChangeEvent(ItemId, MidiProgramChangeData, bool),
+    SelectMidiPolyAftertouchEvent(ItemId, MidiPolyAftertouchData, bool),
+    SelectMidiChannelPressureEvent(ItemId, MidiChannelPressureData, bool),
     MoveMidiEditorEventListCursor(MidiEditorEventListCursorDirection, bool, bool),
     CopyMidiNotes(ItemId, Vec<NoteId>),
     PasteMidiNotes(ItemId),
@@ -622,6 +637,8 @@ pub(crate) enum Message {
     SetMidiControllers(ItemId, Vec<MidiControllerData>),
     SetMidiPitchBends(ItemId, Vec<MidiPitchBendData>),
     SetMidiProgramChanges(ItemId, Vec<MidiProgramChangeData>),
+    SetMidiPolyAftertouches(ItemId, Vec<MidiPolyAftertouchData>),
+    SetMidiChannelPressures(ItemId, Vec<MidiChannelPressureData>),
     PianoRollPan(i8),
     PianoRollPanPixels(f32),
     PianoRollZoom(f32),
@@ -1131,6 +1148,8 @@ mod midi_channel_selection_tests {
         assert!(MidiEditorEventTypeFilter::AllEvents.matches(MidiEditorEventKind::ControlChange));
         assert!(MidiEditorEventTypeFilter::AllEvents.matches(MidiEditorEventKind::Pitch));
         assert!(MidiEditorEventTypeFilter::AllEvents.matches(MidiEditorEventKind::ProgramChange));
+        assert!(MidiEditorEventTypeFilter::AllEvents.matches(MidiEditorEventKind::PolyAftertouch));
+        assert!(MidiEditorEventTypeFilter::AllEvents.matches(MidiEditorEventKind::ChannelPressure));
         assert!(MidiEditorEventTypeFilter::Notes.matches(MidiEditorEventKind::Note));
         assert!(!MidiEditorEventTypeFilter::Notes.matches(MidiEditorEventKind::ControlChange));
         assert!(
@@ -1140,7 +1159,14 @@ mod midi_channel_selection_tests {
         assert!(
             MidiEditorEventTypeFilter::ProgramChange.matches(MidiEditorEventKind::ProgramChange)
         );
-        assert_eq!(MidiEditorEventTypeFilter::OPTIONS.len(), 5);
+        assert!(
+            MidiEditorEventTypeFilter::PolyAftertouch.matches(MidiEditorEventKind::PolyAftertouch)
+        );
+        assert!(
+            MidiEditorEventTypeFilter::ChannelPressure
+                .matches(MidiEditorEventKind::ChannelPressure)
+        );
+        assert_eq!(MidiEditorEventTypeFilter::OPTIONS.len(), 7);
         assert_eq!(
             MidiEditorEventTypeFilter::OPTIONS[0].to_string(),
             "<all events>"
@@ -1148,6 +1174,14 @@ mod midi_channel_selection_tests {
         assert_eq!(
             MidiEditorEventTypeFilter::OPTIONS[2].to_string(),
             "Control Change (CC)"
+        );
+        assert_eq!(
+            MidiEditorEventTypeFilter::OPTIONS[5].to_string(),
+            "Poly Aftertouch"
+        );
+        assert_eq!(
+            MidiEditorEventTypeFilter::OPTIONS[6].to_string(),
+            "Channel Pressure"
         );
 
         let selection = MidiEditorChannelSelection::Multichannel;

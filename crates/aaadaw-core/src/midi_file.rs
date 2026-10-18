@@ -1,4 +1,6 @@
-use crate::{FrameRate, ItemId, MidiItem, MidiNote, Project, TempoCurve, TrackId};
+use crate::{
+    FrameRate, ItemId, MidiItem, MidiItemPosition, MidiNote, Project, TempoCurve, TrackId,
+};
 use std::collections::{HashMap, HashSet};
 
 const MAX_MIDI_FILE_EVENTS: usize = 1_000_000;
@@ -504,6 +506,54 @@ pub fn encode_standard_midi_with_selection(
                 });
             }
         }
+
+        for pressure in item.poly_aftertouches() {
+            for position in midi_item_event_positions(item, pressure.tick)? {
+                let original_project_tick = project_midi_item_event_tick(project, item, position)?;
+                let order = if time_selection
+                    .is_some_and(|(selection_start, _)| original_project_tick < selection_start)
+                {
+                    2
+                } else {
+                    1
+                };
+                let Some(project_tick) =
+                    time_selection_state_event_tick(original_project_tick, time_selection)
+                else {
+                    continue;
+                };
+                ensure_midi_event_capacity(&mut midi_event_count, 1)?;
+                events_by_track[track_index].push(Event {
+                    tick: scale_tick_position(project_tick, project_ppq, options.ppq)?,
+                    order,
+                    bytes: vec![0xA0 | pressure.channel, pressure.note, pressure.value],
+                });
+            }
+        }
+
+        for pressure in item.channel_pressures() {
+            for position in midi_item_event_positions(item, pressure.tick)? {
+                let original_project_tick = project_midi_item_event_tick(project, item, position)?;
+                let order = if time_selection
+                    .is_some_and(|(selection_start, _)| original_project_tick < selection_start)
+                {
+                    2
+                } else {
+                    1
+                };
+                let Some(project_tick) =
+                    time_selection_state_event_tick(original_project_tick, time_selection)
+                else {
+                    continue;
+                };
+                ensure_midi_event_capacity(&mut midi_event_count, 1)?;
+                events_by_track[track_index].push(Event {
+                    tick: scale_tick_position(project_tick, project_ppq, options.ppq)?,
+                    order,
+                    bytes: vec![0xD0 | pressure.channel, pressure.value],
+                });
+            }
+        }
     }
 
     let mut tracks = Vec::new();
@@ -728,6 +778,28 @@ fn type_zero_event_elapsed_seconds(
         return Err("MIDI event lies beyond the supported project timeline".to_owned());
     }
     Ok(elapsed)
+}
+
+fn midi_item_event_positions(
+    item: &MidiItem,
+    content_tick: u64,
+) -> Result<Vec<MidiItemPosition>, String> {
+    if item.is_loop_source() {
+        return Ok(item
+            .project_positions_at_content_tick(content_tick)
+            .collect());
+    }
+    let visible_end = item
+        .source_offset_ticks()
+        .checked_add(item.length_ticks())
+        .ok_or_else(|| "trimmed MIDI item extends beyond the supported timeline".to_owned())?;
+    if content_tick < item.source_offset_ticks() || content_tick >= visible_end {
+        return Ok(Vec::new());
+    }
+    Ok(item
+        .project_position_at_content_tick(content_tick)
+        .into_iter()
+        .collect())
 }
 
 fn project_midi_item_event_tick(
