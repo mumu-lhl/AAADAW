@@ -26,6 +26,8 @@ pub enum MidiFileFormat {
     Type0,
     /// A conductor track and one or more independent MIDI tracks.
     Type1,
+    /// One or more independent sequences, each stored in its own track.
+    Type2,
 }
 
 /// A decoded Standard MIDI File that retains each source event in order.
@@ -250,9 +252,9 @@ impl MidiExportOptions {
 
 /// Decodes a Standard MIDI File while preserving channel, SysEx, and metadata events.
 ///
-/// Only PPQ-based format 0 and format 1 files are accepted. System-common messages are not part
-/// of SMF track event streams and are rejected. The parser enforces file, track, and event
-/// limits before allocating from untrusted chunk lengths.
+/// PPQ-based format 0, format 1, and format 2 files are accepted. SMPTE time divisions and
+/// system-common messages are not part of the supported import model and are rejected. The parser
+/// enforces file, track, and event limits before allocating from untrusted chunk lengths.
 pub fn decode_standard_midi(bytes: &[u8]) -> Result<MidiFileImport, String> {
     if bytes.len() > MAX_MIDI_FILE_BYTES {
         return Err("MIDI file exceeds the 64 MiB import limit".to_owned());
@@ -272,7 +274,7 @@ pub fn decode_standard_midi(bytes: &[u8]) -> Result<MidiFileImport, String> {
     let format = match format_number {
         0 => MidiFileFormat::Type0,
         1 => MidiFileFormat::Type1,
-        2 => return Err("MIDI format 2 patterns are not supported for import".to_owned()),
+        2 => MidiFileFormat::Type2,
         _ => return Err(format!("MIDI file uses unsupported format {format_number}")),
     };
     let declared_track_count = read_u16(bytes, 10)? as usize;
@@ -811,11 +813,29 @@ impl MidiFileImport {
 }
 
 impl MidiFileProjectImport {
+    /// Number of source tracks REAPER-style expansion will create.
+    pub fn expanded_track_count(&self) -> usize {
+        let first_track_is_conductor = self.file_type == MidiFileFormat::Type1
+            && self
+                .tracks
+                .first()
+                .is_some_and(|track| !track.has_channel_events);
+        self.tracks
+            .len()
+            .saturating_sub(usize::from(first_track_is_conductor))
+    }
+
     /// Selects source tracks according to the REAPER import dialog options.
     pub fn tracks_for_options(&self, options: MidiFileImportOptions) -> Vec<MidiImportedTrack> {
-        if options.expand_tracks && self.file_type == MidiFileFormat::Type1 && self.tracks.len() > 1
+        if options.expand_tracks
+            && matches!(
+                self.file_type,
+                MidiFileFormat::Type1 | MidiFileFormat::Type2
+            )
+            && self.tracks.len() > 1
         {
-            let first_track_is_conductor = !self.tracks[0].has_channel_events;
+            let first_track_is_conductor =
+                self.file_type == MidiFileFormat::Type1 && !self.tracks[0].has_channel_events;
             return self
                 .tracks
                 .iter()

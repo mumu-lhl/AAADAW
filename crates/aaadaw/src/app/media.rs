@@ -529,12 +529,13 @@ impl App {
         let start_tick = self.timeline.edit_cursor_tick;
         let tracks = imported.tracks_for_options(options);
         let track_count = tracks.len();
+        let can_import_project_meta = imported.file_type != aaadaw_core::MidiFileFormat::Type2;
         let mut actions = tracks
             .into_iter()
             .map(|track| aaadaw_core::DawAction::ImportMidiTrack { start_tick, track })
             .collect::<Vec<_>>();
 
-        if options.import_tempo_map {
+        if options.import_tempo_map && can_import_project_meta {
             for point in imported.tempo_points {
                 let Some(tick) = start_tick.checked_add(point.tick) else {
                     self.status = "MIDI tempo map exceeds the project tick range".to_owned();
@@ -582,7 +583,7 @@ impl App {
             }
         }
         let mut marker_count = 0_usize;
-        if options.import_markers {
+        if options.import_markers && can_import_project_meta {
             for marker in imported.markers {
                 let Some(tick) = start_tick.checked_add(marker.tick) else {
                     self.status = "MIDI markers exceed the project tick range".to_owned();

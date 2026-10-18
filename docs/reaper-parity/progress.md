@@ -2433,7 +2433,7 @@ AAADAW 项目导入现保留解码层的原始包边界，并按上述规则归�
 
 AAADAW 为导入的 Note、CC、Pitch Bend、Program Change、Poly Aftertouch 和 Channel Pressure 保存源序号；Event List 对这类带有原厂顺序元数据的项目按 Meta/SysEx、Program Change、其他通道事件、Note 的原厂分组并在组内保序。没有导入顺序元数据的旧项目和手工事件继续使用原 Event List 类别顺序，避免改变既有 Bank Select 等行为。快照保存/恢复携带元数据，SQLite schema 64 新增 MIDI event-order 表，schema 63→64 migration 和数据库重开回归通过。Core 导入测试 15/15、UI 正反向排序测试 1/1、导入后音符/CC 编辑删除并重开快照测试通过、Storage project-store 68/68、AAADAW desktop 782/782、strict all-target Clippy (`-D warnings`)、fmt 和 diff 检查通过。
 
-从最终 nightly Cranelift 桌面二进制在独立 Xvfb 会话中分别导入正向、反向 fixture；两张实窗 Event List 截图与 REAPER 两组 `MIDI_GetAllEvts` 读回和原厂截图顺序一致。最终 Build ID `bedf723e6e760b01721e3b47f4e5ba53fca4e4bc`、binary SHA-256 `95a36c1901bb044d07ea45cf0f42657124bd28cfaf758bb0b6bc3ab1310f5ae2` 及两张截图 hash 记于 [same-tick order fixture manifest](../verification/reaper-parity/fixtures/midi-file-import-same-tick-order.tsv)。`MIDI-FILE-IMPORT-001` 继续保持 `in_progress`；原厂 Note Off 同 tick 的 SMF 再导出顺序还未核验，SysEx/Meta 播放、`.sysex` 选择器、Format 2 和 SMPTE divisions 也未完成。
+从最终 nightly Cranelift 桌面二进制在独立 Xvfb 会话中分别导入正向、反向 fixture；两张实窗 Event List 截图与 REAPER 两组 `MIDI_GetAllEvts` 读回和原厂截图顺序一致。最终 Build ID `bedf723e6e760b01721e3b47f4e5ba53fca4e4bc`、binary SHA-256 `95a36c1901bb044d07ea45cf0f42657124bd28cfaf758bb0b6bc3ab1310f5ae2` 及两张截图 hash 记于 [same-tick order fixture manifest](../verification/reaper-parity/fixtures/midi-file-import-same-tick-order.tsv)。`MIDI-FILE-IMPORT-001` 继续保持 `in_progress`；原厂 Note Off 同 tick 的 SMF 再导出顺序还未核验，SysEx/Meta 播放、`.sysex` 选择器和 SMPTE divisions 也未完成。
 
 ### 2026-10-18 保留导入 MIDI 的 Note Off 源顺序并对照原厂导出
 
@@ -2448,3 +2448,9 @@ REAPER 7.82 / Default 7 的 Type 1 导出探针确认：导入同一 Type 0 fixt
 后续审查发现，导入音符的音高、位置、时长或力度一旦被编辑，事件顺序目标仍指向旧数据，导出会退回到缺省排序。普通音符编辑、Quantize 和 Humanize 现在会同步更新对应 Note 的顺序目标，并保留 Note On 与 Note Off 的源序号；撤销通过反向事件将目标恢复。新增回归用例将导入音符改音高后重新导出，并把 tick 240、480 的事件序列与 REAPER 原厂结果逐项比较。
 
 CC、Pitch Bend、Program Change、Poly Aftertouch 与 Channel Pressure 的值编辑也会同步更新类型化顺序目标。Core 测试覆盖这些编辑、重复音符源序号、普通音符 Undo/Redo，以及 Quantize/Humanize 后的元数据同步与 Undo/Redo；导入/导出和 Storage 集成套件 173/173 通过。Core/Storage/App strict all-target Clippy (`-D warnings`)、fmt 和 diff 检查通过。`MIDI-FILE-IMPORT-001` 与 P7 继续保持 `in_progress`。
+
+### 2026-10-18 支持 SMF Format 2 独立序列导入
+
+Linux REAPER 7.82 / Default 7 原厂探针对包含两个独立序列的 Format 2 / 960 PPQ 文件验证默认与展开路径：默认把两序列合并到名为 `Sequence A` 的一个 item，二者均从 tick 0 开始；勾选展开后生成 `Sequence A` 与 `Sequence B` 两条轨道/两个 item，各自只保留对应序列。该格式的 Tempo/Meter 与 Marker/Cue 项目导入控件禁用。输入 fixture、选项及结果截图、两条路径的 `MIDI_GetAllEvts`/note 读回和哈希见 [Format 2 manifest](../verification/reaper-parity/fixtures/midi-file-import-format-2.tsv)。
+
+AAADAW 现在解码 Format 2，将序列保留为独立 source tracks，默认按 REAPER 规则合并，启用 Expand 时逐序列插入；项目 Tempo/Meter 和 Marker/Cue 控件与应用路径均对 Type 2 禁用。Format 2 用例扩展 `midi_file_import` 到 19/19，Core 导入/导出与 Storage 集成测试 174/174、AAADAW 全套 805/805 通过；Core/App strict all-target Clippy (`-D warnings`)、stable fmt 和 diff 检查通过。SMPTE divisions 仍未实现；`MIDI-FILE-IMPORT-001` 与 P7 保持 `in_progress`。

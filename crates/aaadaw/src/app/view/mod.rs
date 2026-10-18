@@ -527,11 +527,8 @@ fn desktop_view(app: &App) -> Element<'_, Message> {
             .into();
     }
     if let Some(import) = &app.pending_midi_file_import {
-        let expanded_track_count = if import.file_type == aaadaw_core::MidiFileFormat::Type1 {
-            import.tracks.len().saturating_sub(1)
-        } else {
-            import.tracks.len()
-        };
+        let expanded_track_count = import.expanded_track_count();
+        let can_import_project_meta = import.file_type != aaadaw_core::MidiFileFormat::Type2;
         let dialog = container(
             column![
                 text("MIDI File Import").size(18),
@@ -542,13 +539,17 @@ fn desktop_view(app: &App) -> Element<'_, Message> {
                     .on_toggle(Message::SetMidiFileImportExpandTracks),
                 checkbox(app.midi_file_import_options.import_tempo_map)
                     .label("Import MIDI tempo map to project tempo map at the edit cursor")
-                    .on_toggle(Message::SetMidiFileImportTempoMap),
+                    .on_toggle_maybe(
+                        can_import_project_meta.then_some(Message::SetMidiFileImportTempoMap),
+                    ),
                 checkbox(app.midi_file_import_options.import_markers)
                     .label(format!(
                         "Import {} MIDI markers/cues as project markers",
                         import.markers.len()
                     ))
-                    .on_toggle(Message::SetMidiFileImportMarkers),
+                    .on_toggle_maybe(
+                        can_import_project_meta.then_some(Message::SetMidiFileImportMarkers),
+                    ),
                 row![
                     button(text("OK")).on_press(Message::ConfirmMidiFileImport),
                     button(text("Cancel"))

@@ -1,0 +1,15 @@
+REAPER	7.82/linux-x86_64
+theme	Default_7.0.ReaperThemeZip
+probe	Insert two independent Format 2 sequences at 960 PPQ, first with Expand unchecked and then checked
+fixture	fixtures/midi-file-import-format-2/format-2-independent-sequences.mid
+fixture_sha256	64a0eaa786391be7c8ce8a804e6841fea73df2881cb6220926eede0931dfb077
+generator	scripts/reaper_parity/generate-midi-timebase-probes.py	sha256=45ffd8f8696b6cf86c7879681c4ad3f4b0e8645af7038e858ea2d6e4ca200ce6
+probe_script	scripts/reaper_parity/probe-midi-timebase-import.lua	sha256=109ab52acc4afd41970ae9e509c08342321d1340327659e133882fc0d1e78f6d
+default_result	one track and item named Sequence A; both sequences begin at tick 0; no tempo markers
+default_readback	fixtures/midi-file-import-format-2/merged-readback.tsv
+default_readback_sha256	2477a4d36e2877974d722b4e04c91151378a7eb8cfb199d702579b40268e3872
+expanded_result	two tracks/items named Sequence A and Sequence B; each contains only its source sequence at tick 0; no tempo markers
+expanded_readback	fixtures/midi-file-import-format-2/expanded-readback.tsv
+expanded_readback_sha256	d6671e3bced464b7bba98ef43dcdb2068b9d99d38a342d1d33752e30c73e2dfa
+options_screenshot	fixtures/midi-file-import-format-2/reaper-7.82-options.png	sha256=a7dda0dd1b75f62e9ac986e9683f3c027a20ab72cde924697d031a73c843ed4f
+expanded_screenshot	fixtures/midi-file-import-format-2/reaper-7.82-expanded-result.png	sha256=eb94d01db6a2be9f532516c353d9a03700545aef8184f64a2488dee9a9458ef3

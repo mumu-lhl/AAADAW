@@ -868,6 +868,7 @@ fn expanded_type1_import_keeps_channel_events_in_the_first_source_track() {
         ..MidiFileImportOptions::default()
     });
 
+    assert_eq!(imported.expanded_track_count(), 2);
     assert_eq!(expanded.len(), 2);
     assert_eq!(expanded[0].name, "First Channel");
     assert_eq!(expanded[0].notes.len(), 1);
@@ -877,8 +878,48 @@ fn expanded_type1_import_keeps_channel_events_in_the_first_source_track() {
 }
 
 #[test]
+fn imports_format_two_sequences_as_merged_or_expanded_tracks() {
+    let sequence_a = [
+        0x00, 0xFF, 0x03, 0x0A, b'S', b'e', b'q', b'u', b'e', b'n', b'c', b'e', b' ', b'A', 0x00,
+        0x90, 60, 100, 0x83, 0x60, 0x80, 60, 24, 0x00, 0xFF, 0x2F, 0x00,
+    ];
+    let sequence_b = [
+        0x00, 0xFF, 0x03, 0x0A, b'S', b'e', b'q', b'u', b'e', b'n', b'c', b'e', b' ', b'B', 0x00,
+        0x91, 64, 100, 0x87, 0x40, 0x81, 64, 18, 0x00, 0xFF, 0x2F, 0x00,
+    ];
+    let decoded = decode_standard_midi(&smf(2, 960, &[&sequence_a, &sequence_b])).unwrap();
+    let imported = decoded.to_project_import(960).unwrap();
+
+    assert_eq!(decoded.format, MidiFileFormat::Type2);
+    assert_eq!(decoded.tracks.len(), 2);
+    assert_eq!(imported.file_type, MidiFileFormat::Type2);
+    assert_eq!(imported.tracks[0].name, "Sequence A");
+    assert_eq!(imported.tracks[1].name, "Sequence B");
+    assert_eq!(imported.tracks[0].length_ticks, 480);
+    assert_eq!(imported.tracks[1].length_ticks, 960);
+
+    let merged = imported.tracks_for_options(MidiFileImportOptions::default());
+    assert_eq!(merged.len(), 1);
+    assert_eq!(merged[0].name, "Sequence A");
+    assert_eq!(merged[0].length_ticks, 960);
+    assert_eq!(merged[0].notes.len(), 2);
+    assert_eq!(merged[0].notes[0].tick, 0);
+    assert_eq!(merged[0].notes[1].tick, 0);
+
+    let expanded = imported.tracks_for_options(MidiFileImportOptions {
+        expand_tracks: true,
+        ..MidiFileImportOptions::default()
+    });
+    assert_eq!(imported.expanded_track_count(), 2);
+    assert_eq!(expanded.len(), 2);
+    assert_eq!(expanded[0].name, "Sequence A");
+    assert_eq!(expanded[1].name, "Sequence B");
+    assert_eq!(expanded[0].notes[0].pitch, 60);
+    assert_eq!(expanded[1].notes[0].pitch, 64);
+}
+
+#[test]
 fn rejects_unsupported_time_bases_and_truncated_or_invalid_events() {
-    assert!(decode_standard_midi(&smf(2, 480, &[&[0x00, 0xFF, 0x2F, 0x00]])).is_err());
     assert!(decode_standard_midi(&smf(0, 0xE728, &[&[0x00, 0xFF, 0x2F, 0x00]])).is_err());
     assert!(decode_standard_midi(&smf(0, 480, &[&[0x80, 0x80, 0x80, 0x80, 0x00]])).is_err());
     assert!(decode_standard_midi(&smf(0, 480, &[&[0x00, 0x90, 60]])).is_err());

@@ -8409,6 +8409,54 @@ fn midi_file_import_options_apply_tracks_tempo_markers_and_opaque_events_atomica
 }
 
 #[test]
+fn format_two_import_ignores_disabled_project_tempo_and_marker_options() {
+    let mut app = App {
+        import_busy: true,
+        ..App::default()
+    };
+
+    let _ = app.update(Message::MidiFileImportFinished(Ok(MidiFileProjectImport {
+        file_type: MidiFileFormat::Type2,
+        tracks: vec![MidiImportedTrack {
+            source_index: 0,
+            has_channel_events: false,
+            name: "Sequence A".to_owned(),
+            length_ticks: 960,
+            notes: Vec::new(),
+            controllers: Vec::new(),
+            pitch_bends: Vec::new(),
+            program_changes: Vec::new(),
+            poly_aftertouches: Vec::new(),
+            channel_pressures: Vec::new(),
+            opaque_events: Vec::new(),
+            event_order: Vec::new(),
+        }],
+        tempo_points: vec![MidiImportedTempoPoint {
+            tick: 0,
+            bpm: 150.0,
+        }],
+        meter_points: vec![MidiImportedMeterPoint {
+            tick: 0,
+            numerator: 3,
+            denominator: 4,
+        }],
+        markers: vec![MidiImportedMarker {
+            tick: 0,
+            name: "Sequence marker".to_owned(),
+        }],
+        unsupported_event_count: 0,
+    })));
+    let _ = app.update(Message::SetMidiFileImportTempoMap(true));
+    let _ = app.update(Message::SetMidiFileImportMarkers(true));
+    let _ = app.update(Message::ConfirmMidiFileImport);
+
+    assert_eq!(app.project.tracks().len(), 1);
+    assert_eq!(app.project.tempo_at_tick(0), 120.0);
+    assert_eq!(app.project.time_signature_at_tick(0).numerator(), 4);
+    assert!(app.project.markers().is_empty());
+}
+
+#[test]
 fn saving_waits_for_an_unsaved_session_recovery_snapshot() {
     let mut app = App {
         project_path: Some(PathBuf::from("project.aaadaw")),
