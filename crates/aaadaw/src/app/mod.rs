@@ -792,6 +792,7 @@ enum MidiEventPropertiesTarget {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum MidiOpaqueEventPropertiesType {
     SysEx,
+    RawMeta,
     TextEvent,
     CopyrightNotice,
     TrackName,
@@ -827,14 +828,17 @@ impl MidiOpaqueEventPropertiesType {
             Self::Cue => 0x07,
             Self::ProgramName => 0x08,
             Self::DeviceName => 0x09,
-            Self::SysEx => return None,
+            Self::SysEx | Self::RawMeta => return None,
         })
     }
 
     fn from_meta_kind(kind: u8) -> Option<Self> {
-        Self::META_OPTIONS
-            .into_iter()
-            .find(|event_type| event_type.meta_kind() == Some(kind))
+        Some(
+            Self::META_OPTIONS
+                .into_iter()
+                .find(|event_type| event_type.meta_kind() == Some(kind))
+                .unwrap_or(Self::RawMeta),
+        )
     }
 }
 
@@ -842,6 +846,7 @@ impl std::fmt::Display for MidiOpaqueEventPropertiesType {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter.write_str(match self {
             Self::SysEx => "SysEx",
+            Self::RawMeta => "Raw Meta (hex)",
             Self::TextEvent => "Text event",
             Self::CopyrightNotice => "Copyright notice",
             Self::TrackName => "Track name",
@@ -859,12 +864,17 @@ fn midi_opaque_event_properties_type_and_payload(
     kind: &MidiOpaqueEventKind,
 ) -> Option<(MidiOpaqueEventPropertiesType, String)> {
     match kind {
-        MidiOpaqueEventKind::Meta { kind, data } => Some((
-            MidiOpaqueEventPropertiesType::from_meta_kind(*kind)?,
-            String::from_utf8_lossy(data)
-                .trim_end_matches('\0')
-                .to_owned(),
-        )),
+        MidiOpaqueEventKind::Meta { kind, data } => {
+            let event_type = MidiOpaqueEventPropertiesType::from_meta_kind(*kind)?;
+            let payload = if event_type == MidiOpaqueEventPropertiesType::RawMeta {
+                format_midi_event_hex_bytes(data)
+            } else {
+                String::from_utf8_lossy(data)
+                    .trim_end_matches('\0')
+                    .to_owned()
+            };
+            Some((event_type, payload))
+        }
         MidiOpaqueEventKind::SystemExclusive { status, data } => {
             let editable_data = if *status == 0xF0 && data.last() == Some(&0xF7) {
                 &data[..data.len().saturating_sub(1)]
@@ -3890,7 +3900,17 @@ impl App {
                     return Task::none();
                 };
                 let data = if dialog.opaque_payload_dirty {
-                    dialog.opaque_payload.into_bytes()
+                    if dialog.opaque_type == Some(MidiOpaqueEventPropertiesType::RawMeta) {
+                        let Some(data) = parse_midi_event_hex_bytes(&dialog.opaque_payload) else {
+                            self.midi_editor_feedback = Some(
+                                "Meta data must be hexadecimal bytes separated by spaces".into(),
+                            );
+                            return Task::none();
+                        };
+                        data
+                    } else {
+                        dialog.opaque_payload.into_bytes()
+                    }
                 } else {
                     data.clone()
                 };
@@ -4019,7 +4039,9 @@ impl App {
                 matches!(
                     &dialog.target,
                     MidiEventPropertiesTarget::Opaque(_, event)
-                        if matches!(&event.kind, MidiOpaqueEventKind::Meta { .. })
+                        if matches!(&event.kind, MidiOpaqueEventKind::Meta { kind, .. }
+                            if MidiOpaqueEventPropertiesType::from_meta_kind(*kind)
+                                != Some(MidiOpaqueEventPropertiesType::RawMeta))
                 )
             })
         {
@@ -6143,6 +6165,7 @@ impl App {
                 if let Some(dialog) = self.midi_event_properties_dialog.as_mut()
                     && dialog.opaque_type.is_some_and(|event_type| {
                         event_type != MidiOpaqueEventPropertiesType::SysEx
+                            && event_type != MidiOpaqueEventPropertiesType::RawMeta
                     })
                 {
                     if multiline {
@@ -6159,6 +6182,7 @@ impl App {
                     && dialog.opaque_type.is_some_and(|event_type| {
                         dialog.opaque_multiline
                             || event_type == MidiOpaqueEventPropertiesType::SysEx
+                            || event_type == MidiOpaqueEventPropertiesType::RawMeta
                     })
                 {
                     dialog.opaque_editor.perform(action);
@@ -6195,6 +6219,7 @@ impl App {
                     if let Some(dialog) = self.midi_event_properties_dialog.as_mut()
                         && dialog.opaque_type.is_some_and(|event_type| {
                             event_type != MidiOpaqueEventPropertiesType::SysEx
+                                && event_type != MidiOpaqueEventPropertiesType::RawMeta
                         })
                     {
                         dialog.opaque_multiline = payload.contains('\n') || payload.contains('\r');

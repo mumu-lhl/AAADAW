@@ -1075,6 +1075,37 @@ fn midi_opaque_meta_text(data: &[u8]) -> String {
     }
 }
 
+fn midi_opaque_meta_hex(data: &[u8]) -> String {
+    data.iter()
+        .map(|byte| format!("{byte:02X}"))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn midi_meta_kind_name(kind: u8) -> &'static str {
+    match kind {
+        0x00 => "Sequence number",
+        0x01 => "Text event",
+        0x02 => "Copyright notice",
+        0x03 => "Track name",
+        0x04 => "Instrument name",
+        0x05 => "Lyrics",
+        0x06 => "Marker",
+        0x07 => "Cue",
+        0x08 => "Program name",
+        0x09 => "Device name",
+        0x20 => "MIDI channel prefix",
+        0x21 => "MIDI port",
+        0x2F => "End of track",
+        0x51 => "Tempo",
+        0x54 => "SMPTE offset",
+        0x58 => "Time signature",
+        0x59 => "Key signature",
+        0x7F => "Sequencer-specific",
+        _ => "Meta event",
+    }
+}
+
 fn midi_opaque_event_label(event: &MidiOpaqueEventData) -> (&'static str, String) {
     match &event.kind {
         MidiOpaqueEventKind::SystemExclusive { status, data } => {
@@ -1092,7 +1123,12 @@ fn midi_opaque_event_label(event: &MidiOpaqueEventData) -> (&'static str, String
             kind: 0x06 | 0x07,
             data,
         } => ("Marker", midi_opaque_meta_text(data)),
-        MidiOpaqueEventKind::Meta { data, .. } => ("Text event", midi_opaque_meta_text(data)),
+        MidiOpaqueEventKind::Meta { kind, data } if (0x01..=0x09).contains(kind) => {
+            ("Text event", midi_opaque_meta_text(data))
+        }
+        MidiOpaqueEventKind::Meta { kind, data } => {
+            (midi_meta_kind_name(*kind), midi_opaque_meta_hex(data))
+        }
     }
 }
 
@@ -1817,6 +1853,8 @@ fn midi_event_properties_dialog(app: &App, touch_targets: bool) -> Element<'_, M
     let is_opaque_sysex =
         state.opaque_type == Some(super::super::MidiOpaqueEventPropertiesType::SysEx);
     let is_opaque_meta = is_opaque && !is_opaque_sysex;
+    let is_opaque_raw_meta =
+        state.opaque_type == Some(super::super::MidiOpaqueEventPropertiesType::RawMeta);
     let position = iced::widget::text_input("1.1.00", &state.position)
         .on_input(Message::SetMidiEventPropertiesPosition)
         .width(Length::Fixed(if touch_targets { 148.0 } else { 116.0 }));
@@ -1853,7 +1891,7 @@ fn midi_event_properties_dialog(app: &App, touch_targets: bool) -> Element<'_, M
     } else {
         "Event Properties"
     };
-    let opaque_meta_text: Element<'_, Message> = if state.opaque_multiline {
+    let opaque_meta_text: Element<'_, Message> = if state.opaque_multiline || is_opaque_raw_meta {
         text_editor(&state.opaque_editor)
             .on_action(Message::EditMidiOpaqueEventPropertiesText)
             .height(Length::Fixed(if touch_targets { 128.0 } else { 96.0 }))
@@ -1904,26 +1942,65 @@ fn midi_event_properties_dialog(app: &App, touch_targets: bool) -> Element<'_, M
             )
             .push(text("Enter hexadecimal bytes separated by spaces.").size(11));
     } else if is_opaque_meta {
+        let type_row: Element<'_, Message> = if is_opaque_raw_meta {
+            let label = match &state.target {
+                super::super::MidiEventPropertiesTarget::Opaque(_, event) => match &event.kind {
+                    MidiOpaqueEventKind::Meta { kind, .. } => {
+                        format!("{} (0x{kind:02X})", midi_meta_kind_name(*kind))
+                    }
+                    _ => "Meta event".to_owned(),
+                },
+                _ => "Meta event".to_owned(),
+            };
+            row![text("Type").width(Length::Fixed(76.0)), text(label)]
+                .spacing(SPACING_XS)
+                .align_y(iced::Alignment::Center)
+                .into()
+        } else {
+            row![
+                text("Type").width(Length::Fixed(76.0)),
+                pick_list(
+                    &super::super::MidiOpaqueEventPropertiesType::META_OPTIONS[..],
+                    state.opaque_type,
+                    Message::SetMidiOpaqueEventPropertiesType,
+                )
+                .width(Length::Fill),
+            ]
+            .spacing(SPACING_XS)
+            .align_y(iced::Alignment::Center)
+            .into()
+        };
+        let mut position_row = row![
+            text("Position").width(Length::Fixed(76.0)),
+            position,
+            iced::widget::Space::new().width(Length::Fill),
+        ]
+        .spacing(SPACING_XS)
+        .align_y(iced::Alignment::Center);
+        if !is_opaque_raw_meta {
+            position_row = position_row.push(
+                button("Load…")
+                    .style(iced::widget::button::secondary)
+                    .on_press(Message::PickMidiOpaqueMetaTextFile),
+            );
+        }
         content = content
             .push(
-                row![text("Text").width(Length::Fixed(76.0)), opaque_meta_text]
-                    .spacing(SPACING_XS)
-                    .align_y(iced::Alignment::Center),
-            )
-            .push(
                 row![
-                    text("Type").width(Length::Fixed(76.0)),
-                    pick_list(
-                        &super::super::MidiOpaqueEventPropertiesType::META_OPTIONS[..],
-                        state.opaque_type,
-                        Message::SetMidiOpaqueEventPropertiesType,
-                    )
-                    .width(Length::Fill),
+                    text(if is_opaque_raw_meta {
+                        "Data (hex)"
+                    } else {
+                        "Text"
+                    })
+                    .width(Length::Fixed(76.0)),
+                    opaque_meta_text
                 ]
                 .spacing(SPACING_XS)
                 .align_y(iced::Alignment::Center),
             )
-            .push(
+            .push(type_row);
+        if !is_opaque_raw_meta {
+            content = content.push(
                 row![
                     iced::widget::Space::new().width(Length::Fixed(76.0)),
                     checkbox(state.opaque_multiline)
@@ -1932,19 +2009,9 @@ fn midi_event_properties_dialog(app: &App, touch_targets: bool) -> Element<'_, M
                 ]
                 .spacing(SPACING_XS)
                 .align_y(iced::Alignment::Center),
-            )
-            .push(
-                row![
-                    text("Position").width(Length::Fixed(76.0)),
-                    position,
-                    iced::widget::Space::new().width(Length::Fill),
-                    button("Load…")
-                        .style(iced::widget::button::secondary)
-                        .on_press(Message::PickMidiOpaqueMetaTextFile),
-                ]
-                .spacing(SPACING_XS)
-                .align_y(iced::Alignment::Center),
             );
+        }
+        content = content.push(position_row);
     } else if is_controller {
         content =
             content
@@ -5180,6 +5247,25 @@ mod tests {
     fn sysex_properties_frame_f0_messages_and_f7_continuations_distinctly() {
         assert_eq!(midi_sysex_frame_labels(0xF0), ("F0", Some("F7")));
         assert_eq!(midi_sysex_frame_labels(0xF7), ("F7", None));
+    }
+
+    #[test]
+    fn structural_meta_events_use_named_rows_and_preserve_their_bytes() {
+        let event = MidiOpaqueEventData {
+            tick: 0,
+            order: 0,
+            kind: MidiOpaqueEventKind::Meta {
+                kind: 0x59,
+                data: vec![0x02, 0x00],
+            },
+        };
+
+        assert_eq!(
+            midi_opaque_event_label(&event),
+            ("Key signature", "02 00".into())
+        );
+        assert_eq!(midi_meta_kind_name(0x51), "Tempo");
+        assert_eq!(midi_meta_kind_name(0x58), "Time signature");
     }
 
     fn piano_roll_for_test<'a>(

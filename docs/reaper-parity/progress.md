@@ -2398,3 +2398,9 @@ Linux REAPER 7.82 / Default 7 的 Type 1 探针实窗确认 SysEx 的 F0/F7、�
 SysEx Event Properties 现在区分 SMF 的 F0 消息和 F7 延续事件：F0 显示完整消息边界，F7 显示延续状态且不附加人为的 F0/F7 外框。App 回归验证 F7 payload 编辑后仍保持 F7 状态，并可 Undo/Redo；视图测试覆盖两类边界标签。该切片目前由自动化验证，F7 对应的 REAPER 原厂窗口行为与截图还未 A/B 确认。
 
 当前 `opaque_` 定向 App 测试 6/6、F0/F7 文件封装测试 1/1、F0/F7 属性边界视图测试 1/1 通过；AAADAW 构建、strict all-target Clippy (`-D warnings`)、fmt 与 diff 检查通过。矩阵仍将原厂 F7 对照、SysEx 文件对话框 I/O、invalid UTF-8 与结构性 Meta 留在开放差异，`MIDI-EVENT-PROPERTIES-001` 保持 `in_progress`。
+
+### 2026-10-18 非文本 Meta 原始数据编辑
+
+Event List 现在为结构性/未知 Meta 行显示对应类型名称与原始十六进制字节。选中事件可打开只读的 Meta 类型标识和可编辑 raw-hex payload；非法 hex 不提交，合法修改保留 Meta type、同一事件顺序及 Undo/Redo。Key signature、MIDI channel prefix、tempo、time signature 等 type name 已能识别，但常规导入中被映射到工程 Tempo/Meter 的有效事件仍按原有路径处理。此功能只提供安全的原始字节编辑，不等同于 REAPER 解码后的特定结构字段窗。
+
+关键签名 Meta 的 App 回归覆盖属性入口、错误输入保护、类型保留和 Undo/Redo；Event List 视图回归覆盖类型名与原始 bytes。当前 opaque 属性 App 测试 7/7、结构性 Meta 定向 App/视图测试 2/2、SysEx 包络与 F0/F7 标签测试各 1/1 通过。当前 AAADAW Build ID `977623f4e8716be4b47b4d0c2c80be5fb721e3cd` 在 Xvfb :456 实际打开 Key signature 属性窗；520×240 截图和哈希记录在 [Event Properties manifest](../verification/reaper-parity/fixtures/midi-event-properties-ui.tsv)。REAPER 对非文本 Meta 的具体属性语义尚未 A/B 探测；后续验证 SysEx 文件对话框 I/O，再按原厂结果补结构化 Meta 行为。`MIDI-EVENT-PROPERTIES-001` 保持 `in_progress`。
