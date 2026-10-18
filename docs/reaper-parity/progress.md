@@ -2553,4 +2553,8 @@ AAADAW inline MIDI 现在将 Control/Command 拖动映射为副本事务：拖�
 
 在 REAPER 7.82 / Linux / Default 7 的 MIDI Editor 中，从 Ctrl 拖拽后的状态继续操作：Ctrl 点击已选副本 C4（960 tick）只取消该音符选择，D4/F4 副本仍选中；再 Ctrl 点击未选源 C4（840 tick）只添加源音符，C4 副本继续未选。两个 MIDI Editor 截图和保存后的 RPP 原始事件大小写选择标记已加入 [inline editor fixture manifest](../verification/reaper-parity/fixtures/midi-inline-editor.tsv)，读回确认事件 tick、音高、音长均未改变。
 
-AAADAW 的 Control-click 处理已通过同一释放态事件流回归覆盖：Ctrl 点击未选 note 延后到 MouseButtonReleased 才加入；再次点击已选 note 延后到 release 并只移除该 note，其余选择保留。`inline_midi_control_click_adds_notes_to_the_drag_selection` 现覆盖增选和取消选择；Cranelift focused 回归通过。`MIDI-INLINE-EDITOR-001` 继续 `in_progress`，原厂 Ctrl-click 映射现已对照；item context menu、音高拖动、resize 边界、zoom/range、loop source、多 item 等仍待独立验收。
+原厂后续 Ctrl+Z 将刚加入的音符从选区移除但不改 MIDI 内容，Ctrl+Shift+Z 重做后恢复该选区；因此 Control-click 选择切换本身属于 Undo/Redo 顺序。
+
+AAADAW 的 Control-click 处理通过同一释放态事件流回归覆盖：Ctrl 点击未选 note 延后到 MouseButtonReleased 才加入；再次点击已选 note 延后到 release 并只移除该 note，其余选择保留。现将选择状态作为应用层历史处理，Undo/Redo 只恢复 Timeline 与打开的 Piano Roll 选区，不建立 MIDI 内容快照；同一历史栈保持 Ctrl-drag 副本事务与之后 Ctrl-click 选择动作的顺序。新增 App 回归覆盖空选区增选/取消和“复制组→改变选区→两次 Undo/Redo”的交错序列，项目快照全程不变。Cranelift 主程序测试 **800/800**、稳定工具链 Nextest **800/800**、workspace strict all-target Clippy（`-D warnings`）、fmt 与 diff 检查通过。Cranelift 构建仍给出既有 iced/wgpu `TimelinePipeline: MaybeSync` recursion-depth warning。
+
+最新 Cranelift 桌面二进制 SHA-256 `84875ca1a7d2496288e05863a8ad5128a8aaa6880c9614d98fa057d4adbbf558` 在隔离 XDG 配置和 Xvfb :316 真实打开七音符工程；实按 E 打开 inline editor、Ctrl-click 加入 C4 副本、Ctrl+Z 清除蓝色选区、Ctrl+Shift+Z 重现蓝色选区。前态、选择态、Undo、Redo 四张 1280×800 实窗截图及哈希均在 [inline editor fixture manifest](../verification/reaper-parity/fixtures/midi-inline-editor.tsv)。`MIDI-INLINE-EDITOR-001` 继续 `in_progress`；原厂 Ctrl-click 与选择 Undo/Redo 现已对照，item context menu、音高拖动、resize 边界、zoom/range、loop source、多 item 等仍待独立验收。

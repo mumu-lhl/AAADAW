@@ -136,6 +136,7 @@ pub(crate) use messages::{
 enum AppHistoryEntry {
     Project,
     ProjectWithInlineMidiSelection(InlineMidiSelectionHistory),
+    InlineMidiSelection(InlineMidiSelectionHistory),
     ItemSelection {
         label: &'static str,
         before: Box<timeline::ItemSelectionState>,
@@ -5218,10 +5219,10 @@ impl App {
             }
             let unsupported_playback_history_edit = match &message {
                 Message::Undo => {
-                    !self.item_selection_is_next_undo() && !self.project.can_undo_track_mix()
+                    !self.app_selection_is_next_undo() && !self.project.can_undo_track_mix()
                 }
                 Message::Redo => {
-                    !self.item_selection_is_next_redo() && !self.project.can_redo_track_mix()
+                    !self.app_selection_is_next_redo() && !self.project.can_redo_track_mix()
                 }
                 _ => false,
             };
@@ -8615,6 +8616,12 @@ impl App {
                 self.with_item_selection_history(label, |app| {
                     app.handle_timeline_view_event(timeline::TimelineEvent::SelectHoveredItem(mode))
                 });
+            }
+            Message::Timeline(timeline::TimelineEvent::SetInlineMidiNoteSelection {
+                item_id,
+                note_ids,
+            }) => {
+                self.with_inline_midi_note_selection_history(item_id, note_ids);
             }
             Message::Timeline(event) => {
                 #[cfg(feature = "audio-device")]
@@ -13764,14 +13771,38 @@ impl App {
     }
 
     fn can_undo_action(&self) -> bool {
-        self.item_selection_is_next_undo() || self.project.can_undo()
+        self.app_selection_is_next_undo() || self.project.can_undo()
     }
 
     fn can_redo_action(&self) -> bool {
-        self.item_selection_is_next_redo() || self.project.can_redo()
+        self.app_selection_is_next_redo() || self.project.can_redo()
     }
 
-    fn inline_midi_selection_is_next_undo(&self) -> Option<InlineMidiSelectionHistory> {
+    fn app_selection_is_next_undo(&self) -> bool {
+        self.item_selection_is_next_undo() || self.inline_midi_note_selection_is_next_undo()
+    }
+
+    fn app_selection_is_next_redo(&self) -> bool {
+        self.item_selection_is_next_redo() || self.inline_midi_note_selection_is_next_redo()
+    }
+
+    fn inline_midi_note_selection_is_next_undo(&self) -> bool {
+        matches!(
+            self.app_undo_history.last(),
+            Some(AppHistoryEntry::InlineMidiSelection(history))
+                if history.project_history_cursor == self.project.history_cursor()
+        )
+    }
+
+    fn inline_midi_note_selection_is_next_redo(&self) -> bool {
+        matches!(
+            self.app_redo_history.last(),
+            Some(AppHistoryEntry::InlineMidiSelection(history))
+                if history.project_history_cursor == self.project.history_cursor()
+        )
+    }
+
+    fn inline_midi_copy_selection_is_next_undo(&self) -> Option<InlineMidiSelectionHistory> {
         match self.app_undo_history.last() {
             Some(AppHistoryEntry::ProjectWithInlineMidiSelection(history))
                 if history.project_history_cursor == self.project.history_cursor() =>
@@ -13792,9 +13823,15 @@ impl App {
         } else {
             &history.before
         };
-        self.timeline
-            .inline_midi_note_selection
-            .insert(history.item_id, selection.clone());
+        if selection.is_empty() {
+            self.timeline
+                .inline_midi_note_selection
+                .remove(&history.item_id);
+        } else {
+            self.timeline
+                .inline_midi_note_selection
+                .insert(history.item_id, selection.clone());
+        }
 
         if self.midi_editor_item_id == Some(history.item_id) {
             let editor_selection = if redo {
@@ -13851,6 +13888,84 @@ impl App {
         });
     }
 
+    fn with_inline_midi_note_selection_history(
+        &mut self,
+        item_id: ItemId,
+        note_ids: Vec<aaadaw_core::NoteId>,
+    ) {
+        let before = self
+            .timeline
+            .inline_midi_note_selection
+            .get(&item_id)
+            .cloned()
+            .unwrap_or_default();
+        let editor_before = (self.midi_editor_item_id == Some(item_id))
+            .then(|| self.midi_editor_selected_notes.clone());
+
+        self.handle_timeline_view_event(timeline::TimelineEvent::SetInlineMidiNoteSelection {
+            item_id,
+            note_ids,
+        });
+
+        let after = self
+            .timeline
+            .inline_midi_note_selection
+            .get(&item_id)
+            .cloned()
+            .unwrap_or_default();
+        let editor_after = editor_before.as_ref().map(|_| after.clone());
+        if let Some(editor_after) = editor_after.as_ref() {
+            self.midi_editor_selected_notes = editor_after.clone();
+        }
+        if before == after && editor_before == editor_after {
+            return;
+        }
+
+        self.project.discard_redo_history();
+        self.app_redo_history.clear();
+        self.app_undo_history
+            .push(AppHistoryEntry::InlineMidiSelection(
+                InlineMidiSelectionHistory {
+                    item_id,
+                    before,
+                    after,
+                    editor_before,
+                    editor_after,
+                    project_history_cursor: self.project.history_cursor(),
+                },
+            ));
+    }
+
+    fn undo_inline_midi_note_selection_if_next(&mut self) -> bool {
+        if !self.inline_midi_note_selection_is_next_undo() {
+            return false;
+        }
+        let Some(AppHistoryEntry::InlineMidiSelection(history)) = self.app_undo_history.pop()
+        else {
+            return false;
+        };
+        self.restore_inline_midi_selection_history(&history, false);
+        self.app_redo_history
+            .push(AppHistoryEntry::InlineMidiSelection(history));
+        self.status = "Undid MIDI note selection".to_owned();
+        true
+    }
+
+    fn redo_inline_midi_note_selection_if_next(&mut self) -> bool {
+        if !self.inline_midi_note_selection_is_next_redo() {
+            return false;
+        }
+        let Some(AppHistoryEntry::InlineMidiSelection(history)) = self.app_redo_history.pop()
+        else {
+            return false;
+        };
+        self.restore_inline_midi_selection_history(&history, true);
+        self.app_undo_history
+            .push(AppHistoryEntry::InlineMidiSelection(history));
+        self.status = "Redid MIDI note selection".to_owned();
+        true
+    }
+
     fn undo_item_selection_if_next(&mut self) -> bool {
         if !self.item_selection_is_next_undo() {
             return false;
@@ -13900,10 +14015,13 @@ impl App {
     }
 
     fn undo(&mut self) {
+        if self.undo_inline_midi_note_selection_if_next() {
+            return;
+        }
         if self.undo_item_selection_if_next() {
             return;
         }
-        let inline_note_selection_history = self.inline_midi_selection_is_next_undo();
+        let inline_note_selection_history = self.inline_midi_copy_selection_is_next_undo();
         let selected_fx_instance_id = self.selected_fx_chain_instance_id();
         #[cfg(feature = "audio-device")]
         let tempo_before = self.project.tempo_points().collect::<Vec<_>>();
@@ -14046,6 +14164,9 @@ impl App {
     }
 
     fn redo(&mut self) {
+        if self.redo_inline_midi_note_selection_if_next() {
+            return;
+        }
         if self.redo_item_selection_if_next() {
             return;
         }

@@ -15787,6 +15787,27 @@ fn inline_midi_group_copy_selects_copies_and_is_one_undoable_transaction() {
     );
     let after = app.project.snapshot();
 
+    let selected_copy = HashSet::from([*copied_ids.iter().next().unwrap()]);
+    let _ = app.update(Message::Timeline(
+        TimelineEvent::SetInlineMidiNoteSelection {
+            item_id,
+            note_ids: selected_copy.iter().copied().collect(),
+        },
+    ));
+    assert_eq!(app.project.snapshot(), after);
+    assert_eq!(
+        app.timeline.inline_midi_note_selection.get(&item_id),
+        Some(&selected_copy)
+    );
+    assert_eq!(app.midi_editor_selected_notes, selected_copy);
+
+    let _ = app.update(Message::Undo);
+    assert_eq!(app.project.snapshot(), after);
+    assert_eq!(
+        app.timeline.inline_midi_note_selection.get(&item_id),
+        Some(&copied_ids)
+    );
+    assert_eq!(app.midi_editor_selected_notes, copied_ids);
     let _ = app.update(Message::Undo);
     assert_eq!(app.project.snapshot(), before);
     assert_eq!(
@@ -15801,6 +15822,105 @@ fn inline_midi_group_copy_selects_copies_and_is_one_undoable_transaction() {
         Some(&copied_ids)
     );
     assert_eq!(app.midi_editor_selected_notes, copied_ids);
+    let _ = app.update(Message::Redo);
+    assert_eq!(app.project.snapshot(), after);
+    assert_eq!(
+        app.timeline.inline_midi_note_selection.get(&item_id),
+        Some(&selected_copy)
+    );
+    assert_eq!(app.midi_editor_selected_notes, selected_copy);
+}
+
+#[test]
+fn inline_midi_note_selection_is_undoable_without_changing_project_content() {
+    let mut app = App::default();
+    let _ = app.update(Message::AddTrack);
+    let track_id = app.project.tracks()[0].id();
+    app.project
+        .apply(DawAction::InsertMidiItem {
+            track_id,
+            start_tick: 0,
+            length_ticks: 960,
+        })
+        .expect("test MIDI item should be inserted");
+    let item_id = app.project.midi_items()[0].id();
+    app.project
+        .apply(DawAction::AddMidiNotes {
+            item_id,
+            notes: [(100, 60), (350, 64)]
+                .into_iter()
+                .map(|(tick, pitch)| MidiNoteData {
+                    channel: 0,
+                    pitch,
+                    tick,
+                    duration: 120,
+                    velocity: 96,
+                    off_velocity: 0,
+                })
+                .collect(),
+        })
+        .expect("test MIDI notes should be inserted");
+    app.timeline.rebuild(&app.project);
+    app.timeline.inline_midi_items.insert(item_id);
+    let note_ids = app.project.midi_items()[0]
+        .notes()
+        .iter()
+        .map(|note| (note.pitch(), note.id()))
+        .collect::<HashMap<_, _>>();
+    let first_id = note_ids[&60];
+    let second_id = note_ids[&64];
+    let _ = app.update(Message::OpenMidiEditor(item_id));
+    let project_snapshot = app.project.snapshot();
+
+    let _ = app.update(Message::Timeline(
+        TimelineEvent::SetInlineMidiNoteSelection {
+            item_id,
+            note_ids: vec![first_id],
+        },
+    ));
+    let _ = app.update(Message::Timeline(
+        TimelineEvent::SetInlineMidiNoteSelection {
+            item_id,
+            note_ids: vec![first_id, second_id],
+        },
+    ));
+    let selected_both = HashSet::from([first_id, second_id]);
+    assert_eq!(
+        app.timeline.inline_midi_note_selection[&item_id],
+        selected_both
+    );
+    assert_eq!(app.midi_editor_selected_notes, selected_both);
+    assert_eq!(app.project.snapshot(), project_snapshot);
+
+    let _ = app.update(Message::Undo);
+    assert_eq!(
+        app.timeline.inline_midi_note_selection[&item_id],
+        HashSet::from([first_id])
+    );
+    assert_eq!(app.midi_editor_selected_notes, HashSet::from([first_id]));
+    assert_eq!(app.project.snapshot(), project_snapshot);
+    let _ = app.update(Message::Undo);
+    assert!(
+        !app.timeline
+            .inline_midi_note_selection
+            .contains_key(&item_id)
+    );
+    assert!(app.midi_editor_selected_notes.is_empty());
+    assert_eq!(app.project.snapshot(), project_snapshot);
+
+    let _ = app.update(Message::Redo);
+    assert_eq!(
+        app.timeline.inline_midi_note_selection[&item_id],
+        HashSet::from([first_id])
+    );
+    assert_eq!(app.midi_editor_selected_notes, HashSet::from([first_id]));
+    let _ = app.update(Message::Redo);
+    assert_eq!(
+        app.timeline.inline_midi_note_selection[&item_id],
+        selected_both
+    );
+    assert_eq!(app.midi_editor_selected_notes, selected_both);
+    assert_eq!(app.project.snapshot(), project_snapshot);
 }
 
 #[test]
