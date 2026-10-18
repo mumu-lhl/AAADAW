@@ -1,4 +1,4 @@
-use aaadaw_core::{DawAction, MidiNoteData, Project};
+use aaadaw_core::{DawAction, MidiNoteData, MidiOpaqueEventData, MidiOpaqueEventKind, Project};
 use aaadaw_engine::{
     AudioItemStream, AudioRenderGraph, AudioStreamPosition, ClapInstrumentHelperProcess,
     ClapIpcConfig, ClapIpcMapping, MasterOutputCeiling, TrackIsolatedInstrument, Transport,
@@ -143,6 +143,19 @@ fn render_callback_does_not_allocate_on_the_rendering_thread() {
             notes,
         })
         .expect("MIDI note creation should succeed");
+    project
+        .apply(DawAction::SetMidiOpaqueEvents {
+            item_id: midi_item_id,
+            events: vec![MidiOpaqueEventData {
+                tick: 16,
+                order: 512,
+                kind: MidiOpaqueEventKind::SystemExclusive {
+                    status: 0xF0,
+                    data: vec![0x43, 0x12, 0xF7],
+                },
+            }],
+        })
+        .expect("SysEx should be part of the render plan before callbacks start");
     for index in 1..=2 {
         project
             .apply(DawAction::CreateTrack {

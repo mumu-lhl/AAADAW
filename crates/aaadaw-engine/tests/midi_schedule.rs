@@ -1,6 +1,7 @@
 use aaadaw_core::{
     DawAction, MidiChannelPressureData, MidiControllerData, MidiItemPosition, MidiNoteData,
-    MidiPitchBendData, MidiPolyAftertouchData, MidiProgramChangeData, Project, TempoCurve,
+    MidiOpaqueEventData, MidiOpaqueEventKind, MidiPitchBendData, MidiPolyAftertouchData,
+    MidiProgramChangeData, Project, TempoCurve,
 };
 use aaadaw_engine::{
     MidiEventKind, MidiEventPlan, MidiScheduleError, MidiSegmentCursor, ScheduledMidiEvent,
@@ -41,6 +42,66 @@ fn project_with_note(pitch: u8, tick: u64, duration: u64) -> (Project, aaadaw_co
         })
         .expect("MIDI note insertion should succeed");
     (project, track_id)
+}
+
+#[test]
+fn midi_sysex_is_scheduled_with_framed_bytes_and_meta_is_not_sent_to_instruments() {
+    let (mut project, track_id) = project_with_note(60, 0, 120);
+    let item_id = project.midi_items()[0].id();
+    project
+        .apply(DawAction::SetMidiOpaqueEvents {
+            item_id,
+            events: vec![
+                MidiOpaqueEventData {
+                    tick: 120,
+                    order: 0,
+                    kind: MidiOpaqueEventKind::SystemExclusive {
+                        status: 0xF0,
+                        data: vec![0x43, 0x12, 0xF7],
+                    },
+                },
+                MidiOpaqueEventData {
+                    tick: 240,
+                    order: 1,
+                    kind: MidiOpaqueEventKind::Meta {
+                        kind: 0x01,
+                        data: b"not sent".to_vec(),
+                    },
+                },
+                MidiOpaqueEventData {
+                    tick: 360,
+                    order: 2,
+                    kind: MidiOpaqueEventKind::SystemExclusive {
+                        status: 0xF7,
+                        data: vec![0x7E, 0x7F],
+                    },
+                },
+            ],
+        })
+        .unwrap();
+
+    let plan = MidiEventPlan::compile(&project).unwrap();
+    let mut events = [None; 4];
+    assert_eq!(plan.events_for_block(0, 12_000, &mut events).unwrap(), 4);
+    let sysex_events: Vec<_> = events
+        .iter()
+        .flatten()
+        .filter(|event| event.kind == MidiEventKind::SystemExclusive)
+        .collect();
+    assert_eq!(sysex_events.len(), 2);
+    assert_eq!(sysex_events[0].track_id, track_id);
+    let first = sysex_events[0];
+    assert_eq!(
+        plan.sysex_data_for_event(*first).unwrap(),
+        [0xF0, 0x43, 0x12, 0xF7]
+    );
+    let second = sysex_events[1];
+    assert_eq!(
+        plan.sysex_data_for_event(*second).unwrap(),
+        [0xF7, 0x7E, 0x7F]
+    );
+    assert_eq!(sysex_events[0].sample_offset, 3_000);
+    assert_eq!(sysex_events[1].sample_offset, 9_000);
 }
 
 #[test]
@@ -436,6 +497,8 @@ fn segmented_event_plan_keeps_output_unchanged_when_callback_buffer_is_too_small
         controller: None,
         pitch_bend: None,
         program: None,
+        sysex_offset: u32::MAX,
+        sysex_length: 0,
         kind: MidiEventKind::NoteOn,
     };
     let mut output = [Some(sentinel); 2];

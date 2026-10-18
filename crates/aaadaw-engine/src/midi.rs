@@ -1,5 +1,7 @@
 use crate::transport::TransportBlockSegment;
-use aaadaw_core::{MidiItemPosition, NoteId, Project, TimebaseError, Track, TrackId};
+use aaadaw_core::{
+    MidiItemPosition, MidiOpaqueEventKind, NoteId, Project, TimebaseError, Track, TrackId,
+};
 use std::collections::HashMap;
 use std::fmt;
 
@@ -7,6 +9,7 @@ pub use aaadaw_core::MIDI_CHANNEL_COUNT;
 
 const MAX_COMPILED_MIDI_EVENTS: usize = 1_000_000;
 const FIRST_LIVE_MIDI_NOTE_ID: u64 = 1 << 30;
+pub(crate) const NO_SYSEX_OFFSET: u32 = u32::MAX;
 
 fn sample_at_midi_position(
     project: &Project,
@@ -29,6 +32,7 @@ pub enum MidiEventKind {
     ProgramChange,
     PolyAftertouch,
     ChannelPressure,
+    SystemExclusive,
     NoteOff,
     NoteOn,
 }
@@ -46,6 +50,10 @@ pub struct ScheduledMidiEvent {
     pub controller: Option<u8>,
     pub pitch_bend: Option<u16>,
     pub program: Option<u8>,
+    /// Byte offset into the immutable SysEx payload table; `NO_SYSEX_OFFSET` for other events.
+    pub sysex_offset: u32,
+    /// Length of the framed SysEx bytes beginning at `sysex_offset`.
+    pub sysex_length: u32,
     pub kind: MidiEventKind,
 }
 
@@ -142,6 +150,8 @@ impl MidiInputMessage {
             controller,
             pitch_bend,
             program,
+            sysex_offset: NO_SYSEX_OFFSET,
+            sysex_length: 0,
             note_id: matches!(kind, MidiEventKind::NoteOn | MidiEventKind::NoteOff)
                 .then_some(self.note_id)
                 .flatten(),
@@ -258,6 +268,8 @@ struct CompiledMidiEvent {
     controller: Option<u8>,
     pitch_bend: Option<u16>,
     program: Option<u8>,
+    sysex_offset: u32,
+    sysex_length: u32,
     kind: MidiEventKind,
 }
 
@@ -345,6 +357,7 @@ struct ActiveNoteQuery {
 #[derive(Clone, Debug, Default)]
 pub struct MidiEventPlan {
     events: Vec<CompiledMidiEvent>,
+    sysex_payload: Vec<u8>,
     controller_timelines: Vec<ControllerTimeline>,
     pitch_bend_timelines: Vec<PitchBendTimeline>,
     program_timelines: Vec<ProgramTimeline>,
@@ -481,6 +494,7 @@ impl MidiEventPlan {
         let tracks = project.tracks();
         let has_solo = tracks.iter().any(Track::is_solo);
         let mut events = Vec::new();
+        let mut sysex_payload = Vec::new();
         let mut notes = Vec::new();
         let mut controller_timelines = Vec::<ControllerTimeline>::new();
         let mut pitch_bend_timelines = Vec::<PitchBendTimeline>::new();
@@ -628,6 +642,8 @@ impl MidiEventPlan {
                             controller: None,
                             pitch_bend: None,
                             program: None,
+                            sysex_offset: NO_SYSEX_OFFSET,
+                            sysex_length: 0,
                             kind: MidiEventKind::NoteOn,
                         });
                         events.push(CompiledMidiEvent {
@@ -640,6 +656,8 @@ impl MidiEventPlan {
                             controller: None,
                             pitch_bend: None,
                             program: None,
+                            sysex_offset: NO_SYSEX_OFFSET,
+                            sysex_length: 0,
                             kind: MidiEventKind::NoteOff,
                         });
                     }
@@ -684,6 +702,8 @@ impl MidiEventPlan {
                             controller: Some(controller.controller),
                             pitch_bend: None,
                             program: None,
+                            sysex_offset: NO_SYSEX_OFFSET,
+                            sysex_length: 0,
                             kind: MidiEventKind::ControllerChange,
                         });
                     }
@@ -725,6 +745,8 @@ impl MidiEventPlan {
                             controller: None,
                             pitch_bend: Some(bend.value),
                             program: None,
+                            sysex_offset: NO_SYSEX_OFFSET,
+                            sysex_length: 0,
                             kind: MidiEventKind::PitchBend,
                         });
                     }
@@ -766,6 +788,8 @@ impl MidiEventPlan {
                             controller: None,
                             pitch_bend: None,
                             program: Some(change.program),
+                            sysex_offset: NO_SYSEX_OFFSET,
+                            sysex_length: 0,
                             kind: MidiEventKind::ProgramChange,
                         });
                     }
@@ -811,6 +835,8 @@ impl MidiEventPlan {
                             controller: None,
                             pitch_bend: None,
                             program: None,
+                            sysex_offset: NO_SYSEX_OFFSET,
+                            sysex_length: 0,
                             kind: MidiEventKind::PolyAftertouch,
                         });
                     }
@@ -856,7 +882,51 @@ impl MidiEventPlan {
                             controller: None,
                             pitch_bend: None,
                             program: None,
+                            sysex_offset: NO_SYSEX_OFFSET,
+                            sysex_length: 0,
                             kind: MidiEventKind::ChannelPressure,
+                        });
+                    }
+                }
+            }
+            for opaque_event in item.opaque_events() {
+                let MidiOpaqueEventKind::SystemExclusive { status, data } = &opaque_event.kind
+                else {
+                    continue;
+                };
+                let sysex_offset = u32::try_from(sysex_payload.len())
+                    .map_err(|_| MidiScheduleError::EventLimitExceeded)?;
+                let sysex_length = data
+                    .len()
+                    .checked_add(1)
+                    .and_then(|length| u32::try_from(length).ok())
+                    .ok_or(MidiScheduleError::EventLimitExceeded)?;
+                if sysex_offset == NO_SYSEX_OFFSET
+                    || sysex_offset.checked_add(sysex_length).is_none()
+                {
+                    return Err(MidiScheduleError::EventLimitExceeded);
+                }
+                sysex_payload.push(*status);
+                sysex_payload.extend_from_slice(data);
+                for position in item.project_positions_at_content_tick(opaque_event.tick) {
+                    let absolute_sample = sample_at_midi_position(project, position)?;
+                    for routed_track in routed_tracks {
+                        if events.len() == MAX_COMPILED_MIDI_EVENTS {
+                            return Err(MidiScheduleError::EventLimitExceeded);
+                        }
+                        events.push(CompiledMidiEvent {
+                            absolute_sample,
+                            track_id: *routed_track,
+                            channel: 0,
+                            note_id: None,
+                            pitch: 0,
+                            velocity: 0,
+                            controller: None,
+                            pitch_bend: None,
+                            program: None,
+                            sysex_offset,
+                            sysex_length,
+                            kind: MidiEventKind::SystemExclusive,
                         });
                     }
                 }
@@ -873,6 +943,7 @@ impl MidiEventPlan {
                 event.note_id.map_or(0, NoteId::value),
                 event.pitch_bend.unwrap_or(0),
                 event.program.unwrap_or(0),
+                event.sysex_offset,
             )
         });
         for timeline in &mut controller_timelines {
@@ -898,6 +969,7 @@ impl MidiEventPlan {
         let (note_interval_nodes, note_interval_root) = compile_note_interval_tree(&notes);
         Ok(Self {
             events,
+            sysex_payload,
             controller_timelines,
             pitch_bend_timelines,
             program_timelines,
@@ -916,6 +988,23 @@ impl MidiEventPlan {
     /// Returns whether the schedule contains no events.
     pub fn is_empty(&self) -> bool {
         self.events.is_empty()
+    }
+
+    pub(crate) fn sysex_payload(&self) -> &[u8] {
+        &self.sysex_payload
+    }
+
+    /// Returns the immutable framed bytes for one scheduled SysEx event.
+    pub fn sysex_data_for_event(&self, event: ScheduledMidiEvent) -> Option<&[u8]> {
+        if event.kind != MidiEventKind::SystemExclusive
+            || event.sysex_offset == NO_SYSEX_OFFSET
+            || event.sysex_length == 0
+        {
+            return None;
+        }
+        let end = event.sysex_offset.checked_add(event.sysex_length)?;
+        self.sysex_payload
+            .get(event.sysex_offset as usize..end as usize)
     }
 
     /// Copies notes sounding at `sample` as note-ons at block offset zero.
@@ -984,6 +1073,8 @@ impl MidiEventPlan {
                     controller: Some(timeline.controller),
                     pitch_bend: None,
                     program: None,
+                    sysex_offset: NO_SYSEX_OFFSET,
+                    sysex_length: 0,
                     kind: MidiEventKind::ControllerChange,
                 });
                 written += 1;
@@ -1042,6 +1133,8 @@ impl MidiEventPlan {
                 controller: None,
                 pitch_bend: Some(value),
                 program: None,
+                sysex_offset: NO_SYSEX_OFFSET,
+                sysex_length: 0,
                 kind: MidiEventKind::PitchBend,
             });
             written += 1;
@@ -1088,6 +1181,8 @@ impl MidiEventPlan {
                     controller: None,
                     pitch_bend: None,
                     program: Some(value.program),
+                    sysex_offset: NO_SYSEX_OFFSET,
+                    sysex_length: 0,
                     kind: MidiEventKind::ProgramChange,
                 });
                 written += 1;
@@ -1134,6 +1229,8 @@ impl MidiEventPlan {
                     controller: None,
                     pitch_bend: None,
                     program: None,
+                    sysex_offset: NO_SYSEX_OFFSET,
+                    sysex_length: 0,
                     kind: timeline.kind,
                 });
                 written += 1;
@@ -1214,6 +1311,8 @@ impl MidiEventPlan {
                 controller: None,
                 pitch_bend: None,
                 program: None,
+                sysex_offset: NO_SYSEX_OFFSET,
+                sysex_length: 0,
                 kind: MidiEventKind::NoteOn,
             });
             *written += 1;
@@ -1240,6 +1339,7 @@ impl MidiEventPlan {
                             | MidiEventKind::ProgramChange
                             | MidiEventKind::PolyAftertouch
                             | MidiEventKind::ChannelPressure
+                            | MidiEventKind::SystemExclusive
                     )
             })
             .count()
@@ -1283,6 +1383,8 @@ impl MidiEventPlan {
                 controller: event.controller,
                 pitch_bend: event.pitch_bend,
                 program: event.program,
+                sysex_offset: event.sysex_offset,
+                sysex_length: event.sysex_length,
                 kind: event.kind,
             });
         }
@@ -1464,6 +1566,7 @@ impl MidiEventPlan {
                     event.track_id.value(),
                     event.controller.unwrap_or(event.pitch),
                     event.note_id.map_or(0, NoteId::value),
+                    event.sysex_offset,
                 )
             });
         }
@@ -1556,6 +1659,7 @@ fn midi_event_priority(kind: MidiEventKind, controller: Option<u8>, value: u8) -
         MidiEventKind::PolyAftertouch => 4,
         MidiEventKind::ControllerChange if controller == Some(64) && value < 64 => 2,
         MidiEventKind::ControllerChange => 0,
+        MidiEventKind::SystemExclusive => 0,
         MidiEventKind::NoteOff => 1,
         MidiEventKind::NoteOn => 3,
     }

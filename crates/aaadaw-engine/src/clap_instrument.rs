@@ -4,7 +4,7 @@
 //! and all buffers are prepared before processing, can move to the render thread, and must be
 //! returned stopped before the owner is deactivated.
 
-use crate::{MidiEventKind, ScheduledMidiEvent};
+use crate::{MidiEventKind, ScheduledMidiEvent, midi::NO_SYSEX_OFFSET};
 use clack_extensions::audio_ports::{AudioPortInfoBuffer, PluginAudioPorts};
 #[cfg(any(target_os = "linux", target_os = "windows"))]
 use clack_extensions::gui::{GuiApiType, GuiConfiguration};
@@ -16,7 +16,7 @@ use clack_extensions::posix_fd::{FdFlags, HostPosixFd, HostPosixFdImpl, PluginPo
 use clack_extensions::state::PluginState;
 use clack_extensions::tail::{PluginTail, TailLength};
 use clack_host::events::Pckn;
-use clack_host::events::event_types::{MidiEvent, NoteOffEvent, NoteOnEvent};
+use clack_host::events::event_types::{MidiEvent, MidiSysExEvent, NoteOffEvent, NoteOnEvent};
 use clack_host::events::event_types::{
     ParamGestureBeginEvent, ParamGestureEndEvent, ParamValueEvent,
 };
@@ -1507,6 +1507,16 @@ impl ClapInstrumentProcessor {
         events: &[ScheduledMidiEvent],
         output: &mut [[f32; 2]],
     ) -> Result<(), ClapInstrumentError> {
+        self.process_with_sysex_data(events, &[], output)
+    }
+
+    /// Processes scheduled MIDI against an immutable SysEx payload buffer prepared off-callback.
+    pub(crate) fn process_with_sysex_data(
+        &mut self,
+        events: &[ScheduledMidiEvent],
+        sysex_data: &[u8],
+        output: &mut [[f32; 2]],
+    ) -> Result<(), ClapInstrumentError> {
         if output.len() > self.max_block_frames {
             return Err(ClapInstrumentError::new(
                 "CLAP instrument block exceeds its prepared frame capacity",
@@ -1534,6 +1544,22 @@ impl ClapInstrumentProcessor {
                 event.channel
             )));
         }
+        if events.iter().any(|event| {
+            if event.kind == MidiEventKind::SystemExclusive {
+                event.sysex_offset == NO_SYSEX_OFFSET
+                    || event.sysex_length == 0
+                    || event
+                        .sysex_offset
+                        .checked_add(event.sysex_length)
+                        .is_none_or(|end| end as usize > sysex_data.len())
+            } else {
+                event.sysex_offset != NO_SYSEX_OFFSET || event.sysex_length != 0
+            }
+        }) {
+            return Err(ClapInstrumentError::new(
+                "MIDI SysEx event references bytes outside its prepared payload",
+            ));
+        }
         if output.is_empty() {
             return Ok(());
         }
@@ -1549,6 +1575,7 @@ impl ClapInstrumentProcessor {
                 event.note_id.map_or(0, aaadaw_core::NoteId::value),
                 event.channel,
                 event.controller.unwrap_or(0),
+                event.sysex_offset,
             )
         });
 
@@ -1563,6 +1590,7 @@ impl ClapInstrumentProcessor {
                     | MidiEventKind::ProgramChange
                     | MidiEventKind::PolyAftertouch
                     | MidiEventKind::ChannelPressure
+                    | MidiEventKind::SystemExclusive
             ) {
                 continue;
             }
@@ -1614,6 +1642,9 @@ impl ClapInstrumentProcessor {
                 MidiEventKind::PolyAftertouch | MidiEventKind::ChannelPressure => {
                     unreachable!("aftertouch events were skipped while updating active note state")
                 }
+                MidiEventKind::SystemExclusive => {
+                    unreachable!("SysEx events were skipped while updating active note state")
+                }
             }
         }
 
@@ -1622,6 +1653,21 @@ impl ClapInstrumentProcessor {
             let sample_offset = u32::try_from(event.sample_offset).map_err(|_| {
                 ClapInstrumentError::new("MIDI event offset exceeds the CLAP range")
             })?;
+            if event.kind == MidiEventKind::SystemExclusive {
+                let port = self.input_midi_port.ok_or_else(|| {
+                    ClapInstrumentError::new(
+                        "CLAP instrument does not support MIDI 1.0 SysEx events",
+                    )
+                })?;
+                let start = event.sysex_offset as usize;
+                let end = start + event.sysex_length as usize;
+                // SAFETY: `sysex_data` belongs to the active immutable render graph or IPC
+                // request and remains alive through the synchronous CLAP process call below.
+                let sysex =
+                    unsafe { MidiSysExEvent::new(sample_offset, port, &sysex_data[start..end]) };
+                self.input_events.push(&sysex);
+                continue;
+            }
             if matches!(
                 event.kind,
                 MidiEventKind::ControllerChange
@@ -1656,6 +1702,9 @@ impl ClapInstrumentProcessor {
                     MidiEventKind::ChannelPressure => [0xd0 | event.channel, event.velocity, 0],
                     MidiEventKind::NoteOff | MidiEventKind::NoteOn => {
                         unreachable!("only control events are handled in this branch")
+                    }
+                    MidiEventKind::SystemExclusive => {
+                        unreachable!("SysEx events were emitted as variable-size events above")
                     }
                 };
                 self.input_events
@@ -1704,6 +1753,9 @@ impl ClapInstrumentProcessor {
                 }
                 MidiEventKind::ChannelPressure => {
                     unreachable!("channel pressure was emitted as raw MIDI events above")
+                }
+                MidiEventKind::SystemExclusive => {
+                    unreachable!("SysEx events were emitted as variable-size events above")
                 }
             }
         }
@@ -2388,6 +2440,14 @@ mod tests {
                                     }
                                     _ => {}
                                 }
+                            }
+                        }
+                        Some(CoreEventSpace::MidiSysEx(event)) => {
+                            // SAFETY: CLAP keeps the input event bytes valid throughout this
+                            // plugin process callback.
+                            let bytes = unsafe { event.data() };
+                            if bytes == [0xF0, 0x43, 0x12, 0xF7] {
+                                self.active_pitch = Some(64);
                             }
                         }
                         _ => {}
@@ -3195,6 +3255,8 @@ mod tests {
                 controller: None,
                 pitch_bend: None,
                 program: None,
+                sysex_offset: u32::MAX,
+                sysex_length: 0,
                 kind: MidiEventKind::NoteOff,
             },
             ScheduledMidiEvent {
@@ -3207,6 +3269,8 @@ mod tests {
                 controller: None,
                 pitch_bend: None,
                 program: None,
+                sysex_offset: u32::MAX,
+                sysex_length: 0,
                 kind: MidiEventKind::NoteOn,
             },
             ScheduledMidiEvent {
@@ -3219,6 +3283,8 @@ mod tests {
                 controller: None,
                 pitch_bend: None,
                 program: None,
+                sysex_offset: u32::MAX,
+                sysex_length: 0,
                 kind: MidiEventKind::NoteOff,
             },
         ];
@@ -3244,6 +3310,40 @@ mod tests {
     }
 
     #[test]
+    fn processor_delivers_framed_sysex_to_clap_without_copying_on_the_audio_thread() {
+        let entry = test_plugin_entry::<true, 2>();
+        let (owner, mut processor) =
+            ClapInstrumentOwner::load_from_entry(entry, PLUGIN_ID, 48_000, 16, 4)
+                .expect("test synth should load");
+        let track_id = test_ids().0;
+        let payload = [0xF0, 0x43, 0x12, 0xF7];
+        let event = ScheduledMidiEvent {
+            sample_offset: 1,
+            track_id,
+            channel: 0,
+            note_id: None,
+            pitch: 0,
+            velocity: 0,
+            controller: None,
+            pitch_bend: None,
+            program: None,
+            sysex_offset: 0,
+            sysex_length: payload.len() as u32,
+            kind: MidiEventKind::SystemExclusive,
+        };
+        let mut output = [[0.0; 2]; 4];
+
+        processor
+            .process_with_sysex_data(&[event], &payload, &mut output)
+            .expect("prepared SysEx should reach the CLAP input event list");
+
+        assert_eq!(output[0], [0.0; 2]);
+        assert!((output[1][0] - 64.0 / 127.0).abs() < 1.0e-6);
+        assert!((output[1][1] - 32.0 / 127.0).abs() < 1.0e-6);
+        owner.deactivate(processor.stop());
+    }
+
+    #[test]
     fn processor_delivers_midi_controller_events_at_their_sample_offsets() {
         let entry = test_plugin_entry::<true, 2>();
         let (owner, mut processor) =
@@ -3261,6 +3361,8 @@ mod tests {
                 controller: None,
                 pitch_bend: None,
                 program: None,
+                sysex_offset: u32::MAX,
+                sysex_length: 0,
                 kind: MidiEventKind::NoteOn,
             },
             ScheduledMidiEvent {
@@ -3273,6 +3375,8 @@ mod tests {
                 controller: Some(64),
                 pitch_bend: None,
                 program: None,
+                sysex_offset: u32::MAX,
+                sysex_length: 0,
                 kind: MidiEventKind::ControllerChange,
             },
             ScheduledMidiEvent {
@@ -3285,6 +3389,8 @@ mod tests {
                 controller: Some(11),
                 pitch_bend: None,
                 program: None,
+                sysex_offset: u32::MAX,
+                sysex_length: 0,
                 kind: MidiEventKind::ControllerChange,
             },
             ScheduledMidiEvent {
@@ -3297,6 +3403,8 @@ mod tests {
                 controller: Some(1),
                 pitch_bend: None,
                 program: None,
+                sysex_offset: u32::MAX,
+                sysex_length: 0,
                 kind: MidiEventKind::ControllerChange,
             },
             ScheduledMidiEvent {
@@ -3309,6 +3417,8 @@ mod tests {
                 controller: None,
                 pitch_bend: None,
                 program: None,
+                sysex_offset: u32::MAX,
+                sysex_length: 0,
                 kind: MidiEventKind::NoteOff,
             },
             ScheduledMidiEvent {
@@ -3321,6 +3431,8 @@ mod tests {
                 controller: Some(123),
                 pitch_bend: None,
                 program: None,
+                sysex_offset: u32::MAX,
+                sysex_length: 0,
                 kind: MidiEventKind::ControllerChange,
             },
             ScheduledMidiEvent {
@@ -3333,6 +3445,8 @@ mod tests {
                 controller: Some(120),
                 pitch_bend: None,
                 program: None,
+                sysex_offset: u32::MAX,
+                sysex_length: 0,
                 kind: MidiEventKind::ControllerChange,
             },
             ScheduledMidiEvent {
@@ -3345,6 +3459,8 @@ mod tests {
                 controller: Some(64),
                 pitch_bend: None,
                 program: None,
+                sysex_offset: u32::MAX,
+                sysex_length: 0,
                 kind: MidiEventKind::ControllerChange,
             },
             ScheduledMidiEvent {
@@ -3357,6 +3473,8 @@ mod tests {
                 controller: None,
                 pitch_bend: Some(16_383),
                 program: None,
+                sysex_offset: u32::MAX,
+                sysex_length: 0,
                 kind: MidiEventKind::PitchBend,
             },
         ];
@@ -3406,6 +3524,8 @@ mod tests {
             controller: None,
             pitch_bend: None,
             program: None,
+            sysex_offset: u32::MAX,
+            sysex_length: 0,
             kind: MidiEventKind::NoteOn,
         };
         let mut output = [[0.0; 2]; 1];
@@ -3439,6 +3559,8 @@ mod tests {
             controller: None,
             pitch_bend: None,
             program: None,
+            sysex_offset: u32::MAX,
+            sysex_length: 0,
             kind: MidiEventKind::NoteOn,
         };
         let mut output = [[0.0; 2]; 1];
@@ -3490,6 +3612,8 @@ mod tests {
             controller: None,
             pitch_bend: None,
             program: None,
+            sysex_offset: u32::MAX,
+            sysex_length: 0,
             kind: MidiEventKind::NoteOn,
         };
         let mut output = [[1.0; 2]; 4];

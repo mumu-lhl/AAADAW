@@ -332,6 +332,7 @@ impl Callback {
                             (0xA0 | event.channel, event.pitch, event.velocity)
                         }
                         MidiEventKind::ChannelPressure => (0xD0 | event.channel, event.velocity, 0),
+                        MidiEventKind::SystemExclusive => continue,
                     };
                     if self
                         .midi_output

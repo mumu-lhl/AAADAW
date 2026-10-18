@@ -2460,3 +2460,9 @@ AAADAW 现在解码 Format 2，将序列保留为独立 source tracks，默认�
 REAPER 7.82 的 `MIDI_GetProjTimeFromPPQPos` 实测表明，SMF header division `0xE728` 被当作无符号 PPQ 59176，而不是其标准定义的 -25 fps / 40 ticks-per-frame。Source tick 250/750 分别读为 0.0021123428/0.0063370285 秒；`MIDI_GetPPQPosFromProjTime(0.25)` 得到 29588。AAADAW 现在同样以 59176 PPQ 缩放事件；在项目 960 PPQ 下音符起止落在 tick 4/12。原厂 MIDI item 为默认 120 BPM 下的 0.5 秒，即使最后源事件不足 0.01 秒；AAADAW 导入 item 现保持至少一个四分音符。Lua 探针、输入、REAPER 窗口截图、readback 和哈希见 [SMPTE division fixture manifest](../verification/reaper-parity/fixtures/midi-file-import-smpte.tsv)。
 
 高位 division 和 one-quarter-note item floor 的 Core 回归包含在本次 `midi_file_import` 20/20 及 Core 导入/导出、Storage 集成 175/175 中；AAADAW 805/805、Core/App strict all-target Clippy、stable fmt 和 diff check 通过。该行为刻意复刻 REAPER 7.82 实测，不按 SMF 标准的 SMPTE wall-clock 解释；`MIDI-FILE-IMPORT-001` 与 P7 仍为 `in_progress`。
+
+### 2026-10-18 将导入的 SysEx 按样本位置发送给 CLAP 插件
+
+MIDI 播放计划现在保留预编译的 F0/F7 字节区间，并将 SysEx 作为带样本偏移的 CLAP MIDI 事件发送。进程内插件直接引用不可变计划字节；隔离插件使用固定共享内存区域传输，每个请求最多 16 KiB，音频回调不分配内存。Meta 事件仍不发送给乐器插件，物理 MIDI 输出的 SysEx 也尚未实现。
+
+验证通过：MIDI 调度与引擎库/实时分配套件合计 125/125，隔离 helper 样本偏移 SysEx 集成测试 1/1，strict engine all-target Clippy (`-D warnings`)、stable fmt 通过。`MIDI-FILE-IMPORT-001`、UI-019 和 P7 继续为 `in_progress`；待处理包括超过单块上限的隔离 SysEx、物理 MIDI SysEx 输出、文件选择器及更多原厂导入边界行为。

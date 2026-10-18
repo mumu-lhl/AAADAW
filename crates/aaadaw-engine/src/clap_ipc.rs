@@ -18,12 +18,14 @@ use tempfile::{NamedTempFile, TempPath};
 
 use memmap2::{MmapMut, MmapOptions};
 
-pub const CLAP_IPC_PROTOCOL_VERSION: u32 = 5;
+pub const CLAP_IPC_PROTOCOL_VERSION: u32 = 6;
 pub const CLAP_IPC_CHANNELS: usize = 2;
 pub const CLAP_IPC_MAX_BLOCK_FRAMES: usize = 1024;
 pub const CLAP_IPC_MAX_EVENTS: usize = 1024;
 /// Keeps at least one maximum render-graph block of helper output queued ahead of playback.
 pub const CLAP_IPC_SLOT_COUNT: usize = 12;
+/// Bounds the variable-size MIDI payload copied through one audio block request.
+pub const CLAP_IPC_MAX_SYSEX_BYTES_PER_BLOCK: usize = 16 * 1024;
 pub const CLAP_IPC_MAGIC: u32 = u32::from_le_bytes(*b"AAIP");
 
 const REGION_INITIALIZING: u32 = 0;
@@ -49,6 +51,7 @@ pub enum ClapIpcMidiKind {
     ProgramChange = 5,
     PolyAftertouch = 6,
     ChannelPressure = 7,
+    SystemExclusive = 8,
 }
 
 struct ClapIpcMappingInner {
@@ -94,6 +97,25 @@ impl ClapIpcAudioPort {
     ) -> Result<(), ClapIpcSubmitError> {
         self.region()
             .try_submit(generation, sequence, start_sample, events, frame_count)
+    }
+
+    pub fn try_submit_with_sysex(
+        &self,
+        generation: u64,
+        sequence: u64,
+        start_sample: u64,
+        events: &[ClapIpcMidiEvent],
+        sysex_data: &[u8],
+        frame_count: usize,
+    ) -> Result<(), ClapIpcSubmitError> {
+        self.region().try_submit_with_sysex(
+            generation,
+            sequence,
+            start_sample,
+            events,
+            sysex_data,
+            frame_count,
+        )
     }
 
     /// Reads one matching response without waiting or allocating; a missing response yields silence.
@@ -589,10 +611,15 @@ pub(crate) fn process_helper_requests(
                             .then_some(event.pitch_bend),
                         program: (event.kind == ClapIpcMidiKind::ProgramChange as u8)
                             .then_some(event.pitch),
+                        sysex_offset: event.sysex_offset,
+                        sysex_length: event.sysex_length,
                         kind: event_kind,
                     });
                 }
-                if processor.process(&events, request.audio).is_err() {
+                if processor
+                    .process_with_sysex_data(&events, request.sysex_data, request.audio)
+                    .is_err()
+                {
                     region.mark_faulted(3);
                     return false;
                 }
@@ -698,6 +725,9 @@ fn midi_kind_from_wire(kind: u8) -> Option<crate::MidiEventKind> {
         value if value == ClapIpcMidiKind::ChannelPressure as u8 => {
             Some(crate::MidiEventKind::ChannelPressure)
         }
+        value if value == ClapIpcMidiKind::SystemExclusive as u8 => {
+            Some(crate::MidiEventKind::SystemExclusive)
+        }
         _ => None,
     }
 }
@@ -716,6 +746,10 @@ pub struct ClapIpcMidiEvent {
     /// Zero-based MIDI channel in the inclusive range `0..16`.
     pub channel: u8,
     pub reserved: u8,
+    /// Offset into the request's packed SysEx byte area, or `u32::MAX` for channel events.
+    pub sysex_offset: u32,
+    /// Number of framed MIDI bytes at `sysex_offset`.
+    pub sysex_length: u32,
 }
 
 impl ClapIpcMidiEvent {
@@ -733,6 +767,7 @@ impl ClapIpcMidiEvent {
             crate::MidiEventKind::ProgramChange => ClapIpcMidiKind::ProgramChange,
             crate::MidiEventKind::PolyAftertouch => ClapIpcMidiKind::PolyAftertouch,
             crate::MidiEventKind::ChannelPressure => ClapIpcMidiKind::ChannelPressure,
+            crate::MidiEventKind::SystemExclusive => ClapIpcMidiKind::SystemExclusive,
         };
         let note_id = event
             .note_id
@@ -757,6 +792,12 @@ impl ClapIpcMidiEvent {
             controller,
             channel: event.channel,
             reserved: 0,
+            sysex_offset: if event.kind == crate::MidiEventKind::SystemExclusive {
+                0
+            } else {
+                event.sysex_offset
+            },
+            sysex_length: event.sysex_length,
         };
         encoded.is_valid(frame_count).then_some(encoded)
     }
@@ -770,7 +811,7 @@ impl ClapIpcMidiEvent {
         {
             return false;
         }
-        match self.kind {
+        let kind_is_valid = match self.kind {
             kind if kind == ClapIpcMidiKind::NoteOn as u8
                 || kind == ClapIpcMidiKind::NoteOff as u8 =>
             {
@@ -800,12 +841,29 @@ impl ClapIpcMidiEvent {
                     && self.controller == Self::NO_CONTROLLER
                     && self.pitch_bend == Self::NO_PITCH_BEND
             }
+            kind if kind == ClapIpcMidiKind::SystemExclusive as u8 => {
+                let Some(end) = self.sysex_offset.checked_add(self.sysex_length) else {
+                    return false;
+                };
+                self.note_id == Self::NO_NOTE_ID
+                    && self.controller == Self::NO_CONTROLLER
+                    && self.pitch_bend == Self::NO_PITCH_BEND
+                    && self.sysex_offset != crate::midi::NO_SYSEX_OFFSET
+                    && self.sysex_length > 0
+                    && end as usize <= CLAP_IPC_MAX_SYSEX_BYTES_PER_BLOCK
+            }
             _ => false,
-        }
+        };
+        kind_is_valid
+            && if self.kind == ClapIpcMidiKind::SystemExclusive as u8 {
+                self.sysex_length > 0
+            } else {
+                self.sysex_offset == crate::midi::NO_SYSEX_OFFSET && self.sysex_length == 0
+            }
     }
 }
 
-const _: () = assert!(std::mem::size_of::<ClapIpcMidiEvent>() == 16);
+const _: () = assert!(std::mem::size_of::<ClapIpcMidiEvent>() == 24);
 
 /// Versioned, fixed-size parameters negotiated before the helper loads a plugin.
 #[repr(C)]
@@ -870,6 +928,8 @@ struct ClapIpcSlotPayload {
     sequence: u64,
     start_sample: u64,
     events: [ClapIpcMidiEvent; CLAP_IPC_MAX_EVENTS],
+    sysex_byte_count: u32,
+    sysex_data: [u8; CLAP_IPC_MAX_SYSEX_BYTES_PER_BLOCK],
     audio: [[f32; CLAP_IPC_CHANNELS]; CLAP_IPC_MAX_BLOCK_FRAMES],
 }
 
@@ -885,6 +945,8 @@ impl ClapIpcSlot {
                 sequence: 0,
                 start_sample: 0,
                 events: [ClapIpcMidiEvent::default(); CLAP_IPC_MAX_EVENTS],
+                sysex_byte_count: 0,
+                sysex_data: [0; CLAP_IPC_MAX_SYSEX_BYTES_PER_BLOCK],
                 audio: [[0.0; CLAP_IPC_CHANNELS]; CLAP_IPC_MAX_BLOCK_FRAMES],
             }),
         }
@@ -1149,6 +1211,18 @@ impl ClapIpcRegion {
         events: &[ClapIpcMidiEvent],
         frame_count: usize,
     ) -> Result<(), ClapIpcSubmitError> {
+        self.try_submit_with_sysex(generation, sequence, start_sample, events, &[], frame_count)
+    }
+
+    pub fn try_submit_with_sysex(
+        &self,
+        generation: u64,
+        sequence: u64,
+        start_sample: u64,
+        events: &[ClapIpcMidiEvent],
+        sysex_data: &[u8],
+        frame_count: usize,
+    ) -> Result<(), ClapIpcSubmitError> {
         if !self.is_ready() {
             return Err(ClapIpcSubmitError::NotReady);
         }
@@ -1158,7 +1232,17 @@ impl ClapIpcRegion {
         if events.len() > self.config.event_capacity as usize {
             return Err(ClapIpcSubmitError::EventCapacityExceeded);
         }
-        if events.iter().any(|event| !event.is_valid(frame_count)) {
+        if sysex_data.len() > CLAP_IPC_MAX_SYSEX_BYTES_PER_BLOCK {
+            return Err(ClapIpcSubmitError::SystemExclusiveCapacityExceeded);
+        }
+        if events.iter().any(|event| {
+            !event.is_valid(frame_count)
+                || (event.kind == ClapIpcMidiKind::SystemExclusive as u8
+                    && event
+                        .sysex_offset
+                        .checked_add(event.sysex_length)
+                        .is_none_or(|end| end as usize > sysex_data.len()))
+        }) {
             return Err(ClapIpcSubmitError::InvalidEvent);
         }
         if self
@@ -1195,6 +1279,8 @@ impl ClapIpcRegion {
                 payload.sequence = sequence;
                 payload.start_sample = start_sample;
                 payload.events[..events.len()].copy_from_slice(events);
+                payload.sysex_byte_count = sysex_data.len() as u32;
+                payload.sysex_data[..sysex_data.len()].copy_from_slice(sysex_data);
                 payload.audio[..frame_count].fill([0.0; CLAP_IPC_CHANNELS]);
                 slot.state.store(SLOT_REQUEST_READY, Ordering::Release);
                 return Ok(());
@@ -1279,9 +1365,17 @@ impl ClapIpcRegion {
             if payload.frame_count == 0
                 || payload.frame_count as usize > CLAP_IPC_MAX_BLOCK_FRAMES
                 || payload.event_count as usize > self.config.event_capacity as usize
+                || payload.sysex_byte_count as usize > CLAP_IPC_MAX_SYSEX_BYTES_PER_BLOCK
                 || payload.events[..payload.event_count as usize]
                     .iter()
-                    .any(|event| !event.is_valid(payload.frame_count as usize))
+                    .any(|event| {
+                        !event.is_valid(payload.frame_count as usize)
+                            || (event.kind == ClapIpcMidiKind::SystemExclusive as u8
+                                && event
+                                    .sysex_offset
+                                    .checked_add(event.sysex_length)
+                                    .is_none_or(|end| end > payload.sysex_byte_count))
+                    })
             {
                 false
             } else {
@@ -1290,6 +1384,7 @@ impl ClapIpcRegion {
                     sequence: payload.sequence,
                     start_sample: payload.start_sample,
                     events: &payload.events[..payload.event_count as usize],
+                    sysex_data: &payload.sysex_data[..payload.sysex_byte_count as usize],
                     audio: &mut payload.audio[..payload.frame_count as usize],
                 })
             }
@@ -1460,6 +1555,7 @@ pub struct ClapIpcRequest<'a> {
     pub sequence: u64,
     pub start_sample: u64,
     pub events: &'a [ClapIpcMidiEvent],
+    pub sysex_data: &'a [u8],
     pub audio: &'a mut [[f32; CLAP_IPC_CHANNELS]],
 }
 
@@ -1513,6 +1609,7 @@ pub enum ClapIpcSubmitError {
     InvalidFrameCount,
     EventCapacityExceeded,
     InvalidEvent,
+    SystemExclusiveCapacityExceeded,
     ProducerBusy,
     SlotsFull,
 }
@@ -1803,6 +1900,7 @@ mod tests {
             pitch: 60,
             velocity: 100,
             controller: ClapIpcMidiEvent::NO_CONTROLLER,
+            sysex_offset: crate::midi::NO_SYSEX_OFFSET,
             ..ClapIpcMidiEvent::default()
         };
         region.try_submit(4, 9, 256, &[event], 16).unwrap();
@@ -1966,6 +2064,8 @@ mod tests {
             controller: ClapIpcMidiEvent::NO_CONTROLLER,
             channel: 0,
             reserved: 0,
+            sysex_offset: crate::midi::NO_SYSEX_OFFSET,
+            sysex_length: 0,
         };
         assert!(event.is_valid(4));
         event.frame_offset = 4;
@@ -1988,6 +2088,8 @@ mod tests {
             controller: None,
             pitch_bend: None,
             program: None,
+            sysex_offset: u32::MAX,
+            sysex_length: 0,
             kind: crate::MidiEventKind::NoteOn,
         };
         let encoded = ClapIpcMidiEvent::from_scheduled(note, 8).unwrap();
@@ -2007,6 +2109,8 @@ mod tests {
             controller: Some(64),
             pitch_bend: None,
             program: None,
+            sysex_offset: u32::MAX,
+            sysex_length: 0,
             kind: crate::MidiEventKind::ControllerChange,
         };
         let encoded = ClapIpcMidiEvent::from_scheduled(controller, 8).unwrap();
@@ -2023,6 +2127,8 @@ mod tests {
             controller: None,
             pitch_bend: None,
             program: Some(41),
+            sysex_offset: u32::MAX,
+            sysex_length: 0,
             kind: crate::MidiEventKind::ProgramChange,
         };
         let encoded = ClapIpcMidiEvent::from_scheduled(program_change, 8).unwrap();
@@ -2060,6 +2166,8 @@ mod tests {
                 controller: None,
                 pitch_bend: None,
                 program: None,
+                sysex_offset: u32::MAX,
+                sysex_length: 0,
                 kind,
             };
             let encoded = ClapIpcMidiEvent::from_scheduled(event, 8).unwrap();
@@ -2112,5 +2220,53 @@ mod tests {
         assert_eq!(output, [[0.0, 0.0]; 4]);
         assert!(!region.try_read_response(2, 5, 128, &mut output));
         assert_eq!(output, [[0.0, 0.0]; 4]);
+    }
+}
+
+#[cfg(test)]
+mod sysex_tests {
+    use super::*;
+
+    fn region() -> Box<ClapIpcRegion> {
+        let config = ClapIpcConfig::new(48_000, 256, 32).unwrap();
+        let region = ClapIpcRegion::new(config).unwrap();
+        assert!(region.accept_handshake(config));
+        region
+    }
+
+    #[test]
+    fn sysex_payloads_round_trip_through_the_bounded_ipc_slot() {
+        let track_id = aaadaw_core::TrackId::from_value(1).unwrap();
+        let payload = [0xF0, 0x43, 0x12, 0xF7];
+        let scheduled = crate::ScheduledMidiEvent {
+            sample_offset: 2,
+            track_id,
+            note_id: None,
+            channel: 0,
+            pitch: 0,
+            velocity: 0,
+            controller: None,
+            pitch_bend: None,
+            program: None,
+            sysex_offset: 4096,
+            sysex_length: payload.len() as u32,
+            kind: crate::MidiEventKind::SystemExclusive,
+        };
+        let event = ClapIpcMidiEvent::from_scheduled(scheduled, 8).unwrap();
+        assert_eq!(event.kind, ClapIpcMidiKind::SystemExclusive as u8);
+        assert_eq!(event.sysex_offset, 0);
+        assert_eq!(event.sysex_length, payload.len() as u32);
+
+        let region = region();
+        region
+            .try_submit_with_sysex(7, 4, 128, &[event], &payload, 8)
+            .unwrap();
+        let request = region.try_claim_request().unwrap();
+        assert!(request.process(|request| {
+            assert_eq!(request.sysex_data, payload);
+            assert_eq!(request.events[0].sysex_offset, 0);
+            assert_eq!(request.events[0].sysex_length, payload.len() as u32);
+            true
+        }));
     }
 }

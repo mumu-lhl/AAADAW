@@ -62,9 +62,10 @@ pub use clap_instrument::{
 };
 pub use clap_ipc::{
     CLAP_IPC_CHANNELS, CLAP_IPC_MAGIC, CLAP_IPC_MAX_BLOCK_FRAMES, CLAP_IPC_MAX_EVENTS,
-    CLAP_IPC_PROTOCOL_VERSION, CLAP_IPC_SLOT_COUNT, ClapIpcAudioPort, ClapIpcAudioReader,
-    ClapIpcConfig, ClapIpcMapping, ClapIpcMidiEvent, ClapIpcMidiKind, ClapIpcRegion,
-    ClapIpcRequest, ClapIpcRequestSlot, ClapIpcSubmitError, run_clap_ipc_instrument_helper,
+    CLAP_IPC_MAX_SYSEX_BYTES_PER_BLOCK, CLAP_IPC_PROTOCOL_VERSION, CLAP_IPC_SLOT_COUNT,
+    ClapIpcAudioPort, ClapIpcAudioReader, ClapIpcConfig, ClapIpcMapping, ClapIpcMidiEvent,
+    ClapIpcMidiKind, ClapIpcRegion, ClapIpcRequest, ClapIpcRequestSlot, ClapIpcSubmitError,
+    run_clap_ipc_instrument_helper,
 };
 #[cfg(all(
     feature = "cpal-backend",
@@ -1518,6 +1519,7 @@ struct InstrumentRoute {
     isolated_next_start_sample: u64,
     isolated_config: Option<ClapIpcConfig>,
     isolated_events: Vec<ClapIpcMidiEvent>,
+    isolated_sysex_data: Vec<u8>,
     isolated_schedule_scratch: Vec<Option<ScheduledMidiEvent>>,
     isolated_preview_pending: bool,
     isolated_preview_events: [Option<ScheduledMidiEvent>; 2],
@@ -1622,19 +1624,44 @@ fn submit_isolated_block_with_preview(
                 event.channel,
                 event.controller.unwrap_or(event.pitch),
                 event.note_id.map_or(0, aaadaw_core::NoteId::value),
+                event.sysex_offset,
             )
         });
     }
     route.isolated_events.clear();
+    route.isolated_sysex_data.clear();
+    let sysex_source = midi_plan.sysex_payload();
     for event in midi_scratch[..count]
         .iter()
         .flatten()
         .filter(|event| event.track_id == route.track_id)
     {
-        let Some(encoded) = ClapIpcMidiEvent::from_scheduled(*event, frame_count) else {
+        let Some(mut encoded) = ClapIpcMidiEvent::from_scheduled(*event, frame_count) else {
             fault_isolated_route(route);
             return false;
         };
+        if event.kind == MidiEventKind::SystemExclusive {
+            let start = event.sysex_offset as usize;
+            let Some(end) = start.checked_add(event.sysex_length as usize) else {
+                fault_isolated_route(route);
+                return false;
+            };
+            let Some(payload) = sysex_source.get(start..end) else {
+                fault_isolated_route(route);
+                return false;
+            };
+            let offset = route.isolated_sysex_data.len();
+            let Some(next_offset) = offset.checked_add(payload.len()) else {
+                fault_isolated_route(route);
+                return false;
+            };
+            if next_offset > CLAP_IPC_MAX_SYSEX_BYTES_PER_BLOCK {
+                fault_isolated_route(route);
+                return false;
+            }
+            encoded.sysex_offset = offset as u32;
+            route.isolated_sysex_data.extend_from_slice(payload);
+        }
         if route.isolated_events.len() == config.event_capacity as usize {
             fault_isolated_route(route);
             return false;
@@ -1645,11 +1672,12 @@ fn submit_isolated_block_with_preview(
         fault_isolated_route(route);
         return false;
     };
-    let submit = port.try_submit(
+    let submit = port.try_submit_with_sysex(
         route.isolated_generation,
         route.isolated_next_sequence,
         route.isolated_next_start_sample,
         &route.isolated_events,
+        &route.isolated_sysex_data,
         frame_count,
     );
     if let Err(error) = submit {
@@ -2202,6 +2230,7 @@ impl AudioRenderGraph {
                 isolated_next_start_sample: 0,
                 isolated_config: None,
                 isolated_events: Vec::new(),
+                isolated_sysex_data: Vec::new(),
                 isolated_schedule_scratch: Vec::new(),
                 isolated_preview_pending: false,
                 isolated_preview_events: [None; 2],
@@ -2558,6 +2587,7 @@ impl AudioRenderGraph {
                 isolated_next_start_sample: 0,
                 isolated_config: None,
                 isolated_events: Vec::new(),
+                isolated_sysex_data: Vec::new(),
                 isolated_schedule_scratch: Vec::new(),
                 isolated_preview_pending: false,
                 isolated_preview_events: [None; 2],
@@ -2666,6 +2696,7 @@ impl AudioRenderGraph {
                 isolated_next_start_sample: start_sample,
                 isolated_config: Some(instrument.config),
                 isolated_events: Vec::with_capacity(instrument.config.event_capacity as usize),
+                isolated_sysex_data: Vec::with_capacity(CLAP_IPC_MAX_SYSEX_BYTES_PER_BLOCK),
                 isolated_schedule_scratch: vec![None; self.midi_scratch.len()],
                 isolated_preview_pending: false,
                 isolated_preview_events: [None; 2],
@@ -3342,6 +3373,8 @@ impl AudioRenderGraph {
                         controller: None,
                         pitch_bend: None,
                         program: None,
+                        sysex_offset: crate::midi::NO_SYSEX_OFFSET,
+                        sysex_length: 0,
                         kind: MidiEventKind::NoteOff,
                     });
                     midi_event_count += 1;
@@ -3367,6 +3400,8 @@ impl AudioRenderGraph {
                         controller: None,
                         pitch_bend: None,
                         program: None,
+                        sysex_offset: crate::midi::NO_SYSEX_OFFSET,
+                        sysex_length: 0,
                         kind: MidiEventKind::NoteOn,
                     });
                     midi_event_count += 1;
@@ -3420,6 +3455,7 @@ impl AudioRenderGraph {
                     event.channel,
                     event.controller.unwrap_or(event.pitch),
                     event.note_id.map_or(0, aaadaw_core::NoteId::value),
+                    event.sysex_offset,
                 )
             });
         }
@@ -3748,7 +3784,11 @@ impl AudioRenderGraph {
                     .as_mut()
                     .expect("active render graphs retain their instrument processors");
                 processor
-                    .process(&route.midi_events, &mut route.audio[..output.len()])
+                    .process_with_sysex_data(
+                        &route.midi_events,
+                        self.midi_plan.sysex_payload(),
+                        &mut route.audio[..output.len()],
+                    )
                     .map_err(|error| AudioGraphError::InstrumentProcess {
                         track_id: route.track_id,
                         error,
