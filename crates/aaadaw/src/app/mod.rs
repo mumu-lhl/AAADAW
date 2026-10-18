@@ -2156,6 +2156,57 @@ impl App {
         remapped
     }
 
+    fn remap_selected_midi_opaque_events(
+        selected: &[MidiOpaqueEventData],
+        after: &[MidiOpaqueEventData],
+    ) -> HashSet<u32> {
+        let mut remaining = after
+            .iter()
+            .cloned()
+            .enumerate()
+            .map(|(index, event)| (index as u32, event))
+            .collect::<Vec<_>>();
+        let mut remapped = HashSet::new();
+        for event in selected {
+            let position = remaining
+                .iter()
+                .position(|(_, candidate)| candidate == event)
+                .or_else(|| {
+                    remaining
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, (_, candidate))| {
+                            candidate.order == event.order && candidate.kind == event.kind
+                        })
+                        .min_by_key(|(_, (_, candidate))| candidate.tick.abs_diff(event.tick))
+                        .map(|(position, _)| position)
+                });
+            if let Some(position) = position {
+                let (index, _) = remaining.remove(position);
+                remapped.insert(index);
+            }
+        }
+        remapped
+    }
+
+    fn selected_midi_opaque_event_data(&self) -> Vec<MidiOpaqueEventData> {
+        let Some(item_id) = self.midi_editor_item_id else {
+            return Vec::new();
+        };
+        let Some(item) = self
+            .project
+            .midi_items()
+            .iter()
+            .find(|item| item.id() == item_id)
+        else {
+            return Vec::new();
+        };
+        self.midi_editor_selected_opaque_events
+            .iter()
+            .filter_map(|index| item.opaque_events().get(*index as usize).cloned())
+            .collect()
+    }
+
     fn midi_event_list_cursor_is_selected(&self, cursor: MidiEditorEventListCursor) -> bool {
         match cursor {
             MidiEditorEventListCursor::Note(note_id) => {
@@ -4139,7 +4190,8 @@ impl App {
                     && self.midi_editor_selected_pitch_bends.is_empty()
                     && self.midi_editor_selected_program_changes.is_empty()
                     && self.midi_editor_selected_poly_aftertouches.is_empty()
-                    && self.midi_editor_selected_channel_pressures.is_empty()))
+                    && self.midi_editor_selected_channel_pressures.is_empty()
+                    && self.midi_editor_selected_opaque_events.is_empty()))
         {
             return;
         }
@@ -4205,6 +4257,11 @@ impl App {
                         .iter()
                         .copied()
                         .collect(),
+                    opaque_events: self
+                        .midi_editor_selected_opaque_events
+                        .iter()
+                        .filter_map(|index| item.opaque_events().get(*index as usize).cloned())
+                        .collect(),
                     grid,
                     strength,
                     operation,
@@ -4237,6 +4294,7 @@ impl App {
         let selected_program_changes = self.midi_editor_selected_program_changes.clone();
         let selected_poly_aftertouches = self.midi_editor_selected_poly_aftertouches.clone();
         let selected_channel_pressures = self.midi_editor_selected_channel_pressures.clone();
+        let selected_opaque_events = self.selected_midi_opaque_event_data();
         let previous_revision = self.revision;
         self.apply_action(action, label);
         if self.revision != previous_revision
@@ -4271,6 +4329,10 @@ impl App {
                 item.channel_pressures(),
                 |left, right| left.channel == right.channel && left.value == right.value,
                 |event| event.tick,
+            );
+            self.midi_editor_selected_opaque_events = Self::remap_selected_midi_opaque_events(
+                &selected_opaque_events,
+                item.opaque_events(),
             );
         }
     }
@@ -13711,10 +13773,26 @@ impl App {
             self.pending_fx_automation_history = None;
         }
         self.audio_item_start_edits.clear();
+        let selected_opaque_events = self.selected_midi_opaque_event_data();
+        let midi_editor_item_id = self.midi_editor_item_id;
         #[cfg(feature = "audio-device")]
         let sample_rate_before = self.project.settings().sample_rate();
         self.status = match self.project.undo() {
             Ok(true) => {
+                if let Some(item_id) = midi_editor_item_id {
+                    self.midi_editor_selected_opaque_events = self
+                        .project
+                        .midi_items()
+                        .iter()
+                        .find(|item| item.id() == item_id)
+                        .map(|item| {
+                            Self::remap_selected_midi_opaque_events(
+                                &selected_opaque_events,
+                                item.opaque_events(),
+                            )
+                        })
+                        .unwrap_or_default();
+                }
                 if matches!(self.app_undo_history.last(), Some(AppHistoryEntry::Project)) {
                     self.app_undo_history.pop();
                 }
@@ -13788,10 +13866,26 @@ impl App {
             self.pending_fx_automation_history = None;
         }
         self.audio_item_start_edits.clear();
+        let selected_opaque_events = self.selected_midi_opaque_event_data();
+        let midi_editor_item_id = self.midi_editor_item_id;
         #[cfg(feature = "audio-device")]
         let sample_rate_before = self.project.settings().sample_rate();
         self.status = match self.project.redo() {
             Ok(true) => {
+                if let Some(item_id) = midi_editor_item_id {
+                    self.midi_editor_selected_opaque_events = self
+                        .project
+                        .midi_items()
+                        .iter()
+                        .find(|item| item.id() == item_id)
+                        .map(|item| {
+                            Self::remap_selected_midi_opaque_events(
+                                &selected_opaque_events,
+                                item.opaque_events(),
+                            )
+                        })
+                        .unwrap_or_default();
+                }
                 if matches!(self.app_redo_history.last(), Some(AppHistoryEntry::Project)) {
                     self.app_redo_history.pop();
                 }

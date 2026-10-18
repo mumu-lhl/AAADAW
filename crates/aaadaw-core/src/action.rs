@@ -587,6 +587,7 @@ pub enum DawAction {
         program_changes: Vec<MidiProgramChangeData>,
         poly_aftertouches: Vec<MidiPolyAftertouchData>,
         channel_pressures: Vec<MidiChannelPressureData>,
+        opaque_events: Vec<MidiOpaqueEventData>,
         grid: GridFraction,
         strength: f32,
         operation: MidiNoteQuantizeOperation,

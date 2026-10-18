@@ -1,7 +1,7 @@
 use aaadaw_core::{
     DawAction, GridFraction, MidiChannelPressureData, MidiControllerData, MidiNoteData,
-    MidiNoteQuantizeOperation, MidiPitchBendData, MidiPolyAftertouchData, MidiProgramChangeData,
-    Project,
+    MidiNoteQuantizeOperation, MidiOpaqueEventData, MidiOpaqueEventKind, MidiPitchBendData,
+    MidiPolyAftertouchData, MidiProgramChangeData, Project,
 };
 
 #[test]
@@ -1000,6 +1000,30 @@ fn midi_quantize_all_modeled_events_and_undoes_as_one_edit() {
             channel_pressures: channel_pressures.to_vec(),
         })
         .expect("test Channel Pressure should be inserted");
+    let opaque_events = [
+        MidiOpaqueEventData {
+            tick: 730,
+            order: 900,
+            kind: MidiOpaqueEventKind::Meta {
+                kind: 0x01,
+                data: vec![0xff, 0x00, b'x'],
+            },
+        },
+        MidiOpaqueEventData {
+            tick: 835,
+            order: 901,
+            kind: MidiOpaqueEventKind::SystemExclusive {
+                status: 0xF0,
+                data: vec![0x43, 0x12, 0x34],
+            },
+        },
+    ];
+    project
+        .apply(DawAction::SetMidiOpaqueEvents {
+            item_id,
+            events: opaque_events.to_vec(),
+        })
+        .expect("test Meta event should be inserted");
     let before_notes = project.midi_items()[0]
         .notes()
         .iter()
@@ -1010,6 +1034,7 @@ fn midi_quantize_all_modeled_events_and_undoes_as_one_edit() {
     let before_program_changes = project.midi_items()[0].program_changes().to_vec();
     let before_poly_aftertouches = project.midi_items()[0].poly_aftertouches().to_vec();
     let before_channel_pressures = project.midi_items()[0].channel_pressures().to_vec();
+    let before_opaque_events = project.midi_items()[0].opaque_events().to_vec();
 
     project
         .apply(DawAction::QuantizeMidiEventsWithOperation {
@@ -1070,6 +1095,19 @@ fn midi_quantize_all_modeled_events_and_undoes_as_one_edit() {
             ..channel_pressures[0]
         }]
     );
+    assert_eq!(
+        item.opaque_events(),
+        [
+            MidiOpaqueEventData {
+                tick: 720,
+                ..opaque_events[0].clone()
+            },
+            MidiOpaqueEventData {
+                tick: 870,
+                ..opaque_events[1].clone()
+            },
+        ]
+    );
 
     assert!(
         project
@@ -1089,6 +1127,7 @@ fn midi_quantize_all_modeled_events_and_undoes_as_one_edit() {
     assert_eq!(item.program_changes(), before_program_changes);
     assert_eq!(item.poly_aftertouches(), before_poly_aftertouches);
     assert_eq!(item.channel_pressures(), before_channel_pressures);
+    assert_eq!(item.opaque_events(), before_opaque_events);
     assert!(
         project
             .redo()
@@ -1101,6 +1140,19 @@ fn midi_quantize_all_modeled_events_and_undoes_as_one_edit() {
     assert_eq!(project.midi_items()[0].program_changes()[0].tick, 480);
     assert_eq!(project.midi_items()[0].poly_aftertouches()[0].tick, 870);
     assert_eq!(project.midi_items()[0].channel_pressures()[0].tick, 720);
+    assert_eq!(
+        project.midi_items()[0].opaque_events(),
+        [
+            MidiOpaqueEventData {
+                tick: 720,
+                ..opaque_events[0].clone()
+            },
+            MidiOpaqueEventData {
+                tick: 870,
+                ..opaque_events[1].clone()
+            },
+        ]
+    );
 }
 
 #[test]
@@ -1211,6 +1263,7 @@ fn midi_quantize_selected_events_only_changes_the_selected_note_cc_and_pitch_ben
             program_changes: Vec::new(),
             poly_aftertouches: Vec::new(),
             channel_pressures: Vec::new(),
+            opaque_events: Vec::new(),
             grid: GridFraction::new(1, 32).expect("1/32 is a valid grid"),
             strength: 1.0,
             operation: MidiNoteQuantizeOperation::Position,

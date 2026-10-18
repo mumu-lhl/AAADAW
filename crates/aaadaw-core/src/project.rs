@@ -537,6 +537,33 @@ where
         .collect())
 }
 
+fn quantized_midi_opaque_events(
+    item: &MidiItem,
+    events: &[MidiOpaqueEventData],
+    selected_events: Option<&[MidiOpaqueEventData]>,
+    grid_ticks: u64,
+    strength: f32,
+    swing_amount_percent: i16,
+) -> Result<Vec<MidiOpaqueEventData>, ActionError> {
+    let mut quantized = events.to_vec();
+    for (original, event) in events.iter().zip(&mut quantized) {
+        if selected_events.is_none_or(|selected| selected.contains(original)) {
+            event.tick = quantized_midi_event_tick(
+                item,
+                event.tick,
+                grid_ticks,
+                strength,
+                swing_amount_percent,
+            )?;
+        }
+    }
+    quantized.sort_unstable_by_key(|event| (event.tick, event.order));
+    if !valid_midi_opaque_events(&quantized) {
+        return Err(ActionError::InvalidMidiOpaqueEvent);
+    }
+    Ok(quantized)
+}
+
 #[allow(clippy::too_many_arguments)]
 fn quantize_midi_events(
     item: &MidiItem,
@@ -546,6 +573,7 @@ fn quantize_midi_events(
     selected_program_changes: Option<&HashSet<MidiProgramChangeData>>,
     selected_poly_aftertouches: Option<&HashSet<MidiPolyAftertouchData>>,
     selected_channel_pressures: Option<&HashSet<MidiChannelPressureData>>,
+    selected_opaque_events: Option<&[MidiOpaqueEventData]>,
     item_id: ItemId,
     grid: crate::GridFraction,
     strength: f32,
@@ -718,6 +746,27 @@ fn quantize_midi_events(
                 before: item.channel_pressures.as_ref().clone(),
                 after: channel_pressures,
             });
+        }
+
+        let opaque_events = quantized_midi_opaque_events(
+            item,
+            item.opaque_events.as_ref(),
+            selected_opaque_events,
+            grid_ticks,
+            strength,
+            swing_amount_percent,
+        )?;
+        if opaque_events.as_slice() != item.opaque_events.as_ref() {
+            events.insert(
+                0,
+                ProjectEvent::MidiItemChanged {
+                    before: item.clone(),
+                    after: MidiItem {
+                        opaque_events: Arc::new(opaque_events),
+                        ..item.clone()
+                    },
+                },
+            );
         }
     }
 
@@ -5775,6 +5824,7 @@ impl Project {
                     None,
                     None,
                     None,
+                    None,
                     item_id,
                     grid,
                     strength,
@@ -5792,6 +5842,7 @@ impl Project {
                 program_changes,
                 poly_aftertouches,
                 channel_pressures,
+                opaque_events,
                 grid,
                 strength,
                 operation,
@@ -5811,6 +5862,7 @@ impl Project {
                     poly_aftertouches.into_iter().collect::<HashSet<_>>();
                 let selected_channel_pressures =
                     channel_pressures.into_iter().collect::<HashSet<_>>();
+                let selected_opaque_events = opaque_events;
                 quantize_midi_events(
                     item,
                     Some(&selected_notes),
@@ -5819,6 +5871,7 @@ impl Project {
                     Some(&selected_program_changes),
                     Some(&selected_poly_aftertouches),
                     Some(&selected_channel_pressures),
+                    Some(&selected_opaque_events),
                     item_id,
                     grid,
                     strength,

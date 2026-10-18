@@ -16313,6 +16313,40 @@ fn midi_quantize_dialog_selected_events_preserves_unselected_events_and_selectio
             ],
         })
         .expect("test Channel Pressure events should be inserted");
+    let selected_opaque_event = MidiOpaqueEventData {
+        tick: 475,
+        order: 20,
+        kind: MidiOpaqueEventKind::Meta {
+            kind: 0x01,
+            data: vec![0xff, 0x00, b's'],
+        },
+    };
+    let unselected_opaque_event = MidiOpaqueEventData {
+        tick: 480,
+        order: 10,
+        kind: MidiOpaqueEventKind::SystemExclusive {
+            status: 0xF7,
+            data: vec![0x43, 0x12, 0x34],
+        },
+    };
+    let second_selected_opaque_event = MidiOpaqueEventData {
+        tick: 595,
+        order: 30,
+        kind: MidiOpaqueEventKind::SystemExclusive {
+            status: 0xF0,
+            data: vec![0x43, 0x56],
+        },
+    };
+    app.project
+        .apply(DawAction::SetMidiOpaqueEvents {
+            item_id,
+            events: vec![
+                selected_opaque_event.clone(),
+                unselected_opaque_event.clone(),
+                second_selected_opaque_event.clone(),
+            ],
+        })
+        .expect("test opaque events should be inserted");
 
     app.midi_editor_item_id = Some(item_id);
     let _ = app.update(Message::SelectMidiNotes(HashSet::from([selected_note_id])));
@@ -16341,6 +16375,8 @@ fn midi_quantize_dialog_selected_events_preserves_unselected_events_and_selectio
         selected_channel_pressure,
         true,
     ));
+    let _ = app.update(Message::SelectMidiOpaqueEvent(item_id, 0, true));
+    let _ = app.update(Message::SelectMidiOpaqueEvent(item_id, 2, true));
     let _ = app.update(Message::OpenMidiQuantizeDialog(item_id));
     let _ = app.update(Message::SetMidiQuantizeScope(
         MidiQuantizeScope::SelectedEvents,
@@ -16403,6 +16439,23 @@ fn midi_quantize_dialog_selected_events_preserves_unselected_events_and_selectio
         ]
     );
     assert_eq!(
+        item.opaque_events(),
+        [
+            MidiOpaqueEventData {
+                tick: 480,
+                ..unselected_opaque_event.clone()
+            },
+            MidiOpaqueEventData {
+                tick: 480,
+                ..selected_opaque_event.clone()
+            },
+            MidiOpaqueEventData {
+                tick: 600,
+                ..second_selected_opaque_event.clone()
+            },
+        ]
+    );
+    assert_eq!(
         app.midi_editor_selected_controllers,
         HashSet::from([MidiControllerData {
             tick: 480,
@@ -16436,6 +16489,10 @@ fn midi_quantize_dialog_selected_events_preserves_unselected_events_and_selectio
             tick: 480,
             ..selected_channel_pressure
         }])
+    );
+    assert_eq!(
+        app.midi_editor_selected_opaque_events,
+        HashSet::from([1, 2])
     );
 
     let _ = app.update(Message::Undo);
@@ -16477,6 +16534,95 @@ fn midi_quantize_dialog_selected_events_preserves_unselected_events_and_selectio
             untouched_channel_pressure,
         ]
     );
+    assert_eq!(
+        item.opaque_events(),
+        [
+            selected_opaque_event.clone(),
+            unselected_opaque_event.clone(),
+            second_selected_opaque_event.clone(),
+        ]
+    );
+    assert_eq!(
+        app.midi_editor_selected_opaque_events,
+        HashSet::from([0, 2])
+    );
+    let _ = app.update(Message::Redo);
+    assert_eq!(
+        app.project.midi_items()[0].opaque_events(),
+        [
+            MidiOpaqueEventData {
+                tick: 480,
+                ..unselected_opaque_event
+            },
+            MidiOpaqueEventData {
+                tick: 480,
+                ..selected_opaque_event
+            },
+            MidiOpaqueEventData {
+                tick: 600,
+                ..second_selected_opaque_event
+            },
+        ]
+    );
+    assert_eq!(
+        app.midi_editor_selected_opaque_events,
+        HashSet::from([1, 2])
+    );
+}
+
+#[test]
+fn midi_quantize_dialog_can_quantize_only_the_selected_opaque_event() {
+    let mut app = App::default();
+    let _ = app.update(Message::AddTrack);
+    let track_id = app.project.tracks()[0].id();
+    app.project
+        .apply(DawAction::InsertMidiItem {
+            track_id,
+            start_tick: 0,
+            length_ticks: 4_000,
+        })
+        .expect("test MIDI item should be inserted");
+    let item_id = app.project.midi_items()[0].id();
+    let opaque_event = MidiOpaqueEventData {
+        tick: 475,
+        order: 7,
+        kind: MidiOpaqueEventKind::SystemExclusive {
+            status: 0xF0,
+            data: vec![0x43, 0x12, 0x34],
+        },
+    };
+    app.project
+        .apply(DawAction::SetMidiOpaqueEvents {
+            item_id,
+            events: vec![opaque_event.clone()],
+        })
+        .expect("test SysEx event should be inserted");
+    app.midi_editor_item_id = Some(item_id);
+    app.midi_editor_mode = MidiEditorMode::EventList;
+    let _ = app.update(Message::SelectMidiOpaqueEvent(item_id, 0, false));
+    let _ = app.update(Message::OpenMidiQuantizeDialog(item_id));
+    let _ = app.update(Message::SetMidiQuantizeScope(
+        MidiQuantizeScope::SelectedEvents,
+    ));
+    let _ = app.update(Message::AcceptMidiQuantize);
+
+    assert_eq!(
+        app.project.midi_items()[0].opaque_events(),
+        [MidiOpaqueEventData {
+            tick: 480,
+            ..opaque_event.clone()
+        }]
+    );
+    assert_eq!(app.midi_editor_selected_opaque_events, HashSet::from([0]));
+    let _ = app.update(Message::Undo);
+    assert_eq!(
+        app.project.midi_items()[0].opaque_events(),
+        std::slice::from_ref(&opaque_event)
+    );
+    assert_eq!(app.midi_editor_selected_opaque_events, HashSet::from([0]));
+    let _ = app.update(Message::Redo);
+    assert_eq!(app.project.midi_items()[0].opaque_events()[0].tick, 480);
+    assert_eq!(app.midi_editor_selected_opaque_events, HashSet::from([0]));
 }
 
 #[test]

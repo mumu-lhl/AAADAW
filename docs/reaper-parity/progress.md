@@ -2482,3 +2482,7 @@ MIDI 播放计划现在保留预编译的 F0/F7 字节区间，并将 SysEx 作�
 ### 2026-10-18 将 Quantize 扩展到三类已建模 MIDI 事件
 
 Quantize Events 的 All events 和 Selected events 现在还会处理 Program Change、Poly Aftertouch、Channel Pressure；与 notes、CC、Pitch Bend 一样，移动基于当前编辑器网格和 Swing，所有类型组成一次历史编辑。Selected events 保留未选事件，仅当选中事件与未选事件冲突时优先保留选中事件；All events 同一目标位置仍沿用较晚原始 tick 优先。更新的 Core/App 回归覆盖三类事件的位置、碰撞、选中状态、Undo/Redo。REAPER 原厂目前只有 notes、CC、Pitch Bend 的已记录 Quantize 数据，因此这次扩展尚未声称这些新类型与原厂一致；SysEx/Meta、复杂重叠链与已记忆对话框设置仍开放，`MIDI-QUANTIZE-DIALOG-001`、UI-019 和 P7 保持 `in_progress`。
+
+### 2026-10-18 MIDI Quantize 加入 SysEx/Meta 事件
+
+All events 和 Selected events 的 Position 路径现在也移动不透明的 SysEx/Meta 行；原始 payload 字节、类型及源顺序保留。Selected events 只移动选中 opaque 行，并在 tick 排序后按事件身份恢复行选择；App 的 Undo/Redo 同样重新映射行索引。Core/App 回归覆盖无效 UTF-8 Meta payload、F0/F7 SysEx payload、未选行保留、跨行排序、只选 opaque 行时的量化、选择恢复及单次 Undo/Redo。Core MIDI quantize 套件 10/10、AAADAW 全套 807/807，workspace strict all-target Clippy (`-D warnings`)、fmt、diff check 和 112 行/15 列唯一 ID parity matrix 均通过。没有 REAPER 7.82 对这些事件类型及同位置碰撞的 Quantize 原厂探测，故仅记录 AAADAW 自动化覆盖；本轮环境也没有 Xvfb/display，未新增桌面截图；`MIDI-QUANTIZE-DIALOG-001`、UI-019 和 P7 继续为 `in_progress`。
