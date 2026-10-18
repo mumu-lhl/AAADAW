@@ -1,0 +1,12 @@
+implementation	AAADAW MIDI Quantize preference persistence
+runtime	Linux x86_64; Xvfb :310 at 1280x800x24; WGPU_BACKEND=gl; isolated XDG config/data/state/cache/runtime directories under target/quantize-settings-aaadaw-profile
+project	docs/verification/reaper-parity/fixtures/midi-note-quantize-aaadaw.aaadaw copied into the ignored target profile before opening
+build	Stable desktop executable; ELF Build ID 061b48ddfa1eb8769a05740e47ff688d72ae425d; binary SHA-256 ab04b48dc1480fd493678400b17519e943e712aedea7df0bc59d599d5bf20cd5
+seeded_preferences	version 1; Selected events; Position and note end; 60%; Bypass off; Fix overlaps on; opening Quantize Events showed every seeded value
+changed_preferences	All events; Note length only; 38%; Bypass on; Fix overlaps off
+before_cancel_capture	midi-quantize-settings-before-cancel-aaadaw.png; 1280x800; SHA-256 7e929015cbbe30b6936474ca207abe05e5ac2d2748a2ec0c4aaad650dfefce58
+cancel_behavior	Clicked Cancel; after the 500 ms preference save delay, midi-quantize-preferences.json contained all five changed values; reopening the dialog showed them unchanged and the project had no pending edit
+after_cancel_capture	midi-quantize-settings-after-cancel-aaadaw.png; 1280x800; SHA-256 4cd83a7bce661912e9b38ebd310adceaf556d7569e96316639df1e813be17d1f
+restart_behavior	Terminated and relaunched the desktop process with the same isolated XDG config and project; Quantize Events restored All events, Note length only, 38%, Bypass on, and Fix overlaps off
+after_restart_capture	midi-quantize-settings-after-restart-aaadaw.png; 1280x800; SHA-256 4cd83a7bce661912e9b38ebd310adceaf556d7569e96316639df1e813be17d1f
+preferences_file	midi-quantize-settings-memory-aaadaw.json; version=1; scope=all_events; operation=note_length_only; strength_percent=38; bypass=true; fix_overlaps=false

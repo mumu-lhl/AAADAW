@@ -1,0 +1,8 @@
+{
+  "version": 1,
+  "scope": "all_events",
+  "operation": "note_length_only",
+  "strength_percent": 38,
+  "bypass": true,
+  "fix_overlaps": false
+}

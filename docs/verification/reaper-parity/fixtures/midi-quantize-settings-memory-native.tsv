@@ -1,0 +1,13 @@
+reference	Linux REAPER 7.82 / Default 7, MIDI Editor action 40009 (Quantize Events)
+environment	Xvfb :301, 1280x800x24, isolated fresh REAPER profile, no audio device
+probe	scripts/reaper_parity/probe-midi-quantize-settings-memory.lua; opens a MIDI test item and Quantize Events, records each run in target/quantize-settings-native/midi-quantize-settings-memory-runs.tsv
+fresh_profile	fresh isolated REAPER profile with no pre-existing Quantize preferences
+defaults	Selected notes; Position; 100%; Bypass off; Fix overlaps on
+cancel_test	Changed to All events; Note length only; 38%; Bypass on; Fix overlaps off; Cancel; reopening in the same process retained all five changed controls
+cancel_capture	docs/verification/reaper-parity/fixtures/midi-quantize-settings-after-cancel-reaper-native.png; 1280x800; SHA-256 ad1e96c532b489d795b6655f42e3c8cafb8b448414e4f040254bcba0ab515762
+ok_test	Changed to Selected events; Position and note end; 60%; Bypass off; Fix overlaps on; OK; reopening in the same process retained all five changed controls
+ok_capture	docs/verification/reaper-parity/fixtures/midi-quantize-settings-after-ok-reaper-native.png; 1280x800; SHA-256 3885613532937d9fec696dd0b7b040ff6c961191c01bd785c7a55203d74cc22d
+restart_test	Closed the isolated REAPER process without saving the temporary project, restarted with the same profile, and reopened action 40009; all five controls retained the last OK settings
+restart_capture	docs/verification/reaper-parity/fixtures/midi-quantize-settings-after-restart-reaper-native.png; 1280x800; SHA-256 f4f0376a162f92a2fbefa2d1eefc636b120d04135db2e68c5b8faa7873340695
+reaper_ini_after_restart	[midiedit] quantmode=19; quantstrength=60; quantmin=0; quantmax=100; other visible controls were verified in the reopened dialog capture
+run_log	4 opens of Quantize Events recorded under target/quantize-settings-native/midi-quantize-settings-memory-runs.tsv

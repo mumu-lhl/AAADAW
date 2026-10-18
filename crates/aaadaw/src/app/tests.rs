@@ -15398,7 +15398,7 @@ fn midi_editor_quantize_positions_and_ends_changes_only_selected_notes() {
 }
 
 #[test]
-fn midi_quantize_dialog_commits_selected_notes_with_strength_and_cancel_discards_settings() {
+fn midi_quantize_dialog_remembers_settings_after_cancel_and_commits_selected_notes() {
     let mut app = App::default();
     let _ = app.update(Message::AddTrack);
     let track_id = app.project.tracks()[0].id();
@@ -15449,7 +15449,37 @@ fn midi_quantize_dialog_commits_selected_notes_with_strength_and_cancel_discards
     assert_eq!(app.project.midi_items()[0].notes()[0].tick(), 170);
 
     let _ = app.update(Message::OpenMidiQuantizeDialog(item_id));
+    let _ = app.update(Message::SetMidiQuantizeScope(
+        MidiQuantizeScope::SelectedEvents,
+    ));
+    let _ = app.update(Message::SetMidiQuantizeOperation(
+        MidiQuantizeOperation::PositionAndNoteEnd,
+    ));
+    let _ = app.update(Message::SetMidiQuantizeStrength(60));
+    let _ = app.update(Message::SetMidiQuantizeBypass(true));
+    let _ = app.update(Message::SetMidiQuantizeFixOverlaps(false));
+    let _ = app.update(Message::CancelMidiQuantize);
+    let _ = app.update(Message::OpenMidiQuantizeDialog(item_id));
+    let remembered = app
+        .midi_quantize_dialog
+        .expect("quantize dialog should reopen with remembered settings");
+    assert_eq!(remembered.scope, MidiQuantizeScope::SelectedEvents);
+    assert_eq!(
+        remembered.operation,
+        MidiQuantizeOperation::PositionAndNoteEnd
+    );
+    assert_eq!(remembered.strength_percent, 60);
+    assert!(remembered.bypass);
+    assert!(!remembered.fix_overlaps);
+    let _ = app.update(Message::SetMidiQuantizeScope(
+        MidiQuantizeScope::SelectedNotes,
+    ));
+    let _ = app.update(Message::SetMidiQuantizeOperation(
+        MidiQuantizeOperation::Position,
+    ));
     let _ = app.update(Message::SetMidiQuantizeStrength(50));
+    let _ = app.update(Message::SetMidiQuantizeBypass(false));
+    let _ = app.update(Message::SetMidiQuantizeFixOverlaps(true));
     let _ = app.update(Message::CommitMidiQuantize);
     assert!(app.midi_quantize_dialog.is_some());
     let notes = app.project.midi_items()[0].notes();
@@ -15505,6 +15535,13 @@ fn midi_quantize_dialog_bypass_skips_commit_and_ok_without_recording_an_edit() {
     let _ = app.update(Message::AcceptMidiQuantize);
     assert!(app.midi_quantize_dialog.is_none());
     assert_eq!(app.project.snapshot(), before);
+    let _ = app.update(Message::OpenMidiQuantizeDialog(item_id));
+    let remembered = app
+        .midi_quantize_dialog
+        .expect("accepted quantize settings should be remembered");
+    assert_eq!(remembered.scope, MidiQuantizeScope::AllNotes);
+    assert!(remembered.bypass);
+    let _ = app.update(Message::CancelMidiQuantize);
 
     let _ = app.update(Message::Undo);
     assert!(app.project.midi_items()[0].notes().is_empty());
@@ -15557,6 +15594,17 @@ fn midi_quantize_dialog_applies_all_notes_and_note_ends_as_one_undoable_edit() {
     let _ = app.update(Message::AcceptMidiQuantize);
 
     assert!(app.midi_quantize_dialog.is_none());
+    let _ = app.update(Message::OpenMidiQuantizeDialog(item_id));
+    let remembered = app
+        .midi_quantize_dialog
+        .expect("accepted quantize settings should be remembered");
+    assert_eq!(remembered.scope, MidiQuantizeScope::AllNotes);
+    assert_eq!(
+        remembered.operation,
+        MidiQuantizeOperation::PositionAndNoteEnd
+    );
+    assert_eq!(remembered.strength_percent, 100);
+    let _ = app.update(Message::CancelMidiQuantize);
     let notes = app.project.midi_items()[0].notes();
     assert_eq!((notes[0].tick(), notes[0].duration()), (120, 120));
     assert_eq!((notes[1].tick(), notes[1].duration()), (360, 120));

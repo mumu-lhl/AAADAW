@@ -102,6 +102,7 @@ mod media;
 mod messages;
 mod midi_export;
 mod midi_humanize_preferences;
+mod midi_quantize_preferences;
 mod offline_job_queue;
 mod project_defaults;
 mod project_io;
@@ -373,6 +374,8 @@ struct App {
     loop_time_preferences_save_at: Option<Instant>,
     midi_humanize_preferences_save_at: Option<Instant>,
     midi_humanize_preferences: midi_humanize_preferences::MidiHumanizePreferences,
+    midi_quantize_preferences_save_at: Option<Instant>,
+    midi_quantize_preferences: midi_quantize_preferences::MidiQuantizePreferences,
     midi_transpose_scope: MidiTransposeScope,
     main_workspace: MainWorkspace,
     shell_profile: ShellProfile,
@@ -2540,6 +2543,12 @@ impl App {
                 app.status = format!("MIDI Humanize preferences unavailable: {error}");
             }
         }
+        match midi_quantize_preferences::load() {
+            Ok(preferences) => app.midi_quantize_preferences = preferences,
+            Err(error) => {
+                app.status = format!("MIDI Quantize preferences unavailable: {error}");
+            }
+        }
         match render_wildcard_preferences::load() {
             Ok(preferences) => {
                 app.render_dialog.allow_slash_in_wildcard_substitutions =
@@ -2816,6 +2825,7 @@ impl App {
                 || self.desktop_layout_save_at.is_some()
                 || self.loop_time_preferences_save_at.is_some()
                 || self.midi_humanize_preferences_save_at.is_some()
+                || self.midi_quantize_preferences_save_at.is_some()
                 || self.unsaved_session_snapshot_at.is_some())
         {
             iced::time::every(background_tick_interval).map(|_| Message::BackgroundTick)
@@ -5810,6 +5820,7 @@ impl App {
                 if self.main_window_id == Some(window_id) {
                     self.flush_loop_time_preferences();
                     self.flush_midi_humanize_preferences();
+                    self.flush_midi_quantize_preferences();
                 }
                 if self.project_settings_window_id == Some(window_id) {
                     self.project_settings_window_id = None;
@@ -5907,6 +5918,7 @@ impl App {
                     self.flush_desktop_layout();
                     self.flush_loop_time_preferences();
                     self.flush_midi_humanize_preferences();
+                    self.flush_midi_quantize_preferences();
                 }
                 if self.fx_chain_window_id == Some(window_id) {
                     self.close_fx_editor_resources();
@@ -8902,13 +8914,14 @@ impl App {
                     .any(|item| item.id() == item_id)
                 {
                     self.midi_editor_filter_dialog_open = false;
+                    let preferences = self.midi_quantize_preferences;
                     self.midi_quantize_dialog = Some(MidiQuantizeDialogState {
                         item_id,
-                        scope: MidiQuantizeScope::SelectedNotes,
-                        operation: MidiQuantizeOperation::Position,
-                        strength_percent: 100,
-                        bypass: false,
-                        fix_overlaps: true,
+                        scope: preferences.scope,
+                        operation: preferences.operation,
+                        strength_percent: preferences.strength_percent,
+                        bypass: preferences.bypass,
+                        fix_overlaps: preferences.fix_overlaps,
                     });
                 }
             }
@@ -8996,26 +9009,31 @@ impl App {
                 if let Some(dialog) = self.midi_quantize_dialog.as_mut() {
                     dialog.scope = scope;
                 }
+                self.remember_midi_quantize_dialog();
             }
             Message::SetMidiQuantizeOperation(operation) => {
                 if let Some(dialog) = self.midi_quantize_dialog.as_mut() {
                     dialog.operation = operation;
                 }
+                self.remember_midi_quantize_dialog();
             }
             Message::SetMidiQuantizeStrength(strength_percent) => {
                 if let Some(dialog) = self.midi_quantize_dialog.as_mut() {
                     dialog.strength_percent = strength_percent.min(100);
                 }
+                self.remember_midi_quantize_dialog();
             }
             Message::SetMidiQuantizeBypass(bypass) => {
                 if let Some(dialog) = self.midi_quantize_dialog.as_mut() {
                     dialog.bypass = bypass;
                 }
+                self.remember_midi_quantize_dialog();
             }
             Message::SetMidiQuantizeFixOverlaps(fix_overlaps) => {
                 if let Some(dialog) = self.midi_quantize_dialog.as_mut() {
                     dialog.fix_overlaps = fix_overlaps;
                 }
+                self.remember_midi_quantize_dialog();
             }
             Message::CommitMidiQuantize => self.commit_midi_quantize_dialog(false),
             Message::AcceptMidiQuantize => self.commit_midi_quantize_dialog(true),
@@ -9554,6 +9572,7 @@ impl App {
                 self.flush_desktop_layout_if_due();
                 self.flush_loop_time_preferences_if_due();
                 self.flush_midi_humanize_preferences_if_due();
+                self.flush_midi_quantize_preferences_if_due();
                 #[cfg(all(feature = "audio-device", target_os = "android"))]
                 if self.settings_category == SettingsCategory::Audio {
                     match crate::android_platform::midi_port_counts() {

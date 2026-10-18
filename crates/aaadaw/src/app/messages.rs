@@ -333,7 +333,8 @@ impl std::fmt::Display for MidiEditorChannelSelection {
     }
 }
 
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub(crate) enum MidiQuantizeScope {
     #[default]
     SelectedNotes,
@@ -402,7 +403,8 @@ impl std::fmt::Display for MidiTransposeScope {
     }
 }
 
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub(crate) enum MidiQuantizeOperation {
     #[default]
     Position,
