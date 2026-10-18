@@ -1,0 +1,19 @@
+application	REAPER 7.82/linux-x86_64
+build_id	fb9ade2f211bc91a3ee6193630ef17bcf5f6528b
+binary_sha256	9976f5608068b7a58518969001b00b527fb0de6ed7459e0e5dda6f29878ee254
+theme	Default_7.0.ReaperThemeZip; SHA-256 575544606736a395520703e532209ad9635f13a41b7ea000bb9810d60025be48
+script	scripts/reaper_parity/probe-midi-event-list.lua; SHA-256 aabce2531a647f3778c6bee2078ec727494d9cdaa38671bf166285486ec85e19
+environment	Linux X11 Xvfb :321, 1440x900x24, xfwm4 compositor disabled, isolated copied REAPER profile
+initial_state	The probe creates four notes: rows 1–3 selected, row 4 unselected; row 4 is C5 at tick 1440 on channel 5
+input	Ctrl-click Event List row 4, then press Ctrl+Z and Ctrl+Shift+Z consecutively without an intervening save
+after_ctrl_click	Rows 1–4 are selected
+after_undo	Rows 1–3 are selected; row 4 is unselected
+after_redo	Rows 1–4 are selected again
+project_content	Note positions, lengths, channels, pitches, and velocities remain unchanged; the RPP diff changes only row 4 note-on/off selection status (plus save timestamp)
+readback	Saved REAPER project events use lowercase e/E status records for selected/unselected note events; undo RPP has row 4 E, redo RPP has row 4 e
+parity	REAPER 7.82 Event List Ctrl-click selection is an Undo/Redo action, matching the previously observed Piano Roll selection-history behavior
+artifact	sha256
+midi-event-list-selection-history-native-undo.png	043388d26da04bcd5dfdebda5141365fbbbf21e18788903969fd4636e1199fc4
+midi-event-list-selection-history-native-undo.rpp	eced0032c772beb3c6503cff2964f7b5a74b9a025779287e1d5ff18f1a4dcbfa
+midi-event-list-selection-history-native-redo.png	b6536b8369a94fa3e4c75b3aea79ced4dc3785d05c3685d163db2f2e623be19d
+midi-event-list-selection-history-native-redo.rpp	45ff4c7e1ec75268844cd771bf71ff237381a75add170587b376084305b2a923

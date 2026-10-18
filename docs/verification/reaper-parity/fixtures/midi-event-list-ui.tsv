@@ -59,3 +59,8 @@ fixtures/midi-event-list-empty-end-aaadaw-properties.png	d88a5ca3a9e4a7687fb5bab
 fixtures/midi-event-list-reaper-data-aaadaw.tsv	4a7ae1edb805e4def5b44cf2fa12921f6e47e3a61112e773d673ff6f20828faa
 fixtures/midi-event-list-reaper-data-aaadaw.png	eaf488686ac0c16796cbd69adbff128ed9eb737551eedf8563ebce45d25f13ac
 fixtures/midi-event-list-reaper-data-aaadaw-narrow-scroll.png	4628d183781fde07a6c14abfcaa1f68b1c2f733650a521ad531d4fcdaff6a1ff
+fixtures/midi-event-list-selection-history-native.tsv	b137165ea1b0d3fdd7e32ab240b326c75eccf0257dbf9bdfed7e102a44338748
+fixtures/midi-event-list-selection-history-native-undo.png	043388d26da04bcd5dfdebda5141365fbbbf21e18788903969fd4636e1199fc4
+fixtures/midi-event-list-selection-history-native-undo.rpp	eced0032c772beb3c6503cff2964f7b5a74b9a025779287e1d5ff18f1a4dcbfa
+fixtures/midi-event-list-selection-history-native-redo.png	b6536b8369a94fa3e4c75b3aea79ced4dc3785d05c3685d163db2f2e623be19d
+fixtures/midi-event-list-selection-history-native-redo.rpp	45ff4c7e1ec75268844cd771bf71ff237381a75add170587b376084305b2a923
