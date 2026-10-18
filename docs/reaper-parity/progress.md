@@ -2352,3 +2352,9 @@ AAADAW 的 Program Change 属性窗现在从该事件 channel 上不晚于其 ti
 根据上述原厂对照，Event List 将同 tick、同 channel 的 CC0/CC32 折叠为一个 `Bank Select 14-bit (0/32)` 行，值为 `(MSB << 7) | LSB`；Bank 行选择、导航范围和删除将一并操作两条底层 controller，Delete/Undo 实窗已核对。Program Change 参数列显示该 channel/tick 的生效 `MSB-LSB-Program`，Value 仍是零基 Program；所有非 Note 行的 Off Value 现在留空。未配对或不同时位置的 CC0/CC32 保持普通 CC 行。
 
 Event List 单元覆盖成对/未配对事件、通道/位置精确配对、14-bit 值、PC 默认与已继承 bank 标签；App 回归验证选择、双事件删除和 Undo。AAADAW `midi_` 定向套件 **176/176**，Bank Select / Program Change 定向测试 **2/2**，all-target `audio-device` strict Clippy 与 stable fmt/diff 通过。AAADAW app suite **769/769** 通过；stable Linux Xvfb 实窗的初始/选中/删除/撤销截图和可复用工程生成器登记在 [case manifest](../verification/reaper-parity/fixtures/midi-event-list-bank-program-aaadaw.tsv)。最终桌面 Build ID `9122c7c08d79277bec523d8dce8ca05db4c4b7ab`，SHA-256 `c8085ee87041f73c7aa7013870b3b610a1b22a55f707497e92acb1d2969e65b0`。`MIDI-EVENT-LIST-001`、UI-019 与 P7 仍 `in_progress`，其余列、混合事件属性、Meta/SysEx、patch-file 与 source-offset/loop 行为仍需实现和原厂验收。
+
+### 2026-10-18 Linux REAPER SMF 导入行为对照
+
+使用 960 PPQ 的 Type 1 确定性文件，分别按 REAPER 7.82 / Default 7 的默认设置与三个导入选项全开执行。默认选项均关闭：REAPER 将导体轨、Lead 与 metadata-only 源轨的事件合并进 edit cursor 处一条名为 `Conductor` 的 MIDI item，工程 Tempo Map 与 project marker 数量保持不变。展开轨道、Tempo Map、Marker/Cue 全开后，REAPER 创建 `Lead` 和 `Meta only` 两条 MIDI 轨；在 edit cursor 2 秒处加入 Tempo/Meter 变化，并把两个 MIDI Marker/Cue 转成 project markers。两种设置下，item 内都保留文本、Marker/Cue Meta 与 SysEx。原厂选项窗口、两种结果 Event List 截图、SMF fixture、ReaScript 与原始读回分别在 [MIDI import probe fixtures](fixtures/midi-file-import-native/)；可复现脚本位于 `scripts/reaper_parity/generate-midi-file-import-probe.py` 与 `scripts/reaper_parity/probe-midi-file-import.lua`。
+
+AAADAW 现有导入仍会按源轨分轨、跳过 metadata-only 轨并丢弃未建模事件，未提供原厂三项选择，也没有导入 Tempo/Meter 和 project marker。因此 `MIDI-FILE-IMPORT-001` 仍保持 `in_progress`；接下来先扩充可持久化的 item 事件和选项化事务导入，再验证桌面实窗与保存重开。原厂文件、读回和截图见 [MIDI import probe fixtures](fixtures/midi-file-import-native/)。

@@ -1,0 +1,20 @@
+version	7.82/linux-x86_64
+theme	Default_7.0.ReaperThemeZip
+cursor_seconds	2.0
+track_count	1
+tempo_marker_count	0
+track	1	Conductor	1
+item	1	1	2.0	1.0	Conductor
+take	1	1	1	3	8
+note	1	1	0	0	0.0	480.0	3	60	100
+cc	1	1	0	0	480.0	0xB0	3	0	11
+cc	1	2	0	0	480.0	0xB0	3	32	22
+cc	1	3	0	0	480.0	0xC0	3	41	0
+text_sysex	1	1	0	0	0.0	3	436F6E647563746F72
+text_sysex	1	2	0	0	0.0	3	4C656164
+text_sysex	1	3	0	0	0.0	3	4D657461206F6E6C79
+text_sysex	1	4	0	0	0.0	1	556E61747461636865642074657874
+text_sysex	1	5	0	0	240.0	1	56657273652074657874
+text_sysex	1	6	0	0	480.0	6	556E6174746163686564206D61726B6572
+text_sysex	1	7	0	0	960.0	-1	4312
+text_sysex	1	8	0	0	1200.0	6	4375652041
