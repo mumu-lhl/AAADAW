@@ -1,0 +1,5 @@
+artifact	sha256
+scripts/reaper_parity/probe-midi-event-properties.lua	0b2c8f679a5e957ccab09f6643db7100dc754b49f592219f690fba6c908127f8
+fixtures/midi-event-properties-native.tsv	4f2bd1ca1714de8fbd4f7420269ef63d4b96c34e21c2937a160e90210cd263e4
+fixtures/midi-event-properties-native.png	e513d9b0c813367b9019a306de11d5dd740e0146430d4561c8cff1b3fbf73ab9
+fixtures/midi-event-properties-aaadaw.png	2c99ae42c6d13cca91fc951cd2d3b523a3c119bee5e7cc3fbcbbbe57b9c27514

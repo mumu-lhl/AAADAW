@@ -2227,3 +2227,12 @@ Linux REAPER 7.82 / Default 7 的 MIDI Editor action 40056 在 Alt+3 打开 Even
 AAADAW 新增 Event List/Piano Roll 两种编辑模式、对应 Action List 动作与默认快捷键；列表现显示工程 BBT 的 Note、CC、Pitch Bend 行，使用现有 channel/type filters。点击和 Ctrl/Cmd-click 可单选/多选，Delete 将选中建模事件合并为一个可 Undo/Redo 的事务。当前 Cranelift 桌面 Build ID `90499bbfde9965ac5092810d27f6e233c53ff0c9` 的真实窗口截图验证了当前布局。此为基础切片：终端 All Notes Off、Program/Bank、Poly Aftertouch、Channel Pressure、SysEx/text/meta、REAPER Data、逐单元格编辑和原厂键盘导航、列操作、准确 loop/source-offset BBT 与跨窗口/重启的模式记忆仍未实现；不计为完整 Event List。
 
 AAADAW Nextest **775/775，0 skipped**（Xvfb）通过；严格 all-target Clippy (`-D warnings`)、`cargo +stable fmt --all -- --check`、`git diff --check` 通过。parity matrix 为 **110 项 / 15 列 / 唯一 ID**，本切片 fixture manifest **4/4 个文件 SHA-256 匹配**。`MIDI-EVENT-LIST-001`、UI-019 与 P7 保持 `in_progress`。
+
+
+### 2026-10-18 MIDI Event Properties 单音符编辑
+
+Linux REAPER 7.82 / Default 7 的 MIDI Event List section 32061 action 40004（`Edit: Event properties`，Ctrl+F2）打开所选音符的 Type、Position、Length、Channel、Note、Velocity、Off value 与 OK/Cancel/Apply。隔离配置 ReaScript 读回位置 720、长度 240、通道 3、pitch 60、velocity 91，原厂窗口显示 `1.1.75`、`0.0.25`、`60 C4` 和 off value 0；[原厂截图](../verification/reaper-parity/fixtures/midi-event-properties-native.png)、[AAADAW 实窗截图](../verification/reaper-parity/fixtures/midi-event-properties-aaadaw.png)、探针和 TSV 由 [fixture manifest](../verification/reaper-parity/fixtures/midi-event-properties-ui.tsv) 校验。
+
+AAADAW 为一个选中的 Note 增加 `Edit: Event properties` / Ctrl+F2 和 Event List 的 `Edit event…`。对话框支持绝对 BBT 位置/长度、通道、MIDI pitch（数字或音名）和力度。Apply 使用一个 `EditMidiNotes` 历史事务并保持窗口打开，OK 提交并关闭，Cancel/Escape 丢弃草稿；非法位置、音长或字段不会改动音符。稳定桌面构建 SHA-256 `61adadf9ad69c6480f8de94a40aa3500d0a5d2dc0074e450b7bac48281a7e88f` 的实窗操作包含创建音符、Event List 切换、选择行及打开属性窗口。
+
+AAADAW App Nextest **776/776，0 skipped**（Xvfb）、all-target Clippy (`-D warnings`)、fmt 与 diff 检查通过；MIDI Event List 与 Event Properties 两个 manifest 各 **4/4 个条目 SHA-256 匹配**。parity matrix 为 **111 项 / 15 列 / 唯一 ID**。仅支持单音符；CC/Pitch Bend/多选属性、相对值语法、持久化 note-off velocity、跨 meter-map/source-loop 的 BBT 和精确焦点/键盘导航继续开放，`MIDI-EVENT-PROPERTIES-001`、`MIDI-EVENT-LIST-001`、UI-019 与 P7 维持 `in_progress`。

@@ -18,8 +18,8 @@ local take = assert(reaper.GetActiveTake(item))
 for index, note in ipairs({
   {true, 60, 1}, {true, 64, 2}, {true, 67, 3}, {false, 72, 4},
 }) do
-  local start = (index - 1) * 240
-  assert(reaper.MIDI_InsertNote(take, note[1], false, start, start + 120,
+  local start = (index - 1) * 480
+  assert(reaper.MIDI_InsertNote(take, note[1], false, start, start + 240,
     note[3], note[2], 90 + index, false))
 end
 reaper.MIDI_Sort(take)

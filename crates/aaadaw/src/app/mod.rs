@@ -17,8 +17,8 @@ use aaadaw_app::{
 use aaadaw_core::ProjectSnapshot;
 use aaadaw_core::{
     AudioItem, DawAction, FxParameterChange, GridFraction, ItemId, MarkerId, MeterPointSnapshot,
-    MidiControllerData, MidiItem, MidiItemPosition, MidiNoteData, MidiPitchBendData, Project,
-    RazorEditArea, RegionId, TempoCurve, TimeSignature, TrackId,
+    MidiControllerData, MidiItem, MidiItemPosition, MidiNoteData, MidiPitchBendData, NoteId,
+    Project, RazorEditArea, RegionId, TempoCurve, TimeSignature, TrackId,
 };
 #[cfg(feature = "audio-device")]
 use aaadaw_engine::{
@@ -487,6 +487,7 @@ struct App {
     midi_quantize_dialog: Option<MidiQuantizeDialogState>,
     midi_humanize_dialog: Option<MidiHumanizeDialogState>,
     midi_transpose_dialog: Option<MidiTransposeDialogState>,
+    midi_event_properties_dialog: Option<MidiEventPropertiesDialogState>,
     midi_editor_lane: MidiEditorLane,
     midi_editor_tool: MidiEditorTool,
     midi_editor_mode: MidiEditorMode,
@@ -734,6 +735,17 @@ struct MidiTransposeDialogState {
     semitones: String,
 }
 
+#[derive(Debug, Clone)]
+struct MidiEventPropertiesDialogState {
+    item_id: ItemId,
+    note_id: NoteId,
+    position: String,
+    length: String,
+    channel: String,
+    pitch: String,
+    velocity: String,
+}
+
 #[derive(Clone, Debug)]
 struct TempoMapEdit {
     original_tick: Option<u64>,
@@ -957,6 +969,92 @@ fn action_updates_item_mix(action: &DawAction) -> bool {
         DawAction::BatchTransaction { actions, .. } => actions.iter().any(action_updates_item_mix),
         _ => false,
     }
+}
+
+fn parse_midi_event_bbt(
+    value: &str,
+    ppq: u64,
+    meter: TimeSignature,
+    is_length: bool,
+) -> Option<u64> {
+    let mut components = value.trim().split('.');
+    let bar = components.next()?.parse::<u64>().ok()?;
+    let beat = components.next()?.parse::<u64>().ok()?;
+    let hundredths = components.next()?.parse::<u64>().ok()?;
+    if components.next().is_some() || ppq == 0 || hundredths > 99 {
+        return None;
+    }
+    let beat_ticks = ppq
+        .checked_mul(4)?
+        .checked_div(u64::from(meter.denominator()))?
+        .max(1);
+    let measure_ticks = beat_ticks.checked_mul(u64::from(meter.numerator()))?;
+    let (bars, beats) = if is_length {
+        if beat >= u64::from(meter.numerator()) {
+            return None;
+        }
+        (bar, beat)
+    } else {
+        if bar == 0 || beat == 0 || beat > u64::from(meter.numerator()) {
+            return None;
+        }
+        (bar - 1, beat - 1)
+    };
+    let subticks = beat_ticks
+        .checked_mul(hundredths)?
+        .checked_add(50)?
+        .checked_div(100)?;
+    bars.checked_mul(measure_ticks)?
+        .checked_add(beats.checked_mul(beat_ticks)?)?
+        .checked_add(subticks)
+}
+
+fn midi_event_pitch_label(pitch: u8) -> String {
+    const NAMES: [&str; 12] = [
+        "C", "C♯", "D", "D♯", "E", "F", "F♯", "G", "G♯", "A", "A♯", "B",
+    ];
+    format!(
+        "{pitch} {}{}",
+        NAMES[usize::from(pitch % 12)],
+        i16::from(pitch) / 12 - 1
+    )
+}
+
+fn parse_midi_event_pitch(value: &str) -> Option<u8> {
+    if let Ok(number) = value.split_whitespace().next()?.parse::<u8>() {
+        return (number <= 127).then_some(number);
+    }
+    let mut chars = value.trim().chars();
+    let pitch_class = match chars.next()?.to_ascii_uppercase() {
+        'C' => 0_i16,
+        'D' => 2,
+        'E' => 4,
+        'F' => 5,
+        'G' => 7,
+        'A' => 9,
+        'B' => 11,
+        _ => return None,
+    };
+    let mut semitone = pitch_class;
+    let next = chars.next()?;
+    let octave = if matches!(next, '#' | 'b' | '♯' | '♭') {
+        semitone += match next {
+            '#' | '♯' => 1,
+            'b' | '♭' => -1,
+            _ => unreachable!(),
+        };
+        chars.as_str().parse::<i16>().ok()?
+    } else {
+        let octave = next.to_string();
+        let rest = chars.as_str();
+        if rest.is_empty() {
+            octave.parse::<i16>().ok()?
+        } else {
+            format!("{octave}{rest}").parse::<i16>().ok()?
+        }
+    };
+    let midi_pitch = (octave + 1).checked_mul(12)?.checked_add(semitone)?;
+    u8::try_from(midi_pitch).ok().filter(|pitch| *pitch <= 127)
 }
 
 #[cfg(feature = "audio-device")]
@@ -2082,6 +2180,101 @@ impl App {
         }
     }
 
+    fn midi_event_properties_state(
+        &self,
+        item_id: ItemId,
+        note_id: NoteId,
+    ) -> Option<MidiEventPropertiesDialogState> {
+        let item = self
+            .project
+            .midi_items()
+            .iter()
+            .find(|item| item.id() == item_id)?;
+        let note = item.notes().iter().find(|note| note.id() == note_id)?;
+        let ppq = u64::from(self.project.settings().ppq());
+        let meter = self.project.time_signature_at_tick(0);
+        Some(MidiEventPropertiesDialogState {
+            item_id,
+            note_id,
+            position: view::midi_event_list_position(note.tick(), ppq, meter),
+            length: view::midi_event_list_length(note.duration(), ppq, meter),
+            channel: (note.channel() + 1).to_string(),
+            pitch: midi_event_pitch_label(note.pitch()),
+            velocity: note.velocity().to_string(),
+        })
+    }
+
+    fn commit_midi_event_properties(&mut self, close_dialog: bool) -> Task<Message> {
+        let Some(dialog) = self.midi_event_properties_dialog.clone() else {
+            return Task::none();
+        };
+        let Some(item) = self
+            .project
+            .midi_items()
+            .iter()
+            .find(|item| item.id() == dialog.item_id)
+        else {
+            self.midi_event_properties_dialog = None;
+            return Task::none();
+        };
+        let Some(note) = item.notes().iter().find(|note| note.id() == dialog.note_id) else {
+            self.midi_event_properties_dialog = None;
+            return Task::none();
+        };
+        let ppq = u64::from(self.project.settings().ppq());
+        let meter = self.project.time_signature_at_tick(0);
+        let Some(tick) = parse_midi_event_bbt(&dialog.position, ppq, meter, false) else {
+            self.midi_editor_feedback = Some("Position must use bar.beat.hundredths format".into());
+            return Task::none();
+        };
+        let Some(duration) = parse_midi_event_bbt(&dialog.length, ppq, meter, true) else {
+            self.midi_editor_feedback = Some("Length must use bar.beat.hundredths format".into());
+            return Task::none();
+        };
+        let Ok(channel) = dialog.channel.trim().parse::<u8>() else {
+            self.midi_editor_feedback = Some("Channel must be from 1 to 16".into());
+            return Task::none();
+        };
+        let Some(pitch) = parse_midi_event_pitch(&dialog.pitch) else {
+            self.midi_editor_feedback = Some("Pitch must be from 0 to 127".into());
+            return Task::none();
+        };
+        let Ok(velocity) = dialog.velocity.trim().parse::<u8>() else {
+            self.midi_editor_feedback = Some("Velocity must be from 0 to 127".into());
+            return Task::none();
+        };
+        if !(1..=16).contains(&channel) {
+            self.midi_editor_feedback = Some("Channel must be from 1 to 16".into());
+            return Task::none();
+        }
+        if duration == 0 || velocity > 127 {
+            self.midi_editor_feedback =
+                Some("Length must be positive; pitch and velocity must be from 0 to 127".into());
+            return Task::none();
+        }
+        let candidate = MidiNoteData {
+            channel: channel - 1,
+            pitch,
+            tick,
+            duration,
+            velocity,
+        };
+        let edits = vec![(note.id(), candidate)];
+        self.midi_editor_feedback = None;
+        let task = self.update(Message::EditMidiNotes(dialog.item_id, edits));
+        if self.status.starts_with("Action failed:") {
+            self.midi_editor_feedback = Some(self.status.clone());
+            return task;
+        }
+        if close_dialog {
+            self.midi_event_properties_dialog = None;
+        } else {
+            self.midi_event_properties_dialog =
+                self.midi_event_properties_state(dialog.item_id, dialog.note_id);
+        }
+        task
+    }
+
     fn commit_midi_quantize_dialog(&mut self, close_dialog: bool) {
         let Some(dialog) = self.midi_quantize_dialog else {
             return;
@@ -2264,6 +2457,30 @@ impl App {
                     | Message::SetMidiTransposeSemitones(_)
                     | Message::AcceptMidiTranspose
                     | Message::CancelMidiTranspose
+                    | Message::Escape
+                    | Message::RuntimeKeyboardEvent(..)
+                    | Message::BackgroundTick
+                    | Message::MeterTick
+                    | Message::WindowResized(..)
+                    | Message::WindowClosed(..)
+                    | Message::WindowCloseRequested(..)
+                    | Message::CloseMidiEditor
+            )
+        {
+            return Task::none();
+        }
+        if self.midi_event_properties_dialog.is_some()
+            && !matches!(
+                &message,
+                Message::SetMidiEventPropertiesPosition(_)
+                    | Message::SetMidiEventPropertiesLength(_)
+                    | Message::SetMidiEventPropertiesChannel(_)
+                    | Message::SetMidiEventPropertiesPitch(_)
+                    | Message::SetMidiEventPropertiesVelocity(_)
+                    | Message::ApplyMidiEventProperties
+                    | Message::AcceptMidiEventProperties
+                    | Message::CancelMidiEventProperties
+                    | Message::EditMidiNotes(..)
                     | Message::Escape
                     | Message::RuntimeKeyboardEvent(..)
                     | Message::BackgroundTick
@@ -3645,6 +3862,7 @@ impl App {
                     self.midi_editor_window_id = None;
                     self.midi_editor_item_id = None;
                     self.midi_editor_feedback = None;
+                    self.midi_event_properties_dialog = None;
                     self.midi_editor_selected_notes.clear();
                     self.midi_editor_selected_controllers.clear();
                     self.midi_editor_selected_pitch_bends.clear();
@@ -3679,6 +3897,7 @@ impl App {
                 self.midi_quantize_dialog = None;
                 self.midi_humanize_dialog = None;
                 self.midi_transpose_dialog = None;
+                self.midi_event_properties_dialog = None;
                 if let Some(window_id) = self.midi_editor_window_id.take() {
                     self.midi_editor_item_id = None;
                     self.midi_editor_feedback = None;
@@ -3760,6 +3979,60 @@ impl App {
                 self.midi_editor_selected_notes.clear();
                 self.midi_editor_selected_controllers.clear();
                 self.midi_editor_selected_pitch_bends.clear();
+            }
+            Message::OpenMidiEventProperties(item_id) => {
+                if self.midi_editor_item_id == Some(item_id)
+                    && self.midi_editor_selected_notes.len() == 1
+                    && self.midi_editor_selected_controllers.is_empty()
+                    && self.midi_editor_selected_pitch_bends.is_empty()
+                {
+                    let note_id = *self
+                        .midi_editor_selected_notes
+                        .iter()
+                        .next()
+                        .expect("one selected MIDI note");
+                    self.midi_editor_feedback = None;
+                    self.midi_quantize_dialog = None;
+                    self.midi_humanize_dialog = None;
+                    self.midi_transpose_dialog = None;
+                    self.midi_event_properties_dialog =
+                        self.midi_event_properties_state(item_id, note_id);
+                }
+            }
+            Message::SetMidiEventPropertiesPosition(value) => {
+                if let Some(dialog) = self.midi_event_properties_dialog.as_mut() {
+                    dialog.position = value;
+                }
+            }
+            Message::SetMidiEventPropertiesLength(value) => {
+                if let Some(dialog) = self.midi_event_properties_dialog.as_mut() {
+                    dialog.length = value;
+                }
+            }
+            Message::SetMidiEventPropertiesChannel(value) => {
+                if let Some(dialog) = self.midi_event_properties_dialog.as_mut() {
+                    dialog.channel = value;
+                }
+            }
+            Message::SetMidiEventPropertiesPitch(value) => {
+                if let Some(dialog) = self.midi_event_properties_dialog.as_mut() {
+                    dialog.pitch = value;
+                }
+            }
+            Message::SetMidiEventPropertiesVelocity(value) => {
+                if let Some(dialog) = self.midi_event_properties_dialog.as_mut() {
+                    dialog.velocity = value;
+                }
+            }
+            Message::ApplyMidiEventProperties => {
+                task = self.commit_midi_event_properties(false);
+            }
+            Message::AcceptMidiEventProperties => {
+                task = self.commit_midi_event_properties(true);
+            }
+            Message::CancelMidiEventProperties => {
+                self.midi_event_properties_dialog = None;
+                self.midi_editor_feedback = None;
             }
             Message::SelectMidiEditorChannel(selection) => {
                 self.midi_editor_channel_selection = selection;
@@ -5112,6 +5385,10 @@ impl App {
                 self.transport_details_open = !self.transport_details_open;
             }
             Message::Escape => {
+                if self.midi_event_properties_dialog.take().is_some() {
+                    self.midi_editor_feedback = None;
+                    return Task::none();
+                }
                 if self.midi_quantize_dialog.take().is_some()
                     || self.midi_humanize_dialog.take().is_some()
                     || self.midi_transpose_dialog.take().is_some()

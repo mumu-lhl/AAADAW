@@ -62,6 +62,7 @@ pub(crate) enum CommandId {
     MidiTransposeNotes,
     MidiEditorPianoRoll,
     MidiEditorEventList,
+    MidiEventProperties,
     AddProjectMarker,
     InsertRegionFromTimeSelection,
     DeleteProjectRegionNearCursor,
@@ -210,6 +211,7 @@ enum CommandKind {
     MidiTransposeNotes,
     MidiEditorPianoRoll,
     MidiEditorEventList,
+    MidiEventProperties,
     AddProjectMarker,
     InsertRegionFromTimeSelection,
     DeleteProjectRegionNearCursor,
@@ -404,6 +406,7 @@ const MIDI_NOTES_DOWN_SEMITONE_IGNORE_SCALE_SHORTCUT: &[Shortcut] = &[
 const MIDI_TRANSPOSE_NOTES_SHORTCUT: &[Shortcut] = &[Shortcut::character('t', Modifiers::NONE)];
 const MIDI_EDITOR_PIANO_ROLL_SHORTCUT: &[Shortcut] = &[Shortcut::character('1', Modifiers::ALT)];
 const MIDI_EDITOR_EVENT_LIST_SHORTCUT: &[Shortcut] = &[Shortcut::character('3', Modifiers::ALT)];
+const MIDI_EVENT_PROPERTIES_SHORTCUT: &[Shortcut] = &[Shortcut::named(Named::F2, Modifiers::CTRL)];
 
 const COMMANDS: &[CommandDefinition] = &[
     CommandDefinition {
@@ -1818,6 +1821,16 @@ const COMMANDS: &[CommandDefinition] = &[
         destructive: false,
         separator_before: false,
     },
+    CommandDefinition {
+        kind: CommandKind::MidiEventProperties,
+        menu: None,
+        category: "MIDI Editor",
+        label: "Edit: Event properties",
+        aliases: &["midi event properties", "edit selected midi event"],
+        shortcuts: MIDI_EVENT_PROPERTIES_SHORTCUT,
+        destructive: false,
+        separator_before: false,
+    },
 ];
 
 #[derive(Clone)]
@@ -2748,6 +2761,7 @@ fn command_kind_id(kind: CommandKind) -> &'static str {
         CommandKind::MidiTransposeNotes => "midi-editor.transpose-notes",
         CommandKind::MidiEditorPianoRoll => "midi-editor.mode-piano-roll",
         CommandKind::MidiEditorEventList => "midi-editor.mode-event-list",
+        CommandKind::MidiEventProperties => "midi-editor.event-properties",
         CommandKind::AddProjectMarker => "insert.project-marker",
         CommandKind::InsertRegionFromTimeSelection => "regions.insert-from-time-selection",
         CommandKind::DeleteProjectRegionNearCursor => "regions.delete-near-cursor",
@@ -2866,6 +2880,11 @@ pub(super) fn dispatch(app: &mut App, command: CommandId) -> Task<Message> {
                 app.update(Message::SetMidiEditorMode(super::MidiEditorMode::EventList))
             });
         }
+        CommandId::MidiEventProperties => {
+            return app.midi_editor_item_id.map_or_else(Task::none, |item_id| {
+                app.update(Message::OpenMidiEventProperties(item_id))
+            });
+        }
         _ => {}
     }
     if let CommandId::OpenProjectTemplate(index) = command {
@@ -2975,6 +2994,9 @@ pub(super) fn dispatch(app: &mut App, command: CommandId) -> Task<Message> {
         CommandId::MidiTransposeNotes => unreachable!("transpose dialog dispatch returned above"),
         CommandId::MidiEditorPianoRoll | CommandId::MidiEditorEventList => {
             unreachable!("MIDI Editor mode dispatch returned above")
+        }
+        CommandId::MidiEventProperties => {
+            unreachable!("MIDI event properties dispatch returned above")
         }
         CommandId::AddProjectMarker => Message::AddProjectMarker,
         CommandId::InsertRegionFromTimeSelection => Message::InsertRegionFromTimeSelection,
@@ -3412,6 +3434,13 @@ fn command_enabled(app: &App, kind: CommandKind, track: Option<TrackState>) -> b
         CommandKind::MidiEditorPianoRoll | CommandKind::MidiEditorEventList => {
             !project_edit_busy(app) && app.midi_editor_item_id.is_some()
         }
+        CommandKind::MidiEventProperties => {
+            !project_edit_busy(app)
+                && app.midi_editor_item_id.is_some()
+                && app.midi_editor_selected_notes.len() == 1
+                && app.midi_editor_selected_controllers.is_empty()
+                && app.midi_editor_selected_pitch_bends.is_empty()
+        }
         CommandKind::AddProjectMarker => !project_edit_busy(app),
         CommandKind::InsertRegionFromTimeSelection => {
             !project_edit_busy(app) && app.timeline.time_selection.is_some()
@@ -3726,6 +3755,7 @@ fn command_id(kind: CommandKind) -> CommandId {
         CommandKind::MidiTransposeNotes => CommandId::MidiTransposeNotes,
         CommandKind::MidiEditorPianoRoll => CommandId::MidiEditorPianoRoll,
         CommandKind::MidiEditorEventList => CommandId::MidiEditorEventList,
+        CommandKind::MidiEventProperties => CommandId::MidiEventProperties,
         CommandKind::AddProjectMarker => CommandId::AddProjectMarker,
         CommandKind::InsertRegionFromTimeSelection => CommandId::InsertRegionFromTimeSelection,
         CommandKind::DeleteProjectRegionNearCursor => CommandId::DeleteProjectRegionNearCursor,

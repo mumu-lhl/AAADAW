@@ -796,15 +796,20 @@ fn view_with_profile(app: &App, touch_targets: bool) -> Element<'_, Message> {
     if app.midi_quantize_dialog.is_some()
         || app.midi_humanize_dialog.is_some()
         || app.midi_transpose_dialog.is_some()
+        || app.midi_event_properties_dialog.is_some()
     {
-        let dialog = if app.midi_transpose_dialog.is_some() {
+        let dialog = if app.midi_event_properties_dialog.is_some() {
+            midi_event_properties_dialog(app, touch_targets)
+        } else if app.midi_transpose_dialog.is_some() {
             midi_transpose_dialog(app, touch_targets)
         } else if app.midi_quantize_dialog.is_some() {
             midi_quantize_dialog(app, touch_targets)
         } else {
             midi_humanize_dialog(app, touch_targets)
         };
-        let cancel_message = if app.midi_transpose_dialog.is_some() {
+        let cancel_message = if app.midi_event_properties_dialog.is_some() {
+            Message::CancelMidiEventProperties
+        } else if app.midi_transpose_dialog.is_some() {
             Message::CancelMidiTranspose
         } else if app.midi_quantize_dialog.is_some() {
             Message::CancelMidiQuantize
@@ -1009,6 +1014,9 @@ fn midi_event_list_view<'a>(
     let has_selection = !app.midi_editor_selected_notes.is_empty()
         || !app.midi_editor_selected_controllers.is_empty()
         || !app.midi_editor_selected_pitch_bends.is_empty();
+    let has_single_note_selection = app.midi_editor_selected_notes.len() == 1
+        && app.midi_editor_selected_controllers.is_empty()
+        && app.midi_editor_selected_pitch_bends.is_empty();
     let mut content = column![toolbar, channel_toolbar];
     if let Some(feedback) = app.midi_editor_feedback.as_deref() {
         content = content.push(text(feedback).size(12));
@@ -1020,6 +1028,12 @@ fn midi_event_list_view<'a>(
                 text("Click a row to select an event; Delete removes the selected modeled events.")
                     .size(11)
                     .width(Length::Fill),
+                button("Edit event…")
+                    .style(iced::widget::button::secondary)
+                    .on_press_maybe(
+                        has_single_note_selection
+                            .then_some(Message::OpenMidiEventProperties(item_id)),
+                    ),
                 button("Delete selected")
                     .style(if has_selection {
                         iced::widget::button::danger
@@ -1112,7 +1126,11 @@ fn midi_event_controller_name(controller: u8) -> String {
     }
 }
 
-fn midi_event_list_position(tick: u64, ppq: u64, meter: TimeSignature) -> String {
+pub(in crate::app) fn midi_event_list_position(
+    tick: u64,
+    ppq: u64,
+    meter: TimeSignature,
+) -> String {
     let beat_ticks = ppq
         .saturating_mul(4)
         .checked_div(u64::from(meter.denominator()))
@@ -1129,7 +1147,7 @@ fn midi_event_list_position(tick: u64, ppq: u64, meter: TimeSignature) -> String
     format!("{bar}.{beat}.{hundredth:02}")
 }
 
-fn midi_event_list_length(ticks: u64, ppq: u64, meter: TimeSignature) -> String {
+pub(in crate::app) fn midi_event_list_length(ticks: u64, ppq: u64, meter: TimeSignature) -> String {
     let beat_ticks = ppq
         .saturating_mul(4)
         .checked_div(u64::from(meter.denominator()))
@@ -1280,6 +1298,81 @@ fn midi_transpose_dialog(app: &App, touch_targets: bool) -> Element<'_, Message>
     .padding(SPACING_MD)
     .style(container::rounded_box)
     .into()
+}
+
+fn midi_event_properties_dialog(app: &App, touch_targets: bool) -> Element<'_, Message> {
+    let Some(state) = app.midi_event_properties_dialog.as_ref() else {
+        return iced::widget::Space::new().into();
+    };
+    let position = iced::widget::text_input("1.1.00", &state.position)
+        .on_input(Message::SetMidiEventPropertiesPosition)
+        .width(Length::Fixed(if touch_targets { 148.0 } else { 116.0 }));
+    let length = iced::widget::text_input("0.1.00", &state.length)
+        .on_input(Message::SetMidiEventPropertiesLength)
+        .width(Length::Fixed(if touch_targets { 116.0 } else { 90.0 }));
+    let channel = iced::widget::text_input("1", &state.channel)
+        .on_input(Message::SetMidiEventPropertiesChannel)
+        .width(Length::Fixed(if touch_targets { 148.0 } else { 116.0 }));
+    let pitch = iced::widget::text_input("60", &state.pitch)
+        .on_input(Message::SetMidiEventPropertiesPitch)
+        .width(Length::Fixed(if touch_targets { 176.0 } else { 152.0 }));
+    let velocity = iced::widget::text_input("96", &state.velocity)
+        .on_input(Message::SetMidiEventPropertiesVelocity)
+        .width(Length::Fixed(if touch_targets { 104.0 } else { 88.0 }));
+    let mut content = column![
+        text("Event Properties").size(16),
+        row![
+            text("Position").width(Length::Fixed(64.0)),
+            position,
+            text("Length").width(Length::Fixed(52.0)),
+            length,
+        ]
+        .spacing(SPACING_XS)
+        .align_y(iced::Alignment::Center),
+        row![text("Channel").width(Length::Fixed(76.0)), channel]
+            .spacing(SPACING_XS)
+            .align_y(iced::Alignment::Center),
+        row![text("Note").width(Length::Fixed(76.0)), pitch]
+            .spacing(SPACING_XS)
+            .align_y(iced::Alignment::Center),
+        row![
+            text("Velocity").width(Length::Fixed(76.0)),
+            velocity,
+            text("Off value 0 · not modeled").size(11),
+        ]
+        .spacing(SPACING_XS)
+        .align_y(iced::Alignment::Center),
+        text("Enter absolute values in bar.beat.hundredths format.").size(11),
+    ]
+    .spacing(if touch_targets {
+        SPACING_MD
+    } else {
+        SPACING_XS
+    });
+    if let Some(feedback) = app.midi_editor_feedback.as_deref() {
+        content = content.push(text(feedback).size(12));
+    }
+    content = content.push(
+        row![
+            iced::widget::Space::new().width(Length::Fill),
+            button("OK")
+                .style(iced::widget::button::primary)
+                .on_press(Message::AcceptMidiEventProperties),
+            button("Cancel")
+                .style(iced::widget::button::secondary)
+                .on_press(Message::CancelMidiEventProperties),
+            button("Apply")
+                .style(iced::widget::button::secondary)
+                .on_press(Message::ApplyMidiEventProperties),
+        ]
+        .spacing(SPACING_XS)
+        .align_y(iced::Alignment::Center),
+    );
+    container(content)
+        .width(Length::Fixed(if touch_targets { 424.0 } else { 388.0 }))
+        .padding(SPACING_MD)
+        .style(container::rounded_box)
+        .into()
 }
 
 fn midi_quantize_dialog(app: &App, touch_targets: bool) -> Element<'_, Message> {

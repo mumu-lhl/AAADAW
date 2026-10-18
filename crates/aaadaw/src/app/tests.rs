@@ -12747,6 +12747,7 @@ fn midi_event_list_mode_switches_by_reaper_shortcuts_and_deletes_selected_events
         app.midi_editor_selected_pitch_bends,
         HashSet::from([pitch_bend])
     );
+    assert!(!commands::is_enabled(&app, CommandId::MidiEventProperties));
 
     let _ = app.update(Message::DeleteSelectedMidiEvents(item_id));
     let item = &app.project.midi_items()[0];
@@ -12768,6 +12769,139 @@ fn midi_event_list_mode_switches_by_reaper_shortcuts_and_deletes_selected_events
     assert!(item.notes().is_empty());
     assert!(item.controllers().is_empty());
     assert!(item.pitch_bends().is_empty());
+}
+
+#[test]
+fn midi_event_properties_edits_note_fields_with_apply_ok_cancel_and_undo() {
+    let common_time = aaadaw_core::TimeSignature::new(4, 4).expect("valid common time");
+    assert_eq!(
+        super::parse_midi_event_bbt("1.1.75", 960, common_time, false),
+        Some(720)
+    );
+    assert_eq!(
+        super::parse_midi_event_bbt("0.0.25", 960, common_time, true),
+        Some(240)
+    );
+    assert_eq!(
+        super::parse_midi_event_bbt("1.5.00", 960, common_time, false),
+        None
+    );
+    assert_eq!(super::parse_midi_event_pitch("60 C4"), Some(60));
+    assert_eq!(super::parse_midi_event_pitch("C♯4"), Some(61));
+    assert_eq!(super::parse_midi_event_pitch("A♭4"), Some(68));
+    assert_eq!(super::parse_midi_event_pitch("C10"), None);
+
+    let mut app = App::default();
+    let _ = app.update(Message::AddTrack);
+    let track_id = app.project.tracks()[0].id();
+    app.project
+        .apply(DawAction::InsertMidiItem {
+            track_id,
+            start_tick: 0,
+            length_ticks: 3_840,
+        })
+        .expect("test MIDI item should be inserted");
+    let item_id = app.project.midi_items()[0].id();
+    app.project
+        .apply(DawAction::AddMidiNotes {
+            item_id,
+            notes: vec![MidiNoteData {
+                channel: 2,
+                pitch: 60,
+                tick: 720,
+                duration: 240,
+                velocity: 91,
+            }],
+        })
+        .expect("test MIDI note should be inserted");
+    let note_id = app.project.midi_items()[0].notes()[0].id();
+    app.midi_editor_item_id = Some(item_id);
+    app.midi_editor_selected_notes = HashSet::from([note_id]);
+    let note_data = |note: &aaadaw_core::MidiNote| MidiNoteData {
+        channel: note.channel(),
+        pitch: note.pitch(),
+        tick: note.tick(),
+        duration: note.duration(),
+        velocity: note.velocity(),
+    };
+    let original = note_data(&app.project.midi_items()[0].notes()[0]);
+
+    assert_eq!(
+        commands::from_shortcut(
+            &Key::Named(iced::keyboard::key::Named::F2),
+            Modifiers::CTRL,
+            &commands::ShortcutBindings::new(),
+            &[],
+        ),
+        Some(CommandId::MidiEventProperties)
+    );
+    assert_eq!(
+        commands::find(&app, "Edit: Event properties"),
+        Some(CommandId::MidiEventProperties)
+    );
+    assert!(commands::is_enabled(&app, CommandId::MidiEventProperties));
+    let _ = commands::dispatch(&mut app, CommandId::MidiEventProperties);
+    assert_eq!(
+        app.midi_event_properties_dialog
+            .as_ref()
+            .map(|dialog| dialog.position.as_str()),
+        Some("1.1.75")
+    );
+    assert_eq!(
+        app.midi_event_properties_dialog
+            .as_ref()
+            .map(|dialog| dialog.pitch.as_str()),
+        Some("60 C4")
+    );
+
+    let _ = app.update(Message::SetMidiEventPropertiesPosition("1.5.00".to_owned()));
+    let _ = app.update(Message::AcceptMidiEventProperties);
+    assert!(app.midi_event_properties_dialog.is_some());
+    assert_eq!(note_data(&app.project.midi_items()[0].notes()[0]), original);
+    assert!(app.midi_editor_feedback.is_some());
+
+    let history_before = app.project.history_cursor();
+    let _ = app.update(Message::SetMidiEventPropertiesPosition("1.2.50".to_owned()));
+    let _ = app.update(Message::SetMidiEventPropertiesLength("0.1.25".to_owned()));
+    let _ = app.update(Message::SetMidiEventPropertiesChannel("3".to_owned()));
+    let _ = app.update(Message::SetMidiEventPropertiesPitch("72".to_owned()));
+    let _ = app.update(Message::SetMidiEventPropertiesVelocity("100".to_owned()));
+    let _ = app.update(Message::ApplyMidiEventProperties);
+    let note = &app.project.midi_items()[0].notes()[0];
+    assert_eq!(note.tick(), 1_440);
+    assert_eq!(note.duration(), 1_200);
+    assert_eq!(note.channel(), 2);
+    assert_eq!(note.pitch(), 72);
+    assert_eq!(note.velocity(), 100);
+    assert_eq!(app.project.history_cursor(), history_before + 1);
+    assert!(app.midi_event_properties_dialog.is_some());
+
+    let _ = app.update(Message::SetMidiEventPropertiesVelocity("101".to_owned()));
+    let _ = app.update(Message::AcceptMidiEventProperties);
+    assert!(app.midi_event_properties_dialog.is_none());
+    assert_eq!(app.project.midi_items()[0].notes()[0].velocity(), 101);
+    let _ = app.update(Message::Undo);
+    assert_eq!(app.project.midi_items()[0].notes()[0].velocity(), 100);
+    let _ = app.update(Message::Undo);
+    assert_eq!(note_data(&app.project.midi_items()[0].notes()[0]), original);
+    let _ = app.update(Message::Redo);
+    assert_eq!(app.project.midi_items()[0].notes()[0].velocity(), 100);
+    let _ = app.update(Message::Redo);
+    assert_eq!(app.project.midi_items()[0].notes()[0].velocity(), 101);
+
+    let history_before_cancel = app.project.history_cursor();
+    let _ = app.update(Message::OpenMidiEventProperties(item_id));
+    let _ = app.update(Message::SetMidiEventPropertiesPitch("66".to_owned()));
+    let _ = app.update(Message::CancelMidiEventProperties);
+    assert!(app.midi_event_properties_dialog.is_none());
+    assert_eq!(app.project.midi_items()[0].notes()[0].pitch(), 72);
+    assert_eq!(app.project.history_cursor(), history_before_cancel);
+    let _ = app.update(Message::OpenMidiEventProperties(item_id));
+    let _ = app.update(Message::SetMidiEventPropertiesPitch("66".to_owned()));
+    let _ = app.update(Message::Escape);
+    assert!(app.midi_event_properties_dialog.is_none());
+    assert_eq!(app.project.midi_items()[0].notes()[0].pitch(), 72);
+    assert_eq!(app.project.history_cursor(), history_before_cancel);
 }
 
 #[test]
