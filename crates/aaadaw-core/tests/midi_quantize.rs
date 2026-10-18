@@ -758,7 +758,7 @@ fn midi_quantize_fix_overlaps_trims_unselected_predecessor_in_selected_scope() {
             .iter()
             .map(|note| (note.tick(), note.duration()))
             .collect::<Vec<_>>(),
-        [(100, 200), (240, 60)]
+        [(100, 200), (240, 120)]
     );
     assert!(
         project
@@ -776,7 +776,7 @@ fn midi_quantize_fix_overlaps_trims_unselected_predecessor_in_selected_scope() {
 }
 
 #[test]
-fn midi_quantize_selected_overlapping_note_end_moves_to_next_unselected_neighbor() {
+fn midi_quantize_keeps_selected_note_off_with_the_quantized_note() {
     let mut project = Project::new();
     project
         .apply(DawAction::CreateTrack {
@@ -842,7 +842,7 @@ fn midi_quantize_selected_overlapping_note_end_moves_to_next_unselected_neighbor
         .expect("overlapping notes should be inserted");
     let selected_note_id = project.midi_items()[0].notes()[1].id();
     let original = [(100, 200), (180, 120), (330, 150), (400, 80), (530, 120)];
-    let reaper_result = [(100, 200), (240, 60), (330, 30), (400, 80), (530, 120)];
+    let reaper_result = [(100, 200), (240, 120), (330, 150), (400, 80), (530, 120)];
 
     for operation in [
         MidiNoteQuantizeOperation::Position,
@@ -881,6 +881,141 @@ fn midi_quantize_selected_overlapping_note_end_moves_to_next_unselected_neighbor
             original
         );
     }
+}
+
+#[test]
+fn midi_quantize_multiple_selected_notes_keep_note_offs_through_overlap_chain() {
+    let mut project = Project::new();
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Piano".to_owned(),
+        })
+        .expect("test track should be created");
+    let track_id = project.tracks()[0].id();
+    project
+        .apply(DawAction::InsertMidiItem {
+            track_id,
+            start_tick: 0,
+            length_ticks: 4_000,
+        })
+        .expect("test MIDI item should be inserted");
+    let item_id = project.midi_items()[0].id();
+    project
+        .apply(DawAction::AddMidiNotes {
+            item_id,
+            notes: vec![
+                MidiNoteData {
+                    channel: 0,
+                    pitch: 60,
+                    tick: 100,
+                    duration: 200,
+                    velocity: 96,
+                    off_velocity: 0,
+                },
+                MidiNoteData {
+                    channel: 0,
+                    pitch: 60,
+                    tick: 180,
+                    duration: 120,
+                    velocity: 96,
+                    off_velocity: 0,
+                },
+                MidiNoteData {
+                    channel: 0,
+                    pitch: 60,
+                    tick: 330,
+                    duration: 150,
+                    velocity: 96,
+                    off_velocity: 0,
+                },
+                MidiNoteData {
+                    channel: 0,
+                    pitch: 60,
+                    tick: 400,
+                    duration: 300,
+                    velocity: 96,
+                    off_velocity: 0,
+                },
+                MidiNoteData {
+                    channel: 0,
+                    pitch: 60,
+                    tick: 530,
+                    duration: 120,
+                    velocity: 96,
+                    off_velocity: 0,
+                },
+                MidiNoteData {
+                    channel: 0,
+                    pitch: 60,
+                    tick: 620,
+                    duration: 140,
+                    velocity: 96,
+                    off_velocity: 0,
+                },
+                MidiNoteData {
+                    channel: 0,
+                    pitch: 60,
+                    tick: 800,
+                    duration: 80,
+                    velocity: 96,
+                    off_velocity: 0,
+                },
+            ],
+        })
+        .expect("overlapping notes should be inserted");
+    let notes = project.midi_items()[0].notes();
+    let selected_note_ids = vec![notes[1].id(), notes[3].id()];
+    let original = [
+        (100, 200),
+        (180, 120),
+        (330, 150),
+        (400, 300),
+        (530, 120),
+        (620, 140),
+        (800, 80),
+    ];
+    let quantized = [
+        (100, 200),
+        (240, 120),
+        (330, 150),
+        (360, 360),
+        (530, 120),
+        (620, 140),
+        (800, 80),
+    ];
+
+    project
+        .apply(DawAction::QuantizeMidiNotesWithOperation {
+            item_id,
+            note_ids: selected_note_ids,
+            grid: GridFraction::new(1, 32).expect("1/32 is a valid grid"),
+            strength: 1.0,
+            operation: MidiNoteQuantizeOperation::PositionAndNoteLength,
+            swing_amount_percent: 0,
+            fix_overlaps: false,
+        })
+        .expect("selected overlap chain should quantize");
+    let note_positions = |project: &Project| {
+        project.midi_items()[0]
+            .notes()
+            .iter()
+            .map(|note| (note.tick(), note.duration()))
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(note_positions(&project), quantized);
+    assert!(
+        project
+            .undo()
+            .expect("multi-note quantize should be undoable")
+    );
+    assert_eq!(note_positions(&project), original);
+    assert!(
+        project
+            .redo()
+            .expect("multi-note quantize should be redoable")
+    );
+    assert_eq!(note_positions(&project), quantized);
 }
 
 #[test]

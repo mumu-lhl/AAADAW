@@ -15670,7 +15670,7 @@ fn midi_quantize_dialog_fix_overlaps_defaults_on_and_can_be_disabled() {
 }
 
 #[test]
-fn midi_quantize_dialog_keeps_selected_overlapped_note_end_when_fix_overlaps_is_off() {
+fn midi_quantize_dialog_keeps_selected_note_off_with_its_quantized_note() {
     let mut app = App::default();
     let _ = app.update(Message::AddTrack);
     let track_id = app.project.tracks()[0].id();
@@ -15721,7 +15721,7 @@ fn midi_quantize_dialog_keeps_selected_overlapped_note_end_when_fix_overlaps_is_
             .iter()
             .map(|note| (note.tick(), note.duration()))
             .collect::<Vec<_>>(),
-        [(100, 200), (240, 60)]
+        [(100, 200), (240, 120)]
     );
     let _ = app.update(Message::Undo);
     assert_eq!(
@@ -15735,7 +15735,7 @@ fn midi_quantize_dialog_keeps_selected_overlapped_note_end_when_fix_overlaps_is_
 }
 
 #[test]
-fn midi_quantize_dialog_routes_selected_overlap_chain_end_to_next_neighbor() {
+fn midi_quantize_dialog_quantizes_multiple_selected_notes_through_overlap_chain() {
     let mut app = App::default();
     let _ = app.update(Message::AddTrack);
     let track_id = app.project.tracks()[0].id();
@@ -15779,7 +15779,7 @@ fn midi_quantize_dialog_routes_selected_overlap_chain_end_to_next_neighbor() {
                     channel: 0,
                     pitch: 60,
                     tick: 400,
-                    duration: 80,
+                    duration: 300,
                     velocity: 96,
                     off_velocity: 0,
                 },
@@ -15791,11 +15791,27 @@ fn midi_quantize_dialog_routes_selected_overlap_chain_end_to_next_neighbor() {
                     velocity: 96,
                     off_velocity: 0,
                 },
+                MidiNoteData {
+                    channel: 0,
+                    pitch: 60,
+                    tick: 620,
+                    duration: 140,
+                    velocity: 96,
+                    off_velocity: 0,
+                },
+                MidiNoteData {
+                    channel: 0,
+                    pitch: 60,
+                    tick: 800,
+                    duration: 80,
+                    velocity: 96,
+                    off_velocity: 0,
+                },
             ],
         })
         .expect("overlapping notes should be inserted");
-    let selected_note_id = app.project.midi_items()[0].notes()[1].id();
-    app.midi_editor_selected_notes = HashSet::from([selected_note_id]);
+    let notes = app.project.midi_items()[0].notes();
+    app.midi_editor_selected_notes = HashSet::from([notes[1].id(), notes[3].id()]);
 
     let _ = app.update(Message::OpenMidiQuantizeDialog(item_id));
     let _ = app.update(Message::SetMidiQuantizeOperation(
@@ -15810,7 +15826,15 @@ fn midi_quantize_dialog_routes_selected_overlap_chain_end_to_next_neighbor() {
             .iter()
             .map(|note| (note.tick(), note.duration()))
             .collect::<Vec<_>>(),
-        [(100, 200), (240, 60), (330, 30), (400, 80), (530, 120)]
+        [
+            (100, 200),
+            (240, 120),
+            (330, 150),
+            (360, 360),
+            (530, 120),
+            (620, 140),
+            (800, 80),
+        ]
     );
     let _ = app.update(Message::Undo);
     assert_eq!(
@@ -15819,7 +15843,15 @@ fn midi_quantize_dialog_routes_selected_overlap_chain_end_to_next_neighbor() {
             .iter()
             .map(|note| (note.tick(), note.duration()))
             .collect::<Vec<_>>(),
-        [(100, 200), (180, 120), (330, 150), (400, 80), (530, 120)]
+        [
+            (100, 200),
+            (180, 120),
+            (330, 150),
+            (400, 300),
+            (530, 120),
+            (620, 140),
+            (800, 80),
+        ]
     );
 }
 

@@ -293,101 +293,6 @@ fn fix_quantized_midi_note_overlaps(item: &MidiItem, changes: &mut Vec<Quantized
     });
 }
 
-fn preserve_selected_overlapped_note_ends(
-    item: &MidiItem,
-    selected_note_ids: &HashSet<NoteId>,
-    changes: &mut Vec<QuantizedMidiNoteChange>,
-) {
-    let mut notes_by_id = HashMap::with_capacity(item.notes.len());
-    let mut unselected_ends_by_key: HashMap<(u8, u8), Vec<(u64, u64)>> = HashMap::new();
-    for note in item.notes.iter() {
-        notes_by_id.insert(note.id, note);
-        if !selected_note_ids.contains(&note.id) {
-            unselected_ends_by_key
-                .entry((note.data.channel, note.data.pitch))
-                .or_default()
-                .push((
-                    note.data.tick,
-                    note.data.tick.saturating_add(note.data.duration),
-                ));
-        }
-    }
-    for unselected_ends in unselected_ends_by_key.values_mut() {
-        unselected_ends.sort_unstable_by_key(|(start, _)| *start);
-        let mut max_end = 0;
-        for (_, end) in unselected_ends {
-            max_end = max_end.max(*end);
-            *end = max_end;
-        }
-    }
-
-    let mut moved_note_ends = Vec::new();
-    for change in changes.iter_mut() {
-        let Some(note) = notes_by_id.get(&change.note_id) else {
-            continue;
-        };
-        let Some(unselected_ends) =
-            unselected_ends_by_key.get(&(note.data.channel, note.data.pitch))
-        else {
-            continue;
-        };
-        let preceding_note_count =
-            unselected_ends.partition_point(|(start, _)| *start < note.data.tick);
-        if preceding_note_count == 0
-            || unselected_ends[preceding_note_count - 1].1 <= note.data.tick
-        {
-            continue;
-        }
-        let original_end = note.data.tick.saturating_add(note.data.duration);
-        let quantized_end = change.after_tick.saturating_add(change.after_duration);
-        moved_note_ends.push((change.note_id, original_end, quantized_end));
-        change.after_duration = original_end.saturating_sub(change.after_tick).max(1);
-    }
-
-    for (selected_note_id, original_end, quantized_end) in moved_note_ends {
-        if quantized_end <= original_end {
-            continue;
-        }
-        let Some(selected_note) = notes_by_id.get(&selected_note_id) else {
-            continue;
-        };
-        // REAPER moves the selected raw note-off with its note. When that event
-        // sorts after a later same-key note-on, its note-table readback assigns
-        // the moved end to the unselected neighbor that spans the new end.
-        let recipient = item
-            .notes
-            .iter()
-            .filter(|note| {
-                note.id != selected_note_id
-                    && !selected_note_ids.contains(&note.id)
-                    && note.data.channel == selected_note.data.channel
-                    && note.data.pitch == selected_note.data.pitch
-                    && note.data.tick >= original_end
-                    && note.data.tick < quantized_end
-                    && note.data.tick.saturating_add(note.data.duration) > quantized_end
-            })
-            .max_by_key(|note| note.data.tick);
-        let Some(recipient) = recipient else {
-            continue;
-        };
-        let after_duration = quantized_end.saturating_sub(recipient.data.tick).max(1);
-        if let Some(change) = changes
-            .iter_mut()
-            .find(|change| change.note_id == recipient.id)
-        {
-            change.after_duration = change.after_duration.min(after_duration);
-        } else {
-            changes.push(QuantizedMidiNoteChange {
-                note_id: recipient.id,
-                before_tick: recipient.data.tick,
-                before_duration: recipient.data.duration,
-                after_tick: recipient.data.tick,
-                after_duration,
-            });
-        }
-    }
-}
-
 fn quantize_tick(tick: u64, grid_ticks: u64, strength: f32) -> Result<u64, ActionError> {
     quantize_tick_with_swing(tick, grid_ticks, strength, 0)
 }
@@ -5759,7 +5664,7 @@ impl Project {
                     .iter()
                     .find(|item| item.id == item_id)
                     .ok_or(ActionError::MidiItemNotFound { item_id })?;
-                let mut changes = quantized_midi_note_changes(
+                let changes = quantized_midi_note_changes(
                     item,
                     Some(&selected_note_ids),
                     MidiQuantizeSettings {
@@ -5771,20 +5676,6 @@ impl Project {
                         fix_overlaps,
                     },
                 )?;
-                if !fix_overlaps
-                    && matches!(
-                        operation,
-                        MidiNoteQuantizeOperation::Position
-                            | MidiNoteQuantizeOperation::PositionAndNoteLength
-                    )
-                    && selected_note_ids.len() < item.notes.len()
-                {
-                    preserve_selected_overlapped_note_ends(item, &selected_note_ids, &mut changes);
-                    changes.retain(|change| {
-                        change.before_tick != change.after_tick
-                            || change.before_duration != change.after_duration
-                    });
-                }
                 ProjectEvent::MidiNotesQuantized { item_id, changes }
             }
             DawAction::HumanizeMidiNotes {

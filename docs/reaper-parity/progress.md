@@ -2505,3 +2505,10 @@ All events 和 Selected events 的 Position 路径现在也移动不透明的 Sy
 在 Linux REAPER 7.82 / Default 7 / Xvfb :300 上，用 straight 1/32、Position、Strength 100% 分别完成 All events 与 Selected events。两种范围里，选中的 Program Change 与 Channel Pressure 从 475 移至 480，并占用同频道 tick 480 的唯一位置，原先未选的目标事件被移除；Poly Aftertouch 则保留同频道、同音符、同 tick 的不同压力值，Selected events 只移动所选值。All events 还将无关频道事件量化至 720，Selected events 保持它们原位。原厂读回、两个真实对话框截图、REAPER build/hash 和可重复脚本均录入 [fixture manifest](../verification/reaper-parity/fixtures/midi-quantize-dialog-ui.tsv)。
 
 AAADAW 为 All events 添加选择优先碰撞参数，Core 与 App 回归覆盖 Program Change/Channel Pressure 取舍、Aftertouch 同位置保留，以及一次事务的 Undo/Redo；MIDI Event List 在量化及 Undo/Redo 后按事件身份恢复 CC、Pitch Bend、Program Change、Aftertouch、Channel Pressure 和 opaque 行选择。Aftertouch 模型现在接受 REAPER 允许的同位置多值并稳定保留事件顺序。Core Quantize **12/12**、Core Aftertouch **3/3**、AAADAW 主程序单测 **787/787**、Core/App strict Clippy (`-D warnings`) 均通过。`MIDI-QUANTIZE-DIALOG-001`、UI-019 与 P7 继续 `in_progress`：目前只验证了直拍 1/32 的 Position；其他网格/Swing/强度/操作、复杂重叠链和已记忆的对话框设置仍待测。
+
+
+### 2026-10-18 Selected multi-note overlap-chain Quantize 修正
+
+继续探测 REAPER 7.82 / Default 7 的 Selected notes、Position and note length、1/32、100%、Fix overlaps 关闭：同时选择第二和第四个同音音符后，选中的 raw NoteOff 分别移动至 360 与 720 tick，未选音符的 NoteOff 仍在 300、480、650、760、880。`MIDI_GetNote` 将这些同音重叠事件重新配对到不同的表格行，因此此前把它当成 note identity，错误地缩短选中音符并改写邻居时值；现在 Core 让选中音符自己的 NoteOff 随量化长度移动，未选音符保持原端点。单选五音探针、双选七音探针的原始事件、`MIDI_GetNote` 读回、原厂 dialog 截图和脚本都收录在 [Quantize fixture manifest](../verification/reaper-parity/fixtures/midi-quantize-dialog-ui.tsv)。
+
+新增 Core 多选链回归及 Undo/Redo，修正先前单选测试的真实事件端点预期；App dialog 回归现在同时选两音、跨越多个未选同音邻居，并验证未选音符端点不变。Core MIDI Quantize **13/13**、定向 App Quantize **12/12**、完整 AAADAW 主程序测试 **787/787**、Core/App all-target Clippy (`-D warnings`)、`cargo fmt --check` 与 `git diff --check` 均通过。当前源码桌面在 Xvfb :300 实际打开工程、选择 note 2、执行对话框量化，并在 Event List 中确认 `1.1.18 → 1.1.25`、长度 `0.12`，邻音保持 `1.1.34 / 0.15`；实窗 Ctrl+Z/Redo 往返与二进制身份、截图哈希也已归档。本次 GUI 使用 Stable Rust build；该工作目录没有可复用的 Cranelift 依赖输出。`MIDI-QUANTIZE-DIALOG-001`、UI-019 与 P7 仍为 `in_progress`：其他混合选择重叠排列、Fix overlaps 全部交集和对话框设置记忆尚未验证。

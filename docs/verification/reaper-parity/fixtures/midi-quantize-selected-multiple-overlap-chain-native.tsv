@@ -1,0 +1,8 @@
+version	7.82/linux-x86_64
+theme	Default_7.0.ReaperThemeZip
+selection	Selected notes: note 2 and note 4; same channel and pitch
+operation	Position and note length; Strength 100%; Fix overlaps unchecked
+grid_quarter_notes	0.125
+note_table_source	REAPER MIDI_GetNote; same-channel, same-pitch overlap pairing can assign a raw NoteOff to a different displayed row
+before	notes=selected,channel,pitch,start,end:0,1,60,100,300;1,1,60,180,300;0,1,60,330,480;1,1,60,400,480;0,1,60,530,650;0,1,60,620,650;0,1,60,800,880	raw=ppq,flags,msg:100,0,90 3C 60;180,1,90 3C 60;300,0,80 3C 00;300,1,80 3C 00;330,0,90 3C 60;400,1,90 3C 60;480,0,80 3C 00;530,0,90 3C 60;620,0,90 3C 60;650,0,80 3C 00;700,1,80 3C 00;760,0,80 3C 00;800,0,90 3C 60;880,0,80 3C 00;7680,0,B0 7B 00
+after	notes=selected,channel,pitch,start,end:0,1,60,100,300;1,1,60,240,300;0,1,60,330,360;1,1,60,360,480;0,1,60,530,650;0,1,60,620,650;0,1,60,800,880	raw=ppq,flags,msg:100,0,90 3C 60;240,1,90 3C 60;300,0,80 3C 00;330,0,90 3C 60;360,1,80 3C 00;360,1,90 3C 60;480,0,80 3C 00;530,0,90 3C 60;620,0,90 3C 60;650,0,80 3C 00;720,1,80 3C 00;760,0,80 3C 00;800,0,90 3C 60;880,0,80 3C 00;7680,0,B0 7B 00
