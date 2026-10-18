@@ -1,9 +1,9 @@
 use super::super::{
-    App, MIDI_EDITOR_KEY_WIDTH, Message, MidiEditorChannelSelection, MidiEditorEventKind,
-    MidiEditorEventListCursor, MidiEditorEventTypeFilter, MidiEditorFilterState, MidiEditorLane,
-    MidiEditorMode, MidiEditorNoteFilter, MidiEditorNoteFilterEvent, MidiEditorPitchFilterValue,
-    MidiEditorTool, effective_midi_bank_value, midi_editor_filter_position_value,
-    midi_editor_measure_length_ticks,
+    App, MIDI_EDITOR_KEY_WIDTH, Message, MidiEditorChannelSelection, MidiEditorControllerFilter,
+    MidiEditorEventKind, MidiEditorEventListCursor, MidiEditorEventTypeFilter,
+    MidiEditorFilterState, MidiEditorLane, MidiEditorMode, MidiEditorNoteFilter,
+    MidiEditorNoteFilterEvent, MidiEditorPitchFilterValue, MidiEditorTool,
+    effective_midi_bank_value, midi_editor_filter_position_value, midi_editor_measure_length_ticks,
 };
 use super::tokens::{PANEL_PADDING, ROW_GAP, SPACING_LG, SPACING_MD, SPACING_XS, TOUCH_TARGET_MIN};
 use crate::timeline::{SnapGrid, TimelineEvent, snap_tick_to_grid};
@@ -49,6 +49,27 @@ const MIDI_EDITOR_FILTER_VALUES: [u8; 128] = {
     }
     values
 };
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct MidiEditorControllerFilterValue(u8);
+
+impl MidiEditorControllerFilterValue {
+    const OPTIONS: [Self; 128] = {
+        let mut options = [Self(0); 128];
+        let mut controller = 0;
+        while controller < options.len() {
+            options[controller] = Self(controller as u8);
+            controller += 1;
+        }
+        options
+    };
+}
+
+impl std::fmt::Display for MidiEditorControllerFilterValue {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(&midi_event_controller_property_label(self.0))
+    }
+}
 
 fn source_tick_is_visible(item: &MidiItem, tick: u64) -> bool {
     let start_tick = item.source_offset_ticks();
@@ -273,6 +294,7 @@ fn midi_snap_for_app(app: &App) -> MidiSnap {
         filter_inverted: app.midi_editor_filter_inverted,
         event_type_filter: app.midi_editor_event_type_filter,
         note_filter: app.midi_editor_note_filter,
+        controller_filter: app.midi_editor_controller_filter,
         measure_ticks,
         transpose_preview,
     }
@@ -301,6 +323,7 @@ struct MidiSnap {
     filter_inverted: bool,
     event_type_filter: MidiEditorEventTypeFilter,
     note_filter: MidiEditorNoteFilter,
+    controller_filter: MidiEditorControllerFilter,
     measure_ticks: u64,
     transpose_preview: Option<MidiTransposePreview>,
 }
@@ -321,6 +344,7 @@ impl Default for MidiSnap {
             filter_inverted: false,
             event_type_filter: MidiEditorEventTypeFilter::AllEvents,
             note_filter: MidiEditorNoteFilter::default(),
+            controller_filter: MidiEditorControllerFilter::default(),
             measure_ticks: 3_840,
             transpose_preview: None,
         }
@@ -341,6 +365,7 @@ impl MidiSnap {
             inverted: self.filter_inverted,
             event_type: self.event_type_filter,
             note: self.note_filter,
+            controller: self.controller_filter,
         }
     }
 
@@ -359,8 +384,9 @@ impl MidiSnap {
         )
     }
 
-    fn controller_visible(self, channel: u8) -> bool {
-        self.event_visible(channel, MidiEditorEventKind::ControlChange)
+    fn controller_visible(self, event: MidiControllerData) -> bool {
+        self.filter_state()
+            .controller_visible(event.channel, event.controller, event.value)
     }
 
     fn pitch_bend_visible(self, channel: u8) -> bool {
@@ -388,7 +414,7 @@ impl MidiSnap {
     }
 
     fn end_row_visible(self) -> bool {
-        self.event_visible(0, MidiEditorEventKind::ControlChange)
+        self.filter_state().controller_visible(0, 123, 0)
     }
 
     fn note_pitch(
@@ -1092,7 +1118,7 @@ fn midi_event_list_entries(item: &MidiItem, snap: MidiSnap) -> Vec<MidiEventList
         .controllers()
         .iter()
         .copied()
-        .filter(|event| snap.controller_visible(event.channel))
+        .filter(|event| snap.controller_visible(*event))
         .collect::<Vec<_>>();
     let mut paired_controllers = HashSet::new();
     let mut bank_select_lsb_by_msb = HashMap::new();
@@ -2638,6 +2664,13 @@ fn midi_quantize_dialog(app: &App, touch_targets: bool) -> Element<'_, Message> 
 
 fn channel_filter_dialog(app: &App, touch_targets: bool) -> Element<'_, Message> {
     let note_filter = app.midi_editor_note_filter;
+    let controller_filter = app.midi_editor_controller_filter;
+    let note_filter_visible = matches!(
+        app.midi_editor_event_type_filter,
+        MidiEditorEventTypeFilter::AllEvents | MidiEditorEventTypeFilter::Notes
+    );
+    let controller_filter_visible =
+        app.midi_editor_event_type_filter == MidiEditorEventTypeFilter::ControlChange;
     let pitch_options = if note_filter.pitch_enabled {
         &MidiEditorPitchFilterValue::OPTIONS[..]
     } else {
@@ -2815,6 +2848,62 @@ fn channel_filter_dialog(app: &App, touch_targets: bool) -> Element<'_, Message>
     ]
     .spacing(ROW_GAP)
     .align_y(iced::Alignment::Center);
+    let controller_filter_row = row![
+        checkbox(controller_filter.controller_enabled)
+            .label("Control")
+            .on_toggle(Message::SetMidiEditorFilterControllerEnabled),
+        pick_list(
+            if controller_filter.controller_enabled {
+                &MidiEditorControllerFilterValue::OPTIONS[..]
+            } else {
+                &[]
+            },
+            controller_filter
+                .controller_enabled
+                .then_some(MidiEditorControllerFilterValue(
+                    controller_filter.controller
+                )),
+            |value| Message::SetMidiEditorFilterController(value.0),
+        )
+        .placeholder("")
+        .width(Length::Fixed(220.0)),
+    ]
+    .spacing(ROW_GAP)
+    .align_y(iced::Alignment::Center);
+    let value_filter_row = row![
+        checkbox(controller_filter.value_enabled)
+            .label("Value")
+            .on_toggle(Message::SetMidiEditorFilterValueEnabled),
+        text_input("", &app.midi_editor_filter_value_low)
+            .on_input_maybe(
+                controller_filter
+                    .value_enabled
+                    .then_some(Message::SetMidiEditorFilterValueLow)
+            )
+            .width(Length::Fixed(80.0)),
+        text("to").size(11),
+        text_input("", &app.midi_editor_filter_value_high)
+            .on_input_maybe(
+                controller_filter
+                    .value_enabled
+                    .then_some(Message::SetMidiEditorFilterValueHigh)
+            )
+            .width(Length::Fixed(80.0)),
+    ]
+    .spacing(ROW_GAP)
+    .align_y(iced::Alignment::Center);
+    let mut criteria_rows: Vec<Element<'_, Message>> = Vec::new();
+    if note_filter_visible {
+        criteria_rows.extend([
+            pitch_filter.into(),
+            velocity_filter.into(),
+            position_filter.into(),
+            length_filter.into(),
+        ]);
+    }
+    if controller_filter_visible {
+        criteria_rows.extend([controller_filter_row.into(), value_filter_row.into()]);
+    }
     container(
         column![
             header,
@@ -2822,10 +2911,7 @@ fn channel_filter_dialog(app: &App, touch_targets: bool) -> Element<'_, Message>
             event_type_filter,
             first_row,
             second_row,
-            pitch_filter,
-            velocity_filter,
-            position_filter,
-            length_filter,
+            column(criteria_rows).spacing(ROW_GAP),
             row![
                 text("Draw events on channel").size(11),
                 pick_list(
@@ -3113,7 +3199,7 @@ impl ControllerLane<'_> {
             .enumerate()
             .filter(|(_, controller)| {
                 controller.controller == self.controller
-                    && self.snap.controller_visible(controller.channel)
+                    && self.snap.controller_visible(**controller)
             })
             .flat_map(|(index, controller)| {
                 source_event_occurrences(self.item, controller.tick, item_start, item_end)
@@ -3394,7 +3480,7 @@ impl canvas::Program<Message> for ControllerLane<'_> {
             .iter()
             .filter(|controller| {
                 controller.controller == self.controller
-                    && self.snap.controller_visible(controller.channel)
+                    && self.snap.controller_visible(**controller)
             })
             .flat_map(|controller| {
                 source_event_occurrences(
@@ -3413,7 +3499,7 @@ impl canvas::Program<Message> for ControllerLane<'_> {
             .iter()
             .filter(|controller| {
                 controller.controller == self.controller
-                    && self.snap.controller_visible(controller.channel)
+                    && self.snap.controller_visible(**controller)
             })
             .flat_map(|controller| {
                 source_event_occurrences(
@@ -9062,6 +9148,79 @@ mod tests {
         let events = midi_event_list_entries(item, pressure_only);
         assert_eq!(events.len(), 1);
         assert!(matches!(events[0], MidiEventListEntry::ChannelPressure(_)));
+    }
+
+    #[test]
+    fn event_list_filters_controller_parameter_and_inclusive_value_range() {
+        let mut project = Project::new();
+        project
+            .apply(aaadaw_core::DawAction::CreateTrack {
+                index: 0,
+                name: "CC Filter".to_owned(),
+            })
+            .unwrap();
+        let track_id = project.tracks()[0].id();
+        project
+            .apply(aaadaw_core::DawAction::InsertMidiItem {
+                track_id,
+                start_tick: 0,
+                length_ticks: 3_840,
+            })
+            .unwrap();
+        let item_id = project.midi_items()[0].id();
+        project
+            .apply(aaadaw_core::DawAction::SetMidiControllers {
+                item_id,
+                controllers: vec![
+                    MidiControllerData {
+                        controller: 7,
+                        channel: 0,
+                        tick: 0,
+                        value: 64,
+                    },
+                    MidiControllerData {
+                        controller: 7,
+                        channel: 0,
+                        tick: 240,
+                        value: 100,
+                    },
+                    MidiControllerData {
+                        controller: 10,
+                        channel: 0,
+                        tick: 480,
+                        value: 64,
+                    },
+                    MidiControllerData {
+                        controller: 7,
+                        channel: 0,
+                        tick: 720,
+                        value: 127,
+                    },
+                ],
+            })
+            .unwrap();
+
+        let snap = MidiSnap {
+            event_filter_enabled: true,
+            event_type_filter: MidiEditorEventTypeFilter::ControlChange,
+            controller_filter: MidiEditorControllerFilter {
+                controller_enabled: true,
+                controller: 7,
+                value_enabled: true,
+                value_range_initialized: true,
+                value_low: 64,
+                value_high: 100,
+            },
+            ..MidiSnap::default()
+        };
+        let entries = midi_event_list_entries(&project.midi_items()[0], snap);
+        assert_eq!(entries.len(), 2);
+        assert!(
+            matches!(entries[0], MidiEventListEntry::Controller(event) if event.controller == 7 && event.value == 64)
+        );
+        assert!(
+            matches!(entries[1], MidiEventListEntry::Controller(event) if event.controller == 7 && event.value == 100)
+        );
     }
 
     #[test]

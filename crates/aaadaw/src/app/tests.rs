@@ -12859,6 +12859,81 @@ fn midi_event_filter_sets_adds_and_removes_mixed_event_selection_with_undo_redo(
 }
 
 #[test]
+fn midi_event_filter_selects_controller_parameter_and_inclusive_value_range() {
+    let mut app = App::default();
+    let _ = app.update(Message::AddTrack);
+    let track_id = app.project.tracks()[0].id();
+    app.project
+        .apply(DawAction::InsertMidiItem {
+            track_id,
+            start_tick: 0,
+            length_ticks: 3_840,
+        })
+        .expect("test MIDI item should be inserted");
+    let item_id = app.project.midi_items()[0].id();
+    let controllers = vec![
+        MidiControllerData {
+            controller: 7,
+            channel: 0,
+            tick: 0,
+            value: 64,
+        },
+        MidiControllerData {
+            controller: 7,
+            channel: 0,
+            tick: 240,
+            value: 100,
+        },
+        MidiControllerData {
+            controller: 10,
+            channel: 0,
+            tick: 480,
+            value: 64,
+        },
+        MidiControllerData {
+            controller: 7,
+            channel: 0,
+            tick: 720,
+            value: 127,
+        },
+    ];
+    app.project
+        .apply(DawAction::SetMidiControllers {
+            item_id,
+            controllers: controllers.clone(),
+        })
+        .expect("test MIDI controllers should be inserted");
+    app.midi_editor_item_id = Some(item_id);
+    app.midi_editor_event_type_filter = super::messages::MidiEditorEventTypeFilter::ControlChange;
+    app.midi_editor_filter_channels = u16::MAX;
+    let _ = app.update(Message::SetMidiEditorFilterControllerEnabled(true));
+    let _ = app.update(Message::SetMidiEditorFilterController(7));
+    let _ = app.update(Message::SetMidiEditorFilterValueEnabled(true));
+    let _ = app.update(Message::SetMidiEditorFilterValueLow("64".to_owned()));
+    let _ = app.update(Message::SetMidiEditorFilterValueHigh("100".to_owned()));
+    assert!(app.midi_editor_controller_filter.value_range_initialized);
+    assert_eq!(app.midi_editor_controller_filter.value_low, 64);
+    assert_eq!(app.midi_editor_controller_filter.value_high, 100);
+    let project_snapshot = app.project.snapshot();
+
+    let filtered = app
+        .midi_editor_filter_event_selection(item_id)
+        .expect("MIDI item should be available to filter");
+    assert_eq!(
+        filtered.controllers,
+        HashSet::from([controllers[0], controllers[1]])
+    );
+    assert!(filtered.notes.is_empty());
+    assert_eq!(app.project.snapshot(), project_snapshot);
+
+    let _ = app.update(Message::ApplyMidiEditorFilterSelection(
+        super::MidiEditorFilterSelectionOperation::Set,
+    ));
+    assert_eq!(app.midi_editor_selected_controllers, filtered.controllers);
+    assert_eq!(app.project.snapshot(), project_snapshot);
+}
+
+#[test]
 fn midi_editor_filter_clear_resets_filter_and_draw_channel_without_changing_selection_or_project() {
     let mut app = App::default();
     let _ = app.update(Message::AddTrack);

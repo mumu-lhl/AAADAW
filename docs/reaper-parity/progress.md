@@ -2603,3 +2603,12 @@ AAADAW 已实现 `Clear filter`：关闭 Show-only / Invert，恢复全部通道
 Xvfb 当前 AAADAW 实窗前后截图复现 Note + channel 5 + Show-only + draw channel 5，再 Clear；四条 Note 全程保持选中，清除后全部重现且合成 end 行可见。该对照发现筛选隐藏行时不能删除其选区；已调整过滤状态更新并加入隐藏选区回归。截图与当前二进制 Build ID `1560378bb71947a856c19deba9d80477b99f2633`、SHA-256 `11baaa496c7e10524f33086291378a124e4acd1e615d6ec1f907500d09029a5f` 记录在 [AAADAW Clear filter manifest](../verification/reaper-parity/fixtures/midi-event-filter-clear-aaadaw.tsv)。Cranelift AAADAW 套件 **826/826**、Stable workspace strict all-target Clippy (`-D warnings`)、fmt 与 diff check 通过。
 
 Parameter、Value、Position、Repeat、Length、Solo 控件及 Set filter from selection 仍未实现；前五项 Clear 的 reset 语义也尚未逐项原厂验证。`MIDI-EVENT-LIST-001`、UI-019、P7 继续 `in_progress`。
+
+
+### 2026-10-18 MIDI Event Filter 的 CC Parameter / Value
+
+AAADAW 的 Filter Events 现能筛选 Control Change 参数与闭区间 Value。REAPER 7.82 / Default 7 原厂实测以四个 CC 建立边界案例：CC7 的 64 与 100、CC10 的 64、CC7 的 127；选择 Control Change、`07 Volume MSB`、Value `64–100` 并开启 Show-only 后，只剩 CC7 的 64 和 100。REAPER MIDI readback 与保存的 RPP `EVTFILTER 0 176 -1 64 100 0 1 1 0 -1 -1 -1 -1 0 -1 1 7 7`、原厂前后截图和可重跑 ReaScript 均在 [原厂 fixture](../verification/reaper-parity/fixtures/midi-event-filter-cc-native.tsv)。原厂 Linux binary Build ID `fb9ade2f211bc91a3ee6193630ef17bcf5f6528b`、SHA-256 `9976f5608068b7a58518969001b00b527fb0de6ed7459e0e5dda6f29878ee254`。
+
+AAADAW 以同样四个 CC 和三条 Note 进行 Xvfb :510 实窗复核：Control Change 下启用 `07 Volume MSB`、Value `64–100` 后，筛选对话框显示正确范围；Show-only 关闭时八行全在，开启后仅 CC7 的两个边界行可见。应用消息、CC lane 可见性/命中测试、Event List 渲染与 Set/Add/Remove 选择共用该条件，Clear filter 重置 Control/Value；两项回归同时检查边界匹配、未匹配控制器/值、终端行隐藏与工程快照不变。可重建 AAADAW 工程的 example、项目、三个实窗截图、当前 Cranelift binary SHA-256 `5973af52b9f257a00e0fe8880a27132085aa8921dcbbda5a75647b6157fc8c29` / Build ID `bc81aca8cf81dcf9d3bdab6f18cc2b185e8233e6` 与逐文件哈希在 [AAADAW fixture](../verification/reaper-parity/fixtures/midi-event-filter-cc-aaadaw.tsv)。功能范围与原厂证据见 [Parameter / Value 验证记录](../verification/reaper-parity/midi-event-filter-parameter-value.md)，Event List 与 channel control 当前说明和验收矩阵也已更新。
+
+Stable 与 Cranelift AAADAW 全套测试各 **833/833**、workspace all-target strict Clippy（`-D warnings`）、Cranelift 桌面构建、fmt、diff 和两份 fixture hash 检查均通过。`MIDI-EVENT-LIST-001`、`MIDI-CHANNEL-VIEW-001`、UI-019 与 P7 仍为 `in_progress`。尚未关闭的工作包括 Control/Value 的原厂 Clear 与 Invert 语义、CC0/32、其他 CC 参数、从 CC 选区推导筛选条件、Repeat、非 Note Position/Length 与 Solo；下一步继续先测量原厂筛选面板的 Repeat 和非 Note Position 规则，再逐个实现与对照。

@@ -351,6 +351,40 @@ impl Default for MidiEditorNoteFilter {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct MidiEditorControllerFilter {
+    pub(crate) controller_enabled: bool,
+    pub(crate) controller: u8,
+    pub(crate) value_enabled: bool,
+    pub(crate) value_range_initialized: bool,
+    pub(crate) value_low: u8,
+    pub(crate) value_high: u8,
+}
+
+impl MidiEditorControllerFilter {
+    pub(crate) const fn matches(self, controller: u8, value: u8) -> bool {
+        (!self.controller_enabled || controller == self.controller)
+            && (!self.value_enabled
+                || !self.value_range_initialized
+                || (self.value_low <= self.value_high
+                    && value >= self.value_low
+                    && value <= self.value_high))
+    }
+}
+
+impl Default for MidiEditorControllerFilter {
+    fn default() -> Self {
+        Self {
+            controller_enabled: false,
+            controller: 0,
+            value_enabled: false,
+            value_range_initialized: false,
+            value_low: 0,
+            value_high: 127,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct MidiEditorPitchFilterValue(u8);
 
 impl MidiEditorPitchFilterValue {
@@ -396,6 +430,7 @@ pub(crate) struct MidiEditorFilterState {
     pub(crate) inverted: bool,
     pub(crate) event_type: MidiEditorEventTypeFilter,
     pub(crate) note: MidiEditorNoteFilter,
+    pub(crate) controller: MidiEditorControllerFilter,
 }
 
 impl MidiEditorFilterState {
@@ -417,6 +452,26 @@ impl MidiEditorFilterState {
                 self.channels & (1_u16.checked_shl(u32::from(channel)).unwrap_or(0)) != 0
             });
             let passes = channel_matches && self.event_type.matches(event_kind);
+            if self.inverted { !passes } else { passes }
+        };
+        editor_channel_matches && event_filter_matches
+    }
+
+    pub(crate) fn controller_visible(self, channel: u8, controller: u8, value: u8) -> bool {
+        let editor_channel_matches = !self.channel_filter_enabled
+            || match self.channel_selection {
+                MidiEditorChannelSelection::AllChannels => true,
+                MidiEditorChannelSelection::Channel(selected) => channel == selected,
+                MidiEditorChannelSelection::Multichannel => {
+                    self.channels & (1_u16.checked_shl(u32::from(channel)).unwrap_or(0)) != 0
+                }
+            };
+        let event_filter_matches = !self.event_filter_enabled || {
+            let channel_matches =
+                self.channels & (1_u16.checked_shl(u32::from(channel)).unwrap_or(0)) != 0;
+            let passes = channel_matches
+                && self.event_type.matches(MidiEditorEventKind::ControlChange)
+                && self.controller.matches(controller, value);
             if self.inverted { !passes } else { passes }
         };
         editor_channel_matches && event_filter_matches
@@ -829,6 +884,11 @@ pub(crate) enum Message {
     SetMidiEditorFilterNoteLengthEnabled(bool),
     SetMidiEditorFilterNoteLengthLow(String),
     SetMidiEditorFilterNoteLengthHigh(String),
+    SetMidiEditorFilterControllerEnabled(bool),
+    SetMidiEditorFilterController(u8),
+    SetMidiEditorFilterValueEnabled(bool),
+    SetMidiEditorFilterValueLow(String),
+    SetMidiEditorFilterValueHigh(String),
     SetMidiEditorFilterFromSelection,
     ClearMidiEditorFilter,
     ApplyMidiEditorFilterSelection(MidiEditorFilterSelectionOperation),
@@ -1267,9 +1327,9 @@ pub(crate) struct FreezeTrackResult {
 #[cfg(test)]
 mod midi_channel_selection_tests {
     use super::{
-        MidiEditorChannelSelection, MidiEditorEventKind, MidiEditorEventTypeFilter,
-        MidiEditorFilterState, MidiEditorNoteFilter, MidiEditorNoteFilterEvent,
-        MidiEditorPitchFilterValue,
+        MidiEditorChannelSelection, MidiEditorControllerFilter, MidiEditorEventKind,
+        MidiEditorEventTypeFilter, MidiEditorFilterState, MidiEditorNoteFilter,
+        MidiEditorNoteFilterEvent, MidiEditorPitchFilterValue,
     };
 
     #[test]
@@ -1287,6 +1347,7 @@ mod midi_channel_selection_tests {
                 inverted,
                 event_type: MidiEditorEventTypeFilter::AllEvents,
                 note: MidiEditorNoteFilter::default(),
+                controller: MidiEditorControllerFilter::default(),
             }
             .event_visible(Some(channel), MidiEditorEventKind::Note)
         };
@@ -1443,6 +1504,7 @@ mod midi_channel_selection_tests {
                 inverted,
                 event_type: MidiEditorEventTypeFilter::Notes,
                 note: MidiEditorNoteFilter::default(),
+                controller: MidiEditorControllerFilter::default(),
             }
             .event_visible(Some(channel), kind)
         };
@@ -1461,6 +1523,7 @@ mod midi_channel_selection_tests {
             inverted: true,
             event_type: MidiEditorEventTypeFilter::Notes,
             note: MidiEditorNoteFilter::default(),
+            controller: MidiEditorControllerFilter::default(),
         };
         assert!(!inverted_filter.event_visible(Some(0), MidiEditorEventKind::Note,));
         assert!(inverted_filter.event_visible(Some(0), MidiEditorEventKind::Pitch,));
@@ -1493,6 +1556,7 @@ mod midi_channel_selection_tests {
                 length_low_ticks: 240,
                 length_high_ticks: 480,
             },
+            controller: MidiEditorControllerFilter::default(),
         };
         let selected_event = MidiEditorNoteFilterEvent {
             pitch: 64,
@@ -1567,6 +1631,41 @@ mod midi_channel_selection_tests {
                 length_ticks: 10,
             }
         ));
+    }
+
+    #[test]
+    fn controller_filter_matches_parameter_and_inclusive_value_range() {
+        let filter = MidiEditorFilterState {
+            channel_selection: MidiEditorChannelSelection::AllChannels,
+            channel_filter_enabled: false,
+            event_filter_enabled: true,
+            channels: u16::MAX,
+            inverted: false,
+            event_type: MidiEditorEventTypeFilter::ControlChange,
+            note: MidiEditorNoteFilter::default(),
+            controller: MidiEditorControllerFilter {
+                controller_enabled: true,
+                controller: 7,
+                value_enabled: true,
+                value_range_initialized: true,
+                value_low: 64,
+                value_high: 100,
+            },
+        };
+
+        assert!(filter.controller_visible(0, 7, 64));
+        assert!(filter.controller_visible(15, 7, 100));
+        assert!(!filter.controller_visible(0, 10, 64));
+        assert!(!filter.controller_visible(0, 7, 63));
+        assert!(!filter.controller_visible(0, 7, 101));
+
+        let inverted = MidiEditorFilterState {
+            inverted: true,
+            ..filter
+        };
+        assert!(!inverted.controller_visible(0, 7, 64));
+        assert!(inverted.controller_visible(0, 10, 64));
+        assert!(inverted.controller_visible(0, 7, 127));
     }
 
     #[test]

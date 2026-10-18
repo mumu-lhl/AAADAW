@@ -102,6 +102,11 @@ fn parse_midi_editor_filter_position(value: &str) -> Option<u32> {
     Some((value * f64::from(MIDI_EDITOR_FILTER_POSITION_SCALE)).round() as u32)
 }
 
+fn parse_midi_editor_filter_value(value: &str) -> Option<u8> {
+    let value = value.trim().parse::<u8>().ok()?;
+    (value <= 127).then_some(value)
+}
+
 fn format_midi_editor_filter_position(value: u32) -> String {
     format!(
         "{:.8}",
@@ -222,8 +227,8 @@ mod x11_plugin_editor;
 use messages::MIDI_EDITOR_FILTER_POSITION_SCALE;
 pub(crate) use messages::{
     MainMenu, MainWorkspace, MenuNavigation, Message, MidiEditorChannelSelection,
-    MidiEditorCursorBoundary, MidiEditorEventKind, MidiEditorEventListCursor,
-    MidiEditorEventListCursorDirection, MidiEditorEventTypeFilter,
+    MidiEditorControllerFilter, MidiEditorCursorBoundary, MidiEditorEventKind,
+    MidiEditorEventListCursor, MidiEditorEventListCursorDirection, MidiEditorEventTypeFilter,
     MidiEditorFilterSelectionOperation, MidiEditorFilterState, MidiEditorLane, MidiEditorMode,
     MidiEditorNoteFilter, MidiEditorNoteFilterEvent, MidiEditorPitchFilterValue, MidiEditorTool,
     MidiHumanizeScope, MidiQuantizeOperation, MidiQuantizeScope, MidiTransposeScope, MobilePanel,
@@ -635,10 +640,13 @@ struct App {
     midi_editor_event_filter_enabled: bool,
     midi_editor_filter_channels: u16,
     midi_editor_note_filter: MidiEditorNoteFilter,
+    midi_editor_controller_filter: MidiEditorControllerFilter,
     midi_editor_filter_note_position_low: String,
     midi_editor_filter_note_position_high: String,
     midi_editor_filter_note_length_low: String,
     midi_editor_filter_note_length_high: String,
+    midi_editor_filter_value_low: String,
+    midi_editor_filter_value_high: String,
     midi_editor_filter_channels_initialized: bool,
     midi_editor_filter_inverted: bool,
     midi_editor_filter_dialog_open: bool,
@@ -2196,6 +2204,7 @@ impl App {
             inverted: self.midi_editor_filter_inverted,
             event_type: self.midi_editor_event_type_filter,
             note: self.midi_editor_note_filter,
+            controller: self.midi_editor_controller_filter,
         };
         item.notes()
             .iter()
@@ -6686,6 +6695,37 @@ impl App {
                 ) {
                     self.midi_editor_note_filter.length_high_ticks = length;
                     self.midi_editor_note_filter.length_range_initialized = true;
+                }
+            }
+            Message::SetMidiEditorFilterControllerEnabled(enabled) => {
+                self.midi_editor_controller_filter.controller_enabled = enabled;
+            }
+            Message::SetMidiEditorFilterController(controller) => {
+                self.midi_editor_controller_filter.controller = controller.min(127);
+            }
+            Message::SetMidiEditorFilterValueEnabled(enabled) => {
+                self.midi_editor_controller_filter.value_enabled = enabled;
+            }
+            Message::SetMidiEditorFilterValueLow(value) => {
+                self.midi_editor_filter_value_low = value;
+                self.midi_editor_controller_filter.value_range_initialized = false;
+                if let Some(value) =
+                    parse_midi_editor_filter_value(&self.midi_editor_filter_value_low)
+                {
+                    self.midi_editor_controller_filter.value_low =
+                        value.min(self.midi_editor_controller_filter.value_high);
+                    self.midi_editor_controller_filter.value_range_initialized = true;
+                }
+            }
+            Message::SetMidiEditorFilterValueHigh(value) => {
+                self.midi_editor_filter_value_high = value;
+                self.midi_editor_controller_filter.value_range_initialized = false;
+                if let Some(value) =
+                    parse_midi_editor_filter_value(&self.midi_editor_filter_value_high)
+                {
+                    self.midi_editor_controller_filter.value_high =
+                        value.max(self.midi_editor_controller_filter.value_low);
+                    self.midi_editor_controller_filter.value_range_initialized = true;
                 }
             }
             Message::ToggleMidiEditorFilterChannel(channel) if channel < 16 => {
@@ -14377,10 +14417,13 @@ impl App {
         self.midi_editor_channel_selection = MidiEditorChannelSelection::AllChannels;
         self.midi_editor_event_type_filter = MidiEditorEventTypeFilter::AllEvents;
         self.midi_editor_note_filter = MidiEditorNoteFilter::default();
+        self.midi_editor_controller_filter = MidiEditorControllerFilter::default();
         self.midi_editor_filter_note_position_low.clear();
         self.midi_editor_filter_note_position_high.clear();
         self.midi_editor_filter_note_length_low.clear();
         self.midi_editor_filter_note_length_high.clear();
+        self.midi_editor_filter_value_low.clear();
+        self.midi_editor_filter_value_high.clear();
         self.midi_editor_draw_channel = 0;
         self.midi_editor_filter_enabled = false;
         self.midi_editor_event_filter_enabled = false;
@@ -14506,6 +14549,9 @@ impl App {
             length_low_ticks,
             length_high_ticks,
         };
+        self.midi_editor_controller_filter = MidiEditorControllerFilter::default();
+        self.midi_editor_filter_value_low.clear();
+        self.midi_editor_filter_value_high.clear();
         self.midi_editor_filter_note_position_low =
             format_midi_editor_filter_position(position_low);
         self.midi_editor_filter_note_position_high =
@@ -14533,14 +14579,12 @@ impl App {
                 .filter(|note| self.midi_editor_filter_note_matches(item, note))
                 .map(|note| note.id()),
         );
-        selection
-            .controllers
-            .extend(item.controllers().iter().copied().filter(|event| {
-                self.midi_editor_filter_event_matches(
-                    Some(event.channel),
-                    MidiEditorEventKind::ControlChange,
-                )
-            }));
+        selection.controllers.extend(
+            item.controllers()
+                .iter()
+                .copied()
+                .filter(|event| self.midi_editor_filter_controller_matches(*event)),
+        );
         selection
             .pitch_bends
             .extend(item.pitch_bends().iter().copied().filter(|event| {
@@ -14602,8 +14646,23 @@ impl App {
             inverted: self.midi_editor_filter_inverted,
             event_type: self.midi_editor_event_type_filter,
             note: self.midi_editor_note_filter,
+            controller: self.midi_editor_controller_filter,
         }
         .event_visible(channel, event_kind)
+    }
+
+    fn midi_editor_filter_controller_matches(&self, event: MidiControllerData) -> bool {
+        MidiEditorFilterState {
+            channel_selection: MidiEditorChannelSelection::AllChannels,
+            channel_filter_enabled: false,
+            event_filter_enabled: true,
+            channels: self.midi_editor_filter_channels,
+            inverted: self.midi_editor_filter_inverted,
+            event_type: self.midi_editor_event_type_filter,
+            note: self.midi_editor_note_filter,
+            controller: self.midi_editor_controller_filter,
+        }
+        .controller_visible(event.channel, event.controller, event.value)
     }
 
     fn midi_editor_filter_note_matches(
@@ -14623,6 +14682,7 @@ impl App {
             inverted: self.midi_editor_filter_inverted,
             event_type: self.midi_editor_event_type_filter,
             note: self.midi_editor_note_filter,
+            controller: self.midi_editor_controller_filter,
         }
         .note_passes_event_filter(
             note.channel(),
