@@ -2410,3 +2410,9 @@ Event List 现在为结构性/未知 Meta 行显示对应类型名称与原始�
 将 SysEx 文件读写逻辑抽为可直接验证的路径函数，并为 F0 完整消息、F7 延续包增加真实文件系统往返测试。当前 Linux 桌面构建在 Xvfb :456 通过受控 portal 从 `.syx` 文件载入 `F0 43 12 34 F7`，属性窗显示 payload `43 12 34`；保存后逐字节读回 `F0 43 12 34 F7`。现场截图展示 F0/F7 边界、已载入 payload 和 `SysEx data saved` 状态，SHA-256 与构建身份记录在 [Event Properties fixture manifest](../verification/reaper-parity/fixtures/midi-event-properties-ui.tsv)。
 
 三项 `midi_sysex` 定向 Nextest 测试全部通过，覆盖 F0/F7 封装函数与两类文件读写往返；`cargo build`、strict all-target Clippy、stable fmt 和 diff 检查此前已针对同一代码通过。F7 文件字节保留目前由自动化往返验证，尚无原厂 F7 对照；`.sysex` 文件选择及原厂文件对话框外观/行为也待 A/B。`MIDI-EVENT-PROPERTIES-001` 与 P7 继续保持 `in_progress`。
+
+### 2026-10-18 对齐 F7 SysEx 延续包导入
+
+Linux REAPER 7.82 / Default 7 的原厂 Type 0 MIDI 探针输入 F0 起始包 `43 12`（tick 240）和 F7 延续包 `34 F7`（tick 480）。REAPER 把两包合成一个 F0 事件 `F0 43 12 34 F7`，位置移至最终包 tick 480；事件属性显示 payload `43 12 34`、Position `1.1.50`。原厂读回、探针 MIDI 和窗口截图在 [Event Properties fixture manifest](../verification/reaper-parity/fixtures/midi-event-properties-ui.tsv)。
+
+AAADAW 的 SMF 解码层仍保留源包，项目导入转换则合并仍开放的 F0/F7 连续包并使用最后一包位置；未匹配 F7 仍保留原始状态。当前桌面构建通过受控 portal 导入同一 fixture，Event List 单行参数与属性窗 payload 均和 REAPER 一致；两张实窗截图及二进制身份记录在同一 manifest。`midi_file_import` Nextest 11/11、strict core all-target Clippy、stable fmt 与 diff 检查通过。REAPER 未匹配 F7 escape 行和跨其他事件间隔的延续规则仍需原厂探测；相关 parity 项保持 `in_progress`。

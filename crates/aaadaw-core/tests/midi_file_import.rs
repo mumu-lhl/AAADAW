@@ -1,6 +1,6 @@
 use aaadaw_core::{
-    ActionError, DawAction, MidiFileEventKind, MidiFileFormat, MidiFileImportOptions, Project,
-    decode_standard_midi,
+    ActionError, DawAction, MidiFileEventKind, MidiFileFormat, MidiFileImportOptions,
+    MidiOpaqueEventKind, Project, decode_standard_midi,
 };
 
 fn smf(format: u16, division: u16, tracks: &[&[u8]]) -> Vec<u8> {
@@ -63,6 +63,75 @@ fn decodes_type_zero_running_status_and_preserves_sysex_and_meta() {
         }
     );
     assert_eq!(decoded.tracks[0].events[6].tick, 480);
+}
+
+#[test]
+fn project_import_merges_f7_continuations_into_open_f0_at_the_final_packet_tick() {
+    let track = [
+        0x3C, 0xF0, 0x02, 0x43, 0x12, // F0 start at tick 60
+        0x3C, 0xF7, 0x02, 0x34, 0xF7, // final F7 packet at tick 120
+        0x00, 0xFF, 0x2F, 0x00,
+    ];
+    let decoded = decode_standard_midi(&smf(0, 480, &[&track])).unwrap();
+    assert_eq!(decoded.tracks[0].events.len(), 3);
+    assert!(matches!(
+        decoded.tracks[0].events[0].kind,
+        MidiFileEventKind::SystemExclusive { status: 0xF0, .. }
+    ));
+    assert!(matches!(
+        decoded.tracks[0].events[1].kind,
+        MidiFileEventKind::SystemExclusive { status: 0xF7, .. }
+    ));
+
+    let imported = decoded.to_project_import(480).unwrap();
+    assert_eq!(imported.tracks[0].opaque_events.len(), 1);
+    assert_eq!(imported.tracks[0].opaque_events[0].tick, 120);
+    assert_eq!(imported.tracks[0].opaque_events[0].order, 1);
+    assert_eq!(
+        imported.tracks[0].opaque_events[0].kind,
+        MidiOpaqueEventKind::SystemExclusive {
+            status: 0xF0,
+            data: vec![0x43, 0x12, 0x34, 0xF7],
+        }
+    );
+}
+
+#[test]
+fn project_import_merges_multiple_f7_continuation_packets_and_retains_unmatched_f7() {
+    let chained = [
+        0x3C, 0xF0, 0x01, 0x43, // F0 start at tick 60
+        0x1E, 0xF7, 0x01, 0x12, // continuation at tick 90
+        0x1E, 0xF7, 0x02, 0x34, 0xF7, // final continuation at tick 120
+        0x00, 0xFF, 0x2F, 0x00,
+    ];
+    let imported = decode_standard_midi(&smf(0, 480, &[&chained]))
+        .unwrap()
+        .to_project_import(480)
+        .unwrap();
+    assert_eq!(imported.tracks[0].opaque_events.len(), 1);
+    assert_eq!(imported.tracks[0].opaque_events[0].tick, 120);
+    assert_eq!(
+        imported.tracks[0].opaque_events[0].kind,
+        MidiOpaqueEventKind::SystemExclusive {
+            status: 0xF0,
+            data: vec![0x43, 0x12, 0x34, 0xF7],
+        }
+    );
+
+    let unmatched = [0x3C, 0xF7, 0x02, 0x34, 0xF7, 0x00, 0xFF, 0x2F, 0x00];
+    let imported = decode_standard_midi(&smf(0, 480, &[&unmatched]))
+        .unwrap()
+        .to_project_import(480)
+        .unwrap();
+    assert_eq!(imported.tracks[0].opaque_events.len(), 1);
+    assert_eq!(imported.tracks[0].opaque_events[0].tick, 60);
+    assert_eq!(
+        imported.tracks[0].opaque_events[0].kind,
+        MidiOpaqueEventKind::SystemExclusive {
+            status: 0xF7,
+            data: vec![0x34, 0xF7],
+        }
+    );
 }
 
 #[test]

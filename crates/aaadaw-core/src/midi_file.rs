@@ -480,14 +480,18 @@ impl MidiFileImport {
             let mut program_changes = Vec::new();
             let mut poly_aftertouches = Vec::new();
             let mut channel_pressures = Vec::new();
-            let mut opaque_events = Vec::new();
+            let mut opaque_events: Vec<MidiOpaqueEventData> = Vec::new();
             let mut open_notes = HashMap::<(u8, u8), VecDeque<(u64, u8)>>::new();
+            let mut open_sysex_event: Option<usize> = None;
             let mut has_channel_events = false;
             let mut last_content_tick =
                 scale_import_tick(track.end_tick, self.ticks_per_quarter_note, project_ppq)?;
 
             for (event_index, event) in track.events.iter().enumerate() {
                 let tick = scale_import_tick(event.tick, self.ticks_per_quarter_note, project_ppq)?;
+                if !matches!(&event.kind, MidiFileEventKind::SystemExclusive { .. }) {
+                    open_sysex_event = None;
+                }
                 match &event.kind {
                     MidiFileEventKind::Channel { status, data } => {
                         has_channel_events = true;
@@ -546,14 +550,37 @@ impl MidiFileImport {
                     }
                     MidiFileEventKind::SystemExclusive { status, data } => {
                         last_content_tick = last_content_tick.max(tick);
-                        opaque_events.push(MidiOpaqueEventData {
-                            tick,
-                            order: event_index as u32,
-                            kind: MidiOpaqueEventKind::SystemExclusive {
-                                status: *status,
-                                data: data.clone(),
-                            },
-                        });
+                        let mut merged_into_open_sysex = false;
+                        if *status == 0xF7
+                            && let Some(open_index) = open_sysex_event.take()
+                            && let Some(previous) = opaque_events.get_mut(open_index)
+                            && let MidiOpaqueEventKind::SystemExclusive {
+                                status: 0xF0,
+                                data: previous_data,
+                            } = &mut previous.kind
+                        {
+                            previous_data.extend_from_slice(data);
+                            previous.tick = tick;
+                            previous.order = event_index as u32;
+                            open_sysex_event =
+                                (previous_data.last() != Some(&0xF7)).then_some(open_index);
+                            merged_into_open_sysex = true;
+                        }
+                        if !merged_into_open_sysex {
+                            opaque_events.push(MidiOpaqueEventData {
+                                tick,
+                                order: event_index as u32,
+                                kind: MidiOpaqueEventKind::SystemExclusive {
+                                    status: *status,
+                                    data: data.clone(),
+                                },
+                            });
+                            if *status == 0xF0 && data.last() != Some(&0xF7) {
+                                open_sysex_event = Some(opaque_events.len() - 1);
+                            } else {
+                                open_sysex_event = None;
+                            }
+                        }
                     }
                     MidiFileEventKind::Meta { kind, data } => {
                         match kind {

@@ -1,0 +1,8 @@
+version	7.82/linux-x86_64
+theme	Default_7.0.ReaperThemeZip
+counts	0	0	2
+source_packets	F0@240:43 12; F7@480:34 F7
+native_event_status	F0
+native_event_raw_hex	F0 43 12 34 F7
+native_event_ppqpos	480
+properties_action	40004
