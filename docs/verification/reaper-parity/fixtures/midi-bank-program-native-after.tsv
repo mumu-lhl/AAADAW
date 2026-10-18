@@ -1,0 +1,7 @@
+version	7.82/linux-x86_64
+theme	Default_7.0.ReaperThemeZip
+label	event stream after native dialog edit
+counts	0	3
+event	1	1	0	480.0	0xB0	3	0	12
+event	2	1	0	480.0	0xB0	3	32	23
+event	3	1	0	480.0	0xC0	3	42	0

@@ -40,3 +40,7 @@ fixtures/midi-event-list-home-end-aaadaw.tsv	4e8e948bef03ce03f2fc06b06c907472dce
 fixtures/midi-event-list-home-end-aaadaw-home.png	b0b2f5449546c21be2a5ab4215ddd436ed8b4d1374af0b648a76d241d2b4da97
 fixtures/midi-event-list-home-end-aaadaw-home-main.png	e0ec67ec5fa91ed246a86e3cfb1fa7c351f26f5ad21890c59150395c44ad5250
 fixtures/midi-event-list-home-end-aaadaw-end-main.png	f9545ff106a40324331fab4a78911da8b272176339be528bd98b50bb5a120c8c
+scripts/reaper_parity/probe-midi-bank-program-select.lua	f948d91db974f7439845b9d4a07a133caac6f42dffdc0d5e66e439f1bdc59599
+fixtures/midi-bank-program-native-before.tsv	b161233b760aefeadf69ef5e9299d94c7016330fc2e264190a26fd569098c017
+fixtures/midi-bank-program-native-after.tsv	e7d74824ac6f2ea314180a2901eef81c3cc2edaaea22cde1416df7c7ec44afaf
+fixtures/midi-bank-program-native-event-list-edited.png	4bb46bfcc6a400ab03b777095f43871fa425a848b2551234aeaa67368ce5d8f7

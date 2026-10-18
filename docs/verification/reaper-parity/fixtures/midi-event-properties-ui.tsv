@@ -66,4 +66,11 @@ build_id	2dd542d14a9fa54d58cccd95373cc23f96cd441d
 assertion	Linux stable AAADAW window in Xvfb shows Event List Program Change Event Properties with Bank MSB (CC0)=0 and Bank LSB (CC32)=0.
 verification	crates/aaadaw/src/app/tests.rs::midi_bank_program_properties_edit_cc0_and_cc32_atomically_with_program verifies inherited values, same-tick CC0/CC32 replacement, one history step, Undo/Redo, and 0..127 validation; crates/aaadaw-engine/tests/midi_schedule.rs::bank_select_controllers_precede_program_change_at_the_same_tick verifies realtime event ordering.
 playback_graph_test	crates/aaadaw/src/app/tests.rs::midi_bank_program_batch_invalidates_the_audio_playback_graph passes with --features audio-device.
-limitation	Screenshot is the initial dialog only; native edited-value A/B and patch-file selection remain open, so MIDI-EVENT-PROPERTIES-001 remains in_progress.
+scripts/reaper_parity/probe-midi-bank-program-select.lua	f948d91db974f7439845b9d4a07a133caac6f42dffdc0d5e66e439f1bdc59599
+fixtures/midi-bank-program-native-before.tsv	b161233b760aefeadf69ef5e9299d94c7016330fc2e264190a26fd569098c017
+fixtures/midi-bank-program-native-after.tsv	e7d74824ac6f2ea314180a2901eef81c3cc2edaaea22cde1416df7c7ec44afaf
+fixtures/midi-bank-program-native-dialog-initial.png	d3965468871c1a332aafdb0f09edcff29cfd62a9632a5be3e71540f51114f7de
+fixtures/midi-bank-program-native-dialog-edited.png	9e5414f371b3095825ebfcc9cc07e22d5342320cb4c93c206a3183dac9056d8b
+fixtures/midi-bank-program-native-event-list-edited.png	4bb46bfcc6a400ab03b777095f43871fa425a848b2551234aeaa67368ce5d8f7
+assertion	Linux REAPER 7.82 / Default 7 Bank/Program Select changes CC0/CC32/PC from 11/22/41 to 12/23/42; Event List displays the paired bank controllers as Bank Select 14-bit (0/32)=1559 and PC parameter 12-23-42.
+limitation	Patch-file selection, mixed event-type properties, and full Event List alignment remain open; MIDI-EVENT-PROPERTIES-001 stays in_progress.
