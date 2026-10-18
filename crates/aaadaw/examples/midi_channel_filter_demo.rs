@@ -1,4 +1,4 @@
-use aaadaw_core::{DawAction, MidiNoteData, Project};
+use aaadaw_core::{DawAction, MidiControllerData, MidiNoteData, MidiPitchBendData, Project};
 use aaadaw_storage::{ArrangementViewState, ProjectStore};
 use std::path::PathBuf;
 
@@ -64,6 +64,49 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 tick: 4_800,
                 duration: 480,
                 velocity: 96,
+            },
+        ],
+    })?;
+    project.apply(DawAction::SetMidiControllers {
+        item_id,
+        controllers: vec![
+            MidiControllerData {
+                channel: 0,
+                controller: 1,
+                tick: 0,
+                value: 64,
+            },
+            MidiControllerData {
+                channel: 1,
+                controller: 1,
+                tick: 1_920,
+                value: 96,
+            },
+            MidiControllerData {
+                channel: 2,
+                controller: 1,
+                tick: 3_840,
+                value: 32,
+            },
+        ],
+    })?;
+    project.apply(DawAction::SetMidiPitchBends {
+        item_id,
+        pitch_bends: vec![
+            MidiPitchBendData {
+                channel: 0,
+                tick: 0,
+                value: 8_192,
+            },
+            MidiPitchBendData {
+                channel: 1,
+                tick: 1_920,
+                value: 12_288,
+            },
+            MidiPitchBendData {
+                channel: 2,
+                tick: 3_840,
+                value: 4_096,
             },
         ],
     })?;

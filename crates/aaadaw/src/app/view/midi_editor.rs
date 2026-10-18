@@ -1,5 +1,6 @@
 use super::super::{
-    App, MIDI_EDITOR_KEY_WIDTH, Message, MidiEditorChannelSelection, MidiEditorLane, MidiEditorTool,
+    App, MIDI_EDITOR_KEY_WIDTH, Message, MidiEditorChannelSelection, MidiEditorEventKind,
+    MidiEditorEventTypeFilter, MidiEditorLane, MidiEditorTool,
 };
 use super::tokens::{PANEL_PADDING, ROW_GAP, SPACING_LG, SPACING_MD, SPACING_XS, TOUCH_TARGET_MIN};
 use crate::timeline::{SnapGrid, TimelineEvent, snap_tick_to_grid};
@@ -211,6 +212,7 @@ fn midi_snap_for_app(app: &App) -> MidiSnap {
         filter_enabled: app.midi_editor_filter_enabled,
         filter_channels: app.midi_editor_filter_channels,
         filter_inverted: app.midi_editor_filter_inverted,
+        event_type_filter: app.midi_editor_event_type_filter,
     }
 }
 
@@ -226,6 +228,7 @@ struct MidiSnap {
     filter_enabled: bool,
     filter_channels: u16,
     filter_inverted: bool,
+    event_type_filter: MidiEditorEventTypeFilter,
 }
 
 impl Default for MidiSnap {
@@ -241,18 +244,33 @@ impl Default for MidiSnap {
             filter_enabled: false,
             filter_channels: 0,
             filter_inverted: false,
+            event_type_filter: MidiEditorEventTypeFilter::AllEvents,
         }
     }
 }
 
 impl MidiSnap {
-    fn channel_visible(self, channel: u8) -> bool {
-        self.channel_selection.shows_channel(
+    fn event_visible(self, channel: u8, event_kind: MidiEditorEventKind) -> bool {
+        self.channel_selection.shows_event(
             channel,
             self.filter_enabled,
             self.filter_channels,
             self.filter_inverted,
+            self.event_type_filter,
+            event_kind,
         )
+    }
+
+    fn note_visible(self, channel: u8) -> bool {
+        self.event_visible(channel, MidiEditorEventKind::Note)
+    }
+
+    fn controller_visible(self, channel: u8) -> bool {
+        self.event_visible(channel, MidiEditorEventKind::ControlChange)
+    }
+
+    fn pitch_bend_visible(self, channel: u8) -> bool {
+        self.event_visible(channel, MidiEditorEventKind::Pitch)
     }
 }
 
@@ -289,17 +307,11 @@ fn view_with_profile(app: &App, touch_targets: bool) -> Element<'_, Message> {
         .find(|track| track.id() == item.track_id())
         .map_or("Track", |track| track.name());
     let playhead_tick = app.midi_editor_playhead_tick(item);
+    let event_snap = midi_snap_for_app(app);
     let visible_note_count = item
         .notes()
         .iter()
-        .filter(|note| {
-            app.midi_editor_channel_selection.shows_channel(
-                note.channel(),
-                app.midi_editor_filter_enabled,
-                app.midi_editor_filter_channels,
-                app.midi_editor_filter_inverted,
-            )
-        })
+        .filter(|note| event_snap.note_visible(note.channel()))
         .count();
     let edit_toolbar: Element<'_, Message> = if touch_targets {
         row![
@@ -524,6 +536,7 @@ fn view_with_profile(app: &App, touch_targets: bool) -> Element<'_, Message> {
             SPACING_XS
         }),
         filter_control,
+        button("Filter events…").on_press(Message::OpenMidiEditorFilter),
     ]
     .spacing(ROW_GAP)
     .align_y(iced::Alignment::Center);
@@ -962,7 +975,7 @@ fn channel_filter_dialog(app: &App, touch_targets: bool) -> Element<'_, Message>
     };
     let all_channels = app.midi_editor_filter_channels == u16::MAX;
     let header = row![
-        text("MIDI channel filter").width(Length::Fill),
+        text("Filter Events").width(Length::Fill),
         checkbox(all_channels)
             .label("All")
             .on_toggle(Message::SetMidiEditorFilterChannelsAll),
@@ -986,10 +999,22 @@ fn channel_filter_dialog(app: &App, touch_targets: bool) -> Element<'_, Message>
     ]
     .spacing(ROW_GAP)
     .align_y(iced::Alignment::Center);
+    let event_type_filter = row![
+        text("Event type").width(Length::Fixed(92.0)),
+        pick_list(
+            &MidiEditorEventTypeFilter::OPTIONS[..],
+            Some(app.midi_editor_event_type_filter),
+            Message::SetMidiEditorEventTypeFilter,
+        )
+        .width(Length::Fixed(208.0)),
+    ]
+    .spacing(ROW_GAP)
+    .align_y(iced::Alignment::Center);
     container(
         column![
             header,
             filter_options,
+            event_type_filter,
             first_row,
             second_row,
             row![
@@ -1230,7 +1255,7 @@ impl ControllerLane<'_> {
             .enumerate()
             .filter(|(_, controller)| {
                 controller.controller == self.controller
-                    && self.snap.channel_visible(controller.channel)
+                    && self.snap.controller_visible(controller.channel)
             })
             .flat_map(|(index, controller)| {
                 source_event_occurrences(self.item, controller.tick, item_start, item_end)
@@ -1513,7 +1538,7 @@ impl canvas::Program<Message> for ControllerLane<'_> {
             .iter()
             .filter(|controller| {
                 controller.controller == self.controller
-                    && self.snap.channel_visible(controller.channel)
+                    && self.snap.controller_visible(controller.channel)
             })
             .flat_map(|controller| {
                 source_event_occurrences(
@@ -1532,7 +1557,7 @@ impl canvas::Program<Message> for ControllerLane<'_> {
             .iter()
             .filter(|controller| {
                 controller.controller == self.controller
-                    && self.snap.channel_visible(controller.channel)
+                    && self.snap.controller_visible(controller.channel)
             })
             .flat_map(|controller| {
                 source_event_occurrences(
@@ -1744,7 +1769,7 @@ impl PitchBendLane<'_> {
             .pitch_bends()
             .iter()
             .enumerate()
-            .filter(|(_, bend)| self.snap.channel_visible(bend.channel))
+            .filter(|(_, bend)| self.snap.pitch_bend_visible(bend.channel))
             .flat_map(|(index, bend)| {
                 source_event_occurrences(self.item, bend.tick, item_start, item_end)
                     .map(move |tick| (index, tick, bend.value))
@@ -1988,7 +2013,7 @@ impl canvas::Program<Message> for PitchBendLane<'_> {
             .item
             .pitch_bends()
             .iter()
-            .filter(|bend| self.snap.channel_visible(bend.channel))
+            .filter(|bend| self.snap.pitch_bend_visible(bend.channel))
             .flat_map(|bend| {
                 source_event_occurrences(
                     self.item,
@@ -2006,7 +2031,7 @@ impl canvas::Program<Message> for PitchBendLane<'_> {
             .item
             .pitch_bends()
             .iter()
-            .filter(|bend| self.snap.channel_visible(bend.channel))
+            .filter(|bend| self.snap.pitch_bend_visible(bend.channel))
             .flat_map(|bend| {
                 source_event_occurrences(
                     self.item,
@@ -2743,7 +2768,7 @@ impl canvas::Program<Message> for PianoRoll<'_> {
                             .item
                             .notes()
                             .iter()
-                            .filter(|note| self.snap.channel_visible(note.channel()))
+                            .filter(|note| self.snap.note_visible(note.channel()))
                         {
                             let y = mapping.y_at_pitch(note.pitch());
                             let note_bottom = y + self.pitch_row_height;
@@ -3067,7 +3092,7 @@ impl canvas::Program<Message> for PianoRoll<'_> {
             .item
             .notes()
             .iter()
-            .filter(|note| self.snap.channel_visible(note.channel()))
+            .filter(|note| self.snap.note_visible(note.channel()))
         {
             if note.pitch() > self.high_pitch
                 || note.pitch() < self.high_pitch.saturating_sub(self.pitch_rows - 1)
@@ -3253,7 +3278,7 @@ impl PianoRoll<'_> {
         self.item
             .notes()
             .iter()
-            .filter(|note| self.snap.channel_visible(note.channel()))
+            .filter(|note| self.snap.note_visible(note.channel()))
             .cloned()
             .collect()
     }
@@ -3330,7 +3355,7 @@ impl PianoRoll<'_> {
             .notes()
             .iter()
             .rev()
-            .filter(|note| self.snap.channel_visible(note.channel()))
+            .filter(|note| self.snap.note_visible(note.channel()))
         {
             let duration = visible_note_duration(self.item, note, note.tick());
             for occurrence_tick in source_event_occurrences(
@@ -3366,7 +3391,7 @@ impl PianoRoll<'_> {
             .notes()
             .iter()
             .rev()
-            .filter(|note| self.snap.channel_visible(note.channel()))
+            .filter(|note| self.snap.note_visible(note.channel()))
             .flat_map(|note| {
                 let duration = visible_note_duration(self.item, note, note.tick());
                 source_event_occurrences(
@@ -3837,6 +3862,20 @@ mod tests {
                 .is_none()
         );
 
+        roll.snap.channel_selection = MidiEditorChannelSelection::AllChannels;
+        roll.snap.event_type_filter = MidiEditorEventTypeFilter::ControlChange;
+        assert!(
+            roll.note_at_point(Point::new(2.0, 9.0), false, 500.0)
+                .is_none()
+        );
+        roll.snap.filter_enabled = false;
+        assert!(
+            roll.note_at_point(Point::new(2.0, 9.0), false, 500.0)
+                .is_some()
+        );
+        roll.snap.filter_enabled = true;
+        roll.snap.event_type_filter = MidiEditorEventTypeFilter::AllEvents;
+
         roll.snap.channel_selection = MidiEditorChannelSelection::Multichannel;
         roll.snap.filter_channels = 0b0100;
         roll.snap.filter_inverted = true;
@@ -3912,7 +3951,7 @@ mod tests {
             filter_channels: 0b10,
             ..MidiSnap::default()
         };
-        let controller_lane = ControllerLane {
+        let mut controller_lane = ControllerLane {
             item,
             item_id,
             selected: &HashSet::new(),
@@ -3935,6 +3974,20 @@ mod tests {
                 .map(|(index, _)| index),
             Some(1)
         );
+        controller_lane.snap.event_type_filter = MidiEditorEventTypeFilter::Notes;
+        assert!(
+            controller_lane
+                .closest_point(Point::new(96.0, controller_y(64, 72.0)))
+                .is_none()
+        );
+        controller_lane.snap.event_type_filter = MidiEditorEventTypeFilter::ControlChange;
+        assert_eq!(
+            controller_lane
+                .closest_point(Point::new(96.0, controller_y(64, 72.0)))
+                .map(|(index, _)| index),
+            Some(1)
+        );
+        controller_lane.snap = snap;
 
         let inverted_snap = MidiSnap {
             filter_channels: 0b10,
@@ -3957,7 +4010,7 @@ mod tests {
                 .is_none()
         );
 
-        let pitch_bend_lane = PitchBendLane {
+        let mut pitch_bend_lane = PitchBendLane {
             item,
             item_id,
             selected: &HashSet::new(),
@@ -3979,6 +4032,20 @@ mod tests {
                 .map(|(index, _)| index),
             Some(1)
         );
+        pitch_bend_lane.snap.event_type_filter = MidiEditorEventTypeFilter::Notes;
+        assert!(
+            pitch_bend_lane
+                .closest_point(Point::new(96.0, pitch_bend_y(8_192, 72.0)))
+                .is_none()
+        );
+        pitch_bend_lane.snap.event_type_filter = MidiEditorEventTypeFilter::Pitch;
+        assert_eq!(
+            pitch_bend_lane
+                .closest_point(Point::new(96.0, pitch_bend_y(8_192, 72.0)))
+                .map(|(index, _)| index),
+            Some(1)
+        );
+        pitch_bend_lane.snap = snap;
 
         let inverted_pitch_bend_lane = PitchBendLane {
             snap: inverted_snap,

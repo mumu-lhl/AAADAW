@@ -1,0 +1,14 @@
+build_id	59cb80e57dc54292b25558be33a1b619ccb568d7
+binary_sha256	6b63619599cc55599121c4656973dfbf7518b6e2cad0d1b5c63a5ffe9bb6787f
+project_sha256	7c963f48227e83548cceeb5ab29a5773a3f0a16fd7119fe7e90eb402c24f3d47
+project_generator	crates/aaadaw/examples/midi_channel_filter_demo.rs
+runtime	Linux AAADAW nightly Cranelift; Xvfb :296; 1280x800
+notes_channel_pitch_tick	1,60,0;2,62,960;3,64,1920;1,65,2880;2,67,3840;3,69,4800
+cc_number_channel_tick_value	1,1,0,64;2,1,1920,96;3,1,3840,32
+pitch_channel_tick_value	1,0,8192;2,1920,12288;3,3840,4096
+case	Show only	Channels	Event type	Invert	Piano roll note count	Active lane result
+all-default	false	All channels	<all events>	false	6	all modeled events visible
+note	true	All channels	Note	false	6	velocity lane displays notes
+cc	true	All channels	Control Change (CC)	false	0	Mod CC1 lane displays three controller points
+pitch	true	All channels	Pitch	false	0	Pitch Bend lane displays three bend events
+note-inverted	true	All channels	Note	true	0	Pitch Bend events pass the complemented filter

@@ -12360,6 +12360,31 @@ fn midi_editor_multichannel_invert_shows_the_complement_and_drops_hidden_selecti
         HashSet::from([note_ids[0], note_ids[2]])
     );
     assert!(app.midi_editor_selected_notes.is_empty());
+
+    let _ = app.update(Message::OpenMidiEditorFilter);
+    assert!(app.midi_editor_filter_dialog_open);
+    assert_eq!(app.midi_editor_filter_channels, u16::MAX);
+    app.midi_editor_channel_selection = super::messages::MidiEditorChannelSelection::AllChannels;
+    app.midi_editor_selected_notes = HashSet::from([note_ids[0], note_ids[1], note_ids[2]]);
+    let _ = app.update(Message::SetMidiEditorEventTypeFilter(
+        super::messages::MidiEditorEventTypeFilter::Notes,
+    ));
+    assert_eq!(
+        app.visible_midi_note_ids(),
+        HashSet::from([note_ids[0], note_ids[1], note_ids[2]])
+    );
+    let _ = app.update(Message::ToggleMidiEditorFilterInvert);
+    assert!(app.visible_midi_note_ids().is_empty());
+    assert!(app.midi_editor_selected_notes.is_empty());
+
+    let _ = app.update(Message::ToggleMidiEditorChannelFilter);
+    let _ = app.update(Message::SetMidiEditorEventTypeFilter(
+        super::messages::MidiEditorEventTypeFilter::ControlChange,
+    ));
+    assert_eq!(
+        app.visible_midi_note_ids(),
+        HashSet::from([note_ids[0], note_ids[1], note_ids[2]])
+    );
 }
 
 #[test]

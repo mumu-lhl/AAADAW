@@ -121,9 +121,10 @@ mod view;
 mod x11_plugin_editor;
 
 pub(crate) use messages::{
-    MainMenu, MainWorkspace, MenuNavigation, Message, MidiEditorChannelSelection, MidiEditorLane,
-    MidiEditorTool, MidiHumanizeScope, MidiQuantizeOperation, MidiQuantizeScope, MobilePanel,
-    PathPickerTarget, PendingProjectTransition, SettingsCategory, TimeMapTab,
+    MainMenu, MainWorkspace, MenuNavigation, Message, MidiEditorChannelSelection,
+    MidiEditorEventKind, MidiEditorEventTypeFilter, MidiEditorLane, MidiEditorTool,
+    MidiHumanizeScope, MidiQuantizeOperation, MidiQuantizeScope, MobilePanel, PathPickerTarget,
+    PendingProjectTransition, SettingsCategory, TimeMapTab,
 };
 
 #[derive(Clone)]
@@ -487,9 +488,11 @@ struct App {
     midi_editor_lane: MidiEditorLane,
     midi_editor_tool: MidiEditorTool,
     midi_editor_channel_selection: MidiEditorChannelSelection,
+    midi_editor_event_type_filter: MidiEditorEventTypeFilter,
     midi_editor_draw_channel: u8,
     midi_editor_filter_enabled: bool,
     midi_editor_filter_channels: u16,
+    midi_editor_filter_channels_initialized: bool,
     midi_editor_filter_inverted: bool,
     midi_editor_filter_dialog_open: bool,
     midi_editor_origin_tick: u64,
@@ -1492,14 +1495,17 @@ impl App {
         let filter_enabled = self.midi_editor_filter_enabled;
         let filter_channels = self.midi_editor_filter_channels;
         let filter_inverted = self.midi_editor_filter_inverted;
+        let event_type_filter = self.midi_editor_event_type_filter;
         item.notes()
             .iter()
             .filter(|note| {
-                selection.shows_channel(
+                selection.shows_event(
                     note.channel(),
                     filter_enabled,
                     filter_channels,
                     filter_inverted,
+                    event_type_filter,
+                    MidiEditorEventKind::Note,
                 )
             })
             .map(|note| note.id())
@@ -3619,6 +3625,7 @@ impl App {
                             self.midi_editor_filter_channels =
                                 1_u16 << self.midi_editor_draw_channel.min(15);
                         }
+                        self.midi_editor_filter_channels_initialized = true;
                         self.midi_editor_filter_dialog_open = true;
                     }
                 }
@@ -3633,15 +3640,28 @@ impl App {
             }
             Message::ToggleMidiEditorFilterChannel(channel) if channel < 16 => {
                 self.midi_editor_filter_channels ^= 1_u16 << channel;
+                self.midi_editor_filter_channels_initialized = true;
                 self.retain_visible_midi_note_selection();
             }
             Message::ToggleMidiEditorFilterChannel(_) => {}
             Message::SetMidiEditorFilterChannelsAll(all) => {
                 self.midi_editor_filter_channels = if all { u16::MAX } else { 0 };
+                self.midi_editor_filter_channels_initialized = true;
                 self.retain_visible_midi_note_selection();
             }
             Message::ToggleMidiEditorFilterInvert => {
                 self.midi_editor_filter_inverted = !self.midi_editor_filter_inverted;
+                self.retain_visible_midi_note_selection();
+            }
+            Message::OpenMidiEditorFilter => {
+                if !self.midi_editor_filter_channels_initialized {
+                    self.midi_editor_filter_channels = u16::MAX;
+                    self.midi_editor_filter_channels_initialized = true;
+                }
+                self.midi_editor_filter_dialog_open = true;
+            }
+            Message::SetMidiEditorEventTypeFilter(event_type_filter) => {
+                self.midi_editor_event_type_filter = event_type_filter;
                 self.retain_visible_midi_note_selection();
             }
             Message::CloseMidiEditorFilter => self.midi_editor_filter_dialog_open = false,

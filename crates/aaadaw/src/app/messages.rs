@@ -169,6 +169,52 @@ pub(crate) enum MidiEditorChannelSelection {
     Multichannel,
 }
 
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum MidiEditorEventTypeFilter {
+    #[default]
+    AllEvents,
+    Notes,
+    ControlChange,
+    Pitch,
+}
+
+impl MidiEditorEventTypeFilter {
+    pub(crate) const OPTIONS: [Self; 4] = [
+        Self::AllEvents,
+        Self::Notes,
+        Self::ControlChange,
+        Self::Pitch,
+    ];
+
+    pub(crate) fn matches(self, kind: MidiEditorEventKind) -> bool {
+        matches!(
+            (self, kind),
+            (Self::AllEvents, _)
+                | (Self::Notes, MidiEditorEventKind::Note)
+                | (Self::ControlChange, MidiEditorEventKind::ControlChange)
+                | (Self::Pitch, MidiEditorEventKind::Pitch)
+        )
+    }
+}
+
+impl std::fmt::Display for MidiEditorEventTypeFilter {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(match self {
+            Self::AllEvents => "<all events>",
+            Self::Notes => "Note",
+            Self::ControlChange => "Control Change (CC)",
+            Self::Pitch => "Pitch",
+        })
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum MidiEditorEventKind {
+    Note,
+    ControlChange,
+    Pitch,
+}
+
 impl MidiEditorChannelSelection {
     pub(crate) const OPTIONS: [Self; 18] = [
         Self::AllChannels,
@@ -191,28 +237,28 @@ impl MidiEditorChannelSelection {
         Self::Multichannel,
     ];
 
-    pub(crate) fn shows_channel(
+    pub(crate) fn shows_event(
         self,
         channel: u8,
         filter_enabled: bool,
         filter_channels: u16,
         filter_inverted: bool,
+        event_type: MidiEditorEventTypeFilter,
+        event_kind: MidiEditorEventKind,
     ) -> bool {
         if !filter_enabled {
             return true;
         }
-        let passes = match self {
+
+        let channel_matches = match self {
             Self::AllChannels => true,
             Self::Channel(selected) => channel == selected,
             Self::Multichannel => {
                 filter_channels & (1_u16.checked_shl(u32::from(channel)).unwrap_or(0)) != 0
             }
         };
-        if self == Self::Multichannel && filter_inverted {
-            !passes
-        } else {
-            passes
-        }
+        let passes = channel_matches && event_type.matches(event_kind);
+        if filter_inverted { !passes } else { passes }
     }
 }
 
@@ -497,6 +543,8 @@ pub(crate) enum Message {
     ToggleMidiEditorFilterChannel(u8),
     SetMidiEditorFilterChannelsAll(bool),
     ToggleMidiEditorFilterInvert,
+    OpenMidiEditorFilter,
+    SetMidiEditorEventTypeFilter(MidiEditorEventTypeFilter),
     CloseMidiEditorFilter,
     MidiEditorFeedback(String),
     SelectMidiNotes(HashSet<NoteId>),
@@ -906,18 +954,87 @@ pub(crate) struct FreezeTrackResult {
 
 #[cfg(test)]
 mod midi_channel_selection_tests {
-    use super::MidiEditorChannelSelection;
+    use super::{MidiEditorChannelSelection, MidiEditorEventKind, MidiEditorEventTypeFilter};
 
     #[test]
     fn channel_filter_matches_all_single_and_multiple_channel_modes() {
-        assert!(MidiEditorChannelSelection::AllChannels.shows_channel(15, true, 0, false));
-        assert!(!MidiEditorChannelSelection::Channel(2).shows_channel(1, true, u16::MAX, false));
-        assert!(MidiEditorChannelSelection::Channel(2).shows_channel(2, true, 0, true));
-        assert!(!MidiEditorChannelSelection::Multichannel.shows_channel(1, true, 0b0101, false));
-        assert!(MidiEditorChannelSelection::Multichannel.shows_channel(2, true, 0b0100, false));
-        assert!(!MidiEditorChannelSelection::Multichannel.shows_channel(0, true, 0b0101, true));
-        assert!(MidiEditorChannelSelection::Multichannel.shows_channel(1, true, 0b0101, true));
-        assert!(MidiEditorChannelSelection::Multichannel.shows_channel(15, false, 0, true));
+        let shows_note = |selection: MidiEditorChannelSelection,
+                          channel: u8,
+                          enabled: bool,
+                          channels: u16,
+                          inverted: bool| {
+            selection.shows_event(
+                channel,
+                enabled,
+                channels,
+                inverted,
+                MidiEditorEventTypeFilter::AllEvents,
+                MidiEditorEventKind::Note,
+            )
+        };
+        assert!(shows_note(
+            MidiEditorChannelSelection::AllChannels,
+            15,
+            true,
+            0,
+            false
+        ));
+        assert!(!shows_note(
+            MidiEditorChannelSelection::Channel(2),
+            1,
+            true,
+            u16::MAX,
+            false
+        ));
+        assert!(shows_note(
+            MidiEditorChannelSelection::Channel(2),
+            2,
+            true,
+            0,
+            false
+        ));
+        assert!(!shows_note(
+            MidiEditorChannelSelection::Multichannel,
+            1,
+            true,
+            0b0101,
+            false
+        ));
+        assert!(shows_note(
+            MidiEditorChannelSelection::Multichannel,
+            2,
+            true,
+            0b0100,
+            false
+        ));
+        assert!(!shows_note(
+            MidiEditorChannelSelection::Multichannel,
+            0,
+            true,
+            0b0101,
+            true
+        ));
+        assert!(shows_note(
+            MidiEditorChannelSelection::Multichannel,
+            1,
+            true,
+            0b0101,
+            true
+        ));
+        assert!(shows_note(
+            MidiEditorChannelSelection::Multichannel,
+            15,
+            false,
+            0,
+            true
+        ));
+        assert!(!shows_note(
+            MidiEditorChannelSelection::AllChannels,
+            15,
+            true,
+            u16::MAX,
+            true
+        ));
     }
 
     #[test]
@@ -939,5 +1056,65 @@ mod midi_channel_selection_tests {
             MidiEditorChannelSelection::OPTIONS[17].to_string(),
             "Multichannel"
         );
+    }
+
+    #[test]
+    fn event_type_filter_covers_modeled_events_and_inverts_the_combined_match() {
+        assert!(MidiEditorEventTypeFilter::AllEvents.matches(MidiEditorEventKind::Note));
+        assert!(MidiEditorEventTypeFilter::AllEvents.matches(MidiEditorEventKind::ControlChange));
+        assert!(MidiEditorEventTypeFilter::AllEvents.matches(MidiEditorEventKind::Pitch));
+        assert!(MidiEditorEventTypeFilter::Notes.matches(MidiEditorEventKind::Note));
+        assert!(!MidiEditorEventTypeFilter::Notes.matches(MidiEditorEventKind::ControlChange));
+        assert!(
+            MidiEditorEventTypeFilter::ControlChange.matches(MidiEditorEventKind::ControlChange)
+        );
+        assert!(MidiEditorEventTypeFilter::Pitch.matches(MidiEditorEventKind::Pitch));
+        assert_eq!(MidiEditorEventTypeFilter::OPTIONS.len(), 4);
+        assert_eq!(
+            MidiEditorEventTypeFilter::OPTIONS[0].to_string(),
+            "<all events>"
+        );
+        assert_eq!(
+            MidiEditorEventTypeFilter::OPTIONS[2].to_string(),
+            "Control Change (CC)"
+        );
+
+        let selection = MidiEditorChannelSelection::Multichannel;
+        let selected_channel_note = (1, MidiEditorEventKind::Note);
+        let selected_channel_cc = (1, MidiEditorEventKind::ControlChange);
+        let other_channel_note = (2, MidiEditorEventKind::Note);
+        let matches_filter = |(channel, kind), inverted| {
+            selection.shows_event(
+                channel,
+                true,
+                0b0010,
+                inverted,
+                MidiEditorEventTypeFilter::Notes,
+                kind,
+            )
+        };
+        assert!(matches_filter(selected_channel_note, false));
+        assert!(!matches_filter(selected_channel_cc, false));
+        assert!(!matches_filter(other_channel_note, false));
+        assert!(!matches_filter(selected_channel_note, true));
+        assert!(matches_filter(selected_channel_cc, true));
+        assert!(matches_filter(other_channel_note, true));
+
+        assert!(!MidiEditorChannelSelection::AllChannels.shows_event(
+            0,
+            true,
+            u16::MAX,
+            true,
+            MidiEditorEventTypeFilter::Notes,
+            MidiEditorEventKind::Note,
+        ));
+        assert!(MidiEditorChannelSelection::AllChannels.shows_event(
+            0,
+            true,
+            u16::MAX,
+            true,
+            MidiEditorEventTypeFilter::Notes,
+            MidiEditorEventKind::Pitch,
+        ));
     }
 }

@@ -1,0 +1,12 @@
+version	7.82/linux-x86_64
+theme	Default_7.0.ReaperThemeZip
+probe_script	scripts/reaper_parity/probe-midi-channel-editor.lua
+probe_project	target/midi-channel-event-type/midi-channel.aaadaw
+event_type_menu	<all events>;Note;Poly Aftertouch;Control Change (CC);Program Change (PC);Channel Pressure;Pitch;Sysex/Meta
+filter_enabled	true
+selected_channels	All channels (all 16 channel boxes checked)
+case	Event type	Invert	Visible note events	Visible active-lane events
+note	Note	false	4	notes visible; CC/Pitch lane content hidden by type filter
+cc	Control Change (CC)	false	0	3 CC20 points visible in CC20 lane
+pitch	Pitch	false	0	3 Pitch Bend events visible in Pitch lane
+note-inverted	Note	true	0	3 Pitch Bend events visible; event match is complemented

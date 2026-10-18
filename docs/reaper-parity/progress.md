@@ -2189,3 +2189,11 @@ REAPER 7.82 / Default 7 的 `Filter Events` 窗口实测：勾选 Channel 1 和 
 AAADAW 的 Multichannel 面板新增原厂同名 Show only 与 Invert 控件；Invert 对当前通道集合取反并驱动音符、CC、Pitch Bend 的显示和命中测试，改变筛选后清除变为隐藏的音符选择。App 回归验证互补集合与选中项清理；Piano Roll、CC 和 Pitch Bend lane 分别覆盖反向命中路径。nightly Cranelift 当前二进制 Build ID `42006dc9d7d0b4c8d2caa280cb0457955388dc5d`，SHA-256 `f3d657dca6cfdb19ff6e4300e3962f46df80e4a2fe7047567d78c4b52efd902c`；Xvfb :294 实窗截图显示同一通道集合下 4→2 个可见音符，截图哈希与原厂参考均列入 fixture manifest。
 
 AAADAW App Nextest **768/768，0 skipped**、all-target Clippy (`-D warnings`)、`cargo fmt --all -- --check` 通过。`MIDI-CHANNEL-VIEW-001` 保持 `in_progress`：原厂 Solo、参数/值/位置/长度/事件类型条件、轨道列表、通道颜色及单独浮动窗口和完整几何仍未实现；UI-018、UI-019 与 P7 继续开放。
+
+### 2026-10-18 MIDI Editor Filter Events 事件类型
+
+Linux REAPER 7.82 / Default 7 原厂 `Filter Events` 实测提供 `<all events>`、Note、Poly Aftertouch、Control Change (CC)、Program Change (PC)、Channel Pressure、Pitch、Sysex/Meta 八类事件条件。保持全部 16 个通道勾选并启用 Show only 时，Note 显示 4 个音符，CC 显示 3 个 CC20 点，Pitch 显示 3 个 Pitch Bend；Note + Invert 隐藏全部音符并让 Pitch Bend 通过，说明 Invert 对通道和事件类型的组合条件整体取反。原厂菜单、三种类型结果、反向结果、逐事件读数及桌面验证文件已收入 [MIDI channel fixture manifest](../verification/reaper-parity/fixtures/midi-channel-editor-ui.tsv)。
+
+AAADAW 在 All channels 模式下增加 `Filter events…` 入口，首次打开将 16 个通道全部勾选。事件类型已覆盖 `<all events>`、Note、Control Change (CC)、Pitch；默认 `<all events>`。统一谓词驱动音符计数、绘制/命中、CC 与 Pitch Bend lane 绘制/命中；Invert 取反组合匹配，修改筛选时会清除被隐藏音符的选择。可复现项目生成器及六个音符、三条 CC1、三条 Pitch Bend 的清单记录在同一 fixture manifest。Poly Aftertouch、Program Change、Channel Pressure、Sysex/Meta、Solo、参数/值/位置/长度筛选、轨道列表、通道颜色、单独窗口控件和完整几何均未实现，本项继续为 `in_progress`。
+
+nightly Cranelift 桌面 Build ID `59cb80e57dc54292b25558be33a1b619ccb568d7`、SHA-256 `6b63619599cc55599121c4656973dfbf7518b6e2cad0d1b5c63a5ffe9bb6787f` 在 Xvfb 1280×800 实际运行。截图捕获了类型菜单、选择项、零音符计数以及 CC/Pitch lane。当前 detached editor 的 Xvfb 截图同时含有主窗口 Arrangement 预览的浅绿色音符像素，因此不把截图当作 Piano Roll 空白像素证明；组合谓词、计数和 hit-test 由回归测试验证。全工作区 Nextest **1439/1439，0 skipped**（Xvfb）、AAADAW all-target Clippy (`-D warnings`)、`cargo fmt --all -- --check`、`git diff --check` 均通过；parity matrix 校验为 **107 项 / 15 列 / 唯一 ID**，fixture manifest **36 个条目**全部存在且 SHA-256 一致。
