@@ -2424,3 +2424,5 @@ AAADAW 的 SMF 解码层仍保留源包，项目导入转换则合并仍开放�
 AAADAW 项目导入现保留解码层的原始包边界，并按上述规则归一化项目事件：合并紧邻的延续包、将事件移到最终包位置、补全 F0 结束字节、遇到新事件/新 F0 时结束旧消息，并丢弃未匹配 F7。Core 导入测试 13/13 通过，覆盖轨尾、CC/Meta 打断、新 F0、无终止字节 continuation 和孤立 F7。MIDI Event Properties 对直接存储的 F7 事件仍保持原始状态编辑行为；文件导入归一化不改变这一路径。`MIDI-FILE-IMPORT-001`、`MIDI-EVENT-PROPERTIES-001` 与 P7 保持 `in_progress`。
 
 当前 Cranelift nightly Linux 桌面构建通过受控 portal 导入 F0@240 + Text Meta@360 + F7@480 fixture；实窗 Event List 显示 Track Name、`F0 43 12 F7` SysEx、Text Meta 和结束行，没有独立 F7 行。截图、Build ID、SHA-256 与 fixture 哈希见同一 manifest。AAADAW desktop Cranelift build、Core 定向 Nextest、strict Core Clippy、stable fmt 与 diff check 均通过。
+
+另一个 REAPER 原厂探针在新 MIDI take 上通过 `MIDI_SetAllEvts` 写入选中 raw event `F7 34 F7`，再排序并调用 `MIDI_GetAllEvts`。读回只剩终止 All Notes Off，Event List 实窗也只有结束行；Action 40004 打开的属性表为空。readback、Event List 和空属性窗截图已登记。REAPER 在该项目 API 路径不保存独立 F7 行；AAADAW 仍保留对直接/旧项目 F7 状态的属性编辑以兼容已有数据，此行为不作为原厂文件导入 parity 通过项。

@@ -136,3 +136,10 @@ aaadaw_sysex_f7_edge_build_id	43b9c452558714abda82b0ffa7906e86dbce039e
 aaadaw_sysex_f7_edge_sha256	820716d08d23ddf070423d34179459ef5e1d19bbb81c4d25b55b8fa987290249
 aaadaw_sysex_f7_edge_assertion	The four Event List rows are Track name, F0 43 12 F7 SysEx at 1.1.25, Text event x at 1.1.37, and the terminal end row; the source F7 packet after Meta is not retained as another row.
 aaadaw_sysex_f7_edge_verification	Native input fixture fixtures/midi-event-properties-sysex-f7-after-meta.mid; current-build desktop import through the controlled portal; screenshot and binary hashes above; project_import_closes_sysex_before_channel_and_meta_events_and_drops_later_f7; MIDI import Nextest 13/13; strict aaadaw-core Clippy -D warnings; nightly cargo build with Cranelift backend; stable fmt and diff checks.
+scripts/reaper_parity/probe-midi-sysex-f7-direct-properties.lua	Native Linux REAPER probe that attempts to write a standalone F7 34 F7 event through MIDI_SetAllEvts, sorts and reads it back, then opens Event List and action 40004.
+fixtures/midi-event-properties-sysex-f7-direct-native.tsv	365203bf546369f8ec992cbca3384f0c0cb2e36389b14b2087b867e5845285e3
+fixtures/midi-event-list-sysex-f7-direct-native.png	c0fa56935b7b053e605bbe37ab638d6721ae92cc56036af8695c3d800d51c45f
+fixtures/midi-event-properties-sysex-f7-direct-native.png	3aac4c3a058cd53d275fbd12632cc3d6c2e70251e8591c9cec8a60ae9ce7ea97
+native_sysex_f7_direct_environment	Linux REAPER 7.82 / Default 7, Xvfb :460 at 1280×800, isolated profile; a fresh MIDI take was written through MIDI_SetAllEvts and opened in Event List.
+native_sysex_f7_direct_assertion	MIDI_SetAllEvts accepted the call but, after MIDI_Sort, MIDI_GetAllEvts contained only the terminal B0 7B 00 All Notes Off event; the Event List has no standalone F7 row and action 40004 displays a blank form with no selected event.
+native_sysex_f7_direct_verification	scripts/reaper_parity/probe-midi-sysex-f7-direct-properties.lua; readback and both actual REAPER window screenshots above; this establishes that the direct-F7 editor path retained by AAADAW has no native standalone row through this API.

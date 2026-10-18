@@ -1,0 +1,5 @@
+version	7.82/linux-x86_64
+theme	Default_7.0.ReaperThemeZip
+source_event	F7 34 F7 at tick 480
+native_event_readback	480:0:B0 7B 00
+properties_action	40004
