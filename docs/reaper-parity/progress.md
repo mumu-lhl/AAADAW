@@ -2532,3 +2532,11 @@ REAPER 7.82 / Default 7 在 Linux 新配置中打开现有 MIDI item，实按 `E
 AAADAW 空白已打开 MIDI item 现在绘制默认稳定音高网格；空白格单击不改工程，双击插入默认网格长度音符，拖动按网格跨度插入。Cranelift 桌面实窗捕获打开、单击、双击和拖动四种状态；最新 binary Build ID 与 SHA-256、10 幅新增参照/产品截图的哈希均登记在 manifest。AAADAW 主程序测试 **794/794** 通过，含空白 pitch grid、单击无编辑、双击插入和拖动时长回归；Cranelift desktop build、stable all-target Clippy（`-D warnings`）、fmt 与 diff check 通过。
 
 本次只对齐了空白 item 的网格可见性和在默认 1/4 网格上的插入手势，不据此推定原厂音高映射、移动/调整长度、滚轮缩放、音域策略、多 item、loop source 边界或菜单入口等价。`MIDI-INLINE-EDITOR-001`、UI-020 与 P7 继续 `in_progress`。
+
+### 2026-10-18 Arrange inline MIDI 已选音符组移动
+
+在 Linux REAPER 7.82 / Default 7 中以 `midi-note-quantize-before.rpp` 实测 1/32（120 tick）网格：已选 C4/D4/F4 原位于 100/350/900 tick，未选 E4 位于 550；拖动 C4 至 840 后，REAPER 将其余已选音符同步移至 1090/1640，保留 +250/+550 相对偏移、音高和 120 tick 音长，未选 E4 不动。原厂前后窗口截图及保存后的 RPP 读回已归档。
+
+AAADAW inline MIDI 增加每个 item 独立的音符选择、Ctrl 点击增删、选中音符蓝色高亮和整组选中音符的共同时间/音高位移；非循环 MIDI source 上整组时间与音高增量共同限界，编辑通过一次 `EditMidiNotes` 列表提交。Cranelift 桌面程序实窗按相同 tick/网格操作，保存后读回为 840/1090/1640，未选 E4 仍为 550；选区和移动前后截图、工程文件及 SHA-256 在 [inline editor fixture manifest](../verification/reaper-parity/fixtures/midi-inline-editor.tsv)。新增控制点击选择及原厂 tick 值组移动回归后，AAADAW 桌面测试 **796/796** 通过；Stable all-target Clippy (`-D warnings`)、fmt 与 diff 检查通过。
+
+`MIDI-INLINE-EDITOR-001`、UI-020 与 P7 继续 `in_progress`：REAPER 本轮只验证了已选音符的水平组移动，逐音音高映射、resize 手柄、loop-source 边界、多 item 选择与鼠标缩放仍未对照；不得据该组用例判定其他 MIDI 编辑手势已对齐。
