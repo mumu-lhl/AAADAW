@@ -2426,3 +2426,9 @@ AAADAW 项目导入现保留解码层的原始包边界，并按上述规则归�
 当前 Cranelift nightly Linux 桌面构建通过受控 portal 导入 F0@240 + Text Meta@360 + F7@480 fixture；实窗 Event List 显示 Track Name、`F0 43 12 F7` SysEx、Text Meta 和结束行，没有独立 F7 行。截图、Build ID、SHA-256 与 fixture 哈希见同一 manifest。AAADAW desktop Cranelift build、Core 定向 Nextest、strict Core Clippy、stable fmt 与 diff check 均通过。
 
 另一个 REAPER 原厂探针在新 MIDI take 上通过 `MIDI_SetAllEvts` 写入选中 raw event `F7 34 F7`，再排序并调用 `MIDI_GetAllEvts`。读回只剩终止 All Notes Off，Event List 实窗也只有结束行；Action 40004 打开的属性表为空。readback、Event List 和空属性窗截图已登记。REAPER 在该项目 API 路径不保存独立 F7 行；AAADAW 仍保留对直接/旧项目 F7 状态的属性编辑以兼容已有数据，此行为不作为原厂文件导入 parity 通过项。
+
+### 2026-10-18 MIDI 同 tick 跨类别顺序基线
+
+两份反向排序的 Type 0 fixture 在 tick 240 各包含 SysEx、Text Meta、Pitch Bend、CC、Program Change、Poly Aftertouch、Channel Pressure 和 Note On。Linux REAPER 7.82 / Default 7 的 `MIDI_GetAllEvts` 两次读回均显示：Meta/SysEx 在通道事件前，Program Change 在其他通道事件前，剩余非音符通道事件沿用源顺序，Note On 最后。输入、Lua 探针、读回和文件 SHA-256 记录在 [same-tick order fixture manifest](../verification/reaper-parity/fixtures/midi-file-import-same-tick-order.tsv)。
+
+使用同一正向 fixture 检查当前 Cranelift nightly AAADAW desktop build。实际 Event List 截图显示其固定类别排序与 REAPER 不一致；两张窗口截图及 Build ID `43b9c452558714abda82b0ffa7906e86dbce039e`、binary SHA-256 `820716d08d23ddf070423d34179459ef5e1d19bbb81c4d25b55b8fa987290249` 已归档。`MIDI-FILE-IMPORT-001` 保持 `in_progress`。后续实现须把源顺序元数据带过导入、编辑器行排序、snapshot 与 SQLite 保存/重开，并覆盖相反源序 fixture；只改固定显示优先级不足以验收。
