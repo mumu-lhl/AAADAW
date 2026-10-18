@@ -5933,6 +5933,15 @@ impl App {
             }
             Message::OpenTrackFxChain(track_id) => task = self.open_track_fx_chain(track_id),
             Message::OpenMidiEditor(item_id) => task = self.open_midi_editor(item_id),
+            Message::ToggleMidiInlineEditors => {
+                self.timeline.toggle_inline_midi_editors(false);
+            }
+            Message::CloseMidiInlineEditors => {
+                self.timeline.toggle_inline_midi_editors(true);
+            }
+            Message::SetMidiInlineEditor(item_id, open) => {
+                self.timeline.set_inline_midi_editor(item_id, open);
+            }
             Message::CloseMidiEditor => {
                 self.release_midi_preview();
                 self.midi_quantize_dialog = None;

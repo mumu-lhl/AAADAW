@@ -53,6 +53,8 @@ pub(crate) enum CommandId {
     ToggleProjectRegionsAndMarkersOnRuler,
     ToggleMixerPanel,
     AddMidiItem,
+    ToggleMidiInlineEditors,
+    CloseMidiInlineEditors,
     MidiNotesUpSemitone,
     MidiNotesDownSemitone,
     MidiNotesUpOctave,
@@ -203,6 +205,8 @@ enum CommandKind {
     ToggleProjectRegionsAndMarkersOnRuler,
     ToggleMixerPanel,
     AddMidiItem,
+    ToggleMidiInlineEditors,
+    CloseMidiInlineEditors,
     MidiNotesUpSemitone,
     MidiNotesDownSemitone,
     MidiNotesUpOctave,
@@ -408,6 +412,7 @@ const MIDI_NOTES_DOWN_SEMITONE_IGNORE_SCALE_SHORTCUT: &[Shortcut] = &[
 const MIDI_TRANSPOSE_NOTES_SHORTCUT: &[Shortcut] = &[Shortcut::character('t', Modifiers::NONE)];
 const MIDI_EDITOR_PIANO_ROLL_SHORTCUT: &[Shortcut] = &[Shortcut::character('1', Modifiers::ALT)];
 const MIDI_EDITOR_EVENT_LIST_SHORTCUT: &[Shortcut] = &[Shortcut::character('3', Modifiers::ALT)];
+const MIDI_INLINE_EDITORS_SHORTCUT: &[Shortcut] = &[Shortcut::character('e', Modifiers::NONE)];
 const MIDI_EVENT_PROPERTIES_SHORTCUT: &[Shortcut] = &[Shortcut::named(Named::F2, Modifiers::CTRL)];
 
 const COMMANDS: &[CommandDefinition] = &[
@@ -1194,6 +1199,26 @@ const COMMANDS: &[CommandDefinition] = &[
         label: "Item properties…",
         aliases: &["toggle media item properties"],
         shortcuts: &[Shortcut::named(Named::F2, Modifiers::NONE)],
+        destructive: false,
+        separator_before: false,
+    },
+    CommandDefinition {
+        kind: CommandKind::ToggleMidiInlineEditors,
+        menu: Some(MainMenu::Item),
+        category: "Item",
+        label: "Item: Open item inline editors",
+        aliases: &["open midi inline editor", "toggle midi inline editor"],
+        shortcuts: MIDI_INLINE_EDITORS_SHORTCUT,
+        destructive: false,
+        separator_before: false,
+    },
+    CommandDefinition {
+        kind: CommandKind::CloseMidiInlineEditors,
+        menu: None,
+        category: "Item",
+        label: "Item: Close item inline editors",
+        aliases: &["close midi inline editors"],
+        shortcuts: &[],
         destructive: false,
         separator_before: false,
     },
@@ -2760,6 +2785,8 @@ fn command_kind_id(kind: CommandKind) -> &'static str {
         }
         CommandKind::ToggleMixerPanel => "view.toggle-mixer",
         CommandKind::AddMidiItem => "insert.midi-item",
+        CommandKind::ToggleMidiInlineEditors => "item.toggle-midi-inline-editors",
+        CommandKind::CloseMidiInlineEditors => "item.close-midi-inline-editors",
         CommandKind::MidiNotesUpSemitone => "midi-editor.notes-up-semitone",
         CommandKind::MidiNotesDownSemitone => "midi-editor.notes-down-semitone",
         CommandKind::MidiNotesUpOctave => "midi-editor.notes-up-octave",
@@ -2996,6 +3023,8 @@ pub(super) fn dispatch(app: &mut App, command: CommandId) -> Task<Message> {
         }
         CommandId::ToggleMixerPanel => Message::ToggleMixerPanel,
         CommandId::AddMidiItem => Message::AddMidiItem,
+        CommandId::ToggleMidiInlineEditors => Message::ToggleMidiInlineEditors,
+        CommandId::CloseMidiInlineEditors => Message::CloseMidiInlineEditors,
         CommandId::MidiNotesUpSemitone | CommandId::MidiNotesUpSemitoneIgnoringScale => {
             Message::TransposeSelectedMidiNotes(1)
         }
@@ -3426,6 +3455,20 @@ fn command_enabled(app: &App, kind: CommandKind, track: Option<TrackState>) -> b
                         .any(|track| track.id() == selected_track && !track.is_bus())
                 })
         }
+        CommandKind::ToggleMidiInlineEditors => {
+            !project_edit_busy(app)
+                && app.timeline.selected_items.iter().any(|item_id| {
+                    app.project
+                        .midi_items()
+                        .iter()
+                        .any(|item| item.id() == *item_id)
+                })
+        }
+        CommandKind::CloseMidiInlineEditors => app
+            .timeline
+            .selected_items
+            .iter()
+            .any(|item_id| app.timeline.inline_midi_items.contains(item_id)),
         CommandKind::MidiNotesUpSemitone
         | CommandKind::MidiNotesDownSemitone
         | CommandKind::MidiNotesUpOctave
@@ -3809,6 +3852,8 @@ fn command_id(kind: CommandKind) -> CommandId {
         }
         CommandKind::ToggleMixerPanel => CommandId::ToggleMixerPanel,
         CommandKind::AddMidiItem => CommandId::AddMidiItem,
+        CommandKind::ToggleMidiInlineEditors => CommandId::ToggleMidiInlineEditors,
+        CommandKind::CloseMidiInlineEditors => CommandId::CloseMidiInlineEditors,
         CommandKind::MidiNotesUpSemitone => CommandId::MidiNotesUpSemitone,
         CommandKind::MidiNotesDownSemitone => CommandId::MidiNotesDownSemitone,
         CommandKind::MidiNotesUpOctave => CommandId::MidiNotesUpOctave,
@@ -4188,6 +4233,38 @@ mod macro_tests {
     fn destructive_actions_are_not_available_as_macro_steps() {
         assert!(!macro_step_ids().contains("item.delete-selected"));
         assert!(!macro_step_ids().contains("track.delete"));
+    }
+}
+
+#[cfg(test)]
+mod midi_inline_editor_command_tests {
+    use super::*;
+
+    #[test]
+    fn reaper_inline_editor_action_uses_e_and_has_stable_open_close_ids() {
+        let bindings = ShortcutBindings::new();
+        assert_eq!(
+            from_shortcut(&Key::Character("e"), Modifiers::NONE, &bindings, &[],),
+            Some(CommandId::ToggleMidiInlineEditors)
+        );
+        assert_eq!(
+            command_kind_id(CommandKind::ToggleMidiInlineEditors),
+            "item.toggle-midi-inline-editors"
+        );
+        assert_eq!(
+            command_kind_id(CommandKind::CloseMidiInlineEditors),
+            "item.close-midi-inline-editors"
+        );
+        assert!(
+            COMMANDS
+                .iter()
+                .any(|definition| definition.label == "Item: Open item inline editors")
+        );
+        assert!(
+            COMMANDS
+                .iter()
+                .any(|definition| definition.label == "Item: Close item inline editors")
+        );
     }
 }
 

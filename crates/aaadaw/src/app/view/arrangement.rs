@@ -847,6 +847,17 @@ fn item_context_menu<'a>(app: &'a App, item_id: aaadaw_core::ItemId) -> Element<
     }
     if is_midi {
         actions = actions.push(action_button(
+            if app.timeline.inline_midi_items.contains(&item_id) {
+                "Close inline editor"
+            } else {
+                "Open inline editor"
+            },
+            Message::SetMidiInlineEditor(
+                item_id,
+                !app.timeline.inline_midi_items.contains(&item_id),
+            ),
+        ));
+        actions = actions.push(action_button(
             "Open piano roll",
             Message::OpenMidiEditor(item_id),
         ));

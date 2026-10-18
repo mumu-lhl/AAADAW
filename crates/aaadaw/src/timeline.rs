@@ -1,6 +1,8 @@
 mod renderer;
 
-use aaadaw_core::{ItemId, MarkerId, Project, TempoCurve, TrackId, VolumeAutomationPoint};
+use aaadaw_core::{
+    ItemId, MarkerId, MidiNoteData, NoteId, Project, TempoCurve, TrackId, VolumeAutomationPoint,
+};
 use aaadaw_media::{AudioWaveform, WaveformPeak};
 use aaadaw_storage::{
     ArrangementTimeRangeState, ArrangementViewState, FxAutomationLaneViewState,
@@ -375,6 +377,8 @@ struct TimelineItem {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct MidiNotePreview {
+    id: NoteId,
+    data: MidiNoteData,
     tick: u64,
     duration: u64,
     pitch: u8,
@@ -543,6 +547,15 @@ impl TimelineCache {
                     .notes()
                     .iter()
                     .map(|note| MidiNotePreview {
+                        id: note.id(),
+                        data: MidiNoteData {
+                            pitch: note.pitch(),
+                            channel: note.channel(),
+                            tick: note.tick(),
+                            duration: note.duration(),
+                            velocity: note.velocity(),
+                            off_velocity: note.off_velocity(),
+                        },
                         tick: note.tick(),
                         duration: note.duration(),
                         pitch: note.pitch(),
@@ -872,6 +885,7 @@ pub(crate) struct TimelineState {
     pub(crate) delete_focus: DeleteFocusTarget,
     pub(crate) selected_item: Option<ItemId>,
     pub(crate) selected_items: HashSet<ItemId>,
+    pub(crate) inline_midi_items: HashSet<ItemId>,
     pub(crate) hovered_item: Option<ItemId>,
     pub(crate) selected_project_marker: Option<MarkerId>,
     pub(crate) time_selection: Option<TimeSelection>,
@@ -1095,6 +1109,7 @@ impl Default for TimelineState {
             delete_focus: DeleteFocusTarget::Arrange,
             selected_item: None,
             selected_items: HashSet::new(),
+            inline_midi_items: HashSet::new(),
             hovered_item: None,
             selected_project_marker: None,
             time_selection: None,
@@ -1169,6 +1184,48 @@ impl TimelineState {
         self.selection_anchor = None;
     }
 
+    pub(crate) fn toggle_inline_midi_editors(&mut self, close: bool) {
+        let selected_midi_items = self
+            .selected_items
+            .iter()
+            .filter(|item_id| {
+                self.cache
+                    .item_indices
+                    .get(item_id)
+                    .is_some_and(|index| self.cache.items[*index].kind == ItemKind::Midi)
+            })
+            .copied()
+            .collect::<Vec<_>>();
+        let close_selected = close
+            || (!selected_midi_items.is_empty()
+                && selected_midi_items
+                    .iter()
+                    .all(|item_id| self.inline_midi_items.contains(item_id)));
+        if close_selected {
+            for item_id in selected_midi_items {
+                self.inline_midi_items.remove(&item_id);
+            }
+        } else {
+            self.inline_midi_items.extend(selected_midi_items);
+        }
+    }
+
+    pub(crate) fn set_inline_midi_editor(&mut self, item_id: ItemId, open: bool) {
+        let is_midi_item = self
+            .cache
+            .item_indices
+            .get(&item_id)
+            .is_some_and(|index| self.cache.items[*index].kind == ItemKind::Midi);
+        if !is_midi_item {
+            return;
+        }
+        if open {
+            self.inline_midi_items.insert(item_id);
+        } else {
+            self.inline_midi_items.remove(&item_id);
+        }
+    }
+
     #[cfg(test)]
     pub(crate) fn selection_anchor(&self) -> Option<ItemId> {
         self.selection_anchor
@@ -1209,6 +1266,7 @@ impl TimelineState {
             });
         self.selected_project_marker = None;
         self.hovered_item = None;
+        self.inline_midi_items.clear();
         self.hovered_item_position = None;
         self.context_fade = None;
         self.item_fade_preview = None;
@@ -1435,6 +1493,12 @@ impl TimelineState {
         self.hidden_volume_automation_tracks
             .retain(|track_id| project.tracks().iter().any(|track| track.id() == *track_id));
         self.cache.rebuild(project, self.snap_grid);
+        self.inline_midi_items.retain(|item_id| {
+            self.cache
+                .item_indices
+                .get(item_id)
+                .is_some_and(|index| self.cache.items[*index].kind == ItemKind::Midi)
+        });
         self.waveform_source_generation = self.waveform_source_generation.wrapping_add(1);
         self.rebuild_row_layout();
         if self.cache.snap_grid_ticks.is_none() {
@@ -2707,6 +2771,7 @@ impl TimelineState {
             edit_cursor_tick_position: self.edit_cursor_tick_position(project),
             playhead_tick,
             selected_items: self.selected_item_geometries(),
+            inline_midi_items: &self.inline_midi_items,
             razor_edit_areas: project
                 .tracks()
                 .iter()
@@ -2798,6 +2863,7 @@ struct TimelineProgram<'a> {
     edit_cursor_tick_position: f64,
     playhead_tick: Option<u64>,
     selected_items: Vec<SelectedItemGeometry>,
+    inline_midi_items: &'a HashSet<ItemId>,
     razor_edit_areas: Vec<(u64, u64, u32)>,
     hovered_item: Option<ItemId>,
     hovered_item_position: Option<Point>,
@@ -2826,10 +2892,50 @@ struct TimelineInteractionState {
     pending_item_fade: Option<PendingItemFade>,
     pending_time_selection_drag: Option<PendingTimeSelectionDrag>,
     pending_item_selection_drag: Option<PendingItemSelectionDrag>,
+    pending_inline_note_move: Option<PendingInlineNoteMove>,
+    pending_inline_note_insert: Option<PendingInlineNoteInsert>,
     last_item_click: Option<(ItemId, Instant)>,
     pending_automation_point: Option<PendingAutomationPoint>,
     automation_point_preview: Option<AutomationPointPreview>,
     pending_fx_lane_resize: Option<PendingFxAutomationLaneResize>,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct InlineMidiTarget {
+    item_id: ItemId,
+    item_start_tick: u64,
+    item_length_ticks: u64,
+    source_offset_ticks: u64,
+    source_loop_length_ticks: Option<u64>,
+    item_left: f32,
+    item_width: f32,
+    pitch_low: u8,
+    pitch_high: u8,
+    notes_top: f32,
+    notes_height: f32,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct PendingInlineNoteMove {
+    target: InlineMidiTarget,
+    note_id: NoteId,
+    note: MidiNoteData,
+    display_tick: u64,
+    start_position: Point,
+    resize: bool,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct PendingInlineNoteInsert {
+    target: InlineMidiTarget,
+    start_position: Point,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct InlineMidiNoteHit {
+    note: MidiNotePreview,
+    display_tick: u64,
+    resize: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -3174,6 +3280,271 @@ impl TimelineProgram<'_> {
             })
     }
 
+    fn inline_midi_target_at(&self, position: Point) -> Option<InlineMidiTarget> {
+        let (track_index, _) = row_at_y(self.row_layout, position.y)?;
+        let tick = tick_at_x(self.origin_tick, self.pixels_per_tick, position.x);
+        let item = self.cache.item_at(track_index, tick)?;
+        if item.kind != ItemKind::Midi || !self.inline_midi_items.contains(&item.id) {
+            return None;
+        }
+        let row = self.row_layout.get(track_index)?;
+        let subticks_per_tick = f64::from(aaadaw_core::MIDI_ITEM_SUBTICKS_PER_TICK);
+        let item_start =
+            item.start_tick as f64 + f64::from(item.start_tick_subtick) / subticks_per_tick;
+        let item_end = item.end_tick as f64 + f64::from(item.end_tick_subtick) / subticks_per_tick;
+        let item_left =
+            ((item_start - self.origin_tick as f64) * f64::from(self.pixels_per_tick)) as f32;
+        let item_width = ((item_end - item_start) * f64::from(self.pixels_per_tick)) as f32;
+        let notes_top = row.top + 24.0;
+        let notes_height = (row.base_height - 34.0).max(12.0);
+        if !item_width.is_finite()
+            || item_width <= 0.0
+            || position.x < item_left
+            || position.x > item_left + item_width
+            || position.y < notes_top
+            || position.y > notes_top + notes_height
+        {
+            return None;
+        }
+        let (pitch_low, pitch_high) = midi_inline_pitch_bounds(&item.midi_notes);
+        Some(InlineMidiTarget {
+            item_id: item.id,
+            item_start_tick: item.start_tick,
+            item_length_ticks: item.end_tick.saturating_sub(item.start_tick),
+            source_offset_ticks: item.midi_source_offset_ticks,
+            source_loop_length_ticks: item.midi_source_loop_length_ticks,
+            item_left,
+            item_width,
+            pitch_low,
+            pitch_high,
+            notes_top,
+            notes_height,
+        })
+    }
+
+    fn inline_midi_note_hit(
+        &self,
+        target: InlineMidiTarget,
+        position: Point,
+    ) -> Option<InlineMidiNoteHit> {
+        let item = self
+            .cache
+            .item_indices
+            .get(&target.item_id)
+            .and_then(|index| self.cache.items.get(*index))?;
+        if target.item_length_ticks == 0 || target.item_width <= 0.0 {
+            return None;
+        }
+        let local_tick = (((position.x - target.item_left) / target.item_width)
+            * target.item_length_ticks as f32)
+            .floor()
+            .clamp(0.0, target.item_length_ticks.saturating_sub(1) as f32)
+            as u64;
+        let (low_pitch, high_pitch) = midi_inline_pitch_bounds(&item.midi_notes);
+        let pitch_range = f32::from((high_pitch - low_pitch).max(1));
+        let note_height = (target.notes_height / (pitch_range + 1.0)).clamp(2.0, 6.0);
+        let visible_pitch_height = (target.notes_height - note_height).max(0.0);
+        let loop_length = target.source_loop_length_ticks.filter(|length| *length > 0);
+        let mut nearest: Option<(f32, InlineMidiNoteHit)> = None;
+        for note in &item.midi_notes {
+            let mut occurrences = [None; 3];
+            if let Some(loop_length) = loop_length {
+                let source_tick = note.tick % loop_length;
+                let source_offset = target.source_offset_ticks % loop_length;
+                let phase = if source_tick >= source_offset {
+                    source_tick - source_offset
+                } else {
+                    loop_length - (source_offset - source_tick)
+                };
+                let near_index = local_tick.saturating_sub(phase) / loop_length;
+                for (slot, index) in
+                    (near_index.saturating_sub(1)..=near_index.saturating_add(1)).enumerate()
+                {
+                    occurrences[slot] = phase.checked_add(index.saturating_mul(loop_length));
+                }
+            } else {
+                occurrences[0] = note.tick.checked_sub(target.source_offset_ticks);
+            }
+            for occurrence_tick in occurrences.into_iter().flatten() {
+                let duration = note.duration.min(target.item_length_ticks);
+                let note_end = occurrence_tick
+                    .saturating_add(duration)
+                    .min(target.item_length_ticks);
+                if occurrence_tick >= target.item_length_ticks || note_end <= occurrence_tick {
+                    continue;
+                }
+                let rect_x = target.item_left
+                    + occurrence_tick as f32 / target.item_length_ticks as f32 * target.item_width;
+                let rect_width = ((note_end - occurrence_tick) as f32
+                    / target.item_length_ticks as f32
+                    * target.item_width)
+                    .max(1.25)
+                    .min(target.item_width);
+                let pitch_offset = f32::from(high_pitch.saturating_sub(note.pitch));
+                let rect_y = target.notes_top + pitch_offset / pitch_range * visible_pitch_height;
+                let dx = if position.x < rect_x {
+                    rect_x - position.x
+                } else if position.x > rect_x + rect_width {
+                    position.x - (rect_x + rect_width)
+                } else {
+                    0.0
+                };
+                let dy = if position.y < rect_y {
+                    rect_y - position.y
+                } else if position.y > rect_y + note_height {
+                    position.y - (rect_y + note_height)
+                } else {
+                    0.0
+                };
+                if dx > 3.0 || dy > 4.0 {
+                    continue;
+                }
+                let distance = dx * dx + dy * dy;
+                if nearest.as_ref().is_none_or(|(best, _)| distance < *best) {
+                    let display_tick = occurrence_tick;
+                    nearest = Some((
+                        distance,
+                        InlineMidiNoteHit {
+                            note: *note,
+                            display_tick,
+                            resize: rect_width > 8.0 && position.x >= rect_x + rect_width - 4.0,
+                        },
+                    ));
+                }
+            }
+        }
+        nearest.map(|(_, hit)| hit)
+    }
+
+    fn inline_note_data_after_drag(
+        &self,
+        drag: PendingInlineNoteMove,
+        position: Point,
+        ignore_snap: bool,
+    ) -> Option<MidiNoteData> {
+        let target = drag.target;
+        if (position.x - drag.start_position.x).hypot(position.y - drag.start_position.y) < 2.0 {
+            return Some(drag.note);
+        }
+        let delta_ticks = (f64::from(position.x - drag.start_position.x)
+            / f64::from(self.pixels_per_tick))
+        .round();
+        if !delta_ticks.is_finite() {
+            return None;
+        }
+        if drag.resize {
+            let raw_end = (drag.display_tick as f64 + drag.note.duration as f64 + delta_ticks)
+                .clamp(
+                    drag.display_tick.saturating_add(1) as f64,
+                    target.item_length_ticks as f64,
+                ) as u64;
+            let snapped_end = snap_tick_to_grid(
+                target.item_start_tick.saturating_add(raw_end),
+                self.cache.snap_grid_ticks,
+                self.snap_enabled,
+                ignore_snap,
+                self.cache.swing_grid.active_amount_percent(),
+            );
+            let mut duration = snapped_end
+                .saturating_sub(target.item_start_tick.saturating_add(drag.display_tick))
+                .clamp(
+                    1,
+                    target.item_length_ticks.saturating_sub(drag.display_tick),
+                );
+            if let Some(loop_length) = target.source_loop_length_ticks.filter(|length| *length > 0)
+            {
+                duration = duration.min(loop_length - (drag.note.tick % loop_length));
+            }
+            return Some(MidiNoteData {
+                duration,
+                ..drag.note
+            });
+        }
+        let target_local_tick = (drag.display_tick as f64 + delta_ticks)
+            .clamp(0.0, target.item_length_ticks.saturating_sub(1) as f64)
+            as u64;
+        let project_tick = target.item_start_tick.saturating_add(target_local_tick);
+        let snapped_tick = snap_tick_to_grid(
+            project_tick,
+            self.cache.snap_grid_ticks,
+            self.snap_enabled,
+            ignore_snap,
+            self.cache.swing_grid.active_amount_percent(),
+        );
+        let local_tick = snapped_tick
+            .saturating_sub(target.item_start_tick)
+            .min(target.item_length_ticks.saturating_sub(1));
+        let mut tick = target.source_offset_ticks.saturating_add(local_tick);
+        if let Some(loop_length) = target.source_loop_length_ticks.filter(|length| *length > 0) {
+            tick %= loop_length;
+        } else {
+            tick = tick.clamp(
+                target.source_offset_ticks,
+                target
+                    .source_offset_ticks
+                    .saturating_add(target.item_length_ticks)
+                    .saturating_sub(drag.note.duration),
+            );
+        }
+        let pitch_range =
+            f32::from((u16::from(target.pitch_high) - u16::from(target.pitch_low)).max(1));
+        let semitone_height = (target.notes_height / pitch_range).max(1.0);
+        let pitch_delta = ((drag.start_position.y - position.y) / semitone_height).round();
+        let pitch = (f32::from(drag.note.pitch) + pitch_delta).clamp(0.0, 127.0) as u8;
+        Some(MidiNoteData {
+            tick,
+            pitch,
+            ..drag.note
+        })
+    }
+
+    fn inline_note_data_at(
+        &self,
+        target: InlineMidiTarget,
+        position: Point,
+        ignore_snap: bool,
+    ) -> Option<MidiNoteData> {
+        let raw_tick = tick_at_x(self.origin_tick, self.pixels_per_tick, position.x);
+        let snapped_tick = snap_tick_to_grid(
+            raw_tick,
+            self.cache.snap_grid_ticks,
+            self.snap_enabled,
+            ignore_snap,
+            self.cache.swing_grid.active_amount_percent(),
+        );
+        let local_tick = snapped_tick
+            .saturating_sub(target.item_start_tick)
+            .min(target.item_length_ticks.saturating_sub(1));
+        let mut tick = target.source_offset_ticks.saturating_add(local_tick);
+        if let Some(loop_length) = target.source_loop_length_ticks.filter(|length| *length > 0) {
+            tick %= loop_length;
+        }
+        let pitch_span = u16::from(target.pitch_high - target.pitch_low).max(1);
+        let pitch_from_top = ((target.notes_top + target.notes_height - position.y)
+            / target.notes_height
+            * f32::from(pitch_span))
+        .round()
+        .clamp(0.0, f32::from(pitch_span)) as u16;
+        let pitch = (u16::from(target.pitch_low) + pitch_from_top).min(127) as u8;
+        let default_duration = self
+            .cache
+            .snap_grid_ticks
+            .unwrap_or_else(|| (u64::from(self.project.settings().ppq()) / 4).max(1));
+        let mut duration =
+            default_duration.min(target.item_length_ticks.saturating_sub(local_tick));
+        if let Some(loop_length) = target.source_loop_length_ticks.filter(|length| *length > 0) {
+            duration = duration.min(loop_length - (tick % loop_length));
+        }
+        (duration > 0).then_some(MidiNoteData {
+            channel: 0,
+            pitch,
+            tick,
+            duration,
+            velocity: 96,
+            off_velocity: 0,
+        })
+    }
+
     fn automation_point_preview(
         &self,
         drag: PendingAutomationPoint,
@@ -3389,6 +3760,8 @@ impl shader::Program<crate::app::Message> for TimelineProgram<'_> {
                 .pending_item_selection_drag
                 .take()
                 .is_some_and(|drag| drag.is_dragging);
+            let cancel_inline_midi_gesture = state.pending_inline_note_move.take().is_some()
+                || state.pending_inline_note_insert.take().is_some();
             let cancel_automation_point = state.pending_automation_point.take().is_some();
             state.automation_point_preview = None;
             return if cancel_fade {
@@ -3414,7 +3787,10 @@ impl shader::Program<crate::app::Message> for TimelineProgram<'_> {
                 )
             } else if cancel_time_selection_drag {
                 Some(shader::Action::capture())
-            } else if cancel_item_selection_drag || cancel_automation_point {
+            } else if cancel_item_selection_drag
+                || cancel_inline_midi_gesture
+                || cancel_automation_point
+            {
                 Some(shader::Action::request_redraw().and_capture())
             } else {
                 None
@@ -3622,6 +3998,8 @@ impl shader::Program<crate::app::Message> for TimelineProgram<'_> {
                     || state.pending_item_drag.is_some()
                     || state.pending_item_trim.is_some()
                     || state.pending_item_fade.is_some()
+                    || state.pending_inline_note_move.is_some()
+                    || state.pending_inline_note_insert.is_some()
                     || state.pending_time_selection_drag.is_some()
                     || state.pending_item_selection_drag.is_some()
                     || state.pending_automation_point.is_some()
@@ -3634,7 +4012,11 @@ impl shader::Program<crate::app::Message> for TimelineProgram<'_> {
                         TimelineEvent::PointerMoved(position),
                     )));
                 }
-                if let Some(mut fade) = state.pending_item_fade {
+                if state.pending_inline_note_move.is_some()
+                    || state.pending_inline_note_insert.is_some()
+                {
+                    Some(shader::Action::request_redraw().and_capture())
+                } else if let Some(mut fade) = state.pending_item_fade {
                     let delta = position.x - fade.start_x;
                     if !fade.dragging && delta.abs() < 1.0 {
                         return Some(shader::Action::capture());
@@ -3815,6 +4197,29 @@ impl shader::Program<crate::app::Message> for TimelineProgram<'_> {
             Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => {
                 let position = cursor.position_in(bounds)?;
                 let raw_tick = tick_at_x(self.origin_tick, self.pixels_per_tick, position.x);
+                if let Some(target) = self.inline_midi_target_at(position) {
+                    state.pending_item_drag = None;
+                    state.pending_item_trim = None;
+                    state.pending_time_selection_drag = None;
+                    if let Some(hit) = self.inline_midi_note_hit(target, position) {
+                        state.pending_inline_note_move = Some(PendingInlineNoteMove {
+                            target,
+                            note_id: hit.note.id,
+                            note: hit.note.data,
+                            display_tick: hit.display_tick,
+                            start_position: position,
+                            resize: hit.resize,
+                        });
+                        state.pending_inline_note_insert = None;
+                    } else {
+                        state.pending_inline_note_insert = Some(PendingInlineNoteInsert {
+                            target,
+                            start_position: position,
+                        });
+                        state.pending_inline_note_move = None;
+                    }
+                    return Some(shader::Action::capture());
+                }
                 let Some((track_index, row_y)) = row_at_y(self.row_layout, position.y) else {
                     state.pending_item_drag = None;
                     state.pending_item_trim = None;
@@ -4099,6 +4504,44 @@ impl shader::Program<crate::app::Message> for TimelineProgram<'_> {
             Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
                 if state.pending_fx_lane_resize.take().is_some() {
                     Some(shader::Action::capture())
+                } else if let Some(drag) = state.pending_inline_note_move.take() {
+                    let Some(position) = cursor.position_in(bounds) else {
+                        return Some(shader::Action::capture());
+                    };
+                    let Some(data) =
+                        self.inline_note_data_after_drag(drag, position, state.modifiers.shift())
+                    else {
+                        return Some(shader::Action::capture());
+                    };
+                    if data == drag.note {
+                        Some(shader::Action::capture())
+                    } else {
+                        Some(
+                            shader::Action::publish(crate::app::Message::EditMidiNotes(
+                                drag.target.item_id,
+                                vec![(drag.note_id, data)],
+                            ))
+                            .and_capture(),
+                        )
+                    }
+                } else if let Some(insert) = state.pending_inline_note_insert.take() {
+                    if cursor.position_in(bounds).is_none() {
+                        return Some(shader::Action::capture());
+                    }
+                    let Some(data) = self.inline_note_data_at(
+                        insert.target,
+                        insert.start_position,
+                        state.modifiers.shift(),
+                    ) else {
+                        return Some(shader::Action::capture());
+                    };
+                    Some(
+                        shader::Action::publish(crate::app::Message::AddMidiNoteAt(
+                            insert.target.item_id,
+                            data,
+                        ))
+                        .and_capture(),
+                    )
                 } else if let Some(drag) = state.pending_automation_point.take() {
                     state.automation_point_preview = None;
                     let Some(track) = self.project.tracks().get(drag.track_index) else {
@@ -4563,6 +5006,9 @@ impl shader::Program<crate::app::Message> for TimelineProgram<'_> {
         cursor: mouse::Cursor,
     ) -> mouse::Interaction {
         if let Some(position) = cursor.position_in(bounds) {
+            if self.inline_midi_target_at(position).is_some() {
+                return mouse::Interaction::Crosshair;
+            }
             if self.fade_handle_at(position).is_some() {
                 return mouse::Interaction::ResizingHorizontally;
             }
@@ -5621,6 +6067,22 @@ fn midi_note_preview_geometry(
     item_length: u64,
     bounds: MidiPreviewBounds,
 ) -> Vec<Rectangle> {
+    midi_note_preview_geometry_in_pitch_range(
+        notes,
+        source,
+        item_length,
+        bounds,
+        midi_preview_pitch_bounds(notes),
+    )
+}
+
+fn midi_note_preview_geometry_in_pitch_range(
+    notes: &[MidiNotePreview],
+    source: MidiPreviewSource,
+    item_length: u64,
+    bounds: MidiPreviewBounds,
+    pitch_bounds: (u8, u8),
+) -> Vec<Rectangle> {
     if item_length == 0
         || !bounds.item_width.is_finite()
         || bounds.item_width <= 0.0
@@ -5721,16 +6183,9 @@ fn midi_note_preview_geometry(
 
     let selected_count = candidate_count.min(MAX_MIDI_ITEM_PREVIEW_NOTES);
     let occurrences_per_note = MAX_MIDI_ITEM_PREVIEW_NOTES / selected_count;
-    let lowest = notes.iter().map(|note| note.pitch).min().unwrap_or(0);
-    let highest = notes.iter().map(|note| note.pitch).max().unwrap_or(127);
-    let range = u16::from(highest - lowest);
-    let padded_range = range.max(11);
-    let padding_below = (padded_range - range) / 2;
-    let mut low_pitch = u16::from(lowest).saturating_sub(padding_below);
-    let high_pitch = (low_pitch + padded_range).min(127);
-    low_pitch = high_pitch.saturating_sub(padded_range);
-    let pitch_range = f32::from((high_pitch - low_pitch).max(1));
-    let note_height = (bounds.height / f32::from((padded_range + 1).max(12))).clamp(2.0, 6.0);
+    let (low_pitch, high_pitch) = pitch_bounds;
+    let pitch_range = f32::from((u16::from(high_pitch) - u16::from(low_pitch)).max(1));
+    let note_height = (bounds.height / (pitch_range + 1.0)).clamp(2.0, 6.0);
 
     let mut rectangles = Vec::with_capacity(selected_count * occurrences_per_note);
     let mut candidate_index = 0;
@@ -5775,7 +6230,8 @@ fn midi_note_preview_geometry(
             let x = item_left + (tick as f64 / item_length as f64) * item_width;
             let right = item_left + (note_end as f64 / item_length as f64) * item_width;
             let width = (right - x).max(1.25).min(item_width);
-            let pitch_offset = f32::from(high_pitch.saturating_sub(u16::from(note.pitch)));
+            let pitch_offset =
+                f32::from(u16::from(high_pitch).saturating_sub(u16::from(note.pitch)));
             let y =
                 bounds.top + (pitch_offset / pitch_range) * (bounds.height - note_height).max(0.0);
             rectangles.push(Rectangle::new(
@@ -5790,6 +6246,27 @@ fn midi_note_preview_geometry(
         }
     }
     rectangles
+}
+
+fn midi_preview_pitch_bounds(notes: &[MidiNotePreview]) -> (u8, u8) {
+    let lowest = notes.iter().map(|note| note.pitch).min().unwrap_or(0);
+    let highest = notes.iter().map(|note| note.pitch).max().unwrap_or(127);
+    let range = u16::from(highest - lowest);
+    let padded_range = range.max(11);
+    let padding_below = (padded_range - range) / 2;
+    let mut low_pitch = u16::from(lowest).saturating_sub(padding_below);
+    let high_pitch = (low_pitch + padded_range).min(127);
+    low_pitch = high_pitch.saturating_sub(padded_range);
+    (low_pitch as u8, high_pitch as u8)
+}
+
+fn midi_inline_pitch_bounds(notes: &[MidiNotePreview]) -> (u8, u8) {
+    let lowest = notes.iter().map(|note| note.pitch).min().unwrap_or(60);
+    let highest = notes.iter().map(|note| note.pitch).max().unwrap_or(71);
+    let low_pitch = (u16::from(lowest) / 12 * 12).saturating_sub(12);
+    let high_pitch = (low_pitch + 35).max(u16::from(highest)).min(127);
+    let low_pitch = high_pitch.saturating_sub(35).min(low_pitch);
+    (low_pitch as u8, high_pitch as u8)
 }
 
 impl canvas::Program<crate::app::Message> for ItemLabelsProgram<'_> {
@@ -5953,23 +6430,64 @@ impl canvas::Program<crate::app::Message> for ItemLabelsProgram<'_> {
             }
             if row.base_height >= 43.0 && item.kind == ItemKind::Midi && !item.midi_notes.is_empty()
             {
-                let preview_top = row.top + 34.0;
-                let preview_height = 50.0_f32.min(row.base_height - 42.0);
-                for note_rect in midi_note_preview_geometry(
-                    &item.midi_notes,
-                    MidiPreviewSource {
-                        offset_ticks: item.midi_source_offset_ticks,
-                        loop_length_ticks: item.midi_source_loop_length_ticks,
-                    },
-                    item.end_tick.saturating_sub(item.start_tick),
-                    MidiPreviewBounds {
-                        item_left: left as f32,
-                        item_width: width as f32,
-                        viewport_width: bounds.width,
-                        top: preview_top,
-                        height: preview_height,
-                    },
-                ) {
+                let inline = self.state.inline_midi_items.contains(&item.id);
+                let (preview_top, preview_height) = if inline {
+                    (row.top + 24.0, (row.base_height - 34.0).max(12.0))
+                } else {
+                    (row.top + 34.0, 50.0_f32.min(row.base_height - 42.0))
+                };
+                if inline {
+                    let (low_pitch, high_pitch) = midi_inline_pitch_bounds(&item.midi_notes);
+                    let pitch_span = f32::from((high_pitch - low_pitch).max(1));
+                    for row_index in 0..=u16::from(high_pitch - low_pitch) {
+                        let y = preview_top + f32::from(row_index) * preview_height / pitch_span;
+                        let line = canvas::Path::line(
+                            Point::new((left as f32).max(0.0), y),
+                            Point::new((right as f32).min(bounds.width), y),
+                        );
+                        frame.stroke(
+                            &line,
+                            canvas::Stroke::default()
+                                .with_color(Color::from_rgba8(202, 214, 190, 0.18))
+                                .with_width(0.5),
+                        );
+                    }
+                }
+                let note_rectangles = if inline {
+                    midi_note_preview_geometry_in_pitch_range(
+                        &item.midi_notes,
+                        MidiPreviewSource {
+                            offset_ticks: item.midi_source_offset_ticks,
+                            loop_length_ticks: item.midi_source_loop_length_ticks,
+                        },
+                        item.end_tick.saturating_sub(item.start_tick),
+                        MidiPreviewBounds {
+                            item_left: left as f32,
+                            item_width: width as f32,
+                            viewport_width: bounds.width,
+                            top: preview_top,
+                            height: preview_height,
+                        },
+                        midi_inline_pitch_bounds(&item.midi_notes),
+                    )
+                } else {
+                    midi_note_preview_geometry(
+                        &item.midi_notes,
+                        MidiPreviewSource {
+                            offset_ticks: item.midi_source_offset_ticks,
+                            loop_length_ticks: item.midi_source_loop_length_ticks,
+                        },
+                        item.end_tick.saturating_sub(item.start_tick),
+                        MidiPreviewBounds {
+                            item_left: left as f32,
+                            item_width: width as f32,
+                            viewport_width: bounds.width,
+                            top: preview_top,
+                            height: preview_height,
+                        },
+                    )
+                };
+                for note_rect in note_rectangles {
                     frame.fill_rectangle(
                         note_rect.position(),
                         note_rect.size(),
@@ -6211,11 +6729,11 @@ mod tests {
     use super::{
         AutomationPointContext, FX_AUTOMATION_LANE_HEIGHT, ItemKind, ItemTrimEdge,
         LOOP_POINT_HANDLE_ROW_HEIGHT, LoopPointDragTarget, LoopPoints,
-        MAX_FX_AUTOMATION_LANE_HEIGHT, MAX_MIDI_ITEM_PREVIEW_NOTES, MiddleDragState,
-        MidiNotePreview, MidiPreviewBounds, MidiPreviewSource, PendingAutomationPoint,
-        PendingTimeSelectionDrag, ProjectMarkerInteraction, RulerProgram, SnapGrid,
-        TIMELINE_ROW_HEIGHT, TimeSelection, TimeSelectionDragMode, TimelineCache, TimelineEvent,
-        TimelineInteractionState, TimelineState, automation_sample_between,
+        MAX_FX_AUTOMATION_LANE_HEIGHT, MAX_MIDI_ITEM_PREVIEW_NOTES, MiddleDragState, MidiNoteData,
+        MidiNotePreview, MidiPreviewBounds, MidiPreviewSource, NoteId, PendingAutomationPoint,
+        PendingInlineNoteMove, PendingTimeSelectionDrag, ProjectMarkerInteraction, RulerProgram,
+        SnapGrid, TIMELINE_ROW_HEIGHT, TimeSelection, TimeSelectionDragMode, TimelineCache,
+        TimelineEvent, TimelineInteractionState, TimelineState, automation_sample_between,
         fx_automation_band_at_y, fx_automation_lane_resize_target, fx_automation_tick_at,
         item_trim_edge_at_x, loop_point_body_hit, loop_point_target_at, loop_points_at_drag_target,
         midi_note_preview_geometry, project_marker_x, project_region_hit, row_at_y,
@@ -8825,35 +9343,157 @@ mod tests {
         assert_eq!(cached.midi_source_offset_ticks, 0);
         assert_eq!(cached.midi_source_loop_length_ticks, Some(960));
         assert_eq!(
-            cached.midi_notes,
-            vec![
-                MidiNotePreview {
-                    tick: 0,
-                    duration: 240,
-                    pitch: 60,
-                },
-                MidiNotePreview {
-                    tick: 480,
-                    duration: 360,
-                    pitch: 67,
-                },
-            ]
+            cached
+                .midi_notes
+                .iter()
+                .map(|note| (note.data.tick, note.data.duration, note.data.pitch))
+                .collect::<Vec<_>>(),
+            vec![(0, 240, 60), (480, 360, 67)]
         );
+    }
+
+    #[test]
+    fn inline_midi_editor_toggle_tracks_only_selected_midi_items() {
+        let mut project = Project::new();
+        project
+            .apply(aaadaw_core::DawAction::CreateTrack {
+                index: 0,
+                name: "Keys".to_owned(),
+            })
+            .unwrap();
+        let track_id = project.tracks()[0].id();
+        project
+            .apply(aaadaw_core::DawAction::InsertMidiItem {
+                track_id,
+                start_tick: 0,
+                length_ticks: 960,
+            })
+            .unwrap();
+        let item_id = project.midi_items()[0].id();
+
+        let mut timeline = TimelineState::default();
+        timeline.rebuild(&project);
+        timeline.selected_item = Some(item_id);
+        timeline.selected_items.insert(item_id);
+
+        timeline.toggle_inline_midi_editors(false);
+        assert!(timeline.inline_midi_items.contains(&item_id));
+        timeline.toggle_inline_midi_editors(false);
+        assert!(!timeline.inline_midi_items.contains(&item_id));
+        timeline.toggle_inline_midi_editors(false);
+        timeline.toggle_inline_midi_editors(true);
+        assert!(!timeline.inline_midi_items.contains(&item_id));
+    }
+
+    #[test]
+    fn inline_midi_editor_hit_testing_and_note_drag_edit_the_source_event() {
+        let mut project = Project::new();
+        project
+            .apply(DawAction::CreateTrack {
+                index: 0,
+                name: "Inline MIDI".to_owned(),
+            })
+            .unwrap();
+        let track_id = project.tracks()[0].id();
+        project
+            .apply(DawAction::InsertMidiItem {
+                track_id,
+                start_tick: 0,
+                length_ticks: 960,
+            })
+            .unwrap();
+        let item_id = project.midi_items()[0].id();
+        project
+            .apply(DawAction::AddMidiNotes {
+                item_id,
+                notes: vec![MidiNoteData {
+                    channel: 0,
+                    pitch: 60,
+                    tick: 0,
+                    duration: 120,
+                    velocity: 96,
+                    off_velocity: 0,
+                }],
+            })
+            .unwrap();
+
+        let mut timeline = TimelineState::default();
+        timeline.rebuild(&project);
+        timeline.pixels_per_tick = 0.5;
+        timeline.snap_enabled = false;
+        timeline.inline_midi_items.insert(item_id);
+        let program = timeline.program(&project, None);
+        let surface = Point::new(30.0, 50.0);
+        let target = program
+            .inline_midi_target_at(surface)
+            .expect("an open MIDI item exposes its inline editing surface");
+        let pitch_range = f32::from(target.pitch_high - target.pitch_low);
+        let note_height = (target.notes_height / (pitch_range + 1.0)).clamp(2.0, 6.0);
+        let note_top = target.notes_top
+            + f32::from(target.pitch_high - 60) / pitch_range
+                * (target.notes_height - note_height).max(0.0);
+        let start = Point::new(30.0, note_top + note_height / 2.0);
+        let hit = program
+            .inline_midi_note_hit(target, start)
+            .expect("the visible note rectangle maps back to its source note");
+        assert_eq!(hit.note.data.tick, 0);
+
+        let moved = program
+            .inline_note_data_after_drag(
+                PendingInlineNoteMove {
+                    target,
+                    note_id: hit.note.id,
+                    note: hit.note.data,
+                    display_tick: hit.display_tick,
+                    start_position: start,
+                    resize: false,
+                },
+                Point::new(
+                    start.x + 240.0,
+                    start.y - (target.notes_height / pitch_range * 2.0).round(),
+                ),
+                false,
+            )
+            .expect("a valid arrangement drag updates the MIDI note");
+        assert_eq!((moved.tick, moved.pitch, moved.duration), (480, 62, 120));
+
+        let resize_start = Point::new(58.0, start.y);
+        let resize_hit = program
+            .inline_midi_note_hit(target, resize_start)
+            .expect("the note's right edge selects its duration handle");
+        assert!(resize_hit.resize);
+        let resized = program
+            .inline_note_data_after_drag(
+                PendingInlineNoteMove {
+                    target,
+                    note_id: resize_hit.note.id,
+                    note: resize_hit.note.data,
+                    display_tick: resize_hit.display_tick,
+                    start_position: resize_start,
+                    resize: resize_hit.resize,
+                },
+                Point::new(resize_start.x + 60.0, resize_start.y),
+                false,
+            )
+            .expect("a valid arrangement edge drag updates MIDI note duration");
+        assert_eq!(
+            (resized.tick, resized.pitch, resized.duration),
+            (0, 60, 240)
+        );
+
+        let inserted = program
+            .inline_note_data_at(target, Point::new(100.0, target.notes_top + 2.0), true)
+            .expect("empty inline grid space can create a MIDI note");
+        assert_eq!(inserted.tick, 200);
+        assert_eq!(inserted.duration, 760);
+        assert!(inserted.pitch > hit.note.data.pitch);
     }
 
     #[test]
     fn midi_note_preview_geometry_maps_project_time_and_pitch_into_the_clip() {
         let notes = [
-            MidiNotePreview {
-                tick: 0,
-                duration: 240,
-                pitch: 60,
-            },
-            MidiNotePreview {
-                tick: 480,
-                duration: 240,
-                pitch: 72,
-            },
+            test_midi_note_preview(1, 0, 240, 60),
+            test_midi_note_preview(2, 480, 240, 72),
         ];
         let rects = midi_note_preview_geometry(
             &notes,
@@ -8880,11 +9520,7 @@ mod tests {
 
     #[test]
     fn midi_loop_preview_keeps_far_right_visible_occurrences() {
-        let notes = [MidiNotePreview {
-            tick: 120,
-            duration: 120,
-            pitch: 60,
-        }];
+        let notes = [test_midi_note_preview(1, 120, 120, 60)];
         let rects = midi_note_preview_geometry(
             &notes,
             MidiPreviewSource {
@@ -8909,6 +9545,15 @@ mod tests {
     fn midi_preview_budget_covers_visible_source_notes_and_time_range() {
         let notes = (0..MAX_MIDI_ITEM_PREVIEW_NOTES + 88)
             .map(|index| MidiNotePreview {
+                id: NoteId::from_value(index as u64 + 1).unwrap(),
+                data: MidiNoteData {
+                    channel: 0,
+                    pitch: 48 + (index % 36) as u8,
+                    tick: index as u64,
+                    duration: 1,
+                    velocity: 100,
+                    off_velocity: 0,
+                },
                 tick: index as u64,
                 duration: 1,
                 pitch: 48 + (index % 36) as u8,
@@ -8933,6 +9578,23 @@ mod tests {
         assert_eq!(rects.len(), MAX_MIDI_ITEM_PREVIEW_NOTES);
         assert!(rects.first().is_some_and(|rect| rect.x < 2.0));
         assert!(rects.last().is_some_and(|rect| rect.x > 990.0));
+    }
+
+    fn test_midi_note_preview(id: u64, tick: u64, duration: u64, pitch: u8) -> MidiNotePreview {
+        MidiNotePreview {
+            id: NoteId::from_value(id).unwrap(),
+            data: MidiNoteData {
+                channel: 0,
+                pitch,
+                tick,
+                duration,
+                velocity: 100,
+                off_velocity: 0,
+            },
+            tick,
+            duration,
+            pitch,
+        }
     }
 
     #[test]

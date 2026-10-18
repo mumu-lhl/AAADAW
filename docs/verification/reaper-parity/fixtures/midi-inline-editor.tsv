@@ -1,0 +1,33 @@
+key	value
+reference_application	REAPER 7.82 Linux x86_64
+reference_theme	Default 7 / ColorThemes/Default_7.0.ReaperThemeZip
+reference_profile	Fresh isolated configuration; no custom actions or extensions
+reference_archive_sha256	a4aa961534f22ae5ae910e4ec0c200dcb4476c9f7556806fe09a9743cd582563
+reference_project	midi-note-quantize-before.rpp
+reference_project_sha256	4bdbba8bcc46ff7bf74fabcb34031466898a81f74cf6497fd0ac2c8dd6f3174a
+native_input	Open the Arrange item, press E to show the inline MIDI editor, press E again to close it
+capture_display	Xvfb :311, X11, 1440x900x24, xfwm4 without compositor
+aaadaw_build_backend	rustc 1.101.0-nightly with Cranelift
+aaadaw_build_command	CARGO_TARGET_DIR=target/cranelift CARGO_PROFILE_DEV_CODEGEN_BACKEND=cranelift cargo +nightly -Zcodegen-backend build -p aaadaw --bin aaadaw
+aaadaw_binary_build_id	515be55054714858da4798929593c2d13395ebbe
+aaadaw_binary_sha256	6289d0ac488a3fdba0ff81033fe6bebadc33cbe2eaf26c9f9186fdbb49e721d3
+aaadaw_build_warning	Cranelift reports existing TimelinePipeline: MaybeSync recursion-depth warning; build succeeds
+aaadaw_input	Create a track and MIDI item, select it, press E, click an empty inline grid cell, drag the note, undo and redo, press E to close, reopen and drag the note's right edge
+aaadaw_drawn_note	B4; tick 960; duration 960 ticks; velocity 96
+aaadaw_moved_note	C#5; tick 1920; duration 960 ticks; velocity 96
+aaadaw_undo_redo	Ctrl+Z restores B4/tick 960; Ctrl+Shift+Z restores C#5/tick 1920
+aaadaw_resized_note	C#5; tick 1920; duration extended from 960 to 1920 ticks
+aaadaw_test_suite	cargo test -p aaadaw --bin aaadaw: 792 passed
+aaadaw_clippy	Stable all-target Clippy with -D warnings: no issues
+manual_scope_limit	Native probing confirms E open/close only; inline gestures and the per-item context menu are not yet compared against REAPER in a live window
+artifact	sha256
+midi-note-quantize-before.rpp	4bdbba8bcc46ff7bf74fabcb34031466898a81f74cf6497fd0ac2c8dd6f3174a
+midi-inline-editor-native-open.png	7210bf7c7948dedc1eeb5940f1233fc31c16bebda67a0de8de3f5337d1580b60
+midi-inline-editor-native-close.png	9495828dc099e50f1b45f0b717f1bf0fef648b56940f78b55cc236c13295b91c
+midi-inline-editor-aaadaw-open.png	e70934bfafe54508a701407b893bfdce50bdf440a98159932851d3eca9ef7a90
+midi-inline-editor-aaadaw-drawn.png	9083a9e53c47427027721a523d25eea73da1be0942cb5e5ca4b313b9864c8bb3
+midi-inline-editor-aaadaw-moved.png	4709c2a0c6091dc068c67304e1f5af4049a50f6e19dab0bdfb5b60609831d70e
+midi-inline-editor-aaadaw-undo.png	3228964145d2360c239eebc6d57a6013f7c59d682944b032a7e9a41e04d1c476
+midi-inline-editor-aaadaw-redo.png	c3b472a834e27867841271ff59e27dec3a10cd6b8fd974d34bb3459e2b2dd490
+midi-inline-editor-aaadaw-resized.png	6417423ea3227f2cfba0ce057f729901988cdd35afc8151221d19348cd7e866d
+midi-inline-editor-aaadaw-closed.png	4c2562dcbc97e8ac2b55bd814d82d0c5efe9ad99c00246ab58ef349a03f2d2b3
