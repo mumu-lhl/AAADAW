@@ -3437,9 +3437,15 @@ fn command_enabled(app: &App, kind: CommandKind, track: Option<TrackState>) -> b
         CommandKind::MidiEventProperties => {
             !project_edit_busy(app)
                 && app.midi_editor_item_id.is_some()
-                && app.midi_editor_selected_notes.len() == 1
-                && app.midi_editor_selected_controllers.is_empty()
-                && app.midi_editor_selected_pitch_bends.is_empty()
+                && ((app.midi_editor_selected_notes.len() == 1
+                    && app.midi_editor_selected_controllers.is_empty()
+                    && app.midi_editor_selected_pitch_bends.is_empty())
+                    || (app.midi_editor_selected_controllers.len() == 1
+                        && app.midi_editor_selected_notes.is_empty()
+                        && app.midi_editor_selected_pitch_bends.is_empty())
+                    || (app.midi_editor_selected_pitch_bends.len() == 1
+                        && app.midi_editor_selected_notes.is_empty()
+                        && app.midi_editor_selected_controllers.is_empty()))
         }
         CommandKind::AddProjectMarker => !project_edit_busy(app),
         CommandKind::InsertRegionFromTimeSelection => {

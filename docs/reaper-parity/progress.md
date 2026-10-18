@@ -2236,3 +2236,14 @@ Linux REAPER 7.82 / Default 7 的 MIDI Event List section 32061 action 40004（`
 AAADAW 为一个选中的 Note 增加 `Edit: Event properties` / Ctrl+F2 和 Event List 的 `Edit event…`。对话框支持绝对 BBT 位置/长度、通道、MIDI pitch（数字或音名）和力度。Apply 使用一个 `EditMidiNotes` 历史事务并保持窗口打开，OK 提交并关闭，Cancel/Escape 丢弃草稿；非法位置、音长或字段不会改动音符。稳定桌面构建 SHA-256 `61adadf9ad69c6480f8de94a40aa3500d0a5d2dc0074e450b7bac48281a7e88f` 的实窗操作包含创建音符、Event List 切换、选择行及打开属性窗口。
 
 AAADAW App Nextest **776/776，0 skipped**（Xvfb）、all-target Clippy (`-D warnings`)、fmt 与 diff 检查通过；MIDI Event List 与 Event Properties 两个 manifest 各 **4/4 个条目 SHA-256 匹配**。parity matrix 为 **111 项 / 15 列 / 唯一 ID**。仅支持单音符；CC/Pitch Bend/多选属性、相对值语法、持久化 note-off velocity、跨 meter-map/source-loop 的 BBT 和精确焦点/键盘导航继续开放，`MIDI-EVENT-PROPERTIES-001`、`MIDI-EVENT-LIST-001`、UI-019 与 P7 维持 `in_progress`。
+
+
+### 2026-10-18 MIDI Event Properties CC 与 Pitch Bend
+
+继续基于 REAPER 7.82 / Default 7 的隔离 profile 测量 action 40004。CC 原厂窗口为 Position、Channel、Controller、Value、CC shape、Bezier tension；样例 CC7 在 tick 480 / channel 3 / value 90 显示 `1.1.50`、`07 Volume MSB`，shape 为 Square、tension 为 0.00。Pitch Bend 原厂 Type 为 Pitch，样例 raw value 9000 同样位于 `1.1.50` / channel 3，并显示相对中心的 `(+808)`。两类都可用 Apply、OK、Cancel；ReaScript 探针、读回 TSV 和裁切原厂截图列在 [Event Properties fixture manifest](../verification/reaper-parity/fixtures/midi-event-properties-ui.tsv)。
+
+AAADAW 的 `Edit event…`、action 40004 / Ctrl+F2 现可打开恰好单选的 Note、CC 或 Pitch Bend。CC 使用命名 Controller 下拉并编辑 0–127 Value；Pitch Bend 编辑 raw 0–16383 Value，并实时显示相对 8192 中心的偏移。位置仍接受绝对 bar.beat.hundredths，通道为 1–16。Apply 对 CC 与 Pitch Bend 分别提交一个现有 `SetMidiControllers` / `SetMidiPitchBends` 历史事务并保持窗口，OK 提交后关闭；非法范围拒绝修改。Note、CC、Pitch Bend 各有 App 回归覆盖；两类表达事件的实窗图额外记录了 Apply、Undo、Redo。
+
+最终普通 Linux 桌面二进制 SHA-256 `735e6339962f2faede8cc56612fe85bf99bd357c9a171a6ec3dbe61a5fd3ded1`。当前 AAADAW 窗口截图分别记录 CC 下拉和 Pitch Bend 14-bit Value；真实输入把 CC 90→95、Pitch Bend 9000→10000 后 Apply，关闭后 Ctrl+Z / Ctrl+Shift+Z 还原与重做均在 Event List 实际显示正确值。AAADAW 包级 Nextest **778/778，0 skipped**（6 个测试二进制）、严格 all-target Clippy (`-D warnings`)、fmt、diff 检查通过；Event Properties manifest **18/18 文件哈希一致**，parity matrix **111 项 / 15 列 / 唯一 ID**。
+
+原生 CC shape / Bezier tension 仍未建模，Note off velocity 仍未持久化；多事件编辑、相对值快捷语法、meter map/source offset/loop BBT 与精确原厂键盘焦点继续开放。因此 `MIDI-EVENT-PROPERTIES-001`、`MIDI-EVENT-LIST-001`、UI-019 与 P7 仍为 `in_progress`。

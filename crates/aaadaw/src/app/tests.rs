@@ -12850,7 +12850,7 @@ fn midi_event_properties_edits_note_fields_with_apply_ok_cancel_and_undo() {
     assert_eq!(
         app.midi_event_properties_dialog
             .as_ref()
-            .map(|dialog| dialog.pitch.as_str()),
+            .map(|dialog| dialog.parameter.as_str()),
         Some("60 C4")
     );
 
@@ -12864,8 +12864,8 @@ fn midi_event_properties_edits_note_fields_with_apply_ok_cancel_and_undo() {
     let _ = app.update(Message::SetMidiEventPropertiesPosition("1.2.50".to_owned()));
     let _ = app.update(Message::SetMidiEventPropertiesLength("0.1.25".to_owned()));
     let _ = app.update(Message::SetMidiEventPropertiesChannel("3".to_owned()));
-    let _ = app.update(Message::SetMidiEventPropertiesPitch("72".to_owned()));
-    let _ = app.update(Message::SetMidiEventPropertiesVelocity("100".to_owned()));
+    let _ = app.update(Message::SetMidiEventPropertiesParameter("72".to_owned()));
+    let _ = app.update(Message::SetMidiEventPropertiesValue("100".to_owned()));
     let _ = app.update(Message::ApplyMidiEventProperties);
     let note = &app.project.midi_items()[0].notes()[0];
     assert_eq!(note.tick(), 1_440);
@@ -12876,7 +12876,7 @@ fn midi_event_properties_edits_note_fields_with_apply_ok_cancel_and_undo() {
     assert_eq!(app.project.history_cursor(), history_before + 1);
     assert!(app.midi_event_properties_dialog.is_some());
 
-    let _ = app.update(Message::SetMidiEventPropertiesVelocity("101".to_owned()));
+    let _ = app.update(Message::SetMidiEventPropertiesValue("101".to_owned()));
     let _ = app.update(Message::AcceptMidiEventProperties);
     assert!(app.midi_event_properties_dialog.is_none());
     assert_eq!(app.project.midi_items()[0].notes()[0].velocity(), 101);
@@ -12891,17 +12891,199 @@ fn midi_event_properties_edits_note_fields_with_apply_ok_cancel_and_undo() {
 
     let history_before_cancel = app.project.history_cursor();
     let _ = app.update(Message::OpenMidiEventProperties(item_id));
-    let _ = app.update(Message::SetMidiEventPropertiesPitch("66".to_owned()));
+    let _ = app.update(Message::SetMidiEventPropertiesParameter("66".to_owned()));
     let _ = app.update(Message::CancelMidiEventProperties);
     assert!(app.midi_event_properties_dialog.is_none());
     assert_eq!(app.project.midi_items()[0].notes()[0].pitch(), 72);
     assert_eq!(app.project.history_cursor(), history_before_cancel);
     let _ = app.update(Message::OpenMidiEventProperties(item_id));
-    let _ = app.update(Message::SetMidiEventPropertiesPitch("66".to_owned()));
+    let _ = app.update(Message::SetMidiEventPropertiesParameter("66".to_owned()));
     let _ = app.update(Message::Escape);
     assert!(app.midi_event_properties_dialog.is_none());
     assert_eq!(app.project.midi_items()[0].notes()[0].pitch(), 72);
     assert_eq!(app.project.history_cursor(), history_before_cancel);
+}
+
+#[test]
+fn midi_event_properties_edits_controller_fields_with_apply_and_undo() {
+    assert_eq!(super::parse_midi_event_controller("07 Volume MSB"), Some(7));
+    assert_eq!(super::parse_midi_event_controller("10 Pan MSB"), Some(10));
+    assert_eq!(super::parse_midi_event_controller("128 Invalid"), None);
+    let mut app = App::default();
+    let _ = app.update(Message::AddTrack);
+    let track_id = app.project.tracks()[0].id();
+    app.project
+        .apply(DawAction::InsertMidiItem {
+            track_id,
+            start_tick: 0,
+            length_ticks: 3_840,
+        })
+        .expect("test MIDI item should be inserted");
+    let item_id = app.project.midi_items()[0].id();
+    let original = MidiControllerData {
+        controller: 7,
+        channel: 2,
+        tick: 480,
+        value: 90,
+    };
+    app.project
+        .apply(DawAction::SetMidiControllers {
+            item_id,
+            controllers: vec![original],
+        })
+        .expect("test controller should be inserted");
+    app.midi_editor_item_id = Some(item_id);
+    app.midi_editor_selected_controllers = HashSet::from([original]);
+
+    assert!(commands::is_enabled(&app, CommandId::MidiEventProperties));
+    let _ = commands::dispatch(&mut app, CommandId::MidiEventProperties);
+    let dialog = app
+        .midi_event_properties_dialog
+        .as_ref()
+        .expect("selected controller should open event properties");
+    assert_eq!(dialog.position, "1.1.50");
+    assert_eq!(dialog.channel, "3");
+    assert_eq!(dialog.parameter, "07 Volume MSB");
+    assert_eq!(dialog.value, "90");
+
+    let history_before = app.project.history_cursor();
+    let _ = app.update(Message::SetMidiEventPropertiesPosition("1.2.50".to_owned()));
+    let _ = app.update(Message::SetMidiEventPropertiesChannel("3".to_owned()));
+    let _ = app.update(Message::SetMidiEventPropertiesParameter("10".to_owned()));
+    let _ = app.update(Message::SetMidiEventPropertiesValue("100".to_owned()));
+    let _ = app.update(Message::ApplyMidiEventProperties);
+    let edited = MidiControllerData {
+        controller: 10,
+        channel: 2,
+        tick: 1_440,
+        value: 100,
+    };
+    assert_eq!(app.project.midi_items()[0].controllers(), [edited]);
+    assert_eq!(app.project.history_cursor(), history_before + 1);
+    assert!(app.midi_event_properties_dialog.is_some());
+    assert_eq!(
+        app.midi_event_properties_dialog
+            .as_ref()
+            .map(|dialog| dialog.parameter.as_str()),
+        Some("10 Pan MSB")
+    );
+    assert_eq!(
+        app.midi_editor_selected_controllers,
+        HashSet::from([edited])
+    );
+
+    let _ = app.update(Message::SetMidiEventPropertiesValue("110".to_owned()));
+    let _ = app.update(Message::AcceptMidiEventProperties);
+    assert!(app.midi_event_properties_dialog.is_none());
+    let accepted = MidiControllerData {
+        value: 110,
+        ..edited
+    };
+    assert_eq!(app.project.midi_items()[0].controllers(), [accepted]);
+
+    let _ = app.update(Message::Undo);
+    assert_eq!(app.project.midi_items()[0].controllers(), [edited]);
+    let _ = app.update(Message::Undo);
+    assert_eq!(app.project.midi_items()[0].controllers(), [original]);
+    let _ = app.update(Message::Redo);
+    assert_eq!(app.project.midi_items()[0].controllers(), [edited]);
+    let _ = app.update(Message::Redo);
+    assert_eq!(app.project.midi_items()[0].controllers(), [accepted]);
+
+    let history_before_invalid = app.project.history_cursor();
+    app.midi_editor_selected_controllers = HashSet::from([accepted]);
+    let _ = app.update(Message::OpenMidiEventProperties(item_id));
+    let _ = app.update(Message::SetMidiEventPropertiesParameter("128".to_owned()));
+    let _ = app.update(Message::AcceptMidiEventProperties);
+    assert!(app.midi_event_properties_dialog.is_some());
+    assert!(app.midi_editor_feedback.is_some());
+    assert_eq!(app.project.midi_items()[0].controllers(), [accepted]);
+    assert_eq!(app.project.history_cursor(), history_before_invalid);
+    let _ = app.update(Message::CancelMidiEventProperties);
+}
+
+#[test]
+fn midi_event_properties_edits_pitch_bend_fields_with_apply_and_undo() {
+    let mut app = App::default();
+    let _ = app.update(Message::AddTrack);
+    let track_id = app.project.tracks()[0].id();
+    app.project
+        .apply(DawAction::InsertMidiItem {
+            track_id,
+            start_tick: 0,
+            length_ticks: 3_840,
+        })
+        .expect("test MIDI item should be inserted");
+    let item_id = app.project.midi_items()[0].id();
+    let original = MidiPitchBendData {
+        channel: 2,
+        tick: 480,
+        value: 9_000,
+    };
+    app.project
+        .apply(DawAction::SetMidiPitchBends {
+            item_id,
+            pitch_bends: vec![original],
+        })
+        .expect("test pitch bend should be inserted");
+    app.midi_editor_item_id = Some(item_id);
+    app.midi_editor_selected_pitch_bends = HashSet::from([original]);
+
+    assert!(commands::is_enabled(&app, CommandId::MidiEventProperties));
+    let _ = commands::dispatch(&mut app, CommandId::MidiEventProperties);
+    let dialog = app
+        .midi_event_properties_dialog
+        .as_ref()
+        .expect("selected pitch bend should open event properties");
+    assert_eq!(dialog.position, "1.1.50");
+    assert_eq!(dialog.channel, "3");
+    assert_eq!(dialog.value, "9000");
+
+    let history_before = app.project.history_cursor();
+    let _ = app.update(Message::SetMidiEventPropertiesPosition("1.2.50".to_owned()));
+    let _ = app.update(Message::SetMidiEventPropertiesChannel("4".to_owned()));
+    let _ = app.update(Message::SetMidiEventPropertiesValue("16383".to_owned()));
+    let _ = app.update(Message::ApplyMidiEventProperties);
+    let edited = MidiPitchBendData {
+        channel: 3,
+        tick: 1_440,
+        value: 16_383,
+    };
+    assert_eq!(app.project.midi_items()[0].pitch_bends(), [edited]);
+    assert_eq!(app.project.history_cursor(), history_before + 1);
+    assert_eq!(
+        app.midi_event_properties_dialog
+            .as_ref()
+            .map(|dialog| dialog.value.as_str()),
+        Some("16383")
+    );
+
+    let _ = app.update(Message::SetMidiEventPropertiesValue("8192".to_owned()));
+    let _ = app.update(Message::AcceptMidiEventProperties);
+    let accepted = MidiPitchBendData {
+        value: 8_192,
+        ..edited
+    };
+    assert_eq!(app.project.midi_items()[0].pitch_bends(), [accepted]);
+    let _ = app.update(Message::Undo);
+    assert_eq!(app.project.midi_items()[0].pitch_bends(), [edited]);
+    let _ = app.update(Message::Undo);
+    assert_eq!(app.project.midi_items()[0].pitch_bends(), [original]);
+    let _ = app.update(Message::Redo);
+    assert_eq!(app.project.midi_items()[0].pitch_bends(), [edited]);
+    let _ = app.update(Message::Redo);
+    assert_eq!(app.project.midi_items()[0].pitch_bends(), [accepted]);
+
+    let history_before_invalid = app.project.history_cursor();
+    app.midi_editor_selected_pitch_bends = HashSet::from([accepted]);
+    let _ = app.update(Message::OpenMidiEventProperties(item_id));
+    let _ = app.update(Message::SetMidiEventPropertiesValue("16384".to_owned()));
+    let _ = app.update(Message::AcceptMidiEventProperties);
+    assert!(app.midi_event_properties_dialog.is_some());
+    assert!(app.midi_editor_feedback.is_some());
+    assert_eq!(app.project.midi_items()[0].pitch_bends(), [accepted]);
+    assert_eq!(app.project.history_cursor(), history_before_invalid);
+    let _ = app.update(Message::CancelMidiEventProperties);
 }
 
 #[test]

@@ -34,7 +34,9 @@ mod marker_properties;
 mod media;
 mod menu;
 mod midi_editor;
-pub(super) use midi_editor::{midi_event_list_length, midi_event_list_position};
+pub(super) use midi_editor::{
+    midi_event_controller_property_label, midi_event_list_length, midi_event_list_position,
+};
 mod midi_export;
 mod mixer;
 mod plugin_picker;

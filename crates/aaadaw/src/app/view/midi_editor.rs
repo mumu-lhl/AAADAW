@@ -1014,9 +1014,15 @@ fn midi_event_list_view<'a>(
     let has_selection = !app.midi_editor_selected_notes.is_empty()
         || !app.midi_editor_selected_controllers.is_empty()
         || !app.midi_editor_selected_pitch_bends.is_empty();
-    let has_single_note_selection = app.midi_editor_selected_notes.len() == 1
+    let has_single_editable_event = (app.midi_editor_selected_notes.len() == 1
         && app.midi_editor_selected_controllers.is_empty()
-        && app.midi_editor_selected_pitch_bends.is_empty();
+        && app.midi_editor_selected_pitch_bends.is_empty())
+        || (app.midi_editor_selected_controllers.len() == 1
+            && app.midi_editor_selected_notes.is_empty()
+            && app.midi_editor_selected_pitch_bends.is_empty())
+        || (app.midi_editor_selected_pitch_bends.len() == 1
+            && app.midi_editor_selected_notes.is_empty()
+            && app.midi_editor_selected_controllers.is_empty());
     let mut content = column![toolbar, channel_toolbar];
     if let Some(feedback) = app.midi_editor_feedback.as_deref() {
         content = content.push(text(feedback).size(12));
@@ -1031,7 +1037,7 @@ fn midi_event_list_view<'a>(
                 button("Edit event…")
                     .style(iced::widget::button::secondary)
                     .on_press_maybe(
-                        has_single_note_selection
+                        has_single_editable_event
                             .then_some(Message::OpenMidiEventProperties(item_id)),
                     ),
                 button("Delete selected")
@@ -1124,6 +1130,86 @@ fn midi_event_controller_name(controller: u8) -> String {
         64 => "Sustain (CC64)".to_owned(),
         _ => format!("CC {controller}"),
     }
+}
+
+pub(in crate::app) fn midi_event_controller_property_label(controller: u8) -> String {
+    let name = match controller {
+        0 => "Bank Select MSB",
+        1 => "Modulation MSB",
+        2 => "Breath Controller MSB",
+        3 => "Undefined",
+        4 => "Foot Controller MSB",
+        5 => "Portamento Time MSB",
+        6 => "Data Entry MSB",
+        7 => "Volume MSB",
+        8 => "Balance MSB",
+        9 => "Undefined",
+        10 => "Pan MSB",
+        11 => "Expression MSB",
+        12 => "Effect Control 1 MSB",
+        13 => "Effect Control 2 MSB",
+        16 => "General Purpose 1 MSB",
+        17 => "General Purpose 2 MSB",
+        18 => "General Purpose 3 MSB",
+        19 => "General Purpose 4 MSB",
+        32 => "Bank Select LSB",
+        33 => "Modulation LSB",
+        34 => "Breath Controller LSB",
+        36 => "Foot Controller LSB",
+        37 => "Portamento Time LSB",
+        38 => "Data Entry LSB",
+        39 => "Volume LSB",
+        40 => "Balance LSB",
+        42 => "Pan LSB",
+        43 => "Expression LSB",
+        44 => "Effect Control 1 LSB",
+        45 => "Effect Control 2 LSB",
+        48 => "General Purpose 1 LSB",
+        49 => "General Purpose 2 LSB",
+        50 => "General Purpose 3 LSB",
+        51 => "General Purpose 4 LSB",
+        64 => "Hold Pedal (on/off)",
+        65 => "Portamento (on/off)",
+        66 => "Sostenuto (on/off)",
+        67 => "Soft Pedal (on/off)",
+        68 => "Legato Footswitch (on/off)",
+        69 => "Hold 2 (on/off)",
+        70 => "Sound Variation",
+        71 => "Timbre/Resonance",
+        72 => "Release Time",
+        73 => "Attack Time",
+        74 => "Brightness/Cutoff",
+        75..=79 => "Sound Controller",
+        80..=83 => "General Purpose Controller",
+        84 => "Portamento Control",
+        91 => "Reverb Send Level",
+        92 => "Tremolo Depth",
+        93 => "Chorus Send Level",
+        94 => "Celeste/Detune Depth",
+        95 => "Phaser Depth",
+        96 => "Data Increment",
+        97 => "Data Decrement",
+        98 => "NRPN LSB",
+        99 => "NRPN MSB",
+        100 => "RPN LSB",
+        101 => "RPN MSB",
+        120 => "All Sound Off",
+        121 => "Reset All Controllers",
+        122 => "Local Control (on/off)",
+        123 => "All Notes Off",
+        124 => "Omni Mode Off",
+        125 => "Omni Mode On",
+        126 => "Mono Mode On",
+        127 => "Poly Mode On",
+        _ => "Undefined",
+    };
+    format!("{controller:02} {name}")
+}
+
+fn midi_event_controller_property_options() -> Vec<String> {
+    (0..=127)
+        .map(midi_event_controller_property_label)
+        .collect()
 }
 
 pub(in crate::app) fn midi_event_list_position(
@@ -1304,6 +1390,14 @@ fn midi_event_properties_dialog(app: &App, touch_targets: bool) -> Element<'_, M
     let Some(state) = app.midi_event_properties_dialog.as_ref() else {
         return iced::widget::Space::new().into();
     };
+    let is_controller = matches!(
+        state.target,
+        super::super::MidiEventPropertiesTarget::Controller(_)
+    );
+    let is_pitch_bend = matches!(
+        state.target,
+        super::super::MidiEventPropertiesTarget::PitchBend(_)
+    );
     let position = iced::widget::text_input("1.1.00", &state.position)
         .on_input(Message::SetMidiEventPropertiesPosition)
         .width(Length::Fixed(if touch_targets { 148.0 } else { 116.0 }));
@@ -1313,38 +1407,125 @@ fn midi_event_properties_dialog(app: &App, touch_targets: bool) -> Element<'_, M
     let channel = iced::widget::text_input("1", &state.channel)
         .on_input(Message::SetMidiEventPropertiesChannel)
         .width(Length::Fixed(if touch_targets { 148.0 } else { 116.0 }));
-    let pitch = iced::widget::text_input("60", &state.pitch)
-        .on_input(Message::SetMidiEventPropertiesPitch)
+    let pitch = iced::widget::text_input("60", &state.parameter)
+        .on_input(Message::SetMidiEventPropertiesParameter)
         .width(Length::Fixed(if touch_targets { 176.0 } else { 152.0 }));
-    let velocity = iced::widget::text_input("96", &state.velocity)
-        .on_input(Message::SetMidiEventPropertiesVelocity)
+    let value = iced::widget::text_input("96", &state.value)
+        .on_input(Message::SetMidiEventPropertiesValue)
         .width(Length::Fixed(if touch_targets { 104.0 } else { 88.0 }));
-    let mut content = column![
-        text("Event Properties").size(16),
-        row![
-            text("Position").width(Length::Fixed(64.0)),
-            position,
-            text("Length").width(Length::Fixed(52.0)),
-            length,
-        ]
-        .spacing(SPACING_XS)
-        .align_y(iced::Alignment::Center),
-        row![text("Channel").width(Length::Fixed(76.0)), channel]
-            .spacing(SPACING_XS)
-            .align_y(iced::Alignment::Center),
-        row![text("Note").width(Length::Fixed(76.0)), pitch]
-            .spacing(SPACING_XS)
-            .align_y(iced::Alignment::Center),
-        row![
-            text("Velocity").width(Length::Fixed(76.0)),
-            velocity,
-            text("Off value 0 · not modeled").size(11),
-        ]
-        .spacing(SPACING_XS)
-        .align_y(iced::Alignment::Center),
-        text("Enter absolute values in bar.beat.hundredths format.").size(11),
-    ]
-    .spacing(if touch_targets {
+    let mut content = column![text("Event Properties").size(16)];
+    if is_controller {
+        content = content
+            .push(
+                row![
+                    text("Type").width(Length::Fixed(76.0)),
+                    text("Control Change (CC)"),
+                ]
+                .spacing(SPACING_XS)
+                .align_y(iced::Alignment::Center),
+            )
+            .push(
+                row![text("Position").width(Length::Fixed(76.0)), position]
+                    .spacing(SPACING_XS)
+                    .align_y(iced::Alignment::Center),
+            )
+            .push(
+                row![text("Channel").width(Length::Fixed(76.0)), channel]
+                    .spacing(SPACING_XS)
+                    .align_y(iced::Alignment::Center),
+            )
+            .push(
+                row![
+                    text("Controller").width(Length::Fixed(76.0)),
+                    pick_list(
+                        midi_event_controller_property_options(),
+                        Some(state.parameter.clone()),
+                        Message::SetMidiEventPropertiesParameter,
+                    )
+                    .width(Length::Fixed(if touch_targets {
+                        224.0
+                    } else {
+                        200.0
+                    })),
+                ]
+                .spacing(SPACING_XS)
+                .align_y(iced::Alignment::Center),
+            )
+            .push(
+                row![text("Value").width(Length::Fixed(76.0)), value]
+                    .spacing(SPACING_XS)
+                    .align_y(iced::Alignment::Center),
+            )
+            .push(text("CC shape and Bezier tension · not modeled").size(11))
+            .push(text("Use absolute values in bar.beat.hundredths format.").size(11));
+    } else if is_pitch_bend {
+        let offset = state
+            .value
+            .trim()
+            .parse::<i32>()
+            .map(|value| format!("({:+})", value - 8_192))
+            .unwrap_or_default();
+        content = content
+            .push(
+                row![text("Type").width(Length::Fixed(76.0)), text("Pitch")]
+                    .spacing(SPACING_XS)
+                    .align_y(iced::Alignment::Center),
+            )
+            .push(
+                row![text("Position").width(Length::Fixed(76.0)), position]
+                    .spacing(SPACING_XS)
+                    .align_y(iced::Alignment::Center),
+            )
+            .push(
+                row![text("Channel").width(Length::Fixed(76.0)), channel]
+                    .spacing(SPACING_XS)
+                    .align_y(iced::Alignment::Center),
+            )
+            .push(
+                row![
+                    text("Value").width(Length::Fixed(76.0)),
+                    value,
+                    text(offset)
+                ]
+                .spacing(SPACING_XS)
+                .align_y(iced::Alignment::Center),
+            )
+            .push(text("CC shape and Bezier tension · not modeled").size(11))
+            .push(text("Use absolute values in bar.beat.hundredths format.").size(11));
+    } else {
+        content = content
+            .push(
+                row![
+                    text("Position").width(Length::Fixed(64.0)),
+                    position,
+                    text("Length").width(Length::Fixed(52.0)),
+                    length,
+                ]
+                .spacing(SPACING_XS)
+                .align_y(iced::Alignment::Center),
+            )
+            .push(
+                row![text("Channel").width(Length::Fixed(76.0)), channel]
+                    .spacing(SPACING_XS)
+                    .align_y(iced::Alignment::Center),
+            )
+            .push(
+                row![text("Note").width(Length::Fixed(76.0)), pitch]
+                    .spacing(SPACING_XS)
+                    .align_y(iced::Alignment::Center),
+            )
+            .push(
+                row![
+                    text("Velocity").width(Length::Fixed(76.0)),
+                    value,
+                    text("Off value 0 · not modeled").size(11),
+                ]
+                .spacing(SPACING_XS)
+                .align_y(iced::Alignment::Center),
+            )
+            .push(text("Enter absolute values in bar.beat.hundredths format.").size(11));
+    }
+    let mut content = content.spacing(if touch_targets {
         SPACING_MD
     } else {
         SPACING_XS

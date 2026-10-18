@@ -738,12 +738,19 @@ struct MidiTransposeDialogState {
 #[derive(Debug, Clone)]
 struct MidiEventPropertiesDialogState {
     item_id: ItemId,
-    note_id: NoteId,
+    target: MidiEventPropertiesTarget,
     position: String,
     length: String,
     channel: String,
-    pitch: String,
-    velocity: String,
+    parameter: String,
+    value: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MidiEventPropertiesTarget {
+    Note(NoteId),
+    Controller(MidiControllerData),
+    PitchBend(MidiPitchBendData),
 }
 
 #[derive(Clone, Debug)]
@@ -1055,6 +1062,15 @@ fn parse_midi_event_pitch(value: &str) -> Option<u8> {
     };
     let midi_pitch = (octave + 1).checked_mul(12)?.checked_add(semitone)?;
     u8::try_from(midi_pitch).ok().filter(|pitch| *pitch <= 127)
+}
+
+fn parse_midi_event_controller(value: &str) -> Option<u8> {
+    value
+        .split_whitespace()
+        .next()?
+        .parse::<u8>()
+        .ok()
+        .filter(|controller| *controller <= 127)
 }
 
 #[cfg(feature = "audio-device")]
@@ -2183,24 +2199,61 @@ impl App {
     fn midi_event_properties_state(
         &self,
         item_id: ItemId,
-        note_id: NoteId,
+        target: MidiEventPropertiesTarget,
     ) -> Option<MidiEventPropertiesDialogState> {
         let item = self
             .project
             .midi_items()
             .iter()
             .find(|item| item.id() == item_id)?;
-        let note = item.notes().iter().find(|note| note.id() == note_id)?;
         let ppq = u64::from(self.project.settings().ppq());
         let meter = self.project.time_signature_at_tick(0);
+        let (position, length, channel, parameter, value) = match target {
+            MidiEventPropertiesTarget::Note(note_id) => {
+                let note = item.notes().iter().find(|note| note.id() == note_id)?;
+                (
+                    view::midi_event_list_position(note.tick(), ppq, meter),
+                    view::midi_event_list_length(note.duration(), ppq, meter),
+                    (note.channel() + 1).to_string(),
+                    midi_event_pitch_label(note.pitch()),
+                    note.velocity().to_string(),
+                )
+            }
+            MidiEventPropertiesTarget::Controller(controller) => {
+                let event = item
+                    .controllers()
+                    .iter()
+                    .find(|event| **event == controller)?;
+                (
+                    view::midi_event_list_position(event.tick, ppq, meter),
+                    String::new(),
+                    (event.channel + 1).to_string(),
+                    view::midi_event_controller_property_label(event.controller),
+                    event.value.to_string(),
+                )
+            }
+            MidiEventPropertiesTarget::PitchBend(pitch_bend) => {
+                let event = item
+                    .pitch_bends()
+                    .iter()
+                    .find(|event| **event == pitch_bend)?;
+                (
+                    view::midi_event_list_position(event.tick, ppq, meter),
+                    String::new(),
+                    (event.channel + 1).to_string(),
+                    String::new(),
+                    event.value.to_string(),
+                )
+            }
+        };
         Some(MidiEventPropertiesDialogState {
             item_id,
-            note_id,
-            position: view::midi_event_list_position(note.tick(), ppq, meter),
-            length: view::midi_event_list_length(note.duration(), ppq, meter),
-            channel: (note.channel() + 1).to_string(),
-            pitch: midi_event_pitch_label(note.pitch()),
-            velocity: note.velocity().to_string(),
+            target,
+            position,
+            length,
+            channel,
+            parameter,
+            value,
         })
     }
 
@@ -2217,62 +2270,159 @@ impl App {
             self.midi_event_properties_dialog = None;
             return Task::none();
         };
-        let Some(note) = item.notes().iter().find(|note| note.id() == dialog.note_id) else {
-            self.midi_event_properties_dialog = None;
-            return Task::none();
-        };
         let ppq = u64::from(self.project.settings().ppq());
         let meter = self.project.time_signature_at_tick(0);
         let Some(tick) = parse_midi_event_bbt(&dialog.position, ppq, meter, false) else {
             self.midi_editor_feedback = Some("Position must use bar.beat.hundredths format".into());
             return Task::none();
         };
-        let Some(duration) = parse_midi_event_bbt(&dialog.length, ppq, meter, true) else {
-            self.midi_editor_feedback = Some("Length must use bar.beat.hundredths format".into());
-            return Task::none();
-        };
         let Ok(channel) = dialog.channel.trim().parse::<u8>() else {
             self.midi_editor_feedback = Some("Channel must be from 1 to 16".into());
-            return Task::none();
-        };
-        let Some(pitch) = parse_midi_event_pitch(&dialog.pitch) else {
-            self.midi_editor_feedback = Some("Pitch must be from 0 to 127".into());
-            return Task::none();
-        };
-        let Ok(velocity) = dialog.velocity.trim().parse::<u8>() else {
-            self.midi_editor_feedback = Some("Velocity must be from 0 to 127".into());
             return Task::none();
         };
         if !(1..=16).contains(&channel) {
             self.midi_editor_feedback = Some("Channel must be from 1 to 16".into());
             return Task::none();
         }
-        if duration == 0 || velocity > 127 {
-            self.midi_editor_feedback =
-                Some("Length must be positive; pitch and velocity must be from 0 to 127".into());
-            return Task::none();
+        match dialog.target {
+            MidiEventPropertiesTarget::Note(note_id) => {
+                let Some(note) = item.notes().iter().find(|note| note.id() == note_id) else {
+                    self.midi_event_properties_dialog = None;
+                    return Task::none();
+                };
+                let Some(duration) = parse_midi_event_bbt(&dialog.length, ppq, meter, true) else {
+                    self.midi_editor_feedback =
+                        Some("Length must use bar.beat.hundredths format".into());
+                    return Task::none();
+                };
+                let Some(pitch) = parse_midi_event_pitch(&dialog.parameter) else {
+                    self.midi_editor_feedback = Some("Pitch must be from 0 to 127".into());
+                    return Task::none();
+                };
+                let Ok(velocity) = dialog.value.trim().parse::<u8>() else {
+                    self.midi_editor_feedback = Some("Velocity must be from 0 to 127".into());
+                    return Task::none();
+                };
+                if duration == 0 || velocity > 127 {
+                    self.midi_editor_feedback = Some(
+                        "Length must be positive; pitch and velocity must be from 0 to 127".into(),
+                    );
+                    return Task::none();
+                }
+                let candidate = MidiNoteData {
+                    channel: channel - 1,
+                    pitch,
+                    tick,
+                    duration,
+                    velocity,
+                };
+                let edits = vec![(note.id(), candidate)];
+                self.midi_editor_feedback = None;
+                let task = self.update(Message::EditMidiNotes(dialog.item_id, edits));
+                if self.status.starts_with("Action failed:") {
+                    self.midi_editor_feedback = Some(self.status.clone());
+                    return task;
+                }
+                if close_dialog {
+                    self.midi_event_properties_dialog = None;
+                } else {
+                    self.midi_event_properties_dialog = self.midi_event_properties_state(
+                        dialog.item_id,
+                        MidiEventPropertiesTarget::Note(note_id),
+                    );
+                }
+                task
+            }
+            MidiEventPropertiesTarget::Controller(controller) => {
+                let Some(parameter) = parse_midi_event_controller(&dialog.parameter) else {
+                    self.midi_editor_feedback = Some("Controller must be from 0 to 127".into());
+                    return Task::none();
+                };
+                let Some(value) = dialog
+                    .value
+                    .trim()
+                    .parse::<u8>()
+                    .ok()
+                    .filter(|value| *value <= 127)
+                else {
+                    self.midi_editor_feedback = Some("Value must be from 0 to 127".into());
+                    return Task::none();
+                };
+                let Some(event_index) = item
+                    .controllers()
+                    .iter()
+                    .position(|event| *event == controller)
+                else {
+                    self.midi_event_properties_dialog = None;
+                    return Task::none();
+                };
+                let mut controllers = item.controllers().to_vec();
+                let candidate = MidiControllerData {
+                    controller: parameter,
+                    channel: channel - 1,
+                    tick,
+                    value,
+                };
+                controllers[event_index] = candidate;
+                self.midi_editor_feedback = None;
+                let task = self.update(Message::SetMidiControllers(dialog.item_id, controllers));
+                if self.status.starts_with("Action failed:") {
+                    self.midi_editor_feedback = Some(self.status.clone());
+                    return task;
+                }
+                if close_dialog {
+                    self.midi_event_properties_dialog = None;
+                } else {
+                    self.midi_event_properties_dialog = self.midi_event_properties_state(
+                        dialog.item_id,
+                        MidiEventPropertiesTarget::Controller(candidate),
+                    );
+                }
+                task
+            }
+            MidiEventPropertiesTarget::PitchBend(pitch_bend) => {
+                let Some(value) = dialog
+                    .value
+                    .trim()
+                    .parse::<u16>()
+                    .ok()
+                    .filter(|value| *value <= 16_383)
+                else {
+                    self.midi_editor_feedback = Some("Value must be from 0 to 16383".into());
+                    return Task::none();
+                };
+                let Some(event_index) = item
+                    .pitch_bends()
+                    .iter()
+                    .position(|event| *event == pitch_bend)
+                else {
+                    self.midi_event_properties_dialog = None;
+                    return Task::none();
+                };
+                let mut pitch_bends = item.pitch_bends().to_vec();
+                let candidate = MidiPitchBendData {
+                    channel: channel - 1,
+                    tick,
+                    value,
+                };
+                pitch_bends[event_index] = candidate;
+                self.midi_editor_feedback = None;
+                let task = self.update(Message::SetMidiPitchBends(dialog.item_id, pitch_bends));
+                if self.status.starts_with("Action failed:") {
+                    self.midi_editor_feedback = Some(self.status.clone());
+                    return task;
+                }
+                if close_dialog {
+                    self.midi_event_properties_dialog = None;
+                } else {
+                    self.midi_event_properties_dialog = self.midi_event_properties_state(
+                        dialog.item_id,
+                        MidiEventPropertiesTarget::PitchBend(candidate),
+                    );
+                }
+                task
+            }
         }
-        let candidate = MidiNoteData {
-            channel: channel - 1,
-            pitch,
-            tick,
-            duration,
-            velocity,
-        };
-        let edits = vec![(note.id(), candidate)];
-        self.midi_editor_feedback = None;
-        let task = self.update(Message::EditMidiNotes(dialog.item_id, edits));
-        if self.status.starts_with("Action failed:") {
-            self.midi_editor_feedback = Some(self.status.clone());
-            return task;
-        }
-        if close_dialog {
-            self.midi_event_properties_dialog = None;
-        } else {
-            self.midi_event_properties_dialog =
-                self.midi_event_properties_state(dialog.item_id, dialog.note_id);
-        }
-        task
     }
 
     fn commit_midi_quantize_dialog(&mut self, close_dialog: bool) {
@@ -2475,12 +2625,14 @@ impl App {
                 Message::SetMidiEventPropertiesPosition(_)
                     | Message::SetMidiEventPropertiesLength(_)
                     | Message::SetMidiEventPropertiesChannel(_)
-                    | Message::SetMidiEventPropertiesPitch(_)
-                    | Message::SetMidiEventPropertiesVelocity(_)
+                    | Message::SetMidiEventPropertiesParameter(_)
+                    | Message::SetMidiEventPropertiesValue(_)
                     | Message::ApplyMidiEventProperties
                     | Message::AcceptMidiEventProperties
                     | Message::CancelMidiEventProperties
                     | Message::EditMidiNotes(..)
+                    | Message::SetMidiControllers(..)
+                    | Message::SetMidiPitchBends(..)
                     | Message::Escape
                     | Message::RuntimeKeyboardEvent(..)
                     | Message::BackgroundTick
@@ -3981,22 +4133,45 @@ impl App {
                 self.midi_editor_selected_pitch_bends.clear();
             }
             Message::OpenMidiEventProperties(item_id) => {
-                if self.midi_editor_item_id == Some(item_id)
-                    && self.midi_editor_selected_notes.len() == 1
+                let target = if self.midi_editor_selected_notes.len() == 1
                     && self.midi_editor_selected_controllers.is_empty()
                     && self.midi_editor_selected_pitch_bends.is_empty()
                 {
-                    let note_id = *self
-                        .midi_editor_selected_notes
+                    self.midi_editor_selected_notes
                         .iter()
                         .next()
-                        .expect("one selected MIDI note");
+                        .copied()
+                        .map(MidiEventPropertiesTarget::Note)
+                } else if self.midi_editor_selected_controllers.len() == 1
+                    && self.midi_editor_selected_notes.is_empty()
+                    && self.midi_editor_selected_pitch_bends.is_empty()
+                {
+                    self.midi_editor_selected_controllers
+                        .iter()
+                        .next()
+                        .copied()
+                        .map(MidiEventPropertiesTarget::Controller)
+                } else if self.midi_editor_selected_pitch_bends.len() == 1
+                    && self.midi_editor_selected_notes.is_empty()
+                    && self.midi_editor_selected_controllers.is_empty()
+                {
+                    self.midi_editor_selected_pitch_bends
+                        .iter()
+                        .next()
+                        .copied()
+                        .map(MidiEventPropertiesTarget::PitchBend)
+                } else {
+                    None
+                };
+                if self.midi_editor_item_id == Some(item_id)
+                    && let Some(target) = target
+                {
                     self.midi_editor_feedback = None;
                     self.midi_quantize_dialog = None;
                     self.midi_humanize_dialog = None;
                     self.midi_transpose_dialog = None;
                     self.midi_event_properties_dialog =
-                        self.midi_event_properties_state(item_id, note_id);
+                        self.midi_event_properties_state(item_id, target);
                 }
             }
             Message::SetMidiEventPropertiesPosition(value) => {
@@ -4014,14 +4189,14 @@ impl App {
                     dialog.channel = value;
                 }
             }
-            Message::SetMidiEventPropertiesPitch(value) => {
+            Message::SetMidiEventPropertiesParameter(value) => {
                 if let Some(dialog) = self.midi_event_properties_dialog.as_mut() {
-                    dialog.pitch = value;
+                    dialog.parameter = value;
                 }
             }
-            Message::SetMidiEventPropertiesVelocity(value) => {
+            Message::SetMidiEventPropertiesValue(value) => {
                 if let Some(dialog) = self.midi_event_properties_dialog.as_mut() {
-                    dialog.velocity = value;
+                    dialog.value = value;
                 }
             }
             Message::ApplyMidiEventProperties => {
