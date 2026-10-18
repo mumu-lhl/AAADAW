@@ -2524,3 +2524,11 @@ REAPER 7.82 / Default 7 在 Linux 新配置中打开现有 MIDI item，实按 `E
 在最新 Linux 桌面程序中从空工程新增 track/item，实按 `E` 后绘制 B4（tick 960、960 ticks），拖至 C#5（tick 1920），Ctrl+Z 恢复、Ctrl+Shift+Z 重做，再延长音符至 1920 ticks；截图显示稳定音高网格和同步 Inspector。关闭 `E` 后音符回到 Arrange 预览。音高、时间移动、绘制和右边缘长度处理也由 Timeline 回归覆盖；AAADAW 桌面测试 792/792、严格 all-target Clippy（`-D warnings`）、fmt 与 diff check 通过。配对截图、输入步骤、Build ID 与文件哈希列在 [inline editor fixture manifest](../verification/reaper-parity/fixtures/midi-inline-editor.tsv)。
 
 原厂本轮只确认了 `E` 的开关，不据 AAADAW 的行为推定原厂绘制、移动、调整音长或 Undo 细节一致。AAADAW 的 item 菜单入口仍需实窗操作核对；主题/布局、音高缩放与音域、loop source 边缘、多 item 与其他鼠标映射也尚未逐项对照。`MIDI-INLINE-EDITOR-001`、UI-020 与 P7 保持 `in_progress`。
+
+### 2026-10-18 空白 MIDI item 网格与插入手势原厂对照
+
+在同一 REAPER 7.82 / Default 7 隔离配置内新建空 MIDI item 并按 `E`，确认即使没有音符也会显示音高网格。空白格单击后，REAPER 编辑器窗口前后 PNG 的 SHA-256 完全相同；双击会插入当前 1/4 网格长度音符，左键拖动也会按拖动范围和网格创建音符。原厂空白打开、单击、双击、拖动截图，以及单击前后的相同 1024×768 编辑器图像均保存在 [inline editor fixture manifest](../verification/reaper-parity/fixtures/midi-inline-editor.tsv)。
+
+AAADAW 空白已打开 MIDI item 现在绘制默认稳定音高网格；空白格单击不改工程，双击插入默认网格长度音符，拖动按网格跨度插入。Cranelift 桌面实窗捕获打开、单击、双击和拖动四种状态；最新 binary Build ID 与 SHA-256、10 幅新增参照/产品截图的哈希均登记在 manifest。AAADAW 主程序测试 **794/794** 通过，含空白 pitch grid、单击无编辑、双击插入和拖动时长回归；Cranelift desktop build、stable all-target Clippy（`-D warnings`）、fmt 与 diff check 通过。
+
+本次只对齐了空白 item 的网格可见性和在默认 1/4 网格上的插入手势，不据此推定原厂音高映射、移动/调整长度、滚轮缩放、音域策略、多 item、loop source 边界或菜单入口等价。`MIDI-INLINE-EDITOR-001`、UI-020 与 P7 继续 `in_progress`。

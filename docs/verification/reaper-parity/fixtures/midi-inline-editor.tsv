@@ -6,6 +6,10 @@ reference_archive_sha256	a4aa961534f22ae5ae910e4ec0c200dcb4476c9f7556806fe09a974
 reference_project	midi-note-quantize-before.rpp
 reference_project_sha256	4bdbba8bcc46ff7bf74fabcb34031466898a81f74cf6497fd0ac2c8dd6f3174a
 native_input	Open the Arrange item, press E to show the inline MIDI editor, press E again to close it
+native_blank_item_input	In REAPER 7.82 Default 7, add a new MIDI item on track 2, select it, press E, click an empty cell once, double-click an empty cell, undo, then drag across a cell
+native_blank_item_result	E displays pitch lanes with no notes; single click leaves the item unchanged; double-click and drag each create a snapped quarter-note-length event on the 1/4 grid (960 ticks)
+native_single_click_window_sha256_before_after	c9560e42d3ee6adbfe612fb5db856e7f6f7364d6cbeafae45ab27cab1f821313 (identical direct-window captures)
+native_blank_capture_display	Xvfb :311, X11, 1440x900x24, xfwm4 without compositor
 capture_display	Xvfb :311, X11, 1440x900x24, xfwm4 without compositor
 aaadaw_build_backend	rustc 1.101.0-nightly with Cranelift
 aaadaw_build_command	CARGO_TARGET_DIR=target/cranelift CARGO_PROFILE_DEV_CODEGEN_BACKEND=cranelift cargo +nightly -Zcodegen-backend build -p aaadaw --bin aaadaw
@@ -17,9 +21,15 @@ aaadaw_drawn_note	B4; tick 960; duration 960 ticks; velocity 96
 aaadaw_moved_note	C#5; tick 1920; duration 960 ticks; velocity 96
 aaadaw_undo_redo	Ctrl+Z restores B4/tick 960; Ctrl+Shift+Z restores C#5/tick 1920
 aaadaw_resized_note	C#5; tick 1920; duration extended from 960 to 1920 ticks
+aaadaw_blank_item_input	On a fresh desktop profile, create a track and empty MIDI item, press E, single-click an empty cell, then double-click; undo and drag across one quarter-grid cell
+aaadaw_blank_item_result	Empty item shows pitch lanes; single click creates no note; double-click and drag each create B4 at tick 960, duration 960 ticks, velocity 96
+aaadaw_blank_gesture_build_id	5b1d67321474aa6ca738c76c7df5ea5f28a306a4
+aaadaw_blank_gesture_binary_sha256	03d66baaf0f39c0165175c13dfe5648d24aca7227d607fc52d003a8b109e7d90
+aaadaw_blank_gesture_capture_display	Xvfb :312, X11, 1440x900x24, xfwm4 without compositor; XDG isolated profile
+aaadaw_blank_gesture_test_suite	Cranelift: cargo +nightly -Zcodegen-backend test -p aaadaw --bin aaadaw: 794 passed
 aaadaw_test_suite	cargo test -p aaadaw --bin aaadaw: 792 passed
 aaadaw_clippy	Stable all-target Clippy with -D warnings: no issues
-manual_scope_limit	Native probing confirms E open/close only; inline gestures and the per-item context menu are not yet compared against REAPER in a live window
+manual_scope_limit	Native blank-item grid, single-click, double-click, and 1/4-grid drag behavior were compared; AAADAW item-context-menu equivalence, note pitch mapping, moving/resizing, zoom/range, loop-source edges, multi-item behavior, and other mouse mappings remain unverified
 artifact	sha256
 midi-note-quantize-before.rpp	4bdbba8bcc46ff7bf74fabcb34031466898a81f74cf6497fd0ac2c8dd6f3174a
 midi-inline-editor-native-open.png	7210bf7c7948dedc1eeb5940f1233fc31c16bebda67a0de8de3f5337d1580b60
@@ -31,3 +41,13 @@ midi-inline-editor-aaadaw-undo.png	3228964145d2360c239eebc6d57a6013f7c59d682944b
 midi-inline-editor-aaadaw-redo.png	c3b472a834e27867841271ff59e27dec3a10cd6b8fd974d34bb3459e2b2dd490
 midi-inline-editor-aaadaw-resized.png	6417423ea3227f2cfba0ce057f729901988cdd35afc8151221d19348cd7e866d
 midi-inline-editor-aaadaw-closed.png	4c2562dcbc97e8ac2b55bd814d82d0c5efe9ad99c00246ab58ef349a03f2d2b3
+midi-inline-editor-native-blank-open.png	6232db3a1ed65a22cb86af8daac7505ac879859a48d354c2762e4bec8abaa3d0
+midi-inline-editor-native-blank-single-click.png	d933023ae9dda09570a20f5cd54e120d9aa596898db99321c55f5fadfd40f558
+midi-inline-editor-native-blank-double-click.png	705cd6776bd49f32650c3209acb1d13e26b2664085bc549ec888ca48c75915e1
+midi-inline-editor-native-blank-drag.png	aa2e04aa53c65d15914c9e079af6bb15a3a7f6cf258fa98b2d34808ce10e4554
+midi-inline-editor-native-empty-before-click-window.png	c9560e42d3ee6adbfe612fb5db856e7f6f7364d6cbeafae45ab27cab1f821313
+midi-inline-editor-native-empty-after-click-window.png	c9560e42d3ee6adbfe612fb5db856e7f6f7364d6cbeafae45ab27cab1f821313
+midi-inline-editor-aaadaw-blank-open.png	f62c0c192ba95fe9c6b2fabce803ef6a9bd4ccc1c9c0f22016cc8c28aa87a93f
+midi-inline-editor-aaadaw-blank-single-click.png	f62c0c192ba95fe9c6b2fabce803ef6a9bd4ccc1c9c0f22016cc8c28aa87a93f
+midi-inline-editor-aaadaw-blank-double-click.png	9083a9e53c47427027721a523d25eea73da1be0942cb5e5ca4b313b9864c8bb3
+midi-inline-editor-aaadaw-blank-drag.png	9083a9e53c47427027721a523d25eea73da1be0942cb5e5ca4b313b9864c8bb3

@@ -36,6 +36,7 @@ const TIME_SELECTION_EDGE_HIT_RADIUS_PX: f64 = 7.0;
 const ITEM_TRIM_EDGE_HIT_RADIUS_PX: f64 = 6.0;
 const PROJECT_MARKER_DOUBLE_CLICK_INTERVAL: Duration = Duration::from_millis(500);
 const PROJECT_MARKER_DOUBLE_CLICK_DISTANCE: f32 = 6.0;
+const INLINE_MIDI_DOUBLE_CLICK_DISTANCE: f32 = 6.0;
 const LOOP_POINT_HANDLE_ROW_HEIGHT: f32 = 9.0;
 const LOOP_POINT_HANDLE_HIT_RADIUS: f32 = 8.0;
 const LOOP_POINT_HANDLE_WIDTH: f32 = 7.0;
@@ -2894,6 +2895,7 @@ struct TimelineInteractionState {
     pending_item_selection_drag: Option<PendingItemSelectionDrag>,
     pending_inline_note_move: Option<PendingInlineNoteMove>,
     pending_inline_note_insert: Option<PendingInlineNoteInsert>,
+    last_inline_note_click: Option<(ItemId, Point, Instant)>,
     last_item_click: Option<(ItemId, Instant)>,
     pending_automation_point: Option<PendingAutomationPoint>,
     automation_point_preview: Option<AutomationPointPreview>,
@@ -2929,6 +2931,8 @@ struct PendingInlineNoteMove {
 struct PendingInlineNoteInsert {
     target: InlineMidiTarget,
     start_position: Point,
+    is_dragging: bool,
+    is_double_click: bool,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -3498,40 +3502,64 @@ impl TimelineProgram<'_> {
         })
     }
 
-    fn inline_note_data_at(
+    fn inline_note_data_between(
         &self,
         target: InlineMidiTarget,
-        position: Point,
+        start_position: Point,
+        end_position: Point,
         ignore_snap: bool,
     ) -> Option<MidiNoteData> {
-        let raw_tick = tick_at_x(self.origin_tick, self.pixels_per_tick, position.x);
-        let snapped_tick = snap_tick_to_grid(
-            raw_tick,
+        let start_tick = snap_tick_to_grid(
+            tick_at_x(self.origin_tick, self.pixels_per_tick, start_position.x),
             self.cache.snap_grid_ticks,
             self.snap_enabled,
             ignore_snap,
             self.cache.swing_grid.active_amount_percent(),
         );
-        let local_tick = snapped_tick
+        let end_tick = snap_tick_to_grid(
+            tick_at_x(self.origin_tick, self.pixels_per_tick, end_position.x),
+            self.cache.snap_grid_ticks,
+            self.snap_enabled,
+            ignore_snap,
+            self.cache.swing_grid.active_amount_percent(),
+        );
+        if target.item_length_ticks == 0 {
+            return None;
+        }
+        let start_local_tick = start_tick
             .saturating_sub(target.item_start_tick)
             .min(target.item_length_ticks.saturating_sub(1));
+        let end_local_tick = end_tick
+            .saturating_sub(target.item_start_tick)
+            .min(target.item_length_ticks);
+        let default_duration = self
+            .cache
+            .snap_grid_ticks
+            .unwrap_or_else(|| (u64::from(self.project.settings().ppq()) / 4).max(1));
+        let (local_tick, requested_duration) = match end_local_tick.cmp(&start_local_tick) {
+            std::cmp::Ordering::Greater => (
+                start_local_tick,
+                end_local_tick.saturating_sub(start_local_tick),
+            ),
+            std::cmp::Ordering::Less => (
+                end_local_tick,
+                start_local_tick.saturating_sub(end_local_tick),
+            ),
+            std::cmp::Ordering::Equal => (start_local_tick, default_duration),
+        };
         let mut tick = target.source_offset_ticks.saturating_add(local_tick);
         if let Some(loop_length) = target.source_loop_length_ticks.filter(|length| *length > 0) {
             tick %= loop_length;
         }
         let pitch_span = u16::from(target.pitch_high - target.pitch_low).max(1);
-        let pitch_from_top = ((target.notes_top + target.notes_height - position.y)
+        let pitch_from_top = ((target.notes_top + target.notes_height - start_position.y)
             / target.notes_height
             * f32::from(pitch_span))
         .round()
         .clamp(0.0, f32::from(pitch_span)) as u16;
         let pitch = (u16::from(target.pitch_low) + pitch_from_top).min(127) as u8;
-        let default_duration = self
-            .cache
-            .snap_grid_ticks
-            .unwrap_or_else(|| (u64::from(self.project.settings().ppq()) / 4).max(1));
         let mut duration =
-            default_duration.min(target.item_length_ticks.saturating_sub(local_tick));
+            requested_duration.min(target.item_length_ticks.saturating_sub(local_tick));
         if let Some(loop_length) = target.source_loop_length_ticks.filter(|length| *length > 0) {
             duration = duration.min(loop_length - (tick % loop_length));
         }
@@ -3762,6 +3790,7 @@ impl shader::Program<crate::app::Message> for TimelineProgram<'_> {
                 .is_some_and(|drag| drag.is_dragging);
             let cancel_inline_midi_gesture = state.pending_inline_note_move.take().is_some()
                 || state.pending_inline_note_insert.take().is_some();
+            state.last_inline_note_click = None;
             let cancel_automation_point = state.pending_automation_point.take().is_some();
             state.automation_point_preview = None;
             return if cancel_fade {
@@ -4012,9 +4041,15 @@ impl shader::Program<crate::app::Message> for TimelineProgram<'_> {
                         TimelineEvent::PointerMoved(position),
                     )));
                 }
-                if state.pending_inline_note_move.is_some()
-                    || state.pending_inline_note_insert.is_some()
-                {
+                if let Some(mut insert) = state.pending_inline_note_insert {
+                    if let Some(current_position) = cursor.position_in(bounds) {
+                        insert.is_dragging |= (current_position.x - insert.start_position.x)
+                            .hypot(current_position.y - insert.start_position.y)
+                            >= 3.0;
+                        state.pending_inline_note_insert = Some(insert);
+                    }
+                    Some(shader::Action::request_redraw().and_capture())
+                } else if state.pending_inline_note_move.is_some() {
                     Some(shader::Action::request_redraw().and_capture())
                 } else if let Some(mut fade) = state.pending_item_fade {
                     let delta = position.x - fade.start_x;
@@ -4202,6 +4237,7 @@ impl shader::Program<crate::app::Message> for TimelineProgram<'_> {
                     state.pending_item_trim = None;
                     state.pending_time_selection_drag = None;
                     if let Some(hit) = self.inline_midi_note_hit(target, position) {
+                        state.last_inline_note_click = None;
                         state.pending_inline_note_move = Some(PendingInlineNoteMove {
                             target,
                             note_id: hit.note.id,
@@ -4212,14 +4248,28 @@ impl shader::Program<crate::app::Message> for TimelineProgram<'_> {
                         });
                         state.pending_inline_note_insert = None;
                     } else {
+                        let now = Instant::now();
+                        let is_double_click = state.last_inline_note_click.take().is_some_and(
+                            |(item_id, previous_position, previous_time)| {
+                                item_id == target.item_id
+                                    && now.duration_since(previous_time)
+                                        <= PROJECT_MARKER_DOUBLE_CLICK_INTERVAL
+                                    && (position.x - previous_position.x)
+                                        .hypot(position.y - previous_position.y)
+                                        <= INLINE_MIDI_DOUBLE_CLICK_DISTANCE
+                            },
+                        );
                         state.pending_inline_note_insert = Some(PendingInlineNoteInsert {
                             target,
                             start_position: position,
+                            is_dragging: false,
+                            is_double_click,
                         });
                         state.pending_inline_note_move = None;
                     }
                     return Some(shader::Action::capture());
                 }
+                state.last_inline_note_click = None;
                 let Some((track_index, row_y)) = row_at_y(self.row_layout, position.y) else {
                     state.pending_item_drag = None;
                     state.pending_item_trim = None;
@@ -4525,12 +4575,28 @@ impl shader::Program<crate::app::Message> for TimelineProgram<'_> {
                         )
                     }
                 } else if let Some(insert) = state.pending_inline_note_insert.take() {
-                    if cursor.position_in(bounds).is_none() {
+                    let Some(position) = cursor.position_in(bounds) else {
+                        return Some(shader::Action::capture());
+                    };
+                    let is_dragging = insert.is_dragging
+                        || (position.x - insert.start_position.x)
+                            .hypot(position.y - insert.start_position.y)
+                            >= 3.0;
+                    if !is_dragging && !insert.is_double_click {
+                        state.last_inline_note_click =
+                            Some((insert.target.item_id, insert.start_position, Instant::now()));
                         return Some(shader::Action::capture());
                     }
-                    let Some(data) = self.inline_note_data_at(
+                    state.last_inline_note_click = None;
+                    let end_position = if is_dragging {
+                        position
+                    } else {
+                        insert.start_position
+                    };
+                    let Some(data) = self.inline_note_data_between(
                         insert.target,
                         insert.start_position,
+                        end_position,
                         state.modifiers.shift(),
                     ) else {
                         return Some(shader::Action::capture());
@@ -6428,7 +6494,9 @@ impl canvas::Program<crate::app::Message> for ItemLabelsProgram<'_> {
                     });
                 }
             }
-            if row.base_height >= 43.0 && item.kind == ItemKind::Midi && !item.midi_notes.is_empty()
+            if row.base_height >= 43.0
+                && item.kind == ItemKind::Midi
+                && (!item.midi_notes.is_empty() || self.state.inline_midi_items.contains(&item.id))
             {
                 let inline = self.state.inline_midi_items.contains(&item.id);
                 let (preview_top, preview_height) = if inline {
@@ -9353,6 +9421,166 @@ mod tests {
     }
 
     #[test]
+    fn empty_inline_midi_editor_exposes_a_stable_pitch_grid_and_accepts_note_input() {
+        let mut project = Project::new();
+        project
+            .apply(DawAction::CreateTrack {
+                index: 0,
+                name: "Empty inline MIDI".to_owned(),
+            })
+            .unwrap();
+        let track_id = project.tracks()[0].id();
+        project
+            .apply(DawAction::InsertMidiItem {
+                track_id,
+                start_tick: 0,
+                length_ticks: 960,
+            })
+            .unwrap();
+        let item_id = project.midi_items()[0].id();
+
+        let mut timeline = TimelineState {
+            pixels_per_tick: 0.5,
+            ..TimelineState::default()
+        };
+        timeline.rebuild(&project);
+        timeline.inline_midi_items.insert(item_id);
+        let program = timeline.program(&project, None);
+        let target = program
+            .inline_midi_target_at(Point::new(30.0, 50.0))
+            .expect("an empty open MIDI item still exposes its inline grid");
+        assert_eq!((target.pitch_low, target.pitch_high), (48, 83));
+
+        let note = program
+            .inline_note_data_between(
+                target,
+                Point::new(30.0, target.notes_top + 1.0),
+                Point::new(30.0, target.notes_top + 1.0),
+                true,
+            )
+            .expect("an empty inline grid can create a note");
+        assert_eq!(note.tick, 60);
+        assert!(note.pitch >= 80);
+        assert!(note.duration > 0);
+    }
+
+    #[test]
+    fn inline_midi_editor_empty_click_and_drag_match_note_creation_gestures() {
+        let mut project = Project::new();
+        project
+            .apply(DawAction::CreateTrack {
+                index: 0,
+                name: "Inline gestures".to_owned(),
+            })
+            .unwrap();
+        let track_id = project.tracks()[0].id();
+        project
+            .apply(DawAction::InsertMidiItem {
+                track_id,
+                start_tick: 0,
+                length_ticks: 960,
+            })
+            .unwrap();
+        let item_id = project.midi_items()[0].id();
+        let mut timeline = TimelineState {
+            pixels_per_tick: 0.5,
+            ..TimelineState::default()
+        };
+        timeline.rebuild(&project);
+        timeline.inline_midi_items.insert(item_id);
+        let program = timeline.program(&project, None);
+        let bounds = Rectangle::new(Point::ORIGIN, Size::new(800.0, 480.0));
+        let point = Point::new(30.0, 50.0);
+        let press = Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left));
+        let release = Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left));
+        let mut interaction = TimelineInteractionState::default();
+
+        iced::widget::shader::Program::update(
+            &program,
+            &mut interaction,
+            &press,
+            bounds,
+            mouse::Cursor::Available(point),
+        )
+        .expect("a blank inline cell should capture a click");
+        let action = iced::widget::shader::Program::update(
+            &program,
+            &mut interaction,
+            &release,
+            bounds,
+            mouse::Cursor::Available(point),
+        )
+        .expect("a blank inline cell should finish the click gesture");
+        let (message, _, status) = action.into_inner();
+        assert_eq!(status, iced::event::Status::Captured);
+        assert!(message.is_none(), "a single click must not insert a note");
+        assert!(interaction.last_inline_note_click.is_some());
+
+        iced::widget::shader::Program::update(
+            &program,
+            &mut interaction,
+            &press,
+            bounds,
+            mouse::Cursor::Available(point),
+        )
+        .expect("a second click on the same cell should be captured");
+        let action = iced::widget::shader::Program::update(
+            &program,
+            &mut interaction,
+            &release,
+            bounds,
+            mouse::Cursor::Available(point),
+        )
+        .expect("double-click should insert a note");
+        let (message, _, status) = action.into_inner();
+        assert_eq!(status, iced::event::Status::Captured);
+        match message {
+            Some(crate::app::Message::AddMidiNoteAt(target_item_id, note)) => {
+                assert_eq!(target_item_id, item_id);
+                assert_eq!((note.tick, note.duration), (0, 960));
+            }
+            other => panic!("double-click should add one snapped note, got {other:?}"),
+        }
+
+        let mut drag_interaction = TimelineInteractionState::default();
+        iced::widget::shader::Program::update(
+            &program,
+            &mut drag_interaction,
+            &press,
+            bounds,
+            mouse::Cursor::Available(point),
+        )
+        .expect("a blank inline cell should begin note drawing");
+        let endpoint = Point::new(510.0, point.y);
+        let moved = Event::Mouse(mouse::Event::CursorMoved { position: endpoint });
+        iced::widget::shader::Program::update(
+            &program,
+            &mut drag_interaction,
+            &moved,
+            bounds,
+            mouse::Cursor::Available(endpoint),
+        )
+        .expect("dragging across the grid should update note length");
+        let action = iced::widget::shader::Program::update(
+            &program,
+            &mut drag_interaction,
+            &release,
+            bounds,
+            mouse::Cursor::Available(endpoint),
+        )
+        .expect("releasing the drag should insert the note");
+        let (message, _, status) = action.into_inner();
+        assert_eq!(status, iced::event::Status::Captured);
+        match message {
+            Some(crate::app::Message::AddMidiNoteAt(target_item_id, note)) => {
+                assert_eq!(target_item_id, item_id);
+                assert_eq!((note.tick, note.duration), (0, 960));
+            }
+            other => panic!("dragging should insert a grid-length note, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn inline_midi_editor_toggle_tracks_only_selected_midi_items() {
         let mut project = Project::new();
         project
@@ -9481,8 +9709,9 @@ mod tests {
             (0, 60, 240)
         );
 
+        let insert_position = Point::new(100.0, target.notes_top + 2.0);
         let inserted = program
-            .inline_note_data_at(target, Point::new(100.0, target.notes_top + 2.0), true)
+            .inline_note_data_between(target, insert_position, insert_position, true)
             .expect("empty inline grid space can create a MIDI note");
         assert_eq!(inserted.tick, 200);
         assert_eq!(inserted.duration, 760);
