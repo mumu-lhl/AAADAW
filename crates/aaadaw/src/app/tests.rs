@@ -16337,6 +16337,14 @@ fn midi_quantize_dialog_selected_events_preserves_unselected_events_and_selectio
             data: vec![0x43, 0x56],
         },
     };
+    let unselected_colliding_sysex_event = MidiOpaqueEventData {
+        tick: 600,
+        order: 40,
+        kind: MidiOpaqueEventKind::SystemExclusive {
+            status: 0xF0,
+            data: vec![0x55, 0x66],
+        },
+    };
     app.project
         .apply(DawAction::SetMidiOpaqueEvents {
             item_id,
@@ -16344,6 +16352,7 @@ fn midi_quantize_dialog_selected_events_preserves_unselected_events_and_selectio
                 selected_opaque_event.clone(),
                 unselected_opaque_event.clone(),
                 second_selected_opaque_event.clone(),
+                unselected_colliding_sysex_event.clone(),
             ],
         })
         .expect("test opaque events should be inserted");
@@ -16453,6 +16462,7 @@ fn midi_quantize_dialog_selected_events_preserves_unselected_events_and_selectio
                 tick: 600,
                 ..second_selected_opaque_event.clone()
             },
+            unselected_colliding_sysex_event.clone(),
         ]
     );
     assert_eq!(
@@ -16540,6 +16550,7 @@ fn midi_quantize_dialog_selected_events_preserves_unselected_events_and_selectio
             selected_opaque_event.clone(),
             unselected_opaque_event.clone(),
             second_selected_opaque_event.clone(),
+            unselected_colliding_sysex_event.clone(),
         ]
     );
     assert_eq!(
@@ -16562,6 +16573,7 @@ fn midi_quantize_dialog_selected_events_preserves_unselected_events_and_selectio
                 tick: 600,
                 ..second_selected_opaque_event
             },
+            unselected_colliding_sysex_event,
         ]
     );
     assert_eq!(

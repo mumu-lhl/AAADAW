@@ -1156,6 +1156,111 @@ fn midi_quantize_all_modeled_events_and_undoes_as_one_edit() {
 }
 
 #[test]
+fn midi_quantize_all_opaque_events_preserves_reaper_same_tick_collisions() {
+    let mut project = Project::new();
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Piano".to_owned(),
+        })
+        .expect("test track should be created");
+    let track_id = project.tracks()[0].id();
+    project
+        .apply(DawAction::InsertMidiItem {
+            track_id,
+            start_tick: 0,
+            length_ticks: 4_000,
+        })
+        .expect("test MIDI item should be inserted");
+    let item_id = project.midi_items()[0].id();
+    let events = [
+        MidiOpaqueEventData {
+            tick: 475,
+            order: 1,
+            kind: MidiOpaqueEventKind::Meta {
+                kind: 0x01,
+                data: b"selected text at 475".to_vec(),
+            },
+        },
+        MidiOpaqueEventData {
+            tick: 484,
+            order: 2,
+            kind: MidiOpaqueEventKind::Meta {
+                kind: 0x01,
+                data: b"unselected text at 484".to_vec(),
+            },
+        },
+        MidiOpaqueEventData {
+            tick: 595,
+            order: 3,
+            kind: MidiOpaqueEventKind::SystemExclusive {
+                status: 0xF0,
+                data: vec![0x43, 0x12],
+            },
+        },
+        MidiOpaqueEventData {
+            tick: 600,
+            order: 4,
+            kind: MidiOpaqueEventKind::SystemExclusive {
+                status: 0xF0,
+                data: vec![0x55, 0x66],
+            },
+        },
+        MidiOpaqueEventData {
+            tick: 715,
+            order: 5,
+            kind: MidiOpaqueEventKind::Meta {
+                kind: 0x06,
+                data: b"unselected marker at 715".to_vec(),
+            },
+        },
+    ];
+    project
+        .apply(DawAction::SetMidiOpaqueEvents {
+            item_id,
+            events: events.to_vec(),
+        })
+        .expect("test opaque MIDI events should be inserted");
+
+    project
+        .apply(DawAction::QuantizeMidiEventsWithOperation {
+            item_id,
+            grid: GridFraction::new(1, 32).expect("1/32 is a valid grid"),
+            strength: 1.0,
+            operation: MidiNoteQuantizeOperation::Position,
+            swing_amount_percent: 0,
+            fix_overlaps: false,
+        })
+        .expect("All events quantize should preserve opaque collisions");
+
+    assert_eq!(
+        project.midi_items()[0].opaque_events(),
+        [
+            MidiOpaqueEventData {
+                tick: 480,
+                ..events[0].clone()
+            },
+            MidiOpaqueEventData {
+                tick: 480,
+                ..events[1].clone()
+            },
+            MidiOpaqueEventData {
+                tick: 600,
+                ..events[2].clone()
+            },
+            MidiOpaqueEventData {
+                tick: 600,
+                ..events[3].clone()
+            },
+            MidiOpaqueEventData {
+                tick: 720,
+                ..events[4].clone()
+            },
+        ]
+    );
+}
+
+#[test]
 fn midi_quantize_selected_events_only_changes_the_selected_note_cc_and_pitch_bend() {
     let mut project = Project::new();
     project
