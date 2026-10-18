@@ -2256,4 +2256,13 @@ AAADAW 现对同一 MIDI item 中一个或多个同类 Note、CC、Pitch Bend �
 
 stable 桌面二进制 SHA-256 `58f0b09970b2fb3fe428611bdcaeca0e688af45ff1b700d37b5646aae21e0f27` 在 Xvfb :313 打开包含两个音符的真实 AAADAW 工程；实操切换 Event List、Ctrl-click 多选、Ctrl+F2、仅修改 Velocity 并 Apply，关闭后 Undo/Redo 均在两行实际显示 96/100 → 110 → 96/100 → 110。初始多选属性窗、Apply 后属性窗、事件行及 Undo/Redo 截图收入 manifest。MIDI Event Properties 定向 Nextest **4/4**、AAADAW App 单元测试二进制 **758/758**、strict all-target Clippy (`-D warnings`)、fmt、diff 检查通过；fixture manifest **30/30 SHA-256 有效**，parity matrix **111 项 / 15 列 / 唯一 ID**。
 
-同类型多选已覆盖，混合事件类型的属性编辑、`+` / `-` / `*` / `/` 与 `+1o` 输入、note-off velocity 持久化、CC shape / Bezier tension、meter-map/source-offset/loop BBT 和原厂精确焦点导航仍未实现；`MIDI-EVENT-PROPERTIES-001`、`MIDI-EVENT-LIST-001`、UI-019 与 P7 继续 `in_progress`。
+同类型多选已覆盖；混合事件类型的属性编辑、note-off velocity 持久化、CC shape / Bezier tension、meter-map/source-offset/loop BBT 和原厂精确焦点导航仍未实现。相对值编辑与 `+1o2` 已由下一节补齐；`MIDI-EVENT-PROPERTIES-001`、`MIDI-EVENT-LIST-001`、UI-019 与 P7 继续 `in_progress`。
+
+
+### 2026-10-18 MIDI Event Properties 相对编辑与最终控件验证
+
+在 REAPER 7.82 / Default 7 中追加原厂相对 BBT 探针：两个 Note 分别位于 `1.1.25` / `1.1.50`（960 PPQ 下 tick 240 / 480），Position 输入 `+0.1.00` 并 Apply 后变为 `1.2.25` / `1.2.50`（tick 1200 / 1440），即各自增加一个四分音符拍长。输入窗、Event List 结果、原厂 relative +10 / +1o2 读数共收入 Event Properties manifest。
+
+AAADAW Event Properties 对 Note、CC、Pitch Bend 的相对数值字段支持 `+`、`-`、`*`、`/`，针对各选中事件的当前值逐项计算；Position/Length 的加减支持 BBT offset，Note pitch 支持 `+1o2`。一批事件仍使用单个 Undo 步骤；超出 MIDI/timeline 范围时整批拒绝。最终 Linux 桌面二进制 SHA-256 `eef64c2bf8fc0099bec151f52eb85cfb409bbe516d5500b6fb275080539f0a6b` 在 Xvfb 中验证了可搜索命名 CC combo：搜索 `10` 显示 `10 Pan MSB`，选择并 Apply 将 CC7 改为 CC10，Ctrl+Z 在 Event List 恢复 CC7；搜索、选项、Apply、Undo 四张最终构建实窗图已登记。
+
+AAADAW App 测试目标 **759/759**、Event Properties 定向 Nextest **5/5**、严格 Clippy (`-D warnings`)、stable fmt 与 `git diff --check` 通过。fixture manifest **55/55 文件 SHA-256 有效**，parity matrix **111 项 / 15 列 / 唯一 ID**。混合类型多选、note-off velocity 持久化、CC shape / Bezier tension、非 4/4 meter-map、source-offset / loop BBT 以及精确原厂焦点导航仍未关闭；`MIDI-EVENT-PROPERTIES-001`、`MIDI-EVENT-LIST-001`、UI-019 与 P7 继续为 `in_progress`。

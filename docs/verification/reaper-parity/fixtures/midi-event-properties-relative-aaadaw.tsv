@@ -1,0 +1,6 @@
+build	Linux desktop AAADAW SHA-256 eef64c2bf8fc0099bec151f52eb85cfb409bbe516d5500b6fb275080539f0a6b
+notes	selected velocities 96,100	+10	106,110	Undo	96,100
+notes	selected pitches C6/G4 (84,67)	+1o2	D7/A5 (98,81)	Undo	C6/G4
+cc	controller 7 value 90	controller +1; value +10	controller 8 value 100	Undo	controller 7 value 90
+pitch bend	value 9000	/2	4500	Undo	9000
+controller combo	search 10	option 10 Pan MSB	apply CC7 to CC10	Value 90	Undo CC7

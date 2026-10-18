@@ -488,6 +488,7 @@ struct App {
     midi_humanize_dialog: Option<MidiHumanizeDialogState>,
     midi_transpose_dialog: Option<MidiTransposeDialogState>,
     midi_event_properties_dialog: Option<MidiEventPropertiesDialogState>,
+    midi_event_properties_controller_options: MidiEventPropertiesControllerOptions,
     midi_editor_lane: MidiEditorLane,
     midi_editor_tool: MidiEditorTool,
     midi_editor_mode: MidiEditorMode,
@@ -758,6 +759,45 @@ enum MidiEventPropertiesTarget {
     PitchBends(Vec<MidiPitchBendData>),
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum MidiEventPropertiesOperator {
+    Add,
+    Subtract,
+    Multiply,
+    Divide,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct MidiEventPropertiesRelativeValue {
+    operator: MidiEventPropertiesOperator,
+    operand: f64,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum MidiEventPropertiesEdit {
+    Preserve,
+    Absolute(i128),
+    Relative(MidiEventPropertiesRelativeValue),
+}
+
+#[derive(Debug, Clone)]
+struct MidiEventPropertiesControllerOptions(iced::widget::combo_box::State<String>);
+
+impl MidiEventPropertiesControllerOptions {
+    fn reset(&mut self, selection: Option<String>) {
+        let options = view::midi_event_controller_property_options();
+        self.0 = iced::widget::combo_box::State::with_selection(options, selection.as_ref());
+    }
+}
+
+impl Default for MidiEventPropertiesControllerOptions {
+    fn default() -> Self {
+        Self(iced::widget::combo_box::State::new(
+            view::midi_event_controller_property_options(),
+        ))
+    }
+}
+
 #[derive(Clone, Debug)]
 struct TempoMapEdit {
     original_tick: Option<u64>,
@@ -1019,6 +1059,139 @@ fn parse_midi_event_bbt(
     bars.checked_mul(measure_ticks)?
         .checked_add(beats.checked_mul(beat_ticks)?)?
         .checked_add(subticks)
+}
+
+fn parse_midi_event_property_edit(
+    value: &str,
+    mixed: bool,
+    parse_absolute: impl FnOnce(&str) -> Option<i128>,
+    parse_relative: impl FnOnce(&str) -> Option<MidiEventPropertiesRelativeValue>,
+) -> Option<MidiEventPropertiesEdit> {
+    let value = value.trim();
+    if value.is_empty() {
+        return mixed.then_some(MidiEventPropertiesEdit::Preserve);
+    }
+    if matches!(value.chars().next(), Some('+' | '-' | '*' | '/')) {
+        return parse_relative(value).map(MidiEventPropertiesEdit::Relative);
+    }
+    parse_absolute(value).map(MidiEventPropertiesEdit::Absolute)
+}
+
+fn parse_midi_event_relative_numeric(value: &str) -> Option<MidiEventPropertiesRelativeValue> {
+    let mut characters = value.trim().chars();
+    let operator = match characters.next()? {
+        '+' => MidiEventPropertiesOperator::Add,
+        '-' => MidiEventPropertiesOperator::Subtract,
+        '*' => MidiEventPropertiesOperator::Multiply,
+        '/' => MidiEventPropertiesOperator::Divide,
+        _ => return None,
+    };
+    let operand = characters.as_str().parse::<f64>().ok()?;
+    if !operand.is_finite() || (operator == MidiEventPropertiesOperator::Divide && operand == 0.0) {
+        return None;
+    }
+    Some(MidiEventPropertiesRelativeValue { operator, operand })
+}
+
+fn parse_midi_event_time_edit(
+    value: &str,
+    mixed: bool,
+    ppq: u64,
+    meter: TimeSignature,
+    is_length: bool,
+) -> Option<MidiEventPropertiesEdit> {
+    parse_midi_event_property_edit(
+        value,
+        mixed,
+        |value| parse_midi_event_bbt(value, ppq, meter, is_length).map(i128::from),
+        |value| {
+            let value = value.trim();
+            let mut characters = value.chars();
+            let operator = match characters.next()? {
+                '+' => MidiEventPropertiesOperator::Add,
+                '-' => MidiEventPropertiesOperator::Subtract,
+                '*' => MidiEventPropertiesOperator::Multiply,
+                '/' => MidiEventPropertiesOperator::Divide,
+                _ => return None,
+            };
+            let operand = characters.as_str();
+            let operand = if operand.contains('.')
+                && matches!(
+                    operator,
+                    MidiEventPropertiesOperator::Add | MidiEventPropertiesOperator::Subtract
+                ) {
+                parse_midi_event_bbt(operand, ppq, meter, true)? as f64
+            } else {
+                operand.parse::<f64>().ok()?
+            };
+            if !operand.is_finite()
+                || (operator == MidiEventPropertiesOperator::Divide && operand == 0.0)
+            {
+                return None;
+            }
+            Some(MidiEventPropertiesRelativeValue { operator, operand })
+        },
+    )
+}
+
+fn parse_midi_event_pitch_edit(value: &str, mixed: bool) -> Option<MidiEventPropertiesEdit> {
+    parse_midi_event_property_edit(
+        value,
+        mixed,
+        |value| parse_midi_event_pitch(value).map(i128::from),
+        |value| {
+            let value = value.trim();
+            let first = value.chars().next()?;
+            if matches!(first, '+' | '-') {
+                let operand = &value[first.len_utf8()..];
+                if let Some((octaves, semitones)) = operand.split_once(['o', 'O']) {
+                    let octaves = octaves.parse::<i128>().ok()?;
+                    let semitones = if semitones.is_empty() {
+                        0
+                    } else {
+                        semitones.parse::<i128>().ok()?
+                    };
+                    let magnitude = octaves.checked_mul(12)?.checked_add(semitones)?;
+                    let (operator, magnitude) = if first == '+' {
+                        (MidiEventPropertiesOperator::Add, magnitude)
+                    } else {
+                        (MidiEventPropertiesOperator::Subtract, magnitude)
+                    };
+                    return Some(MidiEventPropertiesRelativeValue {
+                        operator,
+                        operand: magnitude as f64,
+                    });
+                }
+            }
+            parse_midi_event_relative_numeric(value)
+        },
+    )
+}
+
+fn apply_midi_event_properties_edit(
+    original: i128,
+    edit: MidiEventPropertiesEdit,
+    minimum: i128,
+    maximum: i128,
+) -> Option<i128> {
+    let value = match edit {
+        MidiEventPropertiesEdit::Preserve => original,
+        MidiEventPropertiesEdit::Absolute(value) => value,
+        MidiEventPropertiesEdit::Relative(relative) => {
+            let original = original as f64;
+            let result = match relative.operator {
+                MidiEventPropertiesOperator::Add => original + relative.operand,
+                MidiEventPropertiesOperator::Subtract => original - relative.operand,
+                MidiEventPropertiesOperator::Multiply => original * relative.operand,
+                MidiEventPropertiesOperator::Divide => original / relative.operand,
+            };
+            if !result.is_finite() || result < minimum as f64 || result > maximum as f64 {
+                return None;
+            }
+            result.round() as i128
+        }
+    };
+    (minimum..=maximum).contains(&value).then_some(value)
 }
 
 fn midi_event_pitch_label(pitch: u8) -> String {
@@ -2363,6 +2536,18 @@ impl App {
         })
     }
 
+    fn reset_midi_event_properties_controller_options(&mut self) {
+        let selection = self
+            .midi_event_properties_dialog
+            .as_ref()
+            .and_then(|dialog| {
+                matches!(&dialog.target, MidiEventPropertiesTarget::Controllers(_))
+                    .then(|| dialog.parameter.clone())
+            });
+        self.midi_event_properties_controller_options
+            .reset(selection);
+    }
+
     fn commit_midi_event_properties(&mut self, close_dialog: bool) -> Task<Message> {
         let Some(dialog) = self.midi_event_properties_dialog.clone() else {
             return Task::none();
@@ -2379,86 +2564,101 @@ impl App {
         };
         let ppq = u64::from(self.project.settings().ppq());
         let meter = self.project.time_signature_at_tick(0);
-        let tick = if dialog.position_mixed && dialog.position.trim().is_empty() {
-            None
-        } else if let Some(tick) = parse_midi_event_bbt(&dialog.position, ppq, meter, false) {
-            Some(tick)
-        } else {
+        let Some(position_edit) =
+            parse_midi_event_time_edit(&dialog.position, dialog.position_mixed, ppq, meter, false)
+        else {
             self.midi_editor_feedback = Some("Position must use bar.beat.hundredths format".into());
             return Task::none();
         };
-        let channel = if dialog.channel_mixed && dialog.channel.trim().is_empty() {
-            None
-        } else if let Ok(channel) = dialog.channel.trim().parse::<u8>() {
-            if (1..=16).contains(&channel) {
-                Some(channel - 1)
-            } else {
-                self.midi_editor_feedback = Some("Channel must be from 1 to 16".into());
-                return Task::none();
-            }
-        } else {
+        let Some(channel_edit) = parse_midi_event_property_edit(
+            &dialog.channel,
+            dialog.channel_mixed,
+            |value| value.parse::<i128>().ok(),
+            parse_midi_event_relative_numeric,
+        ) else {
             self.midi_editor_feedback = Some("Channel must be from 1 to 16".into());
             return Task::none();
         };
         match dialog.target {
             MidiEventPropertiesTarget::Notes(note_ids) => {
-                let duration = if dialog.length_mixed && dialog.length.trim().is_empty() {
-                    None
-                } else if let Some(duration) =
-                    parse_midi_event_bbt(&dialog.length, ppq, meter, true)
-                {
-                    Some(duration)
-                } else {
+                let Some(duration_edit) = parse_midi_event_time_edit(
+                    &dialog.length,
+                    dialog.length_mixed,
+                    ppq,
+                    meter,
+                    true,
+                ) else {
                     self.midi_editor_feedback =
                         Some("Length must use bar.beat.hundredths format".into());
                     return Task::none();
                 };
-                let pitch = if dialog.parameter_mixed && dialog.parameter.trim().is_empty() {
-                    None
-                } else if let Some(pitch) = parse_midi_event_pitch(&dialog.parameter) {
-                    Some(pitch)
-                } else {
+                let Some(pitch_edit) =
+                    parse_midi_event_pitch_edit(&dialog.parameter, dialog.parameter_mixed)
+                else {
                     self.midi_editor_feedback = Some("Pitch must be from 0 to 127".into());
                     return Task::none();
                 };
-                let velocity = if dialog.value_mixed && dialog.value.trim().is_empty() {
-                    None
-                } else if let Some(velocity) = dialog
-                    .value
-                    .trim()
-                    .parse::<u8>()
-                    .ok()
-                    .filter(|velocity| *velocity <= 127)
-                {
-                    Some(velocity)
-                } else {
+                let Some(velocity_edit) = parse_midi_event_property_edit(
+                    &dialog.value,
+                    dialog.value_mixed,
+                    |value| value.parse::<i128>().ok(),
+                    parse_midi_event_relative_numeric,
+                ) else {
                     self.midi_editor_feedback = Some("Velocity must be from 0 to 127".into());
                     return Task::none();
                 };
-                if duration == Some(0) {
-                    self.midi_editor_feedback = Some(
-                        "Length must be positive; pitch and velocity must be from 0 to 127".into(),
-                    );
-                    return Task::none();
-                }
                 let edits = note_ids
                     .iter()
                     .map(|note_id| {
                         let note = item.notes().iter().find(|note| note.id() == *note_id)?;
+                        let channel = apply_midi_event_properties_edit(
+                            i128::from(note.channel()) + 1,
+                            channel_edit,
+                            1,
+                            16,
+                        )? as u8
+                            - 1;
+                        let pitch = apply_midi_event_properties_edit(
+                            i128::from(note.pitch()),
+                            pitch_edit,
+                            0,
+                            127,
+                        )? as u8;
+                        let tick = apply_midi_event_properties_edit(
+                            i128::from(note.tick()),
+                            position_edit,
+                            0,
+                            i128::from(u64::MAX),
+                        )? as u64;
+                        let duration = apply_midi_event_properties_edit(
+                            i128::from(note.duration()),
+                            duration_edit,
+                            1,
+                            i128::from(u64::MAX),
+                        )? as u64;
+                        let velocity = apply_midi_event_properties_edit(
+                            i128::from(note.velocity()),
+                            velocity_edit,
+                            0,
+                            127,
+                        )? as u8;
                         Some((
                             note.id(),
                             MidiNoteData {
-                                channel: channel.unwrap_or(note.channel()),
-                                pitch: pitch.unwrap_or(note.pitch()),
-                                tick: tick.unwrap_or(note.tick()),
-                                duration: duration.unwrap_or(note.duration()),
-                                velocity: velocity.unwrap_or(note.velocity()),
+                                channel,
+                                pitch,
+                                tick,
+                                duration,
+                                velocity,
                             },
                         ))
                     })
                     .collect::<Option<Vec<_>>>();
                 let Some(edits) = edits else {
-                    self.midi_event_properties_dialog = None;
+                    self.midi_editor_feedback = Some(
+                        "Position, length, channel, pitch, or velocity is outside its valid range"
+                            .into(),
+                    );
                     return Task::none();
                 };
                 let unchanged = edits.iter().all(|(note_id, data)| {
@@ -2497,25 +2697,21 @@ impl App {
                 task
             }
             MidiEventPropertiesTarget::Controllers(events) => {
-                let controller = if dialog.parameter_mixed && dialog.parameter.trim().is_empty() {
-                    None
-                } else if let Some(controller) = parse_midi_event_controller(&dialog.parameter) {
-                    Some(controller)
-                } else {
+                let Some(controller_edit) = parse_midi_event_property_edit(
+                    &dialog.parameter,
+                    dialog.parameter_mixed,
+                    |value| parse_midi_event_controller(value).map(i128::from),
+                    parse_midi_event_relative_numeric,
+                ) else {
                     self.midi_editor_feedback = Some("Controller must be from 0 to 127".into());
                     return Task::none();
                 };
-                let value = if dialog.value_mixed && dialog.value.trim().is_empty() {
-                    None
-                } else if let Some(value) = dialog
-                    .value
-                    .trim()
-                    .parse::<u8>()
-                    .ok()
-                    .filter(|value| *value <= 127)
-                {
-                    Some(value)
-                } else {
+                let Some(value_edit) = parse_midi_event_property_edit(
+                    &dialog.value,
+                    dialog.value_mixed,
+                    |value| value.parse::<i128>().ok(),
+                    parse_midi_event_relative_numeric,
+                ) else {
                     self.midi_editor_feedback = Some("Value must be from 0 to 127".into());
                     return Task::none();
                 };
@@ -2527,11 +2723,48 @@ impl App {
                         self.midi_event_properties_dialog = None;
                         return Task::none();
                     };
+                    let Some(channel) = apply_midi_event_properties_edit(
+                        i128::from(event.channel) + 1,
+                        channel_edit,
+                        1,
+                        16,
+                    ) else {
+                        self.midi_editor_feedback = Some("Channel must be from 1 to 16".into());
+                        return Task::none();
+                    };
+                    let Some(tick) = apply_midi_event_properties_edit(
+                        i128::from(event.tick),
+                        position_edit,
+                        0,
+                        i128::from(u64::MAX),
+                    ) else {
+                        self.midi_editor_feedback =
+                            Some("Position is outside its valid range".into());
+                        return Task::none();
+                    };
+                    let Some(controller) = apply_midi_event_properties_edit(
+                        i128::from(event.controller),
+                        controller_edit,
+                        0,
+                        127,
+                    ) else {
+                        self.midi_editor_feedback = Some("Controller must be from 0 to 127".into());
+                        return Task::none();
+                    };
+                    let Some(value) = apply_midi_event_properties_edit(
+                        i128::from(event.value),
+                        value_edit,
+                        0,
+                        127,
+                    ) else {
+                        self.midi_editor_feedback = Some("Value must be from 0 to 127".into());
+                        return Task::none();
+                    };
                     let candidate = MidiControllerData {
-                        controller: controller.unwrap_or(event.controller),
-                        channel: channel.unwrap_or(event.channel),
-                        tick: tick.unwrap_or(event.tick),
-                        value: value.unwrap_or(event.value),
+                        controller: controller as u8,
+                        channel: channel as u8 - 1,
+                        tick: tick as u64,
+                        value: value as u8,
                     };
                     controllers[index] = candidate;
                     updated_events.push(candidate);
@@ -2558,20 +2791,16 @@ impl App {
                         MidiEventPropertiesTarget::Controllers(updated_events),
                     );
                 }
+                self.reset_midi_event_properties_controller_options();
                 task
             }
             MidiEventPropertiesTarget::PitchBends(events) => {
-                let value = if dialog.value_mixed && dialog.value.trim().is_empty() {
-                    None
-                } else if let Some(value) = dialog
-                    .value
-                    .trim()
-                    .parse::<u16>()
-                    .ok()
-                    .filter(|value| *value <= 16_383)
-                {
-                    Some(value)
-                } else {
+                let Some(value_edit) = parse_midi_event_property_edit(
+                    &dialog.value,
+                    dialog.value_mixed,
+                    |value| value.parse::<i128>().ok(),
+                    parse_midi_event_relative_numeric,
+                ) else {
                     self.midi_editor_feedback = Some("Value must be from 0 to 16383".into());
                     return Task::none();
                 };
@@ -2583,10 +2812,38 @@ impl App {
                         self.midi_event_properties_dialog = None;
                         return Task::none();
                     };
+                    let Some(channel) = apply_midi_event_properties_edit(
+                        i128::from(event.channel) + 1,
+                        channel_edit,
+                        1,
+                        16,
+                    ) else {
+                        self.midi_editor_feedback = Some("Channel must be from 1 to 16".into());
+                        return Task::none();
+                    };
+                    let Some(tick) = apply_midi_event_properties_edit(
+                        i128::from(event.tick),
+                        position_edit,
+                        0,
+                        i128::from(u64::MAX),
+                    ) else {
+                        self.midi_editor_feedback =
+                            Some("Position is outside its valid range".into());
+                        return Task::none();
+                    };
+                    let Some(value) = apply_midi_event_properties_edit(
+                        i128::from(event.value),
+                        value_edit,
+                        0,
+                        16_383,
+                    ) else {
+                        self.midi_editor_feedback = Some("Value must be from 0 to 16383".into());
+                        return Task::none();
+                    };
                     let candidate = MidiPitchBendData {
-                        channel: channel.unwrap_or(event.channel),
-                        tick: tick.unwrap_or(event.tick),
-                        value: value.unwrap_or(event.value),
+                        channel: channel as u8 - 1,
+                        tick: tick as u64,
+                        value: value as u16,
                     };
                     pitch_bends[index] = candidate;
                     updated_events.push(candidate);
@@ -4384,6 +4641,7 @@ impl App {
                     self.midi_transpose_dialog = None;
                     self.midi_event_properties_dialog =
                         self.midi_event_properties_state(item_id, target);
+                    self.reset_midi_event_properties_controller_options();
                 }
             }
             Message::SetMidiEventPropertiesPosition(value) => {

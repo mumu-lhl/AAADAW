@@ -1206,7 +1206,7 @@ pub(in crate::app) fn midi_event_controller_property_label(controller: u8) -> St
     format!("{controller:02} {name}")
 }
 
-fn midi_event_controller_property_options() -> Vec<String> {
+pub(in crate::app) fn midi_event_controller_property_options() -> Vec<String> {
     (0..=127)
         .map(midi_event_controller_property_label)
         .collect()
@@ -1415,49 +1415,51 @@ fn midi_event_properties_dialog(app: &App, touch_targets: bool) -> Element<'_, M
         .width(Length::Fixed(if touch_targets { 104.0 } else { 88.0 }));
     let mut content = column![text("Event Properties").size(16)];
     if is_controller {
-        content = content
-            .push(
-                row![
-                    text("Type").width(Length::Fixed(76.0)),
-                    text("Control Change (CC)"),
-                ]
-                .spacing(SPACING_XS)
-                .align_y(iced::Alignment::Center),
-            )
-            .push(
-                row![text("Position").width(Length::Fixed(76.0)), position]
+        content =
+            content
+                .push(
+                    row![
+                        text("Type").width(Length::Fixed(76.0)),
+                        text("Control Change (CC)"),
+                    ]
                     .spacing(SPACING_XS)
                     .align_y(iced::Alignment::Center),
-            )
-            .push(
-                row![text("Channel").width(Length::Fixed(76.0)), channel]
+                )
+                .push(
+                    row![text("Position").width(Length::Fixed(76.0)), position]
+                        .spacing(SPACING_XS)
+                        .align_y(iced::Alignment::Center),
+                )
+                .push(
+                    row![text("Channel").width(Length::Fixed(76.0)), channel]
+                        .spacing(SPACING_XS)
+                        .align_y(iced::Alignment::Center),
+                )
+                .push(
+                    row![
+                        text("Controller").width(Length::Fixed(76.0)),
+                        iced::widget::combo_box(
+                            &app.midi_event_properties_controller_options.0,
+                            "7",
+                            (!state.parameter.is_empty()).then_some(&state.parameter),
+                            Message::SetMidiEventPropertiesParameter,
+                        )
+                        .on_input(Message::SetMidiEventPropertiesParameter)
+                        .width(Length::Fixed(if touch_targets { 224.0 } else { 200.0 })),
+                    ]
                     .spacing(SPACING_XS)
                     .align_y(iced::Alignment::Center),
-            )
-            .push(
-                row![
-                    text("Controller").width(Length::Fixed(76.0)),
-                    pick_list(
-                        midi_event_controller_property_options(),
-                        Some(state.parameter.clone()),
-                        Message::SetMidiEventPropertiesParameter,
-                    )
-                    .width(Length::Fixed(if touch_targets {
-                        224.0
-                    } else {
-                        200.0
-                    })),
-                ]
-                .spacing(SPACING_XS)
-                .align_y(iced::Alignment::Center),
-            )
-            .push(
-                row![text("Value").width(Length::Fixed(76.0)), value]
-                    .spacing(SPACING_XS)
-                    .align_y(iced::Alignment::Center),
-            )
-            .push(text("CC shape and Bezier tension · not modeled").size(11))
-            .push(text("Use absolute values in bar.beat.hundredths format.").size(11));
+                )
+                .push(
+                    row![text("Value").width(Length::Fixed(76.0)), value]
+                        .spacing(SPACING_XS)
+                        .align_y(iced::Alignment::Center),
+                )
+                .push(text("CC shape and Bezier tension · not modeled").size(11))
+                .push(
+                    text("Use +, -, *, / for relative changes; position uses bar.beat.hundredths.")
+                        .size(11),
+                );
     } else if is_pitch_bend {
         let offset = state
             .value
@@ -1491,7 +1493,10 @@ fn midi_event_properties_dialog(app: &App, touch_targets: bool) -> Element<'_, M
                 .align_y(iced::Alignment::Center),
             )
             .push(text("CC shape and Bezier tension · not modeled").size(11))
-            .push(text("Use absolute values in bar.beat.hundredths format.").size(11));
+            .push(
+                text("Use +, -, *, / for relative changes; position uses bar.beat.hundredths.")
+                    .size(11),
+            );
     } else {
         content = content
             .push(
@@ -1528,7 +1533,8 @@ fn midi_event_properties_dialog(app: &App, touch_targets: bool) -> Element<'_, M
                 .spacing(SPACING_XS)
                 .align_y(iced::Alignment::Center),
             )
-            .push(text("Enter absolute values in bar.beat.hundredths format.").size(11));
+            .push(text("Use +, -, *, / for relative changes; position and length use bar.beat.hundredths.").size(11))
+            .push(text("Pitch also accepts +1o2 to add 1 octave and 2 semitones.").size(11));
     }
     let mut content = content.spacing(if touch_targets {
         SPACING_MD

@@ -1,0 +1,10 @@
+version	7.82/linux-x86_64
+theme	Default_7.0.ReaperThemeZip
+action	40004	Edit: Event properties	Ctrl+F2
+case	notes	selected events	2
+case	velocity	input	+10	before	90,100	after	100,110
+case	pitch	input	+1o2	before	74,78	after	88,92
+case	position-bbt	input	+0.1.00	before	1.1.25,1.1.50	after	1.2.25,1.2.50
+note	+10 applies the increment to each selected event
+note	+1o2 adds 12+2 semitones to each selected note
+note	+0.1.00 advances each selected event by one beat (960 ticks at 960 PPQ in 4/4)
