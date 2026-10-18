@@ -10343,6 +10343,43 @@ mod tests {
             selected.into_iter().collect::<HashSet<_>>(),
             HashSet::from([first_id, second_id])
         );
+
+        timeline.handle(TimelineEvent::SetInlineMidiNoteSelection {
+            item_id,
+            note_ids: vec![first_id, second_id],
+        });
+        let program = timeline.program(&project, None);
+        let second_press = iced::widget::shader::Program::update(
+            &program,
+            &mut interaction,
+            &press,
+            bounds,
+            mouse::Cursor::Available(second_position),
+        )
+        .expect("Control-click on a selected note defers deselection until release");
+        let (message, _, _) = second_press.into_inner();
+        assert!(message.is_none());
+        let second_release = iced::widget::shader::Program::update(
+            &program,
+            &mut interaction,
+            &release,
+            bounds,
+            mouse::Cursor::Available(second_position),
+        )
+        .expect("releasing Control-click removes only that note from the selection");
+        let (message, _, _) = second_release.into_inner();
+        let crate::app::Message::Timeline(TimelineEvent::SetInlineMidiNoteSelection {
+            item_id: selected_item,
+            note_ids: selected,
+        }) = message.unwrap()
+        else {
+            panic!("Control-clicking a selected note should publish deselection");
+        };
+        assert_eq!(selected_item, item_id);
+        assert_eq!(
+            selected.into_iter().collect::<HashSet<_>>(),
+            HashSet::from([first_id])
+        );
     }
 
     #[test]

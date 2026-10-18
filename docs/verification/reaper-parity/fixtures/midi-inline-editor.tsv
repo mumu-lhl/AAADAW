@@ -29,7 +29,7 @@ aaadaw_blank_gesture_capture_display	Xvfb :312, X11, 1440x900x24, xfwm4 without 
 aaadaw_blank_gesture_test_suite	Cranelift: cargo +nightly -Zcodegen-backend test -p aaadaw --bin aaadaw: 794 passed
 aaadaw_test_suite	cargo test -p aaadaw --bin aaadaw: 792 passed
 aaadaw_clippy	Stable all-target Clippy with -D warnings: no issues
-manual_scope_limit	Native Ctrl-drag group-copy behavior is now compared. Blank-item grid/single click/double click/1/4 insertion and populated-item movement/copy at 1/32 snap were compared with native REAPER. AAADAW selection, Ctrl-click extension, selected-note highlight, group movement/copy, Undo restoring the source selection, Redo restoring the copy selection, and exact tick readback are live-captured. Native Ctrl-click add/remove selection mapping, item context-menu equivalence, note pitch mapping, resize-edge parity, zoom/range, loop-source edges, cross-item groups and other mouse mappings remain unverified
+manual_scope_limit	Native Ctrl-drag group-copy behavior is now compared. Blank-item grid/single click/double click/1/4 insertion and populated-item movement/copy at 1/32 snap were compared with native REAPER. AAADAW selection, Ctrl-click extension, selected-note highlight, group movement/copy, Undo restoring the source selection, Redo restoring the copy selection, and exact tick readback are live-captured. Item context-menu equivalence, note pitch mapping, resize-edge parity, zoom/range, loop-source edges, cross-item groups and other mouse mappings remain unverified
 native_group_move_input	REAPER 7.82 Linux / Default 7; midi-note-quantize-before.rpp; selected C4 tick 100, D4 tick 350, F4 tick 900; unselected E4 tick 550; all durations 120
 native_group_move_grid	1/32 straight grid; 120 ticks at 960 PPQ
 native_group_move_gesture	Open the inline MIDI editor, drag selected C4 from tick 100 to the snapped tick 840, save the project
@@ -61,6 +61,11 @@ aaadaw_ctrl_drag_binary_sha256	5f8828c66c80ca8794af9d3f3fc9b6666284a5da663596c2e
 aaadaw_ctrl_drag_test_suite	Cranelift: cargo +nightly -Zcodegen-backend test -p aaadaw --bin aaadaw: 799 passed, 0 failed, 0 skipped
 aaadaw_ctrl_drag_undo_redo_regression	app::tests::inline_midi_group_copy_selects_copies_and_is_one_undoable_transaction; one Undo removes the three copies, one Redo restores them and inline selection
 aaadaw_ctrl_drag_clippy	Stable all-target Clippy with -D warnings: passed; cargo fmt --check and git diff --check: passed
+native_ctrl_click_input	In REAPER 7.82 Default 7 Piano Roll, begin with C4/D4/F4 copies at 960/1210/1760 selected, source group at 840/1090/1640 unselected, and E4 at 550 unselected
+native_ctrl_click_remove	Ctrl-click selected copy C4 at 960; it becomes unselected while D4/F4 copies stay selected and all note positions remain unchanged
+native_ctrl_click_add	Ctrl-click unselected source C4 at 840; it becomes selected while D4/F4 copies stay selected and C4 copy remains unselected
+native_ctrl_click_project_readback	Saved RPP selection bits: C4 source tick 840 selected; C4 copy tick 960 unselected; D4/F4 copies at 1210/1760 selected; E4 remains unselected; no MIDI event positions or durations change
+native_ctrl_click_capture_display	Xvfb :313, X11, 1440x900x24, xfwm4 without compositor; direct MIDI editor capture 1054x408
 artifact	sha256
 midi-note-quantize-before.rpp	4bdbba8bcc46ff7bf74fabcb34031466898a81f74cf6497fd0ac2c8dd6f3174a
 midi-inline-editor-native-open.png	7210bf7c7948dedc1eeb5940f1233fc31c16bebda67a0de8de3f5337d1580b60
@@ -98,3 +103,6 @@ midi-inline-editor-aaadaw-ctrl-drag-after.png	e31dfdb1bc0d3b29f3c9fcb0d20c2b7de7
 midi-inline-editor-aaadaw-ctrl-drag-undo.png	95c8c5b79aac65efc6711026f24c68486386b765201f3be11da8a46c3f047095
 midi-inline-editor-aaadaw-ctrl-drag-redo.png	0e977b5c42e0411a10f10cd0c7de0ce174a41408901165ff45a4f7b2f47a40bd
 midi-inline-editor-aaadaw-ctrl-drag-after.aaadaw	5bc6a3b02c930ff2e94c77058cd7855cffe92edf6cd8b05915e8bc377bd48c32
+midi-inline-editor-native-ctrl-click-remove.png	f6b910da2df46b4390a66ed4eabfea67241eec147a9b733c940927247a675dd4
+midi-inline-editor-native-ctrl-click-add.png	3286abd7c7a78989d52de4d17fb713b5c84b5a456bed1789fd75abb3fdee290e
+midi-inline-editor-native-ctrl-click-after.rpp	41f3992819f7a44c5ed4d27fe1d25f0a983b887c8f6f0608ce0521ba7c0587d7

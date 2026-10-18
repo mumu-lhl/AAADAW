@@ -2547,4 +2547,10 @@ REAPER 7.82 Linux / Default 7 已实测 1/32（120 tick）网格上的 Ctrl 拖�
 
 AAADAW inline MIDI 现在将 Control/Command 拖动映射为副本事务：拖动选中音符组时保留原组并按共同时间/音高增量创建新音符，释放时选中新副本；无实际拖动时才提交修饰键点击的选择切换，避免 Ctrl 拖动起始先把锚点从组选择中移除。通过已有 `CopyDragMidiNotes`/`AddMidiNotes` 一次提交并同步编排视图与钢琴卷帘选择。最新 Cranelift 桌面程序在 Xvfb :314 对照同一工程实际拖动、保存并读回精确 7 音状态；实窗 Ctrl+Z 恢复 4 个源音符及源组选区、Ctrl+Shift+Z 重做 7 个音符及副本组选区。应用历史同时保存 inline 与已打开钢琴卷帘的前后选区；新增手势/事务回归后桌面测试 **799/799** 通过；Stable all-target Clippy（`-D warnings`）、fmt 与 diff check 通过，Build ID 与 SHA-256、前后/Undo/Redo 截图和保存工程已列入 [inline editor fixture manifest](../verification/reaper-parity/fixtures/midi-inline-editor.tsv)。
 
-`MIDI-INLINE-EDITOR-001`、UI-020 与 P7 仍为 `in_progress`：本次确认的是 Ctrl-drag 复制和 AAADAW Ctrl-click 行为；原厂 Ctrl-click 增删映射、音高操作、resize 边界、zoom/range、loop source、多 item 等仍需各自实测，不能据此判定内嵌 MIDI 编辑器整体对齐。
+`MIDI-INLINE-EDITOR-001`、UI-020 与 P7 仍为 `in_progress`：本次确认了原厂 Ctrl-drag 复制与 Ctrl-click 增删选择映射；音高操作、resize 边界、zoom/range、loop source、多 item 等仍需各自实测，不能据此判定内嵌 MIDI 编辑器整体对齐。
+
+### 2026-10-18 REAPER MIDI Editor Ctrl-click 选择增删核验
+
+在 REAPER 7.82 / Linux / Default 7 的 MIDI Editor 中，从 Ctrl 拖拽后的状态继续操作：Ctrl 点击已选副本 C4（960 tick）只取消该音符选择，D4/F4 副本仍选中；再 Ctrl 点击未选源 C4（840 tick）只添加源音符，C4 副本继续未选。两个 MIDI Editor 截图和保存后的 RPP 原始事件大小写选择标记已加入 [inline editor fixture manifest](../verification/reaper-parity/fixtures/midi-inline-editor.tsv)，读回确认事件 tick、音高、音长均未改变。
+
+AAADAW 的 Control-click 处理已通过同一释放态事件流回归覆盖：Ctrl 点击未选 note 延后到 MouseButtonReleased 才加入；再次点击已选 note 延后到 release 并只移除该 note，其余选择保留。`inline_midi_control_click_adds_notes_to_the_drag_selection` 现覆盖增选和取消选择；Cranelift focused 回归通过。`MIDI-INLINE-EDITOR-001` 继续 `in_progress`，原厂 Ctrl-click 映射现已对照；item context menu、音高拖动、resize 边界、zoom/range、loop source、多 item 等仍待独立验收。
