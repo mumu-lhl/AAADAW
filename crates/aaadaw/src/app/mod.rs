@@ -127,9 +127,10 @@ pub(crate) use messages::{
     MainMenu, MainWorkspace, MenuNavigation, Message, MidiEditorChannelSelection,
     MidiEditorCursorBoundary, MidiEditorEventKind, MidiEditorEventListCursor,
     MidiEditorEventListCursorDirection, MidiEditorEventTypeFilter,
-    MidiEditorFilterSelectionOperation, MidiEditorLane, MidiEditorMode, MidiEditorTool,
-    MidiHumanizeScope, MidiQuantizeOperation, MidiQuantizeScope, MidiTransposeScope, MobilePanel,
-    PathPickerTarget, PendingProjectTransition, SettingsCategory, TimeMapTab,
+    MidiEditorFilterSelectionOperation, MidiEditorFilterState, MidiEditorLane, MidiEditorMode,
+    MidiEditorTool, MidiHumanizeScope, MidiQuantizeOperation, MidiQuantizeScope,
+    MidiTransposeScope, MobilePanel, PathPickerTarget, PendingProjectTransition, SettingsCategory,
+    TimeMapTab,
 };
 
 #[derive(Clone)]
@@ -534,6 +535,7 @@ struct App {
     midi_editor_event_type_filter: MidiEditorEventTypeFilter,
     midi_editor_draw_channel: u8,
     midi_editor_filter_enabled: bool,
+    midi_editor_event_filter_enabled: bool,
     midi_editor_filter_channels: u16,
     midi_editor_filter_channels_initialized: bool,
     midi_editor_filter_inverted: bool,
@@ -2080,23 +2082,17 @@ impl App {
         else {
             return HashSet::new();
         };
-        let selection = self.midi_editor_channel_selection;
-        let filter_enabled = self.midi_editor_filter_enabled;
-        let filter_channels = self.midi_editor_filter_channels;
-        let filter_inverted = self.midi_editor_filter_inverted;
-        let event_type_filter = self.midi_editor_event_type_filter;
+        let filter = MidiEditorFilterState {
+            channel_selection: self.midi_editor_channel_selection,
+            channel_filter_enabled: self.midi_editor_filter_enabled,
+            event_filter_enabled: self.midi_editor_event_filter_enabled,
+            channels: self.midi_editor_filter_channels,
+            inverted: self.midi_editor_filter_inverted,
+            event_type: self.midi_editor_event_type_filter,
+        };
         item.notes()
             .iter()
-            .filter(|note| {
-                selection.shows_event(
-                    note.channel(),
-                    filter_enabled,
-                    filter_channels,
-                    filter_inverted,
-                    event_type_filter,
-                    MidiEditorEventKind::Note,
-                )
-            })
+            .filter(|note| filter.event_visible(Some(note.channel()), MidiEditorEventKind::Note))
             .map(|note| note.id())
             .collect()
     }
@@ -6501,6 +6497,9 @@ impl App {
             Message::ToggleMidiEditorChannelFilter => {
                 self.midi_editor_filter_enabled = !self.midi_editor_filter_enabled;
             }
+            Message::ToggleMidiEditorEventFilter => {
+                self.midi_editor_event_filter_enabled = !self.midi_editor_event_filter_enabled;
+            }
             Message::ToggleMidiEditorFilterChannel(channel) if channel < 16 => {
                 self.midi_editor_filter_channels ^= 1_u16 << channel;
                 self.midi_editor_filter_channels_initialized = true;
@@ -6522,6 +6521,9 @@ impl App {
             }
             Message::SetMidiEditorEventTypeFilter(event_type_filter) => {
                 self.midi_editor_event_type_filter = event_type_filter;
+            }
+            Message::SetMidiEditorFilterFromSelection => {
+                self.set_midi_editor_filter_from_selection();
             }
             Message::ClearMidiEditorFilter => self.clear_midi_editor_filter(),
             Message::ApplyMidiEditorFilterSelection(operation) => {
@@ -14188,9 +14190,54 @@ impl App {
         self.midi_editor_event_type_filter = MidiEditorEventTypeFilter::AllEvents;
         self.midi_editor_draw_channel = 0;
         self.midi_editor_filter_enabled = false;
+        self.midi_editor_event_filter_enabled = false;
         self.midi_editor_filter_channels = u16::MAX;
         self.midi_editor_filter_channels_initialized = true;
         self.midi_editor_filter_inverted = false;
+    }
+
+    fn set_midi_editor_filter_from_selection(&mut self) {
+        if self.midi_editor_selected_notes.is_empty()
+            || !self.midi_editor_selected_controllers.is_empty()
+            || !self.midi_editor_selected_pitch_bends.is_empty()
+            || !self.midi_editor_selected_program_changes.is_empty()
+            || !self.midi_editor_selected_poly_aftertouches.is_empty()
+            || !self.midi_editor_selected_channel_pressures.is_empty()
+            || !self.midi_editor_selected_opaque_events.is_empty()
+        {
+            return;
+        }
+        let Some(item_id) = self.midi_editor_item_id else {
+            return;
+        };
+        let Some(item) = self
+            .project
+            .midi_items()
+            .iter()
+            .find(|item| item.id() == item_id)
+        else {
+            return;
+        };
+        let channels = item
+            .notes()
+            .iter()
+            .filter(|note| self.midi_editor_selected_notes.contains(&note.id()))
+            .fold(0_u16, |channels, note| {
+                channels | (1_u16 << note.channel().min(15))
+            });
+        if channels == 0 {
+            return;
+        }
+
+        self.midi_editor_channel_selection = if channels.count_ones() == 1 {
+            MidiEditorChannelSelection::Channel(channels.trailing_zeros() as u8)
+        } else {
+            MidiEditorChannelSelection::Multichannel
+        };
+        self.midi_editor_filter_channels = channels;
+        self.midi_editor_filter_channels_initialized = true;
+        self.midi_editor_event_type_filter = MidiEditorEventTypeFilter::Notes;
+        self.midi_editor_draw_channel = 0;
     }
 
     fn midi_editor_filter_event_selection(
@@ -14275,23 +14322,15 @@ impl App {
         channel: Option<u8>,
         event_kind: MidiEditorEventKind,
     ) -> bool {
-        if let Some(channel) = channel {
-            self.midi_editor_channel_selection.shows_event(
-                channel,
-                true,
-                self.midi_editor_filter_channels,
-                self.midi_editor_filter_inverted,
-                self.midi_editor_event_type_filter,
-                event_kind,
-            )
-        } else {
-            let passes = self.midi_editor_event_type_filter.matches(event_kind);
-            if self.midi_editor_filter_inverted {
-                !passes
-            } else {
-                passes
-            }
+        MidiEditorFilterState {
+            channel_selection: MidiEditorChannelSelection::AllChannels,
+            channel_filter_enabled: false,
+            event_filter_enabled: true,
+            channels: self.midi_editor_filter_channels,
+            inverted: self.midi_editor_filter_inverted,
+            event_type: self.midi_editor_event_type_filter,
         }
+        .event_visible(channel, event_kind)
     }
 
     fn select_midi_notes(&mut self, note_ids: HashSet<aaadaw_core::NoteId>) {

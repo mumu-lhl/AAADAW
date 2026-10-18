@@ -1,7 +1,7 @@
 use super::super::{
     App, MIDI_EDITOR_KEY_WIDTH, Message, MidiEditorChannelSelection, MidiEditorEventKind,
-    MidiEditorEventListCursor, MidiEditorEventTypeFilter, MidiEditorLane, MidiEditorMode,
-    MidiEditorTool, effective_midi_bank_value,
+    MidiEditorEventListCursor, MidiEditorEventTypeFilter, MidiEditorFilterState, MidiEditorLane,
+    MidiEditorMode, MidiEditorTool, effective_midi_bank_value,
 };
 use super::tokens::{PANEL_PADDING, ROW_GAP, SPACING_LG, SPACING_MD, SPACING_XS, TOUCH_TARGET_MIN};
 use crate::timeline::{SnapGrid, TimelineEvent, snap_tick_to_grid};
@@ -235,7 +235,8 @@ fn midi_snap_for_app(app: &App) -> MidiSnap {
         context_menu_epoch: app.midi_expression_context_menu_epoch,
         channel_selection: app.midi_editor_channel_selection,
         draw_channel: app.midi_editor_draw_channel.min(15),
-        filter_enabled: app.midi_editor_filter_enabled,
+        channel_filter_enabled: app.midi_editor_filter_enabled,
+        event_filter_enabled: app.midi_editor_event_filter_enabled,
         filter_channels: app.midi_editor_filter_channels,
         filter_inverted: app.midi_editor_filter_inverted,
         event_type_filter: app.midi_editor_event_type_filter,
@@ -260,7 +261,8 @@ struct MidiSnap {
     context_menu_epoch: u64,
     channel_selection: MidiEditorChannelSelection,
     draw_channel: u8,
-    filter_enabled: bool,
+    channel_filter_enabled: bool,
+    event_filter_enabled: bool,
     filter_channels: u16,
     filter_inverted: bool,
     event_type_filter: MidiEditorEventTypeFilter,
@@ -277,8 +279,9 @@ impl Default for MidiSnap {
             context_menu_epoch: 0,
             channel_selection: MidiEditorChannelSelection::AllChannels,
             draw_channel: 0,
-            filter_enabled: false,
-            filter_channels: 0,
+            channel_filter_enabled: false,
+            event_filter_enabled: false,
+            filter_channels: u16::MAX,
             filter_inverted: false,
             event_type_filter: MidiEditorEventTypeFilter::AllEvents,
             transpose_preview: None,
@@ -288,14 +291,15 @@ impl Default for MidiSnap {
 
 impl MidiSnap {
     fn event_visible(self, channel: u8, event_kind: MidiEditorEventKind) -> bool {
-        self.channel_selection.shows_event(
-            channel,
-            self.filter_enabled,
-            self.filter_channels,
-            self.filter_inverted,
-            self.event_type_filter,
-            event_kind,
-        )
+        MidiEditorFilterState {
+            channel_selection: self.channel_selection,
+            channel_filter_enabled: self.channel_filter_enabled,
+            event_filter_enabled: self.event_filter_enabled,
+            channels: self.filter_channels,
+            inverted: self.filter_inverted,
+            event_type: self.event_type_filter,
+        }
+        .event_visible(Some(channel), event_kind)
     }
 
     fn note_visible(self, channel: u8) -> bool {
@@ -323,19 +327,19 @@ impl MidiSnap {
     }
 
     fn opaque_event_visible(self, event: &MidiOpaqueEventData) -> bool {
-        if !self.filter_enabled {
-            return true;
-        }
         let event_kind = match &event.kind {
             MidiOpaqueEventKind::SystemExclusive { .. } => MidiEditorEventKind::SysEx,
             MidiOpaqueEventKind::Meta { .. } => MidiEditorEventKind::Text,
         };
-        let passes = self.event_type_filter.matches(event_kind);
-        if self.filter_inverted {
-            !passes
-        } else {
-            passes
+        MidiEditorFilterState {
+            channel_selection: self.channel_selection,
+            channel_filter_enabled: self.channel_filter_enabled,
+            event_filter_enabled: self.event_filter_enabled,
+            channels: self.filter_channels,
+            inverted: self.filter_inverted,
+            event_type: self.event_type_filter,
         }
+        .event_visible(None, event_kind)
     }
 
     fn end_row_visible(self) -> bool {
@@ -2637,9 +2641,9 @@ fn channel_filter_dialog(app: &App, touch_targets: bool) -> Element<'_, Message>
     .spacing(ROW_GAP)
     .align_y(iced::Alignment::Center);
     let filter_options = row![
-        checkbox(app.midi_editor_filter_enabled)
+        checkbox(app.midi_editor_event_filter_enabled)
             .label("Show only events that pass filter")
-            .on_toggle(|_| Message::ToggleMidiEditorChannelFilter),
+            .on_toggle(|_| Message::ToggleMidiEditorEventFilter),
         checkbox(app.midi_editor_filter_inverted)
             .label("Invert")
             .on_toggle(|_| Message::ToggleMidiEditorFilterInvert),
@@ -2723,6 +2727,14 @@ fn channel_filter_dialog(app: &App, touch_targets: bool) -> Element<'_, Message>
                 .on_press(Message::ApplyMidiEditorFilterSelection(
                     super::super::MidiEditorFilterSelectionOperation::Remove,
                 )),
+            button("Set filter from selection")
+                .width(Length::Fill)
+                .height(Length::Fixed(if touch_targets {
+                    TOUCH_TARGET_MIN
+                } else {
+                    28.0
+                }))
+                .on_press(Message::SetMidiEditorFilterFromSelection),
         ]
         .spacing(SPACING_XS),
     )
@@ -5611,7 +5623,7 @@ mod tests {
         let mut roll = piano_roll_for_test(&project, item_id, &selected, MidiEditorTool::Select);
         roll.snap = MidiSnap {
             channel_selection: MidiEditorChannelSelection::Channel(1),
-            filter_enabled: true,
+            channel_filter_enabled: true,
             ..MidiSnap::default()
         };
         assert!(
@@ -5620,20 +5632,23 @@ mod tests {
         );
 
         roll.snap.channel_selection = MidiEditorChannelSelection::AllChannels;
+        roll.snap.event_filter_enabled = true;
         roll.snap.event_type_filter = MidiEditorEventTypeFilter::ControlChange;
         assert!(
             roll.note_at_point(Point::new(2.0, 9.0), false, 500.0)
                 .is_none()
         );
-        roll.snap.filter_enabled = false;
+        roll.snap.event_filter_enabled = false;
         assert!(
             roll.note_at_point(Point::new(2.0, 9.0), false, 500.0)
                 .is_some()
         );
-        roll.snap.filter_enabled = true;
+        roll.snap.channel_filter_enabled = true;
         roll.snap.event_type_filter = MidiEditorEventTypeFilter::AllEvents;
 
         roll.snap.channel_selection = MidiEditorChannelSelection::Multichannel;
+        roll.snap.channel_filter_enabled = false;
+        roll.snap.event_filter_enabled = true;
         roll.snap.filter_channels = 0b0100;
         roll.snap.filter_inverted = true;
         assert!(
@@ -5646,7 +5661,7 @@ mod tests {
                 .is_some()
         );
 
-        roll.snap.filter_enabled = false;
+        roll.snap.event_filter_enabled = false;
         assert!(
             roll.note_at_point(Point::new(2.0, 9.0), false, 500.0)
                 .is_some()
@@ -5705,7 +5720,7 @@ mod tests {
         let item = &project.midi_items()[0];
         let snap = MidiSnap {
             channel_selection: MidiEditorChannelSelection::Multichannel,
-            filter_enabled: true,
+            channel_filter_enabled: true,
             filter_channels: 0b10,
             ..MidiSnap::default()
         };
@@ -5732,6 +5747,7 @@ mod tests {
                 .map(|(index, _)| index),
             Some(1)
         );
+        controller_lane.snap.event_filter_enabled = true;
         controller_lane.snap.event_type_filter = MidiEditorEventTypeFilter::Notes;
         assert!(
             controller_lane
@@ -5748,6 +5764,8 @@ mod tests {
         controller_lane.snap = snap;
 
         let inverted_snap = MidiSnap {
+            channel_filter_enabled: false,
+            event_filter_enabled: true,
             filter_channels: 0b10,
             filter_inverted: true,
             ..snap
@@ -5790,6 +5808,7 @@ mod tests {
                 .map(|(index, _)| index),
             Some(1)
         );
+        pitch_bend_lane.snap.event_filter_enabled = true;
         pitch_bend_lane.snap.event_type_filter = MidiEditorEventTypeFilter::Notes;
         assert!(
             pitch_bend_lane
@@ -8849,7 +8868,7 @@ mod tests {
 
         let channel_one = MidiSnap {
             channel_selection: MidiEditorChannelSelection::Channel(1),
-            filter_enabled: true,
+            channel_filter_enabled: true,
             ..MidiSnap::default()
         };
         let events = midi_event_list_entries(item, channel_one);
@@ -8860,7 +8879,7 @@ mod tests {
         assert!(matches!(events[3], MidiEventListEntry::PolyAftertouch(_)));
 
         let programs_only = MidiSnap {
-            filter_enabled: true,
+            event_filter_enabled: true,
             event_type_filter: MidiEditorEventTypeFilter::ProgramChange,
             ..MidiSnap::default()
         };
@@ -8869,7 +8888,7 @@ mod tests {
         assert!(matches!(events[0], MidiEventListEntry::ProgramChange(_)));
 
         let poly_only = MidiSnap {
-            filter_enabled: true,
+            event_filter_enabled: true,
             event_type_filter: MidiEditorEventTypeFilter::PolyAftertouch,
             ..MidiSnap::default()
         };
@@ -8878,7 +8897,7 @@ mod tests {
         assert!(matches!(events[0], MidiEventListEntry::PolyAftertouch(_)));
 
         let pressure_only = MidiSnap {
-            filter_enabled: true,
+            event_filter_enabled: true,
             event_type_filter: MidiEditorEventTypeFilter::ChannelPressure,
             ..MidiSnap::default()
         };
@@ -8969,7 +8988,7 @@ mod tests {
         assert_eq!(events[0].cursor(), MidiEditorEventListCursor::Opaque(0));
 
         let metadata_only = MidiSnap {
-            filter_enabled: true,
+            event_filter_enabled: true,
             event_type_filter: MidiEditorEventTypeFilter::SysExMeta,
             ..MidiSnap::default()
         };
@@ -8981,7 +9000,8 @@ mod tests {
         assert!(matches!(events[3], MidiEventListEntry::Opaque(3, _)));
 
         let metadata_ignores_channel_selection = MidiSnap {
-            filter_enabled: true,
+            channel_filter_enabled: true,
+            event_filter_enabled: true,
             event_type_filter: MidiEditorEventTypeFilter::SysExMeta,
             channel_selection: MidiEditorChannelSelection::Channel(7),
             ..MidiSnap::default()
@@ -8994,7 +9014,7 @@ mod tests {
         assert!(matches!(events[3], MidiEventListEntry::Opaque(3, _)));
 
         let inverted_metadata = MidiSnap {
-            filter_enabled: true,
+            event_filter_enabled: true,
             filter_inverted: true,
             event_type_filter: MidiEditorEventTypeFilter::SysExMeta,
             ..MidiSnap::default()
