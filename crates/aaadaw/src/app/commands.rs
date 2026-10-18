@@ -59,6 +59,7 @@ pub(crate) enum CommandId {
     MidiNotesDownOctave,
     MidiNotesUpSemitoneIgnoringScale,
     MidiNotesDownSemitoneIgnoringScale,
+    MidiTransposeNotes,
     AddProjectMarker,
     InsertRegionFromTimeSelection,
     DeleteProjectRegionNearCursor,
@@ -204,6 +205,7 @@ enum CommandKind {
     MidiNotesDownOctave,
     MidiNotesUpSemitoneIgnoringScale,
     MidiNotesDownSemitoneIgnoringScale,
+    MidiTransposeNotes,
     AddProjectMarker,
     InsertRegionFromTimeSelection,
     DeleteProjectRegionNearCursor,
@@ -395,6 +397,7 @@ const MIDI_NOTES_DOWN_SEMITONE_IGNORE_SCALE_SHORTCUT: &[Shortcut] = &[
             .union(Modifiers::SHIFT),
     ),
 ];
+const MIDI_TRANSPOSE_NOTES_SHORTCUT: &[Shortcut] = &[Shortcut::character('t', Modifiers::NONE)];
 
 const COMMANDS: &[CommandDefinition] = &[
     CommandDefinition {
@@ -1779,6 +1782,16 @@ const COMMANDS: &[CommandDefinition] = &[
         destructive: false,
         separator_before: false,
     },
+    CommandDefinition {
+        kind: CommandKind::MidiTransposeNotes,
+        menu: None,
+        category: "MIDI Editor",
+        label: "Transpose notes...",
+        aliases: &["transpose midi notes", "transpose notes"],
+        shortcuts: MIDI_TRANSPOSE_NOTES_SHORTCUT,
+        destructive: false,
+        separator_before: false,
+    },
 ];
 
 #[derive(Clone)]
@@ -2706,6 +2719,7 @@ fn command_kind_id(kind: CommandKind) -> &'static str {
         CommandKind::MidiNotesDownSemitoneIgnoringScale => {
             "midi-editor.notes-down-semitone-ignoring-scale"
         }
+        CommandKind::MidiTransposeNotes => "midi-editor.transpose-notes",
         CommandKind::AddProjectMarker => "insert.project-marker",
         CommandKind::InsertRegionFromTimeSelection => "regions.insert-from-time-selection",
         CommandKind::DeleteProjectRegionNearCursor => "regions.delete-near-cursor",
@@ -2808,6 +2822,11 @@ fn command_kind_id(kind: CommandKind) -> &'static str {
 }
 
 pub(super) fn dispatch(app: &mut App, command: CommandId) -> Task<Message> {
+    if command == CommandId::MidiTransposeNotes {
+        return app.midi_editor_item_id.map_or_else(Task::none, |item_id| {
+            app.update(Message::OpenMidiTransposeDialog(item_id))
+        });
+    }
     if let CommandId::OpenProjectTemplate(index) = command {
         let Some(path) = app.project_template_paths.get(index).cloned() else {
             app.status = "Project template is no longer available".to_owned();
@@ -2912,6 +2931,7 @@ pub(super) fn dispatch(app: &mut App, command: CommandId) -> Task<Message> {
         }
         CommandId::MidiNotesUpOctave => Message::TransposeSelectedMidiNotes(12),
         CommandId::MidiNotesDownOctave => Message::TransposeSelectedMidiNotes(-12),
+        CommandId::MidiTransposeNotes => unreachable!("transpose dialog dispatch returned above"),
         CommandId::AddProjectMarker => Message::AddProjectMarker,
         CommandId::InsertRegionFromTimeSelection => Message::InsertRegionFromTimeSelection,
         CommandId::DeleteProjectRegionNearCursor => Message::DeleteProjectRegionNearCursor,
@@ -3336,6 +3356,15 @@ fn command_enabled(app: &App, kind: CommandKind, track: Option<TrackState>) -> b
                 && app.midi_editor_item_id.is_some()
                 && !app.midi_editor_selected_notes.is_empty()
         }
+        CommandKind::MidiTransposeNotes => {
+            !project_edit_busy(app)
+                && app.midi_editor_item_id.is_some_and(|item_id| {
+                    app.project
+                        .midi_items()
+                        .iter()
+                        .any(|item| item.id() == item_id)
+                })
+        }
         CommandKind::AddProjectMarker => !project_edit_busy(app),
         CommandKind::InsertRegionFromTimeSelection => {
             !project_edit_busy(app) && app.timeline.time_selection.is_some()
@@ -3647,6 +3676,7 @@ fn command_id(kind: CommandKind) -> CommandId {
         CommandKind::MidiNotesDownSemitoneIgnoringScale => {
             CommandId::MidiNotesDownSemitoneIgnoringScale
         }
+        CommandKind::MidiTransposeNotes => CommandId::MidiTransposeNotes,
         CommandKind::AddProjectMarker => CommandId::AddProjectMarker,
         CommandKind::InsertRegionFromTimeSelection => CommandId::InsertRegionFromTimeSelection,
         CommandKind::DeleteProjectRegionNearCursor => CommandId::DeleteProjectRegionNearCursor,

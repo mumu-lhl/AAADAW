@@ -201,6 +201,28 @@ fn visible_edit_cursor_tick(app: &App) -> u64 {
 }
 
 fn midi_snap_for_app(app: &App) -> MidiSnap {
+    let transpose_preview = app.midi_transpose_dialog.as_ref().and_then(|dialog| {
+        let semitones = dialog.semitones.trim().parse::<i8>().ok()?;
+        let item = app
+            .project
+            .midi_items()
+            .iter()
+            .find(|item| item.id() == dialog.item_id)?;
+        let range_valid = item
+            .notes()
+            .iter()
+            .filter(|note| {
+                dialog.scope == super::super::MidiTransposeScope::AllNotes
+                    || app.midi_editor_selected_notes.contains(&note.id())
+            })
+            .all(|note| note.pitch().checked_add_signed(semitones).is_some());
+        Some(MidiTransposePreview {
+            item_id: dialog.item_id,
+            scope: dialog.scope,
+            semitones,
+            range_valid,
+        })
+    });
     MidiSnap {
         grid: app.timeline.midi_editor_snap_grid,
         enabled: app.timeline.snap_enabled,
@@ -213,7 +235,16 @@ fn midi_snap_for_app(app: &App) -> MidiSnap {
         filter_channels: app.midi_editor_filter_channels,
         filter_inverted: app.midi_editor_filter_inverted,
         event_type_filter: app.midi_editor_event_type_filter,
+        transpose_preview,
     }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct MidiTransposePreview {
+    item_id: ItemId,
+    scope: super::super::MidiTransposeScope,
+    semitones: i8,
+    range_valid: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -229,6 +260,7 @@ struct MidiSnap {
     filter_channels: u16,
     filter_inverted: bool,
     event_type_filter: MidiEditorEventTypeFilter,
+    transpose_preview: Option<MidiTransposePreview>,
 }
 
 impl Default for MidiSnap {
@@ -245,6 +277,7 @@ impl Default for MidiSnap {
             filter_channels: 0,
             filter_inverted: false,
             event_type_filter: MidiEditorEventTypeFilter::AllEvents,
+            transpose_preview: None,
         }
     }
 }
@@ -271,6 +304,25 @@ impl MidiSnap {
 
     fn pitch_bend_visible(self, channel: u8) -> bool {
         self.event_visible(channel, MidiEditorEventKind::Pitch)
+    }
+
+    fn note_pitch(
+        self,
+        item_id: ItemId,
+        selected: &HashSet<aaadaw_core::NoteId>,
+        note: &aaadaw_core::MidiNote,
+    ) -> u8 {
+        let Some(preview) = self.transpose_preview.filter(|preview| {
+            preview.item_id == item_id
+                && preview.range_valid
+                && (preview.scope == super::super::MidiTransposeScope::AllNotes
+                    || selected.contains(&note.id()))
+        }) else {
+            return note.pitch();
+        };
+        note.pitch()
+            .checked_add_signed(preview.semitones)
+            .unwrap_or(note.pitch())
     }
 }
 
@@ -366,6 +418,10 @@ fn view_with_profile(app: &App, touch_targets: bool) -> Element<'_, Message> {
                     (!item.notes().is_empty() && app.timeline.midi_editor_has_snap_grid())
                         .then_some(Message::OpenMidiHumanizeDialog(item_id)),
                 )
+                .padding([SPACING_XS / 2.0, SPACING_XS]),
+            button("Transpose…")
+                .style(iced::widget::button::secondary)
+                .on_press(Message::OpenMidiTransposeDialog(item_id))
                 .padding([SPACING_XS / 2.0, SPACING_XS]),
             button("Q pos")
                 .style(iced::widget::button::secondary)
@@ -732,13 +788,20 @@ fn view_with_profile(app: &App, touch_targets: bool) -> Element<'_, Message> {
         .width(Length::Fill)
         .height(Length::Fill)
         .into();
-    if app.midi_quantize_dialog.is_some() || app.midi_humanize_dialog.is_some() {
-        let dialog = if app.midi_quantize_dialog.is_some() {
+    if app.midi_quantize_dialog.is_some()
+        || app.midi_humanize_dialog.is_some()
+        || app.midi_transpose_dialog.is_some()
+    {
+        let dialog = if app.midi_transpose_dialog.is_some() {
+            midi_transpose_dialog(app, touch_targets)
+        } else if app.midi_quantize_dialog.is_some() {
             midi_quantize_dialog(app, touch_targets)
         } else {
             midi_humanize_dialog(app, touch_targets)
         };
-        let cancel_message = if app.midi_quantize_dialog.is_some() {
+        let cancel_message = if app.midi_transpose_dialog.is_some() {
+            Message::CancelMidiTranspose
+        } else if app.midi_quantize_dialog.is_some() {
             Message::CancelMidiQuantize
         } else {
             Message::CancelMidiHumanize
@@ -853,6 +916,56 @@ fn midi_humanize_dialog(app: &App, touch_targets: bool) -> Element<'_, Message> 
         }),
     )
     .width(Length::Fixed(if touch_targets { 480.0 } else { 448.0 }))
+    .padding(SPACING_MD)
+    .style(container::rounded_box)
+    .into()
+}
+
+fn midi_transpose_dialog(app: &App, touch_targets: bool) -> Element<'_, Message> {
+    let Some(state) = app.midi_transpose_dialog.as_ref() else {
+        return iced::widget::Space::new().into();
+    };
+    let scope = pick_list(
+        super::super::MidiTransposeScope::OPTIONS,
+        Some(state.scope),
+        Message::SetMidiTransposeScope,
+    )
+    .width(Length::Fixed(if touch_targets { 184.0 } else { 160.0 }));
+    let semitones = iced::widget::text_input("0", &state.semitones)
+        .on_input(Message::SetMidiTransposeSemitones)
+        .width(Length::Fixed(88.0));
+    let can_apply = midi_snap_for_app(app)
+        .transpose_preview
+        .is_some_and(|preview| preview.range_valid);
+    let controls = row![
+        iced::widget::Space::new().width(Length::Fill),
+        button("Cancel")
+            .style(iced::widget::button::secondary)
+            .on_press(Message::CancelMidiTranspose),
+        button("OK")
+            .style(iced::widget::button::primary)
+            .on_press_maybe(can_apply.then_some(Message::AcceptMidiTranspose)),
+    ]
+    .spacing(SPACING_XS)
+    .align_y(iced::Alignment::Center);
+    container(
+        column![
+            text("Transpose MIDI").size(16),
+            row![text("Transpose:").width(Length::Fixed(92.0)), scope]
+                .spacing(SPACING_XS)
+                .align_y(iced::Alignment::Center),
+            row![text("Semitones").width(Length::Fixed(92.0)), semitones]
+                .spacing(SPACING_XS)
+                .align_y(iced::Alignment::Center),
+            controls,
+        ]
+        .spacing(if touch_targets {
+            SPACING_MD
+        } else {
+            SPACING_XS
+        }),
+    )
+    .width(Length::Fixed(if touch_targets { 384.0 } else { 344.0 }))
     .padding(SPACING_MD)
     .style(container::rounded_box)
     .into()
@@ -2770,7 +2883,11 @@ impl canvas::Program<Message> for PianoRoll<'_> {
                             .iter()
                             .filter(|note| self.snap.note_visible(note.channel()))
                         {
-                            let y = mapping.y_at_pitch(note.pitch());
+                            let y = mapping.y_at_pitch(self.snap.note_pitch(
+                                self.item_id,
+                                self.selected,
+                                note,
+                            ));
                             let note_bottom = y + self.pitch_row_height;
                             let note_duration = visible_note_duration(self.item, note, note.tick());
                             let (view_start, view_end) = self.content_tick_range(bounds.width);
@@ -3094,12 +3211,13 @@ impl canvas::Program<Message> for PianoRoll<'_> {
             .iter()
             .filter(|note| self.snap.note_visible(note.channel()))
         {
-            if note.pitch() > self.high_pitch
-                || note.pitch() < self.high_pitch.saturating_sub(self.pitch_rows - 1)
+            let pitch = self.snap.note_pitch(self.item_id, self.selected, note);
+            if pitch > self.high_pitch
+                || pitch < self.high_pitch.saturating_sub(self.pitch_rows - 1)
             {
                 continue;
             }
-            let y = grid_top + mapping.y_at_pitch(note.pitch());
+            let y = grid_top + mapping.y_at_pitch(pitch);
             let source_duration = visible_note_duration(self.item, note, note.tick());
             for occurrence_tick in source_event_occurrences(
                 self.item,
@@ -3370,7 +3488,8 @@ impl PianoRoll<'_> {
                     self.ticks_per_beat,
                     self.pixels_per_beat,
                 );
-                let top = mapping.y_at_pitch(note.pitch());
+                let top =
+                    mapping.y_at_pitch(self.snap.note_pitch(self.item_id, self.selected, note));
                 if point.x >= left
                     && point.x <= left + note_width
                     && point.y >= top
@@ -3409,7 +3528,8 @@ impl PianoRoll<'_> {
                     self.ticks_per_beat,
                     self.pixels_per_beat,
                 );
-                let top = mapping.y_at_pitch(note.pitch());
+                let top =
+                    mapping.y_at_pitch(self.snap.note_pitch(self.item_id, self.selected, note));
                 let hit_width = note_width.max(48.0);
                 let hit_height = self.pitch_row_height.max(48.0);
                 let hit_left = left - (hit_width - note_width) / 2.0;
@@ -3783,6 +3903,7 @@ fn piano_key_rect(pitch: u8, row_y: f32, row_height: f32) -> Rectangle {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app::MidiTransposeScope;
 
     fn piano_roll_for_test<'a>(
         project: &'a Project,
@@ -6812,6 +6933,96 @@ mod tests {
         assert_eq!(
             velocity_note_at_x(notes, mapping, 0, 3_840, second + 4.0),
             Some(notes[1].id())
+        );
+    }
+
+    #[test]
+    fn transpose_preview_follows_scope_and_rejects_the_whole_invalid_range() {
+        let mut project = Project::new();
+        project
+            .apply(aaadaw_core::DawAction::CreateTrack {
+                index: 0,
+                name: "Track".to_owned(),
+            })
+            .unwrap();
+        let track_id = project.tracks()[0].id();
+        project
+            .apply(aaadaw_core::DawAction::InsertMidiItem {
+                track_id,
+                start_tick: 0,
+                length_ticks: 3_840,
+            })
+            .unwrap();
+        let item_id = project.midi_items()[0].id();
+        project
+            .apply(aaadaw_core::DawAction::AddMidiNotes {
+                item_id,
+                notes: vec![
+                    MidiNoteData {
+                        channel: 0,
+                        pitch: 60,
+                        tick: 0,
+                        duration: 120,
+                        velocity: 90,
+                    },
+                    MidiNoteData {
+                        channel: 1,
+                        pitch: 72,
+                        tick: 240,
+                        duration: 120,
+                        velocity: 91,
+                    },
+                ],
+            })
+            .unwrap();
+        let notes = project.midi_items()[0].notes();
+        let selected = HashSet::from([notes[0].id()]);
+        let selected_preview = MidiSnap {
+            transpose_preview: Some(MidiTransposePreview {
+                item_id,
+                scope: MidiTransposeScope::SelectedNotes,
+                semitones: 2,
+                range_valid: true,
+            }),
+            ..MidiSnap::default()
+        };
+        assert_eq!(
+            selected_preview.note_pitch(item_id, &selected, &notes[0]),
+            62
+        );
+        assert_eq!(
+            selected_preview.note_pitch(item_id, &selected, &notes[1]),
+            72
+        );
+
+        let all_preview = MidiSnap {
+            transpose_preview: Some(MidiTransposePreview {
+                item_id,
+                scope: MidiTransposeScope::AllNotes,
+                semitones: 2,
+                range_valid: true,
+            }),
+            ..MidiSnap::default()
+        };
+        assert_eq!(all_preview.note_pitch(item_id, &selected, &notes[0]), 62);
+        assert_eq!(all_preview.note_pitch(item_id, &selected, &notes[1]), 74);
+
+        let invalid_all_preview = MidiSnap {
+            transpose_preview: Some(MidiTransposePreview {
+                item_id,
+                scope: MidiTransposeScope::AllNotes,
+                semitones: 1,
+                range_valid: false,
+            }),
+            ..MidiSnap::default()
+        };
+        assert_eq!(
+            invalid_all_preview.note_pitch(item_id, &selected, &notes[0]),
+            60
+        );
+        assert_eq!(
+            invalid_all_preview.note_pitch(item_id, &selected, &notes[1]),
+            72
         );
     }
 }

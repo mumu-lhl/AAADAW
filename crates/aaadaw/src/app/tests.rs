@@ -12,8 +12,8 @@ use super::shortcut;
 use super::{ActiveRecording, SharedRecordingStart};
 use super::{
     App, ItemSnapDirection, MainMenu, MainWorkspace, MenuNavigation, Message, MidiEditorTool,
-    MidiHumanizeScope, MidiQuantizeOperation, MidiQuantizeScope, MobilePanel, PathPickerTarget,
-    fx_chain_plugin_drag_event, keyboard_shortcut_event, menu_navigation_event,
+    MidiHumanizeScope, MidiQuantizeOperation, MidiQuantizeScope, MidiTransposeScope, MobilePanel,
+    PathPickerTarget, fx_chain_plugin_drag_event, keyboard_shortcut_event, menu_navigation_event,
     midi_editor_shortcut_event, midi_expression_context_menu_event, midi_item_swing_snap_target,
     mobile_back_event, shortcut_message,
 };
@@ -12530,6 +12530,124 @@ fn midi_editor_transpose_actions_preserve_note_data_and_reject_out_of_range_batc
     assert_eq!(
         app.midi_editor_selected_notes,
         HashSet::from([note_ids[0], note_ids[3]])
+    );
+}
+
+#[test]
+fn midi_transpose_dialog_previews_and_cancels_then_commits_all_notes_as_one_edit() {
+    let mut app = App::default();
+    let _ = app.update(Message::AddTrack);
+    let track_id = app.project.tracks()[0].id();
+    app.project
+        .apply(DawAction::InsertMidiItem {
+            track_id,
+            start_tick: 0,
+            length_ticks: 3_840,
+        })
+        .expect("test MIDI item should be inserted");
+    let item_id = app.project.midi_items()[0].id();
+    app.project
+        .apply(DawAction::AddMidiNotes {
+            item_id,
+            notes: vec![
+                MidiNoteData {
+                    channel: 0,
+                    pitch: 60,
+                    tick: 100,
+                    duration: 90,
+                    velocity: 80,
+                },
+                MidiNoteData {
+                    channel: 1,
+                    pitch: 64,
+                    tick: 300,
+                    duration: 90,
+                    velocity: 81,
+                },
+                MidiNoteData {
+                    channel: 15,
+                    pitch: 72,
+                    tick: 700,
+                    duration: 120,
+                    velocity: 83,
+                },
+            ],
+        })
+        .expect("test notes should be inserted");
+    app.midi_editor_item_id = Some(item_id);
+    let note_ids = app.project.midi_items()[0]
+        .notes()
+        .iter()
+        .map(|note| note.id())
+        .collect::<Vec<_>>();
+    app.midi_editor_selected_notes = HashSet::from([note_ids[0], note_ids[1]]);
+    let before = app.project.midi_items()[0].notes().to_vec();
+    let before_revision = app.revision;
+
+    assert_eq!(
+        commands::from_shortcut(
+            &Key::Character("t"),
+            Modifiers::NONE,
+            &commands::ShortcutBindings::new(),
+            &[],
+        ),
+        Some(CommandId::MidiTransposeNotes)
+    );
+    assert_eq!(
+        commands::find(&app, "Transpose notes..."),
+        Some(CommandId::MidiTransposeNotes)
+    );
+    assert!(commands::is_enabled(&app, CommandId::MidiTransposeNotes));
+    let _ = commands::dispatch(&mut app, CommandId::MidiTransposeNotes);
+    let dialog = app
+        .midi_transpose_dialog
+        .as_ref()
+        .expect("transpose dialog should open");
+    assert_eq!(dialog.scope, MidiTransposeScope::SelectedNotes);
+    assert_eq!(dialog.semitones, "0");
+
+    let _ = app.update(Message::SetMidiTransposeScope(MidiTransposeScope::AllNotes));
+    let _ = app.update(Message::SetMidiTransposeSemitones("5".to_owned()));
+    assert_eq!(app.project.midi_items()[0].notes(), before);
+    assert_eq!(app.revision, before_revision);
+    let _ = app.update(Message::CancelMidiTranspose);
+    assert!(app.midi_transpose_dialog.is_none());
+    assert_eq!(app.project.midi_items()[0].notes(), before);
+    assert_eq!(app.revision, before_revision);
+
+    let _ = app.update(Message::OpenMidiTransposeDialog(item_id));
+    let dialog = app
+        .midi_transpose_dialog
+        .as_ref()
+        .expect("transpose dialog should reopen");
+    assert_eq!(dialog.scope, MidiTransposeScope::AllNotes);
+    assert_eq!(dialog.semitones, "0");
+    let _ = app.update(Message::SetMidiTransposeSemitones("-2".to_owned()));
+    assert_eq!(app.project.midi_items()[0].notes(), before);
+    let _ = app.update(Message::AcceptMidiTranspose);
+
+    let after = app.project.midi_items()[0].notes();
+    assert_eq!(
+        after.iter().map(|note| note.pitch()).collect::<Vec<_>>(),
+        [58, 62, 70]
+    );
+    assert_eq!(after[0].tick(), before[0].tick());
+    assert_eq!(after[0].duration(), before[0].duration());
+    assert_eq!(after[0].channel(), before[0].channel());
+    assert_eq!(after[0].velocity(), before[0].velocity());
+    assert_eq!(app.revision, before_revision + 1);
+    assert!(app.midi_transpose_dialog.is_none());
+
+    let _ = app.update(Message::Undo);
+    assert_eq!(app.project.midi_items()[0].notes(), before);
+    let _ = app.update(Message::Redo);
+    assert_eq!(
+        app.project.midi_items()[0]
+            .notes()
+            .iter()
+            .map(|note| note.pitch())
+            .collect::<Vec<_>>(),
+        [58, 62, 70]
     );
 }
 

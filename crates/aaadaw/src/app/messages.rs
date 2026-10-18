@@ -322,6 +322,26 @@ impl std::fmt::Display for MidiHumanizeScope {
 }
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum MidiTransposeScope {
+    AllNotes,
+    #[default]
+    SelectedNotes,
+}
+
+impl MidiTransposeScope {
+    pub(crate) const OPTIONS: [Self; 2] = [Self::AllNotes, Self::SelectedNotes];
+}
+
+impl std::fmt::Display for MidiTransposeScope {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(match self {
+            Self::AllNotes => "All notes",
+            Self::SelectedNotes => "Selected notes",
+        })
+    }
+}
+
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum MidiQuantizeOperation {
     #[default]
     Position,
@@ -675,6 +695,11 @@ pub(crate) enum Message {
     QuantizeSelectedMidiNotesAndEnds(ItemId),
     OpenMidiQuantizeDialog(ItemId),
     OpenMidiHumanizeDialog(ItemId),
+    OpenMidiTransposeDialog(ItemId),
+    SetMidiTransposeScope(MidiTransposeScope),
+    SetMidiTransposeSemitones(String),
+    AcceptMidiTranspose,
+    CancelMidiTranspose,
     SetMidiHumanizeScope(MidiHumanizeScope),
     SetMidiHumanizeTiming(u8),
     SetMidiHumanizeVelocity(u8),

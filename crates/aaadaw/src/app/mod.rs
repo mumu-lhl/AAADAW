@@ -123,8 +123,8 @@ mod x11_plugin_editor;
 pub(crate) use messages::{
     MainMenu, MainWorkspace, MenuNavigation, Message, MidiEditorChannelSelection,
     MidiEditorEventKind, MidiEditorEventTypeFilter, MidiEditorLane, MidiEditorTool,
-    MidiHumanizeScope, MidiQuantizeOperation, MidiQuantizeScope, MobilePanel, PathPickerTarget,
-    PendingProjectTransition, SettingsCategory, TimeMapTab,
+    MidiHumanizeScope, MidiQuantizeOperation, MidiQuantizeScope, MidiTransposeScope, MobilePanel,
+    PathPickerTarget, PendingProjectTransition, SettingsCategory, TimeMapTab,
 };
 
 #[derive(Clone)]
@@ -369,6 +369,7 @@ struct App {
     loop_time_preferences_save_at: Option<Instant>,
     midi_humanize_preferences_save_at: Option<Instant>,
     midi_humanize_preferences: midi_humanize_preferences::MidiHumanizePreferences,
+    midi_transpose_scope: MidiTransposeScope,
     main_workspace: MainWorkspace,
     shell_profile: ShellProfile,
     mobile_panel: MobilePanel,
@@ -485,6 +486,7 @@ struct App {
     midi_editor_selected_pitch_bends: HashSet<MidiPitchBendData>,
     midi_quantize_dialog: Option<MidiQuantizeDialogState>,
     midi_humanize_dialog: Option<MidiHumanizeDialogState>,
+    midi_transpose_dialog: Option<MidiTransposeDialogState>,
     midi_editor_lane: MidiEditorLane,
     midi_editor_tool: MidiEditorTool,
     midi_editor_channel_selection: MidiEditorChannelSelection,
@@ -722,6 +724,13 @@ struct MidiHumanizeDialogState {
     velocity_amount_percent: u8,
     timing_bias_percent: i16,
     seed: u64,
+}
+
+#[derive(Debug, Clone)]
+struct MidiTransposeDialogState {
+    item_id: ItemId,
+    scope: MidiTransposeScope,
+    semitones: String,
 }
 
 #[derive(Clone, Debug)]
@@ -2022,6 +2031,56 @@ impl App {
         );
     }
 
+    fn commit_midi_transpose_dialog(&mut self) -> Task<Message> {
+        let Some(dialog) = self.midi_transpose_dialog.take() else {
+            return Task::none();
+        };
+        let Ok(semitones) = dialog.semitones.trim().parse::<i8>() else {
+            return Task::none();
+        };
+        if semitones == 0 {
+            return Task::none();
+        }
+        let Some(item) = self
+            .project
+            .midi_items()
+            .iter()
+            .find(|item| item.id() == dialog.item_id)
+        else {
+            return Task::none();
+        };
+        let edits = item
+            .notes()
+            .iter()
+            .filter(|note| {
+                dialog.scope == MidiTransposeScope::AllNotes
+                    || self.midi_editor_selected_notes.contains(&note.id())
+            })
+            .map(|note| {
+                note.pitch().checked_add_signed(semitones).map(|pitch| {
+                    (
+                        note.id(),
+                        MidiNoteData {
+                            pitch,
+                            channel: note.channel(),
+                            tick: note.tick(),
+                            duration: note.duration(),
+                            velocity: note.velocity(),
+                        },
+                    )
+                })
+            })
+            .collect::<Option<Vec<_>>>();
+        let Some(edits) = edits else {
+            return Task::none();
+        };
+        if edits.is_empty() {
+            Task::none()
+        } else {
+            self.update(Message::EditMidiNotes(dialog.item_id, edits))
+        }
+    }
+
     fn commit_midi_quantize_dialog(&mut self, close_dialog: bool) {
         let Some(dialog) = self.midi_quantize_dialog else {
             return;
@@ -2185,6 +2244,25 @@ impl App {
                     | Message::SetMidiQuantizeStrength(_)
                     | Message::SetMidiQuantizeBypass(_)
                     | Message::SetMidiQuantizeFixOverlaps(_)
+                    | Message::Escape
+                    | Message::RuntimeKeyboardEvent(..)
+                    | Message::BackgroundTick
+                    | Message::MeterTick
+                    | Message::WindowResized(..)
+                    | Message::WindowClosed(..)
+                    | Message::WindowCloseRequested(..)
+                    | Message::CloseMidiEditor
+            )
+        {
+            return Task::none();
+        }
+        if self.midi_transpose_dialog.is_some()
+            && !matches!(
+                &message,
+                Message::SetMidiTransposeScope(_)
+                    | Message::SetMidiTransposeSemitones(_)
+                    | Message::AcceptMidiTranspose
+                    | Message::CancelMidiTranspose
                     | Message::Escape
                     | Message::RuntimeKeyboardEvent(..)
                     | Message::BackgroundTick
@@ -2445,6 +2523,7 @@ impl App {
                         | commands::CommandId::MidiNotesDownOctave
                         | commands::CommandId::MidiNotesUpSemitoneIgnoringScale
                         | commands::CommandId::MidiNotesDownSemitoneIgnoringScale
+                        | commands::CommandId::MidiTransposeNotes
                 ) | Message::OpenTrackRouting(_)
                     | Message::CloseTrackRouting
                     | Message::RoutingSendDraft(..)
@@ -3595,6 +3674,7 @@ impl App {
                 self.release_midi_preview();
                 self.midi_quantize_dialog = None;
                 self.midi_humanize_dialog = None;
+                self.midi_transpose_dialog = None;
                 if let Some(window_id) = self.midi_editor_window_id.take() {
                     self.midi_editor_item_id = None;
                     self.midi_editor_feedback = None;
@@ -4953,6 +5033,7 @@ impl App {
             Message::Escape => {
                 if self.midi_quantize_dialog.take().is_some()
                     || self.midi_humanize_dialog.take().is_some()
+                    || self.midi_transpose_dialog.take().is_some()
                 {
                     return Task::none();
                 }
@@ -5689,6 +5770,36 @@ impl App {
                     });
                 }
             }
+            Message::OpenMidiTransposeDialog(item_id) => {
+                if self
+                    .project
+                    .midi_items()
+                    .iter()
+                    .any(|item| item.id() == item_id)
+                {
+                    self.midi_editor_filter_dialog_open = false;
+                    self.midi_quantize_dialog = None;
+                    self.midi_humanize_dialog = None;
+                    self.midi_transpose_dialog = Some(MidiTransposeDialogState {
+                        item_id,
+                        scope: self.midi_transpose_scope,
+                        semitones: "0".to_owned(),
+                    });
+                }
+            }
+            Message::SetMidiTransposeScope(scope) => {
+                self.midi_transpose_scope = scope;
+                if let Some(dialog) = self.midi_transpose_dialog.as_mut() {
+                    dialog.scope = scope;
+                }
+            }
+            Message::SetMidiTransposeSemitones(semitones) => {
+                if let Some(dialog) = self.midi_transpose_dialog.as_mut() {
+                    dialog.semitones = semitones;
+                }
+            }
+            Message::AcceptMidiTranspose => task = self.commit_midi_transpose_dialog(),
+            Message::CancelMidiTranspose => self.midi_transpose_dialog = None,
             Message::SetMidiHumanizeScope(scope) => {
                 if let Some(dialog) = self.midi_humanize_dialog.as_mut() {
                     dialog.scope = scope;
