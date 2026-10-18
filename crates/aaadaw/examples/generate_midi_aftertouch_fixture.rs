@@ -28,7 +28,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             channel: 2,
             pitch: 60,
             tick: 0,
-            duration: 480,
+            duration: 240,
             velocity: 96,
             off_velocity: 0,
         }],

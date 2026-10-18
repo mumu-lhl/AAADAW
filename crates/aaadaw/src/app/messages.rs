@@ -177,6 +177,7 @@ pub(crate) enum MidiEditorEventListCursor {
     ProgramChange(MidiProgramChangeData),
     PolyAftertouch(MidiPolyAftertouchData),
     ChannelPressure(MidiChannelPressureData),
+    End,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -625,6 +626,7 @@ pub(crate) enum Message {
     SelectMidiProgramChangeEvent(ItemId, MidiProgramChangeData, bool),
     SelectMidiPolyAftertouchEvent(ItemId, MidiPolyAftertouchData, bool),
     SelectMidiChannelPressureEvent(ItemId, MidiChannelPressureData, bool),
+    SelectMidiEditorEventListEnd(bool),
     MoveMidiEditorEventListCursor(MidiEditorEventListCursorDirection, bool, bool),
     CopyMidiNotes(ItemId, Vec<NoteId>),
     PasteMidiNotes(ItemId),

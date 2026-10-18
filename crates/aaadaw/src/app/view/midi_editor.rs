@@ -875,6 +875,7 @@ enum MidiEventListEntry<'a> {
     ProgramChange(MidiProgramChangeData),
     PolyAftertouch(MidiPolyAftertouchData),
     ChannelPressure(MidiChannelPressureData),
+    End(u64),
 }
 
 impl MidiEventListEntry<'_> {
@@ -886,6 +887,7 @@ impl MidiEventListEntry<'_> {
             Self::ProgramChange(event) => event.tick,
             Self::PolyAftertouch(event) => event.tick,
             Self::ChannelPressure(event) => event.tick,
+            Self::End(tick) => tick,
         }
     }
 
@@ -897,6 +899,7 @@ impl MidiEventListEntry<'_> {
             Self::ProgramChange(_) => 3,
             Self::PolyAftertouch(_) => 4,
             Self::ChannelPressure(_) => 5,
+            Self::End(_) => u8::MAX,
         }
     }
 
@@ -908,6 +911,7 @@ impl MidiEventListEntry<'_> {
             Self::ProgramChange(event) => MidiEditorEventListCursor::ProgramChange(event),
             Self::PolyAftertouch(event) => MidiEditorEventListCursor::PolyAftertouch(event),
             Self::ChannelPressure(event) => MidiEditorEventListCursor::ChannelPressure(event),
+            Self::End(_) => MidiEditorEventListCursor::End,
         }
     }
 }
@@ -955,6 +959,7 @@ fn midi_event_list_entries(item: &MidiItem, snap: MidiSnap) -> Vec<MidiEventList
         )
         .collect::<Vec<_>>();
     events.sort_by_key(|event| (event.tick(), event.order()));
+    events.push(MidiEventListEntry::End(item.length_ticks()));
     events
 }
 
@@ -1014,7 +1019,7 @@ fn midi_event_list_view<'a>(
         .map(|(index, event)| {
             let (
                 position_tick,
-                length_tick,
+                length_ticks,
                 channel,
                 event_type,
                 parameter,
@@ -1025,7 +1030,7 @@ fn midi_event_list_view<'a>(
             ) = match *event {
                 MidiEventListEntry::Note(note) => (
                     note.tick(),
-                    note.duration(),
+                    Some(note.duration()),
                     note.channel(),
                     "Note",
                     pitch_name(snap.note_pitch(item_id, &app.midi_editor_selected_notes, note)),
@@ -1039,7 +1044,7 @@ fn midi_event_list_view<'a>(
                 ),
                 MidiEventListEntry::Controller(event) => (
                     event.tick,
-                    0,
+                    None,
                     event.channel,
                     "CC",
                     midi_event_controller_name(event.controller),
@@ -1054,7 +1059,7 @@ fn midi_event_list_view<'a>(
                 ),
                 MidiEventListEntry::PitchBend(event) => (
                     event.tick,
-                    0,
+                    None,
                     event.channel,
                     "Pitch",
                     "Pitch Bend".to_owned(),
@@ -1069,7 +1074,7 @@ fn midi_event_list_view<'a>(
                 ),
                 MidiEventListEntry::ProgramChange(event) => (
                     event.tick,
-                    0,
+                    None,
                     event.channel,
                     "PC",
                     String::new(),
@@ -1084,7 +1089,7 @@ fn midi_event_list_view<'a>(
                 ),
                 MidiEventListEntry::PolyAftertouch(event) => (
                     event.tick,
-                    0,
+                    None,
                     event.channel,
                     "Poly Aftertouch",
                     pitch_name(event.note),
@@ -1099,7 +1104,7 @@ fn midi_event_list_view<'a>(
                 ),
                 MidiEventListEntry::ChannelPressure(event) => (
                     event.tick,
-                    0,
+                    None,
                     event.channel,
                     "Channel Pressure",
                     String::new(),
@@ -1112,11 +1117,25 @@ fn midi_event_list_view<'a>(
                         app.keyboard_modifiers.command() || app.keyboard_modifiers.control(),
                     ),
                 ),
+                MidiEventListEntry::End(tick) => (
+                    tick,
+                    None,
+                    0,
+                    "(end) All Notes Off",
+                    String::new(),
+                    "0".to_owned(),
+                    String::new(),
+                    app.midi_editor_event_list_cursor == Some(MidiEditorEventListCursor::End)
+                        || events.len() == 1,
+                    Message::SelectMidiEditorEventListEnd(
+                        app.keyboard_modifiers.command() || app.keyboard_modifiers.control(),
+                    ),
+                ),
             };
             midi_event_list_row(MidiEventListRow {
                 index: (index + 1).to_string(),
                 position: midi_event_list_position(position_tick, ppq, meter),
-                length: midi_event_list_length(length_tick, ppq, meter),
+                length: midi_event_list_optional_length(length_ticks, ppq, meter),
                 channel: (channel + 1).to_string(),
                 event_type: event_type.to_owned(),
                 parameter,
@@ -1127,13 +1146,7 @@ fn midi_event_list_view<'a>(
             })
         })
         .collect::<Vec<_>>();
-    let event_rows: Element<'_, Message> = if rows.is_empty() {
-        column![text("No modeled MIDI events.").size(13)]
-            .padding(SPACING_MD)
-            .into()
-    } else {
-        column![header].extend(rows).spacing(1).into()
-    };
+    let event_rows: Element<'_, Message> = column![header].extend(rows).spacing(1).into();
     let has_selection = !app.midi_editor_selected_notes.is_empty()
         || !app.midi_editor_selected_controllers.is_empty()
         || !app.midi_editor_selected_pitch_bends.is_empty()
@@ -1404,6 +1417,12 @@ pub(in crate::app) fn midi_event_list_length(ticks: u64, ppq: u64, meter: TimeSi
     let beat_subticks = within_measure % beat_ticks;
     let hundredth = (u128::from(beat_subticks) * 100 / u128::from(beat_ticks)) as u8;
     format!("{bars}.{beats}.{hundredth:02}")
+}
+
+fn midi_event_list_optional_length(ticks: Option<u64>, ppq: u64, meter: TimeSignature) -> String {
+    ticks
+        .map(|ticks| midi_event_list_length(ticks, ppq, meter))
+        .unwrap_or_default()
 }
 
 fn midi_humanize_dialog(app: &App, touch_targets: bool) -> Element<'_, Message> {
@@ -7849,6 +7868,11 @@ mod tests {
         assert_eq!(midi_event_list_length(240, 960, common_time), "0.0.25");
         assert_eq!(midi_event_list_length(960, 960, common_time), "0.1.00");
         assert_eq!(midi_event_list_length(3_840, 960, common_time), "1.0.00");
+        assert_eq!(midi_event_list_optional_length(None, 960, common_time), "");
+        assert_eq!(
+            midi_event_list_optional_length(Some(240), 960, common_time),
+            "0.0.25"
+        );
 
         let six_eight = TimeSignature::new(6, 8).expect("valid compound meter");
         assert_eq!(midi_event_list_position(480, 960, six_eight), "1.2.00");
@@ -7950,6 +7974,7 @@ mod tests {
         assert_eq!(note.off_velocity(), 37);
         assert!(matches!(events[4], MidiEventListEntry::PolyAftertouch(_)));
         assert!(matches!(events[5], MidiEventListEntry::ChannelPressure(_)));
+        assert!(matches!(events[6], MidiEventListEntry::End(3_840)));
 
         let channel_one = MidiSnap {
             channel_selection: MidiEditorChannelSelection::Channel(1),
@@ -7957,11 +7982,12 @@ mod tests {
             ..MidiSnap::default()
         };
         let events = midi_event_list_entries(item, channel_one);
-        assert_eq!(events.len(), 4);
+        assert_eq!(events.len(), 5);
         assert!(matches!(events[0], MidiEventListEntry::PitchBend(_)));
         assert!(matches!(events[1], MidiEventListEntry::ProgramChange(_)));
         assert!(matches!(events[2], MidiEventListEntry::Note(_)));
         assert!(matches!(events[3], MidiEventListEntry::PolyAftertouch(_)));
+        assert!(matches!(events[4], MidiEventListEntry::End(3_840)));
 
         let programs_only = MidiSnap {
             filter_enabled: true,
@@ -7969,8 +7995,9 @@ mod tests {
             ..MidiSnap::default()
         };
         let events = midi_event_list_entries(item, programs_only);
-        assert_eq!(events.len(), 1);
+        assert_eq!(events.len(), 2);
         assert!(matches!(events[0], MidiEventListEntry::ProgramChange(_)));
+        assert!(matches!(events[1], MidiEventListEntry::End(3_840)));
 
         let poly_only = MidiSnap {
             filter_enabled: true,
@@ -7978,8 +8005,9 @@ mod tests {
             ..MidiSnap::default()
         };
         let events = midi_event_list_entries(item, poly_only);
-        assert_eq!(events.len(), 1);
+        assert_eq!(events.len(), 2);
         assert!(matches!(events[0], MidiEventListEntry::PolyAftertouch(_)));
+        assert!(matches!(events[1], MidiEventListEntry::End(3_840)));
 
         let pressure_only = MidiSnap {
             filter_enabled: true,
@@ -7987,8 +8015,9 @@ mod tests {
             ..MidiSnap::default()
         };
         let events = midi_event_list_entries(item, pressure_only);
-        assert_eq!(events.len(), 1);
+        assert_eq!(events.len(), 2);
         assert!(matches!(events[0], MidiEventListEntry::ChannelPressure(_)));
+        assert!(matches!(events[1], MidiEventListEntry::End(3_840)));
     }
 
     #[test]

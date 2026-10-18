@@ -1,0 +1,18 @@
+reference_version	7.82/linux-x86_64
+theme	Default_7.0.ReaperThemeZip
+empty_item_event_counts	notes=0; cc=0; text=0
+item_end_seconds	4
+item_end_tick	7680
+native_event_list_action	40056 (Alt+3)
+native_empty_terminal_row	index=1; position=3.1.00; length=blank; channel=1; type=(end) All Notes Off; parameter=blank; value=0; off_value=blank; REAPER_Data=blank
+native_empty_row_initial_cursor	active; native index cell displays 1 <<
+native_ctrl_f2	opens blank Event Properties window; Type, Position, and Channel are unset
+aaadaw_empty_terminal_row	index=1; position=3.1.00; length=blank; channel=1; type=(end) All Notes Off; parameter=blank; value=0; off_value=blank
+aaadaw_expression_row_lengths	Note length=0.0.25; Poly Aftertouch and Channel Pressure lengths blank; terminal row length blank
+aaadaw_empty_delete	Delete leaves the terminal row and project unchanged
+aaadaw_populated_terminal_row	index=5; position=3.1.00; length=blank; channel=1; type=(end) All Notes Off; parameter=blank; value=0; off_value=blank
+aaadaw_populated_delete_terminal	Delete leaves four notes and the terminal row unchanged
+aaadaw_populated_delete_note	Delete removes the selected first note; three notes and the terminal row remain
+aaadaw_desktop_sha256	b0562fe90b2a72570024fddf50a2f275f3566dbf2e66f3bebad80cb852ec0564
+aaadaw_elf_build_id	3044a174aeb547f866dc8c55ed43b1f585d30f2e
+aaadaw_build_profile	stable Linux desktop debug build, Xvfb :416 real-window input and captures

@@ -1916,6 +1916,7 @@ impl App {
             MidiEditorEventListCursor::ChannelPressure(event) => {
                 self.midi_editor_selected_channel_pressures.contains(&event)
             }
+            MidiEditorEventListCursor::End => false,
         }
     }
 
@@ -1990,6 +1991,8 @@ impl App {
             self.midi_editor_selected_controllers.clear();
             self.midi_editor_selected_pitch_bends.clear();
             self.midi_editor_selected_program_changes.clear();
+            self.midi_editor_selected_poly_aftertouches.clear();
+            self.midi_editor_selected_channel_pressures.clear();
             if extend_selection {
                 let anchor_index = self
                     .midi_editor_event_list_anchor
@@ -2022,6 +2025,7 @@ impl App {
                         MidiEditorEventListCursor::ChannelPressure(event) => {
                             self.midi_editor_selected_channel_pressures.insert(event);
                         }
+                        MidiEditorEventListCursor::End => {}
                     }
                 }
             } else {
@@ -2044,6 +2048,7 @@ impl App {
                     MidiEditorEventListCursor::ChannelPressure(event) => {
                         self.midi_editor_selected_channel_pressures.insert(event);
                     }
+                    MidiEditorEventListCursor::End => {}
                 }
             }
         }
@@ -5629,6 +5634,20 @@ impl App {
                     self.midi_editor_selected_channel_pressures.insert(event);
                 }
             }
+            Message::SelectMidiEditorEventListEnd(additive) => {
+                self.midi_editor_event_list_cursor = Some(MidiEditorEventListCursor::End);
+                if !additive || self.midi_editor_event_list_anchor.is_none() {
+                    self.midi_editor_event_list_anchor = Some(MidiEditorEventListCursor::End);
+                }
+                if !additive {
+                    self.midi_editor_selected_notes.clear();
+                    self.midi_editor_selected_controllers.clear();
+                    self.midi_editor_selected_pitch_bends.clear();
+                    self.midi_editor_selected_program_changes.clear();
+                    self.midi_editor_selected_poly_aftertouches.clear();
+                    self.midi_editor_selected_channel_pressures.clear();
+                }
+            }
             Message::SelectMidiControllerEvent(..)
             | Message::SelectMidiPitchBendEvent(..)
             | Message::SelectMidiProgramChangeEvent(..)
@@ -6859,27 +6878,40 @@ impl App {
                     && let iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
                         key: iced::keyboard::Key::Named(key),
                         modifiers,
+                        repeat: false,
                         ..
                     }) = &event
-                    && (modifiers.is_empty()
-                        || *modifiers == iced::keyboard::Modifiers::CTRL
-                        || *modifiers == iced::keyboard::Modifiers::SHIFT)
                 {
-                    let direction = match key {
-                        iced::keyboard::key::Named::ArrowUp => {
-                            Some(MidiEditorEventListCursorDirection::Previous)
+                    if modifiers.is_empty()
+                        && matches!(
+                            key,
+                            iced::keyboard::key::Named::Delete
+                                | iced::keyboard::key::Named::Backspace
+                        )
+                        && let Some(item_id) = self.midi_editor_item_id
+                    {
+                        return self.update(Message::DeleteSelectedMidiEvents(item_id));
+                    }
+                    if modifiers.is_empty()
+                        || *modifiers == iced::keyboard::Modifiers::CTRL
+                        || *modifiers == iced::keyboard::Modifiers::SHIFT
+                    {
+                        let direction = match key {
+                            iced::keyboard::key::Named::ArrowUp => {
+                                Some(MidiEditorEventListCursorDirection::Previous)
+                            }
+                            iced::keyboard::key::Named::ArrowDown => {
+                                Some(MidiEditorEventListCursorDirection::Next)
+                            }
+                            _ => None,
+                        };
+                        if let Some(direction) = direction {
+                            return self.update(Message::MoveMidiEditorEventListCursor(
+                                direction,
+                                modifiers == &iced::keyboard::Modifiers::CTRL,
+                                modifiers == &iced::keyboard::Modifiers::SHIFT,
+                            ));
                         }
-                        iced::keyboard::key::Named::ArrowDown => {
-                            Some(MidiEditorEventListCursorDirection::Next)
-                        }
-                        _ => None,
-                    };
-                    if let Some(direction) = direction {
-                        return self.update(Message::MoveMidiEditorEventListCursor(
-                            direction,
-                            modifiers == &iced::keyboard::Modifiers::CTRL,
-                            modifiers == &iced::keyboard::Modifiers::SHIFT,
-                        ));
                     }
                 }
 

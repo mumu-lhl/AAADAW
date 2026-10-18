@@ -13062,6 +13062,158 @@ fn midi_event_list_arrow_keys_navigate_visible_events_and_keep_ctrl_multiselecti
 }
 
 #[test]
+fn midi_event_list_end_row_navigates_without_becoming_a_project_event() {
+    let editor_window_id = iced::window::Id::unique();
+    let mut app = App {
+        midi_editor_window_id: Some(editor_window_id),
+        midi_editor_mode: MidiEditorMode::EventList,
+        ..App::default()
+    };
+    let _ = app.update(Message::AddTrack);
+    let track_id = app.project.tracks()[0].id();
+    app.project
+        .apply(DawAction::InsertMidiItem {
+            track_id,
+            start_tick: 0,
+            length_ticks: 7_680,
+        })
+        .unwrap();
+    let item_id = app.project.midi_items()[0].id();
+    app.project
+        .apply(DawAction::AddMidiNotes {
+            item_id,
+            notes: vec![MidiNoteData {
+                channel: 2,
+                pitch: 60,
+                tick: 0,
+                duration: 240,
+                velocity: 91,
+                off_velocity: 37,
+            }],
+        })
+        .unwrap();
+    let poly_aftertouch = MidiPolyAftertouchData {
+        channel: 2,
+        tick: 480,
+        note: 60,
+        value: 37,
+    };
+    let channel_pressure = MidiChannelPressureData {
+        channel: 3,
+        tick: 960,
+        value: 74,
+    };
+    app.project
+        .apply(DawAction::SetMidiPolyAftertouches {
+            item_id,
+            poly_aftertouches: vec![poly_aftertouch],
+        })
+        .unwrap();
+    app.project
+        .apply(DawAction::SetMidiChannelPressures {
+            item_id,
+            channel_pressures: vec![channel_pressure],
+        })
+        .unwrap();
+    app.midi_editor_item_id = Some(item_id);
+    let note_id = app.project.midi_items()[0].notes()[0].id();
+    let item = &app.project.midi_items()[0];
+    assert_eq!(
+        super::view::midi_event_list_cursors(&app, item),
+        [
+            super::MidiEditorEventListCursor::Note(note_id),
+            super::MidiEditorEventListCursor::PolyAftertouch(poly_aftertouch),
+            super::MidiEditorEventListCursor::ChannelPressure(channel_pressure),
+            super::MidiEditorEventListCursor::End,
+        ]
+    );
+    let before = app.project.snapshot();
+    let revision = app.revision;
+
+    let _ = app.update(Message::SelectMidiNoteEvent(note_id, false));
+    let _ = app.update(Message::SelectMidiEditorEventListEnd(false));
+    assert_eq!(
+        app.midi_editor_event_list_cursor,
+        Some(super::MidiEditorEventListCursor::End)
+    );
+    assert!(app.midi_editor_selected_notes.is_empty());
+    assert!(app.midi_editor_selected_poly_aftertouches.is_empty());
+    assert!(app.midi_editor_selected_channel_pressures.is_empty());
+    assert_eq!(app.revision, revision);
+    let delete = test_input_event(test_shortcut_input(
+        Key::Named(iced::keyboard::key::Named::Delete),
+        Modifiers::NONE,
+    ));
+    let _ = app.update(Message::RuntimeKeyboardEvent(
+        delete,
+        iced::event::Status::Ignored,
+        editor_window_id,
+    ));
+    assert_eq!(app.project.snapshot(), before);
+    assert_eq!(app.revision, revision);
+
+    let _ = app.update(Message::SelectMidiEditorEventListEnd(false));
+    let up = test_input_event(test_shortcut_input(
+        Key::Named(iced::keyboard::key::Named::ArrowUp),
+        Modifiers::NONE,
+    ));
+    let down = test_input_event(test_shortcut_input(
+        Key::Named(iced::keyboard::key::Named::ArrowDown),
+        Modifiers::NONE,
+    ));
+    let _ = app.update(Message::RuntimeKeyboardEvent(
+        up,
+        iced::event::Status::Ignored,
+        editor_window_id,
+    ));
+    assert_eq!(
+        app.midi_editor_event_list_cursor,
+        Some(super::MidiEditorEventListCursor::ChannelPressure(
+            channel_pressure
+        ))
+    );
+    assert!(app.midi_editor_selected_notes.is_empty());
+    assert!(app.midi_editor_selected_poly_aftertouches.is_empty());
+    assert_eq!(
+        app.midi_editor_selected_channel_pressures,
+        HashSet::from([channel_pressure])
+    );
+    let _ = app.update(Message::RuntimeKeyboardEvent(
+        down,
+        iced::event::Status::Ignored,
+        editor_window_id,
+    ));
+    assert_eq!(
+        app.midi_editor_event_list_cursor,
+        Some(super::MidiEditorEventListCursor::End)
+    );
+    assert!(app.midi_editor_selected_notes.is_empty());
+    assert!(app.midi_editor_selected_poly_aftertouches.is_empty());
+    assert!(app.midi_editor_selected_channel_pressures.is_empty());
+    assert_eq!(app.project.snapshot(), before);
+}
+
+#[test]
+fn empty_midi_event_list_contains_the_terminal_cursor() {
+    let mut app = App::default();
+    let _ = app.update(Message::AddTrack);
+    let track_id = app.project.tracks()[0].id();
+    app.project
+        .apply(DawAction::InsertMidiItem {
+            track_id,
+            start_tick: 0,
+            length_ticks: 7_680,
+        })
+        .unwrap();
+    let item = &app.project.midi_items()[0];
+
+    assert_eq!(
+        super::view::midi_event_list_cursors(&app, item),
+        [super::MidiEditorEventListCursor::End]
+    );
+}
+
+#[test]
 fn midi_event_properties_edits_note_fields_with_apply_ok_cancel_and_undo() {
     let common_time = aaadaw_core::TimeSignature::new(4, 4).expect("valid common time");
     assert_eq!(
