@@ -2101,6 +2101,16 @@ impl App {
             {
                 remapped.insert(*candidate);
                 remaining.remove(index);
+            } else if let Some((index, candidate)) = remaining
+                .iter()
+                .enumerate()
+                .filter(|(_, candidate)| {
+                    candidate.channel == event.channel && candidate.controller == event.controller
+                })
+                .min_by_key(|(_, candidate)| candidate.tick.abs_diff(event.tick))
+            {
+                remapped.insert(*candidate);
+                remaining.remove(index);
             }
         }
         remapped
@@ -2126,6 +2136,14 @@ impl App {
             {
                 remapped.insert(*candidate);
                 remaining.remove(index);
+            } else if let Some((index, candidate)) = remaining
+                .iter()
+                .enumerate()
+                .filter(|(_, candidate)| candidate.channel == event.channel)
+                .min_by_key(|(_, candidate)| candidate.tick.abs_diff(event.tick))
+            {
+                remapped.insert(*candidate);
+                remaining.remove(index);
             }
         }
         remapped
@@ -2135,6 +2153,7 @@ impl App {
         selected: &HashSet<T>,
         after: &[T],
         same_payload: impl Fn(&T, &T) -> bool,
+        same_identity: impl Fn(&T, &T) -> bool,
         tick: impl Fn(&T) -> u64,
     ) -> HashSet<T> {
         let mut remaining = after.to_vec();
@@ -2147,6 +2166,14 @@ impl App {
                 .iter()
                 .enumerate()
                 .filter(|(_, candidate)| same_payload(event, candidate))
+                .min_by_key(|(_, candidate)| tick(candidate).abs_diff(tick(event)))
+            {
+                remapped.insert(*candidate);
+                remaining.remove(index);
+            } else if let Some((index, candidate)) = remaining
+                .iter()
+                .enumerate()
+                .filter(|(_, candidate)| same_identity(event, candidate))
                 .min_by_key(|(_, candidate)| tick(candidate).abs_diff(tick(event)))
             {
                 remapped.insert(*candidate);
@@ -4220,8 +4247,28 @@ impl App {
             ),
         };
         let action = match dialog.scope {
-            MidiQuantizeScope::AllEvents => DawAction::QuantizeMidiEventsWithOperation {
+            MidiQuantizeScope::AllEvents => DawAction::QuantizeMidiEventsWithSelection {
                 item_id: dialog.item_id,
+                selected_controllers: self
+                    .midi_editor_selected_controllers
+                    .iter()
+                    .copied()
+                    .collect(),
+                selected_pitch_bends: self
+                    .midi_editor_selected_pitch_bends
+                    .iter()
+                    .copied()
+                    .collect(),
+                selected_program_changes: self
+                    .midi_editor_selected_program_changes
+                    .iter()
+                    .copied()
+                    .collect(),
+                selected_channel_pressures: self
+                    .midi_editor_selected_channel_pressures
+                    .iter()
+                    .copied()
+                    .collect(),
                 grid,
                 strength,
                 operation,
@@ -4312,6 +4359,7 @@ impl App {
                 &selected_program_changes,
                 item.program_changes(),
                 |left, right| left.channel == right.channel && left.program == right.program,
+                |left, right| left.channel == right.channel,
                 |event| event.tick,
             );
             self.midi_editor_selected_poly_aftertouches = Self::remap_selected_midi_point_events(
@@ -4322,12 +4370,14 @@ impl App {
                         && left.note == right.note
                         && left.value == right.value
                 },
+                |left, right| left.channel == right.channel && left.note == right.note,
                 |event| event.tick,
             );
             self.midi_editor_selected_channel_pressures = Self::remap_selected_midi_point_events(
                 &selected_channel_pressures,
                 item.channel_pressures(),
                 |left, right| left.channel == right.channel && left.value == right.value,
+                |left, right| left.channel == right.channel,
                 |event| event.tick,
             );
             self.midi_editor_selected_opaque_events = Self::remap_selected_midi_opaque_events(
@@ -13773,25 +13823,69 @@ impl App {
             self.pending_fx_automation_history = None;
         }
         self.audio_item_start_edits.clear();
+        let selected_controllers = self.midi_editor_selected_controllers.clone();
+        let selected_pitch_bends = self.midi_editor_selected_pitch_bends.clone();
+        let selected_program_changes = self.midi_editor_selected_program_changes.clone();
+        let selected_poly_aftertouches = self.midi_editor_selected_poly_aftertouches.clone();
+        let selected_channel_pressures = self.midi_editor_selected_channel_pressures.clone();
         let selected_opaque_events = self.selected_midi_opaque_event_data();
         let midi_editor_item_id = self.midi_editor_item_id;
         #[cfg(feature = "audio-device")]
         let sample_rate_before = self.project.settings().sample_rate();
         self.status = match self.project.undo() {
             Ok(true) => {
-                if let Some(item_id) = midi_editor_item_id {
-                    self.midi_editor_selected_opaque_events = self
+                if let Some(item_id) = midi_editor_item_id
+                    && let Some(item) = self
                         .project
                         .midi_items()
                         .iter()
                         .find(|item| item.id() == item_id)
-                        .map(|item| {
-                            Self::remap_selected_midi_opaque_events(
-                                &selected_opaque_events,
-                                item.opaque_events(),
-                            )
-                        })
-                        .unwrap_or_default();
+                {
+                    self.midi_editor_selected_controllers = Self::remap_selected_controller_events(
+                        &selected_controllers,
+                        item.controllers(),
+                    );
+                    self.midi_editor_selected_pitch_bends = Self::remap_selected_pitch_bend_events(
+                        &selected_pitch_bends,
+                        item.pitch_bends(),
+                    );
+                    self.midi_editor_selected_program_changes =
+                        Self::remap_selected_midi_point_events(
+                            &selected_program_changes,
+                            item.program_changes(),
+                            |left, right| {
+                                left.channel == right.channel && left.program == right.program
+                            },
+                            |left, right| left.channel == right.channel,
+                            |event| event.tick,
+                        );
+                    self.midi_editor_selected_poly_aftertouches =
+                        Self::remap_selected_midi_point_events(
+                            &selected_poly_aftertouches,
+                            item.poly_aftertouches(),
+                            |left, right| {
+                                left.channel == right.channel
+                                    && left.note == right.note
+                                    && left.value == right.value
+                            },
+                            |left, right| left.channel == right.channel && left.note == right.note,
+                            |event| event.tick,
+                        );
+                    self.midi_editor_selected_channel_pressures =
+                        Self::remap_selected_midi_point_events(
+                            &selected_channel_pressures,
+                            item.channel_pressures(),
+                            |left, right| {
+                                left.channel == right.channel && left.value == right.value
+                            },
+                            |left, right| left.channel == right.channel,
+                            |event| event.tick,
+                        );
+                    self.midi_editor_selected_opaque_events =
+                        Self::remap_selected_midi_opaque_events(
+                            &selected_opaque_events,
+                            item.opaque_events(),
+                        );
                 }
                 if matches!(self.app_undo_history.last(), Some(AppHistoryEntry::Project)) {
                     self.app_undo_history.pop();
@@ -13866,25 +13960,69 @@ impl App {
             self.pending_fx_automation_history = None;
         }
         self.audio_item_start_edits.clear();
+        let selected_controllers = self.midi_editor_selected_controllers.clone();
+        let selected_pitch_bends = self.midi_editor_selected_pitch_bends.clone();
+        let selected_program_changes = self.midi_editor_selected_program_changes.clone();
+        let selected_poly_aftertouches = self.midi_editor_selected_poly_aftertouches.clone();
+        let selected_channel_pressures = self.midi_editor_selected_channel_pressures.clone();
         let selected_opaque_events = self.selected_midi_opaque_event_data();
         let midi_editor_item_id = self.midi_editor_item_id;
         #[cfg(feature = "audio-device")]
         let sample_rate_before = self.project.settings().sample_rate();
         self.status = match self.project.redo() {
             Ok(true) => {
-                if let Some(item_id) = midi_editor_item_id {
-                    self.midi_editor_selected_opaque_events = self
+                if let Some(item_id) = midi_editor_item_id
+                    && let Some(item) = self
                         .project
                         .midi_items()
                         .iter()
                         .find(|item| item.id() == item_id)
-                        .map(|item| {
-                            Self::remap_selected_midi_opaque_events(
-                                &selected_opaque_events,
-                                item.opaque_events(),
-                            )
-                        })
-                        .unwrap_or_default();
+                {
+                    self.midi_editor_selected_controllers = Self::remap_selected_controller_events(
+                        &selected_controllers,
+                        item.controllers(),
+                    );
+                    self.midi_editor_selected_pitch_bends = Self::remap_selected_pitch_bend_events(
+                        &selected_pitch_bends,
+                        item.pitch_bends(),
+                    );
+                    self.midi_editor_selected_program_changes =
+                        Self::remap_selected_midi_point_events(
+                            &selected_program_changes,
+                            item.program_changes(),
+                            |left, right| {
+                                left.channel == right.channel && left.program == right.program
+                            },
+                            |left, right| left.channel == right.channel,
+                            |event| event.tick,
+                        );
+                    self.midi_editor_selected_poly_aftertouches =
+                        Self::remap_selected_midi_point_events(
+                            &selected_poly_aftertouches,
+                            item.poly_aftertouches(),
+                            |left, right| {
+                                left.channel == right.channel
+                                    && left.note == right.note
+                                    && left.value == right.value
+                            },
+                            |left, right| left.channel == right.channel && left.note == right.note,
+                            |event| event.tick,
+                        );
+                    self.midi_editor_selected_channel_pressures =
+                        Self::remap_selected_midi_point_events(
+                            &selected_channel_pressures,
+                            item.channel_pressures(),
+                            |left, right| {
+                                left.channel == right.channel && left.value == right.value
+                            },
+                            |left, right| left.channel == right.channel,
+                            |event| event.tick,
+                        );
+                    self.midi_editor_selected_opaque_events =
+                        Self::remap_selected_midi_opaque_events(
+                            &selected_opaque_events,
+                            item.opaque_events(),
+                        );
                 }
                 if matches!(self.app_redo_history.last(), Some(AppHistoryEntry::Project)) {
                     self.app_redo_history.pop();

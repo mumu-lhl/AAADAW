@@ -567,6 +567,22 @@ pub enum DawAction {
         /// Shorten notes that overlap the next note with the same channel and pitch.
         fix_overlaps: bool,
     },
+    /// Quantize every modeled event while preserving selected-event priority when quantization
+    /// creates a same-position collision.
+    QuantizeMidiEventsWithSelection {
+        item_id: ItemId,
+        selected_controllers: Vec<MidiControllerData>,
+        selected_pitch_bends: Vec<crate::MidiPitchBendData>,
+        selected_program_changes: Vec<MidiProgramChangeData>,
+        selected_channel_pressures: Vec<MidiChannelPressureData>,
+        grid: GridFraction,
+        strength: f32,
+        operation: MidiNoteQuantizeOperation,
+        /// Swing amount of the MIDI editor grid, clamped to -100..=100 percent.
+        swing_amount_percent: i16,
+        /// Shorten notes that overlap the next note with the same channel and pitch.
+        fix_overlaps: bool,
+    },
     /// Randomize MIDI note positions and velocities as one undoable edit.
     HumanizeMidiNotes {
         item_id: ItemId,

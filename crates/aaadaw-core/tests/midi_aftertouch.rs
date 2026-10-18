@@ -36,6 +36,12 @@ fn aftertouch_events_are_sorted_undoable_and_snapshot_safe() {
                     value: 37,
                 },
                 MidiPolyAftertouchData {
+                    channel: 2,
+                    tick: 960,
+                    note: 60,
+                    value: 41,
+                },
+                MidiPolyAftertouchData {
                     channel: 0,
                     tick: 0,
                     note: 64,
@@ -89,6 +95,12 @@ fn aftertouch_events_are_sorted_undoable_and_snapshot_safe() {
                 note: 60,
                 value: 37,
             },
+            MidiPolyAftertouchData {
+                channel: 2,
+                tick: 960,
+                note: 60,
+                value: 41,
+            },
         ]
     );
     assert_eq!(
@@ -121,23 +133,9 @@ fn aftertouch_events_are_sorted_undoable_and_snapshot_safe() {
 }
 
 #[test]
-fn aftertouch_events_reject_duplicate_positions_and_out_of_range_data() {
+fn aftertouch_events_allow_same_position_poly_values_but_reject_out_of_range_data() {
     let (mut project, item_id) = project_with_midi_item();
     let invalid_poly = [
-        vec![
-            MidiPolyAftertouchData {
-                channel: 1,
-                tick: 10,
-                note: 60,
-                value: 12,
-            },
-            MidiPolyAftertouchData {
-                channel: 1,
-                tick: 10,
-                note: 60,
-                value: 14,
-            },
-        ],
         vec![MidiPolyAftertouchData {
             channel: 16,
             tick: 10,

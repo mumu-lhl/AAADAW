@@ -1156,6 +1156,119 @@ fn midi_quantize_all_modeled_events_and_undoes_as_one_edit() {
 }
 
 #[test]
+fn midi_quantize_all_events_preserves_selected_priority_and_poly_aftertouch_collisions() {
+    let mut project = Project::new();
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Piano".to_owned(),
+        })
+        .expect("test track should be created");
+    let track_id = project.tracks()[0].id();
+    project
+        .apply(DawAction::InsertMidiItem {
+            track_id,
+            start_tick: 0,
+            length_ticks: 4_000,
+        })
+        .expect("test MIDI item should be inserted");
+    let item_id = project.midi_items()[0].id();
+    let selected_program = MidiProgramChangeData {
+        channel: 0,
+        tick: 475,
+        program: 12,
+    };
+    let unselected_program = MidiProgramChangeData {
+        tick: 480,
+        program: 13,
+        ..selected_program
+    };
+    project
+        .apply(DawAction::SetMidiProgramChanges {
+            item_id,
+            program_changes: vec![selected_program, unselected_program],
+        })
+        .expect("test Program Changes should be inserted");
+    let selected_pressure = MidiChannelPressureData {
+        channel: 0,
+        tick: 475,
+        value: 60,
+    };
+    let unselected_pressure = MidiChannelPressureData {
+        tick: 480,
+        value: 70,
+        ..selected_pressure
+    };
+    project
+        .apply(DawAction::SetMidiChannelPressures {
+            item_id,
+            channel_pressures: vec![selected_pressure, unselected_pressure],
+        })
+        .expect("test Channel Pressure events should be inserted");
+    let selected_aftertouch = MidiPolyAftertouchData {
+        channel: 0,
+        tick: 355,
+        note: 60,
+        value: 80,
+    };
+    let unselected_aftertouch = MidiPolyAftertouchData {
+        tick: 360,
+        value: 90,
+        ..selected_aftertouch
+    };
+    project
+        .apply(DawAction::SetMidiPolyAftertouches {
+            item_id,
+            poly_aftertouches: vec![selected_aftertouch, unselected_aftertouch],
+        })
+        .expect("test Poly Aftertouch events should be inserted");
+
+    project
+        .apply(DawAction::QuantizeMidiEventsWithSelection {
+            item_id,
+            selected_controllers: Vec::new(),
+            selected_pitch_bends: Vec::new(),
+            selected_program_changes: vec![selected_program],
+            selected_channel_pressures: vec![selected_pressure],
+            grid: GridFraction::new(1, 32).expect("1/32 is a valid grid"),
+            strength: 1.0,
+            operation: MidiNoteQuantizeOperation::Position,
+            swing_amount_percent: 0,
+            fix_overlaps: false,
+        })
+        .expect("All events should retain selected collision priority");
+
+    let item = &project.midi_items()[0];
+    assert_eq!(
+        item.program_changes(),
+        [MidiProgramChangeData {
+            tick: 480,
+            ..selected_program
+        }]
+    );
+    assert_eq!(
+        item.channel_pressures(),
+        [MidiChannelPressureData {
+            tick: 480,
+            ..selected_pressure
+        }]
+    );
+    assert_eq!(
+        item.poly_aftertouches(),
+        [
+            MidiPolyAftertouchData {
+                tick: 360,
+                ..selected_aftertouch
+            },
+            MidiPolyAftertouchData {
+                tick: 360,
+                ..unselected_aftertouch
+            },
+        ]
+    );
+}
+
+#[test]
 fn midi_quantize_all_opaque_events_preserves_reaper_same_tick_collisions() {
     let mut project = Project::new();
     project

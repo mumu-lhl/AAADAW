@@ -16040,7 +16040,7 @@ fn midi_quantize_dialog_routes_position_and_note_end_only_operations() {
 }
 
 #[test]
-fn midi_quantize_dialog_all_events_quantizes_notes_controllers_and_pitch_bends_together() {
+fn midi_quantize_dialog_all_events_matches_midi_collision_rules_in_one_edit() {
     let mut app = App::default();
     let _ = app.update(Message::AddTrack);
     let track_id = app.project.tracks()[0].id();
@@ -16112,6 +16112,79 @@ fn midi_quantize_dialog_all_events_quantizes_notes_controllers_and_pitch_bends_t
         })
         .expect("test pitch bend should be inserted");
 
+    let selected_program_change = MidiProgramChangeData {
+        channel: 0,
+        tick: 475,
+        program: 12,
+    };
+    let colliding_unselected_program_change = MidiProgramChangeData {
+        tick: 480,
+        program: 13,
+        ..selected_program_change
+    };
+    app.project
+        .apply(DawAction::SetMidiProgramChanges {
+            item_id,
+            program_changes: vec![selected_program_change, colliding_unselected_program_change],
+        })
+        .expect("test Program Changes should be inserted");
+    let selected_channel_pressure = MidiChannelPressureData {
+        channel: 0,
+        tick: 475,
+        value: 60,
+    };
+    let colliding_unselected_channel_pressure = MidiChannelPressureData {
+        tick: 480,
+        value: 70,
+        ..selected_channel_pressure
+    };
+    app.project
+        .apply(DawAction::SetMidiChannelPressures {
+            item_id,
+            channel_pressures: vec![
+                selected_channel_pressure,
+                colliding_unselected_channel_pressure,
+            ],
+        })
+        .expect("test Channel Pressure events should be inserted");
+    let selected_poly_aftertouch = MidiPolyAftertouchData {
+        channel: 0,
+        tick: 355,
+        note: 60,
+        value: 80,
+    };
+    let colliding_unselected_poly_aftertouch = MidiPolyAftertouchData {
+        tick: 360,
+        value: 90,
+        ..selected_poly_aftertouch
+    };
+    app.project
+        .apply(DawAction::SetMidiPolyAftertouches {
+            item_id,
+            poly_aftertouches: vec![
+                selected_poly_aftertouch,
+                colliding_unselected_poly_aftertouch,
+            ],
+        })
+        .expect("test Poly Aftertouch events should be inserted");
+    app.midi_editor_item_id = Some(item_id);
+    app.midi_editor_mode = MidiEditorMode::EventList;
+    let _ = app.update(Message::SelectMidiProgramChangeEvent(
+        item_id,
+        selected_program_change,
+        false,
+    ));
+    let _ = app.update(Message::SelectMidiChannelPressureEvent(
+        item_id,
+        selected_channel_pressure,
+        true,
+    ));
+    let _ = app.update(Message::SelectMidiPolyAftertouchEvent(
+        item_id,
+        selected_poly_aftertouch,
+        true,
+    ));
+
     let _ = app.update(Message::OpenMidiQuantizeDialog(item_id));
     let _ = app.update(Message::SetMidiQuantizeScope(MidiQuantizeScope::AllEvents));
     let _ = app.update(Message::AcceptMidiQuantize);
@@ -16130,6 +16203,54 @@ fn midi_quantize_dialog_all_events_quantizes_notes_controllers_and_pitch_bends_t
     assert_eq!(item.pitch_bends().len(), 1);
     assert_eq!(item.pitch_bends()[0].tick, 840);
     assert_eq!(item.pitch_bends()[0].value, 8_192);
+    assert_eq!(
+        item.program_changes(),
+        [MidiProgramChangeData {
+            tick: 480,
+            ..selected_program_change
+        }]
+    );
+    assert_eq!(
+        item.channel_pressures(),
+        [MidiChannelPressureData {
+            tick: 480,
+            ..selected_channel_pressure
+        }]
+    );
+    assert_eq!(
+        item.poly_aftertouches(),
+        [
+            MidiPolyAftertouchData {
+                tick: 360,
+                ..selected_poly_aftertouch
+            },
+            MidiPolyAftertouchData {
+                tick: 360,
+                ..colliding_unselected_poly_aftertouch
+            },
+        ]
+    );
+    assert_eq!(
+        app.midi_editor_selected_program_changes,
+        HashSet::from([MidiProgramChangeData {
+            tick: 480,
+            ..selected_program_change
+        }])
+    );
+    assert_eq!(
+        app.midi_editor_selected_channel_pressures,
+        HashSet::from([MidiChannelPressureData {
+            tick: 480,
+            ..selected_channel_pressure
+        }])
+    );
+    assert_eq!(
+        app.midi_editor_selected_poly_aftertouches,
+        HashSet::from([MidiPolyAftertouchData {
+            tick: 360,
+            ..selected_poly_aftertouch
+        }])
+    );
     let _ = app.update(Message::Undo);
     let item = &app.project.midi_items()[0];
     assert_eq!(item.notes()[0].tick(), 100);
@@ -16139,6 +16260,36 @@ fn midi_quantize_dialog_all_events_quantizes_notes_controllers_and_pitch_bends_t
     assert_eq!(item.pitch_bends().len(), 2);
     assert_eq!(item.pitch_bends()[0].tick, 835);
     assert_eq!(item.pitch_bends()[1].tick, 850);
+    assert_eq!(
+        item.program_changes(),
+        [selected_program_change, colliding_unselected_program_change]
+    );
+    assert_eq!(
+        item.channel_pressures(),
+        [
+            selected_channel_pressure,
+            colliding_unselected_channel_pressure
+        ]
+    );
+    assert_eq!(
+        item.poly_aftertouches(),
+        [
+            selected_poly_aftertouch,
+            colliding_unselected_poly_aftertouch
+        ]
+    );
+    assert_eq!(
+        app.midi_editor_selected_program_changes,
+        HashSet::from([selected_program_change])
+    );
+    assert_eq!(
+        app.midi_editor_selected_channel_pressures,
+        HashSet::from([selected_channel_pressure])
+    );
+    assert_eq!(
+        app.midi_editor_selected_poly_aftertouches,
+        HashSet::from([selected_poly_aftertouch])
+    );
     let _ = app.update(Message::Redo);
     let item = &app.project.midi_items()[0];
     assert_eq!(item.notes()[0].tick(), 120);
@@ -16146,6 +16297,54 @@ fn midi_quantize_dialog_all_events_quantizes_notes_controllers_and_pitch_bends_t
     assert_eq!(item.controllers()[0].tick, 480);
     assert_eq!(item.pitch_bends().len(), 1);
     assert_eq!(item.pitch_bends()[0].tick, 840);
+    assert_eq!(
+        item.program_changes(),
+        [MidiProgramChangeData {
+            tick: 480,
+            ..selected_program_change
+        }]
+    );
+    assert_eq!(
+        item.channel_pressures(),
+        [MidiChannelPressureData {
+            tick: 480,
+            ..selected_channel_pressure
+        }]
+    );
+    assert_eq!(
+        item.poly_aftertouches(),
+        [
+            MidiPolyAftertouchData {
+                tick: 360,
+                ..selected_poly_aftertouch
+            },
+            MidiPolyAftertouchData {
+                tick: 360,
+                ..colliding_unselected_poly_aftertouch
+            },
+        ]
+    );
+    assert_eq!(
+        app.midi_editor_selected_program_changes,
+        HashSet::from([MidiProgramChangeData {
+            tick: 480,
+            ..selected_program_change
+        }])
+    );
+    assert_eq!(
+        app.midi_editor_selected_channel_pressures,
+        HashSet::from([MidiChannelPressureData {
+            tick: 480,
+            ..selected_channel_pressure
+        }])
+    );
+    assert_eq!(
+        app.midi_editor_selected_poly_aftertouches,
+        HashSet::from([MidiPolyAftertouchData {
+            tick: 360,
+            ..selected_poly_aftertouch
+        }])
+    );
 }
 
 #[test]
@@ -16433,6 +16632,10 @@ fn midi_quantize_dialog_selected_events_preserves_unselected_events_and_selectio
             MidiPolyAftertouchData {
                 tick: 360,
                 ..selected_poly_aftertouch
+            },
+            MidiPolyAftertouchData {
+                tick: 360,
+                ..colliding_unselected_poly_aftertouch
             },
             untouched_poly_aftertouch,
         ]

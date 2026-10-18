@@ -1,0 +1,32 @@
+version	7.82/linux-x86_64
+theme	Default_7.0.ReaperThemeZip
+scope_to_apply	selected
+grid_quarter_notes	0.125
+before	notes=0,60,100,280;1,62,350,430	channel_events=1,355,A0,1,60,80;0,360,A0,1,60,90;1,475,C0,1,12,0;1,475,D0,1,60,0;0,480,C0,1,13,0;0,480,D0,1,70,0;0,730,C0,4,14,0;0,730,A0,6,64,70;0,730,D0,8,75,0
+raw	100	0	90 3C 60
+raw	280	0	80 3C 00
+raw	350	1	90 3E 60
+raw	355	1	A0 3C 50
+raw	360	0	A0 3C 5A
+raw	430	1	80 3E 00
+raw	475	1	C0 0C
+raw	475	1	D0 3C
+raw	480	0	C0 0D
+raw	480	0	D0 46
+raw	730	0	C3 0E
+raw	730	0	A5 40 46
+raw	730	0	D7 4B
+raw	7680	0	B0 7B 00
+after	notes=0,60,100,280;1,62,360,440	channel_events=1,360,A0,1,60,80;0,360,A0,1,60,90;1,480,C0,1,12,0;1,480,D0,1,60,0;0,730,C0,4,14,0;0,730,A0,6,64,70;0,730,D0,8,75,0
+raw	100	0	90 3C 60
+raw	280	0	80 3C 00
+raw	360	1	A0 3C 50
+raw	360	0	A0 3C 5A
+raw	360	1	90 3E 60
+raw	440	1	80 3E 00
+raw	480	1	C0 0C
+raw	480	1	D0 3C
+raw	730	0	C3 0E
+raw	730	0	A5 40 46
+raw	730	0	D7 4B
+raw	7680	0	B0 7B 00
