@@ -2682,6 +2682,36 @@ fn channel_filter_dialog(app: &App, touch_targets: bool) -> Element<'_, Message>
             ]
             .spacing(ROW_GAP)
             .align_y(iced::Alignment::Center),
+            button("Set selection")
+                .width(Length::Fill)
+                .height(Length::Fixed(if touch_targets {
+                    TOUCH_TARGET_MIN
+                } else {
+                    28.0
+                }))
+                .on_press(Message::ApplyMidiEditorFilterSelection(
+                    super::super::MidiEditorFilterSelectionOperation::Set,
+                )),
+            button("Add to selection")
+                .width(Length::Fill)
+                .height(Length::Fixed(if touch_targets {
+                    TOUCH_TARGET_MIN
+                } else {
+                    28.0
+                }))
+                .on_press(Message::ApplyMidiEditorFilterSelection(
+                    super::super::MidiEditorFilterSelectionOperation::Add,
+                )),
+            button("Remove from selection")
+                .width(Length::Fill)
+                .height(Length::Fixed(if touch_targets {
+                    TOUCH_TARGET_MIN
+                } else {
+                    28.0
+                }))
+                .on_press(Message::ApplyMidiEditorFilterSelection(
+                    super::super::MidiEditorFilterSelectionOperation::Remove,
+                )),
         ]
         .spacing(SPACING_XS),
     )

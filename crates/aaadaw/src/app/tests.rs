@@ -12552,6 +12552,299 @@ fn midi_editor_multichannel_invert_shows_the_complement_and_drops_hidden_selecti
 }
 
 #[test]
+fn midi_event_filter_sets_adds_and_removes_mixed_event_selection_with_undo_redo() {
+    let mut app = App::default();
+    let _ = app.update(Message::AddTrack);
+    let track_id = app.project.tracks()[0].id();
+    app.project
+        .apply(DawAction::InsertMidiItem {
+            track_id,
+            start_tick: 0,
+            length_ticks: 3_840,
+        })
+        .expect("test MIDI item should be inserted");
+    let item_id = app.project.midi_items()[0].id();
+    app.project
+        .apply(DawAction::AddMidiNotes {
+            item_id,
+            notes: vec![
+                MidiNoteData {
+                    channel: 0,
+                    pitch: 60,
+                    tick: 120,
+                    duration: 240,
+                    velocity: 90,
+                    off_velocity: 0,
+                },
+                MidiNoteData {
+                    channel: 1,
+                    pitch: 62,
+                    tick: 360,
+                    duration: 240,
+                    velocity: 92,
+                    off_velocity: 0,
+                },
+            ],
+        })
+        .expect("test MIDI notes should be inserted");
+    let controllers = vec![
+        MidiControllerData {
+            controller: 1,
+            channel: 0,
+            tick: 180,
+            value: 64,
+        },
+        MidiControllerData {
+            controller: 7,
+            channel: 1,
+            tick: 420,
+            value: 96,
+        },
+    ];
+    app.project
+        .apply(DawAction::SetMidiControllers {
+            item_id,
+            controllers: controllers.clone(),
+        })
+        .expect("test MIDI controllers should be inserted");
+    let pitch_bend = MidiPitchBendData {
+        channel: 1,
+        tick: 480,
+        value: 12_000,
+    };
+    app.project
+        .apply(DawAction::SetMidiPitchBends {
+            item_id,
+            pitch_bends: vec![pitch_bend],
+        })
+        .expect("test MIDI pitch bend should be inserted");
+    let program_change = MidiProgramChangeData {
+        channel: 1,
+        tick: 540,
+        program: 41,
+    };
+    app.project
+        .apply(DawAction::SetMidiProgramChanges {
+            item_id,
+            program_changes: vec![program_change],
+        })
+        .expect("test Program Change should be inserted");
+    let poly_aftertouch = MidiPolyAftertouchData {
+        channel: 1,
+        tick: 600,
+        note: 62,
+        value: 72,
+    };
+    app.project
+        .apply(DawAction::SetMidiPolyAftertouches {
+            item_id,
+            poly_aftertouches: vec![poly_aftertouch],
+        })
+        .expect("test Poly Aftertouch should be inserted");
+    let channel_pressure = MidiChannelPressureData {
+        channel: 1,
+        tick: 660,
+        value: 80,
+    };
+    app.project
+        .apply(DawAction::SetMidiChannelPressures {
+            item_id,
+            channel_pressures: vec![channel_pressure],
+        })
+        .expect("test Channel Pressure should be inserted");
+    let opaque_events = vec![
+        MidiOpaqueEventData {
+            tick: 240,
+            order: 0,
+            kind: MidiOpaqueEventKind::Meta {
+                kind: 0x01,
+                data: b"verse".to_vec(),
+            },
+        },
+        MidiOpaqueEventData {
+            tick: 300,
+            order: 1,
+            kind: MidiOpaqueEventKind::SystemExclusive {
+                status: 0xF0,
+                data: vec![0x43, 0x12, 0xF7],
+            },
+        },
+    ];
+    app.project
+        .apply(DawAction::SetMidiOpaqueEvents {
+            item_id,
+            events: opaque_events.clone(),
+        })
+        .expect("test opaque events should be inserted");
+    app.midi_editor_item_id = Some(item_id);
+    app.midi_editor_mode = MidiEditorMode::EventList;
+    app.midi_editor_channel_selection = super::messages::MidiEditorChannelSelection::Multichannel;
+    app.midi_editor_filter_enabled = false;
+    app.midi_editor_filter_channels = 1 << 1;
+    app.midi_editor_event_type_filter = super::messages::MidiEditorEventTypeFilter::Notes;
+
+    let note_ids = app.project.midi_items()[0]
+        .notes()
+        .iter()
+        .map(|note| note.id())
+        .collect::<Vec<_>>();
+    app.midi_editor_selected_notes = HashSet::from([note_ids[0]]);
+    app.midi_editor_selected_controllers = HashSet::from([controllers[0]]);
+    app.midi_editor_selected_opaque_events = HashSet::from([0]);
+    app.timeline
+        .inline_midi_note_selection
+        .insert(item_id, HashSet::from([note_ids[0]]));
+    let project_snapshot = app.project.snapshot();
+
+    let _ = app.update(Message::ApplyMidiEditorFilterSelection(
+        super::MidiEditorFilterSelectionOperation::Set,
+    ));
+    assert_eq!(app.midi_editor_selected_notes, HashSet::from([note_ids[1]]));
+    assert!(app.midi_editor_selected_controllers.is_empty());
+    assert!(app.midi_editor_selected_opaque_events.is_empty());
+    assert_eq!(
+        app.timeline.inline_midi_note_selection.get(&item_id),
+        Some(&HashSet::from([note_ids[1]]))
+    );
+    let _ = app.update(Message::Undo);
+    assert_eq!(app.midi_editor_selected_notes, HashSet::from([note_ids[0]]));
+    assert_eq!(
+        app.midi_editor_selected_controllers,
+        HashSet::from([controllers[0]])
+    );
+    assert_eq!(app.midi_editor_selected_opaque_events, HashSet::from([0]));
+    let _ = app.update(Message::Redo);
+    assert_eq!(app.midi_editor_selected_notes, HashSet::from([note_ids[1]]));
+    assert!(app.midi_editor_selected_controllers.is_empty());
+
+    app.midi_editor_event_type_filter = super::messages::MidiEditorEventTypeFilter::ControlChange;
+    let _ = app.update(Message::ApplyMidiEditorFilterSelection(
+        super::MidiEditorFilterSelectionOperation::Add,
+    ));
+    assert_eq!(app.midi_editor_selected_notes, HashSet::from([note_ids[1]]));
+    assert_eq!(
+        app.midi_editor_selected_controllers,
+        HashSet::from([controllers[1]])
+    );
+    let _ = app.update(Message::Undo);
+    assert!(app.midi_editor_selected_controllers.is_empty());
+    assert_eq!(app.midi_editor_selected_notes, HashSet::from([note_ids[1]]));
+    let _ = app.update(Message::Redo);
+    assert_eq!(
+        app.midi_editor_selected_controllers,
+        HashSet::from([controllers[1]])
+    );
+
+    app.midi_editor_event_type_filter = super::messages::MidiEditorEventTypeFilter::Notes;
+    let _ = app.update(Message::ApplyMidiEditorFilterSelection(
+        super::MidiEditorFilterSelectionOperation::Remove,
+    ));
+    assert!(app.midi_editor_selected_notes.is_empty());
+    assert_eq!(
+        app.midi_editor_selected_controllers,
+        HashSet::from([controllers[1]])
+    );
+    assert!(
+        !app.timeline
+            .inline_midi_note_selection
+            .contains_key(&item_id)
+    );
+    let _ = app.update(Message::Undo);
+    assert_eq!(app.midi_editor_selected_notes, HashSet::from([note_ids[1]]));
+    assert_eq!(
+        app.midi_editor_selected_controllers,
+        HashSet::from([controllers[1]])
+    );
+    let _ = app.update(Message::Redo);
+    assert!(app.midi_editor_selected_notes.is_empty());
+
+    app.midi_editor_event_type_filter = super::messages::MidiEditorEventTypeFilter::SysExMeta;
+    let _ = app.update(Message::ApplyMidiEditorFilterSelection(
+        super::MidiEditorFilterSelectionOperation::Set,
+    ));
+    assert!(app.midi_editor_selected_notes.is_empty());
+    assert!(app.midi_editor_selected_controllers.is_empty());
+    assert_eq!(
+        app.midi_editor_selected_opaque_events,
+        HashSet::from([0, 1])
+    );
+
+    app.midi_editor_event_type_filter = super::messages::MidiEditorEventTypeFilter::Pitch;
+    let _ = app.update(Message::ApplyMidiEditorFilterSelection(
+        super::MidiEditorFilterSelectionOperation::Set,
+    ));
+    assert_eq!(
+        app.midi_editor_selected_pitch_bends,
+        HashSet::from([pitch_bend])
+    );
+    assert!(app.midi_editor_selected_opaque_events.is_empty());
+    app.midi_editor_event_type_filter = super::messages::MidiEditorEventTypeFilter::ProgramChange;
+    let _ = app.update(Message::ApplyMidiEditorFilterSelection(
+        super::MidiEditorFilterSelectionOperation::Set,
+    ));
+    assert_eq!(
+        app.midi_editor_selected_program_changes,
+        HashSet::from([program_change])
+    );
+    app.midi_editor_event_type_filter = super::messages::MidiEditorEventTypeFilter::PolyAftertouch;
+    let _ = app.update(Message::ApplyMidiEditorFilterSelection(
+        super::MidiEditorFilterSelectionOperation::Set,
+    ));
+    assert_eq!(
+        app.midi_editor_selected_poly_aftertouches,
+        HashSet::from([poly_aftertouch])
+    );
+    app.midi_editor_event_type_filter = super::messages::MidiEditorEventTypeFilter::ChannelPressure;
+    let _ = app.update(Message::ApplyMidiEditorFilterSelection(
+        super::MidiEditorFilterSelectionOperation::Set,
+    ));
+    assert_eq!(
+        app.midi_editor_selected_channel_pressures,
+        HashSet::from([channel_pressure])
+    );
+
+    app.midi_editor_event_type_filter = super::messages::MidiEditorEventTypeFilter::Notes;
+    app.midi_editor_filter_channels = u16::MAX;
+    app.midi_editor_filter_inverted = true;
+    let _ = app.update(Message::ApplyMidiEditorFilterSelection(
+        super::MidiEditorFilterSelectionOperation::Set,
+    ));
+    assert!(app.midi_editor_selected_notes.is_empty());
+    assert_eq!(
+        app.midi_editor_selected_controllers,
+        HashSet::from([controllers[0], controllers[1]])
+    );
+    assert_eq!(
+        app.midi_editor_selected_pitch_bends,
+        HashSet::from([pitch_bend])
+    );
+    assert_eq!(
+        app.midi_editor_selected_program_changes,
+        HashSet::from([program_change])
+    );
+    assert_eq!(
+        app.midi_editor_selected_poly_aftertouches,
+        HashSet::from([poly_aftertouch])
+    );
+    assert_eq!(
+        app.midi_editor_selected_channel_pressures,
+        HashSet::from([channel_pressure])
+    );
+    assert_eq!(
+        app.midi_editor_selected_opaque_events,
+        HashSet::from([0, 1])
+    );
+    let item = &app.project.midi_items()[0];
+    assert_eq!(item.controllers(), controllers);
+    assert_eq!(item.opaque_events(), opaque_events);
+    assert_eq!(item.pitch_bends(), [pitch_bend]);
+    assert_eq!(item.program_changes(), [program_change]);
+    assert_eq!(item.poly_aftertouches(), [poly_aftertouch]);
+    assert_eq!(item.channel_pressures(), [channel_pressure]);
+    assert_eq!(app.project.snapshot(), project_snapshot);
+}
+
+#[test]
 fn midi_editor_transpose_actions_preserve_note_data_and_reject_out_of_range_batches() {
     let mut app = App::default();
     let _ = app.update(Message::AddTrack);

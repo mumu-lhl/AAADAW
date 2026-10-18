@@ -1,0 +1,23 @@
+artifact	sha256
+fixtures/midi-event-filter-selection-native-set.png	7516c4b7cb6dd3503ce2eab3532caeaf409f07367d4ac4bd5a87428b7f780bf5
+fixtures/midi-event-filter-selection-native-set.rpp	24e4144951c615101c830b7d0062ed780a49e2984e149ec4d02410528384115b
+fixtures/midi-event-filter-selection-native-add.rpp	a23d45e821a18f32d8e0d56564ced66ce5887130dd4ab9b3c538b0a9ab7b4b28
+fixtures/midi-event-filter-selection-native-remove.rpp	fe8172fe467777f8704039c61e9737f880ead65dc8c9e0ef820cc9f2aa9fcc53
+fixtures/midi-event-filter-selection-native-show-only-off-set.png	362d221c2c05575dbef0b87cb7c7ef4501f4e8f76d9295f1b7fe94be4adf5ca8
+fixtures/midi-event-filter-selection-native-show-only-off-set.rpp	7c0e7fecd3b2067073104bea8f3ab7d9f487230846ce94d21e310cd489613e37
+fixtures/midi-event-filter-selection-native-show-only-off-add.png	d6722e14bf8977c843eba49296eee7c3f5040d04ccd41c68aba1e9e2f8473275
+fixtures/midi-event-filter-selection-native-show-only-off-add.rpp	6468d384cf377c230dc77ec7b1dc367aaa34ac8a93750a54a38ee4ecba7da7da
+fixtures/midi-event-filter-selection-native-show-only-off-remove.png	4e9bab09d7e6efaa0fe130581e86facebd1243ea382a164b2766d4708377737a
+fixtures/midi-event-filter-selection-native-show-only-off-remove.rpp	72329d34f90cb5e80fcfc53a5b2d145768eb38be62df3c4c1f86ce22b5f67ac6
+native_build_id	fb9ade2f211bc91a3ee6193630ef17bcf5f6528b
+native_binary_sha256	9976f5608068b7a58518969001b00b527fb0de6ed7459e0e5dda6f29878ee254
+theme	REAPER 7.82 Linux Default 7; theme sha256 575544606736a395520703e532209ad9635f13a41b7ea000bb9810d60025be48
+probe_script_sha256	aabce2531a647f3778c6bee2078ec727494d9cdaa38671bf166285486ec85e19
+environment	Linux Xvfb :322; REAPER 7.82; Default 7; native project was produced from four Notes on channels 2, 3, 4, and 5
+filter	Event type Note; channel 5 only; Invert disabled; Show only enabled for the first Set/Add/Remove readbacks and disabled for the follow-up Set/Add/Remove probes
+set_assertion	Set leaves only the channel 5 Note selected. RPP readback has the first three Note events unselected and the fourth selected.
+add_assertion	Starting with channels 2-4 selected and channel 5 unselected, Add selects all four Notes with Show only both enabled and disabled.
+remove_assertion	Starting with all four Notes selected, Remove leaves channels 2-4 selected and clears channel 5 with Show only both enabled and disabled.
+show_only_disabled_assertion	With Show only disabled, all four Note rows remain visible. Set still selects only channel 5; Remove from all four selected clears only channel 5; Add to channels 2-4 selected restores channel 5. Screenshots and RPP readbacks confirm the three outcomes.
+readback	Saved RPP event data preserves event positions, lengths, channels, pitches, velocities, and terminal controller. The disabled-visibility Set/Add/Remove readbacks preserve event positions, lengths, channels, pitches, velocities, and terminal controller; only selected flags and the filter-visibility option differ, apart from save timestamps.
+limitation	Show-only-off Set/Add/Remove are confirmed for the Note/channel-5 criterion. Other filter combinations remain open.

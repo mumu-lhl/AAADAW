@@ -1,0 +1,14 @@
+artifact	sha256
+fixtures/midi-event-filter-selection-aaadaw-set.png	89b325a7a36b549d16622ec764a5f0cfd3643d5e2d17a136de51d9ce505d923c
+fixtures/midi-event-filter-selection-aaadaw-add.png	a07e58077fee013637f9ee75b2b59bdf9bd60a81926531f67c8fa48a0a178795
+fixtures/midi-event-filter-selection-aaadaw-remove.png	c95c00431859cced7c11fc6ec12c06d667331383ecb130ffc94f82a66f77a4fa
+screenshot_binary_build_id	d3fc747138cb692ae7d198cbe33f84720b29224c
+screenshot_binary_sha256	62bb3d82813fd9cabe5e4c83a185e05b10501cd8bab3134f6b514b1496b2fe5e
+build	cargo +nightly with Cranelift backend; dev debug info disabled
+environment	Linux Xvfb :323; 1440x900; isolated XDG directories
+project	One Audio track with one MIDI item and two C5 Notes at ticks 360 and 960; Event List filter dialog open
+set_assertion	Show-only checkbox off; Set selection selects the first Note matching the active all-events filter, leaving the second Note and synthetic End row unselected.
+add_assertion	Add to selection selects both Note rows and leaves synthetic End unselected.
+remove_assertion	Remove from selection clears both Note rows; synthetic End remains unselected.
+verification	App test midi_event_filter_sets_adds_and_removes_mixed_event_selection_with_undo_redo covers Notes, CC, Pitch Bend, Program Change, Poly Aftertouch, Channel Pressure, opaque Meta/SysEx, inversion, selection Undo/Redo, inline selection sync, and no MIDI project-data mutation.
+limitation	Screenshot evidence verifies the recorded screenshot build's three actions; screenshot comparison is behavioral evidence, not pixel-diff certification. Native Show-only-off Set/Add/Remove are confirmed; other filters remain open.

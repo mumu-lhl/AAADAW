@@ -276,6 +276,13 @@ pub(crate) enum MidiEditorEventKind {
     Text,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum MidiEditorFilterSelectionOperation {
+    Set,
+    Add,
+    Remove,
+}
+
 impl MidiEditorChannelSelection {
     pub(crate) const OPTIONS: [Self; 18] = [
         Self::AllChannels,
@@ -653,6 +660,7 @@ pub(crate) enum Message {
     ToggleMidiEditorFilterInvert,
     OpenMidiEditorFilter,
     SetMidiEditorEventTypeFilter(MidiEditorEventTypeFilter),
+    ApplyMidiEditorFilterSelection(MidiEditorFilterSelectionOperation),
     CloseMidiEditorFilter,
     MidiEditorFeedback(String),
     SelectMidiNotes(HashSet<NoteId>),

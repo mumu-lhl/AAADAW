@@ -2584,3 +2584,13 @@ REAPER 原厂 Note、Program Change、Poly Aftertouch 和 Channel Pressure 截�
 在 Linux REAPER 7.82 / Default 7 的 Event List 中，以 ReaScript 创建四音符 item（前 3 行已选、第 4 行 C5@tick 1440 未选），Ctrl-click 第 4 行后保存，原始 MIDI take 的四个 Note On/Off selection bits 全部变为 selected。立即 Ctrl+Z 再读回，第 4 行的 Note On/Off bits 恢复为 unselected；Ctrl+Shift+Z 重做后，两者重新变为 selected。前 3 行选中状态、所有事件 tick/length/channel/pitch/velocity 均不变；RPP diff 除保存时间戳外只改第 4 行的选择位。原厂 Linux 二进制 Build ID `fb9ade2f211bc91a3ee6193630ef17bcf5f6528b`、SHA-256 `9976f5608068b7a58518969001b00b527fb0de6ed7459e0e5dda6f29878ee254`，Default 7 theme、生成脚本、Undo/Redo 实窗截图与两份 RPP 读回均在 [Event List selection history native fixture](../verification/reaper-parity/fixtures/midi-event-list-selection-history-native.tsv)。
 
 因此 AAADAW 已有的 Event List Ctrl/Cmd-click、Arrow、Shift-range 与 Home 选择 Undo/Redo 现获得 REAPER Event List 鼠标选择的原厂历史顺序对照；此前 MIDI Editor Piano Roll 选择历史的原厂对照也已记录。当前 Cranelift/Nextest **803/803**、strict workspace Clippy、fmt/diff 均已通过。更广的 Event List 过滤字段/动作、Meta/SysEx REAPER Data、混合类型属性、排序/列宽和上下文菜单仍未完成；`MIDI-EVENT-LIST-001`、UI-019 与 P7 维持 `in_progress`。
+
+### 2026-10-18 Event List Filter Set/Add/Remove 选择操作
+
+AAADAW 的 Event List Filter Events 对话框现有原厂同名的 `Set selection`、`Add to selection`、`Remove from selection` 操作。操作按事件类型、通道 mask 与反转条件匹配所有 modeled MIDI 事件及 Meta/SysEx；Show-only 只控制可见行，合成 `(end)` 行不进入选区。Set 替换不同类型的旧选区，Add 合并，Remove 扣除；选择进入既有 Undo/Redo 历史并同步 Arrange inline note selection，不改工程数据。P7 原子验收表已补入这项明确要求。
+
+Linux REAPER 7.82 / Default 7 原厂探针使用 Note + channel 5、Show-only 开启：Set 单独选中 channel 5，Add 从前 3 个选中扩展为 4 个，Remove 从 4 个选中回到前 3 个。原厂截图及三份 RPP 读回，与 Xvfb 当前 AAADAW 实窗的 Set / Add / Remove 截图和 SHA-256 均已登记在 [筛选选择验证页](../verification/reaper-parity/midi-event-filter-selection.md)及两个 fixture manifests。后续关闭 Show-only 的原厂探针确认 Set 仍只选中 channel 5；从四条全选开始 Remove 只清除 channel 5；从 channel 2–4 选中开始 Add 又选中 channel 5。三组 RPP 与截图均已加入原厂 manifest，其他筛选组合仍待探测。
+
+App 回归覆盖 Notes、CC、Pitch Bend、Program Change、Poly Aftertouch、Channel Pressure、Meta/SysEx、反转、Undo/Redo、Arrange 选区同步与工程快照不变。Cranelift 全 workspace 在 Xvfb :324 下 **1,548 项测试、84 个测试目标全部通过**；Stable workspace strict all-target Clippy (`-D warnings`)、fmt 与 diff 检查通过；两个新 manifest 的图像/RPP 哈希逐项校验通过。截图所用 AAADAW 桌面二进制 Build ID `d3fc747138cb692ae7d198cbe33f84720b29224c`、SHA-256 `62bb3d82813fd9cabe5e4c83a185e05b10501cd8bab3134f6b514b1496b2fe5e`。Cranelift 保留既有 `TimelinePipeline: MaybeSync` future-incompatibility warning。
+
+`MIDI-EVENT-LIST-001`、UI-019、P7 继续 `in_progress`。下一项继续用 REAPER 实测其他筛选条件，再扩展 Parameter/Value/Position 与 Clear filter / Set filter from selection 控件；这些未完成项不因本次选择操作完成而关闭。

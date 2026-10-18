@@ -126,10 +126,10 @@ mod x11_plugin_editor;
 pub(crate) use messages::{
     MainMenu, MainWorkspace, MenuNavigation, Message, MidiEditorChannelSelection,
     MidiEditorCursorBoundary, MidiEditorEventKind, MidiEditorEventListCursor,
-    MidiEditorEventListCursorDirection, MidiEditorEventTypeFilter, MidiEditorLane, MidiEditorMode,
-    MidiEditorTool, MidiHumanizeScope, MidiQuantizeOperation, MidiQuantizeScope,
-    MidiTransposeScope, MobilePanel, PathPickerTarget, PendingProjectTransition, SettingsCategory,
-    TimeMapTab,
+    MidiEditorEventListCursorDirection, MidiEditorEventTypeFilter,
+    MidiEditorFilterSelectionOperation, MidiEditorLane, MidiEditorMode, MidiEditorTool,
+    MidiHumanizeScope, MidiQuantizeOperation, MidiQuantizeScope, MidiTransposeScope, MobilePanel,
+    PathPickerTarget, PendingProjectTransition, SettingsCategory, TimeMapTab,
 };
 
 #[derive(Clone)]
@@ -6534,6 +6534,9 @@ impl App {
             Message::SetMidiEditorEventTypeFilter(event_type_filter) => {
                 self.midi_editor_event_type_filter = event_type_filter;
                 self.retain_visible_midi_note_selection();
+            }
+            Message::ApplyMidiEditorFilterSelection(operation) => {
+                self.apply_midi_editor_filter_selection(operation);
             }
             Message::CloseMidiEditorFilter => self.midi_editor_filter_dialog_open = false,
             Message::PreviewMidiNote(track_id, pitch) => {
@@ -14111,6 +14114,185 @@ impl App {
         let task = self.update(message);
         self.record_midi_editor_selection_history(item_id, before_inline, before_editor);
         task
+    }
+
+    fn apply_midi_editor_filter_selection(
+        &mut self,
+        operation: MidiEditorFilterSelectionOperation,
+    ) {
+        let Some(item_id) = self.midi_editor_item_id else {
+            return;
+        };
+        let Some(matching) = self.midi_editor_filter_event_selection(item_id) else {
+            return;
+        };
+        let before_editor = self.midi_editor_selection_state();
+        let before_inline = self
+            .timeline
+            .inline_midi_note_selection
+            .get(&item_id)
+            .cloned()
+            .unwrap_or_default();
+
+        match operation {
+            MidiEditorFilterSelectionOperation::Set => {
+                self.midi_editor_selected_notes.clear();
+                self.midi_editor_selected_controllers.clear();
+                self.midi_editor_selected_pitch_bends.clear();
+                self.midi_editor_selected_program_changes.clear();
+                self.midi_editor_selected_poly_aftertouches.clear();
+                self.midi_editor_selected_channel_pressures.clear();
+                self.midi_editor_selected_opaque_events.clear();
+                self.midi_editor_selected_notes.extend(matching.notes);
+                self.midi_editor_selected_controllers
+                    .extend(matching.controllers);
+                self.midi_editor_selected_pitch_bends
+                    .extend(matching.pitch_bends);
+                self.midi_editor_selected_program_changes
+                    .extend(matching.program_changes);
+                self.midi_editor_selected_poly_aftertouches
+                    .extend(matching.poly_aftertouches);
+                self.midi_editor_selected_channel_pressures
+                    .extend(matching.channel_pressures);
+                self.midi_editor_selected_opaque_events
+                    .extend(matching.opaque_events);
+            }
+            MidiEditorFilterSelectionOperation::Add => {
+                self.midi_editor_selected_notes.extend(matching.notes);
+                self.midi_editor_selected_controllers
+                    .extend(matching.controllers);
+                self.midi_editor_selected_pitch_bends
+                    .extend(matching.pitch_bends);
+                self.midi_editor_selected_program_changes
+                    .extend(matching.program_changes);
+                self.midi_editor_selected_poly_aftertouches
+                    .extend(matching.poly_aftertouches);
+                self.midi_editor_selected_channel_pressures
+                    .extend(matching.channel_pressures);
+                self.midi_editor_selected_opaque_events
+                    .extend(matching.opaque_events);
+            }
+            MidiEditorFilterSelectionOperation::Remove => {
+                self.midi_editor_selected_notes
+                    .retain(|event| !matching.notes.contains(event));
+                self.midi_editor_selected_controllers
+                    .retain(|event| !matching.controllers.contains(event));
+                self.midi_editor_selected_pitch_bends
+                    .retain(|event| !matching.pitch_bends.contains(event));
+                self.midi_editor_selected_program_changes
+                    .retain(|event| !matching.program_changes.contains(event));
+                self.midi_editor_selected_poly_aftertouches
+                    .retain(|event| !matching.poly_aftertouches.contains(event));
+                self.midi_editor_selected_channel_pressures
+                    .retain(|event| !matching.channel_pressures.contains(event));
+                self.midi_editor_selected_opaque_events
+                    .retain(|event| !matching.opaque_events.contains(event));
+            }
+        }
+
+        self.midi_editor_feedback = None;
+        self.record_midi_editor_selection_history(item_id, before_inline, before_editor);
+    }
+
+    fn midi_editor_filter_event_selection(
+        &self,
+        item_id: ItemId,
+    ) -> Option<MidiEditorSelectionState> {
+        let item = self
+            .project
+            .midi_items()
+            .iter()
+            .find(|item| item.id() == item_id)?;
+        let mut selection = MidiEditorSelectionState::default();
+        selection.notes.extend(
+            item.notes()
+                .iter()
+                .filter(|note| {
+                    self.midi_editor_filter_event_matches(
+                        Some(note.channel()),
+                        MidiEditorEventKind::Note,
+                    )
+                })
+                .map(|note| note.id()),
+        );
+        selection
+            .controllers
+            .extend(item.controllers().iter().copied().filter(|event| {
+                self.midi_editor_filter_event_matches(
+                    Some(event.channel),
+                    MidiEditorEventKind::ControlChange,
+                )
+            }));
+        selection
+            .pitch_bends
+            .extend(item.pitch_bends().iter().copied().filter(|event| {
+                self.midi_editor_filter_event_matches(
+                    Some(event.channel),
+                    MidiEditorEventKind::Pitch,
+                )
+            }));
+        selection
+            .program_changes
+            .extend(item.program_changes().iter().copied().filter(|event| {
+                self.midi_editor_filter_event_matches(
+                    Some(event.channel),
+                    MidiEditorEventKind::ProgramChange,
+                )
+            }));
+        selection
+            .poly_aftertouches
+            .extend(item.poly_aftertouches().iter().copied().filter(|event| {
+                self.midi_editor_filter_event_matches(
+                    Some(event.channel),
+                    MidiEditorEventKind::PolyAftertouch,
+                )
+            }));
+        selection
+            .channel_pressures
+            .extend(item.channel_pressures().iter().copied().filter(|event| {
+                self.midi_editor_filter_event_matches(
+                    Some(event.channel),
+                    MidiEditorEventKind::ChannelPressure,
+                )
+            }));
+        selection.opaque_events.extend(
+            item.opaque_events()
+                .iter()
+                .enumerate()
+                .filter(|(_, event)| {
+                    let event_kind = match &event.kind {
+                        MidiOpaqueEventKind::SystemExclusive { .. } => MidiEditorEventKind::SysEx,
+                        MidiOpaqueEventKind::Meta { .. } => MidiEditorEventKind::Text,
+                    };
+                    self.midi_editor_filter_event_matches(None, event_kind)
+                })
+                .map(|(index, _)| index as u32),
+        );
+        Some(selection)
+    }
+
+    fn midi_editor_filter_event_matches(
+        &self,
+        channel: Option<u8>,
+        event_kind: MidiEditorEventKind,
+    ) -> bool {
+        if let Some(channel) = channel {
+            self.midi_editor_channel_selection.shows_event(
+                channel,
+                true,
+                self.midi_editor_filter_channels,
+                self.midi_editor_filter_inverted,
+                self.midi_editor_event_type_filter,
+                event_kind,
+            )
+        } else {
+            let passes = self.midi_editor_event_type_filter.matches(event_kind);
+            if self.midi_editor_filter_inverted {
+                !passes
+            } else {
+                passes
+            }
+        }
     }
 
     fn select_midi_notes(&mut self, note_ids: HashSet<aaadaw_core::NoteId>) {
