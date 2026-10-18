@@ -2490,3 +2490,7 @@ All events 和 Selected events 的 Position 路径现在也移动不透明的 Sy
 ### 2026-10-18 补齐 MIDI Event List 的 SysEx/Meta 类型筛选记录
 
 复核发现 AAADAW 已有 `Sysex/Meta` 过滤选项和 Event List 谓词：Track Name、Text、Marker、SysEx opaque 行可单独显示，行不带 channel 时仍通过 channel-only 筛选，Invert 会显示取反结果。回归 `event_list_shows_text_marker_and_sysex_item_events` 覆盖四行 opaque 事件、Sysex/Meta-only、channel-independent 与 inverted 结果。REAPER 原厂探针已记录菜单有 Sysex/Meta 项，但尚未逐行验证该筛选结果；当前 AAADAW 结果证据为自动化测试，没有新增实窗截图。因此只从“功能缺失”移到“实现待原厂结果对照”，`MIDI-CHANNEL-VIEW-001`、UI-018 和 P7 保持 `in_progress`。
+
+### 2026-10-18 实窗核验 opaque MIDI Quantize 与历史往返
+
+为补上此前缺少显示服务时的桌面证据，解包启动 Xvfb 并用 Mesa llvmpipe 在 Linux 当前 Cranelift 桌面二进制上打开可复现的 SysEx/Meta 工程。还补上 Piano Roll 中可见的 Piano Roll/Event List 模式按钮，并在新二进制中实点验证双向切换。Event List 中只选 Meta tick 475 和 F0 SysEx tick 595，保留 F7 tick 480 未选；在 Quantize Events 选择 Selected events → Position，以 1/32 网格应用后，Meta/F0 分别到 tick 480/600，F7 保持 480。事件因 tick 排序后，Meta 与 F0 的选中状态、Meta 原始字节及 F0/F7 SysEx payload 均保留。等待实窗重绘后，Ctrl+Z 恢复原 tick 和两行选择，Ctrl+Shift+Z 再应用。模式按钮、前后与 Undo 实窗截图、项目、生成器、二进制 Build ID/SHA-256 记录在 [Quantize Events fixture manifest](../verification/reaper-parity/fixtures/midi-quantize-dialog-ui.tsv)。先前 opaque quantize Core/App 套件 10/10、808/808 与 strict workspace Clippy 已通过；加入可见模式按钮后，本轮定向 App 回归 3/3、Cranelift 桌面构建、实窗交互、生成器运行、fmt、diff、parity matrix 和截图哈希核验均通过。REAPER 7.82 的 SysEx/Meta Quantize 原厂结果和 opaque 同位置碰撞仍未实测，故不宣称原厂一致，`MIDI-QUANTIZE-DIALOG-001`、UI-019 与 P7 继续为 `in_progress`。

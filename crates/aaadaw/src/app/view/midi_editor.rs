@@ -629,6 +629,12 @@ fn view_with_profile(app: &App, touch_targets: bool) -> Element<'_, Message> {
         }),
         filter_control,
         button("Filter events…").on_press(Message::OpenMidiEditorFilter),
+        button("Piano Roll")
+            .style(iced::widget::button::primary)
+            .on_press(Message::SetMidiEditorMode(MidiEditorMode::PianoRoll)),
+        button("Event List")
+            .style(iced::widget::button::secondary)
+            .on_press(Message::SetMidiEditorMode(MidiEditorMode::EventList)),
     ]
     .spacing(ROW_GAP)
     .align_y(iced::Alignment::Center);
