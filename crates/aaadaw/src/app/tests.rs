@@ -13324,6 +13324,41 @@ fn midi_sysex_file_data_preserves_framing_and_payload_for_f0_and_f7_packets() {
 }
 
 #[test]
+fn midi_sysex_f0_file_io_round_trips_standard_framing() {
+    let directory = tempfile::tempdir().expect("temporary directory should be created");
+    let path = directory.path().join("message.syx");
+    let payload = [0x43, 0x12, 0x34];
+
+    super::save_midi_sysex_file(&path, 0xF0, &payload).expect("SysEx file should be saved");
+    assert_eq!(
+        std::fs::read(&path).expect("saved SysEx file should be readable"),
+        [0xF0, 0x43, 0x12, 0x34, 0xF7]
+    );
+    assert_eq!(
+        super::load_midi_sysex_file(&path, 0xF0).expect("SysEx file should be loaded"),
+        "43 12 34"
+    );
+}
+
+#[test]
+fn midi_sysex_f7_file_io_preserves_continuation_packet_bytes() {
+    let directory = tempfile::tempdir().expect("temporary directory should be created");
+    let path = directory.path().join("continuation.syx");
+    let payload = [0x43, 0x12, 0xF7];
+
+    super::save_midi_sysex_file(&path, 0xF7, &payload)
+        .expect("F7 continuation file should be saved");
+    assert_eq!(
+        std::fs::read(&path).expect("saved continuation should be readable"),
+        [0xF7, 0x43, 0x12, 0xF7]
+    );
+    assert_eq!(
+        super::load_midi_sysex_file(&path, 0xF7).expect("F7 continuation file should be loaded"),
+        "43 12 F7"
+    );
+}
+
+#[test]
 fn midi_event_list_opaque_event_can_be_deleted_and_undo_restores_it() {
     let mut app = App::default();
     let _ = app.update(Message::AddTrack);

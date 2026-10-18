@@ -2404,3 +2404,9 @@ SysEx Event Properties 现在区分 SMF 的 F0 消息和 F7 延续事件：F0 �
 Event List 现在为结构性/未知 Meta 行显示对应类型名称与原始十六进制字节。选中事件可打开只读的 Meta 类型标识和可编辑 raw-hex payload；非法 hex 不提交，合法修改保留 Meta type、同一事件顺序及 Undo/Redo。Key signature、MIDI channel prefix、tempo、time signature 等 type name 已能识别，但常规导入中被映射到工程 Tempo/Meter 的有效事件仍按原有路径处理。此功能只提供安全的原始字节编辑，不等同于 REAPER 解码后的特定结构字段窗。
 
 关键签名 Meta 的 App 回归覆盖属性入口、错误输入保护、类型保留和 Undo/Redo；Event List 视图回归覆盖类型名与原始 bytes。当前 opaque 属性 App 测试 7/7、结构性 Meta 定向 App/视图测试 2/2、SysEx 包络与 F0/F7 标签测试各 1/1 通过。当前 AAADAW Build ID `977623f4e8716be4b47b4d0c2c80be5fb721e3cd` 在 Xvfb :456 实际打开 Key signature 属性窗；520×240 截图和哈希记录在 [Event Properties manifest](../verification/reaper-parity/fixtures/midi-event-properties-ui.tsv)。REAPER 对非文本 Meta 的具体属性语义尚未 A/B 探测；后续验证 SysEx 文件对话框 I/O，再按原厂结果补结构化 Meta 行为。`MIDI-EVENT-PROPERTIES-001` 保持 `in_progress`。
+
+### 2026-10-18 SysEx `.syx` 文件读写实测
+
+将 SysEx 文件读写逻辑抽为可直接验证的路径函数，并为 F0 完整消息、F7 延续包增加真实文件系统往返测试。当前 Linux 桌面构建在 Xvfb :456 通过受控 portal 从 `.syx` 文件载入 `F0 43 12 34 F7`，属性窗显示 payload `43 12 34`；保存后逐字节读回 `F0 43 12 34 F7`。现场截图展示 F0/F7 边界、已载入 payload 和 `SysEx data saved` 状态，SHA-256 与构建身份记录在 [Event Properties fixture manifest](../verification/reaper-parity/fixtures/midi-event-properties-ui.tsv)。
+
+三项 `midi_sysex` 定向 Nextest 测试全部通过，覆盖 F0/F7 封装函数与两类文件读写往返；`cargo build`、strict all-target Clippy、stable fmt 和 diff 检查此前已针对同一代码通过。F7 文件字节保留目前由自动化往返验证，尚无原厂 F7 对照；`.sysex` 文件选择及原厂文件对话框外观/行为也待 A/B。`MIDI-EVENT-PROPERTIES-001` 与 P7 继续保持 `in_progress`。

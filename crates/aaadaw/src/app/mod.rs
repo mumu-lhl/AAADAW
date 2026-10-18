@@ -37,7 +37,7 @@ use iced::widget::pane_grid::{self, Axis, Split};
 use std::collections::{HashMap, HashSet, VecDeque};
 #[cfg(feature = "audio-device")]
 use std::ops::{Deref, DerefMut};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -922,6 +922,17 @@ fn midi_sysex_payload_from_file(status: u8, mut bytes: Vec<u8>) -> Vec<u8> {
         bytes.pop();
     }
     bytes
+}
+
+fn load_midi_sysex_file(path: &Path, status: u8) -> Result<String, String> {
+    std::fs::read(path)
+        .map(|bytes| format_midi_event_hex_bytes(&midi_sysex_payload_from_file(status, bytes)))
+        .map_err(|error| format!("Could not load SysEx data: {error}"))
+}
+
+fn save_midi_sysex_file(path: &Path, status: u8, payload: &[u8]) -> Result<(), String> {
+    std::fs::write(path, midi_sysex_file_bytes(status, payload))
+        .map_err(|error| format!("Could not save SysEx data: {error}"))
 }
 
 fn format_midi_event_hex_bytes(bytes: &[u8]) -> String {
@@ -3987,13 +3998,13 @@ impl App {
             return Task::none();
         };
         let status = *status;
-        let bytes_to_save = if save {
+        let payload_to_save = if save {
             let Some(payload) = parse_midi_event_hex_bytes(&dialog.opaque_payload) else {
                 self.midi_editor_feedback =
                     Some("SysEx data must be hexadecimal bytes separated by spaces".into());
                 return Task::none();
             };
-            Some(midi_sysex_file_bytes(status, &payload))
+            Some(payload)
         } else {
             None
         };
@@ -4013,18 +4024,10 @@ impl App {
                 let Some(path) = path else {
                     return Ok(None);
                 };
-                if let Some(bytes) = bytes_to_save {
-                    std::fs::write(&path, bytes)
-                        .map(|()| Some(String::new()))
-                        .map_err(|error| format!("Could not save SysEx data: {error}"))
+                if let Some(payload) = payload_to_save {
+                    save_midi_sysex_file(&path, status, &payload).map(|()| Some(String::new()))
                 } else {
-                    std::fs::read(&path)
-                        .map(|bytes| {
-                            Some(format_midi_event_hex_bytes(&midi_sysex_payload_from_file(
-                                status, bytes,
-                            )))
-                        })
-                        .map_err(|error| format!("Could not load SysEx data: {error}"))
+                    load_midi_sysex_file(&path, status).map(Some)
                 }
             }),
             move |result| Message::MidiOpaqueSysExFileFinished(save, result),
