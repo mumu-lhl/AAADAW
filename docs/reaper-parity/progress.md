@@ -2392,3 +2392,9 @@ Event List 的 `Edit event…` 和原厂 `Ctrl+F2` action 40004 现在可打开�
 Linux REAPER 7.82 / Default 7 的 Type 1 探针实窗确认 SysEx 的 F0/F7、十六进制区、Position、Save/Load，以及 Meta 的 Text、9 个 Type 选项、Multi-line text、Position、Load、OK、Cancel。当前 AAADAW 稳定桌面二进制 SHA-256 为 `10c992915ca62188a73d51df1398534466859bc57bc5c74e56c6c9320ca759e1`，ELF Build ID `98091bbc9cf7d861cd9ddde49f75d677c3d2e663`；原厂二进制身份与当前构建截图列在 [Event Properties fixture manifest](../verification/reaper-parity/fixtures/midi-event-properties-ui.tsv)。Xvfb :455 的 Type 1 实窗通过桌面 portal 加载两行 UTF-8 文本，确认自动切换 Multi-line、选取 Marker 并将两行文字提交至 Event List；另将 SysEx 从 `43 12` 改为 `43 12 34`，Event List 显示 `F0 43 12 34 F7`，Undo 恢复 `F0 43 12 F7`。
 
 六项聚焦 App 测试通过：五项匹配 `opaque_` 的属性/列表测试与一项 F0/F7 文件包络测试；strict all-target Clippy (`-D warnings`)、stable fmt、diff 检查和稳定桌面构建均通过。首次测试链接曾因本地 GLib 搜索路径配置不足失败；补充本地 `LIBRARY_PATH` 后测试二进制成功链接并通过。`MIDI-EVENT-PROPERTIES-001`、`MIDI-EVENT-LIST-001`、`MIDI-FILE-IMPORT-001`、UI-019 与 P7 仍是 `in_progress`。剩余边界包括 SysEx `.syx/.sysex` 文件读写、invalid UTF-8 Meta、F7 continuation 属性编辑、结构性 Meta 属性、mixed-type 选择、REAPER Data、patch-file selection 与 BBT meter/source-offset/loop 语义。
+
+### 2026-10-18 修正 F7 SysEx 延续事件属性显示
+
+SysEx Event Properties 现在区分 SMF 的 F0 消息和 F7 延续事件：F0 显示完整消息边界，F7 显示延续状态且不附加人为的 F0/F7 外框。App 回归验证 F7 payload 编辑后仍保持 F7 状态，并可 Undo/Redo；视图测试覆盖两类边界标签。该切片目前由自动化验证，F7 对应的 REAPER 原厂窗口行为与截图还未 A/B 确认。
+
+当前 `opaque_` 定向 App 测试 6/6、F0/F7 文件封装测试 1/1、F0/F7 属性边界视图测试 1/1 通过；AAADAW 构建、strict all-target Clippy (`-D warnings`)、fmt 与 diff 检查通过。矩阵仍将原厂 F7 对照、SysEx 文件对话框 I/O、invalid UTF-8 与结构性 Meta 留在开放差异，`MIDI-EVENT-PROPERTIES-001` 保持 `in_progress`。

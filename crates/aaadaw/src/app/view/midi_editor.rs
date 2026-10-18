@@ -1867,14 +1867,26 @@ fn midi_event_properties_dialog(app: &App, touch_targets: bool) -> Element<'_, M
     let opaque_sysex_data = text_editor(&state.opaque_editor)
         .on_action(Message::EditMidiOpaqueEventPropertiesText)
         .height(Length::Fixed(if touch_targets { 220.0 } else { 188.0 }));
+    let (sysex_start, sysex_end) = match &state.target {
+        super::super::MidiEventPropertiesTarget::Opaque(
+            _,
+            MidiOpaqueEventData {
+                kind: MidiOpaqueEventKind::SystemExclusive { status, .. },
+                ..
+            },
+        ) => midi_sysex_frame_labels(*status),
+        _ => ("F0", Some("F7")),
+    };
     let mut content = column![text(title).size(16)];
     if is_opaque_sysex {
+        let mut sysex_data_row = row![text(sysex_start), opaque_sysex_data]
+            .spacing(SPACING_XS)
+            .align_y(iced::Alignment::Center);
+        if let Some(sysex_end) = sysex_end {
+            sysex_data_row = sysex_data_row.push(text(sysex_end));
+        }
         content = content
-            .push(
-                row![text("F0"), opaque_sysex_data, text("F7"),]
-                    .spacing(SPACING_XS)
-                    .align_y(iced::Alignment::Center),
-            )
+            .push(sysex_data_row)
             .push(
                 row![
                     text("Position").width(Length::Fixed(76.0)),
@@ -2207,6 +2219,14 @@ fn midi_event_properties_dialog(app: &App, touch_targets: bool) -> Element<'_, M
         .padding(SPACING_MD)
         .style(container::rounded_box)
         .into()
+}
+
+fn midi_sysex_frame_labels(status: u8) -> (&'static str, Option<&'static str>) {
+    if status == 0xF7 {
+        ("F7", None)
+    } else {
+        ("F0", Some("F7"))
+    }
 }
 
 fn midi_quantize_dialog(app: &App, touch_targets: bool) -> Element<'_, Message> {
@@ -5154,6 +5174,12 @@ mod tests {
             midi_opaque_meta_text(b"bad\x01text"),
             "62 61 64 01 74 65 78 74"
         );
+    }
+
+    #[test]
+    fn sysex_properties_frame_f0_messages_and_f7_continuations_distinctly() {
+        assert_eq!(midi_sysex_frame_labels(0xF0), ("F0", Some("F7")));
+        assert_eq!(midi_sysex_frame_labels(0xF7), ("F7", None));
     }
 
     fn piano_roll_for_test<'a>(
