@@ -15,6 +15,7 @@ use crate::{
     TimeSignature, TimebaseError, Track, TrackFxPlugin, TrackId, TrackInstrument,
 };
 use std::collections::{HashMap, HashSet};
+use std::hash::Hash;
 use std::sync::Arc;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -6661,6 +6662,9 @@ impl Project {
                 {
                     return Err(ActionError::HistoryInvariantViolation);
                 }
+                replace_midi_event_order_targets(item, before, after, |event| {
+                    MidiEventOrderTarget::Controller(event)
+                });
                 item.controllers = Arc::new(after.clone());
             }
             ProjectEvent::MidiPitchBendsChanged {
@@ -6683,6 +6687,9 @@ impl Project {
                 {
                     return Err(ActionError::HistoryInvariantViolation);
                 }
+                replace_midi_event_order_targets(item, before, after, |event| {
+                    MidiEventOrderTarget::PitchBend(event)
+                });
                 item.pitch_bends = Arc::new(after.clone());
             }
             ProjectEvent::MidiProgramChangesChanged {
@@ -6705,6 +6712,9 @@ impl Project {
                 {
                     return Err(ActionError::HistoryInvariantViolation);
                 }
+                replace_midi_event_order_targets(item, before, after, |event| {
+                    MidiEventOrderTarget::ProgramChange(event)
+                });
                 item.program_changes = Arc::new(after.clone());
             }
             ProjectEvent::MidiPolyAftertouchesChanged {
@@ -6727,6 +6737,9 @@ impl Project {
                 {
                     return Err(ActionError::HistoryInvariantViolation);
                 }
+                replace_midi_event_order_targets(item, before, after, |event| {
+                    MidiEventOrderTarget::PolyAftertouch(event)
+                });
                 item.poly_aftertouches = Arc::new(after.clone());
             }
             ProjectEvent::MidiChannelPressuresChanged {
@@ -6749,6 +6762,9 @@ impl Project {
                 {
                     return Err(ActionError::HistoryInvariantViolation);
                 }
+                replace_midi_event_order_targets(item, before, after, |event| {
+                    MidiEventOrderTarget::ChannelPressure(event)
+                });
                 item.channel_pressures = Arc::new(after.clone());
             }
             ProjectEvent::MidiNotesQuantized { item_id, changes } => {
@@ -7094,6 +7110,51 @@ fn replace_midi_note_event_order(
         return;
     };
     event.target = MidiEventOrderTarget::Note(after);
+}
+
+fn replace_midi_event_order_targets<T: Copy + Eq + Hash>(
+    item: &mut MidiItem,
+    before: &[T],
+    after: &[T],
+    target: impl Fn(T) -> MidiEventOrderTarget,
+) {
+    let mut unmatched_after = HashMap::with_capacity(after.len());
+    for event in after {
+        *unmatched_after.entry(*event).or_insert(0_usize) += 1;
+    }
+    let mut removed = Vec::new();
+    for event in before {
+        match unmatched_after.get_mut(event) {
+            Some(count) if *count > 0 => *count -= 1,
+            _ => removed.push(*event),
+        }
+    }
+
+    let mut unmatched_before = HashMap::with_capacity(before.len());
+    for event in before {
+        *unmatched_before.entry(*event).or_insert(0_usize) += 1;
+    }
+    let mut added = Vec::new();
+    for event in after {
+        match unmatched_before.get_mut(event) {
+            Some(count) if *count > 0 => *count -= 1,
+            _ => added.push(*event),
+        }
+    }
+
+    if removed.is_empty() || added.is_empty() {
+        return;
+    }
+    let event_order = Arc::make_mut(&mut item.event_order);
+    for (before, after) in removed.into_iter().zip(added) {
+        let before_target = target(before);
+        if let Some(event) = event_order
+            .iter_mut()
+            .find(|event| event.target == before_target)
+        {
+            event.target = target(after);
+        }
+    }
 }
 
 fn valid_midi_event_order_data(events: &[MidiEventOrderData]) -> bool {

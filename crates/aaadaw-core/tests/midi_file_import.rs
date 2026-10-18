@@ -1,6 +1,8 @@
 use aaadaw_core::{
-    ActionError, DawAction, MidiEventOrderTarget, MidiFileEventKind, MidiFileFormat,
-    MidiFileImportOptions, MidiNoteData, MidiOpaqueEventKind, Project, decode_standard_midi,
+    ActionError, DawAction, MidiChannelPressureData, MidiControllerData, MidiEventOrderTarget,
+    MidiFileEventKind, MidiFileFormat, MidiFileImportOptions, MidiNoteData, MidiOpaqueEventKind,
+    MidiPitchBendData, MidiPolyAftertouchData, MidiProgramChangeData, Project,
+    decode_standard_midi,
 };
 
 fn smf(format: u16, division: u16, tracks: &[&[u8]]) -> Vec<u8> {
@@ -184,6 +186,39 @@ fn same_tick_import_order_does_not_block_typed_event_edits_or_snapshot_round_tri
             && entry.order == first_note_order.order
             && entry.note_off_order == first_note_order.note_off_order
     }));
+    let first_controller = project.midi_items()[0].controllers()[0];
+    let first_controller_order = project.midi_items()[0]
+        .event_order()
+        .iter()
+        .find(|entry| entry.target == MidiEventOrderTarget::Controller(first_controller))
+        .copied()
+        .unwrap();
+    let edited_controller = MidiControllerData {
+        value: first_controller.value + 1,
+        ..first_controller
+    };
+    let mut edited_controllers = project.midi_items()[0].controllers().to_vec();
+    edited_controllers[0] = edited_controller;
+    project
+        .apply(DawAction::SetMidiControllers {
+            item_id,
+            controllers: edited_controllers,
+        })
+        .unwrap();
+    assert!(project.midi_items()[0].event_order().iter().any(|entry| {
+        entry.target == MidiEventOrderTarget::Controller(edited_controller)
+            && entry.order == first_controller_order.order
+    }));
+    assert!(project.undo().unwrap());
+    assert!(project.midi_items()[0].event_order().iter().any(|entry| {
+        entry.target == MidiEventOrderTarget::Controller(first_controller)
+            && entry.order == first_controller_order.order
+    }));
+    assert!(project.redo().unwrap());
+    assert!(project.midi_items()[0].event_order().iter().any(|entry| {
+        entry.target == MidiEventOrderTarget::Controller(edited_controller)
+            && entry.order == first_controller_order.order
+    }));
     project
         .apply(DawAction::DeleteMidiNotes {
             item_id,
@@ -270,6 +305,118 @@ fn editing_one_of_identical_imported_notes_keeps_its_paired_off_order() {
             })
             && entry.order == second_note_order.order
             && entry.note_off_order == second_note_order.note_off_order
+    }));
+}
+
+#[test]
+fn same_tick_import_order_tracks_edited_channel_event_values() {
+    let decoded = decode_standard_midi(include_bytes!(
+        "../../../docs/verification/reaper-parity/fixtures/midi-file-import-same-tick-order.mid"
+    ))
+    .unwrap();
+    let imported = decoded.to_project_import(960).unwrap();
+    let mut project = Project::new();
+    project
+        .apply(DawAction::ImportMidiTrack {
+            start_tick: 0,
+            track: imported.tracks[0].clone(),
+        })
+        .unwrap();
+    let item_id = project.midi_items()[0].id();
+
+    let bend = project.midi_items()[0].pitch_bends()[0];
+    let bend_order = project.midi_items()[0]
+        .event_order()
+        .iter()
+        .find(|entry| entry.target == MidiEventOrderTarget::PitchBend(bend))
+        .unwrap()
+        .order;
+    let edited_bend = MidiPitchBendData {
+        value: bend.value + 1,
+        ..bend
+    };
+    let mut bends = project.midi_items()[0].pitch_bends().to_vec();
+    bends[0] = edited_bend;
+    project
+        .apply(DawAction::SetMidiPitchBends {
+            item_id,
+            pitch_bends: bends,
+        })
+        .unwrap();
+    assert!(project.midi_items()[0].event_order().iter().any(|entry| {
+        entry.target == MidiEventOrderTarget::PitchBend(edited_bend) && entry.order == bend_order
+    }));
+
+    let program = project.midi_items()[0].program_changes()[0];
+    let program_order = project.midi_items()[0]
+        .event_order()
+        .iter()
+        .find(|entry| entry.target == MidiEventOrderTarget::ProgramChange(program))
+        .unwrap()
+        .order;
+    let edited_program = MidiProgramChangeData {
+        program: program.program + 1,
+        ..program
+    };
+    let mut programs = project.midi_items()[0].program_changes().to_vec();
+    programs[0] = edited_program;
+    project
+        .apply(DawAction::SetMidiProgramChanges {
+            item_id,
+            program_changes: programs,
+        })
+        .unwrap();
+    assert!(project.midi_items()[0].event_order().iter().any(|entry| {
+        entry.target == MidiEventOrderTarget::ProgramChange(edited_program)
+            && entry.order == program_order
+    }));
+
+    let aftertouch = project.midi_items()[0].poly_aftertouches()[0];
+    let aftertouch_order = project.midi_items()[0]
+        .event_order()
+        .iter()
+        .find(|entry| entry.target == MidiEventOrderTarget::PolyAftertouch(aftertouch))
+        .unwrap()
+        .order;
+    let edited_aftertouch = MidiPolyAftertouchData {
+        value: aftertouch.value + 1,
+        ..aftertouch
+    };
+    let mut aftertouches = project.midi_items()[0].poly_aftertouches().to_vec();
+    aftertouches[0] = edited_aftertouch;
+    project
+        .apply(DawAction::SetMidiPolyAftertouches {
+            item_id,
+            poly_aftertouches: aftertouches,
+        })
+        .unwrap();
+    assert!(project.midi_items()[0].event_order().iter().any(|entry| {
+        entry.target == MidiEventOrderTarget::PolyAftertouch(edited_aftertouch)
+            && entry.order == aftertouch_order
+    }));
+
+    let pressure = project.midi_items()[0].channel_pressures()[0];
+    let pressure_order = project.midi_items()[0]
+        .event_order()
+        .iter()
+        .find(|entry| entry.target == MidiEventOrderTarget::ChannelPressure(pressure))
+        .unwrap()
+        .order;
+    let edited_pressure = MidiChannelPressureData {
+        value: pressure.value + 1,
+        ..pressure
+    };
+    let mut pressures = project.midi_items()[0].channel_pressures().to_vec();
+    pressures[0] = edited_pressure;
+    project
+        .apply(DawAction::SetMidiChannelPressures {
+            item_id,
+            channel_pressures: pressures,
+        })
+        .unwrap();
+    assert!(project.midi_items()[0].event_order().iter().any(|entry| {
+        entry.target == MidiEventOrderTarget::ChannelPressure(edited_pressure)
+            && entry.order == pressure_order
     }));
 }
 
