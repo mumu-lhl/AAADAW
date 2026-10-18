@@ -124,6 +124,9 @@ pub(crate) enum PathPickerTarget {
     ExportShortcutMap,
     ImportReaperKeyMap,
     ExportReaperKeyMap,
+    ImportMidiOpaqueSysEx { status: u8 },
+    ExportMidiOpaqueSysEx { status: u8 },
+    ImportMidiOpaqueMetaText,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

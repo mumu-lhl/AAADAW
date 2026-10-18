@@ -135,6 +135,22 @@ impl App {
                 .set_mime_type("audio/midi")
                 .add_filter("MIDI files", &["mid", "midi"])
                 .pick_file(completion),
+            PathPickerTarget::ImportMidiOpaqueSysEx { .. } => robius_file_picker::FileDialog::new()
+                .set_title("Load System Exclusive data")
+                .set_mime_type("application/octet-stream")
+                .add_filter("System Exclusive files", &["syx", "sysex"])
+                .pick_file(completion),
+            PathPickerTarget::ExportMidiOpaqueSysEx { .. } => robius_file_picker::FileDialog::new()
+                .set_title("Save System Exclusive data")
+                .set_file_name("sysex.syx")
+                .set_mime_type("application/octet-stream")
+                .add_filter("System Exclusive files", &["syx", "sysex"])
+                .save_data(Vec::<u8>::new(), completion),
+            PathPickerTarget::ImportMidiOpaqueMetaText => robius_file_picker::FileDialog::new()
+                .set_title("Load MIDI Meta text")
+                .set_mime_type("text/plain")
+                .add_filter("Text files", &["txt"])
+                .pick_file(completion),
             PathPickerTarget::AddClapPluginPath => robius_file_picker::FileDialog::new()
                 .set_title("Install a trusted Android ARM64 CLAP plugin")
                 .set_mime_type("application/octet-stream")
@@ -161,6 +177,7 @@ impl App {
                         | PathPickerTarget::SaveProjectTemplate
                         | PathPickerTarget::ExportWav
                         | PathPickerTarget::ExportMidi
+                        | PathPickerTarget::ExportMidiOpaqueSysEx { .. }
                         | PathPickerTarget::ExportShortcutMap
                         | PathPickerTarget::ExportReaperKeyMap => {
                             crate::android_platform::prepare_saf_save(
@@ -285,6 +302,19 @@ impl App {
                         .set_title("Insert MIDI file at the edit cursor")
                         .add_filter("MIDI files", &["mid", "midi"])
                         .pick_file(),
+                    PathPickerTarget::ImportMidiOpaqueSysEx { .. } => rfd::FileDialog::new()
+                        .set_title("Load System Exclusive data")
+                        .add_filter("System Exclusive files", &["syx", "sysex"])
+                        .pick_file(),
+                    PathPickerTarget::ExportMidiOpaqueSysEx { .. } => rfd::FileDialog::new()
+                        .set_title("Save System Exclusive data")
+                        .set_file_name("sysex.syx")
+                        .add_filter("System Exclusive files", &["syx", "sysex"])
+                        .save_file(),
+                    PathPickerTarget::ImportMidiOpaqueMetaText => rfd::FileDialog::new()
+                        .set_title("Load MIDI Meta text")
+                        .add_filter("Text files", &["txt"])
+                        .pick_file(),
                     PathPickerTarget::RelinkAudio => rfd::FileDialog::new()
                         .set_title("Choose replacement audio")
                         .add_filter(
@@ -393,6 +423,49 @@ impl App {
                     self.start_audio_import()
                 }
                 PathPickerTarget::ImportMidiToProject => self.start_midi_file_import(path),
+                PathPickerTarget::ImportMidiOpaqueSysEx { status } => {
+                    self.path_picker_busy = true;
+                    Task::perform(
+                        run_blocking("aaadaw-midi-sysex-file", move || {
+                            super::load_midi_sysex_file(&path, status).map(Some)
+                        }),
+                        |result| Message::MidiOpaqueSysExFileFinished(false, result),
+                    )
+                }
+                PathPickerTarget::ExportMidiOpaqueSysEx { status } => {
+                    let Some(payload) =
+                        self.midi_event_properties_dialog
+                            .as_ref()
+                            .and_then(|dialog| {
+                                super::parse_midi_event_hex_bytes(&dialog.opaque_payload)
+                            })
+                    else {
+                        self.midi_editor_feedback =
+                            Some("SysEx data must be hexadecimal bytes separated by spaces".into());
+                        return Task::none();
+                    };
+                    self.path_picker_busy = true;
+                    Task::perform(
+                        run_blocking("aaadaw-midi-sysex-file", move || {
+                            super::save_midi_sysex_file(&path, status, &payload)?;
+                            #[cfg(target_os = "android")]
+                            crate::android_platform::sync_saf_document(&path)?;
+                            Ok(Some(String::new()))
+                        }),
+                        |result| Message::MidiOpaqueSysExFileFinished(true, result),
+                    )
+                }
+                PathPickerTarget::ImportMidiOpaqueMetaText => {
+                    self.path_picker_busy = true;
+                    Task::perform(
+                        run_blocking("aaadaw-midi-meta-text-file", move || {
+                            std::fs::read_to_string(&path)
+                                .map(Some)
+                                .map_err(|error| format!("Could not load Meta text: {error}"))
+                        }),
+                        Message::MidiOpaqueMetaTextFileFinished,
+                    )
+                }
                 PathPickerTarget::RelinkAudio => {
                     self.relink_source_path_query = path.to_string_lossy().into_owned();
                     Task::none()

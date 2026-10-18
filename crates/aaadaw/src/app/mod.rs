@@ -3998,40 +3998,19 @@ impl App {
             return Task::none();
         };
         let status = *status;
-        let payload_to_save = if save {
-            let Some(payload) = parse_midi_event_hex_bytes(&dialog.opaque_payload) else {
+        if save {
+            let Some(_payload) = parse_midi_event_hex_bytes(&dialog.opaque_payload) else {
                 self.midi_editor_feedback =
                     Some("SysEx data must be hexadecimal bytes separated by spaces".into());
                 return Task::none();
             };
-            Some(payload)
-        } else {
-            None
-        };
+        }
         self.midi_editor_feedback = None;
-        Task::perform(
-            run_blocking("aaadaw-midi-sysex-file", move || {
-                let picker =
-                    rfd::FileDialog::new().add_filter("System Exclusive files", &["syx", "sysex"]);
-                let path = if save {
-                    picker
-                        .set_title("Save System Exclusive data")
-                        .set_file_name("sysex.syx")
-                        .save_file()
-                } else {
-                    picker.set_title("Load System Exclusive data").pick_file()
-                };
-                let Some(path) = path else {
-                    return Ok(None);
-                };
-                if let Some(payload) = payload_to_save {
-                    save_midi_sysex_file(&path, status, &payload).map(|()| Some(String::new()))
-                } else {
-                    load_midi_sysex_file(&path, status).map(Some)
-                }
-            }),
-            move |result| Message::MidiOpaqueSysExFileFinished(save, result),
-        )
+        self.pick_path(if save {
+            PathPickerTarget::ExportMidiOpaqueSysEx { status }
+        } else {
+            PathPickerTarget::ImportMidiOpaqueSysEx { status }
+        })
     }
 
     fn pick_midi_opaque_meta_text_file(&mut self) -> Task<Message> {
@@ -4051,21 +4030,7 @@ impl App {
             return Task::none();
         }
         self.midi_editor_feedback = None;
-        Task::perform(
-            run_blocking("aaadaw-midi-meta-text-file", move || {
-                let path = rfd::FileDialog::new()
-                    .set_title("Load MIDI Meta text")
-                    .add_filter("Text files", &["txt"])
-                    .pick_file();
-                let Some(path) = path else {
-                    return Ok(None);
-                };
-                std::fs::read_to_string(&path)
-                    .map(Some)
-                    .map_err(|error| format!("Could not load Meta text: {error}"))
-            }),
-            Message::MidiOpaqueMetaTextFileFinished,
-        )
+        self.pick_path(PathPickerTarget::ImportMidiOpaqueMetaText)
     }
 
     fn commit_midi_quantize_dialog(&mut self, close_dialog: bool) {
@@ -6196,46 +6161,55 @@ impl App {
             Message::PickMidiOpaqueSysExFile(save) => {
                 task = self.pick_midi_opaque_sysex_file(save);
             }
-            Message::MidiOpaqueSysExFileFinished(save, result) => match result {
-                Ok(Some(_payload)) if save => {
-                    self.midi_editor_feedback = Some("SysEx data saved".to_owned());
-                }
-                Ok(Some(payload)) => {
-                    if let Some(dialog) = self.midi_event_properties_dialog.as_mut()
-                        && dialog.opaque_type == Some(MidiOpaqueEventPropertiesType::SysEx)
-                    {
-                        dialog.opaque_payload = payload;
-                        dialog.opaque_editor =
-                            iced::widget::text_editor::Content::with_text(&dialog.opaque_payload);
-                        dialog.opaque_payload_dirty = true;
-                        self.midi_editor_feedback = None;
+            Message::MidiOpaqueSysExFileFinished(save, result) => {
+                self.path_picker_busy = false;
+                match result {
+                    Ok(Some(_payload)) if save => {
+                        self.midi_editor_feedback = Some("SysEx data saved".to_owned());
                     }
+                    Ok(Some(payload)) => {
+                        if let Some(dialog) = self.midi_event_properties_dialog.as_mut()
+                            && dialog.opaque_type == Some(MidiOpaqueEventPropertiesType::SysEx)
+                        {
+                            dialog.opaque_payload = payload;
+                            dialog.opaque_editor = iced::widget::text_editor::Content::with_text(
+                                &dialog.opaque_payload,
+                            );
+                            dialog.opaque_payload_dirty = true;
+                            self.midi_editor_feedback = None;
+                        }
+                    }
+                    Ok(None) => {}
+                    Err(error) => self.midi_editor_feedback = Some(error),
                 }
-                Ok(None) => {}
-                Err(error) => self.midi_editor_feedback = Some(error),
-            },
+            }
             Message::PickMidiOpaqueMetaTextFile => {
                 task = self.pick_midi_opaque_meta_text_file();
             }
-            Message::MidiOpaqueMetaTextFileFinished(result) => match result {
-                Ok(Some(payload)) => {
-                    if let Some(dialog) = self.midi_event_properties_dialog.as_mut()
-                        && dialog.opaque_type.is_some_and(|event_type| {
-                            event_type != MidiOpaqueEventPropertiesType::SysEx
-                                && event_type != MidiOpaqueEventPropertiesType::RawMeta
-                        })
-                    {
-                        dialog.opaque_multiline = payload.contains('\n') || payload.contains('\r');
-                        dialog.opaque_payload = payload;
-                        dialog.opaque_editor =
-                            iced::widget::text_editor::Content::with_text(&dialog.opaque_payload);
-                        dialog.opaque_payload_dirty = true;
-                        self.midi_editor_feedback = None;
+            Message::MidiOpaqueMetaTextFileFinished(result) => {
+                self.path_picker_busy = false;
+                match result {
+                    Ok(Some(payload)) => {
+                        if let Some(dialog) = self.midi_event_properties_dialog.as_mut()
+                            && dialog.opaque_type.is_some_and(|event_type| {
+                                event_type != MidiOpaqueEventPropertiesType::SysEx
+                                    && event_type != MidiOpaqueEventPropertiesType::RawMeta
+                            })
+                        {
+                            dialog.opaque_multiline =
+                                payload.contains('\n') || payload.contains('\r');
+                            dialog.opaque_payload = payload;
+                            dialog.opaque_editor = iced::widget::text_editor::Content::with_text(
+                                &dialog.opaque_payload,
+                            );
+                            dialog.opaque_payload_dirty = true;
+                            self.midi_editor_feedback = None;
+                        }
                     }
+                    Ok(None) => {}
+                    Err(error) => self.midi_editor_feedback = Some(error),
                 }
-                Ok(None) => {}
-                Err(error) => self.midi_editor_feedback = Some(error),
-            },
+            }
             Message::ApplyMidiEventProperties => {
                 task = self.commit_midi_event_properties(false);
             }

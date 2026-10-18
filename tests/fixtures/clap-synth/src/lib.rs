@@ -448,12 +448,13 @@ impl<'a> ClackPluginAudioProcessor<'a, Shared, MainThread<'a>> for AudioProcesso
                             }
                         }
                     }
-                    Some(CoreEventSpace::MidiSysEx(event)) => {
-                        // SAFETY: the CLAP host keeps the event bytes alive during this callback.
-                        if unsafe { event.data() } == [0xF0, 0x43, 0x12, 0xF7] {
-                            self.gain.store(48, Ordering::Relaxed);
-                        }
+                    // SAFETY: the CLAP host keeps the event bytes alive during this callback.
+                    Some(CoreEventSpace::MidiSysEx(event))
+                        if unsafe { event.data() } == [0xF0, 0x43, 0x12, 0xF7] =>
+                    {
+                        self.gain.store(48, Ordering::Relaxed);
                     }
+                    Some(CoreEventSpace::MidiSysEx(_)) => {}
                     _ => {}
                 }
             }
