@@ -7,6 +7,8 @@ use crate::{
 use std::collections::{HashMap, HashSet, VecDeque};
 
 const MAX_MIDI_FILE_EVENTS: usize = 1_000_000;
+const MIDI_EVENT_ORDER_GROUP_WIDTH: u64 = 4_294_967_296;
+const MIDI_EXPORT_SELECTION_ORDER_WIDTH: u64 = 1 << 56;
 /// Maximum byte count accepted by the Standard MIDI File decoder.
 pub const MAX_MIDI_FILE_IMPORT_BYTES: u64 = 64 * 1024 * 1024;
 const MAX_MIDI_FILE_BYTES: usize = MAX_MIDI_FILE_IMPORT_BYTES as usize;
@@ -126,7 +128,7 @@ pub struct MidiFileImportOptions {
 #[derive(Debug)]
 struct Event {
     tick: u64,
-    order: u8,
+    order: u64,
     bytes: Vec<u8>,
 }
 
@@ -134,6 +136,21 @@ struct TempoEvent {
     tick: u64,
     bpm: f64,
     order: u8,
+}
+
+fn midi_event_order_key(
+    has_imported_order: bool,
+    group: u64,
+    source_order: Option<u32>,
+    selection_order: u8,
+    fallback_order: u64,
+) -> u64 {
+    if !has_imported_order {
+        return fallback_order;
+    }
+    u64::from(selection_order) * MIDI_EXPORT_SELECTION_ORDER_WIDTH
+        + group * MIDI_EVENT_ORDER_GROUP_WIDTH
+        + u64::from(source_order.unwrap_or(u32::MAX))
 }
 
 /// The Standard MIDI File track layout selected for project export.
@@ -532,6 +549,7 @@ impl MidiFileImport {
                                 data[0],
                                 tick,
                                 data[1],
+                                event_index as u32,
                             )?,
                             0x90 if data[1] == 0 => finish_imported_note(
                                 &mut open_notes,
@@ -541,6 +559,7 @@ impl MidiFileImport {
                                 data[0],
                                 tick,
                                 0,
+                                event_index as u32,
                             )?,
                             0x90 => open_notes
                                 .entry((channel, data[0]))
@@ -557,6 +576,7 @@ impl MidiFileImport {
                                 event_order.push(MidiEventOrderData {
                                     target: MidiEventOrderTarget::PolyAftertouch(event),
                                     order: event_index as u32,
+                                    note_off_order: None,
                                 });
                             }
                             0xB0 => {
@@ -570,6 +590,7 @@ impl MidiFileImport {
                                 event_order.push(MidiEventOrderData {
                                     target: MidiEventOrderTarget::Controller(event),
                                     order: event_index as u32,
+                                    note_off_order: None,
                                 });
                             }
                             0xC0 => {
@@ -582,6 +603,7 @@ impl MidiFileImport {
                                 event_order.push(MidiEventOrderData {
                                     target: MidiEventOrderTarget::ProgramChange(event),
                                     order: event_index as u32,
+                                    note_off_order: None,
                                 });
                             }
                             0xD0 => {
@@ -594,6 +616,7 @@ impl MidiFileImport {
                                 event_order.push(MidiEventOrderData {
                                     target: MidiEventOrderTarget::ChannelPressure(event),
                                     order: event_index as u32,
+                                    note_off_order: None,
                                 });
                             }
                             0xE0 => {
@@ -606,6 +629,7 @@ impl MidiFileImport {
                                 event_order.push(MidiEventOrderData {
                                     target: MidiEventOrderTarget::PitchBend(event),
                                     order: event_index as u32,
+                                    note_off_order: None,
                                 });
                             }
                             _ => unreachable!("the MIDI channel status range is exhaustive"),
@@ -832,9 +856,14 @@ impl MidiFileProjectImport {
             let order_offset = (track.source_index as u32).saturating_mul(1_000_001);
             merged
                 .event_order
-                .extend(track.event_order.iter().map(|entry| MidiEventOrderData {
-                    target: entry.target,
-                    order: order_offset.saturating_add(entry.order),
+                .extend(track.event_order.iter().map(|entry| {
+                    MidiEventOrderData {
+                        target: entry.target,
+                        order: order_offset.saturating_add(entry.order),
+                        note_off_order: entry
+                            .note_off_order
+                            .map(|order| order_offset.saturating_add(order)),
+                    }
                 }));
             merged
                 .opaque_events
@@ -850,6 +879,7 @@ impl MidiFileProjectImport {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn finish_imported_note(
     open_notes: &mut OpenImportedNotes,
     notes: &mut Vec<MidiNoteData>,
@@ -858,6 +888,7 @@ fn finish_imported_note(
     pitch: u8,
     tick: u64,
     off_velocity: u8,
+    off_order: u32,
 ) -> Result<(), String> {
     let Some((start_tick, velocity, order)) = open_notes
         .get_mut(&(channel, pitch))
@@ -886,6 +917,7 @@ fn finish_imported_note(
     event_order.push(MidiEventOrderData {
         target: MidiEventOrderTarget::Note(note),
         order,
+        note_off_order: Some(off_order),
     });
     Ok(())
 }
@@ -1060,7 +1092,18 @@ pub fn encode_standard_midi_with_selection(
             .start_position()
             .checked_add_ticks(item.length_ticks())
             .ok_or_else(|| "MIDI item extends beyond the supported timeline".to_owned())?;
+        let imported_event_order = item
+            .event_order()
+            .iter()
+            .copied()
+            .map(|entry| (entry.target, entry))
+            .collect::<HashMap<_, _>>();
+        let has_imported_order =
+            !imported_event_order.is_empty() || !item.opaque_events().is_empty();
         for note in item.notes() {
+            let note_order = imported_event_order
+                .get(&MidiEventOrderTarget::Note(note.data))
+                .copied();
             let note_end_tick = note
                 .tick()
                 .checked_add(note.duration())
@@ -1078,6 +1121,8 @@ pub fn encode_standard_midi_with_selection(
                         project_ppq,
                         options.ppq,
                         note,
+                        note_order,
+                        has_imported_order,
                         time_selection,
                     )?;
                     ensure_midi_event_capacity(&mut midi_event_count, added)?;
@@ -1109,6 +1154,8 @@ pub fn encode_standard_midi_with_selection(
                     project_ppq,
                     options.ppq,
                     note,
+                    note_order,
+                    has_imported_order,
                     time_selection,
                 )?;
                 ensure_midi_event_capacity(&mut midi_event_count, added)?;
@@ -1120,13 +1167,22 @@ pub fn encode_standard_midi_with_selection(
                 for project_position in item.project_positions_at_content_tick(controller.tick) {
                     let project_tick =
                         project_midi_item_event_tick(project, item, project_position)?;
-                    let order = if time_selection
+                    let selection_order = if time_selection
                         .is_some_and(|(selection_start, _)| project_tick < selection_start)
                     {
                         2
                     } else {
                         1
                     };
+                    let order = midi_event_order_key(
+                        has_imported_order,
+                        2,
+                        imported_event_order
+                            .get(&MidiEventOrderTarget::Controller(*controller))
+                            .map(|entry| entry.order),
+                        selection_order,
+                        u64::from(selection_order),
+                    );
                     let Some(project_tick) =
                         time_selection_state_event_tick(project_tick, time_selection)
                     else {
@@ -1161,13 +1217,22 @@ pub fn encode_standard_midi_with_selection(
                     })?;
                     let project_tick =
                         project_midi_item_event_tick(project, item, project_position)?;
-                    let order = if time_selection
+                    let selection_order = if time_selection
                         .is_some_and(|(selection_start, _)| project_tick < selection_start)
                     {
                         2
                     } else {
                         1
                     };
+                    let order = midi_event_order_key(
+                        has_imported_order,
+                        2,
+                        imported_event_order
+                            .get(&MidiEventOrderTarget::Controller(*controller))
+                            .map(|entry| entry.order),
+                        selection_order,
+                        u64::from(selection_order),
+                    );
                     let Some(project_tick) =
                         time_selection_state_event_tick(project_tick, time_selection)
                     else {
@@ -1202,7 +1267,15 @@ pub fn encode_standard_midi_with_selection(
                     let tick = scale_tick_position(project_tick, project_ppq, options.ppq)?;
                     events_by_track[track_index].push(Event {
                         tick,
-                        order: 1,
+                        order: midi_event_order_key(
+                            has_imported_order,
+                            2,
+                            imported_event_order
+                                .get(&MidiEventOrderTarget::PitchBend(*bend))
+                                .map(|entry| entry.order),
+                            1,
+                            1,
+                        ),
                         bytes: vec![
                             0xe0 | bend.channel,
                             (bend.value & 0x7f) as u8,
@@ -1234,7 +1307,15 @@ pub fn encode_standard_midi_with_selection(
                     let tick = scale_tick_position(project_tick, project_ppq, options.ppq)?;
                     events_by_track[track_index].push(Event {
                         tick,
-                        order: 1,
+                        order: midi_event_order_key(
+                            has_imported_order,
+                            2,
+                            imported_event_order
+                                .get(&MidiEventOrderTarget::PitchBend(*bend))
+                                .map(|entry| entry.order),
+                            1,
+                            1,
+                        ),
                         bytes: vec![
                             0xe0 | bend.channel,
                             (bend.value & 0x7f) as u8,
@@ -1266,13 +1347,22 @@ pub fn encode_standard_midi_with_selection(
             };
             for position in positions {
                 let original_project_tick = project_midi_item_event_tick(project, item, position)?;
-                let order = if time_selection
+                let selection_order = if time_selection
                     .is_some_and(|(selection_start, _)| original_project_tick < selection_start)
                 {
                     2
                 } else {
                     1
                 };
+                let order = midi_event_order_key(
+                    has_imported_order,
+                    1,
+                    imported_event_order
+                        .get(&MidiEventOrderTarget::ProgramChange(*change))
+                        .map(|entry| entry.order),
+                    selection_order,
+                    u64::from(selection_order),
+                );
                 let Some(project_tick) =
                     time_selection_state_event_tick(original_project_tick, time_selection)
                 else {
@@ -1290,13 +1380,22 @@ pub fn encode_standard_midi_with_selection(
         for pressure in item.poly_aftertouches() {
             for position in midi_item_event_positions(item, pressure.tick)? {
                 let original_project_tick = project_midi_item_event_tick(project, item, position)?;
-                let order = if time_selection
+                let selection_order = if time_selection
                     .is_some_and(|(selection_start, _)| original_project_tick < selection_start)
                 {
                     2
                 } else {
                     1
                 };
+                let order = midi_event_order_key(
+                    has_imported_order,
+                    2,
+                    imported_event_order
+                        .get(&MidiEventOrderTarget::PolyAftertouch(*pressure))
+                        .map(|entry| entry.order),
+                    selection_order,
+                    u64::from(selection_order),
+                );
                 let Some(project_tick) =
                     time_selection_state_event_tick(original_project_tick, time_selection)
                 else {
@@ -1314,13 +1413,22 @@ pub fn encode_standard_midi_with_selection(
         for pressure in item.channel_pressures() {
             for position in midi_item_event_positions(item, pressure.tick)? {
                 let original_project_tick = project_midi_item_event_tick(project, item, position)?;
-                let order = if time_selection
+                let selection_order = if time_selection
                     .is_some_and(|(selection_start, _)| original_project_tick < selection_start)
                 {
                     2
                 } else {
                     1
                 };
+                let order = midi_event_order_key(
+                    has_imported_order,
+                    2,
+                    imported_event_order
+                        .get(&MidiEventOrderTarget::ChannelPressure(*pressure))
+                        .map(|entry| entry.order),
+                    selection_order,
+                    u64::from(selection_order),
+                );
                 let Some(project_tick) =
                     time_selection_state_event_tick(original_project_tick, time_selection)
                 else {
@@ -1356,7 +1464,7 @@ pub fn encode_standard_midi_with_selection(
                 };
                 events_by_track[track_index].push(Event {
                     tick: scale_tick_position(project_tick, project_ppq, options.ppq)?,
-                    order: 1,
+                    order: midi_event_order_key(has_imported_order, 0, Some(opaque.order), 1, 1),
                     bytes,
                 });
             }
@@ -1644,6 +1752,7 @@ fn project_midi_item_event_tick(
     Ok(event_tick)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn push_midi_note_events(
     events: &mut Vec<Event>,
     project_start_tick: f64,
@@ -1651,6 +1760,8 @@ fn push_midi_note_events(
     project_ppq: u32,
     export_ppq: u16,
     note: &MidiNote,
+    note_order: Option<MidiEventOrderData>,
+    has_imported_order: bool,
 ) -> Result<(), String> {
     let start_tick = scale_tick_position(project_start_tick, project_ppq, export_ppq)?;
     let mut end_tick = scale_tick_position(project_end_tick, project_ppq, export_ppq)?;
@@ -1663,17 +1774,30 @@ fn push_midi_note_events(
     }
     events.push(Event {
         tick: end_tick,
-        order: 0,
+        order: midi_event_order_key(
+            has_imported_order,
+            3,
+            note_order.map(|entry| entry.note_off_order.unwrap_or(entry.order)),
+            1,
+            0,
+        ),
         bytes: vec![0x80 | note.channel(), note.pitch(), note.off_velocity()],
     });
     events.push(Event {
         tick: start_tick,
-        order: 2,
+        order: midi_event_order_key(
+            has_imported_order,
+            3,
+            note_order.map(|entry| entry.order),
+            1,
+            2,
+        ),
         bytes: vec![0x90 | note.channel(), note.pitch(), note.velocity()],
     });
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn push_midi_note_events_in_time_selection(
     events: &mut Vec<Event>,
     project_start_tick: f64,
@@ -1681,6 +1805,8 @@ fn push_midi_note_events_in_time_selection(
     project_ppq: u32,
     export_ppq: u16,
     note: &MidiNote,
+    note_order: Option<MidiEventOrderData>,
+    has_imported_order: bool,
     time_selection: Option<(f64, f64)>,
 ) -> Result<usize, String> {
     let Some((selection_start, selection_end)) = time_selection else {
@@ -1691,6 +1817,8 @@ fn push_midi_note_events_in_time_selection(
             project_ppq,
             export_ppq,
             note,
+            note_order,
+            has_imported_order,
         )?;
         return Ok(2);
     };
@@ -1703,14 +1831,21 @@ fn push_midi_note_events_in_time_selection(
         project_ppq,
         export_ppq,
     )?;
-    let order = if project_start_tick < selection_start {
+    let selection_order = if project_start_tick < selection_start {
         3
     } else {
         2
     };
+    let note_on_order = midi_event_order_key(
+        has_imported_order,
+        3,
+        note_order.map(|entry| entry.order),
+        selection_order,
+        u64::from(selection_order),
+    );
     events.push(Event {
         tick: start_tick,
-        order,
+        order: note_on_order,
         bytes: vec![0x90 | note.channel(), note.pitch(), note.velocity()],
     });
     if project_end_tick < selection_end {
@@ -1723,7 +1858,13 @@ fn push_midi_note_events_in_time_selection(
         }
         events.push(Event {
             tick: end_tick,
-            order: 0,
+            order: midi_event_order_key(
+                has_imported_order,
+                3,
+                note_order.map(|entry| entry.note_off_order.unwrap_or(entry.order)),
+                selection_order,
+                0,
+            ),
             bytes: vec![0x80 | note.channel(), note.pitch(), note.off_velocity()],
         });
         Ok(2)
@@ -1865,7 +2006,7 @@ fn conductor_events(
                     };
                     events.push(Event {
                         tick: scale_tick(start_tick, project_ppq, options.ppq)?,
-                        order: starting_tempo_order,
+                        order: u64::from(starting_tempo_order),
                         bytes: meta_event(0x01, ramp_start.as_bytes())?,
                     });
                     let interval_ticks = (ppq / 8).max(1);
@@ -1899,7 +2040,7 @@ fn conductor_events(
                     let ramp_end = "REAPER gradual tempo change interpolation end";
                     events.push(Event {
                         tick: scale_tick(last_interval_start, project_ppq, options.ppq)?,
-                        order: ramp_tempo_order + 1,
+                        order: u64::from(ramp_tempo_order + 1),
                         bytes: meta_event(0x01, ramp_end.as_bytes())?,
                     });
                 }
@@ -1951,7 +2092,7 @@ fn conductor_events(
         };
         events.push(Event {
             tick: scale_tick(tick, project_ppq, options.ppq)?,
-            order: tempo_event.order,
+            order: u64::from(tempo_event.order),
             bytes: vec![
                 0xff,
                 0x51,
@@ -1984,7 +2125,7 @@ fn conductor_events(
         };
         events.push(Event {
             tick: scale_tick(tick, project_ppq, options.ppq)?,
-            order: 1 + smpte_order_offset,
+            order: u64::from(1 + smpte_order_offset),
             bytes: vec![
                 0xff,
                 0x58,
@@ -2045,7 +2186,7 @@ fn conductor_events(
                     precedes_time_selection,
                 ) {
                     (MidiFileType::Type0, true, _) | (MidiFileType::Type1, true, true) => 0,
-                    _ => ramp_tempo_order + 1,
+                    _ => u64::from(ramp_tempo_order + 1),
                 },
                 bytes: meta_event(marker_kind, marker.name().as_bytes())?,
             });

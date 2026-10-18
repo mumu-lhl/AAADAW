@@ -8,6 +8,44 @@ use aaadaw_core::{
 };
 
 #[test]
+fn reaper_782_export_preserves_same_tick_note_off_order_from_imported_take() {
+    let source = decode_standard_midi(include_bytes!(
+        "../../../docs/verification/reaper-parity/fixtures/midi-file-import-same-tick-order.mid"
+    ))
+    .unwrap();
+    let imported = source.to_project_import(960).unwrap();
+    let mut project = Project::new();
+    for track in imported.tracks {
+        project
+            .apply(DawAction::ImportMidiTrack {
+                start_tick: 0,
+                track,
+            })
+            .unwrap();
+    }
+
+    let bytes = encode_standard_midi(&project, MidiExportOptions::for_project(&project)).unwrap();
+    let exported = decode_standard_midi(&bytes).unwrap();
+    let native = decode_standard_midi(include_bytes!(
+        "../../../docs/verification/reaper-parity/fixtures/midi-file-export-same-tick-note-off-native.mid"
+    ))
+    .unwrap();
+    let same_tick_events = |track: &aaadaw_core::MidiFileTrack| {
+        track
+            .events
+            .iter()
+            .filter(|event| matches!(event.tick, 240 | 480))
+            .map(|event| (event.tick, event.kind.clone()))
+            .collect::<Vec<_>>()
+    };
+
+    assert_eq!(
+        same_tick_events(&exported.tracks[1]),
+        same_tick_events(&native.tracks[1])
+    );
+}
+
+#[test]
 fn exports_note_controller_and_pitch_bend_channels_as_midi_status_nibbles() {
     let mut project = Project::new();
     project

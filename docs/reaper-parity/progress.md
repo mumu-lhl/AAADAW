@@ -2434,3 +2434,11 @@ AAADAW 项目导入现保留解码层的原始包边界，并按上述规则归�
 AAADAW 为导入的 Note、CC、Pitch Bend、Program Change、Poly Aftertouch 和 Channel Pressure 保存源序号；Event List 对这类带有原厂顺序元数据的项目按 Meta/SysEx、Program Change、其他通道事件、Note 的原厂分组并在组内保序。没有导入顺序元数据的旧项目和手工事件继续使用原 Event List 类别顺序，避免改变既有 Bank Select 等行为。快照保存/恢复携带元数据，SQLite schema 64 新增 MIDI event-order 表，schema 63→64 migration 和数据库重开回归通过。Core 导入测试 15/15、UI 正反向排序测试 1/1、导入后音符/CC 编辑删除并重开快照测试通过、Storage project-store 68/68、AAADAW desktop 782/782、strict all-target Clippy (`-D warnings`)、fmt 和 diff 检查通过。
 
 从最终 nightly Cranelift 桌面二进制在独立 Xvfb 会话中分别导入正向、反向 fixture；两张实窗 Event List 截图与 REAPER 两组 `MIDI_GetAllEvts` 读回和原厂截图顺序一致。最终 Build ID `bedf723e6e760b01721e3b47f4e5ba53fca4e4bc`、binary SHA-256 `95a36c1901bb044d07ea45cf0f42657124bd28cfaf758bb0b6bc3ab1310f5ae2` 及两张截图 hash 记于 [same-tick order fixture manifest](../verification/reaper-parity/fixtures/midi-file-import-same-tick-order.tsv)。`MIDI-FILE-IMPORT-001` 继续保持 `in_progress`；原厂 Note Off 同 tick 的 SMF 再导出顺序还未核验，SysEx/Meta 播放、`.sysex` 选择器、Format 2 和 SMPTE divisions 也未完成。
+
+### 2026-10-18 保留导入 MIDI 的 Note Off 源顺序并对照原厂导出
+
+REAPER 7.82 / Default 7 的 Type 1 导出探针确认：导入同一 Type 0 fixture 后，tick 480 的事件顺序为 CC7、Note On、Note Off。AAADAW 之前将 Note Off 固定排在其他事件之前；现在导入模型同时保存 Note On 与配对 Note Off 的源序号，SMF exporter 对导入事件按原厂 Meta/SysEx、Program Change、其他通道事件、音符分组并在组内保序。新增 SQLite schema 65 保存 Note Off 序号，schema 64 及更早版本迁移均可通过；旧版快照没有该字段时仍按兼容默认处理。
+
+原厂 Type 1 MIDI 输出、导入 take 的 `MIDI_GetAllEvts` 顺序、导出设置和 REAPER 实际写出提示截图记录在 [same-tick Note Off export manifest](../verification/reaper-parity/fixtures/midi-file-export-same-tick-note-off.tsv)。回归测试将 AAADAW 导出与原厂文件在 tick 240 和 tick 480 的全部事件逐项对比。Core 导入、导出和存储集成测试 169/169，opaque-only Event List 顺序定向 App 测试 1/1，Core/Storage/App strict all-target Clippy (`-D warnings`)、fmt 和 diff 检查通过。
+
+同时修复只有 Meta/SysEx、没有 typed-channel 顺序记录的导入 item：Event List 现在仍按这些 opaque 行的源序号排序。MIDI 文件格式、SysEx/Meta 播放、文件选择器等其它差异尚未完成，`MIDI-FILE-IMPORT-001` 与 P7 继续保持 `in_progress`。

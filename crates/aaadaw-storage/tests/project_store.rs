@@ -91,6 +91,7 @@ fn imported_midi_tracks_round_trip_through_the_project_store() {
                                 program: 11,
                             }),
                             order: 0,
+                            note_off_order: None,
                         },
                         MidiEventOrderData {
                             target: MidiEventOrderTarget::Controller(MidiControllerData {
@@ -100,6 +101,7 @@ fn imported_midi_tracks_round_trip_through_the_project_store() {
                                 value: 96,
                             }),
                             order: 1,
+                            note_off_order: None,
                         },
                         MidiEventOrderData {
                             target: MidiEventOrderTarget::Note(MidiNoteData {
@@ -111,6 +113,7 @@ fn imported_midi_tracks_round_trip_through_the_project_store() {
                                 off_velocity: 33,
                             }),
                             order: 2,
+                            note_off_order: Some(8),
                         },
                         MidiEventOrderData {
                             target: MidiEventOrderTarget::PitchBend(MidiPitchBendData {
@@ -119,6 +122,7 @@ fn imported_midi_tracks_round_trip_through_the_project_store() {
                                 value: 4_321,
                             }),
                             order: 3,
+                            note_off_order: None,
                         },
                         MidiEventOrderData {
                             target: MidiEventOrderTarget::PolyAftertouch(MidiPolyAftertouchData {
@@ -128,6 +132,7 @@ fn imported_midi_tracks_round_trip_through_the_project_store() {
                                 value: 70,
                             }),
                             order: 4,
+                            note_off_order: None,
                         },
                         MidiEventOrderData {
                             target: MidiEventOrderTarget::ChannelPressure(
@@ -138,6 +143,7 @@ fn imported_midi_tracks_round_trip_through_the_project_store() {
                                 },
                             ),
                             order: 5,
+                            note_off_order: None,
                         },
                     ],
                 },
@@ -192,6 +198,33 @@ fn schema_63_migrates_the_midi_event_order_table() {
         )
         .unwrap();
     assert_eq!(table_count, 1);
+    store.close().unwrap();
+    remove_database(&path);
+}
+
+#[test]
+fn schema_64_migrates_note_off_source_order() {
+    let path = project_path();
+    ProjectStore::open(&path).unwrap().close().unwrap();
+    let connection = Connection::open(&path).unwrap();
+    connection
+        .execute_batch(
+            "ALTER TABLE midi_event_order DROP COLUMN note_off_order; PRAGMA user_version = 64;",
+        )
+        .unwrap();
+    drop(connection);
+
+    let store = ProjectStore::open(&path).unwrap();
+    assert_eq!(store.schema_version().unwrap(), CURRENT_SCHEMA_VERSION);
+    let connection = Connection::open(&path).unwrap();
+    let has_note_off_order: i64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM pragma_table_info('midi_event_order') WHERE name = 'note_off_order'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(has_note_off_order, 1);
     store.close().unwrap();
     remove_database(&path);
 }

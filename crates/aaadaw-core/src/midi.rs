@@ -201,6 +201,8 @@ pub enum MidiEventOrderTarget {
 pub struct MidiEventOrderData {
     pub target: MidiEventOrderTarget,
     pub order: u32,
+    /// Source ordinal of a paired Note Off; absent for legacy snapshots and non-note events.
+    pub note_off_order: Option<u32>,
 }
 
 /// A SysEx or Meta payload that does not map to a channel-event model.

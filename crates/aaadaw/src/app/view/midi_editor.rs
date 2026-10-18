@@ -1126,7 +1126,7 @@ fn midi_event_list_entries(item: &MidiItem, snap: MidiSnap) -> Vec<MidiEventList
                 .map(|(index, event)| MidiEventListEntry::Opaque(index as u32, event)),
         )
         .collect::<Vec<_>>();
-    let imported_ordering = !source_order.is_empty();
+    let imported_ordering = !source_order.is_empty() || !item.opaque_events().is_empty();
     events.sort_by_key(|event| {
         (
             event.tick(),
@@ -8514,6 +8514,60 @@ mod tests {
                 .collect::<Vec<_>>();
             assert_eq!(actual_order, expected_order);
         }
+    }
+
+    #[test]
+    fn imported_opaque_only_events_keep_same_tick_source_order() {
+        let mut project = Project::new();
+        project
+            .apply(aaadaw_core::DawAction::ImportMidiTrack {
+                start_tick: 0,
+                track: aaadaw_core::MidiImportedTrack {
+                    source_index: 0,
+                    has_channel_events: false,
+                    name: "Opaque order".to_owned(),
+                    length_ticks: 960,
+                    notes: Vec::new(),
+                    controllers: Vec::new(),
+                    pitch_bends: Vec::new(),
+                    program_changes: Vec::new(),
+                    poly_aftertouches: Vec::new(),
+                    channel_pressures: Vec::new(),
+                    opaque_events: vec![
+                        MidiOpaqueEventData {
+                            tick: 240,
+                            order: 0,
+                            kind: MidiOpaqueEventKind::SystemExclusive {
+                                status: 0xF0,
+                                data: vec![0x43, 0x12, 0xF7],
+                            },
+                        },
+                        MidiOpaqueEventData {
+                            tick: 240,
+                            order: 1,
+                            kind: MidiOpaqueEventKind::Meta {
+                                kind: 0x01,
+                                data: b"text".to_vec(),
+                            },
+                        },
+                    ],
+                    event_order: Vec::new(),
+                },
+            })
+            .unwrap();
+
+        let actual_order = midi_event_list_entries(&project.midi_items()[0], MidiSnap::default())
+            .into_iter()
+            .filter(|entry| entry.tick() == 240)
+            .map(|entry| match entry {
+                MidiEventListEntry::Opaque(_, event) => match &event.kind {
+                    MidiOpaqueEventKind::SystemExclusive { .. } => "sysex",
+                    MidiOpaqueEventKind::Meta { .. } => "meta",
+                },
+                _ => panic!("opaque-only track should not contain channel events"),
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(actual_order, ["sysex", "meta"]);
     }
 
     #[test]

@@ -27,7 +27,7 @@ use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 /// Latest database schema version understood by this release.
-pub const CURRENT_SCHEMA_VERSION: u32 = 64;
+pub const CURRENT_SCHEMA_VERSION: u32 = 65;
 
 const MIGRATION_29: &str = "ALTER TABLE project_meta ADD COLUMN start_measure INTEGER NOT NULL DEFAULT 1 CHECK(start_measure BETWEEN -2147483648 AND 2147483647);";
 const MIGRATION_30: &str = "ALTER TABLE project_meta ADD COLUMN bpm_basis INTEGER NOT NULL DEFAULT 1 CHECK(bpm_basis BETWEEN 0 AND 5);";
@@ -606,6 +606,11 @@ CREATE TABLE IF NOT EXISTS midi_event_order (
 );
 CREATE INDEX IF NOT EXISTS midi_event_order_by_item_source_order
     ON midi_event_order(item_id, source_order);
+"#;
+const MIGRATION_65_MIDI_NOTE_OFF_ORDER: &str = r#"
+ALTER TABLE midi_event_order
+    ADD COLUMN note_off_order INTEGER
+    CHECK (note_off_order IS NULL OR note_off_order BETWEEN 0 AND 4294967295);
 "#;
 
 /// SQLite persistence failures, including incompatible project files.
@@ -3633,6 +3638,11 @@ fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
             }
             63 => transaction.execute_batch(MIGRATION_63_MIDI_OPAQUE_EVENTS)?,
             64 => transaction.execute_batch(MIGRATION_64_MIDI_EVENT_ORDER)?,
+            65 => {
+                if !table_has_column(&transaction, "midi_event_order", "note_off_order")? {
+                    transaction.execute_batch(MIGRATION_65_MIDI_NOTE_OFF_ORDER)?;
+                }
+            }
             missing => return Err(StorageError::MissingMigration(missing - 1)),
         }
         transaction.pragma_update(None, "user_version", next_version)?;
@@ -4049,8 +4059,8 @@ fn write_snapshot(
                 ),
             };
             transaction.execute(
-                "INSERT INTO midi_event_order(item_id, position, source_order, event_kind, tick, channel, data1, data2, data3, duration) \
-                 VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                "INSERT INTO midi_event_order(item_id, position, source_order, event_kind, tick, channel, data1, data2, data3, duration, note_off_order) \
+                 VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
                 params![
                     to_sql_integer(item.id)?,
                     usize_to_sql(position)?,
@@ -4062,6 +4072,7 @@ fn write_snapshot(
                     data2,
                     data3,
                     to_sql_integer(duration)?,
+                    event.note_off_order.map(i64::from),
                 ],
             )?;
         }
@@ -5022,7 +5033,7 @@ fn read_midi_items(connection: &Connection) -> Result<(Vec<MidiItemSnapshot>, bo
     }
 
     let mut order_statement = connection.prepare(
-        "SELECT item_id, position, source_order, event_kind, tick, channel, data1, data2, data3, duration \
+        "SELECT item_id, position, source_order, event_kind, tick, channel, data1, data2, data3, duration, note_off_order \
          FROM midi_event_order ORDER BY item_id, position",
     )?;
     let order_rows = order_statement
@@ -5038,6 +5049,7 @@ fn read_midi_items(connection: &Connection) -> Result<(Vec<MidiItemSnapshot>, bo
                 row.get::<_, i64>(7)?,
                 row.get::<_, i64>(8)?,
                 row.get::<_, i64>(9)?,
+                row.get::<_, Option<i64>>(10)?,
             ))
         })?
         .collect::<Result<Vec<_>, _>>()?;
@@ -5053,6 +5065,7 @@ fn read_midi_items(connection: &Connection) -> Result<(Vec<MidiItemSnapshot>, bo
         data2,
         data3,
         duration,
+        note_off_order,
     ) in order_rows
     {
         let tick = from_sql_u64(tick)?;
@@ -5122,6 +5135,7 @@ fn read_midi_items(connection: &Connection) -> Result<(Vec<MidiItemSnapshot>, bo
                 MidiEventOrderData {
                     target,
                     order: from_sql_u32(source_order)?,
+                    note_off_order: note_off_order.map(from_sql_u32).transpose()?,
                 },
             ));
     }

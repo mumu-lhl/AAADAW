@@ -7074,7 +7074,12 @@ fn valid_midi_event_order_data(events: &[MidiEventOrderData]) -> bool {
                 event.channel < crate::MIDI_CHANNEL_COUNT && event.value <= 127
             }
         };
-        target_valid && orders.insert(event.order)
+        let note_off_order_valid = match (event.target, event.note_off_order) {
+            (MidiEventOrderTarget::Note(_), Some(order)) => orders.insert(order),
+            (MidiEventOrderTarget::Note(_), None) | (_, None) => true,
+            (_, Some(_)) => false,
+        };
+        target_valid && orders.insert(event.order) && note_off_order_valid
     })
 }
 

@@ -1,0 +1,13 @@
+artifact	sha256
+scripts/reaper_parity/probe-midi-export-same-tick-note-off.lua	cfc26f41b80c01619f739fe1dd8023950d5a07a21fdd7511e6e0d85eab3ee2a2
+fixtures/midi-file-import-same-tick-order.mid	a406882bb3d554a7d19372e54504220de9ca534c06b826e3ec1c3bcbe439a1bb
+fixtures/midi-file-export-same-tick-note-off-native.mid	b816e1cc7a13d0bac819499db3f1f91389856bd3331a12d41efe2b1a74352086
+fixtures/midi-file-export-same-tick-note-off-native-dialog.png	6cdbe442be47116bd65ac6c2c1e3007bdb7aee92e298b16791166d5bb71f2106
+fixtures/midi-file-export-same-tick-note-off-native-result.png	db98f8eb2da2f7b13286c2eb1175ec2924aa9e072fd68a600635cf1b8f3e9ccb
+REAPER	7.82/linux-x86_64
+theme	Default_7.0.ReaperThemeZip
+probe	Import the same-tick Type 0 fixture, record MIDI_GetAllEvts, then run action 40849.
+export_options	Type 1; PPQN 960; tempo/meter/SMPTE/markers unchecked
+native_take_events	0:FF 03 53 61 6D 65 20 54 69 63 6B 20 4F 72 64 65 72 20 50 72 6F 62 65; 240:F0 43 12 F7; 240:FF 01 78; 240:C0 05; 240:E0 01 40; 240:B0 07 40; 240:A0 60 20; 240:D0 40; 240:B0 10 20; 240:90 60 64; 480:B0 07 50; 480:90 64 5A; 480:80 60 20; 720:80 64 18; 960:B0 7B 00
+native_export_tick_480	B0 07 50; 90 64 5A; 80 60 20
+AAADAW_check	Core test reaper_782_export_preserves_same_tick_note_off_order_from_imported_take compares the tick-480 channel-event bytes against the native exported MIDI.

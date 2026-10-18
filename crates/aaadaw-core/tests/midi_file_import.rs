@@ -53,6 +53,23 @@ fn same_tick_import_records_typed_event_source_order_and_round_trips_in_snapshot
         let decoded = decode_standard_midi(fixture).unwrap();
         let imported = decoded.to_project_import(960).unwrap();
         let track = imported.tracks.into_iter().next().unwrap();
+        let expected_note_off_order = decoded.tracks[0]
+            .events
+            .iter()
+            .enumerate()
+            .find_map(|(index, event)| match &event.kind {
+                MidiFileEventKind::Channel { status: 0x80, data }
+                    if event.tick == 480 && data[0] == 0x60 =>
+                {
+                    Some(index as u32)
+                }
+                _ => None,
+            })
+            .unwrap();
+        assert!(track.event_order.iter().any(|entry| {
+            matches!(entry.target, MidiEventOrderTarget::Note(note) if note.tick == 240)
+                && entry.note_off_order == Some(expected_note_off_order)
+        }));
         let mut source_order = track
             .event_order
             .iter()
