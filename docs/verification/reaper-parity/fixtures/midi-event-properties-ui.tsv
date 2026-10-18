@@ -103,14 +103,14 @@ sysex_file_io_aaadaw_sha256	c432e8a2e4751b0f7cbb1d370ef791455266bfbc8fdba041ceab
 sysex_file_io_aaadaw_build_id	7967859d966dc7387e97ba34173920b13dd23923
 sysex_file_io_assertion	Load read bytes F0 43 12 34 F7 and displayed payload 43 12 34; Save wrote exactly F0 43 12 34 F7. The current-build screenshot shows the loaded bytes, F0/F7 framing, and `SysEx data saved` feedback.
 sysex_file_io_verification	crates/aaadaw/src/app/tests.rs::midi_sysex_f0_file_io_round_trips_standard_framing; crates/aaadaw/src/app/tests.rs::midi_sysex_f7_file_io_preserves_continuation_packet_bytes; crates/aaadaw/src/app/tests.rs::midi_sysex_file_data_preserves_framing_and_payload_for_f0_and_f7_packets; AAADAW targeted Nextest 3/3 passed; current-build Linux Xvfb Load/Save portal probe; saved file bytes verified exactly as F0 43 12 34 F7; screenshot SHA-256 and desktop identity recorded above.
-opaque_limitation	`.sysex` picker selection and native file-dialog appearance/behavior, unmatched F7 escape event behavior, invalid UTF-8 text Meta, native semantic fields for structural Meta, native multiline edge cases, and Event Properties meter-map/source-offset/loop BBT semantics remain open; MIDI-EVENT-PROPERTIES-001 remains in_progress.
+opaque_limitation	`.sysex` picker selection and native file-dialog appearance/behavior, invalid UTF-8 text Meta, native semantic fields for structural Meta, native multiline edge cases, and Event Properties meter-map/source-offset/loop BBT semantics remain open; MIDI-EVENT-PROPERTIES-001 remains in_progress.
 scripts/reaper_parity/probe-midi-sysex-f7-properties.lua	Native Linux REAPER 7.82 / Default 7 probe that generates and imports a valid F0/F7 continuation chain, selects the normalized SysEx row, opens action 40004, and writes source/result readback.
 fixtures/midi-event-properties-sysex-f7-probe.mid	6136d80d774c507b3e6bd8ddea4b7e41e2f5c7e117d72536af6f74168824fad1
 fixtures/midi-event-properties-sysex-f7-native.tsv	c5e3c0f89a7c416ac44f42068b692c97609082565cf32a46c4f46a47fd7780fc
 fixtures/midi-event-properties-sysex-f7-native.png	780d455afcecedf74d7cd3070bbc5ac33de22a0508860329ee0e7950f884361c
 native_sysex_f7_environment	Linux REAPER 7.82 / Default 7, Xvfb :457 at 1280×800; isolated profile; Type 0 probe contains F0 data 43 12 at tick 240 and F7 continuation data 34 F7 at tick 480.
 native_sysex_f7_assertion	REAPER combines the packets into one event at tick 480 with MIDI_GetAllEvts message F0 43 12 34 F7; Event List shows one SYSEx row; action 40004 shows payload 43 12 34 at Position 1.1.50 between F0/F7 labels.
-native_sysex_f7_verification	scripts/reaper_parity/probe-midi-sysex-f7-properties.lua; fixtures/midi-event-properties-sysex-f7-probe.mid; fixtures/midi-event-properties-sysex-f7-native.tsv; native screenshot and hashes recorded above; AAADAW import tests project_import_merges_f7_continuations_into_open_f0_at_the_final_packet_tick and project_import_merges_multiple_f7_continuation_packets_and_retains_unmatched_f7.
+native_sysex_f7_verification	scripts/reaper_parity/probe-midi-sysex-f7-properties.lua; fixtures/midi-event-properties-sysex-f7-probe.mid; fixtures/midi-event-properties-sysex-f7-native.tsv; native screenshot and hashes recorded above; AAADAW import tests project_import_merges_f7_continuations_into_open_f0_at_the_final_packet_tick and project_import_merges_multiple_f7_continuations_and_drops_unmatched_f7.
 fixtures/midi-event-list-sysex-f7-aaadaw.png	92528b5b1ead1b34862df0ff8809c7c80f227ed64101d81f8893c1cc7da813be
 fixtures/midi-event-properties-sysex-f7-aaadaw.png	ad29f515c132f174595fa94a497478643f3c458b6243cd070ae0c3fff06b76b6
 aaadaw_sysex_f7_environment	Linux Xvfb :457 at 1280×800; current stable desktop build; generated Type 0 F0/F7 chain imported via a controlled desktop portal, then opened in Event List and Properties.
@@ -118,3 +118,21 @@ aaadaw_sysex_f7_sha256	c883076e8780092b604d5a0199e068f645ed8d0445bd990566f464d53
 aaadaw_sysex_f7_build_id	327ff0b48d46f36488faef47545f0938dd045b79
 aaadaw_sysex_f7_assertion	The Event List shows one SYSEx row at 1.1.50 with parameter F0 43 12 34 F7; Event Properties displays payload 43 12 34 at the same position with F0/F7 boundary labels.
 aaadaw_sysex_f7_verification	Current-build Xvfb MIDI File Import through the desktop portal; selected Event List and SysEx Properties screenshots; desktop SHA-256 and Build ID recorded above; aaadaw-core midi_file_import Nextest 11/11; strict aaadaw-core all-target Clippy -D warnings; stable fmt --check and git diff --check.
+scripts/reaper_parity/probe-midi-sysex-f7-edge-cases.lua	Seven isolated Type 0 fixtures imported by Linux REAPER 7.82 / Default 7; the script records MIDI_GetAllEvts output per source file.
+fixtures/midi-event-properties-sysex-f7-edge-native.tsv	6a70c3f26c04da779c3b79ace38ef2395d0a15746131f637b5ba02a50fa2d633
+fixtures/midi-event-properties-sysex-f7-unmatched.mid	fd296b930812b519970d872b63df7e133f4dee0eccc34d1e211daacf11165b01
+fixtures/midi-event-properties-sysex-f7-open-f0-eot.mid	e758560fe5bf0f31cc5a69ba7b58a3196504b859cba847b8181f47138303780b
+fixtures/midi-event-properties-sysex-f7-open-continuation-eot.mid	a1c10cef6563d44b102c0b4278ef75db0251f506ac98cf912d00e15ae696384f
+fixtures/midi-event-properties-sysex-f7-new-f0.mid	ed02de7dace0028049e1430d8e8643423d7193e7ac1854a0db3a10a80a7097b7
+fixtures/midi-event-properties-sysex-f7-after-cc.mid	a957e3c510082abb8000ba5008ebb5db3cd57644c2a4b8fa4a47f8d56f55cb1f
+fixtures/midi-event-properties-sysex-f7-after-meta.mid	af763280183c8aea54541cf69c1c32c6385124e28d23d76f78b250e613ca3b6d
+fixtures/midi-event-properties-sysex-f7-after-closed-f0.mid	bae69e2dc38ce2c7ea8d0d54142f8837ee2e6ac3b3e848472d601992e925ca1c
+native_sysex_f7_edge_environment	Linux REAPER 7.82 / Default 7, Xvfb :458 at 1280×800, isolated profiles; each Type 0 fixture inserted on a separate track and read back through MIDI_GetAllEvts.
+native_sysex_f7_edge_assertion	An unmatched F7 packet produces no SysEx row; F0 messages end with a native F7 byte at End of Track or before a non-SysEx event/new F0; only an immediately adjacent F7 continues an open F0; a continuation without its own final F7 byte is closed by REAPER.
+native_sysex_f7_edge_verification	All seven fixture inputs and the complete native readback table above; current AAADAW Core import tests cover the corresponding project normalization and preserve source decode packets independently.
+fixtures/midi-event-list-sysex-f7-edge-aaadaw.png	3259debc57cd56facfa3f47c63eb2b377336a03865485d703d54fbf08c45f286
+aaadaw_sysex_f7_edge_environment	Linux Xvfb :459 at 1280×800; current nightly Cranelift desktop build; controlled desktop portal imported the after-meta Type 0 fixture into a fresh project and the selected item was opened in Event List.
+aaadaw_sysex_f7_edge_build_id	43b9c452558714abda82b0ffa7906e86dbce039e
+aaadaw_sysex_f7_edge_sha256	820716d08d23ddf070423d34179459ef5e1d19bbb81c4d25b55b8fa987290249
+aaadaw_sysex_f7_edge_assertion	The four Event List rows are Track name, F0 43 12 F7 SysEx at 1.1.25, Text event x at 1.1.37, and the terminal end row; the source F7 packet after Meta is not retained as another row.
+aaadaw_sysex_f7_edge_verification	Native input fixture fixtures/midi-event-properties-sysex-f7-after-meta.mid; current-build desktop import through the controlled portal; screenshot and binary hashes above; project_import_closes_sysex_before_channel_and_meta_events_and_drops_later_f7; MIDI import Nextest 13/13; strict aaadaw-core Clippy -D warnings; nightly cargo build with Cranelift backend; stable fmt and diff checks.

@@ -2416,3 +2416,11 @@ Event List 现在为结构性/未知 Meta 行显示对应类型名称与原始�
 Linux REAPER 7.82 / Default 7 的原厂 Type 0 MIDI 探针输入 F0 起始包 `43 12`（tick 240）和 F7 延续包 `34 F7`（tick 480）。REAPER 把两包合成一个 F0 事件 `F0 43 12 34 F7`，位置移至最终包 tick 480；事件属性显示 payload `43 12 34`、Position `1.1.50`。原厂读回、探针 MIDI 和窗口截图在 [Event Properties fixture manifest](../verification/reaper-parity/fixtures/midi-event-properties-ui.tsv)。
 
 AAADAW 的 SMF 解码层仍保留源包，项目导入转换则合并仍开放的 F0/F7 连续包并使用最后一包位置；未匹配 F7 仍保留原始状态。当前桌面构建通过受控 portal 导入同一 fixture，Event List 单行参数与属性窗 payload 均和 REAPER 一致；两张实窗截图及二进制身份记录在同一 manifest。`midi_file_import` Nextest 11/11、strict core all-target Clippy、stable fmt 与 diff 检查通过。REAPER 未匹配 F7 escape 行和跨其他事件间隔的延续规则仍需原厂探测；相关 parity 项保持 `in_progress`。
+
+### 2026-10-18 补齐 F7 SysEx 导入边界
+
+七个 Linux REAPER 7.82 / Default 7 Type 0 MIDI 探针补全了前一轮尚未核实的导入边界。`MIDI_GetAllEvts` 读回表明：孤立 F7 不生成事件；仅当 F7 紧邻仍未结束的 F0 时才拼接；轨尾、插入非 SysEx 事件或开始另一个 F0 时，REAPER 会在原 F0 数据末尾补 F7 并关闭它；没有终止字节的 F7 continuation 会继续拼接，直到链关闭。七个输入、原厂读回和 SHA-256 见 [Event Properties fixture manifest](../verification/reaper-parity/fixtures/midi-event-properties-ui.tsv)。
+
+AAADAW 项目导入现保留解码层的原始包边界，并按上述规则归一化项目事件：合并紧邻的延续包、将事件移到最终包位置、补全 F0 结束字节、遇到新事件/新 F0 时结束旧消息，并丢弃未匹配 F7。Core 导入测试 13/13 通过，覆盖轨尾、CC/Meta 打断、新 F0、无终止字节 continuation 和孤立 F7。MIDI Event Properties 对直接存储的 F7 事件仍保持原始状态编辑行为；文件导入归一化不改变这一路径。`MIDI-FILE-IMPORT-001`、`MIDI-EVENT-PROPERTIES-001` 与 P7 保持 `in_progress`。
+
+当前 Cranelift nightly Linux 桌面构建通过受控 portal 导入 F0@240 + Text Meta@360 + F7@480 fixture；实窗 Event List 显示 Track Name、`F0 43 12 F7` SysEx、Text Meta 和结束行，没有独立 F7 行。截图、Build ID、SHA-256 与 fixture 哈希见同一 manifest。AAADAW desktop Cranelift build、Core 定向 Nextest、strict Core Clippy、stable fmt 与 diff check 均通过。

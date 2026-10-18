@@ -97,7 +97,7 @@ fn project_import_merges_f7_continuations_into_open_f0_at_the_final_packet_tick(
 }
 
 #[test]
-fn project_import_merges_multiple_f7_continuation_packets_and_retains_unmatched_f7() {
+fn project_import_merges_multiple_f7_continuations_and_drops_unmatched_f7() {
     let chained = [
         0x3C, 0xF0, 0x01, 0x43, // F0 start at tick 60
         0x1E, 0xF7, 0x01, 0x12, // continuation at tick 90
@@ -123,13 +123,116 @@ fn project_import_merges_multiple_f7_continuation_packets_and_retains_unmatched_
         .unwrap()
         .to_project_import(480)
         .unwrap();
+    assert!(imported.tracks[0].opaque_events.is_empty());
+}
+
+#[test]
+fn project_import_terminates_open_f0_messages_and_continuations() {
+    let unterminated_f0 = [
+        0x3C, 0xF0, 0x02, 0x43, 0x12, // F0 at tick 60, no F7 terminator
+        0x00, 0xFF, 0x2F, 0x00,
+    ];
+    let imported = decode_standard_midi(&smf(0, 480, &[&unterminated_f0]))
+        .unwrap()
+        .to_project_import(480)
+        .unwrap();
     assert_eq!(imported.tracks[0].opaque_events.len(), 1);
     assert_eq!(imported.tracks[0].opaque_events[0].tick, 60);
     assert_eq!(
         imported.tracks[0].opaque_events[0].kind,
         MidiOpaqueEventKind::SystemExclusive {
-            status: 0xF7,
-            data: vec![0x34, 0xF7],
+            status: 0xF0,
+            data: vec![0x43, 0x12, 0xF7],
+        }
+    );
+
+    let second_f0 = [
+        0x3C, 0xF0, 0x01, 0x43, // First F0 at tick 60
+        0x3C, 0xF0, 0x02, 0x12, 0xF7, // New F0 at tick 120 closes the first
+        0x00, 0xFF, 0x2F, 0x00,
+    ];
+    let imported = decode_standard_midi(&smf(0, 480, &[&second_f0]))
+        .unwrap()
+        .to_project_import(480)
+        .unwrap();
+    assert_eq!(imported.tracks[0].opaque_events.len(), 2);
+    assert_eq!(imported.tracks[0].opaque_events[0].tick, 60);
+    assert_eq!(
+        imported.tracks[0].opaque_events[0].kind,
+        MidiOpaqueEventKind::SystemExclusive {
+            status: 0xF0,
+            data: vec![0x43, 0xF7],
+        }
+    );
+    assert_eq!(imported.tracks[0].opaque_events[1].tick, 120);
+    assert_eq!(
+        imported.tracks[0].opaque_events[1].kind,
+        MidiOpaqueEventKind::SystemExclusive {
+            status: 0xF0,
+            data: vec![0x12, 0xF7],
+        }
+    );
+
+    let unterminated_continuation = [
+        0x3C, 0xF0, 0x01, 0x43, // F0 at tick 60
+        0x3C, 0xF7, 0x01, 0x12, // F7 continuation at tick 120, no terminator
+        0x00, 0xFF, 0x2F, 0x00,
+    ];
+    let imported = decode_standard_midi(&smf(0, 480, &[&unterminated_continuation]))
+        .unwrap()
+        .to_project_import(480)
+        .unwrap();
+    assert_eq!(imported.tracks[0].opaque_events.len(), 1);
+    assert_eq!(imported.tracks[0].opaque_events[0].tick, 120);
+    assert_eq!(
+        imported.tracks[0].opaque_events[0].kind,
+        MidiOpaqueEventKind::SystemExclusive {
+            status: 0xF0,
+            data: vec![0x43, 0x12, 0xF7],
+        }
+    );
+}
+
+#[test]
+fn project_import_closes_sysex_before_channel_and_meta_events_and_drops_later_f7() {
+    let track = [
+        0x3C, 0xF0, 0x02, 0x43, 0x12, // open F0 at tick 60
+        0x1E, 0xB0, 0x07, 0x40, // Control Change at tick 90 closes the F0
+        0x1E, 0xF7, 0x02, 0x34, 0xF7, // unmatched continuation at tick 120
+        0x1E, 0xF0, 0x01, 0x56, // second open F0 at tick 150
+        0x1E, 0xFF, 0x01, 0x01, b'x', // Text Meta at tick 180 closes it
+        0x1E, 0xF7, 0x02, 0x78, 0xF7, // unmatched continuation at tick 210
+        0x00, 0xFF, 0x2F, 0x00,
+    ];
+    let imported = decode_standard_midi(&smf(0, 480, &[&track]))
+        .unwrap()
+        .to_project_import(480)
+        .unwrap();
+    assert_eq!(imported.tracks[0].controllers.len(), 1);
+    assert_eq!(imported.tracks[0].controllers[0].tick, 90);
+    assert_eq!(imported.tracks[0].opaque_events.len(), 3);
+    assert_eq!(imported.tracks[0].opaque_events[0].tick, 60);
+    assert_eq!(
+        imported.tracks[0].opaque_events[0].kind,
+        MidiOpaqueEventKind::SystemExclusive {
+            status: 0xF0,
+            data: vec![0x43, 0x12, 0xF7],
+        }
+    );
+    assert_eq!(imported.tracks[0].opaque_events[1].tick, 150);
+    assert_eq!(
+        imported.tracks[0].opaque_events[1].kind,
+        MidiOpaqueEventKind::SystemExclusive {
+            status: 0xF0,
+            data: vec![0x56, 0xF7],
+        }
+    );
+    assert_eq!(imported.tracks[0].opaque_events[2].tick, 180);
+    assert_eq!(
+        imported.tracks[0].opaque_events[2].kind,
+        MidiOpaqueEventKind::Meta {
+            kind: 0x01,
+            data: vec![b'x'],
         }
     );
 }
