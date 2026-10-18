@@ -12912,6 +12912,14 @@ fn midi_editor_filter_clear_resets_filter_and_draw_channel_without_changing_sele
         velocity_range_initialized: true,
         velocity_low: 90,
         velocity_high: 100,
+        position_enabled: true,
+        position_range_initialized: true,
+        position_low: 0,
+        position_high: super::messages::MIDI_EDITOR_FILTER_POSITION_SCALE,
+        length_enabled: true,
+        length_range_initialized: true,
+        length_low_ticks: 0,
+        length_high_ticks: 480,
     };
     app.midi_editor_draw_channel = 4;
     app.midi_editor_filter_dialog_open = true;
@@ -12945,6 +12953,10 @@ fn midi_editor_filter_clear_resets_filter_and_draw_channel_without_changing_sele
         app.midi_editor_note_filter,
         super::messages::MidiEditorNoteFilter::default()
     );
+    assert!(app.midi_editor_filter_note_position_low.is_empty());
+    assert!(app.midi_editor_filter_note_position_high.is_empty());
+    assert!(app.midi_editor_filter_note_length_low.is_empty());
+    assert!(app.midi_editor_filter_note_length_high.is_empty());
     assert_eq!(
         app.midi_editor_channel_selection,
         super::messages::MidiEditorChannelSelection::AllChannels
@@ -13048,6 +13060,14 @@ fn midi_editor_set_filter_from_selected_notes_derives_channel_type_pitch_velocit
             velocity_range_initialized: true,
             velocity_low: 91,
             velocity_high: 93,
+            position_enabled: true,
+            position_range_initialized: true,
+            position_low: 62_500_000,
+            position_high: 187_760_417,
+            length_enabled: true,
+            length_range_initialized: true,
+            length_low_ticks: 240,
+            length_high_ticks: 240,
         }
     );
     assert_eq!(
@@ -13058,6 +13078,10 @@ fn midi_editor_set_filter_from_selected_notes_derives_channel_type_pitch_velocit
     assert!(app.midi_editor_filter_enabled);
     assert!(!app.midi_editor_event_filter_enabled);
     assert!(app.midi_editor_filter_dialog_open);
+    assert_eq!(app.midi_editor_filter_note_position_low, "0.06250000");
+    assert_eq!(app.midi_editor_filter_note_position_high, "0.18776042");
+    assert_eq!(app.midi_editor_filter_note_length_low, "1/16");
+    assert_eq!(app.midi_editor_filter_note_length_high, "1/16");
     assert_eq!(app.midi_editor_selected_notes, selected);
     assert_eq!(
         app.visible_midi_note_ids(),
@@ -13071,6 +13095,35 @@ fn midi_editor_set_filter_from_selected_notes_derives_channel_type_pitch_velocit
     assert_eq!(app.project.snapshot(), project_snapshot);
     assert_eq!(app.app_undo_history.len(), undo_history_len);
     assert_eq!(app.app_redo_history.len(), redo_history_len);
+}
+
+#[test]
+fn midi_editor_note_filter_position_and_length_inputs_parse_reaper_units() {
+    let mut app = App::default();
+
+    let _ = app.update(Message::SetMidiEditorFilterNotePositionLow(
+        "0.125".to_owned(),
+    ));
+    let _ = app.update(Message::SetMidiEditorFilterNotePositionHigh(
+        "0.25".to_owned(),
+    ));
+    let _ = app.update(Message::SetMidiEditorFilterNoteLengthLow("1/16".to_owned()));
+    let _ = app.update(Message::SetMidiEditorFilterNoteLengthHigh(
+        "3/16".to_owned(),
+    ));
+
+    assert!(app.midi_editor_note_filter.position_range_initialized);
+    assert_eq!(app.midi_editor_note_filter.position_low, 125_000_000);
+    assert_eq!(app.midi_editor_note_filter.position_high, 250_000_000);
+    assert!(app.midi_editor_note_filter.length_range_initialized);
+    assert_eq!(app.midi_editor_note_filter.length_low_ticks, 240);
+    assert_eq!(app.midi_editor_note_filter.length_high_ticks, 720);
+
+    let _ = app.update(Message::SetMidiEditorFilterNotePositionHigh(
+        "1.01".to_owned(),
+    ));
+    assert!(!app.midi_editor_note_filter.position_range_initialized);
+    assert_eq!(app.midi_editor_filter_note_position_high, "1.01");
 }
 
 #[test]

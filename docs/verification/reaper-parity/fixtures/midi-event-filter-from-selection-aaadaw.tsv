@@ -1,10 +1,10 @@
 artifact	sha256
-fixtures/midi-event-filter-from-selection-aaadaw-before.png	155a12fe43c8883a8806f0f8a80ab2de052adfb1c2bb014c9f89babe5b593c53
-fixtures/midi-event-filter-from-selection-aaadaw-after.png	3da09c5a06405df7bda6a83041693ea694ef0878b347c8fbc1545ad2f36cfc12
-fixtures/midi-event-filter-from-selection-aaadaw-show-only.png	ef165791ce78ec2553d857b18abd4bd581504e9ec00826ca817a572ca4722c9b
-binary_sha256	987ac3ec4b6d10aa6ce2e9d6674c13d53bbe9bca0b89d2185863bb1f9ad20104
-binary_build_id	db26d0b169b6ab003b5eeb14194227c42247564e
-environment	Linux Xvfb :510; Cranelift-built AAADAW; Event List with four Notes on channels 2–5 and terminal row
+fixtures/midi-event-filter-from-selection-aaadaw-before.png	c8571089396ef2ae6c678e716bbe2611fa19f3be84a714770e82dc46a3e7bd5f
+fixtures/midi-event-filter-from-selection-aaadaw-after.png	7ef3f4a4b181b900719fc2dd3cde89707316e326f53ff2c627436661c3cc3524
+fixtures/midi-event-filter-from-selection-aaadaw-show-only.png	ebb5add948e984c76a9035a14b0fdc77f216ce2ab50ebe268f0be8d4784771eb
+binary_sha256	d24ce9c181d10c9798bc563eb343ee9499d30306fe1a522a0c5566ea8e53dec5
+binary_build_id	9f506f9995d0b21d2fb39aa7078bfc1e9fd43635
+environment	Linux Xvfb :510; Cranelift-built AAADAW; 1280×900 MIDI Event List with four Notes on channels 2–5 and terminal row
 starting_state	Notes on channels 2–4 selected; editor channel Channel 5; event type Note; event channel mask Channel 5; Show-only, Invert, and Solo off; draw channel 5
-assertion	Set filter from selection selects channels 2–4, Note type, pitch C4–G4, and velocity 91–93; editor channel becomes Multichannel; draw channel resets to Channel 1; Show-only remains off; the same three Notes stay selected. Enabling Show-only displays exactly those three rows and hides the channel 5 Note and terminal All Notes Off row.
-limitation	AAADAW does not yet populate the native position-in-measure or length ranges. Mixed and non-Note selections remain unimplemented and unprobed.
+assertion	Set filter from selection selects channels 2–4, Note type, pitch C4–G4, velocity 91–93, position in measure 0–0.25026042, and length 1/16–1/16; editor channel becomes Multichannel; draw channel resets to Channel 1; Show-only remains off; the same three Notes stay selected. Enabling Show-only displays exactly those three Note rows and hides the channel 5 Note and terminal All Notes Off row.
+limitation	Repeat every, parameter/value and solo filter criteria are unimplemented. Mixed and non-Note selections remain unimplemented and unprobed.

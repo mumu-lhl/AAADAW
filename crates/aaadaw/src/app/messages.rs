@@ -286,13 +286,44 @@ pub(crate) struct MidiEditorNoteFilter {
     pub(crate) velocity_range_initialized: bool,
     pub(crate) velocity_low: u8,
     pub(crate) velocity_high: u8,
+    pub(crate) position_enabled: bool,
+    pub(crate) position_range_initialized: bool,
+    pub(crate) position_low: u32,
+    pub(crate) position_high: u32,
+    pub(crate) length_enabled: bool,
+    pub(crate) length_range_initialized: bool,
+    pub(crate) length_low_ticks: u64,
+    pub(crate) length_high_ticks: u64,
+}
+
+pub(crate) const MIDI_EDITOR_FILTER_POSITION_SCALE: u32 = 1_000_000_000;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct MidiEditorNoteFilterEvent {
+    pub(crate) pitch: u8,
+    pub(crate) velocity: u8,
+    pub(crate) position_in_measure: u32,
+    pub(crate) length_ticks: u64,
 }
 
 impl MidiEditorNoteFilter {
-    pub(crate) const fn matches(self, pitch: u8, velocity: u8) -> bool {
-        (!self.pitch_enabled || (pitch >= self.pitch_low && pitch <= self.pitch_high))
+    pub(crate) const fn matches(self, event: MidiEditorNoteFilterEvent) -> bool {
+        (!self.pitch_enabled
+            || !self.pitch_range_initialized
+            || (event.pitch >= self.pitch_low && event.pitch <= self.pitch_high))
             && (!self.velocity_enabled
-                || (velocity >= self.velocity_low && velocity <= self.velocity_high))
+                || !self.velocity_range_initialized
+                || (event.velocity >= self.velocity_low && event.velocity <= self.velocity_high))
+            && (!self.position_enabled
+                || !self.position_range_initialized
+                || (self.position_low <= self.position_high
+                    && event.position_in_measure >= self.position_low
+                    && event.position_in_measure <= self.position_high))
+            && (!self.length_enabled
+                || !self.length_range_initialized
+                || (self.length_low_ticks <= self.length_high_ticks
+                    && event.length_ticks >= self.length_low_ticks
+                    && event.length_ticks <= self.length_high_ticks))
     }
 }
 
@@ -307,6 +338,14 @@ impl Default for MidiEditorNoteFilter {
             velocity_range_initialized: false,
             velocity_low: 0,
             velocity_high: 127,
+            position_enabled: false,
+            position_range_initialized: false,
+            position_low: 0,
+            position_high: MIDI_EDITOR_FILTER_POSITION_SCALE,
+            length_enabled: false,
+            length_range_initialized: false,
+            length_low_ticks: 0,
+            length_high_ticks: u64::MAX,
         }
     }
 }
@@ -383,7 +422,7 @@ impl MidiEditorFilterState {
         editor_channel_matches && event_filter_matches
     }
 
-    pub(crate) fn note_visible(self, channel: u8, pitch: u8, velocity: u8) -> bool {
+    pub(crate) fn note_visible(self, channel: u8, event: MidiEditorNoteFilterEvent) -> bool {
         let editor_channel_matches = !self.channel_filter_enabled
             || match self.channel_selection {
                 MidiEditorChannelSelection::AllChannels => true,
@@ -397,18 +436,22 @@ impl MidiEditorFilterState {
                 self.channels & (1_u16.checked_shl(u32::from(channel)).unwrap_or(0)) != 0;
             let passes = channel_matches
                 && self.event_type.matches(MidiEditorEventKind::Note)
-                && self.note.matches(pitch, velocity);
+                && self.note.matches(event);
             if self.inverted { !passes } else { passes }
         };
         editor_channel_matches && event_filter_matches
     }
 
-    pub(crate) fn note_passes_event_filter(self, channel: u8, pitch: u8, velocity: u8) -> bool {
+    pub(crate) fn note_passes_event_filter(
+        self,
+        channel: u8,
+        event: MidiEditorNoteFilterEvent,
+    ) -> bool {
         let channel_matches =
             self.channels & (1_u16.checked_shl(u32::from(channel)).unwrap_or(0)) != 0;
         let passes = channel_matches
             && self.event_type.matches(MidiEditorEventKind::Note)
-            && self.note.matches(pitch, velocity);
+            && self.note.matches(event);
         if self.inverted { !passes } else { passes }
     }
 }
@@ -780,6 +823,12 @@ pub(crate) enum Message {
     SetMidiEditorFilterNoteVelocityEnabled(bool),
     SetMidiEditorFilterNoteVelocityLow(u8),
     SetMidiEditorFilterNoteVelocityHigh(u8),
+    SetMidiEditorFilterNotePositionEnabled(bool),
+    SetMidiEditorFilterNotePositionLow(String),
+    SetMidiEditorFilterNotePositionHigh(String),
+    SetMidiEditorFilterNoteLengthEnabled(bool),
+    SetMidiEditorFilterNoteLengthLow(String),
+    SetMidiEditorFilterNoteLengthHigh(String),
     SetMidiEditorFilterFromSelection,
     ClearMidiEditorFilter,
     ApplyMidiEditorFilterSelection(MidiEditorFilterSelectionOperation),
@@ -1219,7 +1268,8 @@ pub(crate) struct FreezeTrackResult {
 mod midi_channel_selection_tests {
     use super::{
         MidiEditorChannelSelection, MidiEditorEventKind, MidiEditorEventTypeFilter,
-        MidiEditorFilterState, MidiEditorNoteFilter, MidiEditorPitchFilterValue,
+        MidiEditorFilterState, MidiEditorNoteFilter, MidiEditorNoteFilterEvent,
+        MidiEditorPitchFilterValue,
     };
 
     #[test]
@@ -1434,27 +1484,89 @@ mod midi_channel_selection_tests {
                 velocity_range_initialized: true,
                 velocity_low: 91,
                 velocity_high: 93,
+                position_enabled: true,
+                position_range_initialized: true,
+                position_low: 250_000_000,
+                position_high: 750_000_000,
+                length_enabled: true,
+                length_range_initialized: true,
+                length_low_ticks: 240,
+                length_high_ticks: 480,
             },
         };
-        assert!(filter.note_visible(1, 60, 91));
-        assert!(filter.note_visible(1, 67, 93));
-        assert!(!filter.note_visible(1, 59, 92));
-        assert!(!filter.note_visible(1, 64, 90));
-        assert!(!filter.note_visible(2, 64, 92));
+        let selected_event = MidiEditorNoteFilterEvent {
+            pitch: 64,
+            velocity: 92,
+            position_in_measure: 500_000_000,
+            length_ticks: 360,
+        };
+        assert!(filter.note_visible(1, selected_event));
+        assert!(filter.note_visible(
+            1,
+            MidiEditorNoteFilterEvent {
+                pitch: 60,
+                velocity: 91,
+                position_in_measure: 250_000_000,
+                length_ticks: 240,
+            }
+        ));
+        assert!(!filter.note_visible(
+            1,
+            MidiEditorNoteFilterEvent {
+                pitch: 59,
+                ..selected_event
+            }
+        ));
+        assert!(!filter.note_visible(
+            1,
+            MidiEditorNoteFilterEvent {
+                velocity: 90,
+                ..selected_event
+            }
+        ));
+        assert!(!filter.note_visible(
+            1,
+            MidiEditorNoteFilterEvent {
+                position_in_measure: 750_000_001,
+                ..selected_event
+            }
+        ));
+        assert!(!filter.note_visible(
+            1,
+            MidiEditorNoteFilterEvent {
+                length_ticks: 481,
+                ..selected_event
+            }
+        ));
+        assert!(!filter.note_visible(2, selected_event));
 
         let inverted = MidiEditorFilterState {
             inverted: true,
             ..filter
         };
-        assert!(!inverted.note_visible(1, 64, 92));
-        assert!(inverted.note_visible(1, 59, 92));
-        assert!(inverted.note_visible(2, 64, 92));
+        assert!(!inverted.note_visible(1, selected_event));
+        assert!(inverted.note_visible(
+            1,
+            MidiEditorNoteFilterEvent {
+                pitch: 59,
+                ..selected_event
+            }
+        ));
+        assert!(inverted.note_visible(2, selected_event));
 
         let channel_only = MidiEditorFilterState {
             event_filter_enabled: false,
             ..filter
         };
-        assert!(channel_only.note_visible(1, 59, 1));
+        assert!(channel_only.note_visible(
+            1,
+            MidiEditorNoteFilterEvent {
+                pitch: 59,
+                velocity: 1,
+                position_in_measure: 0,
+                length_ticks: 10,
+            }
+        ));
     }
 
     #[test]

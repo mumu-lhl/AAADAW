@@ -1,8 +1,9 @@
 use super::super::{
     App, MIDI_EDITOR_KEY_WIDTH, Message, MidiEditorChannelSelection, MidiEditorEventKind,
     MidiEditorEventListCursor, MidiEditorEventTypeFilter, MidiEditorFilterState, MidiEditorLane,
-    MidiEditorMode, MidiEditorNoteFilter, MidiEditorPitchFilterValue, MidiEditorTool,
-    effective_midi_bank_value,
+    MidiEditorMode, MidiEditorNoteFilter, MidiEditorNoteFilterEvent, MidiEditorPitchFilterValue,
+    MidiEditorTool, effective_midi_bank_value, midi_editor_filter_position_value,
+    midi_editor_measure_length_ticks,
 };
 use super::tokens::{PANEL_PADDING, ROW_GAP, SPACING_LG, SPACING_MD, SPACING_XS, TOUCH_TARGET_MIN};
 use crate::timeline::{SnapGrid, TimelineEvent, snap_tick_to_grid};
@@ -15,7 +16,7 @@ use iced::advanced::text::{Alignment as TextAlignment, LineHeight, Shaping};
 use iced::widget::canvas::{self, Text};
 use iced::widget::{
     button, canvas as canvas_widget, checkbox, column, container, mouse_area, pick_list, row,
-    scrollable, slider, stack, text, text_editor,
+    scrollable, slider, stack, text, text_editor, text_input,
 };
 use iced::{
     Color, Element, Event, Font, Length, Pixels, Point, Rectangle, Size, Theme, keyboard, mouse,
@@ -237,6 +238,27 @@ fn midi_snap_for_app(app: &App) -> MidiSnap {
             range_valid,
         })
     });
+    let ppq = app.project.settings().ppq();
+    let measure_ticks = app
+        .midi_editor_item_id
+        .and_then(|item_id| {
+            app.project
+                .midi_items()
+                .iter()
+                .find(|item| item.id() == item_id)
+        })
+        .map(|item| {
+            midi_editor_measure_length_ticks(
+                ppq,
+                app.project.time_signature_at_tick(item.start_tick()),
+            )
+        })
+        .unwrap_or_else(|| {
+            midi_editor_measure_length_ticks(
+                ppq,
+                TimeSignature::new(4, 4).expect("4/4 is a valid time signature"),
+            )
+        });
     MidiSnap {
         grid: app.timeline.midi_editor_snap_grid,
         enabled: app.timeline.snap_enabled,
@@ -251,6 +273,7 @@ fn midi_snap_for_app(app: &App) -> MidiSnap {
         filter_inverted: app.midi_editor_filter_inverted,
         event_type_filter: app.midi_editor_event_type_filter,
         note_filter: app.midi_editor_note_filter,
+        measure_ticks,
         transpose_preview,
     }
 }
@@ -278,6 +301,7 @@ struct MidiSnap {
     filter_inverted: bool,
     event_type_filter: MidiEditorEventTypeFilter,
     note_filter: MidiEditorNoteFilter,
+    measure_ticks: u64,
     transpose_preview: Option<MidiTransposePreview>,
 }
 
@@ -297,6 +321,7 @@ impl Default for MidiSnap {
             filter_inverted: false,
             event_type_filter: MidiEditorEventTypeFilter::AllEvents,
             note_filter: MidiEditorNoteFilter::default(),
+            measure_ticks: 3_840,
             transpose_preview: None,
         }
     }
@@ -319,8 +344,19 @@ impl MidiSnap {
         }
     }
 
-    fn note_visible(self, channel: u8, pitch: u8, velocity: u8) -> bool {
-        self.filter_state().note_visible(channel, pitch, velocity)
+    fn note_visible(self, note: &MidiNote) -> bool {
+        self.filter_state().note_visible(
+            note.channel(),
+            MidiEditorNoteFilterEvent {
+                pitch: note.pitch(),
+                velocity: note.velocity(),
+                position_in_measure: midi_editor_filter_position_value(
+                    note.tick(),
+                    self.measure_ticks,
+                ),
+                length_ticks: note.duration(),
+            },
+        )
     }
 
     fn controller_visible(self, channel: u8) -> bool {
@@ -412,7 +448,7 @@ fn view_with_profile(app: &App, touch_targets: bool) -> Element<'_, Message> {
     let visible_note_count = item
         .notes()
         .iter()
-        .filter(|note| event_snap.note_visible(note.channel(), note.pitch(), note.velocity()))
+        .filter(|note| event_snap.note_visible(note))
         .count();
     let edit_toolbar: Element<'_, Message> = if touch_targets {
         row![
@@ -1106,7 +1142,7 @@ fn midi_event_list_entries(item: &MidiItem, snap: MidiSnap) -> Vec<MidiEventList
     let mut events = item
         .notes()
         .iter()
-        .filter(|note| snap.note_visible(note.channel(), note.pitch(), note.velocity()))
+        .filter(|note| snap.note_visible(note))
         .map(MidiEventListEntry::Note)
         .chain(controller_entries)
         .chain(
@@ -2735,6 +2771,50 @@ fn channel_filter_dialog(app: &App, touch_targets: bool) -> Element<'_, Message>
     ]
     .spacing(ROW_GAP)
     .align_y(iced::Alignment::Center);
+    let position_filter = row![
+        checkbox(note_filter.position_enabled)
+            .label("Position in measure")
+            .on_toggle(Message::SetMidiEditorFilterNotePositionEnabled),
+        text_input("", &app.midi_editor_filter_note_position_low)
+            .on_input_maybe(
+                note_filter
+                    .position_enabled
+                    .then_some(Message::SetMidiEditorFilterNotePositionLow,)
+            )
+            .width(Length::Fixed(112.0)),
+        text("to").size(11),
+        text_input("", &app.midi_editor_filter_note_position_high)
+            .on_input_maybe(
+                note_filter
+                    .position_enabled
+                    .then_some(Message::SetMidiEditorFilterNotePositionHigh,)
+            )
+            .width(Length::Fixed(112.0)),
+    ]
+    .spacing(ROW_GAP)
+    .align_y(iced::Alignment::Center);
+    let length_filter = row![
+        checkbox(note_filter.length_enabled)
+            .label("Length")
+            .on_toggle(Message::SetMidiEditorFilterNoteLengthEnabled),
+        text_input("", &app.midi_editor_filter_note_length_low)
+            .on_input_maybe(
+                note_filter
+                    .length_enabled
+                    .then_some(Message::SetMidiEditorFilterNoteLengthLow,)
+            )
+            .width(Length::Fixed(88.0)),
+        text("to").size(11),
+        text_input("", &app.midi_editor_filter_note_length_high)
+            .on_input_maybe(
+                note_filter
+                    .length_enabled
+                    .then_some(Message::SetMidiEditorFilterNoteLengthHigh,)
+            )
+            .width(Length::Fixed(88.0)),
+    ]
+    .spacing(ROW_GAP)
+    .align_y(iced::Alignment::Center);
     container(
         column![
             header,
@@ -2744,6 +2824,8 @@ fn channel_filter_dialog(app: &App, touch_targets: bool) -> Element<'_, Message>
             second_row,
             pitch_filter,
             velocity_filter,
+            position_filter,
+            length_filter,
             row![
                 text("Draw events on channel").size(11),
                 pick_list(
@@ -4536,10 +4618,12 @@ impl canvas::Program<Message> for PianoRoll<'_> {
                         } else {
                             HashSet::new()
                         };
-                        for note in self.item.notes().iter().filter(|note| {
-                            self.snap
-                                .note_visible(note.channel(), note.pitch(), note.velocity())
-                        }) {
+                        for note in self
+                            .item
+                            .notes()
+                            .iter()
+                            .filter(|note| self.snap.note_visible(note))
+                        {
                             let y = mapping.y_at_pitch(self.snap.note_pitch(
                                 self.item_id,
                                 self.selected,
@@ -4862,10 +4946,12 @@ impl canvas::Program<Message> for PianoRoll<'_> {
         }
         let content_mapping = self.content_mapping();
         let (view_start, view_end) = self.content_tick_range(bounds.width);
-        for note in self.item.notes().iter().filter(|note| {
-            self.snap
-                .note_visible(note.channel(), note.pitch(), note.velocity())
-        }) {
+        for note in self
+            .item
+            .notes()
+            .iter()
+            .filter(|note| self.snap.note_visible(note))
+        {
             let pitch = self.snap.note_pitch(self.item_id, self.selected, note);
             if pitch > self.high_pitch
                 || pitch < self.high_pitch.saturating_sub(self.pitch_rows - 1)
@@ -5051,10 +5137,7 @@ impl PianoRoll<'_> {
         self.item
             .notes()
             .iter()
-            .filter(|note| {
-                self.snap
-                    .note_visible(note.channel(), note.pitch(), note.velocity())
-            })
+            .filter(|note| self.snap.note_visible(note))
             .cloned()
             .collect()
     }
@@ -5126,10 +5209,13 @@ impl PianoRoll<'_> {
     ) -> Option<(&aaadaw_core::MidiNote, bool, u64)> {
         let mapping = self.content_mapping();
         let (view_start, view_end) = self.content_tick_range(width);
-        for note in self.item.notes().iter().rev().filter(|note| {
-            self.snap
-                .note_visible(note.channel(), note.pitch(), note.velocity())
-        }) {
+        for note in self
+            .item
+            .notes()
+            .iter()
+            .rev()
+            .filter(|note| self.snap.note_visible(note))
+        {
             let duration = visible_note_duration(self.item, note, note.tick());
             for occurrence_tick in source_event_occurrences(
                 self.item,
@@ -5165,10 +5251,7 @@ impl PianoRoll<'_> {
             .notes()
             .iter()
             .rev()
-            .filter(|note| {
-                self.snap
-                    .note_visible(note.channel(), note.pitch(), note.velocity())
-            })
+            .filter(|note| self.snap.note_visible(note))
             .flat_map(|note| {
                 let duration = visible_note_duration(self.item, note, note.tick());
                 source_event_occurrences(
