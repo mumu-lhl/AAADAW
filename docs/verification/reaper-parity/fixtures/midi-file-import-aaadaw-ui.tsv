@@ -1,0 +1,6 @@
+artifact	sha256
+fixtures/midi-file-import-aaadaw-action-list.png	db0820bb51bc10d17d90dca174228d6a5bd870730bf9eaa13b9a03cf26506fc2
+binary_sha256	250178177be4c65e066d7ecf92b1e0e1c5e6a4726b5ed0ab921f4d32eafbd0f8
+build_id	dda5cda44978777bf649ddce7efb9f2c71b5a6a0
+assertion	Current Linux desktop build Action List search for "import midi" shows the Insert > MIDI file… command.
+limitation	This capture proves the command entry only; file-picker completion and imported arrangement are not pictured.
