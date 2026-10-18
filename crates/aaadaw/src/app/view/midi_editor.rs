@@ -339,9 +339,6 @@ impl MidiSnap {
     }
 
     fn end_row_visible(self) -> bool {
-        if self.filter_enabled && self.event_type_filter != MidiEditorEventTypeFilter::AllEvents {
-            return false;
-        }
         self.event_visible(0, MidiEditorEventKind::ControlChange)
     }
 
@@ -8362,7 +8359,8 @@ mod tests {
             ..MidiSnap::default()
         };
         let events = midi_event_list_entries(item, inverted_metadata);
-        assert!(events.is_empty());
+        assert_eq!(events.len(), 1);
+        assert!(matches!(events[0], MidiEventListEntry::End(960)));
     }
 
     #[test]
