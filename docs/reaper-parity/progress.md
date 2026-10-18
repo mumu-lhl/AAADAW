@@ -2593,4 +2593,13 @@ Linux REAPER 7.82 / Default 7 原厂探针使用 Note + channel 5、Show-only �
 
 App 回归覆盖 Notes、CC、Pitch Bend、Program Change、Poly Aftertouch、Channel Pressure、Meta/SysEx、反转、Undo/Redo、Arrange 选区同步与工程快照不变。Cranelift 全 workspace 在 Xvfb :324 下 **1,548 项测试、84 个测试目标全部通过**；Stable workspace strict all-target Clippy (`-D warnings`)、fmt 与 diff 检查通过；两个新 manifest 的图像/RPP 哈希逐项校验通过。截图所用 AAADAW 桌面二进制 Build ID `d3fc747138cb692ae7d198cbe33f84720b29224c`、SHA-256 `62bb3d82813fd9cabe5e4c83a185e05b10501cd8bab3134f6b514b1496b2fe5e`。Cranelift 保留既有 `TimelinePipeline: MaybeSync` future-incompatibility warning。
 
-`MIDI-EVENT-LIST-001`、UI-019、P7 继续 `in_progress`。下一项继续用 REAPER 实测其他筛选条件，再扩展 Parameter/Value/Position 与 Clear filter / Set filter from selection 控件；这些未完成项不因本次选择操作完成而关闭。
+`MIDI-EVENT-LIST-001`、UI-019、P7 继续 `in_progress`。下一项继续用 REAPER 实测其他筛选条件，再扩展 Parameter/Value/Position、Solo 与 Set filter from selection 控件；这些未完成项不因本次选择操作完成而关闭。
+
+
+### 2026-10-18 Event List Filter Clear filter 与隐藏选区保留
+
+AAADAW 已实现 `Clear filter`：关闭 Show-only / Invert，恢复全部通道与事件类型，编辑器通道设为 All channels，绘制通道重置为 Channel 1；保留筛选对话框与当前事件选区，不更改工程数据或 Undo 历史。原厂 REAPER 7.82 / Default 7 实测确认这些重置值，Invert 会清除而 Solo 会保留；四条 Note 的工程事件和选中位不变。原厂前后截图与 RPP 读回见 [Clear filter 原厂记录](../verification/reaper-parity/midi-event-filter-clear.md)。
+
+Xvfb 当前 AAADAW 实窗前后截图复现 Note + channel 5 + Show-only + draw channel 5，再 Clear；四条 Note 全程保持选中，清除后全部重现且合成 end 行可见。该对照发现筛选隐藏行时不能删除其选区；已调整过滤状态更新并加入隐藏选区回归。截图与当前二进制 Build ID `1560378bb71947a856c19deba9d80477b99f2633`、SHA-256 `11baaa496c7e10524f33086291378a124e4acd1e615d6ec1f907500d09029a5f` 记录在 [AAADAW Clear filter manifest](../verification/reaper-parity/fixtures/midi-event-filter-clear-aaadaw.tsv)。Cranelift AAADAW 套件 **826/826**、Stable workspace strict all-target Clippy (`-D warnings`)、fmt 与 diff check 通过。
+
+Parameter、Value、Position、Repeat、Length、Solo 控件及 Set filter from selection 仍未实现；前五项 Clear 的 reset 语义也尚未逐项原厂验证。`MIDI-EVENT-LIST-001`、UI-019、P7 继续 `in_progress`。

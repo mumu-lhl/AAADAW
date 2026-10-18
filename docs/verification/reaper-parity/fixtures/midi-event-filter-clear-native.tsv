@@ -1,0 +1,16 @@
+artifact	sha256
+fixtures/midi-event-filter-clear-native-before.png	7f019082acf0adfe243aa6c0e32df47cae5c013dd408ddbf75dc25cee33ac870
+fixtures/midi-event-filter-clear-native-after.png	092b00711f1bc2adca0f6ea2a9fa2645d6101e5f213a559777362d4abb297b13
+fixtures/midi-event-filter-clear-invert-before.png	17a16228344aaba2ef9b04eb5a669559122bff3ddc5243449637f6e1d56b5df7
+fixtures/midi-event-filter-clear-invert-after.png	0e182517dec628b00444ef44e11830f91567fe687ed09647c2e17473a9abe6c5
+fixtures/midi-event-filter-clear-native.rpp	dd13e615e68e0afe5347578a5d25e261830259535961b288f2bd75a97ceceede
+fixtures/midi-event-filter-clear-solo-native.rpp	244615abc60d64b7c2abd10e1140ae8d213c78a2c0ff06fae2d5e18b35b16078
+native_build_id	fb9ade2f211bc91a3ee6193630ef17bcf5f6528b
+native_binary_sha256	9976f5608068b7a58518969001b00b527fb0de6ed7459e0e5dda6f29878ee254
+theme	REAPER 7.82 Linux Default 7; theme sha256 575544606736a395520703e532209ad9635f13a41b7ea000bb9810d60025be48
+environment	Linux Xvfb :322; REAPER 7.82; Default 7; four-note project on channels 2–5
+before_state	Note event type; channel 5 only; Show-only on; Invert and Solo off; draw channel 5; all four Notes selected
+clear_assertion	Show-only off; Invert off; all channels; event type <all events>; editor channel All channels; draw channel 1; all four selected Note rows remain selected
+invert_solo_assertion	With Invert and Solo enabled, Clear turns Invert off and preserves Solo. The final RPP EVTFILTER Solo value remains 2 while other modeled filter fields are at their clear values.
+readback	Compared with midi-event-filter-selection-native-show-only-off-add.rpp, Note event bytes and selection flags are unchanged; EVTFILTER and CFGEDIT contain cleared state apart from project save time. The Solo follow-up RPP preserves event data and flags and stores Solo independently.
+limitation	Parameter, Value, Position, Repeat, and Length criteria were not activated before Clear; their individual reset behavior remains unprobed.

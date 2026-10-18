@@ -660,6 +660,7 @@ pub(crate) enum Message {
     ToggleMidiEditorFilterInvert,
     OpenMidiEditorFilter,
     SetMidiEditorEventTypeFilter(MidiEditorEventTypeFilter),
+    ClearMidiEditorFilter,
     ApplyMidiEditorFilterSelection(MidiEditorFilterSelectionOperation),
     CloseMidiEditorFilter,
     MidiEditorFeedback(String),

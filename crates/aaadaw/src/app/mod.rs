@@ -2101,12 +2101,6 @@ impl App {
             .collect()
     }
 
-    fn retain_visible_midi_note_selection(&mut self) {
-        let visible = self.visible_midi_note_ids();
-        self.midi_editor_selected_notes
-            .retain(|note_id| visible.contains(note_id));
-    }
-
     fn remap_selected_controller_events(
         selected: &HashSet<MidiControllerData>,
         after: &[MidiControllerData],
@@ -6500,29 +6494,24 @@ impl App {
                         self.midi_editor_filter_dialog_open = true;
                     }
                 }
-                self.retain_visible_midi_note_selection();
             }
             Message::SetMidiEditorDrawChannel(channel) => {
                 self.midi_editor_draw_channel = channel.min(15);
             }
             Message::ToggleMidiEditorChannelFilter => {
                 self.midi_editor_filter_enabled = !self.midi_editor_filter_enabled;
-                self.retain_visible_midi_note_selection();
             }
             Message::ToggleMidiEditorFilterChannel(channel) if channel < 16 => {
                 self.midi_editor_filter_channels ^= 1_u16 << channel;
                 self.midi_editor_filter_channels_initialized = true;
-                self.retain_visible_midi_note_selection();
             }
             Message::ToggleMidiEditorFilterChannel(_) => {}
             Message::SetMidiEditorFilterChannelsAll(all) => {
                 self.midi_editor_filter_channels = if all { u16::MAX } else { 0 };
                 self.midi_editor_filter_channels_initialized = true;
-                self.retain_visible_midi_note_selection();
             }
             Message::ToggleMidiEditorFilterInvert => {
                 self.midi_editor_filter_inverted = !self.midi_editor_filter_inverted;
-                self.retain_visible_midi_note_selection();
             }
             Message::OpenMidiEditorFilter => {
                 if !self.midi_editor_filter_channels_initialized {
@@ -6533,8 +6522,8 @@ impl App {
             }
             Message::SetMidiEditorEventTypeFilter(event_type_filter) => {
                 self.midi_editor_event_type_filter = event_type_filter;
-                self.retain_visible_midi_note_selection();
             }
+            Message::ClearMidiEditorFilter => self.clear_midi_editor_filter(),
             Message::ApplyMidiEditorFilterSelection(operation) => {
                 self.apply_midi_editor_filter_selection(operation);
             }
@@ -14192,6 +14181,16 @@ impl App {
 
         self.midi_editor_feedback = None;
         self.record_midi_editor_selection_history(item_id, before_inline, before_editor);
+    }
+
+    fn clear_midi_editor_filter(&mut self) {
+        self.midi_editor_channel_selection = MidiEditorChannelSelection::AllChannels;
+        self.midi_editor_event_type_filter = MidiEditorEventTypeFilter::AllEvents;
+        self.midi_editor_draw_channel = 0;
+        self.midi_editor_filter_enabled = false;
+        self.midi_editor_filter_channels = u16::MAX;
+        self.midi_editor_filter_channels_initialized = true;
+        self.midi_editor_filter_inverted = false;
     }
 
     fn midi_editor_filter_event_selection(

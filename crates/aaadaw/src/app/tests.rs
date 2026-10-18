@@ -12455,7 +12455,7 @@ fn midi_editor_humanize_dialog_defaults_to_selected_notes_and_is_undoable() {
 }
 
 #[test]
-fn midi_editor_multichannel_invert_shows_the_complement_and_drops_hidden_selection() {
+fn midi_editor_multichannel_invert_shows_complement_and_preserves_hidden_selection() {
     let mut app = App::default();
     let _ = app.update(Message::AddTrack);
     let track_id = app.project.tracks()[0].id();
@@ -12515,14 +12515,20 @@ fn midi_editor_multichannel_invert_shows_the_complement_and_drops_hidden_selecti
     );
     let _ = app.update(Message::ToggleMidiEditorFilterInvert);
     assert_eq!(app.visible_midi_note_ids(), HashSet::from([note_ids[1]]));
-    assert_eq!(app.midi_editor_selected_notes, HashSet::from([note_ids[1]]));
+    assert_eq!(
+        app.midi_editor_selected_notes,
+        HashSet::from([note_ids[0], note_ids[1]])
+    );
 
     let _ = app.update(Message::ToggleMidiEditorFilterInvert);
     assert_eq!(
         app.visible_midi_note_ids(),
         HashSet::from([note_ids[0], note_ids[2]])
     );
-    assert!(app.midi_editor_selected_notes.is_empty());
+    assert_eq!(
+        app.midi_editor_selected_notes,
+        HashSet::from([note_ids[0], note_ids[1]])
+    );
 
     app.midi_editor_mode = MidiEditorMode::EventList;
     let _ = app.update(Message::OpenMidiEditorFilter);
@@ -12539,7 +12545,10 @@ fn midi_editor_multichannel_invert_shows_the_complement_and_drops_hidden_selecti
     );
     let _ = app.update(Message::ToggleMidiEditorFilterInvert);
     assert!(app.visible_midi_note_ids().is_empty());
-    assert!(app.midi_editor_selected_notes.is_empty());
+    assert_eq!(
+        app.midi_editor_selected_notes,
+        HashSet::from([note_ids[0], note_ids[1], note_ids[2]])
+    );
 
     let _ = app.update(Message::ToggleMidiEditorChannelFilter);
     let _ = app.update(Message::SetMidiEditorEventTypeFilter(
@@ -12547,6 +12556,10 @@ fn midi_editor_multichannel_invert_shows_the_complement_and_drops_hidden_selecti
     ));
     assert_eq!(
         app.visible_midi_note_ids(),
+        HashSet::from([note_ids[0], note_ids[1], note_ids[2]])
+    );
+    assert_eq!(
+        app.midi_editor_selected_notes,
         HashSet::from([note_ids[0], note_ids[1], note_ids[2]])
     );
 }
@@ -12841,6 +12854,100 @@ fn midi_event_filter_sets_adds_and_removes_mixed_event_selection_with_undo_redo(
     assert_eq!(item.program_changes(), [program_change]);
     assert_eq!(item.poly_aftertouches(), [poly_aftertouch]);
     assert_eq!(item.channel_pressures(), [channel_pressure]);
+    assert_eq!(app.project.snapshot(), project_snapshot);
+}
+
+#[test]
+fn midi_editor_filter_clear_resets_filter_and_draw_channel_without_changing_selection_or_project() {
+    let mut app = App::default();
+    let _ = app.update(Message::AddTrack);
+    let track_id = app.project.tracks()[0].id();
+    app.project
+        .apply(DawAction::InsertMidiItem {
+            track_id,
+            start_tick: 0,
+            length_ticks: 3_840,
+        })
+        .expect("test MIDI item should be inserted");
+    let item_id = app.project.midi_items()[0].id();
+    app.project
+        .apply(DawAction::AddMidiNotes {
+            item_id,
+            notes: vec![
+                MidiNoteData {
+                    channel: 4,
+                    pitch: 60,
+                    tick: 120,
+                    duration: 240,
+                    velocity: 90,
+                    off_velocity: 0,
+                },
+                MidiNoteData {
+                    channel: 5,
+                    pitch: 62,
+                    tick: 360,
+                    duration: 240,
+                    velocity: 92,
+                    off_velocity: 0,
+                },
+            ],
+        })
+        .expect("test MIDI notes should be inserted");
+    app.midi_editor_item_id = Some(item_id);
+    app.midi_editor_mode = MidiEditorMode::EventList;
+    app.midi_editor_channel_selection = super::messages::MidiEditorChannelSelection::Multichannel;
+    app.midi_editor_filter_enabled = true;
+    app.midi_editor_filter_channels = 1 << 4;
+    app.midi_editor_filter_channels_initialized = true;
+    app.midi_editor_filter_inverted = true;
+    app.midi_editor_event_type_filter = super::messages::MidiEditorEventTypeFilter::Notes;
+    app.midi_editor_draw_channel = 4;
+    app.midi_editor_filter_dialog_open = true;
+    let note_ids = app.project.midi_items()[0]
+        .notes()
+        .iter()
+        .map(|note| note.id())
+        .collect::<Vec<_>>();
+    app.midi_editor_selected_notes = HashSet::from([note_ids[0]]);
+    app.midi_editor_selected_controllers = HashSet::from([MidiControllerData {
+        controller: 7,
+        channel: 4,
+        tick: 180,
+        value: 96,
+    }]);
+    let project_snapshot = app.project.snapshot();
+    assert_eq!(app.visible_midi_note_ids(), HashSet::from([note_ids[1]]));
+
+    let _ = app.update(Message::ClearMidiEditorFilter);
+
+    assert!(!app.midi_editor_filter_enabled);
+    assert_eq!(app.midi_editor_filter_channels, u16::MAX);
+    assert!(app.midi_editor_filter_channels_initialized);
+    assert!(!app.midi_editor_filter_inverted);
+    assert_eq!(
+        app.midi_editor_event_type_filter,
+        super::messages::MidiEditorEventTypeFilter::AllEvents
+    );
+    assert_eq!(
+        app.midi_editor_channel_selection,
+        super::messages::MidiEditorChannelSelection::AllChannels
+    );
+    assert_eq!(app.midi_editor_draw_channel, 0);
+    assert!(app.midi_editor_filter_dialog_open);
+    assert_eq!(
+        app.visible_midi_note_ids(),
+        HashSet::from_iter(note_ids.iter().copied())
+    );
+    assert_eq!(app.midi_editor_selected_notes, HashSet::from([note_ids[0]]));
+    assert_eq!(
+        app.midi_editor_selected_controllers,
+        HashSet::from([MidiControllerData {
+            controller: 7,
+            channel: 4,
+            tick: 180,
+            value: 96,
+        }])
+    );
     assert_eq!(app.project.snapshot(), project_snapshot);
 }
 
