@@ -325,6 +325,9 @@ impl Callback {
                                 (bend >> 7) as u8 & 0x7F,
                             )
                         }
+                        MidiEventKind::ProgramChange => {
+                            (0xC0 | event.channel, event.program.unwrap_or(0), 0)
+                        }
                     };
                     if self
                         .midi_output

@@ -198,9 +198,9 @@ pub fn midi_export_has_items_in_scope(
 
 /// Encodes a project as a Standard MIDI File using the selected export options.
 ///
-/// Project tracks, notes, controllers, pitch bends, and selected tempo, meter, SMPTE, and marker
-/// metadata are encoded as MIDI events. Tempo ramps are sampled because SMF stores discrete tempo
-/// changes only.
+/// Project tracks, notes, controllers, pitch bends, program changes, and selected tempo, meter,
+/// SMPTE, and marker metadata are encoded as MIDI events. Tempo ramps are sampled because SMF
+/// stores discrete tempo changes only.
 pub fn encode_standard_midi(
     project: &Project,
     options: MidiExportOptions,
@@ -460,6 +460,48 @@ pub fn encode_standard_midi_with_selection(
                         ],
                     });
                 }
+            }
+        }
+
+        for change in item.program_changes() {
+            let positions = if item.is_loop_source() {
+                item.project_positions_at_content_tick(change.tick)
+                    .collect::<Vec<_>>()
+            } else {
+                let visible_end = item
+                    .source_offset_ticks()
+                    .checked_add(item.length_ticks())
+                    .ok_or_else(|| {
+                        "trimmed MIDI item extends beyond the supported timeline".to_owned()
+                    })?;
+                if change.tick < item.source_offset_ticks() || change.tick >= visible_end {
+                    continue;
+                }
+                let Some(position) = item.project_position_at_content_tick(change.tick) else {
+                    continue;
+                };
+                vec![position]
+            };
+            for position in positions {
+                let original_project_tick = project_midi_item_event_tick(project, item, position)?;
+                let order = if time_selection
+                    .is_some_and(|(selection_start, _)| original_project_tick < selection_start)
+                {
+                    2
+                } else {
+                    1
+                };
+                let Some(project_tick) =
+                    time_selection_state_event_tick(original_project_tick, time_selection)
+                else {
+                    continue;
+                };
+                ensure_midi_event_capacity(&mut midi_event_count, 1)?;
+                events_by_track[track_index].push(Event {
+                    tick: scale_tick_position(project_tick, project_ppq, options.ppq)?,
+                    order,
+                    bytes: vec![0xc0 | change.channel, change.program],
+                });
             }
         }
     }

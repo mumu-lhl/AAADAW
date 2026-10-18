@@ -8,8 +8,8 @@ use aaadaw_app::{
     AudioAssetManagementOperation, AudioAssetManagementResult, WavChannelCount, WavSampleFormat,
 };
 use aaadaw_core::{
-    DawAction, ItemId, MarkerId, MidiControllerData, MidiNoteData, MidiPitchBendData, NoteId,
-    Project, RegionId, TrackId,
+    DawAction, ItemId, MarkerId, MidiControllerData, MidiNoteData, MidiPitchBendData,
+    MidiProgramChangeData, NoteId, Project, RegionId, TrackId,
 };
 use aaadaw_engine::MasterOutputCeiling;
 use aaadaw_storage::{ArrangementViewState, ProjectSessionLock};
@@ -173,6 +173,7 @@ pub(crate) enum MidiEditorEventListCursor {
     Note(NoteId),
     Controller(MidiControllerData),
     PitchBend(MidiPitchBendData),
+    ProgramChange(MidiProgramChangeData),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -196,14 +197,16 @@ pub(crate) enum MidiEditorEventTypeFilter {
     Notes,
     ControlChange,
     Pitch,
+    ProgramChange,
 }
 
 impl MidiEditorEventTypeFilter {
-    pub(crate) const OPTIONS: [Self; 4] = [
+    pub(crate) const OPTIONS: [Self; 5] = [
         Self::AllEvents,
         Self::Notes,
         Self::ControlChange,
         Self::Pitch,
+        Self::ProgramChange,
     ];
 
     pub(crate) fn matches(self, kind: MidiEditorEventKind) -> bool {
@@ -213,6 +216,7 @@ impl MidiEditorEventTypeFilter {
                 | (Self::Notes, MidiEditorEventKind::Note)
                 | (Self::ControlChange, MidiEditorEventKind::ControlChange)
                 | (Self::Pitch, MidiEditorEventKind::Pitch)
+                | (Self::ProgramChange, MidiEditorEventKind::ProgramChange)
         )
     }
 }
@@ -224,6 +228,7 @@ impl std::fmt::Display for MidiEditorEventTypeFilter {
             Self::Notes => "Note",
             Self::ControlChange => "Control Change (CC)",
             Self::Pitch => "Pitch",
+            Self::ProgramChange => "Program Change",
         })
     }
 }
@@ -233,6 +238,7 @@ pub(crate) enum MidiEditorEventKind {
     Note,
     ControlChange,
     Pitch,
+    ProgramChange,
 }
 
 impl MidiEditorChannelSelection {
@@ -602,6 +608,7 @@ pub(crate) enum Message {
     SelectMidiNoteEvent(NoteId, bool),
     SelectMidiControllerEvent(ItemId, MidiControllerData, bool),
     SelectMidiPitchBendEvent(ItemId, MidiPitchBendData, bool),
+    SelectMidiProgramChangeEvent(ItemId, MidiProgramChangeData, bool),
     MoveMidiEditorEventListCursor(MidiEditorEventListCursorDirection, bool, bool),
     CopyMidiNotes(ItemId, Vec<NoteId>),
     PasteMidiNotes(ItemId),
@@ -614,6 +621,7 @@ pub(crate) enum Message {
     DeleteMidiNotes(ItemId, Vec<NoteId>),
     SetMidiControllers(ItemId, Vec<MidiControllerData>),
     SetMidiPitchBends(ItemId, Vec<MidiPitchBendData>),
+    SetMidiProgramChanges(ItemId, Vec<MidiProgramChangeData>),
     PianoRollPan(i8),
     PianoRollPanPixels(f32),
     PianoRollZoom(f32),
@@ -1122,13 +1130,17 @@ mod midi_channel_selection_tests {
         assert!(MidiEditorEventTypeFilter::AllEvents.matches(MidiEditorEventKind::Note));
         assert!(MidiEditorEventTypeFilter::AllEvents.matches(MidiEditorEventKind::ControlChange));
         assert!(MidiEditorEventTypeFilter::AllEvents.matches(MidiEditorEventKind::Pitch));
+        assert!(MidiEditorEventTypeFilter::AllEvents.matches(MidiEditorEventKind::ProgramChange));
         assert!(MidiEditorEventTypeFilter::Notes.matches(MidiEditorEventKind::Note));
         assert!(!MidiEditorEventTypeFilter::Notes.matches(MidiEditorEventKind::ControlChange));
         assert!(
             MidiEditorEventTypeFilter::ControlChange.matches(MidiEditorEventKind::ControlChange)
         );
         assert!(MidiEditorEventTypeFilter::Pitch.matches(MidiEditorEventKind::Pitch));
-        assert_eq!(MidiEditorEventTypeFilter::OPTIONS.len(), 4);
+        assert!(
+            MidiEditorEventTypeFilter::ProgramChange.matches(MidiEditorEventKind::ProgramChange)
+        );
+        assert_eq!(MidiEditorEventTypeFilter::OPTIONS.len(), 5);
         assert_eq!(
             MidiEditorEventTypeFilter::OPTIONS[0].to_string(),
             "<all events>"

@@ -17,8 +17,9 @@ use aaadaw_app::{
 use aaadaw_core::ProjectSnapshot;
 use aaadaw_core::{
     AudioItem, DawAction, FxParameterChange, GridFraction, ItemId, MarkerId, MeterPointSnapshot,
-    MidiControllerData, MidiItem, MidiItemPosition, MidiNoteData, MidiPitchBendData, NoteId,
-    Project, RazorEditArea, RegionId, TempoCurve, TimeSignature, TrackId,
+    MidiControllerData, MidiItem, MidiItemPosition, MidiNoteData, MidiPitchBendData,
+    MidiProgramChangeData, NoteId, Project, RazorEditArea, RegionId, TempoCurve, TimeSignature,
+    TrackId,
 };
 #[cfg(feature = "audio-device")]
 use aaadaw_engine::{
@@ -485,6 +486,7 @@ struct App {
     midi_editor_selected_notes: HashSet<aaadaw_core::NoteId>,
     midi_editor_selected_controllers: HashSet<MidiControllerData>,
     midi_editor_selected_pitch_bends: HashSet<MidiPitchBendData>,
+    midi_editor_selected_program_changes: HashSet<MidiProgramChangeData>,
     midi_editor_event_list_cursor: Option<MidiEditorEventListCursor>,
     midi_editor_event_list_anchor: Option<MidiEditorEventListCursor>,
     midi_quantize_dialog: Option<MidiQuantizeDialogState>,
@@ -760,6 +762,7 @@ enum MidiEventPropertiesTarget {
     Notes(Vec<NoteId>),
     Controllers(Vec<MidiControllerData>),
     PitchBends(Vec<MidiPitchBendData>),
+    ProgramChanges(Vec<MidiProgramChangeData>),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -1898,6 +1901,9 @@ impl App {
             MidiEditorEventListCursor::PitchBend(event) => {
                 self.midi_editor_selected_pitch_bends.contains(&event)
             }
+            MidiEditorEventListCursor::ProgramChange(event) => {
+                self.midi_editor_selected_program_changes.contains(&event)
+            }
         }
     }
 
@@ -1943,6 +1949,7 @@ impl App {
         let has_multiselection = self.midi_editor_selected_notes.len()
             + self.midi_editor_selected_controllers.len()
             + self.midi_editor_selected_pitch_bends.len()
+            + self.midi_editor_selected_program_changes.len()
             > 1;
         let collapse_at_cursor = !preserve_selection && !extend_selection && has_multiselection;
         let default_index = match direction {
@@ -1968,6 +1975,7 @@ impl App {
             self.midi_editor_selected_notes.clear();
             self.midi_editor_selected_controllers.clear();
             self.midi_editor_selected_pitch_bends.clear();
+            self.midi_editor_selected_program_changes.clear();
             if extend_selection {
                 let anchor_index = self
                     .midi_editor_event_list_anchor
@@ -1991,6 +1999,9 @@ impl App {
                         MidiEditorEventListCursor::PitchBend(event) => {
                             self.midi_editor_selected_pitch_bends.insert(event);
                         }
+                        MidiEditorEventListCursor::ProgramChange(event) => {
+                            self.midi_editor_selected_program_changes.insert(event);
+                        }
                     }
                 }
             } else {
@@ -2003,6 +2014,9 @@ impl App {
                     }
                     MidiEditorEventListCursor::PitchBend(event) => {
                         self.midi_editor_selected_pitch_bends.insert(event);
+                    }
+                    MidiEditorEventListCursor::ProgramChange(event) => {
+                        self.midi_editor_selected_program_changes.insert(event);
                     }
                 }
             }
@@ -2047,6 +2061,7 @@ impl App {
             self.midi_editor_selected_notes.clear();
             self.midi_editor_selected_controllers.clear();
             self.midi_editor_selected_pitch_bends.clear();
+            self.midi_editor_selected_program_changes.clear();
             self.midi_editor_event_list_cursor = None;
             self.midi_editor_event_list_anchor = None;
             self.midi_editor_edit_cursor_tick = None;
@@ -2659,6 +2674,38 @@ impl App {
                     value_mixed,
                 )
             }
+            MidiEventPropertiesTarget::ProgramChanges(events) => {
+                if events.is_empty() {
+                    return None;
+                }
+                let events = events
+                    .iter()
+                    .map(|target| item.program_changes().iter().find(|event| *event == target))
+                    .collect::<Option<Vec<_>>>()?;
+                let (position, position_mixed) = common_midi_event_property(
+                    events
+                        .iter()
+                        .map(|event| view::midi_event_list_position(event.tick, ppq, meter)),
+                );
+                let (channel, channel_mixed) = common_midi_event_property(
+                    events.iter().map(|event| (event.channel + 1).to_string()),
+                );
+                let (value, value_mixed) = common_midi_event_property(
+                    events.iter().map(|event| event.program.to_string()),
+                );
+                (
+                    position,
+                    position_mixed,
+                    String::new(),
+                    false,
+                    channel,
+                    channel_mixed,
+                    String::new(),
+                    false,
+                    value,
+                    value_mixed,
+                )
+            }
         };
         Some(MidiEventPropertiesDialogState {
             item_id,
@@ -3012,6 +3059,88 @@ impl App {
                 }
                 task
             }
+            MidiEventPropertiesTarget::ProgramChanges(events) => {
+                let Some(value_edit) = parse_midi_event_property_edit(
+                    &dialog.value,
+                    dialog.value_mixed,
+                    |value| value.parse::<i128>().ok(),
+                    parse_midi_event_relative_numeric,
+                ) else {
+                    self.midi_editor_feedback = Some("Program number must be from 0 to 127".into());
+                    return Task::none();
+                };
+                let mut program_changes = item.program_changes().to_vec();
+                let mut updated_events = Vec::with_capacity(events.len());
+                for event in &events {
+                    let Some(index) = program_changes
+                        .iter()
+                        .position(|candidate| candidate == event)
+                    else {
+                        self.midi_event_properties_dialog = None;
+                        return Task::none();
+                    };
+                    let Some(channel) = apply_midi_event_properties_edit(
+                        i128::from(event.channel) + 1,
+                        channel_edit,
+                        1,
+                        16,
+                    ) else {
+                        self.midi_editor_feedback = Some("Channel must be from 1 to 16".into());
+                        return Task::none();
+                    };
+                    let Some(tick) = apply_midi_event_properties_edit(
+                        i128::from(event.tick),
+                        position_edit,
+                        0,
+                        i128::from(u64::MAX),
+                    ) else {
+                        self.midi_editor_feedback =
+                            Some("Position is outside its valid range".into());
+                        return Task::none();
+                    };
+                    let Some(program) = apply_midi_event_properties_edit(
+                        i128::from(event.program),
+                        value_edit,
+                        0,
+                        127,
+                    ) else {
+                        self.midi_editor_feedback =
+                            Some("Program number must be from 0 to 127".into());
+                        return Task::none();
+                    };
+                    let candidate = MidiProgramChangeData {
+                        channel: channel as u8 - 1,
+                        tick: tick as u64,
+                        program: program as u8,
+                    };
+                    program_changes[index] = candidate;
+                    updated_events.push(candidate);
+                }
+                if program_changes == item.program_changes() {
+                    self.midi_editor_feedback = None;
+                    if close_dialog {
+                        self.midi_event_properties_dialog = None;
+                    }
+                    return Task::none();
+                }
+                self.midi_editor_feedback = None;
+                let task = self.update(Message::SetMidiProgramChanges(item_id, program_changes));
+                if self.status.starts_with("Action failed:") {
+                    self.midi_editor_feedback = Some(self.status.clone());
+                    return task;
+                }
+                self.midi_editor_selected_program_changes =
+                    updated_events.iter().copied().collect();
+                if close_dialog {
+                    self.midi_event_properties_dialog = None;
+                } else {
+                    self.midi_event_properties_dialog = self.midi_event_properties_state(
+                        item_id,
+                        MidiEventPropertiesTarget::ProgramChanges(updated_events),
+                    );
+                }
+                task
+            }
         }
     }
 
@@ -3223,6 +3352,7 @@ impl App {
                     | Message::EditMidiNotes(..)
                     | Message::SetMidiControllers(..)
                     | Message::SetMidiPitchBends(..)
+                    | Message::SetMidiProgramChanges(..)
                     | Message::Escape
                     | Message::RuntimeKeyboardEvent(..)
                     | Message::BackgroundTick
@@ -4608,6 +4738,7 @@ impl App {
                     self.midi_editor_selected_notes.clear();
                     self.midi_editor_selected_controllers.clear();
                     self.midi_editor_selected_pitch_bends.clear();
+                    self.midi_editor_selected_program_changes.clear();
                     self.midi_editor_event_list_cursor = None;
                     self.midi_editor_event_list_anchor = None;
                 } else if self.main_window_id == Some(window_id) {
@@ -4648,6 +4779,7 @@ impl App {
                     self.midi_editor_selected_notes.clear();
                     self.midi_editor_selected_controllers.clear();
                     self.midi_editor_selected_pitch_bends.clear();
+                    self.midi_editor_selected_program_changes.clear();
                     self.midi_editor_event_list_cursor = None;
                     self.midi_editor_event_list_anchor = None;
                     self.midi_editor_edit_cursor_tick = None;
@@ -4708,6 +4840,12 @@ impl App {
                     .filter(|event| !self.midi_editor_selected_pitch_bends.contains(event))
                     .copied()
                     .collect::<Vec<_>>();
+                let program_changes = item
+                    .program_changes()
+                    .iter()
+                    .filter(|event| !self.midi_editor_selected_program_changes.contains(event))
+                    .copied()
+                    .collect::<Vec<_>>();
                 let mut actions = Vec::new();
                 if !note_ids.is_empty() {
                     actions.push(DawAction::DeleteMidiNotes { item_id, note_ids });
@@ -4724,6 +4862,12 @@ impl App {
                         pitch_bends,
                     });
                 }
+                if program_changes.len() != item.program_changes().len() {
+                    actions.push(DawAction::SetMidiProgramChanges {
+                        item_id,
+                        program_changes,
+                    });
+                }
                 if !actions.is_empty() {
                     self.apply_action(
                         DawAction::BatchTransaction {
@@ -4736,6 +4880,7 @@ impl App {
                 self.midi_editor_selected_notes.clear();
                 self.midi_editor_selected_controllers.clear();
                 self.midi_editor_selected_pitch_bends.clear();
+                self.midi_editor_selected_program_changes.clear();
                 self.midi_editor_event_list_cursor = None;
                 self.midi_editor_event_list_anchor = None;
             }
@@ -4749,6 +4894,7 @@ impl App {
                         if !self.midi_editor_selected_notes.is_empty()
                             && self.midi_editor_selected_controllers.is_empty()
                             && self.midi_editor_selected_pitch_bends.is_empty()
+                            && self.midi_editor_selected_program_changes.is_empty()
                         {
                             Some(MidiEventPropertiesTarget::Notes(
                                 item.notes()
@@ -4762,6 +4908,7 @@ impl App {
                         } else if !self.midi_editor_selected_controllers.is_empty()
                             && self.midi_editor_selected_notes.is_empty()
                             && self.midi_editor_selected_pitch_bends.is_empty()
+                            && self.midi_editor_selected_program_changes.is_empty()
                         {
                             Some(MidiEventPropertiesTarget::Controllers(
                                 item.controllers()
@@ -4775,12 +4922,27 @@ impl App {
                         } else if !self.midi_editor_selected_pitch_bends.is_empty()
                             && self.midi_editor_selected_notes.is_empty()
                             && self.midi_editor_selected_controllers.is_empty()
+                            && self.midi_editor_selected_program_changes.is_empty()
                         {
                             Some(MidiEventPropertiesTarget::PitchBends(
                                 item.pitch_bends()
                                     .iter()
                                     .filter(|event| {
                                         self.midi_editor_selected_pitch_bends.contains(event)
+                                    })
+                                    .copied()
+                                    .collect(),
+                            ))
+                        } else if !self.midi_editor_selected_program_changes.is_empty()
+                            && self.midi_editor_selected_notes.is_empty()
+                            && self.midi_editor_selected_controllers.is_empty()
+                            && self.midi_editor_selected_pitch_bends.is_empty()
+                        {
+                            Some(MidiEventPropertiesTarget::ProgramChanges(
+                                item.program_changes()
+                                    .iter()
+                                    .filter(|event| {
+                                        self.midi_editor_selected_program_changes.contains(event)
                                     })
                                     .copied()
                                     .collect(),
@@ -4916,6 +5078,7 @@ impl App {
                 if !self.keyboard_modifiers.command() && !self.keyboard_modifiers.control() {
                     self.midi_editor_selected_controllers.clear();
                     self.midi_editor_selected_pitch_bends.clear();
+                    self.midi_editor_selected_program_changes.clear();
                 }
                 let visible_note_ids = self.visible_midi_note_ids();
                 self.midi_editor_selected_notes = note_ids
@@ -4941,6 +5104,7 @@ impl App {
                 } else {
                     self.midi_editor_selected_controllers.clear();
                     self.midi_editor_selected_pitch_bends.clear();
+                    self.midi_editor_selected_program_changes.clear();
                     self.midi_editor_selected_notes = HashSet::from([note_id]);
                 }
             }
@@ -4958,6 +5122,7 @@ impl App {
                     self.midi_editor_selected_notes.clear();
                     self.midi_editor_selected_controllers.clear();
                     self.midi_editor_selected_pitch_bends.clear();
+                    self.midi_editor_selected_program_changes.clear();
                     self.midi_editor_selected_controllers.insert(event);
                 } else if !self.midi_editor_selected_controllers.remove(&event) {
                     self.midi_editor_selected_controllers.insert(event);
@@ -4977,12 +5142,35 @@ impl App {
                     self.midi_editor_selected_notes.clear();
                     self.midi_editor_selected_controllers.clear();
                     self.midi_editor_selected_pitch_bends.clear();
+                    self.midi_editor_selected_program_changes.clear();
                     self.midi_editor_selected_pitch_bends.insert(event);
                 } else if !self.midi_editor_selected_pitch_bends.remove(&event) {
                     self.midi_editor_selected_pitch_bends.insert(event);
                 }
             }
-            Message::SelectMidiControllerEvent(..) | Message::SelectMidiPitchBendEvent(..) => {}
+            Message::SelectMidiProgramChangeEvent(item_id, event, additive)
+                if self.midi_editor_item_id == Some(item_id) =>
+            {
+                self.midi_editor_feedback = None;
+                self.midi_editor_event_list_cursor =
+                    Some(MidiEditorEventListCursor::ProgramChange(event));
+                if !additive || self.midi_editor_event_list_anchor.is_none() {
+                    self.midi_editor_event_list_anchor =
+                        Some(MidiEditorEventListCursor::ProgramChange(event));
+                }
+                if !additive {
+                    self.midi_editor_selected_notes.clear();
+                    self.midi_editor_selected_controllers.clear();
+                    self.midi_editor_selected_pitch_bends.clear();
+                    self.midi_editor_selected_program_changes.clear();
+                    self.midi_editor_selected_program_changes.insert(event);
+                } else if !self.midi_editor_selected_program_changes.remove(&event) {
+                    self.midi_editor_selected_program_changes.insert(event);
+                }
+            }
+            Message::SelectMidiControllerEvent(..)
+            | Message::SelectMidiPitchBendEvent(..)
+            | Message::SelectMidiProgramChangeEvent(..) => {}
             Message::CopyMidiNotes(item_id, note_ids) => {
                 if let Some(item) = self
                     .project
@@ -5318,6 +5506,36 @@ impl App {
                 );
                 if self.revision != previous_revision && self.midi_editor_item_id == Some(item_id) {
                     self.midi_editor_selected_pitch_bends = selected;
+                }
+            }
+            Message::SetMidiProgramChanges(item_id, program_changes) => {
+                self.midi_editor_feedback = None;
+                let before = self
+                    .project
+                    .midi_items()
+                    .iter()
+                    .find(|item| item.id() == item_id)
+                    .map(|item| item.program_changes().to_vec())
+                    .unwrap_or_default();
+                let mut selected = self.midi_editor_selected_program_changes.clone();
+                if before.len() == program_changes.len() {
+                    for (old, new) in before.iter().zip(&program_changes) {
+                        if old != new && selected.remove(old) {
+                            selected.insert(*new);
+                        }
+                    }
+                }
+                selected.retain(|event| program_changes.contains(event));
+                let previous_revision = self.revision;
+                self.apply_action(
+                    DawAction::SetMidiProgramChanges {
+                        item_id,
+                        program_changes,
+                    },
+                    "MIDI program changes edited",
+                );
+                if self.revision != previous_revision && self.midi_editor_item_id == Some(item_id) {
+                    self.midi_editor_selected_program_changes = selected;
                 }
             }
             Message::PianoRollPan(beats) => {
@@ -9166,6 +9384,7 @@ impl App {
             self.midi_editor_selected_notes.clear();
             self.midi_editor_selected_controllers.clear();
             self.midi_editor_selected_pitch_bends.clear();
+            self.midi_editor_selected_program_changes.clear();
             self.midi_editor_event_list_cursor = None;
             self.midi_editor_event_list_anchor = None;
             if item_changed {
@@ -9189,6 +9408,7 @@ impl App {
             self.midi_editor_selected_notes.clear();
             self.midi_editor_selected_controllers.clear();
             self.midi_editor_selected_pitch_bends.clear();
+            self.midi_editor_selected_program_changes.clear();
             self.midi_editor_event_list_cursor = None;
             self.midi_editor_event_list_anchor = None;
             return iced::window::gain_focus(window_id);
@@ -9205,6 +9425,7 @@ impl App {
         self.midi_editor_selected_notes.clear();
         self.midi_editor_selected_controllers.clear();
         self.midi_editor_selected_pitch_bends.clear();
+        self.midi_editor_selected_program_changes.clear();
         self.midi_editor_event_list_cursor = None;
         self.midi_editor_event_list_anchor = None;
         self.midi_editor_origin_tick = 0;

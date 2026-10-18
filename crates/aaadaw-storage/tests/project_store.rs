@@ -1,6 +1,6 @@
 use aaadaw_core::{
     BpmBasis, DawAction, MeterPointSnapshot, MidiControllerData, MidiNoteData, MidiPitchBendData,
-    Project, RazorEditArea, VolumeAutomationPoint,
+    MidiProgramChangeData, Project, RazorEditArea, VolumeAutomationPoint,
 };
 use aaadaw_storage::{CURRENT_SCHEMA_VERSION, ProjectStore, StorageError};
 use rusqlite::Connection;
@@ -37,6 +37,26 @@ fn track_razor_edit_areas_migrate_and_round_trip() {
     store.close().unwrap();
 
     let store = ProjectStore::open(&path).unwrap();
+    assert_eq!(store.load().unwrap().snapshot(), project.snapshot());
+    store.close().unwrap();
+    remove_database(&path);
+}
+
+#[test]
+fn schema_59_migration_adds_the_program_change_table() {
+    let path = project_path();
+    let project = Project::new();
+    let mut store = ProjectStore::open(&path).unwrap();
+    store.save(&project).unwrap();
+    store.close().unwrap();
+
+    Connection::open(&path)
+        .unwrap()
+        .execute_batch("DROP TABLE midi_program_changes; PRAGMA user_version = 59;")
+        .unwrap();
+
+    let store = ProjectStore::open(&path).unwrap();
+    assert_eq!(store.schema_version().unwrap(), CURRENT_SCHEMA_VERSION);
     assert_eq!(store.load().unwrap().snapshot(), project.snapshot());
     store.close().unwrap();
     remove_database(&path);
@@ -1317,6 +1337,23 @@ fn schema_migration_and_project_roundtrip_preserve_state() {
             ],
         })
         .expect("MIDI pitch bends should be stored in the project");
+    project
+        .apply(DawAction::SetMidiProgramChanges {
+            item_id,
+            program_changes: vec![
+                MidiProgramChangeData {
+                    channel: 5,
+                    tick: 0,
+                    program: 11,
+                },
+                MidiProgramChangeData {
+                    channel: 14,
+                    tick: 720,
+                    program: 127,
+                },
+            ],
+        })
+        .expect("MIDI program changes should be stored in the project");
     project
         .apply(DawAction::SetTempo {
             start_tick: 960,

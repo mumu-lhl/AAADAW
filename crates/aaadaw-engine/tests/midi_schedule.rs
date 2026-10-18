@@ -1,6 +1,6 @@
 use aaadaw_core::{
-    DawAction, MidiControllerData, MidiItemPosition, MidiNoteData, MidiPitchBendData, Project,
-    TempoCurve,
+    DawAction, MidiControllerData, MidiItemPosition, MidiNoteData, MidiPitchBendData,
+    MidiProgramChangeData, Project, TempoCurve,
 };
 use aaadaw_engine::{
     MidiEventKind, MidiEventPlan, MidiScheduleError, MidiSegmentCursor, ScheduledMidiEvent,
@@ -417,6 +417,7 @@ fn segmented_event_plan_keeps_output_unchanged_when_callback_buffer_is_too_small
         velocity: 2,
         controller: None,
         pitch_bend: None,
+        program: None,
         kind: MidiEventKind::NoteOn,
     };
     let mut output = [Some(sentinel); 2];
@@ -767,6 +768,103 @@ fn pitch_bend_schedule_preserves_14_bit_values_and_chases_the_latest_state() {
     assert_eq!(chased.kind, MidiEventKind::PitchBend);
     assert_eq!(chased.pitch_bend, Some(16_383));
     assert_eq!(chased.sample_offset, 0);
+}
+
+#[test]
+fn program_change_schedule_uses_channel_status_and_chases_the_latest_program() {
+    let (mut project, track_id) = project_with_note(69, 480, 240);
+    let item_id = project.midi_items()[0].id();
+    project
+        .apply(DawAction::SetMidiProgramChanges {
+            item_id,
+            program_changes: vec![
+                MidiProgramChangeData {
+                    channel: 6,
+                    tick: 0,
+                    program: 7,
+                },
+                MidiProgramChangeData {
+                    channel: 6,
+                    tick: 960,
+                    program: 41,
+                },
+            ],
+        })
+        .expect("program changes should be accepted");
+    let change_sample = project.sample_at_tick(960).unwrap();
+    let plan = MidiEventPlan::compile(&project).unwrap();
+    let mut output = [None; 8];
+
+    assert_eq!(plan.events_for_block(0, 1, &mut output).unwrap(), 1);
+    let first = output[0].unwrap();
+    assert_eq!(first.kind, MidiEventKind::ProgramChange);
+    assert_eq!(first.track_id, track_id);
+    assert_eq!(first.channel, 6);
+    assert_eq!(first.program, Some(7));
+
+    assert_eq!(
+        plan.active_program_changes_at(change_sample + 1, &mut output)
+            .unwrap(),
+        1
+    );
+    let chased = output[0].unwrap();
+    assert_eq!(chased.kind, MidiEventKind::ProgramChange);
+    assert_eq!(chased.program, Some(41));
+    assert_eq!(chased.sample_offset, 0);
+}
+
+#[test]
+fn program_change_follows_bank_select_and_precedes_note_on_at_the_same_tick() {
+    let (mut project, track_id) = project_with_note(69, 960, 240);
+    let item_id = project.midi_items()[0].id();
+    project
+        .apply(DawAction::SetMidiControllers {
+            item_id,
+            controllers: vec![
+                MidiControllerData {
+                    controller: 0,
+                    channel: 6,
+                    tick: 960,
+                    value: 4,
+                },
+                MidiControllerData {
+                    controller: 32,
+                    channel: 6,
+                    tick: 960,
+                    value: 2,
+                },
+            ],
+        })
+        .expect("bank-select controller values should be accepted");
+    project
+        .apply(DawAction::SetMidiProgramChanges {
+            item_id,
+            program_changes: vec![MidiProgramChangeData {
+                channel: 6,
+                tick: 960,
+                program: 41,
+            }],
+        })
+        .expect("program change should be accepted");
+
+    let sample = project.sample_at_tick(960).unwrap();
+    let plan = MidiEventPlan::compile(&project).unwrap();
+    let mut output = [None; 8];
+    assert_eq!(plan.events_for_block(sample, 1, &mut output).unwrap(), 4);
+    let events = output[..4]
+        .iter()
+        .map(|event| event.unwrap())
+        .collect::<Vec<_>>();
+    assert!(events.iter().all(|event| event.track_id == track_id));
+    assert!(events[..3].iter().all(|event| event.channel == 6));
+    assert_eq!(events[3].channel, 0);
+    assert_eq!(events[0].kind, MidiEventKind::ControllerChange);
+    assert_eq!(events[0].controller, Some(0));
+    assert_eq!(events[1].kind, MidiEventKind::ControllerChange);
+    assert_eq!(events[1].controller, Some(32));
+    assert_eq!(events[2].kind, MidiEventKind::ProgramChange);
+    assert_eq!(events[2].program, Some(41));
+    assert_eq!(events[3].kind, MidiEventKind::NoteOn);
 }
 
 #[test]

@@ -1576,14 +1576,21 @@ fn submit_isolated_block_with_preview(
             fault_isolated_route(route);
             return false;
         };
-        let Ok(notes) = midi_plan.active_notes_at(
+        let Ok(program_changes) = midi_plan.active_program_changes_at(
             route.isolated_next_start_sample,
             &mut midi_scratch[controllers + pitch_bends..],
         ) else {
             fault_isolated_route(route);
             return false;
         };
-        count = controllers + pitch_bends + notes;
+        let Ok(notes) = midi_plan.active_notes_at(
+            route.isolated_next_start_sample,
+            &mut midi_scratch[controllers + pitch_bends + program_changes..],
+        ) else {
+            fault_isolated_route(route);
+            return false;
+        };
+        count = controllers + pitch_bends + program_changes + notes;
     }
     if include_project_events {
         let Ok(scheduled) = midi_plan.events_for_block(
@@ -2222,6 +2229,7 @@ impl AudioRenderGraph {
             None;
             midi_plan
                 .len()
+                .saturating_mul(2)
                 .saturating_add(MIDI_INPUT_EVENTS_PER_BLOCK)
                 .saturating_add(2)
                 .max(2)
@@ -3333,6 +3341,7 @@ impl AudioRenderGraph {
                         velocity: 0,
                         controller: None,
                         pitch_bend: None,
+                        program: None,
                         kind: MidiEventKind::NoteOff,
                     });
                     midi_event_count += 1;
@@ -3357,6 +3366,7 @@ impl AudioRenderGraph {
                         velocity: requested_velocity,
                         controller: None,
                         pitch_bend: None,
+                        program: None,
                         kind: MidiEventKind::NoteOn,
                     });
                     midi_event_count += 1;

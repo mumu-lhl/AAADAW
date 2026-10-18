@@ -24,8 +24,8 @@ use crate::timeline::{SnapGrid, TimelineEvent};
 #[cfg(all(feature = "jack-backend", feature = "pipewire-backend"))]
 use aaadaw_app::PlaybackBackend;
 use aaadaw_core::{
-    DawAction, MidiControllerData, MidiItemPosition, MidiNoteData, MidiPitchBendData, Project,
-    RazorEditArea, TrackFxPlugin,
+    DawAction, MidiControllerData, MidiItemPosition, MidiNoteData, MidiPitchBendData,
+    MidiProgramChangeData, Project, RazorEditArea, TrackFxPlugin,
 };
 use aaadaw_media::{AudioStreamDecoder, AudioWaveform};
 use aaadaw_storage::{ArrangementViewState, ProjectSessionLock, ProjectStore};
@@ -12700,6 +12700,17 @@ fn midi_event_list_mode_switches_by_reaper_shortcuts_and_deletes_selected_events
             pitch_bends: vec![pitch_bend],
         })
         .expect("test MIDI pitch bend should be inserted");
+    let program_change = MidiProgramChangeData {
+        channel: 0,
+        tick: 420,
+        program: 41,
+    };
+    app.project
+        .apply(DawAction::SetMidiProgramChanges {
+            item_id,
+            program_changes: vec![program_change],
+        })
+        .expect("test MIDI program change should be inserted");
     app.midi_editor_item_id = Some(item_id);
     let note_id = app.project.midi_items()[0].notes()[0].id();
     let before_revision = app.revision;
@@ -12738,6 +12749,11 @@ fn midi_event_list_mode_switches_by_reaper_shortcuts_and_deletes_selected_events
         item_id, controller, true,
     ));
     let _ = app.update(Message::SelectMidiPitchBendEvent(item_id, pitch_bend, true));
+    let _ = app.update(Message::SelectMidiProgramChangeEvent(
+        item_id,
+        program_change,
+        true,
+    ));
     assert_eq!(app.midi_editor_selected_notes, HashSet::from([note_id]));
     assert_eq!(
         app.midi_editor_selected_controllers,
@@ -12747,6 +12763,10 @@ fn midi_event_list_mode_switches_by_reaper_shortcuts_and_deletes_selected_events
         app.midi_editor_selected_pitch_bends,
         HashSet::from([pitch_bend])
     );
+    assert_eq!(
+        app.midi_editor_selected_program_changes,
+        HashSet::from([program_change])
+    );
     assert!(!commands::is_enabled(&app, CommandId::MidiEventProperties));
 
     let _ = app.update(Message::DeleteSelectedMidiEvents(item_id));
@@ -12754,21 +12774,25 @@ fn midi_event_list_mode_switches_by_reaper_shortcuts_and_deletes_selected_events
     assert!(item.notes().is_empty());
     assert!(item.controllers().is_empty());
     assert!(item.pitch_bends().is_empty());
+    assert!(item.program_changes().is_empty());
     assert_eq!(app.revision, before_revision + 1);
     assert!(app.midi_editor_selected_notes.is_empty());
     assert!(app.midi_editor_selected_controllers.is_empty());
     assert!(app.midi_editor_selected_pitch_bends.is_empty());
+    assert!(app.midi_editor_selected_program_changes.is_empty());
 
     let _ = app.update(Message::Undo);
     let item = &app.project.midi_items()[0];
     assert_eq!(item.notes().len(), 1);
     assert_eq!(item.controllers(), [controller]);
     assert_eq!(item.pitch_bends(), [pitch_bend]);
+    assert_eq!(item.program_changes(), [program_change]);
     let _ = app.update(Message::Redo);
     let item = &app.project.midi_items()[0];
     assert!(item.notes().is_empty());
     assert!(item.controllers().is_empty());
     assert!(item.pitch_bends().is_empty());
+    assert!(item.program_changes().is_empty());
 }
 
 #[test]
@@ -13305,6 +13329,85 @@ fn midi_event_properties_edits_pitch_bend_fields_with_apply_and_undo() {
     assert_eq!(app.project.midi_items()[0].pitch_bends(), [accepted]);
     assert_eq!(app.project.history_cursor(), history_before_invalid);
     let _ = app.update(Message::CancelMidiEventProperties);
+}
+
+#[test]
+fn midi_event_properties_edits_program_changes_using_reaper_zero_based_values() {
+    let mut app = App::default();
+    let _ = app.update(Message::AddTrack);
+    let track_id = app.project.tracks()[0].id();
+    app.project
+        .apply(DawAction::InsertMidiItem {
+            track_id,
+            start_tick: 0,
+            length_ticks: 3_840,
+        })
+        .expect("test MIDI item should be inserted");
+    let item_id = app.project.midi_items()[0].id();
+    let original = MidiProgramChangeData {
+        channel: 2,
+        tick: 480,
+        program: 41,
+    };
+    app.project
+        .apply(DawAction::SetMidiProgramChanges {
+            item_id,
+            program_changes: vec![original],
+        })
+        .expect("program change should be inserted");
+    app.midi_editor_item_id = Some(item_id);
+    app.midi_editor_selected_program_changes = HashSet::from([original]);
+    let _ = app.update(Message::OpenMidiEventProperties(item_id));
+    let dialog = app
+        .midi_event_properties_dialog
+        .as_ref()
+        .expect("selected program change should open properties");
+    assert_eq!(dialog.position, "1.1.50");
+    assert_eq!(dialog.channel, "3");
+    assert_eq!(dialog.value, "41");
+
+    let history_before = app.project.history_cursor();
+    let _ = app.update(Message::SetMidiEventPropertiesPosition("1.2.50".to_owned()));
+    let _ = app.update(Message::SetMidiEventPropertiesChannel("4".to_owned()));
+    let _ = app.update(Message::SetMidiEventPropertiesValue("127".to_owned()));
+    let _ = app.update(Message::ApplyMidiEventProperties);
+    let edited = MidiProgramChangeData {
+        channel: 3,
+        tick: 1_440,
+        program: 127,
+    };
+    assert_eq!(app.project.midi_items()[0].program_changes(), [edited]);
+    assert_eq!(app.project.history_cursor(), history_before + 1);
+    assert_eq!(
+        app.midi_editor_selected_program_changes,
+        HashSet::from([edited])
+    );
+
+    let _ = app.update(Message::SetMidiEventPropertiesValue("0".to_owned()));
+    let _ = app.update(Message::AcceptMidiEventProperties);
+    let accepted = MidiProgramChangeData {
+        program: 0,
+        ..edited
+    };
+    assert_eq!(app.project.midi_items()[0].program_changes(), [accepted]);
+    let _ = app.update(Message::Undo);
+    assert_eq!(app.project.midi_items()[0].program_changes(), [edited]);
+    let _ = app.update(Message::Undo);
+    assert_eq!(app.project.midi_items()[0].program_changes(), [original]);
+    let _ = app.update(Message::Redo);
+    assert_eq!(app.project.midi_items()[0].program_changes(), [edited]);
+    let _ = app.update(Message::Redo);
+    assert_eq!(app.project.midi_items()[0].program_changes(), [accepted]);
+
+    let history_before_invalid = app.project.history_cursor();
+    app.midi_editor_selected_program_changes = HashSet::from([accepted]);
+    let _ = app.update(Message::OpenMidiEventProperties(item_id));
+    let _ = app.update(Message::SetMidiEventPropertiesValue("128".to_owned()));
+    let _ = app.update(Message::AcceptMidiEventProperties);
+    assert!(app.midi_event_properties_dialog.is_some());
+    assert!(app.midi_editor_feedback.is_some());
+    assert_eq!(app.project.midi_items()[0].program_changes(), [accepted]);
+    assert_eq!(app.project.history_cursor(), history_before_invalid);
 }
 
 #[test]

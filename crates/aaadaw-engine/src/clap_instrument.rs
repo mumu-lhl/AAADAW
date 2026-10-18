@@ -1558,7 +1558,9 @@ impl ClapInstrumentProcessor {
         for event in &self.event_scratch {
             if matches!(
                 event.kind,
-                MidiEventKind::ControllerChange | MidiEventKind::PitchBend
+                MidiEventKind::ControllerChange
+                    | MidiEventKind::PitchBend
+                    | MidiEventKind::ProgramChange
             ) {
                 continue;
             }
@@ -1604,6 +1606,9 @@ impl ClapInstrumentProcessor {
                 MidiEventKind::PitchBend => {
                     unreachable!("pitch-bend events were skipped while updating active note state")
                 }
+                MidiEventKind::ProgramChange => {
+                    unreachable!("program changes were skipped while updating active note state")
+                }
             }
         }
 
@@ -1614,7 +1619,9 @@ impl ClapInstrumentProcessor {
             })?;
             if matches!(
                 event.kind,
-                MidiEventKind::ControllerChange | MidiEventKind::PitchBend
+                MidiEventKind::ControllerChange
+                    | MidiEventKind::PitchBend
+                    | MidiEventKind::ProgramChange
             ) {
                 let port = self.input_midi_port.ok_or_else(|| {
                     ClapInstrumentError::new(
@@ -1631,6 +1638,11 @@ impl ClapInstrumentProcessor {
                         event.pitch_bend.expect("pitch-bend event value"),
                         event.channel,
                     ),
+                    MidiEventKind::ProgramChange => [
+                        0xc0 | event.channel,
+                        event.program.expect("program-change value"),
+                        0,
+                    ],
                     MidiEventKind::NoteOff | MidiEventKind::NoteOn => {
                         unreachable!("only control events are handled in this branch")
                     }
@@ -1671,6 +1683,9 @@ impl ClapInstrumentProcessor {
                 }
                 MidiEventKind::PitchBend => {
                     unreachable!("pitch-bend events were emitted as raw MIDI events above")
+                }
+                MidiEventKind::ProgramChange => {
+                    unreachable!("program changes were emitted as raw MIDI events above")
                 }
             }
         }
@@ -3160,6 +3175,7 @@ mod tests {
                 velocity: 127,
                 controller: None,
                 pitch_bend: None,
+                program: None,
                 kind: MidiEventKind::NoteOff,
             },
             ScheduledMidiEvent {
@@ -3171,6 +3187,7 @@ mod tests {
                 velocity: 127,
                 controller: None,
                 pitch_bend: None,
+                program: None,
                 kind: MidiEventKind::NoteOn,
             },
             ScheduledMidiEvent {
@@ -3182,6 +3199,7 @@ mod tests {
                 velocity: 0,
                 controller: None,
                 pitch_bend: None,
+                program: None,
                 kind: MidiEventKind::NoteOff,
             },
         ];
@@ -3223,6 +3241,7 @@ mod tests {
                 velocity: 127,
                 controller: None,
                 pitch_bend: None,
+                program: None,
                 kind: MidiEventKind::NoteOn,
             },
             ScheduledMidiEvent {
@@ -3234,6 +3253,7 @@ mod tests {
                 velocity: 127,
                 controller: Some(64),
                 pitch_bend: None,
+                program: None,
                 kind: MidiEventKind::ControllerChange,
             },
             ScheduledMidiEvent {
@@ -3245,6 +3265,7 @@ mod tests {
                 velocity: 32,
                 controller: Some(11),
                 pitch_bend: None,
+                program: None,
                 kind: MidiEventKind::ControllerChange,
             },
             ScheduledMidiEvent {
@@ -3256,6 +3277,7 @@ mod tests {
                 velocity: 64,
                 controller: Some(1),
                 pitch_bend: None,
+                program: None,
                 kind: MidiEventKind::ControllerChange,
             },
             ScheduledMidiEvent {
@@ -3267,6 +3289,7 @@ mod tests {
                 velocity: 0,
                 controller: None,
                 pitch_bend: None,
+                program: None,
                 kind: MidiEventKind::NoteOff,
             },
             ScheduledMidiEvent {
@@ -3278,6 +3301,7 @@ mod tests {
                 velocity: 0,
                 controller: Some(123),
                 pitch_bend: None,
+                program: None,
                 kind: MidiEventKind::ControllerChange,
             },
             ScheduledMidiEvent {
@@ -3289,6 +3313,7 @@ mod tests {
                 velocity: 0,
                 controller: Some(120),
                 pitch_bend: None,
+                program: None,
                 kind: MidiEventKind::ControllerChange,
             },
             ScheduledMidiEvent {
@@ -3300,6 +3325,7 @@ mod tests {
                 velocity: 0,
                 controller: Some(64),
                 pitch_bend: None,
+                program: None,
                 kind: MidiEventKind::ControllerChange,
             },
             ScheduledMidiEvent {
@@ -3311,6 +3337,7 @@ mod tests {
                 velocity: 0,
                 controller: None,
                 pitch_bend: Some(16_383),
+                program: None,
                 kind: MidiEventKind::PitchBend,
             },
         ];
@@ -3359,6 +3386,7 @@ mod tests {
             velocity: 127,
             controller: None,
             pitch_bend: None,
+            program: None,
             kind: MidiEventKind::NoteOn,
         };
         let mut output = [[0.0; 2]; 1];
@@ -3391,6 +3419,7 @@ mod tests {
             velocity: 127,
             controller: None,
             pitch_bend: None,
+            program: None,
             kind: MidiEventKind::NoteOn,
         };
         let mut output = [[0.0; 2]; 1];
@@ -3441,6 +3470,7 @@ mod tests {
             velocity: 100,
             controller: None,
             pitch_bend: None,
+            program: None,
             kind: MidiEventKind::NoteOn,
         };
         let mut output = [[1.0; 2]; 4];

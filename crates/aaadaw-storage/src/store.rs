@@ -3,9 +3,9 @@ use crate::{
 };
 use aaadaw_core::{
     AudioItemSnapshot, BpmBasis, MeterPointSnapshot, MidiControllerData, MidiItemSnapshot,
-    MidiNoteData, MidiNoteSnapshot, MidiPitchBendData, PanMode, Project, ProjectMarkerSnapshot,
-    ProjectRegionSnapshot, ProjectSettings, ProjectSnapshot, RazorEditArea, SnapshotError,
-    TempoCurve, TempoPointSnapshot, TrackFxParameterAutomationLaneSnapshot,
+    MidiNoteData, MidiNoteSnapshot, MidiPitchBendData, MidiProgramChangeData, PanMode, Project,
+    ProjectMarkerSnapshot, ProjectRegionSnapshot, ProjectSettings, ProjectSnapshot, RazorEditArea,
+    SnapshotError, TempoCurve, TempoPointSnapshot, TrackFxParameterAutomationLaneSnapshot,
     TrackFxParameterAutomationPointSnapshot, TrackFxParameterValueSnapshot, TrackFxPluginSnapshot,
     TrackInstrumentSnapshot, TrackSnapshot, VolumeAutomationPoint,
 };
@@ -25,7 +25,7 @@ use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 /// Latest database schema version understood by this release.
-pub const CURRENT_SCHEMA_VERSION: u32 = 59;
+pub const CURRENT_SCHEMA_VERSION: u32 = 60;
 
 const MIGRATION_29: &str = "ALTER TABLE project_meta ADD COLUMN start_measure INTEGER NOT NULL DEFAULT 1 CHECK(start_measure BETWEEN -2147483648 AND 2147483647);";
 const MIGRATION_30: &str = "ALTER TABLE project_meta ADD COLUMN bpm_basis INTEGER NOT NULL DEFAULT 1 CHECK(bpm_basis BETWEEN 0 AND 5);";
@@ -528,6 +528,20 @@ CREATE TABLE midi_pitch_bends (
     UNIQUE (item_id, channel, tick)
 );
 CREATE INDEX midi_pitch_bends_by_item_tick ON midi_pitch_bends(item_id, tick, channel);
+"#;
+
+const MIGRATION_60_PROGRAM_CHANGES: &str = r#"
+CREATE TABLE midi_program_changes (
+    item_id INTEGER NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+    position INTEGER NOT NULL CHECK (position >= 0),
+    channel INTEGER NOT NULL CHECK (channel BETWEEN 0 AND 15),
+    tick INTEGER NOT NULL CHECK (tick >= 0),
+    program INTEGER NOT NULL CHECK (program BETWEEN 0 AND 127),
+    PRIMARY KEY (item_id, position),
+    UNIQUE (item_id, channel, tick)
+);
+CREATE INDEX midi_program_changes_by_item_tick
+    ON midi_program_changes(item_id, tick, channel);
 "#;
 
 /// SQLite persistence failures, including incompatible project files.
@@ -3542,6 +3556,11 @@ fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
                     transaction.execute_batch(MIGRATION_59_PITCH_BENDS)?;
                 }
             }
+            60 => {
+                if !table_exists(&transaction, "midi_program_changes")? {
+                    transaction.execute_batch(MIGRATION_60_PROGRAM_CHANGES)?;
+                }
+            }
             missing => return Err(StorageError::MissingMigration(missing - 1)),
         }
         transaction.pragma_update(None, "user_version", next_version)?;
@@ -3570,6 +3589,7 @@ fn write_snapshot(
     transaction.execute("DELETE FROM midi_notes", [])?;
     transaction.execute("DELETE FROM midi_controllers", [])?;
     transaction.execute("DELETE FROM midi_pitch_bends", [])?;
+    transaction.execute("DELETE FROM midi_program_changes", [])?;
     transaction.execute("DELETE FROM track_volume_automation", [])?;
     transaction.execute("DELETE FROM items", [])?;
     transaction.execute("DELETE FROM audio_item_fade_curves", [])?;
@@ -3832,6 +3852,19 @@ fn write_snapshot(
                     i64::from(bend.channel),
                     to_sql_integer(bend.tick)?,
                     i64::from(bend.value)
+                ],
+            )?;
+        }
+        for (position, event) in item.program_changes.iter().enumerate() {
+            transaction.execute(
+                "INSERT INTO midi_program_changes(item_id, position, channel, tick, program) \
+                 VALUES(?1, ?2, ?3, ?4, ?5)",
+                params![
+                    to_sql_integer(item.id)?,
+                    usize_to_sql(position)?,
+                    i64::from(event.channel),
+                    to_sql_integer(event.tick)?,
+                    i64::from(event.program)
                 ],
             )?;
         }
@@ -4650,6 +4683,36 @@ fn read_midi_items(connection: &Connection) -> Result<(Vec<MidiItemSnapshot>, bo
             ));
     }
 
+    let mut program_statement = connection.prepare(
+        "SELECT item_id, position, channel, tick, program \
+         FROM midi_program_changes ORDER BY item_id, position",
+    )?;
+    let program_rows = program_statement
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, i64>(1)?,
+                row.get::<_, i64>(2)?,
+                row.get::<_, i64>(3)?,
+                row.get::<_, i64>(4)?,
+            ))
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut programs_by_item: HashMap<u64, Vec<(u64, MidiProgramChangeData)>> = HashMap::new();
+    for (item_id, position, channel, tick, program) in program_rows {
+        programs_by_item
+            .entry(from_sql_u64(item_id)?)
+            .or_default()
+            .push((
+                from_sql_u64(position)?,
+                MidiProgramChangeData {
+                    channel: from_sql_u8(channel)?,
+                    tick: from_sql_u64(tick)?,
+                    program: from_sql_u8(program)?,
+                },
+            ));
+    }
+
     let mut item_statement = connection.prepare(
         "SELECT id, track_id, position, start_tick, start_tick_subtick, length_ticks, name, source_offset_ticks, loop_source, source_loop_length_ticks, muted \
          FROM items ORDER BY position",
@@ -4701,6 +4764,7 @@ fn read_midi_items(connection: &Connection) -> Result<(Vec<MidiItemSnapshot>, bo
         let notes = notes_by_item.remove(&id).unwrap_or_default();
         let controllers = controllers_by_item.remove(&id).unwrap_or_default();
         let pitch_bends = bends_by_item.remove(&id).unwrap_or_default();
+        let program_changes = programs_by_item.remove(&id).unwrap_or_default();
         items.push(MidiItemSnapshot {
             id,
             track_id: from_sql_u64(track_id)?,
@@ -4715,11 +4779,18 @@ fn read_midi_items(connection: &Connection) -> Result<(Vec<MidiItemSnapshot>, bo
             notes: notes.into_iter().map(|(_, note)| note).collect(),
             controllers: controllers.into_iter().map(|(_, event)| event).collect(),
             pitch_bends: pitch_bends.into_iter().map(|(_, event)| event).collect(),
+            program_changes: program_changes
+                .into_iter()
+                .map(|(_, event)| event)
+                .collect(),
         });
     }
     Ok((
         items,
-        !notes_by_item.is_empty() || !controllers_by_item.is_empty() || !bends_by_item.is_empty(),
+        !notes_by_item.is_empty()
+            || !controllers_by_item.is_empty()
+            || !bends_by_item.is_empty()
+            || !programs_by_item.is_empty(),
     ))
 }
 

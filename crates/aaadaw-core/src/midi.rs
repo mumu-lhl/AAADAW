@@ -141,6 +141,16 @@ pub struct MidiPitchBendData {
     pub value: u16,
 }
 
+/// Input data for a MIDI Program Change event; `tick` is relative to its item.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct MidiProgramChangeData {
+    /// Zero-based MIDI channel in the inclusive range `0..16`.
+    pub channel: u8,
+    pub tick: u64,
+    /// Zero-based patch number in the range `0..=127`.
+    pub program: u8,
+}
+
 /// A MIDI note stored in a project.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MidiNote {
@@ -196,6 +206,7 @@ pub struct MidiItem {
     pub(crate) notes: Arc<Vec<MidiNote>>,
     pub(crate) controllers: Arc<Vec<MidiControllerData>>,
     pub(crate) pitch_bends: Arc<Vec<MidiPitchBendData>>,
+    pub(crate) program_changes: Arc<Vec<MidiProgramChangeData>>,
 }
 
 impl MidiItem {
@@ -356,5 +367,10 @@ impl MidiItem {
     /// Returns pitch-bend events sorted by tick.
     pub fn pitch_bends(&self) -> &[MidiPitchBendData] {
         &self.pitch_bends
+    }
+
+    /// Returns Program Change events sorted by tick, then channel.
+    pub fn program_changes(&self) -> &[MidiProgramChangeData] {
+        &self.program_changes
     }
 }

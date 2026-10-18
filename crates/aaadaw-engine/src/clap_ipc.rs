@@ -46,6 +46,7 @@ pub enum ClapIpcMidiKind {
     NoteOff = 2,
     ControllerChange = 3,
     PitchBend = 4,
+    ProgramChange = 5,
 }
 
 struct ClapIpcMappingInner {
@@ -584,6 +585,8 @@ pub(crate) fn process_helper_requests(
                             .then_some(event.controller),
                         pitch_bend: (event.kind == ClapIpcMidiKind::PitchBend as u8)
                             .then_some(event.pitch_bend),
+                        program: (event.kind == ClapIpcMidiKind::ProgramChange as u8)
+                            .then_some(event.pitch),
                         kind: event_kind,
                     });
                 }
@@ -684,6 +687,9 @@ fn midi_kind_from_wire(kind: u8) -> Option<crate::MidiEventKind> {
             Some(crate::MidiEventKind::ControllerChange)
         }
         value if value == ClapIpcMidiKind::PitchBend as u8 => Some(crate::MidiEventKind::PitchBend),
+        value if value == ClapIpcMidiKind::ProgramChange as u8 => {
+            Some(crate::MidiEventKind::ProgramChange)
+        }
         _ => None,
     }
 }
@@ -716,6 +722,7 @@ impl ClapIpcMidiEvent {
             crate::MidiEventKind::NoteOff => ClapIpcMidiKind::NoteOff,
             crate::MidiEventKind::ControllerChange => ClapIpcMidiKind::ControllerChange,
             crate::MidiEventKind::PitchBend => ClapIpcMidiKind::PitchBend,
+            crate::MidiEventKind::ProgramChange => ClapIpcMidiKind::ProgramChange,
         };
         let note_id = event
             .note_id
@@ -734,7 +741,8 @@ impl ClapIpcMidiEvent {
             note_id,
             pitch_bend,
             kind: kind as u8,
-            pitch: event.pitch,
+            // The existing first-data-byte field carries the program for this message kind.
+            pitch: event.program.unwrap_or(event.pitch),
             velocity: event.velocity,
             controller,
             channel: event.channel,
@@ -769,6 +777,11 @@ impl ClapIpcMidiEvent {
                 self.note_id == Self::NO_NOTE_ID
                     && self.controller == Self::NO_CONTROLLER
                     && self.pitch_bend <= 16_383
+            }
+            kind if kind == ClapIpcMidiKind::ProgramChange as u8 => {
+                self.note_id == Self::NO_NOTE_ID
+                    && self.controller == Self::NO_CONTROLLER
+                    && self.pitch_bend == Self::NO_PITCH_BEND
             }
             _ => false,
         }
@@ -1957,6 +1970,7 @@ mod tests {
             velocity: 100,
             controller: None,
             pitch_bend: None,
+            program: None,
             kind: crate::MidiEventKind::NoteOn,
         };
         let encoded = ClapIpcMidiEvent::from_scheduled(note, 8).unwrap();
@@ -1975,11 +1989,35 @@ mod tests {
             velocity: 0,
             controller: Some(64),
             pitch_bend: None,
+            program: None,
             kind: crate::MidiEventKind::ControllerChange,
         };
         let encoded = ClapIpcMidiEvent::from_scheduled(controller, 8).unwrap();
         assert_eq!(encoded.controller, 64);
         assert_eq!(encoded.note_id, ClapIpcMidiEvent::NO_NOTE_ID);
+
+        let program_change = crate::ScheduledMidiEvent {
+            sample_offset: 2,
+            track_id,
+            note_id: None,
+            channel: 5,
+            pitch: 0,
+            velocity: 0,
+            controller: None,
+            pitch_bend: None,
+            program: Some(41),
+            kind: crate::MidiEventKind::ProgramChange,
+        };
+        let encoded = ClapIpcMidiEvent::from_scheduled(program_change, 8).unwrap();
+        assert_eq!(encoded.kind, ClapIpcMidiKind::ProgramChange as u8);
+        assert_eq!(encoded.pitch, 41);
+        assert_eq!(encoded.channel, 5);
+        assert_eq!(encoded.note_id, ClapIpcMidiEvent::NO_NOTE_ID);
+        assert!(encoded.is_valid(8));
+        assert_eq!(
+            midi_kind_from_wire(encoded.kind),
+            Some(crate::MidiEventKind::ProgramChange)
+        );
 
         let mut invalid_offset = note;
         invalid_offset.sample_offset = 8;

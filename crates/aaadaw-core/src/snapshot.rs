@@ -1,7 +1,7 @@
 use crate::{
     FxParameterAutomationLane, FxParameterAutomationPoint, MidiControllerData, MidiNoteData,
-    MidiPitchBendData, ProjectMarker, ProjectRegion, ProjectSettings, RazorEditArea, TempoCurve,
-    TimebaseError, VolumeAutomationPoint,
+    MidiPitchBendData, MidiProgramChangeData, ProjectMarker, ProjectRegion, ProjectSettings,
+    RazorEditArea, TempoCurve, TimebaseError, VolumeAutomationPoint,
 };
 use std::fmt;
 
@@ -205,6 +205,7 @@ pub struct MidiItemSnapshot {
     pub notes: Vec<MidiNoteSnapshot>,
     pub controllers: Vec<MidiControllerData>,
     pub pitch_bends: Vec<MidiPitchBendData>,
+    pub program_changes: Vec<MidiProgramChangeData>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

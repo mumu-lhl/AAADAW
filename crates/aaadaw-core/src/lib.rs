@@ -29,7 +29,7 @@ pub use markers::{MAX_PROJECT_MARKER_NUMBER, MarkerId, ProjectMarker};
 pub use master::MasterMix;
 pub use midi::{
     ItemId, MIDI_CHANNEL_COUNT, MIDI_ITEM_SUBTICKS_PER_TICK, MidiControllerData, MidiItem,
-    MidiItemPosition, MidiNote, MidiNoteData, MidiPitchBendData, NoteId,
+    MidiItemPosition, MidiNote, MidiNoteData, MidiPitchBendData, MidiProgramChangeData, NoteId,
 };
 pub use midi_file::{
     MidiExportItemScope, MidiExportOptions, MidiExportSelection, MidiExportTimeScope, MidiFileType,

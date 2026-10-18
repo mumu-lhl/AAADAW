@@ -1,9 +1,9 @@
 use aaadaw_core::{
     DawAction, FrameRate, MidiControllerData, MidiExportItemScope, MidiExportOptions,
     MidiExportSelection, MidiExportTimeScope, MidiFileType, MidiItemPosition, MidiMarkerType,
-    MidiNoteData, MidiPitchBendData, Project, TempoCurve, TimeSignature, encode_standard_midi,
-    encode_standard_midi_with_conductor_track_name, encode_standard_midi_with_selection,
-    midi_export_has_items_in_scope,
+    MidiNoteData, MidiPitchBendData, MidiProgramChangeData, Project, TempoCurve, TimeSignature,
+    encode_standard_midi, encode_standard_midi_with_conductor_track_name,
+    encode_standard_midi_with_selection, midi_export_has_items_in_scope,
 };
 
 #[test]
@@ -74,6 +74,49 @@ fn exports_note_controller_and_pitch_bend_channels_as_midi_status_nibbles() {
             "export is missing channel status bytes {expected:?}"
         );
     }
+}
+
+#[test]
+fn exports_program_change_status_and_zero_based_program_value() {
+    let mut project = Project::new();
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Program".to_owned(),
+        })
+        .unwrap();
+    let track_id = project.tracks()[0].id();
+    project
+        .apply(DawAction::InsertMidiItem {
+            track_id,
+            start_tick: 0,
+            length_ticks: 960,
+        })
+        .unwrap();
+    let item_id = project.midi_items()[0].id();
+    project
+        .apply(DawAction::SetMidiProgramChanges {
+            item_id,
+            program_changes: vec![MidiProgramChangeData {
+                channel: 5,
+                tick: 0,
+                program: 41,
+            }],
+        })
+        .unwrap();
+
+    let bytes = encode_standard_midi(
+        &project,
+        MidiExportOptions {
+            file_type: MidiFileType::Type0,
+            ..MidiExportOptions::for_project(&project)
+        },
+    )
+    .unwrap();
+    assert!(
+        bytes.windows(2).any(|window| window == [0xc5, 41]),
+        "SMF should encode Program Change on channel 6 with its zero-based program byte"
+    );
 }
 
 #[test]

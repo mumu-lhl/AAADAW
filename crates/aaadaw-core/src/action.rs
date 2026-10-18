@@ -1,7 +1,7 @@
 use crate::{
     GridFraction, ItemId, MarkerId, MeterPointSnapshot, MidiControllerData, MidiItemPosition,
-    MidiNoteData, MidiPitchBendData, NoteId, RegionId, TempoCurve, TimeSignature, TrackFxPlugin,
-    TrackId, TrackInstrument, VolumeAutomationPoint,
+    MidiNoteData, MidiPitchBendData, MidiProgramChangeData, NoteId, RegionId, TempoCurve,
+    TimeSignature, TrackFxPlugin, TrackId, TrackInstrument, VolumeAutomationPoint,
 };
 
 /// Which note timing values a MIDI quantize action moves to the current grid.
@@ -490,6 +490,11 @@ pub enum DawAction {
     SetMidiPitchBends {
         item_id: ItemId,
         pitch_bends: Vec<MidiPitchBendData>,
+    },
+    /// Replace the Program Change events belonging to a MIDI item.
+    SetMidiProgramChanges {
+        item_id: ItemId,
+        program_changes: Vec<MidiProgramChangeData>,
     },
     /// Move note starts toward the nearest musical grid position.
     QuantizeItem {

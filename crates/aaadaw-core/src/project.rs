@@ -8,10 +8,10 @@ use crate::timebase::{MeterMap, TempoMap};
 use crate::{
     ActionError, AudioItem, DawAction, FxParameterAutomationLane, FxParameterAutomationPoint,
     ItemId, MAX_TRACK_FX_PARAMETER_AUTOMATION_LANES, MarkerId, MidiControllerData, MidiItem,
-    MidiNote, MidiNoteQuantizeOperation, MidiPitchBendData, MusicalPosition, NoteId, ProjectMarker,
-    ProjectMarkerSnapshot, ProjectRegion, ProjectRegionSnapshot, ProjectSettings, RazorEditArea,
-    RegionId, TempoCurve, TimeSignature, TimebaseError, Track, TrackFxPlugin, TrackId,
-    TrackInstrument,
+    MidiNote, MidiNoteQuantizeOperation, MidiPitchBendData, MidiProgramChangeData, MusicalPosition,
+    NoteId, ProjectMarker, ProjectMarkerSnapshot, ProjectRegion, ProjectRegionSnapshot,
+    ProjectSettings, RazorEditArea, RegionId, TempoCurve, TimeSignature, TimebaseError, Track,
+    TrackFxPlugin, TrackId, TrackInstrument,
 };
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -1353,6 +1353,11 @@ enum ProjectEvent {
         before: Vec<crate::MidiPitchBendData>,
         after: Vec<crate::MidiPitchBendData>,
     },
+    MidiProgramChangesChanged {
+        item_id: ItemId,
+        before: Vec<MidiProgramChangeData>,
+        after: Vec<MidiProgramChangeData>,
+    },
     MidiNotesQuantized {
         item_id: ItemId,
         changes: Vec<QuantizedMidiNoteChange>,
@@ -1778,6 +1783,15 @@ impl ProjectEvent {
                 before: after.clone(),
                 after: before.clone(),
             },
+            Self::MidiProgramChangesChanged {
+                item_id,
+                before,
+                after,
+            } => Self::MidiProgramChangesChanged {
+                item_id: *item_id,
+                before: after.clone(),
+                after: before.clone(),
+            },
             Self::MidiNotesQuantized { item_id, changes } => Self::MidiNotesQuantized {
                 item_id: *item_id,
                 changes: changes
@@ -1926,6 +1940,7 @@ fn duplicate_midi_item_to_track_at_position(
         notes: Arc::new(notes),
         controllers: Arc::clone(&original.controllers),
         pitch_bends: Arc::clone(&original.pitch_bends),
+        program_changes: Arc::clone(&original.program_changes),
     };
     ids.next_item_id = next_item_id;
     ids.next_note_id = next_note_id;
@@ -2578,6 +2593,7 @@ impl Project {
                         .collect(),
                     controllers: item.controllers.as_ref().clone(),
                     pitch_bends: item.pitch_bends.as_ref().clone(),
+                    program_changes: item.program_changes.as_ref().clone(),
                 })
                 .collect(),
             markers: self
@@ -2937,6 +2953,11 @@ impl Project {
             if !valid_midi_pitch_bends(&pitch_bends) {
                 return Err(SnapshotError::InvalidProjectData);
             }
+            let mut program_changes = item.program_changes;
+            program_changes.sort_unstable_by_key(|event| (event.tick, event.channel));
+            if !valid_midi_program_changes(&program_changes) {
+                return Err(SnapshotError::InvalidProjectData);
+            }
             midi_items.push(MidiItem {
                 id: ItemId::from_raw(item.id),
                 track_id: TrackId::from_raw(item.track_id),
@@ -2951,6 +2972,7 @@ impl Project {
                 notes: Arc::new(notes),
                 controllers: Arc::new(controllers),
                 pitch_bends: Arc::new(pitch_bends),
+                program_changes: Arc::new(program_changes),
             });
         }
 
@@ -4494,6 +4516,7 @@ impl Project {
                     notes: Arc::new(Vec::new()),
                     controllers: Arc::new(Vec::new()),
                     pitch_bends: Arc::new(Vec::new()),
+                    program_changes: Arc::new(Vec::new()),
                 };
                 ids.next_item_id = next_id;
                 ProjectEvent::MidiItemInserted {
@@ -4538,6 +4561,9 @@ impl Project {
                 }
                 if !valid_midi_pitch_bends(&item.pitch_bends) {
                     return Err(ActionError::InvalidMidiPitchBend);
+                }
+                if !valid_midi_program_changes(&item.program_changes) {
+                    return Err(ActionError::InvalidMidiProgramChange);
                 }
                 let before = item.clone();
                 let after = MidiItem {
@@ -4589,6 +4615,9 @@ impl Project {
                 }
                 if !valid_midi_pitch_bends(&item.pitch_bends) {
                     return Err(ActionError::InvalidMidiPitchBend);
+                }
+                if !valid_midi_program_changes(&item.program_changes) {
+                    return Err(ActionError::InvalidMidiProgramChange);
                 }
                 let before = item.clone();
                 let after = MidiItem {
@@ -4669,12 +4698,26 @@ impl Project {
                         })
                     })
                     .collect::<Result<Vec<_>, ActionError>>()?;
+                let program_changes = before
+                    .program_changes
+                    .iter()
+                    .map(|event| {
+                        Ok(MidiProgramChangeData {
+                            tick: event
+                                .tick
+                                .checked_add_signed(content_shift_ticks)
+                                .ok_or(ActionError::InvalidMidiItemPosition)?,
+                            ..*event
+                        })
+                    })
+                    .collect::<Result<Vec<_>, ActionError>>()?;
                 let after = MidiItem {
                     source_offset_ticks,
                     source_loop_length_ticks,
                     notes: Arc::new(notes),
                     controllers: Arc::new(controllers),
                     pitch_bends: Arc::new(pitch_bends),
+                    program_changes: Arc::new(program_changes),
                     ..before.clone()
                 };
                 ProjectEvent::MidiItemChanged { before, after }
@@ -4896,6 +4939,12 @@ impl Project {
                             content_points[index + 1],
                             index + 1 == segment_count,
                         )),
+                        program_changes: Arc::new(program_changes_for_segment(
+                            &original.program_changes,
+                            if index == 0 { 0 } else { content_points[index] },
+                            content_points[index + 1],
+                            index + 1 == segment_count,
+                        )),
                     });
                 }
                 ids.next_item_id = next_item_id;
@@ -5058,6 +5107,31 @@ impl Project {
                     item_id,
                     before: item.pitch_bends.as_ref().clone(),
                     after: pitch_bends,
+                }
+            }
+            DawAction::SetMidiProgramChanges {
+                item_id,
+                mut program_changes,
+            } => {
+                let item = state
+                    .midi_items
+                    .iter()
+                    .find(|item| item.id == item_id)
+                    .ok_or(ActionError::MidiItemNotFound { item_id })?;
+                program_changes.sort_unstable_by_key(|event| (event.tick, event.channel));
+                let (source_start_tick, source_end_tick) = midi_item_source_tick_bounds(item);
+                if !valid_midi_program_changes(&program_changes)
+                    || program_changes.iter().any(|event| {
+                        (event.tick < source_start_tick || event.tick >= source_end_tick)
+                            && !item.program_changes.contains(event)
+                    })
+                {
+                    return Err(ActionError::InvalidMidiProgramChange);
+                }
+                ProjectEvent::MidiProgramChangesChanged {
+                    item_id,
+                    before: item.program_changes.as_ref().clone(),
+                    after: program_changes,
                 }
             }
             DawAction::QuantizeItem {
@@ -6260,6 +6334,28 @@ impl Project {
                 }
                 item.pitch_bends = Arc::new(after.clone());
             }
+            ProjectEvent::MidiProgramChangesChanged {
+                item_id,
+                before,
+                after,
+            } => {
+                let item = state
+                    .midi_items
+                    .iter_mut()
+                    .find(|item| item.id == *item_id)
+                    .ok_or(ActionError::HistoryInvariantViolation)?;
+                let (source_start, source_end) = midi_item_source_tick_bounds(item);
+                if item.program_changes.as_ref() != before
+                    || !valid_midi_program_changes(after)
+                    || after.iter().any(|event| {
+                        (event.tick < source_start || event.tick >= source_end)
+                            && !before.contains(event)
+                    })
+                {
+                    return Err(ActionError::HistoryInvariantViolation);
+                }
+                item.program_changes = Arc::new(after.clone());
+            }
             ProjectEvent::MidiNotesQuantized { item_id, changes } => {
                 let item = state
                     .midi_items
@@ -6402,6 +6498,7 @@ fn source_track_for_action(state: &ProjectState, action: &DawAction) -> Option<T
         | DawAction::DeleteMidiNotes { item_id, .. }
         | DawAction::SetMidiControllers { item_id, .. }
         | DawAction::SetMidiPitchBends { item_id, .. }
+        | DawAction::SetMidiProgramChanges { item_id, .. }
         | DawAction::QuantizeItem { item_id, .. }
         | DawAction::QuantizeMidiNotes { item_id, .. }
         | DawAction::QuantizeMidiNotesAndEnds { item_id, .. }
@@ -6514,6 +6611,15 @@ fn valid_midi_pitch_bends(pitch_bends: &[MidiPitchBendData]) -> bool {
     })
 }
 
+fn valid_midi_program_changes(program_changes: &[MidiProgramChangeData]) -> bool {
+    let mut positions = HashSet::with_capacity(program_changes.len());
+    program_changes.iter().all(|event| {
+        event.channel < crate::MIDI_CHANNEL_COUNT
+            && event.program <= 127
+            && positions.insert((event.channel, event.tick))
+    })
+}
+
 fn coalesce_midi_pitch_bends_at_same_tick(pitch_bends: &mut Vec<MidiPitchBendData>) {
     let mut latest_by_position = HashMap::with_capacity(pitch_bends.len());
     for bend in pitch_bends.drain(..) {
@@ -6622,6 +6728,46 @@ fn pitch_bends_for_segment(
                 value: bend.value,
             }),
     );
+    result
+}
+
+fn program_changes_for_segment(
+    program_changes: &[MidiProgramChangeData],
+    start_tick: u64,
+    end_tick: u64,
+    preserve_tail: bool,
+) -> Vec<MidiProgramChangeData> {
+    let mut result = Vec::new();
+    let mut latest_by_channel = [None; crate::MIDI_CHANNEL_COUNT as usize];
+    for event in program_changes
+        .iter()
+        .filter(|event| event.tick <= start_tick)
+    {
+        let latest = &mut latest_by_channel[usize::from(event.channel)];
+        if latest.is_none_or(|current: MidiProgramChangeData| current.tick <= event.tick) {
+            *latest = Some(*event);
+        }
+    }
+    result.extend(
+        latest_by_channel
+            .into_iter()
+            .flatten()
+            .map(|event| MidiProgramChangeData {
+                channel: event.channel,
+                tick: 0,
+                program: event.program,
+            }),
+    );
+    result.extend(
+        program_changes
+            .iter()
+            .filter(|event| event.tick > start_tick && (preserve_tail || event.tick < end_tick))
+            .map(|event| MidiProgramChangeData {
+                tick: event.tick - start_tick,
+                ..*event
+            }),
+    );
+    result.sort_unstable_by_key(|event| (event.tick, event.channel));
     result
 }
 

@@ -1,0 +1,5 @@
+version	7.82/linux-x86_64
+theme	Default_7.0.ReaperThemeZip
+action	40056	Mode: Event List	Alt+3
+counts	1	1
+event	1	1	0	480.0	0xC0	3	41	0

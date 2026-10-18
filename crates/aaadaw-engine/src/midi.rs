@@ -26,6 +26,7 @@ fn sample_at_midi_position(
 pub enum MidiEventKind {
     ControllerChange,
     PitchBend,
+    ProgramChange,
     NoteOff,
     NoteOn,
 }
@@ -42,6 +43,7 @@ pub struct ScheduledMidiEvent {
     pub velocity: u8,
     pub controller: Option<u8>,
     pub pitch_bend: Option<u16>,
+    pub program: Option<u8>,
     pub kind: MidiEventKind,
 }
 
@@ -69,16 +71,39 @@ impl MidiInputMessage {
     /// Converts supported note, controller, and pitch-bend messages for one instrument track.
     pub fn scheduled_event(self, track_id: TrackId) -> Option<ScheduledMidiEvent> {
         let channel_message = self.status & 0xF0;
-        let (kind, pitch, velocity, controller, pitch_bend) = match channel_message {
-            0x80 => (MidiEventKind::NoteOff, self.data1, self.data2, None, None),
-            0x90 if self.data2 == 0 => (MidiEventKind::NoteOff, self.data1, 0, None, None),
-            0x90 => (MidiEventKind::NoteOn, self.data1, self.data2, None, None),
+        let (kind, pitch, velocity, controller, pitch_bend, program) = match channel_message {
+            0x80 => (
+                MidiEventKind::NoteOff,
+                self.data1,
+                self.data2,
+                None,
+                None,
+                None,
+            ),
+            0x90 if self.data2 == 0 => (MidiEventKind::NoteOff, self.data1, 0, None, None, None),
+            0x90 => (
+                MidiEventKind::NoteOn,
+                self.data1,
+                self.data2,
+                None,
+                None,
+                None,
+            ),
             0xB0 => (
                 MidiEventKind::ControllerChange,
                 self.data1,
                 self.data2,
                 Some(self.data1),
                 None,
+                None,
+            ),
+            0xC0 => (
+                MidiEventKind::ProgramChange,
+                0,
+                0,
+                None,
+                None,
+                Some(self.data1),
             ),
             0xE0 => (
                 MidiEventKind::PitchBend,
@@ -86,6 +111,7 @@ impl MidiInputMessage {
                 0,
                 None,
                 Some(u16::from(self.data1) | (u16::from(self.data2) << 7)),
+                None,
             ),
             _ => return None,
         };
@@ -97,6 +123,7 @@ impl MidiInputMessage {
             velocity,
             controller,
             pitch_bend,
+            program,
             note_id: matches!(kind, MidiEventKind::NoteOn | MidiEventKind::NoteOff)
                 .then_some(self.note_id)
                 .flatten(),
@@ -128,7 +155,7 @@ impl Default for MidiInputDecoder {
 }
 
 impl MidiInputDecoder {
-    /// Appends complete note, controller, and pitch-bend messages found in `bytes`.
+    /// Appends complete supported channel-voice messages found in `bytes`.
     pub fn push_bytes(&mut self, bytes: &[u8], output: &mut Vec<MidiInputMessage>) {
         for byte in bytes.iter().copied() {
             if byte >= 0xF8 {
@@ -212,6 +239,7 @@ struct CompiledMidiEvent {
     velocity: u8,
     controller: Option<u8>,
     pitch_bend: Option<u16>,
+    program: Option<u8>,
     kind: MidiEventKind,
 }
 
@@ -240,6 +268,19 @@ struct PitchBendTimeline {
     track_id: TrackId,
     channel: u8,
     values: Vec<CompiledPitchBendValue>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct CompiledProgramValue {
+    absolute_sample: u64,
+    program: u8,
+}
+
+#[derive(Clone, Debug)]
+struct ProgramTimeline {
+    track_id: TrackId,
+    channel: u8,
+    values: Vec<CompiledProgramValue>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -273,6 +314,7 @@ pub struct MidiEventPlan {
     events: Vec<CompiledMidiEvent>,
     controller_timelines: Vec<ControllerTimeline>,
     pitch_bend_timelines: Vec<PitchBendTimeline>,
+    program_timelines: Vec<ProgramTimeline>,
     notes: Vec<CompiledMidiNote>,
     note_interval_nodes: Vec<MidiNoteIntervalNode>,
     note_interval_root: Option<usize>,
@@ -408,6 +450,7 @@ impl MidiEventPlan {
         let mut notes = Vec::new();
         let mut controller_timelines = Vec::<ControllerTimeline>::new();
         let mut pitch_bend_timelines = Vec::<PitchBendTimeline>::new();
+        let mut program_timelines = Vec::<ProgramTimeline>::new();
         let mut midi_routes = HashMap::<TrackId, Vec<TrackId>>::new();
         let mut routed_note_ids = HashMap::<(TrackId, NoteId, usize), NoteId>::new();
         let mut used_note_ids: std::collections::HashSet<_> = project
@@ -549,6 +592,7 @@ impl MidiEventPlan {
                             velocity: note.velocity(),
                             controller: None,
                             pitch_bend: None,
+                            program: None,
                             kind: MidiEventKind::NoteOn,
                         });
                         events.push(CompiledMidiEvent {
@@ -560,6 +604,7 @@ impl MidiEventPlan {
                             velocity: 0,
                             controller: None,
                             pitch_bend: None,
+                            program: None,
                             kind: MidiEventKind::NoteOff,
                         });
                     }
@@ -603,6 +648,7 @@ impl MidiEventPlan {
                             velocity: controller.value,
                             controller: Some(controller.controller),
                             pitch_bend: None,
+                            program: None,
                             kind: MidiEventKind::ControllerChange,
                         });
                     }
@@ -643,7 +689,49 @@ impl MidiEventPlan {
                             velocity: 0,
                             controller: None,
                             pitch_bend: Some(bend.value),
+                            program: None,
                             kind: MidiEventKind::PitchBend,
+                        });
+                    }
+                }
+            }
+            for change in item.program_changes() {
+                for position in item.project_positions_at_content_tick(change.tick) {
+                    let absolute_sample = sample_at_midi_position(project, position)?;
+                    for routed_track in routed_tracks {
+                        if events.len() == MAX_COMPILED_MIDI_EVENTS {
+                            return Err(MidiScheduleError::EventLimitExceeded);
+                        }
+                        let timeline = program_timelines.iter_mut().find(|timeline| {
+                            timeline.track_id == *routed_track && timeline.channel == change.channel
+                        });
+                        let timeline = if let Some(timeline) = timeline {
+                            timeline
+                        } else {
+                            program_timelines.push(ProgramTimeline {
+                                track_id: *routed_track,
+                                channel: change.channel,
+                                values: Vec::new(),
+                            });
+                            program_timelines
+                                .last_mut()
+                                .expect("program timeline was just inserted")
+                        };
+                        timeline.values.push(CompiledProgramValue {
+                            absolute_sample,
+                            program: change.program,
+                        });
+                        events.push(CompiledMidiEvent {
+                            absolute_sample,
+                            track_id: *routed_track,
+                            channel: change.channel,
+                            note_id: None,
+                            pitch: 0,
+                            velocity: 0,
+                            controller: None,
+                            pitch_bend: None,
+                            program: Some(change.program),
+                            kind: MidiEventKind::ProgramChange,
                         });
                     }
                 }
@@ -659,12 +747,16 @@ impl MidiEventPlan {
                 event.pitch,
                 event.note_id.map_or(0, NoteId::value),
                 event.pitch_bend.unwrap_or(0),
+                event.program.unwrap_or(0),
             )
         });
         for timeline in &mut controller_timelines {
             timeline.values.sort_by_key(|value| value.absolute_sample);
         }
         for timeline in &mut pitch_bend_timelines {
+            timeline.values.sort_by_key(|value| value.absolute_sample);
+        }
+        for timeline in &mut program_timelines {
             timeline.values.sort_by_key(|value| value.absolute_sample);
         }
         notes.sort_unstable_by_key(|note| {
@@ -680,6 +772,7 @@ impl MidiEventPlan {
             events,
             controller_timelines,
             pitch_bend_timelines,
+            program_timelines,
             notes,
             note_interval_nodes,
             note_interval_root,
@@ -761,6 +854,7 @@ impl MidiEventPlan {
                     velocity: value.value,
                     controller: Some(timeline.controller),
                     pitch_bend: None,
+                    program: None,
                     kind: MidiEventKind::ControllerChange,
                 });
                 written += 1;
@@ -818,9 +912,57 @@ impl MidiEventPlan {
                 velocity: 0,
                 controller: None,
                 pitch_bend: Some(value),
+                program: None,
                 kind: MidiEventKind::PitchBend,
             });
             written += 1;
+        }
+        Ok(written)
+    }
+
+    /// Copies the last program change before `sample` as a block-offset-zero event per track and
+    /// MIDI channel. A change exactly at the seek point stays in the ordinary block event list.
+    pub fn active_program_changes_at(
+        &self,
+        sample: u64,
+        output: &mut [Option<ScheduledMidiEvent>],
+    ) -> Result<usize, MidiScheduleError> {
+        let active = self
+            .program_timelines
+            .iter()
+            .filter(|timeline| {
+                timeline
+                    .values
+                    .partition_point(|value| value.absolute_sample < sample)
+                    > 0
+            })
+            .count();
+        if output.len() < active {
+            return Err(MidiScheduleError::OutputBufferTooSmall {
+                required: active,
+                available: output.len(),
+            });
+        }
+        let mut written = 0;
+        for timeline in &self.program_timelines {
+            let end = timeline
+                .values
+                .partition_point(|value| value.absolute_sample < sample);
+            if let Some(value) = end.checked_sub(1).map(|index| timeline.values[index]) {
+                output[written] = Some(ScheduledMidiEvent {
+                    sample_offset: 0,
+                    track_id: timeline.track_id,
+                    channel: timeline.channel,
+                    note_id: None,
+                    pitch: 0,
+                    velocity: 0,
+                    controller: None,
+                    pitch_bend: None,
+                    program: Some(value.program),
+                    kind: MidiEventKind::ProgramChange,
+                });
+                written += 1;
+            }
         }
         Ok(written)
     }
@@ -896,6 +1038,7 @@ impl MidiEventPlan {
                 velocity: note.velocity,
                 controller: None,
                 pitch_bend: None,
+                program: None,
                 kind: MidiEventKind::NoteOn,
             });
             *written += 1;
@@ -917,7 +1060,9 @@ impl MidiEventPlan {
                 event.track_id == track_id
                     && matches!(
                         event.kind,
-                        MidiEventKind::ControllerChange | MidiEventKind::PitchBend
+                        MidiEventKind::ControllerChange
+                            | MidiEventKind::PitchBend
+                            | MidiEventKind::ProgramChange
                     )
             })
             .count()
@@ -960,6 +1105,7 @@ impl MidiEventPlan {
                 velocity: event.velocity,
                 controller: event.controller,
                 pitch_bend: event.pitch_bend,
+                program: event.program,
                 kind: event.kind,
             });
         }
@@ -1094,6 +1240,16 @@ impl MidiEventPlan {
             }
             event_count += count;
 
+            let count =
+                self.active_program_changes_at(segment.start_sample, &mut output[event_count..])?;
+            for event in output[event_count..event_count + count]
+                .iter_mut()
+                .flatten()
+            {
+                event.sample_offset = 0;
+            }
+            event_count += count;
+
             let count = self.active_notes_at(segment.start_sample, &mut output[event_count..])?;
             for event in output[event_count..event_count + count]
                 .iter_mut()
@@ -1208,6 +1364,7 @@ fn compile_note_interval_tree(
 fn midi_event_priority(kind: MidiEventKind, controller: Option<u8>, value: u8) -> u8 {
     match kind {
         MidiEventKind::PitchBend => 0,
+        MidiEventKind::ProgramChange => 1,
         MidiEventKind::ControllerChange if controller == Some(64) && value < 64 => 2,
         MidiEventKind::ControllerChange => 0,
         MidiEventKind::NoteOff => 1,
@@ -1283,6 +1440,23 @@ mod input_tests {
         assert_eq!(events[0].note_id, events[2].note_id);
         assert_eq!(events[1].note_id, events[3].note_id);
         assert_ne!(events[0].note_id, events[1].note_id);
+    }
+
+    #[test]
+    fn live_midi_decoder_accepts_one_byte_program_changes_and_running_status() {
+        let mut decoder = MidiInputDecoder::default();
+        let mut messages = Vec::new();
+        decoder.push_bytes(&[0xc3, 41, 42], &mut messages);
+        assert_eq!(messages.len(), 2);
+        assert_eq!(messages[0].data1, 41);
+        assert_eq!(messages[1].data1, 42);
+        let event = messages[0]
+            .scheduled_event(TrackId::from_value(7).unwrap())
+            .unwrap();
+        assert_eq!(event.kind, MidiEventKind::ProgramChange);
+        assert_eq!(event.channel, 3);
+        assert_eq!(event.program, Some(41));
+        assert_eq!(event.note_id, None);
     }
 }
 
