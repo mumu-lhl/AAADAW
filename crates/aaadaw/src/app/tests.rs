@@ -15619,6 +15619,82 @@ fn midi_quantize_dialog_applies_all_notes_and_note_ends_as_one_undoable_edit() {
 }
 
 #[test]
+fn inline_midi_group_edit_is_one_undoable_transaction() {
+    let mut app = App::default();
+    let _ = app.update(Message::AddTrack);
+    let track_id = app.project.tracks()[0].id();
+    app.project
+        .apply(DawAction::InsertMidiItem {
+            track_id,
+            start_tick: 0,
+            length_ticks: 2_400,
+        })
+        .expect("test MIDI item should be inserted");
+    let item_id = app.project.midi_items()[0].id();
+    app.project
+        .apply(DawAction::AddMidiNotes {
+            item_id,
+            notes: [(100, 60), (350, 62), (550, 64), (900, 65)]
+                .into_iter()
+                .map(|(tick, pitch)| MidiNoteData {
+                    channel: 0,
+                    pitch,
+                    tick,
+                    duration: 120,
+                    velocity: 96,
+                    off_velocity: 0,
+                })
+                .collect(),
+        })
+        .expect("test MIDI notes should be inserted");
+    let before = app.project.snapshot();
+    let edits = app.project.midi_items()[0]
+        .notes()
+        .iter()
+        .filter_map(|note| {
+            let tick = match note.pitch() {
+                60 => 840,
+                62 => 1_090,
+                65 => 1_640,
+                _ => return None,
+            };
+            Some((
+                note.id(),
+                MidiNoteData {
+                    channel: note.channel(),
+                    pitch: note.pitch(),
+                    tick,
+                    duration: note.duration(),
+                    velocity: note.velocity(),
+                    off_velocity: note.off_velocity(),
+                },
+            ))
+        })
+        .collect::<Vec<_>>();
+
+    let _ = app.update(Message::EditMidiNotes(item_id, edits));
+    assert_eq!(
+        app.project.midi_items()[0]
+            .notes()
+            .iter()
+            .map(|note| (note.pitch(), note.tick(), note.duration()))
+            .collect::<Vec<_>>(),
+        [
+            (60, 840, 120),
+            (62, 1_090, 120),
+            (64, 550, 120),
+            (65, 1_640, 120)
+        ]
+    );
+    let after = app.project.snapshot();
+
+    let _ = app.update(Message::Undo);
+    assert_eq!(app.project.snapshot(), before);
+    let _ = app.update(Message::Redo);
+    assert_eq!(app.project.snapshot(), after);
+}
+
+#[test]
 fn midi_quantize_dialog_fix_overlaps_defaults_on_and_can_be_disabled() {
     let mut app = App::default();
     let _ = app.update(Message::AddTrack);

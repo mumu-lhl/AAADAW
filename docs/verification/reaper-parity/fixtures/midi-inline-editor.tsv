@@ -44,7 +44,8 @@ aaadaw_group_move_capture_display	Xvfb :314, X11, 1440x900x24, xfwm4 without com
 aaadaw_group_move_build_backend	rustc 1.101.0-nightly with Cranelift
 aaadaw_group_move_build_id	41996b188345b7956ca37d5b3ecd8dc9ae0edba4
 aaadaw_group_move_binary_sha256	fcbe31634b3fe0a09a866b5bd7de8c20a6e1d42423a489332423523833ae2f32
-aaadaw_group_move_test_suite	Cranelift: cargo +nightly -Zcodegen-backend test -p aaadaw --bin aaadaw: 796 passed, 0 failed, 0 skipped
+aaadaw_group_move_test_suite	Cranelift: cargo +nightly -Zcodegen-backend test -p aaadaw --bin aaadaw: 797 passed, 0 failed, 0 skipped
+aaadaw_group_undo_redo_regression	app::tests::inline_midi_group_edit_is_one_undoable_transaction: one Undo restores the four-note source state; one Redo restores the group move
 aaadaw_group_move_clippy	Stable all-target Clippy with -D warnings: passed; cargo fmt --check and git diff --check: passed
 artifact	sha256
 midi-note-quantize-before.rpp	4bdbba8bcc46ff7bf74fabcb34031466898a81f74cf6497fd0ac2c8dd6f3174a
