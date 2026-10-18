@@ -2442,3 +2442,9 @@ REAPER 7.82 / Default 7 的 Type 1 导出探针确认：导入同一 Type 0 fixt
 原厂 Type 1 MIDI 输出、导入 take 的 `MIDI_GetAllEvts` 顺序、导出设置和 REAPER 实际写出提示截图记录在 [same-tick Note Off export manifest](../verification/reaper-parity/fixtures/midi-file-export-same-tick-note-off.tsv)。回归测试将 AAADAW 导出与原厂文件在 tick 240 和 tick 480 的全部事件逐项对比。Core 导入、导出和存储集成测试 169/169，opaque-only Event List 顺序定向 App 测试 1/1，Core/Storage/App strict all-target Clippy (`-D warnings`)、fmt 和 diff 检查通过。
 
 同时修复只有 Meta/SysEx、没有 typed-channel 顺序记录的导入 item：Event List 现在仍按这些 opaque 行的源序号排序。MIDI 文件格式、SysEx/Meta 播放、文件选择器等其它差异尚未完成，`MIDI-FILE-IMPORT-001` 与 P7 继续保持 `in_progress`。
+
+### 2026-10-18 音符编辑后延续导出顺序元数据
+
+后续审查发现，导入音符的音高、位置、时长或力度一旦被编辑，事件顺序目标仍指向旧数据，导出会退回到缺省排序。普通音符编辑、Quantize 和 Humanize 现在会同步更新对应 Note 的顺序目标，并保留 Note On 与 Note Off 的源序号；撤销通过反向事件将目标恢复。新增回归用例将导入音符改音高后重新导出，并把 tick 240、480 的事件序列与 REAPER 原厂结果逐项比较。
+
+Core MIDI 导入/导出和 Storage 集成套件 171/171 通过。回归还覆盖两个内容完全相同的重叠音符：编辑第二个音符时仍保留它自己的 Note On/Off 序号；普通音符编辑的 Undo/Redo 会恢复对应的旧/新顺序目标。Core/Storage/App strict all-target Clippy (`-D warnings`)、fmt 和 diff 检查通过。量化/人性化元数据同步已纳入相同事件路径，仍需针对各自变换增加独立回归。`MIDI-FILE-IMPORT-001` 与 P7 继续保持 `in_progress`。

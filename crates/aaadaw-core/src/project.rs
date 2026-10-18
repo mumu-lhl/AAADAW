@@ -8,7 +8,7 @@ use crate::timebase::{MeterMap, TempoMap};
 use crate::{
     ActionError, AudioItem, DawAction, FxParameterAutomationLane, FxParameterAutomationPoint,
     ItemId, MAX_TRACK_FX_PARAMETER_AUTOMATION_LANES, MarkerId, MidiChannelPressureData,
-    MidiControllerData, MidiEventOrderData, MidiEventOrderTarget, MidiItem, MidiNote,
+    MidiControllerData, MidiEventOrderData, MidiEventOrderTarget, MidiItem, MidiNote, MidiNoteData,
     MidiNoteQuantizeOperation, MidiOpaqueEventData, MidiPitchBendData, MidiPolyAftertouchData,
     MidiProgramChangeData, MusicalPosition, NoteId, ProjectMarker, ProjectMarkerSnapshot,
     ProjectRegion, ProjectRegionSnapshot, ProjectSettings, RazorEditArea, RegionId, TempoCurve,
@@ -6626,13 +6626,19 @@ impl Project {
                 {
                     return Err(ActionError::HistoryInvariantViolation);
                 }
-                let note = Arc::make_mut(&mut item.notes)
-                    .iter_mut()
+                let note = item
+                    .notes
+                    .iter()
                     .find(|note| note.id == before.id)
                     .ok_or(ActionError::HistoryInvariantViolation)?;
                 if *note != *before {
                     return Err(ActionError::HistoryInvariantViolation);
                 }
+                replace_midi_note_event_order(item, before.id, before.data, after.data);
+                let note = Arc::make_mut(&mut item.notes)
+                    .iter_mut()
+                    .find(|note| note.id == before.id)
+                    .ok_or(ActionError::HistoryInvariantViolation)?;
                 *note = after.clone();
             }
             ProjectEvent::MidiControllersChanged {
@@ -6752,14 +6758,15 @@ impl Project {
                     .find(|item| item.id == *item_id)
                     .ok_or(ActionError::HistoryInvariantViolation)?;
                 let source_bounds = midi_item_source_tick_bounds(item);
-                let current_notes = Arc::make_mut(&mut item.notes);
                 for change in changes {
-                    let note = current_notes
-                        .iter_mut()
+                    let before_data = item
+                        .notes
+                        .iter()
                         .find(|note| note.id == change.note_id)
+                        .map(|note| note.data)
                         .ok_or(ActionError::HistoryInvariantViolation)?;
-                    if note.data.tick != change.before_tick
-                        || note.data.duration != change.before_duration
+                    if before_data.tick != change.before_tick
+                        || before_data.duration != change.before_duration
                         || !valid_midi_note_range_in_bounds(
                             source_bounds,
                             change.after_tick,
@@ -6768,8 +6775,17 @@ impl Project {
                     {
                         return Err(ActionError::HistoryInvariantViolation);
                     }
-                    note.data.tick = change.after_tick;
-                    note.data.duration = change.after_duration;
+                    let after_data = MidiNoteData {
+                        tick: change.after_tick,
+                        duration: change.after_duration,
+                        ..before_data
+                    };
+                    replace_midi_note_event_order(item, change.note_id, before_data, after_data);
+                    let note = Arc::make_mut(&mut item.notes)
+                        .iter_mut()
+                        .find(|note| note.id == change.note_id)
+                        .ok_or(ActionError::HistoryInvariantViolation)?;
+                    note.data = after_data;
                 }
             }
             ProjectEvent::MidiNotesHumanized { item_id, changes } => {
@@ -6779,26 +6795,36 @@ impl Project {
                     .find(|item| item.id == *item_id)
                     .ok_or(ActionError::HistoryInvariantViolation)?;
                 let source_bounds = midi_item_source_tick_bounds(item);
-                let current_notes = Arc::make_mut(&mut item.notes);
                 for change in changes {
-                    let note = current_notes
-                        .iter_mut()
+                    let before_data = item
+                        .notes
+                        .iter()
                         .find(|note| note.id == change.note_id)
+                        .map(|note| note.data)
                         .ok_or(ActionError::HistoryInvariantViolation)?;
-                    if note.data.tick != change.before_tick
-                        || note.data.duration != change.before_duration
-                        || note.data.velocity != change.before_velocity
+                    if before_data.tick != change.before_tick
+                        || before_data.duration != change.before_duration
+                        || before_data.velocity != change.before_velocity
                         || !(1..=127).contains(&change.after_velocity)
                         || !valid_midi_note_range_in_bounds(
                             source_bounds,
                             change.after_tick,
-                            change.before_duration,
+                            before_data.duration,
                         )
                     {
                         return Err(ActionError::HistoryInvariantViolation);
                     }
-                    note.data.tick = change.after_tick;
-                    note.data.velocity = change.after_velocity;
+                    let after_data = MidiNoteData {
+                        tick: change.after_tick,
+                        velocity: change.after_velocity,
+                        ..before_data
+                    };
+                    replace_midi_note_event_order(item, change.note_id, before_data, after_data);
+                    let note = Arc::make_mut(&mut item.notes)
+                        .iter_mut()
+                        .find(|note| note.id == change.note_id)
+                        .ok_or(ActionError::HistoryInvariantViolation)?;
+                    note.data = after_data;
                 }
             }
             ProjectEvent::Transaction { events, .. } => {
@@ -7042,6 +7068,32 @@ fn valid_midi_opaque_events(events: &[MidiOpaqueEventData]) -> bool {
             && event.kind.data_len() <= 16 * 1024 * 1024
             && positions.insert((event.tick, event.order))
     })
+}
+
+fn replace_midi_note_event_order(
+    item: &mut MidiItem,
+    note_id: NoteId,
+    before: MidiNoteData,
+    after: MidiNoteData,
+) {
+    if before == after {
+        return;
+    }
+    let Some(note_index) = item.notes.iter().position(|note| note.id == note_id) else {
+        return;
+    };
+    let occurrence = item.notes[..note_index]
+        .iter()
+        .filter(|note| note.data == before)
+        .count();
+    let Some(event) = Arc::make_mut(&mut item.event_order)
+        .iter_mut()
+        .filter(|event| event.target == MidiEventOrderTarget::Note(before))
+        .nth(occurrence)
+    else {
+        return;
+    };
+    event.target = MidiEventOrderTarget::Note(after);
 }
 
 fn valid_midi_event_order_data(events: &[MidiEventOrderData]) -> bool {

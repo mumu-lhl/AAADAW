@@ -1,6 +1,6 @@
 use aaadaw_core::{
     ActionError, DawAction, MidiEventOrderTarget, MidiFileEventKind, MidiFileFormat,
-    MidiFileImportOptions, MidiOpaqueEventKind, Project, decode_standard_midi,
+    MidiFileImportOptions, MidiNoteData, MidiOpaqueEventKind, Project, decode_standard_midi,
 };
 
 fn smf(format: u16, division: u16, tracks: &[&[u8]]) -> Vec<u8> {
@@ -135,6 +135,20 @@ fn same_tick_import_order_does_not_block_typed_event_edits_or_snapshot_round_tri
     let item_id = item.id();
     let first_note = item.notes()[0].clone();
     let second_note_id = item.notes()[1].id();
+    let first_note_data = MidiNoteData {
+        pitch: first_note.pitch(),
+        channel: first_note.channel(),
+        tick: first_note.tick(),
+        duration: first_note.duration(),
+        velocity: first_note.velocity(),
+        off_velocity: first_note.off_velocity(),
+    };
+    let first_note_order = item
+        .event_order()
+        .iter()
+        .find(|entry| entry.target == MidiEventOrderTarget::Note(first_note_data))
+        .copied()
+        .unwrap();
     project
         .apply(DawAction::EditMidiNote {
             item_id,
@@ -149,6 +163,27 @@ fn same_tick_import_order_does_not_block_typed_event_edits_or_snapshot_round_tri
             },
         })
         .unwrap();
+    let edited_note_data = MidiNoteData {
+        pitch: first_note.pitch() + 1,
+        ..first_note_data
+    };
+    assert!(project.midi_items()[0].event_order().iter().any(|entry| {
+        entry.target == MidiEventOrderTarget::Note(edited_note_data)
+            && entry.order == first_note_order.order
+            && entry.note_off_order == first_note_order.note_off_order
+    }));
+    assert!(project.undo().unwrap());
+    assert!(project.midi_items()[0].event_order().iter().any(|entry| {
+        entry.target == MidiEventOrderTarget::Note(first_note_data)
+            && entry.order == first_note_order.order
+            && entry.note_off_order == first_note_order.note_off_order
+    }));
+    assert!(project.redo().unwrap());
+    assert!(project.midi_items()[0].event_order().iter().any(|entry| {
+        entry.target == MidiEventOrderTarget::Note(edited_note_data)
+            && entry.order == first_note_order.order
+            && entry.note_off_order == first_note_order.note_off_order
+    }));
     project
         .apply(DawAction::DeleteMidiNotes {
             item_id,
@@ -177,6 +212,65 @@ fn same_tick_import_order_does_not_block_typed_event_edits_or_snapshot_round_tri
             .pitch(),
         first_note.pitch() + 1
     );
+}
+
+#[test]
+fn editing_one_of_identical_imported_notes_keeps_its_paired_off_order() {
+    let track = [
+        0x00, 0x90, 60, 100, // First Note On.
+        0x00, 0x90, 60, 100, // Identical overlapping Note On.
+        0x83, 0x60, 0x80, 60, 20, // FIFO Note Off at tick 480.
+        0x00, 0x80, 60, 20, // Second FIFO Note Off at tick 480.
+        0x00, 0xFF, 0x2F, 0x00,
+    ];
+    let decoded = decode_standard_midi(&smf(0, 960, &[&track])).unwrap();
+    let imported = decoded.to_project_import(960).unwrap();
+    let mut project = Project::new();
+    project
+        .apply(DawAction::ImportMidiTrack {
+            start_tick: 0,
+            track: imported.tracks[0].clone(),
+        })
+        .unwrap();
+    let item = &project.midi_items()[0];
+    let item_id = item.id();
+    let identical_data = MidiNoteData {
+        pitch: 60,
+        channel: 0,
+        tick: 0,
+        duration: 480,
+        velocity: 100,
+        off_velocity: 20,
+    };
+    let second_note_order = item
+        .event_order()
+        .iter()
+        .filter(|entry| entry.target == MidiEventOrderTarget::Note(identical_data))
+        .nth(1)
+        .copied()
+        .unwrap();
+    let second_note_id = item.notes()[1].id();
+
+    project
+        .apply(DawAction::EditMidiNote {
+            item_id,
+            note_id: second_note_id,
+            data: MidiNoteData {
+                pitch: 61,
+                ..identical_data
+            },
+        })
+        .unwrap();
+
+    assert!(project.midi_items()[0].event_order().iter().any(|entry| {
+        entry.target
+            == MidiEventOrderTarget::Note(MidiNoteData {
+                pitch: 61,
+                ..identical_data
+            })
+            && entry.order == second_note_order.order
+            && entry.note_off_order == second_note_order.note_off_order
+    }));
 }
 
 #[test]

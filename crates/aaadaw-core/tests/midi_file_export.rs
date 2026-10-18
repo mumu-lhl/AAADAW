@@ -46,6 +46,78 @@ fn reaper_782_export_preserves_same_tick_note_off_order_from_imported_take() {
 }
 
 #[test]
+fn reaper_782_note_edit_keeps_the_paired_note_off_source_order_on_export() {
+    let source = decode_standard_midi(include_bytes!(
+        "../../../docs/verification/reaper-parity/fixtures/midi-file-import-same-tick-order.mid"
+    ))
+    .unwrap();
+    let imported = source.to_project_import(960).unwrap();
+    let mut project = Project::new();
+    for track in imported.tracks {
+        project
+            .apply(DawAction::ImportMidiTrack {
+                start_tick: 0,
+                track,
+            })
+            .unwrap();
+    }
+    let item = &project.midi_items()[0];
+    let item_id = item.id();
+    let note = item
+        .notes()
+        .iter()
+        .find(|note| note.tick() == 240)
+        .unwrap()
+        .clone();
+    project
+        .apply(DawAction::EditMidiNote {
+            item_id,
+            note_id: note.id(),
+            data: MidiNoteData {
+                pitch: note.pitch() + 1,
+                channel: note.channel(),
+                tick: note.tick(),
+                duration: note.duration(),
+                velocity: note.velocity(),
+                off_velocity: note.off_velocity(),
+            },
+        })
+        .unwrap();
+
+    let bytes = encode_standard_midi(&project, MidiExportOptions::for_project(&project)).unwrap();
+    let exported = decode_standard_midi(&bytes).unwrap();
+    let mut native = decode_standard_midi(include_bytes!(
+        "../../../docs/verification/reaper-parity/fixtures/midi-file-export-same-tick-note-off-native.mid"
+    ))
+    .unwrap();
+    for event in &mut native.tracks[1].events {
+        match &mut event.kind {
+            aaadaw_core::MidiFileEventKind::Channel { status, data }
+                if ((event.tick == 240 && *status & 0xF0 == 0x90)
+                    || (event.tick == 480 && *status & 0xF0 == 0x80))
+                    && data[0] == note.pitch() =>
+            {
+                data[0] += 1;
+            }
+            _ => {}
+        }
+    }
+    let same_tick_events = |track: &aaadaw_core::MidiFileTrack| {
+        track
+            .events
+            .iter()
+            .filter(|event| matches!(event.tick, 240 | 480))
+            .map(|event| (event.tick, event.kind.clone()))
+            .collect::<Vec<_>>()
+    };
+
+    assert_eq!(
+        same_tick_events(&exported.tracks[1]),
+        same_tick_events(&native.tracks[1])
+    );
+}
+
+#[test]
 fn exports_note_controller_and_pitch_bend_channels_as_midi_status_nibbles() {
     let mut project = Project::new();
     project
