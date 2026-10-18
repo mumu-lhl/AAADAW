@@ -56,3 +56,6 @@ fixtures/midi-event-list-aaadaw-selection-undo.png	3e09280ba1588e5295724492d6539
 fixtures/midi-event-list-aaadaw-selection-redo.png	f055aceced9e1cbcdb72c84a079c66284d71d93d588940996a5d9fbb6dbff563
 fixtures/midi-event-list-empty-end-aaadaw-properties-action.png	86012683914568118816714f927f5b8614b7b49e592bf9dd3f078e9fe88a6d14
 fixtures/midi-event-list-empty-end-aaadaw-properties.png	d88a5ca3a9e4a7687fb5bab092b062c20ecc720f5e0013ca20f87112774f2544
+fixtures/midi-event-list-reaper-data-aaadaw.tsv	4a7ae1edb805e4def5b44cf2fa12921f6e47e3a61112e773d673ff6f20828faa
+fixtures/midi-event-list-reaper-data-aaadaw.png	eaf488686ac0c16796cbd69adbff128ed9eb737551eedf8563ebce45d25f13ac
+fixtures/midi-event-list-reaper-data-aaadaw-narrow-scroll.png	4628d183781fde07a6c14abfcaa1f68b1c2f733650a521ad531d4fcdaff6a1ff

@@ -2572,3 +2572,9 @@ AAADAW 的 Control-click 处理通过同一释放态事件流回归覆盖：Ctrl
 最终 Cranelift 桌面测试 **802/802**、稳定 Nextest **802/802**、workspace strict all-target Clippy（`-D warnings`）、fmt 与 diff 检查通过。当前生产二进制 Build ID `ef5af2d5bfff238c851f69d665348bfadc4533b2`、SHA-256 `6a969b90decbd64766661d8f7cf8564a9c4bcead4aed6a783c8adea90b93cf9a` 在 Xvfb :319 实际打开 7 音符工程；实窗选择 C4、Ctrl-click D4、Ctrl+Z 和 Ctrl+Shift+Z 的四张截图与 hashes 在 [Event List selection fixture](../verification/reaper-parity/fixtures/midi-event-list-selection-history-aaadaw.tsv)。
 
 原厂 REAPER 已确认 MIDI Editor Piano Roll note Ctrl-click 选择会进入 Undo/Redo 顺序；Event List row-click/Arrow/Home 选择的专项 Undo 历史仍须独立原厂 probe，AAADAW 截图不代替该验收。`MIDI-EVENT-LIST-001`、`MIDI-INLINE-EDITOR-001`、UI-018/UI-019/UI-020 与 P7 继续 `in_progress`；下一步先实测 REAPER Event List 的鼠标/键盘选择与 Undo/Redo，再处理 REAPER Data 列、filter 规则与未建模 Meta 行等开放项。
+
+### 2026-10-18 Event List REAPER Data 列与窄窗口横向滚动
+
+提交 `ab5b886` 将 REAPER 7.82 原厂列序 `Index / Position / Length / Channel / Type / Parameter / Value / Off Value / REAPER Data` 接入 AAADAW Event List。表格在竖向滚动区域内再嵌一层横向滚动；实窗检查发现直接使用 Iced 双向滚动会令表格完全空白，当前布局已改为窄窗口下可将末列滚入视区，并保留完整行渲染。Linux Xvfb :320 当前 Cranelift 桌面构建在 1380×780 MIDI Editor 中显示完整九列；缩至 800×620 并横向滚动后能看到 REAPER Data。Build ID `5e34df6ac45ef5ba3d3f8dca92dc47f9d1353244`，SHA-256 `ca37c1f764a31ba394decfbca4895f446a3c5b87ab4bd31f726251033d6c4798`；两张真实窗口截图、七音符项目来源、哈希和验证过程记录在 [REAPER Data fixture manifest](../verification/reaper-parity/fixtures/midi-event-list-reaper-data-aaadaw.tsv)，总表也已登记。
+
+REAPER 原厂 Note、Program Change、Poly Aftertouch 和 Channel Pressure 截图中的 REAPER Data 单元格为空；AAADAW 这些行现留空并与已测结果相符。Meta/SysEx 的 REAPER Data 含义与显示仍未实测，故没有填入猜测值。最终 Cranelift 测试 **803/803**、稳定 Nextest **803/803**、workspace strict all-target Clippy（`-D warnings`）、fmt 和 diff check 通过。`MIDI-EVENT-LIST-001`、UI-019、P7 继续 `in_progress`；opaque 数据、filter controls、混合类型属性、排序、列宽与菜单等仍待逐项验收。
