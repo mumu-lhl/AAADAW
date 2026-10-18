@@ -175,6 +175,38 @@ pub struct MidiChannelPressureData {
     pub value: u8,
 }
 
+/// A non-channel event retained from a Standard MIDI File MIDI item.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MidiOpaqueEventData {
+    /// Event position relative to the MIDI item's source.
+    pub tick: u64,
+    /// Source order among opaque events at this position.
+    pub order: u32,
+    pub kind: MidiOpaqueEventKind,
+}
+
+/// A SysEx or Meta payload that does not map to a channel-event model.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum MidiOpaqueEventKind {
+    SystemExclusive { status: u8, data: Vec<u8> },
+    Meta { kind: u8, data: Vec<u8> },
+}
+
+impl MidiOpaqueEventKind {
+    pub(crate) fn is_valid(&self) -> bool {
+        match self {
+            Self::SystemExclusive { status, .. } => matches!(status, 0xF0 | 0xF7),
+            Self::Meta { .. } => true,
+        }
+    }
+
+    pub(crate) fn data_len(&self) -> usize {
+        match self {
+            Self::SystemExclusive { data, .. } | Self::Meta { data, .. } => data.len(),
+        }
+    }
+}
+
 /// A MIDI note stored in a project.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MidiNote {
@@ -238,6 +270,7 @@ pub struct MidiItem {
     pub(crate) program_changes: Arc<Vec<MidiProgramChangeData>>,
     pub(crate) poly_aftertouches: Arc<Vec<MidiPolyAftertouchData>>,
     pub(crate) channel_pressures: Arc<Vec<MidiChannelPressureData>>,
+    pub(crate) opaque_events: Arc<Vec<MidiOpaqueEventData>>,
 }
 
 impl MidiItem {
@@ -413,5 +446,10 @@ impl MidiItem {
     /// Returns Channel Pressure events sorted by tick, then channel.
     pub fn channel_pressures(&self) -> &[MidiChannelPressureData] {
         &self.channel_pressures
+    }
+
+    /// Returns retained text, marker, SysEx, and other opaque source events.
+    pub fn opaque_events(&self) -> &[MidiOpaqueEventData] {
+        &self.opaque_events
     }
 }

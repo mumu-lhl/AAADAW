@@ -3,12 +3,12 @@ use crate::{
 };
 use aaadaw_core::{
     AudioItemSnapshot, BpmBasis, MeterPointSnapshot, MidiChannelPressureData, MidiControllerData,
-    MidiItemSnapshot, MidiNoteData, MidiNoteSnapshot, MidiPitchBendData, MidiPolyAftertouchData,
-    MidiProgramChangeData, PanMode, Project, ProjectMarkerSnapshot, ProjectRegionSnapshot,
-    ProjectSettings, ProjectSnapshot, RazorEditArea, SnapshotError, TempoCurve, TempoPointSnapshot,
-    TrackFxParameterAutomationLaneSnapshot, TrackFxParameterAutomationPointSnapshot,
-    TrackFxParameterValueSnapshot, TrackFxPluginSnapshot, TrackInstrumentSnapshot, TrackSnapshot,
-    VolumeAutomationPoint,
+    MidiItemSnapshot, MidiNoteData, MidiNoteSnapshot, MidiOpaqueEventData, MidiOpaqueEventKind,
+    MidiPitchBendData, MidiPolyAftertouchData, MidiProgramChangeData, PanMode, Project,
+    ProjectMarkerSnapshot, ProjectRegionSnapshot, ProjectSettings, ProjectSnapshot, RazorEditArea,
+    SnapshotError, TempoCurve, TempoPointSnapshot, TrackFxParameterAutomationLaneSnapshot,
+    TrackFxParameterAutomationPointSnapshot, TrackFxParameterValueSnapshot, TrackFxPluginSnapshot,
+    TrackInstrumentSnapshot, TrackSnapshot, VolumeAutomationPoint,
 };
 use rusqlite::{
     Connection, OpenFlags, OptionalExtension, Transaction, TransactionBehavior, params,
@@ -26,7 +26,7 @@ use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 /// Latest database schema version understood by this release.
-pub const CURRENT_SCHEMA_VERSION: u32 = 62;
+pub const CURRENT_SCHEMA_VERSION: u32 = 63;
 
 const MIGRATION_29: &str = "ALTER TABLE project_meta ADD COLUMN start_measure INTEGER NOT NULL DEFAULT 1 CHECK(start_measure BETWEEN -2147483648 AND 2147483647);";
 const MIGRATION_30: &str = "ALTER TABLE project_meta ADD COLUMN bpm_basis INTEGER NOT NULL DEFAULT 1 CHECK(bpm_basis BETWEEN 0 AND 5);";
@@ -571,6 +571,23 @@ CREATE INDEX IF NOT EXISTS midi_channel_pressures_by_item_tick
     ON midi_channel_pressures(item_id, tick, channel);
 "#;
 const MIGRATION_62_NOTE_OFF_VELOCITY: &str = "ALTER TABLE midi_notes ADD COLUMN off_velocity INTEGER NOT NULL DEFAULT 0 CHECK (off_velocity BETWEEN 0 AND 127);";
+
+const MIGRATION_63_MIDI_OPAQUE_EVENTS: &str = r#"
+CREATE TABLE IF NOT EXISTS midi_opaque_events (
+    item_id INTEGER NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+    position INTEGER NOT NULL CHECK (position >= 0),
+    tick INTEGER NOT NULL CHECK (tick >= 0),
+    source_order INTEGER NOT NULL CHECK (source_order BETWEEN 0 AND 4294967295),
+    event_kind INTEGER NOT NULL CHECK (event_kind BETWEEN 0 AND 2),
+    meta_type INTEGER CHECK (meta_type BETWEEN 0 AND 255),
+    data BLOB NOT NULL,
+    PRIMARY KEY (item_id, position),
+    CHECK ((event_kind = 0 AND meta_type IS NOT NULL) OR
+           (event_kind IN (1, 2) AND meta_type IS NULL))
+);
+CREATE INDEX IF NOT EXISTS midi_opaque_events_by_item_tick
+    ON midi_opaque_events(item_id, tick, source_order);
+"#;
 
 /// SQLite persistence failures, including incompatible project files.
 #[derive(Debug)]
@@ -3595,6 +3612,7 @@ fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
                     transaction.execute_batch(MIGRATION_62_NOTE_OFF_VELOCITY)?;
                 }
             }
+            63 => transaction.execute_batch(MIGRATION_63_MIDI_OPAQUE_EVENTS)?,
             missing => return Err(StorageError::MissingMigration(missing - 1)),
         }
         transaction.pragma_update(None, "user_version", next_version)?;
@@ -3626,6 +3644,7 @@ fn write_snapshot(
     transaction.execute("DELETE FROM midi_program_changes", [])?;
     transaction.execute("DELETE FROM midi_poly_aftertouches", [])?;
     transaction.execute("DELETE FROM midi_channel_pressures", [])?;
+    transaction.execute("DELETE FROM midi_opaque_events", [])?;
     transaction.execute("DELETE FROM track_volume_automation", [])?;
     transaction.execute("DELETE FROM items", [])?;
     transaction.execute("DELETE FROM audio_item_fade_curves", [])?;
@@ -3929,6 +3948,31 @@ fn write_snapshot(
                     i64::from(event.channel),
                     to_sql_integer(event.tick)?,
                     i64::from(event.value)
+                ],
+            )?;
+        }
+        for (position, event) in item.opaque_events.iter().enumerate() {
+            let (event_kind, meta_type, data) = match &event.kind {
+                MidiOpaqueEventKind::Meta { kind, data } => (0_i64, Some(i64::from(*kind)), data),
+                MidiOpaqueEventKind::SystemExclusive { status: 0xF0, data } => (1, None, data),
+                MidiOpaqueEventKind::SystemExclusive { status: 0xF7, data } => (2, None, data),
+                MidiOpaqueEventKind::SystemExclusive { .. } => {
+                    return Err(StorageError::InvalidStoredData(
+                        "unsupported MIDI SysEx status",
+                    ));
+                }
+            };
+            transaction.execute(
+                "INSERT INTO midi_opaque_events(item_id, position, tick, source_order, event_kind, meta_type, data) \
+                 VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                params![
+                    to_sql_integer(item.id)?,
+                    usize_to_sql(position)?,
+                    to_sql_integer(event.tick)?,
+                    i64::from(event.order),
+                    event_kind,
+                    meta_type,
+                    data.as_slice(),
                 ],
             )?;
         }
@@ -4843,6 +4887,51 @@ fn read_midi_items(connection: &Connection) -> Result<(Vec<MidiItemSnapshot>, bo
             ));
     }
 
+    let mut opaque_statement = connection.prepare(
+        "SELECT item_id, position, tick, source_order, event_kind, meta_type, data \
+         FROM midi_opaque_events ORDER BY item_id, position",
+    )?;
+    let opaque_rows = opaque_statement
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, i64>(1)?,
+                row.get::<_, i64>(2)?,
+                row.get::<_, i64>(3)?,
+                row.get::<_, i64>(4)?,
+                row.get::<_, Option<i64>>(5)?,
+                row.get::<_, Vec<u8>>(6)?,
+            ))
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut opaque_by_item: HashMap<u64, Vec<(u64, MidiOpaqueEventData)>> = HashMap::new();
+    for (item_id, position, tick, source_order, event_kind, meta_type, data) in opaque_rows {
+        let kind = match (event_kind, meta_type) {
+            (0, Some(meta_type)) => MidiOpaqueEventKind::Meta {
+                kind: from_sql_u8(meta_type)?,
+                data,
+            },
+            (1, None) => MidiOpaqueEventKind::SystemExclusive { status: 0xF0, data },
+            (2, None) => MidiOpaqueEventKind::SystemExclusive { status: 0xF7, data },
+            _ => {
+                return Err(StorageError::InvalidStoredData(
+                    "invalid MIDI opaque event kind",
+                ));
+            }
+        };
+        opaque_by_item
+            .entry(from_sql_u64(item_id)?)
+            .or_default()
+            .push((
+                from_sql_u64(position)?,
+                MidiOpaqueEventData {
+                    tick: from_sql_u64(tick)?,
+                    order: from_sql_u32(source_order)?,
+                    kind,
+                },
+            ));
+    }
+
     let mut item_statement = connection.prepare(
         "SELECT id, track_id, position, start_tick, start_tick_subtick, length_ticks, name, source_offset_ticks, loop_source, source_loop_length_ticks, muted \
          FROM items ORDER BY position",
@@ -4897,6 +4986,7 @@ fn read_midi_items(connection: &Connection) -> Result<(Vec<MidiItemSnapshot>, bo
         let program_changes = programs_by_item.remove(&id).unwrap_or_default();
         let poly_aftertouches = poly_by_item.remove(&id).unwrap_or_default();
         let channel_pressures = pressures_by_item.remove(&id).unwrap_or_default();
+        let opaque_events = opaque_by_item.remove(&id).unwrap_or_default();
         items.push(MidiItemSnapshot {
             id,
             track_id: from_sql_u64(track_id)?,
@@ -4923,6 +5013,7 @@ fn read_midi_items(connection: &Connection) -> Result<(Vec<MidiItemSnapshot>, bo
                 .into_iter()
                 .map(|(_, event)| event)
                 .collect(),
+            opaque_events: opaque_events.into_iter().map(|(_, event)| event).collect(),
         });
     }
     Ok((
@@ -4932,7 +5023,8 @@ fn read_midi_items(connection: &Connection) -> Result<(Vec<MidiItemSnapshot>, bo
             || !bends_by_item.is_empty()
             || !programs_by_item.is_empty()
             || !poly_by_item.is_empty()
-            || !pressures_by_item.is_empty(),
+            || !pressures_by_item.is_empty()
+            || !opaque_by_item.is_empty(),
     ))
 }
 

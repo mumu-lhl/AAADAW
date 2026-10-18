@@ -7,8 +7,8 @@ use super::tokens::{PANEL_PADDING, ROW_GAP, SPACING_LG, SPACING_MD, SPACING_XS, 
 use crate::timeline::{SnapGrid, TimelineEvent, snap_tick_to_grid};
 use aaadaw_core::{
     ItemId, MidiChannelPressureData, MidiControllerData, MidiItem, MidiNote, MidiNoteData,
-    MidiPitchBendData, MidiPolyAftertouchData, MidiProgramChangeData, NoteId, Project,
-    TimeSignature,
+    MidiOpaqueEventData, MidiOpaqueEventKind, MidiPitchBendData, MidiPolyAftertouchData,
+    MidiProgramChangeData, NoteId, Project, TimeSignature,
 };
 use iced::advanced::text::{Alignment as TextAlignment, LineHeight, Shaping};
 use iced::widget::canvas::{self, Text};
@@ -876,6 +876,7 @@ enum MidiEventListEntry<'a> {
     ProgramChange(MidiProgramChangeData),
     PolyAftertouch(MidiPolyAftertouchData),
     ChannelPressure(MidiChannelPressureData),
+    Opaque(u32, &'a MidiOpaqueEventData),
     End(u64),
 }
 
@@ -889,19 +890,31 @@ impl MidiEventListEntry<'_> {
             Self::ProgramChange(event) => event.tick,
             Self::PolyAftertouch(event) => event.tick,
             Self::ChannelPressure(event) => event.tick,
+            Self::Opaque(_, event) => event.tick,
             Self::End(tick) => tick,
         }
     }
 
-    fn order(self) -> u8 {
+    fn order(self) -> u64 {
         match self {
-            Self::Note(_) => 0,
-            Self::Controller(_) | Self::BankSelect(_, _) => 1,
-            Self::PitchBend(_) => 2,
-            Self::ProgramChange(_) => 3,
-            Self::PolyAftertouch(_) => 4,
-            Self::ChannelPressure(_) => 5,
-            Self::End(_) => u8::MAX,
+            Self::Opaque(index, event) => {
+                let category = match &event.kind {
+                    MidiOpaqueEventKind::Meta { kind: 0x03, .. } => 0,
+                    MidiOpaqueEventKind::Meta {
+                        kind: 0x06 | 0x07, ..
+                    } => 5,
+                    MidiOpaqueEventKind::SystemExclusive { .. } => 6,
+                    MidiOpaqueEventKind::Meta { .. } => 2,
+                };
+                category * 1_000_000 + u64::from(index)
+            }
+            Self::Note(_) => 1_000_000,
+            Self::Controller(_) | Self::BankSelect(_, _) => 3_000_000,
+            Self::PitchBend(_) => 3_500_000,
+            Self::ProgramChange(_) => 4_000_000,
+            Self::PolyAftertouch(_) => 4_500_000,
+            Self::ChannelPressure(_) => 4_750_000,
+            Self::End(_) => u64::MAX,
         }
     }
 
@@ -914,6 +927,7 @@ impl MidiEventListEntry<'_> {
             Self::ProgramChange(event) => MidiEditorEventListCursor::ProgramChange(event),
             Self::PolyAftertouch(event) => MidiEditorEventListCursor::PolyAftertouch(event),
             Self::ChannelPressure(event) => MidiEditorEventListCursor::ChannelPressure(event),
+            Self::Opaque(index, _) => MidiEditorEventListCursor::Opaque(index),
             Self::End(_) => MidiEditorEventListCursor::End,
         }
     }
@@ -998,6 +1012,12 @@ fn midi_event_list_entries(item: &MidiItem, snap: MidiSnap) -> Vec<MidiEventList
                 .filter(|event| snap.channel_pressure_visible(event.channel))
                 .map(MidiEventListEntry::ChannelPressure),
         )
+        .chain(
+            item.opaque_events()
+                .iter()
+                .enumerate()
+                .map(|(index, event)| MidiEventListEntry::Opaque(index as u32, event)),
+        )
         .collect::<Vec<_>>();
     events.sort_by_key(|event| (event.tick(), event.order()));
     events.push(MidiEventListEntry::End(item.length_ticks()));
@@ -1015,6 +1035,42 @@ fn midi_event_program_change_parameter(item: &MidiItem, event: MidiProgramChange
         effective_midi_bank_value(item, event.channel, event.tick, 32),
         event.program
     )
+}
+
+fn midi_opaque_meta_text(data: &[u8]) -> String {
+    let text = String::from_utf8_lossy(data).trim_matches('\0').to_owned();
+    if text
+        .chars()
+        .all(|character| !character.is_control() || character == '\t')
+    {
+        text
+    } else {
+        data.iter()
+            .map(|byte| format!("{byte:02X}"))
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
+}
+
+fn midi_opaque_event_label(event: &MidiOpaqueEventData) -> (&'static str, String) {
+    match &event.kind {
+        MidiOpaqueEventKind::SystemExclusive { status, data } => {
+            let bytes = std::iter::once(status)
+                .chain(data.iter())
+                .map(|byte| format!("{byte:02X}"))
+                .collect::<Vec<_>>()
+                .join(" ");
+            ("SYSEX", bytes)
+        }
+        MidiOpaqueEventKind::Meta { kind: 0x03, data } => {
+            ("Track name", midi_opaque_meta_text(data))
+        }
+        MidiOpaqueEventKind::Meta {
+            kind: 0x06 | 0x07,
+            data,
+        } => ("Marker", midi_opaque_meta_text(data)),
+        MidiOpaqueEventKind::Meta { data, .. } => ("Text event", midi_opaque_meta_text(data)),
+    }
 }
 
 pub(in crate::app) fn midi_event_list_cursors(
@@ -1116,7 +1172,7 @@ fn midi_event_list_view<'a>(
                 MidiEventListEntry::Note(note) => (
                     note.tick(),
                     Some(note.duration()),
-                    note.channel(),
+                    Some(note.channel()),
                     "Note",
                     pitch_name(snap.note_pitch(item_id, &app.midi_editor_selected_notes, note)),
                     note.velocity().to_string(),
@@ -1130,7 +1186,7 @@ fn midi_event_list_view<'a>(
                 MidiEventListEntry::Controller(event) => (
                     event.tick,
                     None,
-                    event.channel,
+                    Some(event.channel),
                     "CC",
                     midi_event_controller_name(event.controller),
                     event.value.to_string(),
@@ -1145,7 +1201,7 @@ fn midi_event_list_view<'a>(
                 MidiEventListEntry::BankSelect(msb, lsb) => (
                     msb.tick,
                     None,
-                    msb.channel,
+                    Some(msb.channel),
                     "CC",
                     "Bank Select 14-bit (0/32)".to_owned(),
                     midi_event_bank_select_value(msb, lsb).to_string(),
@@ -1162,7 +1218,7 @@ fn midi_event_list_view<'a>(
                 MidiEventListEntry::PitchBend(event) => (
                     event.tick,
                     None,
-                    event.channel,
+                    Some(event.channel),
                     "Pitch",
                     "Pitch Bend".to_owned(),
                     event.value.to_string(),
@@ -1177,7 +1233,7 @@ fn midi_event_list_view<'a>(
                 MidiEventListEntry::ProgramChange(event) => (
                     event.tick,
                     None,
-                    event.channel,
+                    Some(event.channel),
                     "PC",
                     midi_event_program_change_parameter(item, event),
                     event.program.to_string(),
@@ -1192,7 +1248,7 @@ fn midi_event_list_view<'a>(
                 MidiEventListEntry::PolyAftertouch(event) => (
                     event.tick,
                     None,
-                    event.channel,
+                    Some(event.channel),
                     "Poly Aftertouch",
                     pitch_name(event.note),
                     event.value.to_string(),
@@ -1207,7 +1263,7 @@ fn midi_event_list_view<'a>(
                 MidiEventListEntry::ChannelPressure(event) => (
                     event.tick,
                     None,
-                    event.channel,
+                    Some(event.channel),
                     "Channel Pressure",
                     String::new(),
                     event.value.to_string(),
@@ -1219,10 +1275,29 @@ fn midi_event_list_view<'a>(
                         app.keyboard_modifiers.command() || app.keyboard_modifiers.control(),
                     ),
                 ),
+                MidiEventListEntry::Opaque(index, event) => {
+                    let (event_type, parameter) = midi_opaque_event_label(event);
+                    (
+                        event.tick,
+                        None,
+                        None,
+                        event_type,
+                        parameter,
+                        String::new(),
+                        String::new(),
+                        app.midi_editor_event_list_cursor
+                            == Some(MidiEditorEventListCursor::Opaque(index)),
+                        Message::SelectMidiOpaqueEvent(
+                            item_id,
+                            index,
+                            app.keyboard_modifiers.command() || app.keyboard_modifiers.control(),
+                        ),
+                    )
+                }
                 MidiEventListEntry::End(tick) => (
                     tick,
                     None,
-                    0,
+                    Some(0),
                     "(end) All Notes Off",
                     String::new(),
                     "0".to_owned(),
@@ -1238,7 +1313,8 @@ fn midi_event_list_view<'a>(
                 index: (index + 1).to_string(),
                 position: midi_event_list_position(position_tick, ppq, meter),
                 length: midi_event_list_optional_length(length_ticks, ppq, meter),
-                channel: (channel + 1).to_string(),
+                channel: channel
+                    .map_or_else(|| "--".to_owned(), |channel| (channel + 1).to_string()),
                 event_type: event_type.to_owned(),
                 parameter,
                 value,
@@ -8141,6 +8217,88 @@ mod tests {
         assert_eq!(events.len(), 2);
         assert!(matches!(events[0], MidiEventListEntry::ChannelPressure(_)));
         assert!(matches!(events[1], MidiEventListEntry::End(3_840)));
+    }
+
+    #[test]
+    fn event_list_shows_text_marker_and_sysex_item_events() {
+        let mut project = Project::new();
+        project
+            .apply(aaadaw_core::DawAction::CreateTrack {
+                index: 0,
+                name: "Lead".to_owned(),
+            })
+            .unwrap();
+        let track_id = project.tracks()[0].id();
+        project
+            .apply(aaadaw_core::DawAction::InsertMidiItem {
+                track_id,
+                start_tick: 0,
+                length_ticks: 960,
+            })
+            .unwrap();
+        let item_id = project.midi_items()[0].id();
+        project
+            .apply(aaadaw_core::DawAction::SetMidiOpaqueEvents {
+                item_id,
+                events: vec![
+                    MidiOpaqueEventData {
+                        tick: 0,
+                        order: 0,
+                        kind: MidiOpaqueEventKind::Meta {
+                            kind: 0x03,
+                            data: b"Lead".to_vec(),
+                        },
+                    },
+                    MidiOpaqueEventData {
+                        tick: 120,
+                        order: 1,
+                        kind: MidiOpaqueEventKind::Meta {
+                            kind: 0x01,
+                            data: b"Verse text".to_vec(),
+                        },
+                    },
+                    MidiOpaqueEventData {
+                        tick: 240,
+                        order: 2,
+                        kind: MidiOpaqueEventKind::Meta {
+                            kind: 0x06,
+                            data: b"Cue A".to_vec(),
+                        },
+                    },
+                    MidiOpaqueEventData {
+                        tick: 360,
+                        order: 3,
+                        kind: MidiOpaqueEventKind::SystemExclusive {
+                            status: 0xF0,
+                            data: vec![0x43, 0x12, 0xF7],
+                        },
+                    },
+                ],
+            })
+            .unwrap();
+
+        let item = &project.midi_items()[0];
+        let events = midi_event_list_entries(item, MidiSnap::default());
+        assert_eq!(events.len(), 5);
+        assert!(matches!(events[0], MidiEventListEntry::Opaque(0, _)));
+        assert_eq!(
+            midi_opaque_event_label(item.opaque_events().first().unwrap()),
+            ("Track name", "Lead".to_owned())
+        );
+        assert_eq!(
+            midi_opaque_event_label(item.opaque_events().get(1).unwrap()),
+            ("Text event", "Verse text".to_owned())
+        );
+        assert_eq!(
+            midi_opaque_event_label(item.opaque_events().get(2).unwrap()),
+            ("Marker", "Cue A".to_owned())
+        );
+        assert_eq!(
+            midi_opaque_event_label(item.opaque_events().get(3).unwrap()),
+            ("SYSEX", "F0 43 12 F7".to_owned())
+        );
+        assert!(matches!(events[4], MidiEventListEntry::End(960)));
+        assert_eq!(events[0].cursor(), MidiEditorEventListCursor::Opaque(0));
     }
 
     #[test]

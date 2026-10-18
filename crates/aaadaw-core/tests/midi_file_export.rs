@@ -1,10 +1,10 @@
 use aaadaw_core::{
     DawAction, FrameRate, MidiChannelPressureData, MidiControllerData, MidiExportItemScope,
     MidiExportOptions, MidiExportSelection, MidiExportTimeScope, MidiFileType, MidiItemPosition,
-    MidiMarkerType, MidiNoteData, MidiPitchBendData, MidiPolyAftertouchData, MidiProgramChangeData,
-    Project, TempoCurve, TimeSignature, encode_standard_midi,
-    encode_standard_midi_with_conductor_track_name, encode_standard_midi_with_selection,
-    midi_export_has_items_in_scope,
+    MidiMarkerType, MidiNoteData, MidiOpaqueEventData, MidiOpaqueEventKind, MidiPitchBendData,
+    MidiPolyAftertouchData, MidiProgramChangeData, Project, TempoCurve, TimeSignature,
+    decode_standard_midi, encode_standard_midi, encode_standard_midi_with_conductor_track_name,
+    encode_standard_midi_with_selection, midi_export_has_items_in_scope,
 };
 
 #[test]
@@ -124,6 +124,84 @@ fn exports_program_change_status_and_zero_based_program_value() {
         bytes.windows(2).any(|window| window == [0xc5, 41]),
         "SMF should encode Program Change on channel 6 with its zero-based program byte"
     );
+}
+
+#[test]
+fn exports_retained_midi_text_markers_and_sysex() {
+    let mut project = Project::new();
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Opaque".to_owned(),
+        })
+        .unwrap();
+    let track_id = project.tracks()[0].id();
+    project
+        .apply(DawAction::InsertMidiItem {
+            track_id,
+            start_tick: 0,
+            length_ticks: 960,
+        })
+        .unwrap();
+    let item_id = project.midi_items()[0].id();
+    project
+        .apply(DawAction::SetMidiOpaqueEvents {
+            item_id,
+            events: vec![
+                MidiOpaqueEventData {
+                    tick: 120,
+                    order: 1,
+                    kind: MidiOpaqueEventKind::Meta {
+                        kind: 0x01,
+                        data: b"Verse".to_vec(),
+                    },
+                },
+                MidiOpaqueEventData {
+                    tick: 240,
+                    order: 2,
+                    kind: MidiOpaqueEventKind::Meta {
+                        kind: 0x06,
+                        data: b"Marker".to_vec(),
+                    },
+                },
+                MidiOpaqueEventData {
+                    tick: 360,
+                    order: 3,
+                    kind: MidiOpaqueEventKind::SystemExclusive {
+                        status: 0xF0,
+                        data: vec![0x43, 0x12, 0xF7],
+                    },
+                },
+            ],
+        })
+        .unwrap();
+
+    let decoded = decode_standard_midi(
+        &encode_standard_midi(&project, MidiExportOptions::default()).unwrap(),
+    )
+    .unwrap();
+    let track_events = &decoded.tracks[1].events;
+    assert!(track_events.iter().any(|event| {
+        event.kind
+            == aaadaw_core::MidiFileEventKind::Meta {
+                kind: 0x01,
+                data: b"Verse".to_vec(),
+            }
+    }));
+    assert!(track_events.iter().any(|event| {
+        event.kind
+            == aaadaw_core::MidiFileEventKind::Meta {
+                kind: 0x06,
+                data: b"Marker".to_vec(),
+            }
+    }));
+    assert!(track_events.iter().any(|event| {
+        event.kind
+            == aaadaw_core::MidiFileEventKind::SystemExclusive {
+                status: 0xF0,
+                data: vec![0x43, 0x12, 0xF7],
+            }
+    }));
 }
 
 #[test]

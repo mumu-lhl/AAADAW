@@ -17,9 +17,10 @@ use aaadaw_app::{
 use aaadaw_core::ProjectSnapshot;
 use aaadaw_core::{
     AudioItem, DawAction, FxParameterChange, GridFraction, ItemId, MarkerId, MeterPointSnapshot,
-    MidiChannelPressureData, MidiControllerData, MidiItem, MidiItemPosition, MidiNoteData,
-    MidiPitchBendData, MidiPolyAftertouchData, MidiProgramChangeData, NoteId, Project,
-    RazorEditArea, RegionId, TempoCurve, TimeSignature, TrackId,
+    MidiChannelPressureData, MidiControllerData, MidiFileImportOptions, MidiFileProjectImport,
+    MidiItem, MidiItemPosition, MidiNoteData, MidiPitchBendData, MidiPolyAftertouchData,
+    MidiProgramChangeData, NoteId, Project, RazorEditArea, RegionId, TempoCurve, TimeSignature,
+    TrackId,
 };
 #[cfg(feature = "audio-device")]
 use aaadaw_engine::{
@@ -607,6 +608,8 @@ struct App {
     io_busy: bool,
     audio_file_path_query: String,
     import_busy: bool,
+    pending_midi_file_import: Option<MidiFileProjectImport>,
+    midi_file_import_options: MidiFileImportOptions,
     import_finalizing: bool,
     import_cancel_requested: bool,
     import_worker: Option<PendingAudioImport>,
@@ -1966,7 +1969,7 @@ impl App {
             MidiEditorEventListCursor::ChannelPressure(event) => {
                 self.midi_editor_selected_channel_pressures.contains(&event)
             }
-            MidiEditorEventListCursor::End => false,
+            MidiEditorEventListCursor::Opaque(_) | MidiEditorEventListCursor::End => false,
         }
     }
 
@@ -2079,7 +2082,7 @@ impl App {
                         MidiEditorEventListCursor::ChannelPressure(event) => {
                             self.midi_editor_selected_channel_pressures.insert(event);
                         }
-                        MidiEditorEventListCursor::End => {}
+                        MidiEditorEventListCursor::Opaque(_) | MidiEditorEventListCursor::End => {}
                     }
                 }
             } else {
@@ -2106,7 +2109,7 @@ impl App {
                     MidiEditorEventListCursor::ChannelPressure(event) => {
                         self.midi_editor_selected_channel_pressures.insert(event);
                     }
-                    MidiEditorEventListCursor::End => {}
+                    MidiEditorEventListCursor::Opaque(_) | MidiEditorEventListCursor::End => {}
                 }
             }
         }
@@ -3912,6 +3915,22 @@ impl App {
         {
             return Task::none();
         }
+        if self.pending_midi_file_import.is_some()
+            && !matches!(
+                &message,
+                Message::SetMidiFileImportExpandTracks(_)
+                    | Message::SetMidiFileImportTempoMap(_)
+                    | Message::SetMidiFileImportMarkers(_)
+                    | Message::ConfirmMidiFileImport
+                    | Message::CancelMidiFileImport
+                    | Message::Escape
+                    | Message::RuntimeKeyboardEvent(..)
+                    | Message::BackgroundTick
+                    | Message::MeterTick
+            )
+        {
+            return Task::none();
+        }
         if self.pending_empty_midi_export.is_some()
             && !matches!(
                 &message,
@@ -5369,7 +5388,8 @@ impl App {
                             MidiEditorEventListCursor::ChannelPressure(event) => {
                                 self.midi_editor_selected_channel_pressures.insert(event);
                             }
-                            MidiEditorEventListCursor::End => {}
+                            MidiEditorEventListCursor::Opaque(_)
+                            | MidiEditorEventListCursor::End => {}
                         }
                         (local_tick, project_tick)
                     }
@@ -5934,6 +5954,36 @@ impl App {
                     self.midi_editor_selected_channel_pressures.insert(event);
                 }
             }
+            Message::SelectMidiOpaqueEvent(item_id, index, additive)
+                if self.midi_editor_item_id == Some(item_id) =>
+            {
+                let cursor = MidiEditorEventListCursor::Opaque(index);
+                let visible = self
+                    .project
+                    .midi_items()
+                    .iter()
+                    .find(|item| item.id() == item_id)
+                    .is_some_and(|item| {
+                        item.opaque_events().get(index as usize).is_some()
+                            && view::midi_event_list_cursors(self, item).contains(&cursor)
+                    });
+                if !visible {
+                    return task;
+                }
+                self.midi_editor_feedback = None;
+                self.midi_editor_event_list_cursor = Some(cursor);
+                if !additive || self.midi_editor_event_list_anchor.is_none() {
+                    self.midi_editor_event_list_anchor = Some(cursor);
+                }
+                if !additive {
+                    self.midi_editor_selected_notes.clear();
+                    self.midi_editor_selected_controllers.clear();
+                    self.midi_editor_selected_pitch_bends.clear();
+                    self.midi_editor_selected_program_changes.clear();
+                    self.midi_editor_selected_poly_aftertouches.clear();
+                    self.midi_editor_selected_channel_pressures.clear();
+                }
+            }
             Message::SelectMidiEditorEventListEnd(additive) => {
                 self.midi_editor_event_list_cursor = Some(MidiEditorEventListCursor::End);
                 if !additive || self.midi_editor_event_list_anchor.is_none() {
@@ -5953,7 +6003,8 @@ impl App {
             | Message::SelectMidiPitchBendEvent(..)
             | Message::SelectMidiProgramChangeEvent(..)
             | Message::SelectMidiPolyAftertouchEvent(..)
-            | Message::SelectMidiChannelPressureEvent(..) => {}
+            | Message::SelectMidiChannelPressureEvent(..)
+            | Message::SelectMidiOpaqueEvent(..) => {}
             Message::CopyMidiNotes(item_id, note_ids) => {
                 if let Some(item) = self
                     .project
@@ -7332,6 +7383,11 @@ impl App {
                 self.transport_details_open = !self.transport_details_open;
             }
             Message::Escape => {
+                if self.pending_midi_file_import.take().is_some() {
+                    self.midi_file_import_options = MidiFileImportOptions::default();
+                    self.status = "MIDI file import cancelled".to_owned();
+                    return Task::none();
+                }
                 if self.midi_event_properties_dialog.take().is_some() {
                     self.midi_editor_feedback = None;
                     return Task::none();
@@ -8652,47 +8708,27 @@ impl App {
                 self.import_busy = false;
                 match result {
                     Err(error) => self.status = format!("MIDI import failed: {error}"),
-                    Ok((tracks, unsupported_event_count)) if tracks.is_empty() => {
-                        self.status = if unsupported_event_count == 0 {
-                            "MIDI file contains no editable channel events".to_owned()
-                        } else {
-                            format!(
-                                "MIDI file contains no editable channel events; {unsupported_event_count} SysEx/meta event(s) are not supported in project items"
-                            )
-                        };
-                    }
-                    Ok((tracks, unsupported_event_count)) => {
-                        let track_count = tracks.len();
-                        let previous_revision = self.revision;
-                        self.apply_action(
-                            DawAction::BatchTransaction {
-                                tx_id: self.revision,
-                                actions: tracks
-                                    .into_iter()
-                                    .map(|track| DawAction::ImportMidiTrack {
-                                        start_tick: self.timeline.edit_cursor_tick,
-                                        track,
-                                    })
-                                    .collect(),
-                            },
-                            "MIDI file imported",
-                        );
-                        if self.revision != previous_revision {
-                            let count_label = if track_count == 1 {
-                                "1 MIDI track".to_owned()
-                            } else {
-                                format!("{track_count} MIDI tracks")
-                            };
-                            self.status = if unsupported_event_count == 0 {
-                                format!("Inserted {count_label} at the edit cursor")
-                            } else {
-                                format!(
-                                    "Inserted {count_label} at the edit cursor; {unsupported_event_count} SysEx/meta event(s) were not stored in the project"
-                                )
-                            };
-                        }
+                    Ok(imported) => {
+                        self.pending_midi_file_import = Some(imported);
+                        self.midi_file_import_options = MidiFileImportOptions::default();
+                        self.status = "Choose MIDI file import options".to_owned();
                     }
                 }
+            }
+            Message::SetMidiFileImportExpandTracks(enabled) => {
+                self.midi_file_import_options.expand_tracks = enabled;
+            }
+            Message::SetMidiFileImportTempoMap(enabled) => {
+                self.midi_file_import_options.import_tempo_map = enabled;
+            }
+            Message::SetMidiFileImportMarkers(enabled) => {
+                self.midi_file_import_options.import_markers = enabled;
+            }
+            Message::ConfirmMidiFileImport => self.apply_midi_file_import(),
+            Message::CancelMidiFileImport => {
+                self.pending_midi_file_import = None;
+                self.midi_file_import_options = MidiFileImportOptions::default();
+                self.status = "MIDI file import cancelled".to_owned();
             }
             Message::RunAudioAssetManagement(operation) => {
                 task = self.start_audio_asset_management(operation);

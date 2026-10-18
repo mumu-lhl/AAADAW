@@ -8,11 +8,11 @@ use crate::timebase::{MeterMap, TempoMap};
 use crate::{
     ActionError, AudioItem, DawAction, FxParameterAutomationLane, FxParameterAutomationPoint,
     ItemId, MAX_TRACK_FX_PARAMETER_AUTOMATION_LANES, MarkerId, MidiChannelPressureData,
-    MidiControllerData, MidiItem, MidiNote, MidiNoteQuantizeOperation, MidiPitchBendData,
-    MidiPolyAftertouchData, MidiProgramChangeData, MusicalPosition, NoteId, ProjectMarker,
-    ProjectMarkerSnapshot, ProjectRegion, ProjectRegionSnapshot, ProjectSettings, RazorEditArea,
-    RegionId, TempoCurve, TimeSignature, TimebaseError, Track, TrackFxPlugin, TrackId,
-    TrackInstrument,
+    MidiControllerData, MidiItem, MidiNote, MidiNoteQuantizeOperation, MidiOpaqueEventData,
+    MidiPitchBendData, MidiPolyAftertouchData, MidiProgramChangeData, MusicalPosition, NoteId,
+    ProjectMarker, ProjectMarkerSnapshot, ProjectRegion, ProjectRegionSnapshot, ProjectSettings,
+    RazorEditArea, RegionId, TempoCurve, TimeSignature, TimebaseError, Track, TrackFxPlugin,
+    TrackId, TrackInstrument,
 };
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -1972,6 +1972,7 @@ fn duplicate_midi_item_to_track_at_position(
         program_changes: Arc::clone(&original.program_changes),
         poly_aftertouches: Arc::clone(&original.poly_aftertouches),
         channel_pressures: Arc::clone(&original.channel_pressures),
+        opaque_events: Arc::clone(&original.opaque_events),
     };
     ids.next_item_id = next_item_id;
     ids.next_note_id = next_note_id;
@@ -2627,6 +2628,7 @@ impl Project {
                     program_changes: item.program_changes.as_ref().clone(),
                     poly_aftertouches: item.poly_aftertouches.as_ref().clone(),
                     channel_pressures: item.channel_pressures.as_ref().clone(),
+                    opaque_events: item.opaque_events.as_ref().clone(),
                 })
                 .collect(),
             markers: self
@@ -3002,6 +3004,11 @@ impl Project {
             if !valid_midi_channel_pressures(&channel_pressures) {
                 return Err(SnapshotError::InvalidProjectData);
             }
+            let mut opaque_events = item.opaque_events;
+            opaque_events.sort_unstable_by_key(|event| (event.tick, event.order));
+            if !valid_midi_opaque_events(&opaque_events) {
+                return Err(SnapshotError::InvalidProjectData);
+            }
             midi_items.push(MidiItem {
                 id: ItemId::from_raw(item.id),
                 track_id: TrackId::from_raw(item.track_id),
@@ -3019,6 +3026,7 @@ impl Project {
                 program_changes: Arc::new(program_changes),
                 poly_aftertouches: Arc::new(poly_aftertouches),
                 channel_pressures: Arc::new(channel_pressures),
+                opaque_events: Arc::new(opaque_events),
             });
         }
 
@@ -3171,6 +3179,10 @@ impl Project {
                             channel_pressures: track.channel_pressures,
                         },
                     ),
+                    (!track.opaque_events.is_empty()).then_some(DawAction::SetMidiOpaqueEvents {
+                        item_id,
+                        events: track.opaque_events,
+                    }),
                 ]
                 .into_iter()
                 .flatten()
@@ -4657,6 +4669,7 @@ impl Project {
                     program_changes: Arc::new(Vec::new()),
                     poly_aftertouches: Arc::new(Vec::new()),
                     channel_pressures: Arc::new(Vec::new()),
+                    opaque_events: Arc::new(Vec::new()),
                 };
                 ids.next_item_id = next_id;
                 ProjectEvent::MidiItemInserted {
@@ -4877,6 +4890,19 @@ impl Project {
                         })
                     })
                     .collect::<Result<Vec<_>, ActionError>>()?;
+                let opaque_events = before
+                    .opaque_events
+                    .iter()
+                    .map(|event| {
+                        Ok(MidiOpaqueEventData {
+                            tick: event
+                                .tick
+                                .checked_add_signed(content_shift_ticks)
+                                .ok_or(ActionError::InvalidMidiItemPosition)?,
+                            ..event.clone()
+                        })
+                    })
+                    .collect::<Result<Vec<_>, ActionError>>()?;
                 let after = MidiItem {
                     source_offset_ticks,
                     source_loop_length_ticks,
@@ -4886,6 +4912,7 @@ impl Project {
                     program_changes: Arc::new(program_changes),
                     poly_aftertouches: Arc::new(poly_aftertouches),
                     channel_pressures: Arc::new(channel_pressures),
+                    opaque_events: Arc::new(opaque_events),
                     ..before.clone()
                 };
                 ProjectEvent::MidiItemChanged { before, after }
@@ -5132,6 +5159,12 @@ impl Project {
                             content_points[index + 1],
                             index + 1 == segment_count,
                         )),
+                        opaque_events: Arc::new(opaque_events_for_segment(
+                            &original.opaque_events,
+                            if index == 0 { 0 } else { content_points[index] },
+                            content_points[index + 1],
+                            index + 1 == segment_count,
+                        )),
                     });
                 }
                 ids.next_item_id = next_item_id;
@@ -5373,6 +5406,26 @@ impl Project {
                     before: item.channel_pressures.as_ref().clone(),
                     after: channel_pressures,
                 }
+            }
+            DawAction::SetMidiOpaqueEvents {
+                item_id,
+                mut events,
+            } => {
+                let before = state
+                    .midi_items
+                    .iter()
+                    .find(|item| item.id == item_id)
+                    .ok_or(ActionError::MidiItemNotFound { item_id })?
+                    .clone();
+                events.sort_unstable_by_key(|event| (event.tick, event.order));
+                if !valid_midi_opaque_events(&events) {
+                    return Err(ActionError::InvalidMidiOpaqueEvent);
+                }
+                let after = MidiItem {
+                    opaque_events: Arc::new(events),
+                    ..before.clone()
+                };
+                ProjectEvent::MidiItemChanged { before, after }
             }
             DawAction::QuantizeItem {
                 item_id,
@@ -6790,6 +6843,7 @@ fn source_track_for_action(state: &ProjectState, action: &DawAction) -> Option<T
         | DawAction::SetMidiProgramChanges { item_id, .. }
         | DawAction::SetMidiPolyAftertouches { item_id, .. }
         | DawAction::SetMidiChannelPressures { item_id, .. }
+        | DawAction::SetMidiOpaqueEvents { item_id, .. }
         | DawAction::QuantizeItem { item_id, .. }
         | DawAction::QuantizeMidiNotes { item_id, .. }
         | DawAction::QuantizeMidiNotesAndEnds { item_id, .. }
@@ -6927,6 +6981,18 @@ fn valid_midi_channel_pressures(events: &[MidiChannelPressureData]) -> bool {
         event.channel < crate::MIDI_CHANNEL_COUNT
             && event.value <= 127
             && positions.insert((event.channel, event.tick))
+    })
+}
+
+fn valid_midi_opaque_events(events: &[MidiOpaqueEventData]) -> bool {
+    if events.len() > 1_000_000 {
+        return false;
+    }
+    let mut positions = HashSet::with_capacity(events.len());
+    events.iter().all(|event| {
+        event.kind.is_valid()
+            && event.kind.data_len() <= 16 * 1024 * 1024
+            && positions.insert((event.tick, event.order))
     })
 }
 
@@ -7145,6 +7211,22 @@ fn channel_pressures_for_segment(
             }),
     );
     result
+}
+
+fn opaque_events_for_segment(
+    events: &[MidiOpaqueEventData],
+    start_tick: u64,
+    end_tick: u64,
+    preserve_tail: bool,
+) -> Vec<MidiOpaqueEventData> {
+    events
+        .iter()
+        .filter(|event| start_tick <= event.tick && (preserve_tail || event.tick < end_tick))
+        .map(|event| MidiOpaqueEventData {
+            tick: event.tick - start_tick,
+            ..event.clone()
+        })
+        .collect()
 }
 
 fn next_id(max_id: Option<u64>) -> Result<u64, SnapshotError> {

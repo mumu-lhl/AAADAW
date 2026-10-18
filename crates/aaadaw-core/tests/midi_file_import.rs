@@ -1,5 +1,6 @@
 use aaadaw_core::{
-    ActionError, DawAction, MidiFileEventKind, MidiFileFormat, Project, decode_standard_midi,
+    ActionError, DawAction, MidiFileEventKind, MidiFileFormat, MidiFileImportOptions, Project,
+    decode_standard_midi,
 };
 
 fn smf(format: u16, division: u16, tracks: &[&[u8]]) -> Vec<u8> {
@@ -112,6 +113,59 @@ fn decodes_each_type_one_track_with_independent_absolute_time() {
 }
 
 #[test]
+fn converts_conductor_data_and_selects_reaper_default_or_expanded_tracks() {
+    let conductor = [
+        0x00, 0xFF, 0x03, 0x09, b'C', b'o', b'n', b'd', b'u', b'c', b't', b'o', b'r', 0x00, 0xFF,
+        0x51, 0x03, 0x07, 0xA1, 0x20, // 120 BPM at tick 0
+        0x00, 0xFF, 0x58, 0x04, 0x04, 0x02, 0x18, 0x08, // 4/4 at tick 0
+        0x3C, 0xFF, 0x51, 0x03, 0x06, 0x1A, 0x80, // 150 BPM at tick 60
+        0x00, 0xFF, 0x58, 0x04, 0x03, 0x02, 0x18, 0x08, // 3/4 at tick 60
+        0x00, 0xFF, 0x2F, 0x00,
+    ];
+    let lead = [
+        0x00, 0xFF, 0x03, 0x04, b'L', b'e', b'a', b'd', 0x00, 0x92, 60, 100, 0x3C, 0xFF, 0x01,
+        0x04, b'T', b'e', b'x', b't', // text at tick 60
+        0x3C, 0xF0, 0x02, 0x43, 0x12, // SysEx at tick 120
+        0x3C, 0xFF, 0x07, 0x03, b'C', b'u', b'e', // Cue at tick 180
+        0x3C, 0x82, 60, 37, // Note Off at tick 240
+        0x00, 0xFF, 0x2F, 0x00,
+    ];
+    let meta_only = [
+        0x00, 0xFF, 0x03, 0x04, b'M', b'e', b't', b'a', 0x00, 0xFF, 0x06, 0x06, b'M', b'a', b'r',
+        b'k', b'e', b'r', 0x00, 0xFF, 0x2F, 0x00,
+    ];
+    let decoded = decode_standard_midi(&smf(1, 480, &[&conductor, &lead, &meta_only])).unwrap();
+    let imported = decoded.to_project_import(480).unwrap();
+
+    assert_eq!(imported.tracks.len(), 3);
+    assert!(imported.tracks[1].has_channel_events);
+    assert!(!imported.tracks[2].has_channel_events);
+    assert_eq!(imported.tracks[1].opaque_events.len(), 4);
+    assert_eq!(imported.tracks[1].opaque_events[1].tick, 60);
+    assert_eq!(imported.tempo_points.len(), 2);
+    assert_eq!(imported.tempo_points[0].bpm, 120.0);
+    assert_eq!(imported.tempo_points[1].bpm, 150.0);
+    assert_eq!(imported.meter_points[0].numerator, 4);
+    assert_eq!(imported.meter_points[1].numerator, 3);
+    assert_eq!(imported.markers.len(), 2);
+    assert_eq!(imported.markers[0].name, "Marker");
+    assert_eq!(imported.markers[1].name, "Cue");
+
+    let merged = imported.tracks_for_options(MidiFileImportOptions::default());
+    assert_eq!(merged.len(), 1);
+    assert_eq!(merged[0].name, "Conductor");
+    assert_eq!(merged[0].notes.len(), 1);
+    assert!(merged[0].opaque_events.len() > imported.tracks[1].opaque_events.len());
+    let expanded = imported.tracks_for_options(MidiFileImportOptions {
+        expand_tracks: true,
+        ..MidiFileImportOptions::default()
+    });
+    assert_eq!(expanded.len(), 2);
+    assert_eq!(expanded[0].name, "Lead");
+    assert_eq!(expanded[1].name, "Meta");
+}
+
+#[test]
 fn rejects_unsupported_time_bases_and_truncated_or_invalid_events() {
     assert!(decode_standard_midi(&smf(2, 480, &[&[0x00, 0xFF, 0x2F, 0x00]])).is_err());
     assert!(decode_standard_midi(&smf(0, 0xE728, &[&[0x00, 0xFF, 0x2F, 0x00]])).is_err());
@@ -191,7 +245,7 @@ fn converts_supported_channel_messages_and_groups_import_as_one_undoable_action(
     ];
     let parsed = decode_standard_midi(&smf(0, 480, &[&track])).unwrap();
     let converted = parsed.to_project_import(960).unwrap();
-    assert_eq!(converted.unsupported_event_count, 2);
+    assert_eq!(converted.unsupported_event_count, 0);
     assert_eq!(converted.tracks.len(), 1);
     assert_eq!(converted.tracks[0].name, "Piano");
     assert_eq!(converted.tracks[0].length_ticks, 960);
@@ -202,6 +256,7 @@ fn converts_supported_channel_messages_and_groups_import_as_one_undoable_action(
     assert_eq!(converted.tracks[0].program_changes[0].program, 5);
     assert_eq!(converted.tracks[0].poly_aftertouches[0].value, 70);
     assert_eq!(converted.tracks[0].channel_pressures[0].value, 80);
+    assert_eq!(converted.tracks[0].opaque_events.len(), 3);
 
     let mut project = Project::new();
     project
@@ -230,6 +285,7 @@ fn converts_supported_channel_messages_and_groups_import_as_one_undoable_action(
     assert_eq!(item.program_changes().len(), 1);
     assert_eq!(item.poly_aftertouches().len(), 1);
     assert_eq!(item.channel_pressures().len(), 1);
+    assert_eq!(item.opaque_events().len(), 3);
 
     let snapshot = project.snapshot();
     assert_eq!(
@@ -253,6 +309,8 @@ fn a_failed_import_batch_rolls_back_tracks_and_identifier_allocation() {
             actions: vec![DawAction::ImportMidiTrack {
                 start_tick: 0,
                 track: aaadaw_core::MidiImportedTrack {
+                    source_index: 0,
+                    has_channel_events: true,
                     name: "Invalid".to_owned(),
                     length_ticks: 1,
                     notes: vec![aaadaw_core::MidiNoteData {
@@ -268,6 +326,7 @@ fn a_failed_import_batch_rolls_back_tracks_and_identifier_allocation() {
                     program_changes: Vec::new(),
                     poly_aftertouches: Vec::new(),
                     channel_pressures: Vec::new(),
+                    opaque_events: Vec::new(),
                 },
             }],
         })

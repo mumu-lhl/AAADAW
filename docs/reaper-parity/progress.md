@@ -2358,3 +2358,11 @@ Event List 单元覆盖成对/未配对事件、通道/位置精确配对、14-b
 使用 960 PPQ 的 Type 1 确定性文件，分别按 REAPER 7.82 / Default 7 的默认设置与三个导入选项全开执行。默认选项均关闭：REAPER 将导体轨、Lead 与 metadata-only 源轨的事件合并进 edit cursor 处一条名为 `Conductor` 的 MIDI item，工程 Tempo Map 与 project marker 数量保持不变。展开轨道、Tempo Map、Marker/Cue 全开后，REAPER 创建 `Lead` 和 `Meta only` 两条 MIDI 轨；在 edit cursor 2 秒处加入 Tempo/Meter 变化，并把两个 MIDI Marker/Cue 转成 project markers。两种设置下，item 内都保留文本、Marker/Cue Meta 与 SysEx。原厂选项窗口、两种结果 Event List 截图、SMF fixture、ReaScript 与原始读回分别在 [MIDI import probe fixtures](fixtures/midi-file-import-native/)；可复现脚本位于 `scripts/reaper_parity/generate-midi-file-import-probe.py` 与 `scripts/reaper_parity/probe-midi-file-import.lua`。
 
 AAADAW 现有导入仍会按源轨分轨、跳过 metadata-only 轨并丢弃未建模事件，未提供原厂三项选择，也没有导入 Tempo/Meter 和 project marker。因此 `MIDI-FILE-IMPORT-001` 仍保持 `in_progress`；接下来先扩充可持久化的 item 事件和选项化事务导入，再验证桌面实窗与保存重开。原厂文件、读回和截图见 [MIDI import probe fixtures](fixtures/midi-file-import-native/)。
+
+### 2026-10-18 MIDI 导入选项、Meta/SysEx 持久化与实窗验收
+
+AAADAW 的 `Insert > MIDI file…` 已提供 REAPER 对照确认的三项导入选项，默认全部关闭：合并/展开源轨、应用 Tempo/Meter、将 Marker/Cue 转成工程标记。导入事务会在确认后一次性写入轨道、item 事件、节奏/拍号和标记；取消保持工程不变。SQLite schema 63 持久化 opaque MIDI Meta/SysEx，Event List 可显示并定位这些只读行。Meta/SysEx 原样导出；Tempo/Meter 变更遇到非小节线位置时按 REAPER 行为向后吸附到下一有效小节线。
+
+在 Linux Xvfb 实窗运行当前桌面 Build ID `2afc7079777827714f5e174ba72c3cf2a6e1bdd1`，通过隔离的 D-Bus FileChooser 返回仓库中的原厂探针 MIDI 文件，实际打开导入选项、全选三项并完成导入。实窗结果为 Lead 与 Meta only 两条轨、两个工程标记，以及导入点的 150 BPM / 3/4；对话框默认状态、导入后 Arrangement 和 Tempo/Meter 状态截图连同二进制/fixture 哈希登记于 [AAADAW live import manifest](../verification/reaper-parity/fixtures/midi-file-import-aaadaw.tsv)。该截图验证覆盖 AAADAW 导入 UI 到结果，不替代原厂 REAPER 读回；原厂语义截图继续保存在 [native fixture](fixtures/midi-file-import-native/)。
+
+验证：AAADAW 二进制测试 **770/770**、SMF Core import/export **92/92**、Storage project-store **67/67** 通过；完整 workspace Nextest **1490/1490，0 skipped** 在本轮 off-bar meter snapping 改动前通过。稳定 `cargo fmt --all` 与 `git diff --check` 通过。实现仍未完成：Type 1 展开会漏掉首轨通道事件；关闭 Tempo Map 时源 tempo/meter Meta 被丢弃；opaque 行尚不可编辑、删除或筛选；音频播放不调度 Meta/SysEx；不同事件类别的同 tick 次序未完整保留；Format 2 与 SMPTE division 不支持。故 `MIDI-FILE-IMPORT-001`、UI-019 与 P7 仍为 `in_progress`，不会按已完成登记。

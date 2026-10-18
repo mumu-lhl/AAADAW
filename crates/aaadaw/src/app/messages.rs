@@ -8,9 +8,9 @@ use aaadaw_app::{
     AudioAssetManagementOperation, AudioAssetManagementResult, WavChannelCount, WavSampleFormat,
 };
 use aaadaw_core::{
-    DawAction, ItemId, MarkerId, MidiChannelPressureData, MidiControllerData, MidiImportedTrack,
-    MidiNoteData, MidiPitchBendData, MidiPolyAftertouchData, MidiProgramChangeData, NoteId,
-    Project, RegionId, TrackId,
+    DawAction, ItemId, MarkerId, MidiChannelPressureData, MidiControllerData,
+    MidiFileProjectImport, MidiNoteData, MidiPitchBendData, MidiPolyAftertouchData,
+    MidiProgramChangeData, NoteId, Project, RegionId, TrackId,
 };
 use aaadaw_engine::MasterOutputCeiling;
 use aaadaw_storage::{ArrangementViewState, ProjectSessionLock};
@@ -179,6 +179,7 @@ pub(crate) enum MidiEditorEventListCursor {
     ProgramChange(MidiProgramChangeData),
     PolyAftertouch(MidiPolyAftertouchData),
     ChannelPressure(MidiChannelPressureData),
+    Opaque(u32),
     End,
 }
 
@@ -637,6 +638,7 @@ pub(crate) enum Message {
     SelectMidiProgramChangeEvent(ItemId, MidiProgramChangeData, bool),
     SelectMidiPolyAftertouchEvent(ItemId, MidiPolyAftertouchData, bool),
     SelectMidiChannelPressureEvent(ItemId, MidiChannelPressureData, bool),
+    SelectMidiOpaqueEvent(ItemId, u32, bool),
     SelectMidiEditorEventListEnd(bool),
     MoveMidiEditorEventListCursor(MidiEditorEventListCursorDirection, bool, bool),
     MoveMidiEditorCursorToBoundary(MidiEditorCursorBoundary),
@@ -888,7 +890,12 @@ pub(crate) enum Message {
     CancelAudioImport,
     AudioImportStarted(SharedAudioImportWorker),
     AudioImportFinished(Result<DawAction, String>),
-    MidiFileImportFinished(Result<(Vec<MidiImportedTrack>, usize), String>),
+    MidiFileImportFinished(Result<MidiFileProjectImport, String>),
+    SetMidiFileImportExpandTracks(bool),
+    SetMidiFileImportTempoMap(bool),
+    SetMidiFileImportMarkers(bool),
+    ConfirmMidiFileImport,
+    CancelMidiFileImport,
     ReimportAudioItem(ItemId),
     RunAudioAssetManagement(AudioAssetManagementOperation),
     CancelAudioAssetManagement,

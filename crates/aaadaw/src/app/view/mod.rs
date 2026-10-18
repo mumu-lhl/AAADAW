@@ -17,7 +17,8 @@ use iced::widget::button;
 #[cfg(feature = "audio-device")]
 use iced::widget::text_input;
 use iced::widget::{
-    column, container, float, mouse_area, pane_grid, responsive, row, scrollable, stack, text,
+    checkbox, column, container, float, mouse_area, pane_grid, responsive, row, scrollable, stack,
+    text,
 };
 use iced::{Alignment, Element, Length};
 
@@ -520,6 +521,61 @@ fn desktop_view(app: &App) -> Element<'_, Message> {
                 }),
         )
         .on_press(Message::CancelProjectTemplateOverwrite);
+        return stack![layered, backdrop]
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .into();
+    }
+    if let Some(import) = &app.pending_midi_file_import {
+        let expanded_track_count = if import.file_type == aaadaw_core::MidiFileFormat::Type1 {
+            import.tracks.len().saturating_sub(1)
+        } else {
+            import.tracks.len()
+        };
+        let dialog = container(
+            column![
+                text("MIDI File Import").size(18),
+                checkbox(app.midi_file_import_options.expand_tracks)
+                    .label(format!(
+                        "Expand {expanded_track_count} MIDI tracks to new AAADAW tracks"
+                    ))
+                    .on_toggle(Message::SetMidiFileImportExpandTracks),
+                checkbox(app.midi_file_import_options.import_tempo_map)
+                    .label("Import MIDI tempo map to project tempo map at the edit cursor")
+                    .on_toggle(Message::SetMidiFileImportTempoMap),
+                checkbox(app.midi_file_import_options.import_markers)
+                    .label(format!(
+                        "Import {} MIDI markers/cues as project markers",
+                        import.markers.len()
+                    ))
+                    .on_toggle(Message::SetMidiFileImportMarkers),
+                row![
+                    button(text("OK")).on_press(Message::ConfirmMidiFileImport),
+                    button(text("Cancel"))
+                        .style(button::secondary)
+                        .on_press(Message::CancelMidiFileImport),
+                ]
+                .spacing(tokens::SECTION_GAP)
+                .align_y(Alignment::Center),
+            ]
+            .spacing(tokens::SECTION_GAP),
+        )
+        .width(Length::Fixed(520.0))
+        .padding(tokens::SPACING_LG)
+        .style(iced::widget::container::rounded_box);
+        let backdrop = mouse_area(
+            container(dialog)
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .center(Length::Fill)
+                .style(|_| iced::widget::container::Style {
+                    background: Some(iced::Background::Color(iced::Color::from_rgba8(
+                        0, 0, 0, 0.66,
+                    ))),
+                    ..iced::widget::container::Style::default()
+                }),
+        )
+        .on_press(Message::CancelMidiFileImport);
         return stack![layered, backdrop]
             .width(Length::Fill)
             .height(Length::Fill)

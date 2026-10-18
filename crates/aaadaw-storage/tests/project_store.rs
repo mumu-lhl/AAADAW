@@ -1,7 +1,7 @@
 use aaadaw_core::{
     BpmBasis, DawAction, MeterPointSnapshot, MidiChannelPressureData, MidiControllerData,
-    MidiImportedTrack, MidiNoteData, MidiPitchBendData, MidiPolyAftertouchData,
-    MidiProgramChangeData, Project, RazorEditArea, VolumeAutomationPoint,
+    MidiImportedTrack, MidiNoteData, MidiOpaqueEventData, MidiOpaqueEventKind, MidiPitchBendData,
+    MidiPolyAftertouchData, MidiProgramChangeData, Project, RazorEditArea, VolumeAutomationPoint,
 };
 use aaadaw_storage::{CURRENT_SCHEMA_VERSION, ProjectStore, StorageError};
 use rusqlite::Connection;
@@ -25,6 +25,8 @@ fn imported_midi_tracks_round_trip_through_the_project_store() {
             actions: vec![DawAction::ImportMidiTrack {
                 start_tick: 480,
                 track: MidiImportedTrack {
+                    source_index: 0,
+                    has_channel_events: true,
                     name: "Imported piano".to_owned(),
                     length_ticks: 960,
                     notes: vec![MidiNoteData {
@@ -62,6 +64,24 @@ fn imported_midi_tracks_round_trip_through_the_project_store() {
                         tick: 48,
                         value: 77,
                     }],
+                    opaque_events: vec![
+                        MidiOpaqueEventData {
+                            tick: 60,
+                            order: 2,
+                            kind: MidiOpaqueEventKind::Meta {
+                                kind: 0x01,
+                                data: b"Verse".to_vec(),
+                            },
+                        },
+                        MidiOpaqueEventData {
+                            tick: 72,
+                            order: 3,
+                            kind: MidiOpaqueEventKind::SystemExclusive {
+                                status: 0xF0,
+                                data: vec![0x43, 0x12, 0xF7],
+                            },
+                        },
+                    ],
                 },
             }],
         })
@@ -72,6 +92,23 @@ fn imported_midi_tracks_round_trip_through_the_project_store() {
     store.close().unwrap();
     let store = ProjectStore::open(&path).unwrap();
     assert_eq!(store.load().unwrap().snapshot(), project.snapshot());
+    store.close().unwrap();
+    remove_database(&path);
+}
+
+#[test]
+fn schema_62_migrates_the_midi_opaque_event_table() {
+    let path = project_path();
+    ProjectStore::open(&path).unwrap().close().unwrap();
+    let connection = Connection::open(&path).unwrap();
+    connection
+        .execute_batch("DROP TABLE midi_opaque_events; PRAGMA user_version = 62;")
+        .unwrap();
+    drop(connection);
+
+    let store = ProjectStore::open(&path).unwrap();
+    assert_eq!(store.schema_version().unwrap(), CURRENT_SCHEMA_VERSION);
+    assert!(store.load().unwrap().midi_items().is_empty());
     store.close().unwrap();
     remove_database(&path);
 }

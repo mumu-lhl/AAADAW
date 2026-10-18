@@ -1,7 +1,7 @@
 use crate::{
     FrameRate, ItemId, MidiChannelPressureData, MidiControllerData, MidiItem, MidiItemPosition,
-    MidiNote, MidiNoteData, MidiPitchBendData, MidiPolyAftertouchData, MidiProgramChangeData,
-    Project, TempoCurve, TrackId,
+    MidiNote, MidiNoteData, MidiOpaqueEventData, MidiOpaqueEventKind, MidiPitchBendData,
+    MidiPolyAftertouchData, MidiProgramChangeData, Project, TempoCurve, TrackId,
 };
 use std::collections::{HashMap, HashSet, VecDeque};
 
@@ -65,6 +65,8 @@ pub enum MidiFileEventKind {
 /// One SMF track converted to event types supported by the project editor.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MidiImportedTrack {
+    pub source_index: usize,
+    pub has_channel_events: bool,
     pub name: String,
     pub length_ticks: u64,
     pub notes: Vec<MidiNoteData>,
@@ -73,14 +75,49 @@ pub struct MidiImportedTrack {
     pub program_changes: Vec<MidiProgramChangeData>,
     pub poly_aftertouches: Vec<MidiPolyAftertouchData>,
     pub channel_pressures: Vec<MidiChannelPressureData>,
+    pub opaque_events: Vec<MidiOpaqueEventData>,
+}
+
+/// A conductor tempo point decoded from an SMF tempo Meta event.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct MidiImportedTempoPoint {
+    pub tick: u64,
+    pub bpm: f64,
+}
+
+/// A conductor meter point decoded from an SMF time-signature Meta event.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct MidiImportedMeterPoint {
+    pub tick: u64,
+    pub numerator: u32,
+    pub denominator: u32,
+}
+
+/// A marker/cue event that can optionally become a project marker.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MidiImportedMarker {
+    pub tick: u64,
+    pub name: String,
 }
 
 /// Project-compatible event data decoded from an SMF file.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct MidiFileProjectImport {
     pub tracks: Vec<MidiImportedTrack>,
-    /// SysEx and metadata that the current editable MIDI model cannot store.
+    pub tempo_points: Vec<MidiImportedTempoPoint>,
+    pub meter_points: Vec<MidiImportedMeterPoint>,
+    pub markers: Vec<MidiImportedMarker>,
+    /// Source events rejected as malformed or outside the supported MIDI model.
     pub unsupported_event_count: usize,
+    pub file_type: MidiFileFormat,
+}
+
+/// Import choices matching the Linux REAPER MIDI File Import dialog.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct MidiFileImportOptions {
+    pub expand_tracks: bool,
+    pub import_tempo_map: bool,
+    pub import_markers: bool,
 }
 
 #[derive(Debug)]
@@ -426,16 +463,15 @@ fn read_u32(bytes: &[u8], offset: usize) -> Result<u32, String> {
 }
 
 impl MidiFileImport {
-    /// Converts supported channel events to editable project data at the project's PPQ rate.
-    ///
-    /// MIDI file metadata and SysEx stay available in [`MidiFileImport::tracks`], but cannot yet
-    /// be stored in a project item. Their count is returned so the caller can report the loss.
+    /// Converts source tracks, retained MIDI-item events, and conductor data at project PPQ.
     pub fn to_project_import(&self, project_ppq: u32) -> Result<MidiFileProjectImport, String> {
         if project_ppq == 0 {
             return Err("project PPQ resolution must be greater than zero".to_owned());
         }
         let mut imported_tracks = Vec::new();
-        let mut unsupported_event_count = 0_usize;
+        let mut tempo_points = Vec::new();
+        let mut meter_points = Vec::new();
+        let mut markers = Vec::new();
         for (track_index, track) in self.tracks.iter().enumerate() {
             let mut track_name = None;
             let mut notes = Vec::new();
@@ -444,12 +480,13 @@ impl MidiFileImport {
             let mut program_changes = Vec::new();
             let mut poly_aftertouches = Vec::new();
             let mut channel_pressures = Vec::new();
+            let mut opaque_events = Vec::new();
             let mut open_notes = HashMap::<(u8, u8), VecDeque<(u64, u8)>>::new();
             let mut has_channel_events = false;
             let mut last_content_tick =
                 scale_import_tick(track.end_tick, self.ticks_per_quarter_note, project_ppq)?;
 
-            for event in &track.events {
+            for (event_index, event) in track.events.iter().enumerate() {
                 let tick = scale_import_tick(event.tick, self.ticks_per_quarter_note, project_ppq)?;
                 match &event.kind {
                     MidiFileEventKind::Channel { status, data } => {
@@ -457,26 +494,22 @@ impl MidiFileImport {
                         last_content_tick = last_content_tick.max(tick);
                         let channel = status & 0x0F;
                         match status & 0xF0 {
-                            0x80 => {
-                                finish_imported_note(
-                                    &mut open_notes,
-                                    &mut notes,
-                                    channel,
-                                    data[0],
-                                    tick,
-                                    data[1],
-                                )?;
-                            }
-                            0x90 if data[1] == 0 => {
-                                finish_imported_note(
-                                    &mut open_notes,
-                                    &mut notes,
-                                    channel,
-                                    data[0],
-                                    tick,
-                                    0,
-                                )?;
-                            }
+                            0x80 => finish_imported_note(
+                                &mut open_notes,
+                                &mut notes,
+                                channel,
+                                data[0],
+                                tick,
+                                data[1],
+                            )?,
+                            0x90 if data[1] == 0 => finish_imported_note(
+                                &mut open_notes,
+                                &mut notes,
+                                channel,
+                                data[0],
+                                tick,
+                                0,
+                            )?,
                             0x90 => open_notes
                                 .entry((channel, data[0]))
                                 .or_default()
@@ -511,26 +544,99 @@ impl MidiFileImport {
                             _ => unreachable!("the MIDI channel status range is exhaustive"),
                         }
                     }
-                    MidiFileEventKind::SystemExclusive { .. } => {
-                        unsupported_event_count = unsupported_event_count.saturating_add(1);
+                    MidiFileEventKind::SystemExclusive { status, data } => {
+                        last_content_tick = last_content_tick.max(tick);
+                        opaque_events.push(MidiOpaqueEventData {
+                            tick,
+                            order: event_index as u32,
+                            kind: MidiOpaqueEventKind::SystemExclusive {
+                                status: *status,
+                                data: data.clone(),
+                            },
+                        });
                     }
-                    MidiFileEventKind::Meta { kind, data } => match kind {
-                        0x2F => {}
-                        0x03 if track_name.is_none() => {
-                            let name = String::from_utf8_lossy(data)
-                                .trim_matches('\0')
-                                .trim()
-                                .chars()
-                                .take(128)
-                                .collect::<String>();
-                            if !name.is_empty() {
-                                track_name = Some(name);
+                    MidiFileEventKind::Meta { kind, data } => {
+                        match kind {
+                            0x2F => {}
+                            0x03 => {
+                                if track_name.is_none() {
+                                    let name = String::from_utf8_lossy(data)
+                                        .trim_matches('\0')
+                                        .trim()
+                                        .chars()
+                                        .take(128)
+                                        .collect::<String>();
+                                    if !name.is_empty() {
+                                        track_name = Some(name);
+                                    }
+                                }
+                                opaque_events.push(MidiOpaqueEventData {
+                                    tick,
+                                    order: event_index as u32,
+                                    kind: MidiOpaqueEventKind::Meta {
+                                        kind: *kind,
+                                        data: data.clone(),
+                                    },
+                                });
                             }
+                            0x51 if data.len() == 3 => {
+                                let microseconds_per_quarter =
+                                    u32::from_be_bytes([0, data[0], data[1], data[2]]);
+                                if microseconds_per_quarter > 0 {
+                                    tempo_points.push(MidiImportedTempoPoint {
+                                        tick,
+                                        bpm: 60_000_000.0 / f64::from(microseconds_per_quarter),
+                                    });
+                                } else {
+                                    opaque_events.push(MidiOpaqueEventData {
+                                        tick,
+                                        order: event_index as u32,
+                                        kind: MidiOpaqueEventKind::Meta {
+                                            kind: *kind,
+                                            data: data.clone(),
+                                        },
+                                    });
+                                }
+                            }
+                            0x58 if data.len() >= 2 && data[0] > 0 && data[1] <= 7 => {
+                                meter_points.push(MidiImportedMeterPoint {
+                                    tick,
+                                    numerator: u32::from(data[0]),
+                                    denominator: 1_u32 << data[1],
+                                });
+                            }
+                            0x06 | 0x07 => {
+                                markers.push(MidiImportedMarker {
+                                    tick,
+                                    name: String::from_utf8_lossy(data)
+                                        .trim_matches('\0')
+                                        .trim()
+                                        .chars()
+                                        .take(128)
+                                        .collect(),
+                                });
+                                opaque_events.push(MidiOpaqueEventData {
+                                    tick,
+                                    order: event_index as u32,
+                                    kind: MidiOpaqueEventKind::Meta {
+                                        kind: *kind,
+                                        data: data.clone(),
+                                    },
+                                });
+                            }
+                            _ => opaque_events.push(MidiOpaqueEventData {
+                                tick,
+                                order: event_index as u32,
+                                kind: MidiOpaqueEventKind::Meta {
+                                    kind: *kind,
+                                    data: data.clone(),
+                                },
+                            }),
                         }
-                        _ => {
-                            unsupported_event_count = unsupported_event_count.saturating_add(1);
+                        if !matches!(kind, 0x2F | 0x51 | 0x58) {
+                            last_content_tick = last_content_tick.max(tick);
                         }
-                    },
+                    }
                 }
             }
 
@@ -539,9 +645,6 @@ impl MidiFileImport {
                     "MIDI track {} has a Note On without a matching Note Off",
                     track_index + 1
                 ));
-            }
-            if !has_channel_events {
-                continue;
             }
             let length_ticks = last_content_tick.max(1);
             if notes.iter().any(|note: &MidiNoteData| {
@@ -555,6 +658,8 @@ impl MidiFileImport {
                 ));
             }
             imported_tracks.push(MidiImportedTrack {
+                source_index: track_index,
+                has_channel_events,
                 name: track_name.unwrap_or_else(|| format!("MIDI {}", track_index + 1)),
                 length_ticks,
                 notes,
@@ -563,12 +668,72 @@ impl MidiFileImport {
                 program_changes,
                 poly_aftertouches,
                 channel_pressures,
+                opaque_events,
             });
         }
+        tempo_points.sort_by_key(|point| point.tick);
+        meter_points.sort_by_key(|point| point.tick);
+        markers.sort_by_key(|marker| marker.tick);
         Ok(MidiFileProjectImport {
             tracks: imported_tracks,
-            unsupported_event_count,
+            tempo_points,
+            meter_points,
+            markers,
+            unsupported_event_count: 0,
+            file_type: self.format,
         })
+    }
+}
+
+impl MidiFileProjectImport {
+    /// Selects source tracks according to the REAPER import dialog options.
+    pub fn tracks_for_options(&self, options: MidiFileImportOptions) -> Vec<MidiImportedTrack> {
+        if options.expand_tracks && self.file_type == MidiFileFormat::Type1 && self.tracks.len() > 1
+        {
+            return self.tracks.iter().skip(1).cloned().collect();
+        }
+        let Some(first) = self.tracks.first() else {
+            return Vec::new();
+        };
+        let mut merged = first.clone();
+        merged.source_index = 0;
+        merged.has_channel_events = false;
+        merged.length_ticks = 1;
+        merged.notes.clear();
+        merged.controllers.clear();
+        merged.pitch_bends.clear();
+        merged.program_changes.clear();
+        merged.poly_aftertouches.clear();
+        merged.channel_pressures.clear();
+        merged.opaque_events.clear();
+        for track in &self.tracks {
+            merged.has_channel_events |= track.has_channel_events;
+            merged.length_ticks = merged.length_ticks.max(track.length_ticks);
+            merged.notes.extend(track.notes.iter().copied());
+            merged.controllers.extend(track.controllers.iter().copied());
+            merged.pitch_bends.extend(track.pitch_bends.iter().copied());
+            merged
+                .program_changes
+                .extend(track.program_changes.iter().copied());
+            merged
+                .poly_aftertouches
+                .extend(track.poly_aftertouches.iter().copied());
+            merged
+                .channel_pressures
+                .extend(track.channel_pressures.iter().copied());
+            merged
+                .opaque_events
+                .extend(track.opaque_events.iter().cloned().map(|mut event| {
+                    event.order = (track.source_index as u32)
+                        .saturating_mul(1_000_001)
+                        .saturating_add(event.order);
+                    event
+                }));
+        }
+        merged
+            .opaque_events
+            .sort_unstable_by_key(|event| (event.tick, event.order));
+        vec![merged]
     }
 }
 
@@ -1047,6 +1212,33 @@ pub fn encode_standard_midi_with_selection(
                     tick: scale_tick_position(project_tick, project_ppq, options.ppq)?,
                     order,
                     bytes: vec![0xD0 | pressure.channel, pressure.value],
+                });
+            }
+        }
+
+        for opaque in item.opaque_events() {
+            for position in midi_item_event_positions(item, opaque.tick)? {
+                let original_project_tick = project_midi_item_event_tick(project, item, position)?;
+                let Some(project_tick) =
+                    time_selection_state_event_tick(original_project_tick, time_selection)
+                else {
+                    continue;
+                };
+                ensure_midi_event_capacity(&mut midi_event_count, 1)?;
+                let bytes = match &opaque.kind {
+                    MidiOpaqueEventKind::SystemExclusive { status, data } => {
+                        let mut bytes = Vec::with_capacity(data.len().saturating_add(1));
+                        bytes.push(*status);
+                        write_vlq(data.len() as u64, &mut bytes);
+                        bytes.extend_from_slice(data);
+                        bytes
+                    }
+                    MidiOpaqueEventKind::Meta { kind, data } => meta_event(*kind, data)?,
+                };
+                events_by_track[track_index].push(Event {
+                    tick: scale_tick_position(project_tick, project_ppq, options.ppq)?,
+                    order: 1,
+                    bytes,
                 });
             }
         }

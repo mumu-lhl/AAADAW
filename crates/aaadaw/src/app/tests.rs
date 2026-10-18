@@ -24,9 +24,10 @@ use crate::timeline::{SnapGrid, TimelineEvent};
 #[cfg(all(feature = "jack-backend", feature = "pipewire-backend"))]
 use aaadaw_app::PlaybackBackend;
 use aaadaw_core::{
-    DawAction, MidiChannelPressureData, MidiControllerData, MidiImportedTrack, MidiItemPosition,
-    MidiNoteData, MidiPitchBendData, MidiPolyAftertouchData, MidiProgramChangeData, Project,
-    RazorEditArea, TrackFxPlugin,
+    DawAction, MidiChannelPressureData, MidiControllerData, MidiFileFormat, MidiFileProjectImport,
+    MidiImportedMarker, MidiImportedMeterPoint, MidiImportedTempoPoint, MidiImportedTrack,
+    MidiItemPosition, MidiNoteData, MidiOpaqueEventData, MidiOpaqueEventKind, MidiPitchBendData,
+    MidiPolyAftertouchData, MidiProgramChangeData, Project, RazorEditArea, TrackFxPlugin,
 };
 use aaadaw_media::{AudioStreamDecoder, AudioWaveform};
 use aaadaw_storage::{ArrangementViewState, ProjectSessionLock, ProjectStore};
@@ -8329,15 +8330,18 @@ fn native_picker_results_fill_the_requested_path_fields() {
 }
 
 #[test]
-fn midi_file_import_message_creates_tracks_and_reports_unmodeled_events() {
+fn midi_file_import_options_apply_tracks_tempo_markers_and_opaque_events_atomically() {
     let mut app = App {
         import_busy: true,
         ..App::default()
     };
     app.timeline.edit_cursor_tick = 1_440;
 
-    let _ = app.update(Message::MidiFileImportFinished(Ok((
-        vec![MidiImportedTrack {
+    let _ = app.update(Message::MidiFileImportFinished(Ok(MidiFileProjectImport {
+        file_type: MidiFileFormat::Type0,
+        tracks: vec![MidiImportedTrack {
+            source_index: 0,
+            has_channel_events: true,
             name: "Piano".to_owned(),
             length_ticks: 960,
             notes: vec![MidiNoteData {
@@ -8353,20 +8357,54 @@ fn midi_file_import_message_creates_tracks_and_reports_unmodeled_events() {
             program_changes: Vec::new(),
             poly_aftertouches: Vec::new(),
             channel_pressures: Vec::new(),
+            opaque_events: vec![MidiOpaqueEventData {
+                tick: 240,
+                order: 0,
+                kind: MidiOpaqueEventKind::SystemExclusive {
+                    status: 0xF0,
+                    data: vec![0x43, 0x12, 0xF7],
+                },
+            }],
         }],
-        2,
-    ))));
+        tempo_points: vec![MidiImportedTempoPoint {
+            tick: 0,
+            bpm: 120.0,
+        }],
+        meter_points: vec![MidiImportedMeterPoint {
+            tick: 480,
+            numerator: 3,
+            denominator: 4,
+        }],
+        markers: vec![MidiImportedMarker {
+            tick: 240,
+            name: "Cue A".to_owned(),
+        }],
+        unsupported_event_count: 0,
+    })));
 
     assert!(!app.import_busy);
-    assert_eq!(app.project.tracks().len(), 1);
+    assert!(app.pending_midi_file_import.is_some());
+    assert!(app.project.tracks().is_empty());
+    let _ = app.update(Message::SetMidiFileImportTempoMap(true));
+    let _ = app.update(Message::SetMidiFileImportMarkers(true));
+    let _ = app.update(Message::ConfirmMidiFileImport);
+    assert_eq!(app.project.tracks().len(), 1, "{}", app.status);
     assert_eq!(app.project.tracks()[0].name(), "Piano");
     assert_eq!(app.project.midi_items().len(), 1);
     assert_eq!(app.project.midi_items()[0].start_tick(), 1_440);
     assert_eq!(app.project.midi_items()[0].notes()[0].off_velocity(), 18);
+    assert_eq!(app.project.midi_items()[0].opaque_events().len(), 1);
+    assert_eq!(app.project.time_signature_at_tick(3_840).numerator(), 3);
+    assert_eq!(app.project.markers().len(), 1);
     assert_eq!(
         app.status,
-        "Inserted 1 MIDI track at the edit cursor; 2 SysEx/meta event(s) were not stored in the project"
+        "Inserted 1 MIDI track at the edit cursor; imported 1 project marker"
     );
+    let _ = app.update(Message::Undo);
+    assert!(app.project.tracks().is_empty());
+    assert!(app.project.midi_items().is_empty());
+    assert!(app.project.markers().is_empty());
+    assert_eq!(app.project.time_signature_at_tick(1_920).numerator(), 4);
 }
 
 #[test]

@@ -8,11 +8,50 @@ use aaadaw_app::{
     relink_external_audio_source, start_audio_asset_management as start_asset_worker,
     start_audio_item_import, start_audio_item_reimport,
 };
-use aaadaw_core::{DawAction, ItemId, Track, TrackId};
+use aaadaw_core::{DawAction, ItemId, TimeSignature, Track, TrackId};
 use iced::Task;
 use std::io::Read;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
+
+fn midi_import_meter_barline(
+    points: &[(u64, TimeSignature)],
+    ppq: u32,
+    tick: u64,
+) -> Result<u64, String> {
+    let index = points
+        .partition_point(|(start_tick, _)| *start_tick <= tick)
+        .checked_sub(1)
+        .ok_or_else(|| "project meter map has no initial time signature".to_owned())?;
+    let (point_tick, signature) = points[index];
+    let quarter_note_ticks = u64::from(ppq)
+        .checked_mul(4)
+        .ok_or_else(|| "project meter map exceeds the project tick range".to_owned())?;
+    let denominator = u64::from(signature.denominator());
+    if !quarter_note_ticks.is_multiple_of(denominator) {
+        return Err("project meter map has an unsupported time signature".to_owned());
+    }
+    let ticks_per_measure = (quarter_note_ticks / denominator)
+        .checked_mul(u64::from(signature.numerator()))
+        .filter(|ticks| *ticks > 0)
+        .ok_or_else(|| "project meter map exceeds the project tick range".to_owned())?;
+    let offset = tick
+        .checked_sub(point_tick)
+        .ok_or_else(|| "project meter map is invalid".to_owned())?;
+    let remainder = offset % ticks_per_measure;
+    let mut barline = if remainder == 0 {
+        tick
+    } else {
+        tick.checked_add(ticks_per_measure - remainder)
+            .ok_or_else(|| "MIDI time-signature map exceeds the project tick range".to_owned())?
+    };
+    if let Some((next_tick, _)) = points.get(index + 1)
+        && *next_tick < barline
+    {
+        barline = *next_tick;
+    }
+    Ok(barline)
+}
 
 impl App {
     #[cfg(target_os = "android")]
@@ -475,11 +514,110 @@ impl App {
                     .read_to_end(&mut bytes)
                     .map_err(|error| format!("could not read {}: {error}", path.display()))?;
                 let parsed = aaadaw_core::decode_standard_midi(&bytes)?;
-                let imported = parsed.to_project_import(project_ppq)?;
-                Ok((imported.tracks, imported.unsupported_event_count))
+                parsed.to_project_import(project_ppq)
             }),
             Message::MidiFileImportFinished,
         )
+    }
+
+    pub(super) fn apply_midi_file_import(&mut self) {
+        let Some(imported) = self.pending_midi_file_import.take() else {
+            return;
+        };
+        let options = self.midi_file_import_options;
+        self.midi_file_import_options = aaadaw_core::MidiFileImportOptions::default();
+        let start_tick = self.timeline.edit_cursor_tick;
+        let tracks = imported.tracks_for_options(options);
+        let track_count = tracks.len();
+        let mut actions = tracks
+            .into_iter()
+            .map(|track| aaadaw_core::DawAction::ImportMidiTrack { start_tick, track })
+            .collect::<Vec<_>>();
+
+        if options.import_tempo_map {
+            for point in imported.tempo_points {
+                let Some(tick) = start_tick.checked_add(point.tick) else {
+                    self.status = "MIDI tempo map exceeds the project tick range".to_owned();
+                    return;
+                };
+                actions.push(aaadaw_core::DawAction::SetTempo {
+                    start_tick: tick,
+                    bpm: point.bpm,
+                });
+            }
+            let mut meter_points = self.project.time_signature_points().collect::<Vec<_>>();
+            let ppq = self.project.settings().ppq();
+            for point in imported.meter_points {
+                let Some(tick) = start_tick.checked_add(point.tick) else {
+                    self.status =
+                        "MIDI time-signature map exceeds the project tick range".to_owned();
+                    return;
+                };
+                let Ok(signature) =
+                    aaadaw_core::TimeSignature::new(point.numerator, point.denominator)
+                else {
+                    continue;
+                };
+                let tick = match midi_import_meter_barline(&meter_points, ppq, tick) {
+                    Ok(tick) => tick,
+                    Err(error) => {
+                        self.status = error;
+                        return;
+                    }
+                };
+                let active_index = meter_points
+                    .partition_point(|(start_tick, _)| *start_tick <= tick)
+                    .saturating_sub(1);
+                if meter_points[active_index].1 != signature {
+                    let action = aaadaw_core::DawAction::SetTimeSignature {
+                        start_tick: tick,
+                        signature,
+                    };
+                    match meter_points.binary_search_by_key(&tick, |(start_tick, _)| *start_tick) {
+                        Ok(index) => meter_points[index].1 = signature,
+                        Err(index) => meter_points.insert(index, (tick, signature)),
+                    }
+                    actions.push(action);
+                }
+            }
+        }
+        let mut marker_count = 0_usize;
+        if options.import_markers {
+            for marker in imported.markers {
+                let Some(tick) = start_tick.checked_add(marker.tick) else {
+                    self.status = "MIDI markers exceed the project tick range".to_owned();
+                    return;
+                };
+                actions.push(aaadaw_core::DawAction::InsertProjectMarker {
+                    position_ticks: tick,
+                    name: marker.name,
+                });
+                marker_count += 1;
+            }
+        }
+        let previous_revision = self.revision;
+        self.apply_action(
+            aaadaw_core::DawAction::BatchTransaction {
+                tx_id: self.revision,
+                actions,
+            },
+            "MIDI file imported",
+        );
+        if self.revision != previous_revision {
+            let tracks_label = if track_count == 1 {
+                "1 MIDI track".to_owned()
+            } else {
+                format!("{track_count} MIDI tracks")
+            };
+            let marker_suffix = if marker_count == 0 {
+                String::new()
+            } else if marker_count == 1 {
+                "; imported 1 project marker".to_owned()
+            } else {
+                format!("; imported {marker_count} project markers")
+            };
+            self.status = format!("Inserted {tracks_label} at the edit cursor{marker_suffix}");
+        }
     }
 
     pub(super) fn audio_import_placement(&self) -> Result<(TrackId, u64), String> {
