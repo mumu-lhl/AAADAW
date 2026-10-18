@@ -602,7 +602,7 @@ pub(crate) enum Message {
     SelectMidiNoteEvent(NoteId, bool),
     SelectMidiControllerEvent(ItemId, MidiControllerData, bool),
     SelectMidiPitchBendEvent(ItemId, MidiPitchBendData, bool),
-    MoveMidiEditorEventListCursor(MidiEditorEventListCursorDirection, bool),
+    MoveMidiEditorEventListCursor(MidiEditorEventListCursorDirection, bool, bool),
     CopyMidiNotes(ItemId, Vec<NoteId>),
     PasteMidiNotes(ItemId),
     DuplicateMidiNotes(ItemId),

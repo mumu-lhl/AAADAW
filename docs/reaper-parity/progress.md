@@ -2274,3 +2274,11 @@ REAPER 7.82 / Default 7 原厂四音符 Event List 探针记录：初始三行�
 AAADAW 在 Event List 模式现在接受未修饰 ArrowUp/Down，沿当前可见、排序后的事件收敛或移动选择；Ctrl+ArrowUp/Down 移动独立事件游标并保留选择。基于含 Note/CC/Pitch Bend 四行的实际工程，当前构建 SHA-256 `c76c9607ac03339e2ee206814f2377b36f2c49da79c0539b7b2e0d870dfbadf6` 的真实窗口已验证多选保持、Ctrl+Up 后普通 Up 收敛到新游标，以及所选行变化。原厂双击数值会打开完整 Event Properties 窗口，因此逐单元格原位编辑不列作差异；Shift+Arrow 范围选择、横向字段焦点和 Home/End 仍待测量/实现。
 
 AAADAW App Nextest **760/760，0 skipped**（Xvfb），严格 all-target Clippy (`-D warnings`)、stable fmt、`git diff --check` 通过；Event List fixture manifest **10/10 文件 SHA-256 有效**，新增的 **6/6** 个 fixture 哈希已核对，parity matrix **111 项 / 15 列 / 唯一 ID**。未建模 MIDI 事件、混合类型属性、note-off velocity、准确 source-offset/loop BBT、列操作与模式持久化仍开放；`MIDI-EVENT-LIST-001`、UI-019 与 P7 保持 `in_progress`。
+
+### 2026-10-18 MIDI Event List Shift+Arrow 范围选择
+
+Linux REAPER 7.82 / Default 7 在单选第一音符后按 Shift+ArrowDown，ReaScript note-selection watcher 从 `1,0,0,0` 读到 `1,1,0,0`；[原厂截图](../verification/reaper-parity/fixtures/midi-event-list-navigation-native-shift-down.png)与完整前序状态记录在 [Event List manifest](../verification/reaper-parity/fixtures/midi-event-list-ui.tsv)。
+
+AAADAW 的 Shift+Arrow Up/Down 现在从独立锚点沿当前可见行扩展或收缩选择；范围可以跨越 Note、CC、Pitch Bend。最新桌面构建 SHA-256 `27334b0a8b7348aef7e9f7123c1653bcea983084a1ff465efc53c774625cf43d` 的真实 MIDI Event List 截图记录跨三种事件扩展、Shift+Up 收缩及普通 Up 收敛。App 回归检查双音符范围、跨类型范围、收缩后只保留锚点到游标之间事件，以及 Ctrl 导航仍保留多选。
+
+AAADAW App Nextest **760/760，0 skipped**，严格 all-target Clippy (`-D warnings`)、stable fmt 与 `git diff --check` 通过；Event List fixture manifest **14/14 文件 SHA-256 有效**，本次新增/更新证据 **4/4** 哈希匹配，parity matrix **111 项 / 15 列 / 唯一 ID**。Shift+click 范围选择、Home/End、横向字段焦点、未建模事件、混合类型属性、note-off velocity 和 source-offset/loop BBT 仍开放；`MIDI-EVENT-LIST-001`、UI-019 与 P7 保持 `in_progress`。

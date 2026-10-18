@@ -7,3 +7,5 @@ ArrowDown	1,0,0,0
 ArrowDown	0,1,0,0
 Ctrl+A	1,1,1,1
 Ctrl+ArrowDown	1,1,1,1
+shift-probe-start	1,0,0,0
+Shift+ArrowDown	1,1,0,0

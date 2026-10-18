@@ -12913,6 +12913,62 @@ fn midi_event_list_arrow_keys_navigate_visible_events_and_keep_ctrl_multiselecti
     );
 
     let _ = app.update(Message::SelectMidiNoteEvent(note_ids[0], false));
+    let shift_down = test_input_event(test_shortcut_input(
+        Key::Named(iced::keyboard::key::Named::ArrowDown),
+        Modifiers::SHIFT,
+    ));
+    let _ = app.update(Message::RuntimeKeyboardEvent(
+        shift_down.clone(),
+        iced::event::Status::Ignored,
+        editor_window_id,
+    ));
+    assert_eq!(
+        app.midi_editor_event_list_cursor,
+        Some(super::MidiEditorEventListCursor::Note(note_ids[1]))
+    );
+    assert_eq!(
+        app.midi_editor_selected_notes,
+        HashSet::from([note_ids[0], note_ids[1]])
+    );
+
+    let _ = app.update(Message::RuntimeKeyboardEvent(
+        shift_down,
+        iced::event::Status::Ignored,
+        editor_window_id,
+    ));
+    assert_eq!(
+        app.midi_editor_event_list_cursor,
+        Some(super::MidiEditorEventListCursor::Controller(controller))
+    );
+    assert_eq!(
+        app.midi_editor_selected_notes,
+        HashSet::from([note_ids[0], note_ids[1]])
+    );
+    assert_eq!(
+        app.midi_editor_selected_controllers,
+        HashSet::from([controller])
+    );
+
+    let shift_up = test_input_event(test_shortcut_input(
+        Key::Named(iced::keyboard::key::Named::ArrowUp),
+        Modifiers::SHIFT,
+    ));
+    let _ = app.update(Message::RuntimeKeyboardEvent(
+        shift_up,
+        iced::event::Status::Ignored,
+        editor_window_id,
+    ));
+    assert_eq!(
+        app.midi_editor_event_list_cursor,
+        Some(super::MidiEditorEventListCursor::Note(note_ids[1]))
+    );
+    assert_eq!(
+        app.midi_editor_selected_notes,
+        HashSet::from([note_ids[0], note_ids[1]])
+    );
+    assert!(app.midi_editor_selected_controllers.is_empty());
+
+    let _ = app.update(Message::SelectMidiNoteEvent(note_ids[0], false));
     let _ = app.update(Message::RuntimeKeyboardEvent(
         up,
         iced::event::Status::Ignored,
