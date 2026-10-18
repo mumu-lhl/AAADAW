@@ -867,7 +867,7 @@ fn midi_opaque_event_properties_type_and_payload(
     match kind {
         MidiOpaqueEventKind::Meta { kind, data } => {
             let event_type = MidiOpaqueEventPropertiesType::from_meta_kind(*kind)?;
-            let payload = if event_type == MidiOpaqueEventPropertiesType::RawMeta {
+            let payload = if midi_opaque_event_properties_payload_is_hex(*kind, data) {
                 format_midi_event_hex_bytes(data)
             } else {
                 String::from_utf8_lossy(data)
@@ -892,6 +892,29 @@ fn midi_opaque_event_properties_type_and_payload(
             ))
         }
     }
+}
+
+fn midi_opaque_event_properties_payload_is_hex(kind: u8, data: &[u8]) -> bool {
+    match MidiOpaqueEventPropertiesType::from_meta_kind(kind) {
+        Some(MidiOpaqueEventPropertiesType::RawMeta) => true,
+        Some(_) => std::str::from_utf8(data).is_err(),
+        None => false,
+    }
+}
+
+fn midi_opaque_event_properties_dialog_payload_is_hex(
+    dialog: &MidiEventPropertiesDialogState,
+) -> bool {
+    matches!(
+        &dialog.target,
+        MidiEventPropertiesTarget::Opaque(
+            _,
+            MidiOpaqueEventData {
+                kind: MidiOpaqueEventKind::Meta { kind, data },
+                ..
+            }
+        ) if midi_opaque_event_properties_payload_is_hex(*kind, data)
+    )
 }
 
 fn parse_midi_event_hex_bytes(value: &str) -> Option<Vec<u8>> {
@@ -3933,7 +3956,7 @@ impl App {
                     return Task::none();
                 };
                 let data = if dialog.opaque_payload_dirty {
-                    if dialog.opaque_type == Some(MidiOpaqueEventPropertiesType::RawMeta) {
+                    if midi_opaque_event_properties_payload_is_hex(kind, data) {
                         let Some(data) = parse_midi_event_hex_bytes(&dialog.opaque_payload) else {
                             self.midi_editor_feedback = Some(
                                 "Meta data must be hexadecimal bytes separated by spaces".into(),
@@ -6196,6 +6219,7 @@ impl App {
                         dialog.opaque_multiline
                             || event_type == MidiOpaqueEventPropertiesType::SysEx
                             || event_type == MidiOpaqueEventPropertiesType::RawMeta
+                            || midi_opaque_event_properties_dialog_payload_is_hex(dialog)
                     })
                 {
                     dialog.opaque_editor.perform(action);

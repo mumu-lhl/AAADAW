@@ -2474,3 +2474,7 @@ MIDI 播放计划现在保留预编译的 F0/F7 字节区间，并将 SysEx 作�
 为修复 PR #282 上 Android ARM64 编译失败，SysEx/Meta 文件读写改走共享平台路径选择器与 Android SAF，不再直接引用桌面专用 `rfd`；MIDI 输入分派现在也显式处理 Program Change、Poly Aftertouch 和 Channel Pressure。另一条回归测试保证 MIDI Event Properties 模态打开时，SysEx/Meta picker 的取消结果仍可返回并清除忙状态。Linux strict Clippy、工作区格式检查、MIDI Event List app 全套 Nextest **806/806** 和 picker/modal 定向测试通过。提交 `3b372df` 与 `c1f7196` 的 GitHub CI 已通过 Linux、Windows、macOS、Android ARM64/x86_64 构建和 Android emulator foreground launch。
 
 继续按原厂空 item fixture 补上 Event List 合成 `(end) All Notes Off` 行的 `Ctrl+F2` 入口。空 Item 唯一可见行在 AAADAW 进入 Event List 时仅有初始视觉选中、尚无显式内部游标；动作启用和打开路径已对齐该状态。现在弹出 Type、Position、Channel 均未设置的空白表单，Apply/OK 不创建工程事件，App 回归比较工程 snapshot 与 history，保持零修改。Xorg dummy :99 下用当前 Linux 桌面二进制真实输入 `Ctrl+F2` 并保存了 [属性窗截图](../verification/reaper-parity/fixtures/midi-event-list-empty-end-aaadaw-properties.png)，窗口前态截图、Build ID、二进制与图像哈希已记入 [fixture manifest](../verification/reaper-parity/fixtures/midi-event-list-ui.tsv) 和空 Item TSV。该空白表单的字段仍为 display-only，Apply 是 no-op；从空表单新建 MIDI 事件及 REAPER 对 Apply/OK 的原厂行为未实现/实测，因此 `MIDI-EVENT-LIST-001`、UI-019 与 P7 保持 `in_progress`。
+
+### 2026-10-18 保留文本 Meta 中的无效 UTF-8 字节
+
+已知文本类型的 Meta 若含无效 UTF-8，Event List 和 Event Properties 现在以十六进制显示原始字节，属性编辑器仍保留其 Meta 类型；只改 Position 不会重写 payload，明确编辑十六进制时也会按原字节提交并支持 Undo/Redo。新增 App 回归覆盖显示、Position-only 提交、字节编辑及历史往返。当前未对 REAPER 7.82 的无效 UTF-8 呈现做原厂实测，因此这里只修复 AAADAW 的字节可见性与保真，不宣称语义已与原厂对齐；`.sysex` picker、结构性 Meta 原厂字段与 Event Properties BBT 边界仍开放，`MIDI-EVENT-PROPERTIES-001` 继续为 `in_progress`。

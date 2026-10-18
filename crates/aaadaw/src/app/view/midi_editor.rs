@@ -1153,6 +1153,9 @@ fn midi_event_program_change_parameter(item: &MidiItem, event: MidiProgramChange
 }
 
 fn midi_opaque_meta_text(data: &[u8]) -> String {
+    if std::str::from_utf8(data).is_err() {
+        return midi_opaque_meta_hex(data);
+    }
     let text = String::from_utf8_lossy(data).trim_matches('\0').to_owned();
     if text
         .chars()
@@ -1955,6 +1958,8 @@ fn midi_event_properties_dialog(app: &App, touch_targets: bool) -> Element<'_, M
     let is_opaque_meta = is_opaque && !is_opaque_sysex;
     let is_opaque_raw_meta =
         state.opaque_type == Some(super::super::MidiOpaqueEventPropertiesType::RawMeta);
+    let is_opaque_meta_hex =
+        super::super::midi_opaque_event_properties_dialog_payload_is_hex(state);
     let position = iced::widget::text_input("1.1.00", &state.position)
         .on_input(Message::SetMidiEventPropertiesPosition)
         .width(Length::Fixed(if touch_targets { 148.0 } else { 116.0 }));
@@ -1991,7 +1996,7 @@ fn midi_event_properties_dialog(app: &App, touch_targets: bool) -> Element<'_, M
     } else {
         "Event Properties"
     };
-    let opaque_meta_text: Element<'_, Message> = if state.opaque_multiline || is_opaque_raw_meta {
+    let opaque_meta_text: Element<'_, Message> = if state.opaque_multiline || is_opaque_meta_hex {
         text_editor(&state.opaque_editor)
             .on_action(Message::EditMidiOpaqueEventPropertiesText)
             .height(Length::Fixed(if touch_targets { 128.0 } else { 96.0 }))
@@ -2109,7 +2114,7 @@ fn midi_event_properties_dialog(app: &App, touch_targets: bool) -> Element<'_, M
         ]
         .spacing(SPACING_XS)
         .align_y(iced::Alignment::Center);
-        if !is_opaque_raw_meta {
+        if !is_opaque_meta_hex {
             position_row = position_row.push(
                 button("Load…")
                     .style(iced::widget::button::secondary)
@@ -2119,7 +2124,7 @@ fn midi_event_properties_dialog(app: &App, touch_targets: bool) -> Element<'_, M
         content = content
             .push(
                 row![
-                    text(if is_opaque_raw_meta {
+                    text(if is_opaque_meta_hex {
                         "Data (hex)"
                     } else {
                         "Text"
@@ -2131,7 +2136,7 @@ fn midi_event_properties_dialog(app: &App, touch_targets: bool) -> Element<'_, M
                 .align_y(iced::Alignment::Center),
             )
             .push(type_row);
-        if !is_opaque_raw_meta {
+        if !is_opaque_meta_hex {
             content = content.push(
                 row![
                     iced::widget::Space::new().width(Length::Fixed(76.0)),
@@ -5392,6 +5397,7 @@ mod tests {
             midi_opaque_meta_text(b"bad\x01text"),
             "62 61 64 01 74 65 78 74"
         );
+        assert_eq!(midi_opaque_meta_text(&[b'A', 0xFF, b'B']), "41 FF 42");
     }
 
     #[test]
