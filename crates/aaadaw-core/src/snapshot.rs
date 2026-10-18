@@ -210,6 +210,7 @@ pub struct MidiItemSnapshot {
     pub poly_aftertouches: Vec<MidiPolyAftertouchData>,
     pub channel_pressures: Vec<MidiChannelPressureData>,
     pub opaque_events: Vec<MidiOpaqueEventData>,
+    pub event_order: Vec<crate::MidiEventOrderData>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

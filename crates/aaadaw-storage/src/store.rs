@@ -3,12 +3,13 @@ use crate::{
 };
 use aaadaw_core::{
     AudioItemSnapshot, BpmBasis, MeterPointSnapshot, MidiChannelPressureData, MidiControllerData,
-    MidiItemSnapshot, MidiNoteData, MidiNoteSnapshot, MidiOpaqueEventData, MidiOpaqueEventKind,
-    MidiPitchBendData, MidiPolyAftertouchData, MidiProgramChangeData, PanMode, Project,
-    ProjectMarkerSnapshot, ProjectRegionSnapshot, ProjectSettings, ProjectSnapshot, RazorEditArea,
-    SnapshotError, TempoCurve, TempoPointSnapshot, TrackFxParameterAutomationLaneSnapshot,
-    TrackFxParameterAutomationPointSnapshot, TrackFxParameterValueSnapshot, TrackFxPluginSnapshot,
-    TrackInstrumentSnapshot, TrackSnapshot, VolumeAutomationPoint,
+    MidiEventOrderData, MidiEventOrderTarget, MidiItemSnapshot, MidiNoteData, MidiNoteSnapshot,
+    MidiOpaqueEventData, MidiOpaqueEventKind, MidiPitchBendData, MidiPolyAftertouchData,
+    MidiProgramChangeData, PanMode, Project, ProjectMarkerSnapshot, ProjectRegionSnapshot,
+    ProjectSettings, ProjectSnapshot, RazorEditArea, SnapshotError, TempoCurve, TempoPointSnapshot,
+    TrackFxParameterAutomationLaneSnapshot, TrackFxParameterAutomationPointSnapshot,
+    TrackFxParameterValueSnapshot, TrackFxPluginSnapshot, TrackInstrumentSnapshot, TrackSnapshot,
+    VolumeAutomationPoint,
 };
 use rusqlite::{
     Connection, OpenFlags, OptionalExtension, Transaction, TransactionBehavior, params,
@@ -26,7 +27,7 @@ use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 /// Latest database schema version understood by this release.
-pub const CURRENT_SCHEMA_VERSION: u32 = 63;
+pub const CURRENT_SCHEMA_VERSION: u32 = 64;
 
 const MIGRATION_29: &str = "ALTER TABLE project_meta ADD COLUMN start_measure INTEGER NOT NULL DEFAULT 1 CHECK(start_measure BETWEEN -2147483648 AND 2147483647);";
 const MIGRATION_30: &str = "ALTER TABLE project_meta ADD COLUMN bpm_basis INTEGER NOT NULL DEFAULT 1 CHECK(bpm_basis BETWEEN 0 AND 5);";
@@ -587,6 +588,24 @@ CREATE TABLE IF NOT EXISTS midi_opaque_events (
 );
 CREATE INDEX IF NOT EXISTS midi_opaque_events_by_item_tick
     ON midi_opaque_events(item_id, tick, source_order);
+"#;
+const MIGRATION_64_MIDI_EVENT_ORDER: &str = r#"
+CREATE TABLE IF NOT EXISTS midi_event_order (
+    item_id INTEGER NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+    position INTEGER NOT NULL CHECK (position >= 0),
+    source_order INTEGER NOT NULL CHECK (source_order BETWEEN 0 AND 4294967295),
+    event_kind INTEGER NOT NULL CHECK (event_kind BETWEEN 0 AND 5),
+    tick INTEGER NOT NULL CHECK (tick >= 0),
+    channel INTEGER NOT NULL CHECK (channel BETWEEN 0 AND 15),
+    data1 INTEGER NOT NULL CHECK (data1 BETWEEN 0 AND 16383),
+    data2 INTEGER NOT NULL CHECK (data2 BETWEEN 0 AND 127),
+    data3 INTEGER NOT NULL CHECK (data3 BETWEEN 0 AND 127),
+    duration INTEGER NOT NULL CHECK (duration >= 0),
+    PRIMARY KEY (item_id, position),
+    UNIQUE (item_id, source_order)
+);
+CREATE INDEX IF NOT EXISTS midi_event_order_by_item_source_order
+    ON midi_event_order(item_id, source_order);
 "#;
 
 /// SQLite persistence failures, including incompatible project files.
@@ -3613,6 +3632,7 @@ fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
                 }
             }
             63 => transaction.execute_batch(MIGRATION_63_MIDI_OPAQUE_EVENTS)?,
+            64 => transaction.execute_batch(MIGRATION_64_MIDI_EVENT_ORDER)?,
             missing => return Err(StorageError::MissingMigration(missing - 1)),
         }
         transaction.pragma_update(None, "user_version", next_version)?;
@@ -3645,6 +3665,7 @@ fn write_snapshot(
     transaction.execute("DELETE FROM midi_poly_aftertouches", [])?;
     transaction.execute("DELETE FROM midi_channel_pressures", [])?;
     transaction.execute("DELETE FROM midi_opaque_events", [])?;
+    transaction.execute("DELETE FROM midi_event_order", [])?;
     transaction.execute("DELETE FROM track_volume_automation", [])?;
     transaction.execute("DELETE FROM items", [])?;
     transaction.execute("DELETE FROM audio_item_fade_curves", [])?;
@@ -3973,6 +3994,74 @@ fn write_snapshot(
                     event_kind,
                     meta_type,
                     data.as_slice(),
+                ],
+            )?;
+        }
+        for (position, event) in item.event_order.iter().enumerate() {
+            let (event_kind, tick, channel, data1, data2, data3, duration) = match event.target {
+                MidiEventOrderTarget::Note(note) => (
+                    0_i64,
+                    note.tick,
+                    note.channel,
+                    i64::from(note.pitch),
+                    i64::from(note.velocity),
+                    i64::from(note.off_velocity),
+                    note.duration,
+                ),
+                MidiEventOrderTarget::Controller(controller) => (
+                    1,
+                    controller.tick,
+                    controller.channel,
+                    i64::from(controller.controller),
+                    i64::from(controller.value),
+                    0,
+                    0,
+                ),
+                MidiEventOrderTarget::PitchBend(bend) => {
+                    (2, bend.tick, bend.channel, i64::from(bend.value), 0, 0, 0)
+                }
+                MidiEventOrderTarget::ProgramChange(change) => (
+                    3,
+                    change.tick,
+                    change.channel,
+                    i64::from(change.program),
+                    0,
+                    0,
+                    0,
+                ),
+                MidiEventOrderTarget::PolyAftertouch(aftertouch) => (
+                    4,
+                    aftertouch.tick,
+                    aftertouch.channel,
+                    i64::from(aftertouch.note),
+                    i64::from(aftertouch.value),
+                    0,
+                    0,
+                ),
+                MidiEventOrderTarget::ChannelPressure(pressure) => (
+                    5,
+                    pressure.tick,
+                    pressure.channel,
+                    i64::from(pressure.value),
+                    0,
+                    0,
+                    0,
+                ),
+            };
+            transaction.execute(
+                "INSERT INTO midi_event_order(item_id, position, source_order, event_kind, tick, channel, data1, data2, data3, duration) \
+                 VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                params![
+                    to_sql_integer(item.id)?,
+                    usize_to_sql(position)?,
+                    i64::from(event.order),
+                    event_kind,
+                    to_sql_integer(tick)?,
+                    i64::from(channel),
+                    data1,
+                    data2,
+                    data3,
+                    to_sql_integer(duration)?,
                 ],
             )?;
         }
@@ -4932,6 +5021,111 @@ fn read_midi_items(connection: &Connection) -> Result<(Vec<MidiItemSnapshot>, bo
             ));
     }
 
+    let mut order_statement = connection.prepare(
+        "SELECT item_id, position, source_order, event_kind, tick, channel, data1, data2, data3, duration \
+         FROM midi_event_order ORDER BY item_id, position",
+    )?;
+    let order_rows = order_statement
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, i64>(1)?,
+                row.get::<_, i64>(2)?,
+                row.get::<_, i64>(3)?,
+                row.get::<_, i64>(4)?,
+                row.get::<_, i64>(5)?,
+                row.get::<_, i64>(6)?,
+                row.get::<_, i64>(7)?,
+                row.get::<_, i64>(8)?,
+                row.get::<_, i64>(9)?,
+            ))
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut event_order_by_item: HashMap<u64, Vec<(u64, MidiEventOrderData)>> = HashMap::new();
+    for (
+        item_id,
+        position,
+        source_order,
+        event_kind,
+        tick,
+        channel,
+        data1,
+        data2,
+        data3,
+        duration,
+    ) in order_rows
+    {
+        let tick = from_sql_u64(tick)?;
+        let channel = from_sql_u8(channel)?;
+        let data2 = from_sql_u8(data2)?;
+        let data3 = from_sql_u8(data3)?;
+        let duration = from_sql_u64(duration)?;
+        let target = match event_kind {
+            0 => MidiEventOrderTarget::Note(MidiNoteData {
+                pitch: u8::try_from(data1).map_err(|_| {
+                    StorageError::InvalidStoredData("invalid MIDI note order pitch")
+                })?,
+                channel,
+                tick,
+                duration,
+                velocity: data2,
+                off_velocity: data3,
+            }),
+            1 => MidiEventOrderTarget::Controller(MidiControllerData {
+                controller: u8::try_from(data1).map_err(|_| {
+                    StorageError::InvalidStoredData("invalid MIDI controller order number")
+                })?,
+                channel,
+                tick,
+                value: data2,
+            }),
+            2 => MidiEventOrderTarget::PitchBend(MidiPitchBendData {
+                channel,
+                tick,
+                value: u16::try_from(data1).map_err(|_| {
+                    StorageError::InvalidStoredData("invalid MIDI pitch-bend order value")
+                })?,
+            }),
+            3 => MidiEventOrderTarget::ProgramChange(MidiProgramChangeData {
+                channel,
+                tick,
+                program: u8::try_from(data1).map_err(|_| {
+                    StorageError::InvalidStoredData("invalid MIDI Program Change order value")
+                })?,
+            }),
+            4 => MidiEventOrderTarget::PolyAftertouch(MidiPolyAftertouchData {
+                channel,
+                tick,
+                note: u8::try_from(data1).map_err(|_| {
+                    StorageError::InvalidStoredData("invalid MIDI poly-aftertouch order note")
+                })?,
+                value: data2,
+            }),
+            5 => MidiEventOrderTarget::ChannelPressure(MidiChannelPressureData {
+                channel,
+                tick,
+                value: u8::try_from(data1).map_err(|_| {
+                    StorageError::InvalidStoredData("invalid MIDI channel-pressure order value")
+                })?,
+            }),
+            _ => {
+                return Err(StorageError::InvalidStoredData(
+                    "invalid MIDI event order kind",
+                ));
+            }
+        };
+        event_order_by_item
+            .entry(from_sql_u64(item_id)?)
+            .or_default()
+            .push((
+                from_sql_u64(position)?,
+                MidiEventOrderData {
+                    target,
+                    order: from_sql_u32(source_order)?,
+                },
+            ));
+    }
+
     let mut item_statement = connection.prepare(
         "SELECT id, track_id, position, start_tick, start_tick_subtick, length_ticks, name, source_offset_ticks, loop_source, source_loop_length_ticks, muted \
          FROM items ORDER BY position",
@@ -4987,6 +5181,7 @@ fn read_midi_items(connection: &Connection) -> Result<(Vec<MidiItemSnapshot>, bo
         let poly_aftertouches = poly_by_item.remove(&id).unwrap_or_default();
         let channel_pressures = pressures_by_item.remove(&id).unwrap_or_default();
         let opaque_events = opaque_by_item.remove(&id).unwrap_or_default();
+        let event_order = event_order_by_item.remove(&id).unwrap_or_default();
         items.push(MidiItemSnapshot {
             id,
             track_id: from_sql_u64(track_id)?,
@@ -5014,6 +5209,7 @@ fn read_midi_items(connection: &Connection) -> Result<(Vec<MidiItemSnapshot>, bo
                 .map(|(_, event)| event)
                 .collect(),
             opaque_events: opaque_events.into_iter().map(|(_, event)| event).collect(),
+            event_order: event_order.into_iter().map(|(_, event)| event).collect(),
         });
     }
     Ok((
@@ -5024,7 +5220,8 @@ fn read_midi_items(connection: &Connection) -> Result<(Vec<MidiItemSnapshot>, bo
             || !programs_by_item.is_empty()
             || !poly_by_item.is_empty()
             || !pressures_by_item.is_empty()
-            || !opaque_by_item.is_empty(),
+            || !opaque_by_item.is_empty()
+            || !event_order_by_item.is_empty(),
     ))
 }
 

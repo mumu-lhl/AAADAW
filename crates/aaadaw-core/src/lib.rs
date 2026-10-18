@@ -29,8 +29,9 @@ pub use markers::{MAX_PROJECT_MARKER_NUMBER, MarkerId, ProjectMarker};
 pub use master::MasterMix;
 pub use midi::{
     ItemId, MIDI_CHANNEL_COUNT, MIDI_ITEM_SUBTICKS_PER_TICK, MidiChannelPressureData,
-    MidiControllerData, MidiItem, MidiItemPosition, MidiNote, MidiNoteData, MidiOpaqueEventData,
-    MidiOpaqueEventKind, MidiPitchBendData, MidiPolyAftertouchData, MidiProgramChangeData, NoteId,
+    MidiControllerData, MidiEventOrderData, MidiEventOrderTarget, MidiItem, MidiItemPosition,
+    MidiNote, MidiNoteData, MidiOpaqueEventData, MidiOpaqueEventKind, MidiPitchBendData,
+    MidiPolyAftertouchData, MidiProgramChangeData, NoteId,
 };
 pub use midi_file::{
     MAX_MIDI_FILE_IMPORT_BYTES, MidiExportItemScope, MidiExportOptions, MidiExportSelection,

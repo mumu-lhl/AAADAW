@@ -8365,6 +8365,7 @@ fn midi_file_import_options_apply_tracks_tempo_markers_and_opaque_events_atomica
                     data: vec![0x43, 0x12, 0xF7],
                 },
             }],
+            event_order: Vec::new(),
         }],
         tempo_points: vec![MidiImportedTempoPoint {
             tick: 0,

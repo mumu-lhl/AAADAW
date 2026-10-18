@@ -148,6 +148,7 @@ pub enum ActionError {
     InvalidMidiPolyAftertouch,
     InvalidMidiChannelPressure,
     InvalidMidiOpaqueEvent,
+    InvalidMidiEventOrder,
     /// Quantize strength must be finite and in `0.0..=1.0`.
     InvalidQuantizeStrength,
     /// The quantization grid cannot be represented at the project's PPQ.
@@ -352,6 +353,9 @@ impl fmt::Display for ActionError {
             }
             Self::InvalidMidiOpaqueEvent => {
                 formatter.write_str("MIDI SysEx or Meta event data is invalid")
+            }
+            Self::InvalidMidiEventOrder => {
+                formatter.write_str("MIDI event ordering metadata is invalid")
             }
             Self::InvalidQuantizeStrength => {
                 formatter.write_str("quantize strength must be finite and in 0..=1")

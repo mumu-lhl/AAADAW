@@ -1,7 +1,8 @@
 use aaadaw_core::{
     BpmBasis, DawAction, MeterPointSnapshot, MidiChannelPressureData, MidiControllerData,
-    MidiImportedTrack, MidiNoteData, MidiOpaqueEventData, MidiOpaqueEventKind, MidiPitchBendData,
-    MidiPolyAftertouchData, MidiProgramChangeData, Project, RazorEditArea, VolumeAutomationPoint,
+    MidiEventOrderData, MidiEventOrderTarget, MidiImportedTrack, MidiNoteData, MidiOpaqueEventData,
+    MidiOpaqueEventKind, MidiPitchBendData, MidiPolyAftertouchData, MidiProgramChangeData, Project,
+    RazorEditArea, VolumeAutomationPoint,
 };
 use aaadaw_storage::{CURRENT_SCHEMA_VERSION, ProjectStore, StorageError};
 use rusqlite::Connection;
@@ -82,6 +83,63 @@ fn imported_midi_tracks_round_trip_through_the_project_store() {
                             },
                         },
                     ],
+                    event_order: vec![
+                        MidiEventOrderData {
+                            target: MidiEventOrderTarget::ProgramChange(MidiProgramChangeData {
+                                channel: 2,
+                                tick: 0,
+                                program: 11,
+                            }),
+                            order: 0,
+                        },
+                        MidiEventOrderData {
+                            target: MidiEventOrderTarget::Controller(MidiControllerData {
+                                controller: 7,
+                                channel: 2,
+                                tick: 0,
+                                value: 96,
+                            }),
+                            order: 1,
+                        },
+                        MidiEventOrderData {
+                            target: MidiEventOrderTarget::Note(MidiNoteData {
+                                pitch: 64,
+                                channel: 2,
+                                tick: 12,
+                                duration: 720,
+                                velocity: 101,
+                                off_velocity: 33,
+                            }),
+                            order: 2,
+                        },
+                        MidiEventOrderData {
+                            target: MidiEventOrderTarget::PitchBend(MidiPitchBendData {
+                                channel: 2,
+                                tick: 24,
+                                value: 4_321,
+                            }),
+                            order: 3,
+                        },
+                        MidiEventOrderData {
+                            target: MidiEventOrderTarget::PolyAftertouch(MidiPolyAftertouchData {
+                                channel: 2,
+                                tick: 36,
+                                note: 64,
+                                value: 70,
+                            }),
+                            order: 4,
+                        },
+                        MidiEventOrderData {
+                            target: MidiEventOrderTarget::ChannelPressure(
+                                MidiChannelPressureData {
+                                    channel: 2,
+                                    tick: 48,
+                                    value: 77,
+                                },
+                            ),
+                            order: 5,
+                        },
+                    ],
                 },
             }],
         })
@@ -109,6 +167,31 @@ fn schema_62_migrates_the_midi_opaque_event_table() {
     let store = ProjectStore::open(&path).unwrap();
     assert_eq!(store.schema_version().unwrap(), CURRENT_SCHEMA_VERSION);
     assert!(store.load().unwrap().midi_items().is_empty());
+    store.close().unwrap();
+    remove_database(&path);
+}
+
+#[test]
+fn schema_63_migrates_the_midi_event_order_table() {
+    let path = project_path();
+    ProjectStore::open(&path).unwrap().close().unwrap();
+    let connection = Connection::open(&path).unwrap();
+    connection
+        .execute_batch("DROP TABLE midi_event_order; PRAGMA user_version = 63;")
+        .unwrap();
+    drop(connection);
+
+    let store = ProjectStore::open(&path).unwrap();
+    assert_eq!(store.schema_version().unwrap(), CURRENT_SCHEMA_VERSION);
+    let connection = Connection::open(&path).unwrap();
+    let table_count: i64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'midi_event_order'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(table_count, 1);
     store.close().unwrap();
     remove_database(&path);
 }

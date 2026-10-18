@@ -111,7 +111,7 @@ impl NoteId {
 }
 
 /// Input data for a MIDI note; `tick` is relative to its containing item.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct MidiNoteData {
     pub pitch: u8,
     /// Zero-based MIDI channel in the inclusive range `0..16`.
@@ -183,6 +183,24 @@ pub struct MidiOpaqueEventData {
     /// Source order among opaque events at this position.
     pub order: u32,
     pub kind: MidiOpaqueEventKind,
+}
+
+/// The typed event whose same-tick ordering was recorded while importing an SMF.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum MidiEventOrderTarget {
+    Note(MidiNoteData),
+    Controller(MidiControllerData),
+    PitchBend(MidiPitchBendData),
+    ProgramChange(MidiProgramChangeData),
+    PolyAftertouch(MidiPolyAftertouchData),
+    ChannelPressure(MidiChannelPressureData),
+}
+
+/// Source ordinal for a typed MIDI event imported from a Standard MIDI File.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct MidiEventOrderData {
+    pub target: MidiEventOrderTarget,
+    pub order: u32,
 }
 
 /// A SysEx or Meta payload that does not map to a channel-event model.
@@ -271,6 +289,7 @@ pub struct MidiItem {
     pub(crate) poly_aftertouches: Arc<Vec<MidiPolyAftertouchData>>,
     pub(crate) channel_pressures: Arc<Vec<MidiChannelPressureData>>,
     pub(crate) opaque_events: Arc<Vec<MidiOpaqueEventData>>,
+    pub(crate) event_order: Arc<Vec<MidiEventOrderData>>,
 }
 
 impl MidiItem {
@@ -451,5 +470,10 @@ impl MidiItem {
     /// Returns retained text, marker, SysEx, and other opaque source events.
     pub fn opaque_events(&self) -> &[MidiOpaqueEventData] {
         &self.opaque_events
+    }
+
+    /// Returns imported source ordinals for typed events used to reproduce same-tick order.
+    pub fn event_order(&self) -> &[MidiEventOrderData] {
+        &self.event_order
     }
 }

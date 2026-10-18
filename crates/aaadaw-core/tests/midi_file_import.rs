@@ -1,6 +1,6 @@
 use aaadaw_core::{
-    ActionError, DawAction, MidiFileEventKind, MidiFileFormat, MidiFileImportOptions,
-    MidiOpaqueEventKind, Project, decode_standard_midi,
+    ActionError, DawAction, MidiEventOrderTarget, MidiFileEventKind, MidiFileFormat,
+    MidiFileImportOptions, MidiOpaqueEventKind, Project, decode_standard_midi,
 };
 
 fn smf(format: u16, division: u16, tracks: &[&[u8]]) -> Vec<u8> {
@@ -14,6 +14,152 @@ fn smf(format: u16, division: u16, tracks: &[&[u8]]) -> Vec<u8> {
         bytes.extend_from_slice(track);
     }
     bytes
+}
+
+#[test]
+fn same_tick_import_records_typed_event_source_order_and_round_trips_in_snapshots() {
+    let fixtures: [(&[u8], &[&str]); 2] = [
+        (
+            include_bytes!(
+                "../../../docs/verification/reaper-parity/fixtures/midi-file-import-same-tick-order.mid"
+            ),
+            &[
+                "pitch",
+                "controller",
+                "program",
+                "poly-aftertouch",
+                "channel-pressure",
+                "note",
+                "controller",
+            ],
+        ),
+        (
+            include_bytes!(
+                "../../../docs/verification/reaper-parity/fixtures/midi-file-import-same-tick-order-reversed.mid"
+            ),
+            &[
+                "note",
+                "controller",
+                "channel-pressure",
+                "poly-aftertouch",
+                "program",
+                "controller",
+                "pitch",
+            ],
+        ),
+    ];
+
+    for (fixture, expected_order) in fixtures {
+        let decoded = decode_standard_midi(fixture).unwrap();
+        let imported = decoded.to_project_import(960).unwrap();
+        let track = imported.tracks.into_iter().next().unwrap();
+        let mut source_order = track
+            .event_order
+            .iter()
+            .filter(|entry| match entry.target {
+                MidiEventOrderTarget::Note(event) => event.tick == 240,
+                MidiEventOrderTarget::Controller(event) => event.tick == 240,
+                MidiEventOrderTarget::PitchBend(event) => event.tick == 240,
+                MidiEventOrderTarget::ProgramChange(event) => event.tick == 240,
+                MidiEventOrderTarget::PolyAftertouch(event) => event.tick == 240,
+                MidiEventOrderTarget::ChannelPressure(event) => event.tick == 240,
+            })
+            .copied()
+            .collect::<Vec<_>>();
+        source_order.sort_unstable_by_key(|entry| entry.order);
+        let actual_order = source_order
+            .iter()
+            .map(|entry| match entry.target {
+                MidiEventOrderTarget::Note(_) => "note",
+                MidiEventOrderTarget::Controller(_) => "controller",
+                MidiEventOrderTarget::PitchBend(_) => "pitch",
+                MidiEventOrderTarget::ProgramChange(_) => "program",
+                MidiEventOrderTarget::PolyAftertouch(_) => "poly-aftertouch",
+                MidiEventOrderTarget::ChannelPressure(_) => "channel-pressure",
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(actual_order, expected_order);
+
+        let event_order = track.event_order.clone();
+        let mut project = Project::new();
+        project
+            .apply(DawAction::ImportMidiTrack {
+                start_tick: 0,
+                track,
+            })
+            .unwrap();
+        assert_eq!(project.midi_items()[0].event_order(), event_order);
+        let snapshot = project.snapshot();
+        assert_eq!(snapshot.midi_items[0].event_order, event_order);
+        assert_eq!(
+            Project::from_snapshot(snapshot.clone()).unwrap().snapshot(),
+            snapshot
+        );
+    }
+}
+
+#[test]
+fn same_tick_import_order_does_not_block_typed_event_edits_or_snapshot_round_trip() {
+    let decoded = decode_standard_midi(include_bytes!(
+        "../../../docs/verification/reaper-parity/fixtures/midi-file-import-same-tick-order.mid"
+    ))
+    .unwrap();
+    let mut tracks = decoded.to_project_import(960).unwrap().tracks;
+    let track = tracks.remove(0);
+    let mut project = Project::new();
+    project
+        .apply(DawAction::ImportMidiTrack {
+            start_tick: 0,
+            track,
+        })
+        .unwrap();
+
+    let item = &project.midi_items()[0];
+    let item_id = item.id();
+    let first_note = item.notes()[0].clone();
+    let second_note_id = item.notes()[1].id();
+    project
+        .apply(DawAction::EditMidiNote {
+            item_id,
+            note_id: first_note.id(),
+            data: aaadaw_core::MidiNoteData {
+                pitch: first_note.pitch() + 1,
+                channel: first_note.channel(),
+                tick: first_note.tick(),
+                duration: first_note.duration(),
+                velocity: first_note.velocity(),
+                off_velocity: first_note.off_velocity(),
+            },
+        })
+        .unwrap();
+    project
+        .apply(DawAction::DeleteMidiNotes {
+            item_id,
+            note_ids: vec![second_note_id],
+        })
+        .unwrap();
+    let mut remaining_controllers = project.midi_items()[0].controllers().to_vec();
+    remaining_controllers.remove(0);
+    project
+        .apply(DawAction::SetMidiControllers {
+            item_id,
+            controllers: remaining_controllers,
+        })
+        .unwrap();
+
+    assert_eq!(project.midi_items()[0].notes().len(), 1);
+    assert_eq!(
+        project.midi_items()[0].notes()[0].pitch(),
+        first_note.pitch() + 1
+    );
+    assert_eq!(
+        Project::from_snapshot(project.snapshot())
+            .unwrap()
+            .midi_items()[0]
+            .notes()[0]
+            .pitch(),
+        first_note.pitch() + 1
+    );
 }
 
 #[test]
@@ -527,6 +673,7 @@ fn a_failed_import_batch_rolls_back_tracks_and_identifier_allocation() {
                     poly_aftertouches: Vec::new(),
                     channel_pressures: Vec::new(),
                     opaque_events: Vec::new(),
+                    event_order: Vec::new(),
                 },
             }],
         })

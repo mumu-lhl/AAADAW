@@ -6,9 +6,9 @@ use super::super::{
 use super::tokens::{PANEL_PADDING, ROW_GAP, SPACING_LG, SPACING_MD, SPACING_XS, TOUCH_TARGET_MIN};
 use crate::timeline::{SnapGrid, TimelineEvent, snap_tick_to_grid};
 use aaadaw_core::{
-    ItemId, MidiChannelPressureData, MidiControllerData, MidiItem, MidiNote, MidiNoteData,
-    MidiOpaqueEventData, MidiOpaqueEventKind, MidiPitchBendData, MidiPolyAftertouchData,
-    MidiProgramChangeData, NoteId, Project, TimeSignature,
+    ItemId, MidiChannelPressureData, MidiControllerData, MidiEventOrderTarget, MidiItem, MidiNote,
+    MidiNoteData, MidiOpaqueEventData, MidiOpaqueEventKind, MidiPitchBendData,
+    MidiPolyAftertouchData, MidiProgramChangeData, NoteId, Project, TimeSignature,
 };
 use iced::advanced::text::{Alignment as TextAlignment, LineHeight, Shaping};
 use iced::widget::canvas::{self, Text};
@@ -915,26 +915,105 @@ impl MidiEventListEntry<'_> {
         }
     }
 
-    fn order(self) -> u64 {
+    fn order_key(
+        self,
+        source_order: &HashMap<MidiEventOrderTarget, u32>,
+        imported_ordering: bool,
+    ) -> (u8, u64, u64) {
+        if !imported_ordering {
+            let order = match self {
+                Self::Opaque(index, event) => {
+                    let category = match &event.kind {
+                        MidiOpaqueEventKind::Meta { kind: 0x03, .. } => 0,
+                        MidiOpaqueEventKind::Meta {
+                            kind: 0x06 | 0x07, ..
+                        } => 5,
+                        MidiOpaqueEventKind::SystemExclusive { .. } => 6,
+                        MidiOpaqueEventKind::Meta { .. } => 2,
+                    };
+                    category * 1_000_000 + u64::from(index)
+                }
+                Self::Note(_) => 1_000_000,
+                Self::Controller(_) | Self::BankSelect(_, _) => 3_000_000,
+                Self::PitchBend(_) => 3_500_000,
+                Self::ProgramChange(_) => 4_000_000,
+                Self::PolyAftertouch(_) => 4_500_000,
+                Self::ChannelPressure(_) => 4_750_000,
+                Self::End(_) => u64::MAX,
+            };
+            return (0, order, 0);
+        }
         match self {
-            Self::Opaque(index, event) => {
-                let category = match &event.kind {
-                    MidiOpaqueEventKind::Meta { kind: 0x03, .. } => 0,
-                    MidiOpaqueEventKind::Meta {
-                        kind: 0x06 | 0x07, ..
-                    } => 5,
-                    MidiOpaqueEventKind::SystemExclusive { .. } => 6,
-                    MidiOpaqueEventKind::Meta { .. } => 2,
-                };
-                category * 1_000_000 + u64::from(index)
-            }
-            Self::Note(_) => 1_000_000,
-            Self::Controller(_) | Self::BankSelect(_, _) => 3_000_000,
-            Self::PitchBend(_) => 3_500_000,
-            Self::ProgramChange(_) => 4_000_000,
-            Self::PolyAftertouch(_) => 4_500_000,
-            Self::ChannelPressure(_) => 4_750_000,
-            Self::End(_) => u64::MAX,
+            Self::Opaque(index, event) => (0, u64::from(event.order), u64::from(index)),
+            Self::ProgramChange(event) => (
+                1,
+                source_order
+                    .get(&MidiEventOrderTarget::ProgramChange(event))
+                    .copied()
+                    .map_or(4_000_000, u64::from),
+                0,
+            ),
+            Self::Controller(event) => (
+                2,
+                source_order
+                    .get(&MidiEventOrderTarget::Controller(event))
+                    .copied()
+                    .map_or(3_000_000, u64::from),
+                0,
+            ),
+            Self::BankSelect(msb, lsb) => (
+                2,
+                [msb, lsb]
+                    .into_iter()
+                    .filter_map(|event| {
+                        source_order
+                            .get(&MidiEventOrderTarget::Controller(event))
+                            .copied()
+                    })
+                    .min()
+                    .map_or(3_000_000, u64::from),
+                0,
+            ),
+            Self::PitchBend(event) => (
+                2,
+                source_order
+                    .get(&MidiEventOrderTarget::PitchBend(event))
+                    .copied()
+                    .map_or(3_500_000, u64::from),
+                0,
+            ),
+            Self::PolyAftertouch(event) => (
+                2,
+                source_order
+                    .get(&MidiEventOrderTarget::PolyAftertouch(event))
+                    .copied()
+                    .map_or(4_500_000, u64::from),
+                0,
+            ),
+            Self::ChannelPressure(event) => (
+                2,
+                source_order
+                    .get(&MidiEventOrderTarget::ChannelPressure(event))
+                    .copied()
+                    .map_or(4_750_000, u64::from),
+                0,
+            ),
+            Self::Note(note) => (
+                3,
+                source_order
+                    .get(&MidiEventOrderTarget::Note(MidiNoteData {
+                        pitch: note.pitch(),
+                        channel: note.channel(),
+                        tick: note.tick(),
+                        duration: note.duration(),
+                        velocity: note.velocity(),
+                        off_velocity: note.off_velocity(),
+                    }))
+                    .copied()
+                    .map_or(0, u64::from),
+                0,
+            ),
+            Self::End(_) => (4, 0, 0),
         }
     }
 
@@ -998,6 +1077,13 @@ fn midi_event_list_entries(item: &MidiItem, snap: MidiSnap) -> Vec<MidiEventList
                     Some(MidiEventListEntry::Controller(event))
                 }
             });
+    let mut source_order = HashMap::with_capacity(item.event_order().len());
+    for entry in item.event_order() {
+        source_order
+            .entry(entry.target)
+            .and_modify(|order: &mut u32| *order = (*order).min(entry.order))
+            .or_insert(entry.order);
+    }
     let mut events = item
         .notes()
         .iter()
@@ -1040,7 +1126,13 @@ fn midi_event_list_entries(item: &MidiItem, snap: MidiSnap) -> Vec<MidiEventList
                 .map(|(index, event)| MidiEventListEntry::Opaque(index as u32, event)),
         )
         .collect::<Vec<_>>();
-    events.sort_by_key(|event| (event.tick(), event.order()));
+    let imported_ordering = !source_order.is_empty();
+    events.sort_by_key(|event| {
+        (
+            event.tick(),
+            event.order_key(&source_order, imported_ordering),
+        )
+    });
     if snap.end_row_visible() {
         events.push(MidiEventListEntry::End(item.length_ticks()));
     }
@@ -8348,6 +8440,80 @@ mod tests {
         let six_eight = TimeSignature::new(6, 8).expect("valid compound meter");
         assert_eq!(midi_event_list_position(480, 960, six_eight), "1.2.00");
         assert_eq!(midi_event_list_length(2_880, 960, six_eight), "1.0.00");
+    }
+
+    #[test]
+    fn imported_same_tick_event_list_matches_native_order_in_both_source_directions() {
+        let fixtures: [(&[u8], &[&str]); 2] = [
+            (
+                include_bytes!(
+                    "../../../../../docs/verification/reaper-parity/fixtures/midi-file-import-same-tick-order.mid"
+                ),
+                &[
+                    "sysex",
+                    "meta",
+                    "program",
+                    "pitch",
+                    "controller",
+                    "poly-aftertouch",
+                    "channel-pressure",
+                    "controller",
+                    "note",
+                ],
+            ),
+            (
+                include_bytes!(
+                    "../../../../../docs/verification/reaper-parity/fixtures/midi-file-import-same-tick-order-reversed.mid"
+                ),
+                &[
+                    "meta",
+                    "sysex",
+                    "program",
+                    "controller",
+                    "channel-pressure",
+                    "poly-aftertouch",
+                    "controller",
+                    "pitch",
+                    "note",
+                ],
+            ),
+        ];
+
+        for (fixture, expected_order) in fixtures {
+            let mut imported = aaadaw_core::decode_standard_midi(fixture)
+                .unwrap()
+                .to_project_import(960)
+                .unwrap();
+            let track = imported.tracks.remove(0);
+            let mut project = Project::new();
+            project
+                .apply(aaadaw_core::DawAction::ImportMidiTrack {
+                    start_tick: 0,
+                    track,
+                })
+                .unwrap();
+            let entries = midi_event_list_entries(&project.midi_items()[0], MidiSnap::default());
+            let actual_order = entries
+                .into_iter()
+                .filter(|entry| entry.tick() == 240)
+                .map(|entry| match entry {
+                    MidiEventListEntry::Note(_) => "note",
+                    MidiEventListEntry::Controller(_) | MidiEventListEntry::BankSelect(_, _) => {
+                        "controller"
+                    }
+                    MidiEventListEntry::PitchBend(_) => "pitch",
+                    MidiEventListEntry::ProgramChange(_) => "program",
+                    MidiEventListEntry::PolyAftertouch(_) => "poly-aftertouch",
+                    MidiEventListEntry::ChannelPressure(_) => "channel-pressure",
+                    MidiEventListEntry::Opaque(_, event) => match &event.kind {
+                        MidiOpaqueEventKind::SystemExclusive { .. } => "sysex",
+                        MidiOpaqueEventKind::Meta { .. } => "meta",
+                    },
+                    MidiEventListEntry::End(_) => "end",
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(actual_order, expected_order);
+        }
     }
 
     #[test]

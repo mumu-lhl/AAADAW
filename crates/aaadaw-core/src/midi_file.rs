@@ -1,7 +1,8 @@
 use crate::{
-    FrameRate, ItemId, MidiChannelPressureData, MidiControllerData, MidiItem, MidiItemPosition,
-    MidiNote, MidiNoteData, MidiOpaqueEventData, MidiOpaqueEventKind, MidiPitchBendData,
-    MidiPolyAftertouchData, MidiProgramChangeData, Project, TempoCurve, TrackId,
+    FrameRate, ItemId, MidiChannelPressureData, MidiControllerData, MidiEventOrderData,
+    MidiEventOrderTarget, MidiItem, MidiItemPosition, MidiNote, MidiNoteData, MidiOpaqueEventData,
+    MidiOpaqueEventKind, MidiPitchBendData, MidiPolyAftertouchData, MidiProgramChangeData, Project,
+    TempoCurve, TrackId,
 };
 use std::collections::{HashMap, HashSet, VecDeque};
 
@@ -10,6 +11,7 @@ const MAX_MIDI_FILE_EVENTS: usize = 1_000_000;
 pub const MAX_MIDI_FILE_IMPORT_BYTES: u64 = 64 * 1024 * 1024;
 const MAX_MIDI_FILE_BYTES: usize = MAX_MIDI_FILE_IMPORT_BYTES as usize;
 const MAX_MIDI_FILE_TRACKS: usize = 1_024;
+type OpenImportedNotes = HashMap<(u8, u8), VecDeque<(u64, u8, u32)>>;
 
 const MAX_VLQ: u64 = 0x0fff_ffff;
 const MAX_TEMPO_EVENTS: usize = 100_000;
@@ -76,6 +78,7 @@ pub struct MidiImportedTrack {
     pub poly_aftertouches: Vec<MidiPolyAftertouchData>,
     pub channel_pressures: Vec<MidiChannelPressureData>,
     pub opaque_events: Vec<MidiOpaqueEventData>,
+    pub event_order: Vec<MidiEventOrderData>,
 }
 
 /// A conductor tempo point decoded from an SMF tempo Meta event.
@@ -500,7 +503,8 @@ impl MidiFileImport {
             let mut poly_aftertouches = Vec::new();
             let mut channel_pressures = Vec::new();
             let mut opaque_events: Vec<MidiOpaqueEventData> = Vec::new();
-            let mut open_notes = HashMap::<(u8, u8), VecDeque<(u64, u8)>>::new();
+            let mut event_order = Vec::new();
+            let mut open_notes = OpenImportedNotes::new();
             let mut open_sysex_event: Option<usize> = None;
             let mut has_channel_events = false;
             let mut last_content_tick =
@@ -523,6 +527,7 @@ impl MidiFileImport {
                             0x80 => finish_imported_note(
                                 &mut open_notes,
                                 &mut notes,
+                                &mut event_order,
                                 channel,
                                 data[0],
                                 tick,
@@ -531,6 +536,7 @@ impl MidiFileImport {
                             0x90 if data[1] == 0 => finish_imported_note(
                                 &mut open_notes,
                                 &mut notes,
+                                &mut event_order,
                                 channel,
                                 data[0],
                                 tick,
@@ -539,34 +545,69 @@ impl MidiFileImport {
                             0x90 => open_notes
                                 .entry((channel, data[0]))
                                 .or_default()
-                                .push_back((tick, data[1])),
-                            0xA0 => poly_aftertouches.push(MidiPolyAftertouchData {
-                                channel,
-                                tick,
-                                note: data[0],
-                                value: data[1],
-                            }),
-                            0xB0 => controllers.push(MidiControllerData {
-                                channel,
-                                tick,
-                                controller: data[0],
-                                value: data[1],
-                            }),
-                            0xC0 => program_changes.push(MidiProgramChangeData {
-                                channel,
-                                tick,
-                                program: data[0],
-                            }),
-                            0xD0 => channel_pressures.push(MidiChannelPressureData {
-                                channel,
-                                tick,
-                                value: data[0],
-                            }),
-                            0xE0 => pitch_bends.push(MidiPitchBendData {
-                                channel,
-                                tick,
-                                value: u16::from(data[0]) | (u16::from(data[1]) << 7),
-                            }),
+                                .push_back((tick, data[1], event_index as u32)),
+                            0xA0 => {
+                                let event = MidiPolyAftertouchData {
+                                    channel,
+                                    tick,
+                                    note: data[0],
+                                    value: data[1],
+                                };
+                                poly_aftertouches.push(event);
+                                event_order.push(MidiEventOrderData {
+                                    target: MidiEventOrderTarget::PolyAftertouch(event),
+                                    order: event_index as u32,
+                                });
+                            }
+                            0xB0 => {
+                                let event = MidiControllerData {
+                                    channel,
+                                    tick,
+                                    controller: data[0],
+                                    value: data[1],
+                                };
+                                controllers.push(event);
+                                event_order.push(MidiEventOrderData {
+                                    target: MidiEventOrderTarget::Controller(event),
+                                    order: event_index as u32,
+                                });
+                            }
+                            0xC0 => {
+                                let event = MidiProgramChangeData {
+                                    channel,
+                                    tick,
+                                    program: data[0],
+                                };
+                                program_changes.push(event);
+                                event_order.push(MidiEventOrderData {
+                                    target: MidiEventOrderTarget::ProgramChange(event),
+                                    order: event_index as u32,
+                                });
+                            }
+                            0xD0 => {
+                                let event = MidiChannelPressureData {
+                                    channel,
+                                    tick,
+                                    value: data[0],
+                                };
+                                channel_pressures.push(event);
+                                event_order.push(MidiEventOrderData {
+                                    target: MidiEventOrderTarget::ChannelPressure(event),
+                                    order: event_index as u32,
+                                });
+                            }
+                            0xE0 => {
+                                let event = MidiPitchBendData {
+                                    channel,
+                                    tick,
+                                    value: u16::from(data[0]) | (u16::from(data[1]) << 7),
+                                };
+                                pitch_bends.push(event);
+                                event_order.push(MidiEventOrderData {
+                                    target: MidiEventOrderTarget::PitchBend(event),
+                                    order: event_index as u32,
+                                });
+                            }
                             _ => unreachable!("the MIDI channel status range is exhaustive"),
                         }
                     }
@@ -728,6 +769,7 @@ impl MidiFileImport {
                 poly_aftertouches,
                 channel_pressures,
                 opaque_events,
+                event_order,
             });
         }
         tempo_points.sort_by_key(|point| point.tick);
@@ -771,6 +813,7 @@ impl MidiFileProjectImport {
         merged.poly_aftertouches.clear();
         merged.channel_pressures.clear();
         merged.opaque_events.clear();
+        merged.event_order.clear();
         for track in &self.tracks {
             merged.has_channel_events |= track.has_channel_events;
             merged.length_ticks = merged.length_ticks.max(track.length_ticks);
@@ -786,12 +829,17 @@ impl MidiFileProjectImport {
             merged
                 .channel_pressures
                 .extend(track.channel_pressures.iter().copied());
+            let order_offset = (track.source_index as u32).saturating_mul(1_000_001);
+            merged
+                .event_order
+                .extend(track.event_order.iter().map(|entry| MidiEventOrderData {
+                    target: entry.target,
+                    order: order_offset.saturating_add(entry.order),
+                }));
             merged
                 .opaque_events
                 .extend(track.opaque_events.iter().cloned().map(|mut event| {
-                    event.order = (track.source_index as u32)
-                        .saturating_mul(1_000_001)
-                        .saturating_add(event.order);
+                    event.order = order_offset.saturating_add(event.order);
                     event
                 }));
         }
@@ -803,14 +851,15 @@ impl MidiFileProjectImport {
 }
 
 fn finish_imported_note(
-    open_notes: &mut HashMap<(u8, u8), VecDeque<(u64, u8)>>,
+    open_notes: &mut OpenImportedNotes,
     notes: &mut Vec<MidiNoteData>,
+    event_order: &mut Vec<MidiEventOrderData>,
     channel: u8,
     pitch: u8,
     tick: u64,
     off_velocity: u8,
 ) -> Result<(), String> {
-    let Some((start_tick, velocity)) = open_notes
+    let Some((start_tick, velocity, order)) = open_notes
         .get_mut(&(channel, pitch))
         .and_then(VecDeque::pop_front)
     else {
@@ -825,13 +874,18 @@ fn finish_imported_note(
             channel + 1
         ));
     }
-    notes.push(MidiNoteData {
+    let note = MidiNoteData {
         pitch,
         channel,
         tick: start_tick,
         duration: tick - start_tick,
         velocity,
         off_velocity,
+    };
+    notes.push(note);
+    event_order.push(MidiEventOrderData {
+        target: MidiEventOrderTarget::Note(note),
+        order,
     });
     Ok(())
 }
