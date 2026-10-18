@@ -2447,4 +2447,4 @@ REAPER 7.82 / Default 7 的 Type 1 导出探针确认：导入同一 Type 0 fixt
 
 后续审查发现，导入音符的音高、位置、时长或力度一旦被编辑，事件顺序目标仍指向旧数据，导出会退回到缺省排序。普通音符编辑、Quantize 和 Humanize 现在会同步更新对应 Note 的顺序目标，并保留 Note On 与 Note Off 的源序号；撤销通过反向事件将目标恢复。新增回归用例将导入音符改音高后重新导出，并把 tick 240、480 的事件序列与 REAPER 原厂结果逐项比较。
 
-CC、Pitch Bend、Program Change、Poly Aftertouch 与 Channel Pressure 的值编辑也会同步更新类型化顺序目标。Core 测试覆盖这些编辑、重复音符源序号以及普通音符 Undo/Redo；导入/导出和 Storage 集成套件 172/172 通过。Core/Storage/App strict all-target Clippy (`-D warnings`)、fmt 和 diff 检查通过。量化/人性化元数据同步已纳入相同事件路径，仍需针对各自变换增加独立回归。`MIDI-FILE-IMPORT-001` 与 P7 继续保持 `in_progress`。
+CC、Pitch Bend、Program Change、Poly Aftertouch 与 Channel Pressure 的值编辑也会同步更新类型化顺序目标。Core 测试覆盖这些编辑、重复音符源序号、普通音符 Undo/Redo，以及 Quantize/Humanize 后的元数据同步与 Undo/Redo；导入/导出和 Storage 集成套件 173/173 通过。Core/Storage/App strict all-target Clippy (`-D warnings`)、fmt 和 diff 检查通过。`MIDI-FILE-IMPORT-001` 与 P7 继续保持 `in_progress`。

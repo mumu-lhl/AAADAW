@@ -1,7 +1,7 @@
 use aaadaw_core::{
-    ActionError, DawAction, MidiChannelPressureData, MidiControllerData, MidiEventOrderTarget,
-    MidiFileEventKind, MidiFileFormat, MidiFileImportOptions, MidiNoteData, MidiOpaqueEventKind,
-    MidiPitchBendData, MidiPolyAftertouchData, MidiProgramChangeData, Project,
+    ActionError, DawAction, GridFraction, MidiChannelPressureData, MidiControllerData,
+    MidiEventOrderTarget, MidiFileEventKind, MidiFileFormat, MidiFileImportOptions, MidiNoteData,
+    MidiOpaqueEventKind, MidiPitchBendData, MidiPolyAftertouchData, MidiProgramChangeData, Project,
     decode_standard_midi,
 };
 
@@ -16,6 +16,17 @@ fn smf(format: u16, division: u16, tracks: &[&[u8]]) -> Vec<u8> {
         bytes.extend_from_slice(track);
     }
     bytes
+}
+
+fn midi_note_data(note: &aaadaw_core::MidiNote) -> MidiNoteData {
+    MidiNoteData {
+        pitch: note.pitch(),
+        channel: note.channel(),
+        tick: note.tick(),
+        duration: note.duration(),
+        velocity: note.velocity(),
+        off_velocity: note.off_velocity(),
+    }
 }
 
 #[test]
@@ -417,6 +428,102 @@ fn same_tick_import_order_tracks_edited_channel_event_values() {
     assert!(project.midi_items()[0].event_order().iter().any(|entry| {
         entry.target == MidiEventOrderTarget::ChannelPressure(edited_pressure)
             && entry.order == pressure_order
+    }));
+}
+
+#[test]
+fn imported_note_order_targets_follow_quantize_and_humanize_undo_redo() {
+    let decoded = decode_standard_midi(include_bytes!(
+        "../../../docs/verification/reaper-parity/fixtures/midi-file-import-same-tick-order.mid"
+    ))
+    .unwrap();
+    let imported = decoded.to_project_import(960).unwrap();
+    let mut project = Project::new();
+    project
+        .apply(DawAction::ImportMidiTrack {
+            start_tick: 0,
+            track: imported.tracks[0].clone(),
+        })
+        .unwrap();
+    let item_id = project.midi_items()[0].id();
+    let note = project.midi_items()[0]
+        .notes()
+        .iter()
+        .find(|note| note.tick() == 240)
+        .unwrap()
+        .clone();
+    let note_id = note.id();
+    let source_data = midi_note_data(&note);
+    let source_order = project.midi_items()[0]
+        .event_order()
+        .iter()
+        .find(|entry| entry.target == MidiEventOrderTarget::Note(source_data))
+        .copied()
+        .unwrap();
+
+    project
+        .apply(DawAction::QuantizeMidiNotes {
+            item_id,
+            note_ids: vec![note_id],
+            grid: GridFraction::new(1, 8).unwrap(),
+            strength: 1.0,
+        })
+        .unwrap();
+    let quantized_note = project.midi_items()[0]
+        .notes()
+        .iter()
+        .find(|note| note.id() == note_id)
+        .unwrap()
+        .clone();
+    let quantized_data = midi_note_data(&quantized_note);
+    assert_ne!(quantized_data.tick, source_data.tick);
+    assert!(project.midi_items()[0].event_order().iter().any(|entry| {
+        entry.target == MidiEventOrderTarget::Note(quantized_data)
+            && entry.order == source_order.order
+            && entry.note_off_order == source_order.note_off_order
+    }));
+    assert!(project.undo().unwrap());
+    assert!(project.midi_items()[0].event_order().iter().any(|entry| {
+        entry.target == MidiEventOrderTarget::Note(source_data)
+            && entry.order == source_order.order
+            && entry.note_off_order == source_order.note_off_order
+    }));
+    assert!(project.redo().unwrap());
+
+    project
+        .apply(DawAction::HumanizeMidiNotes {
+            item_id,
+            note_ids: vec![note_id],
+            grid: GridFraction::new(1, 32).unwrap(),
+            timing_amount_percent: 100,
+            velocity_amount_percent: 100,
+            timing_bias_percent: 0,
+            seed: 0x43b0_1a52_74c9_203f,
+        })
+        .unwrap();
+    let humanized_note = project.midi_items()[0]
+        .notes()
+        .iter()
+        .find(|note| note.id() == note_id)
+        .unwrap()
+        .clone();
+    let humanized_data = midi_note_data(&humanized_note);
+    assert!(project.midi_items()[0].event_order().iter().any(|entry| {
+        entry.target == MidiEventOrderTarget::Note(humanized_data)
+            && entry.order == source_order.order
+            && entry.note_off_order == source_order.note_off_order
+    }));
+    assert!(project.undo().unwrap());
+    assert!(project.midi_items()[0].event_order().iter().any(|entry| {
+        entry.target == MidiEventOrderTarget::Note(quantized_data)
+            && entry.order == source_order.order
+            && entry.note_off_order == source_order.note_off_order
+    }));
+    assert!(project.redo().unwrap());
+    assert!(project.midi_items()[0].event_order().iter().any(|entry| {
+        entry.target == MidiEventOrderTarget::Note(humanized_data)
+            && entry.order == source_order.order
+            && entry.note_off_order == source_order.note_off_order
     }));
 }
 
