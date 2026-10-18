@@ -12772,6 +12772,171 @@ fn midi_event_list_mode_switches_by_reaper_shortcuts_and_deletes_selected_events
 }
 
 #[test]
+fn midi_event_list_arrow_keys_navigate_visible_events_and_keep_ctrl_multiselection() {
+    let editor_window_id = iced::window::Id::unique();
+    let mut app = App {
+        midi_editor_window_id: Some(editor_window_id),
+        midi_editor_mode: MidiEditorMode::EventList,
+        ..App::default()
+    };
+    let _ = app.update(Message::AddTrack);
+    let track_id = app.project.tracks()[0].id();
+    app.project
+        .apply(DawAction::InsertMidiItem {
+            track_id,
+            start_tick: 0,
+            length_ticks: 3_840,
+        })
+        .expect("test MIDI item should be inserted");
+    let item_id = app.project.midi_items()[0].id();
+    app.project
+        .apply(DawAction::AddMidiNotes {
+            item_id,
+            notes: vec![
+                MidiNoteData {
+                    channel: 0,
+                    pitch: 60,
+                    tick: 120,
+                    duration: 120,
+                    velocity: 90,
+                },
+                MidiNoteData {
+                    channel: 1,
+                    pitch: 62,
+                    tick: 180,
+                    duration: 120,
+                    velocity: 91,
+                },
+            ],
+        })
+        .expect("test MIDI notes should be inserted");
+    let note_ids = app.project.midi_items()[0]
+        .notes()
+        .iter()
+        .map(|note| note.id())
+        .collect::<Vec<_>>();
+    let controller = MidiControllerData {
+        controller: 7,
+        channel: 0,
+        tick: 240,
+        value: 80,
+    };
+    app.project
+        .apply(DawAction::SetMidiControllers {
+            item_id,
+            controllers: vec![controller],
+        })
+        .expect("test MIDI controller should be inserted");
+    let pitch_bend = MidiPitchBendData {
+        channel: 0,
+        tick: 360,
+        value: 9_000,
+    };
+    app.project
+        .apply(DawAction::SetMidiPitchBends {
+            item_id,
+            pitch_bends: vec![pitch_bend],
+        })
+        .expect("test MIDI pitch bend should be inserted");
+    app.midi_editor_item_id = Some(item_id);
+
+    let _ = app.update(Message::SelectMidiNoteEvent(note_ids[0], false));
+    let _ = app.update(Message::SelectMidiNoteEvent(note_ids[1], true));
+    assert_eq!(
+        app.midi_editor_selected_notes,
+        HashSet::from([note_ids[0], note_ids[1]])
+    );
+    let down = test_input_event(test_shortcut_input(
+        Key::Named(iced::keyboard::key::Named::ArrowDown),
+        Modifiers::NONE,
+    ));
+    let _ = app.update(Message::RuntimeKeyboardEvent(
+        down.clone(),
+        iced::event::Status::Ignored,
+        editor_window_id,
+    ));
+    assert_eq!(
+        app.midi_editor_event_list_cursor,
+        Some(super::MidiEditorEventListCursor::Note(note_ids[1]))
+    );
+    assert_eq!(app.midi_editor_selected_notes, HashSet::from([note_ids[1]]));
+
+    let _ = app.update(Message::RuntimeKeyboardEvent(
+        down.clone(),
+        iced::event::Status::Ignored,
+        editor_window_id,
+    ));
+    assert_eq!(
+        app.midi_editor_event_list_cursor,
+        Some(super::MidiEditorEventListCursor::Controller(controller))
+    );
+    assert!(app.midi_editor_selected_notes.is_empty());
+    assert_eq!(
+        app.midi_editor_selected_controllers,
+        HashSet::from([controller])
+    );
+
+    let control_down = test_input_event(test_shortcut_input(
+        Key::Named(iced::keyboard::key::Named::ArrowDown),
+        Modifiers::CTRL,
+    ));
+    let _ = app.update(Message::RuntimeKeyboardEvent(
+        control_down,
+        iced::event::Status::Ignored,
+        editor_window_id,
+    ));
+    assert_eq!(
+        app.midi_editor_event_list_cursor,
+        Some(super::MidiEditorEventListCursor::PitchBend(pitch_bend))
+    );
+    assert_eq!(
+        app.midi_editor_selected_controllers,
+        HashSet::from([controller])
+    );
+
+    let up = test_input_event(test_shortcut_input(
+        Key::Named(iced::keyboard::key::Named::ArrowUp),
+        Modifiers::NONE,
+    ));
+    let _ = app.update(Message::RuntimeKeyboardEvent(
+        up.clone(),
+        iced::event::Status::Ignored,
+        editor_window_id,
+    ));
+    assert_eq!(
+        app.midi_editor_event_list_cursor,
+        Some(super::MidiEditorEventListCursor::Controller(controller))
+    );
+    assert_eq!(
+        app.midi_editor_selected_controllers,
+        HashSet::from([controller])
+    );
+
+    let _ = app.update(Message::SelectMidiNoteEvent(note_ids[0], false));
+    let _ = app.update(Message::RuntimeKeyboardEvent(
+        up,
+        iced::event::Status::Ignored,
+        editor_window_id,
+    ));
+    assert_eq!(
+        app.midi_editor_event_list_cursor,
+        Some(super::MidiEditorEventListCursor::Note(note_ids[0]))
+    );
+    assert_eq!(app.midi_editor_selected_notes, HashSet::from([note_ids[0]]));
+
+    app.midi_editor_mode = MidiEditorMode::PianoRoll;
+    let _ = app.update(Message::RuntimeKeyboardEvent(
+        down,
+        iced::event::Status::Ignored,
+        editor_window_id,
+    ));
+    assert_eq!(
+        app.midi_editor_event_list_cursor,
+        Some(super::MidiEditorEventListCursor::Note(note_ids[0]))
+    );
+}
+
+#[test]
 fn midi_event_properties_edits_note_fields_with_apply_ok_cancel_and_undo() {
     let common_time = aaadaw_core::TimeSignature::new(4, 4).expect("valid common time");
     assert_eq!(

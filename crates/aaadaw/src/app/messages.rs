@@ -168,6 +168,19 @@ pub(crate) enum MidiEditorMode {
     EventList,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum MidiEditorEventListCursor {
+    Note(NoteId),
+    Controller(MidiControllerData),
+    PitchBend(MidiPitchBendData),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum MidiEditorEventListCursorDirection {
+    Previous,
+    Next,
+}
+
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) enum MidiEditorChannelSelection {
     #[default]
@@ -589,6 +602,7 @@ pub(crate) enum Message {
     SelectMidiNoteEvent(NoteId, bool),
     SelectMidiControllerEvent(ItemId, MidiControllerData, bool),
     SelectMidiPitchBendEvent(ItemId, MidiPitchBendData, bool),
+    MoveMidiEditorEventListCursor(MidiEditorEventListCursorDirection, bool),
     CopyMidiNotes(ItemId, Vec<NoteId>),
     PasteMidiNotes(ItemId),
     DuplicateMidiNotes(ItemId),

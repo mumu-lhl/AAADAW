@@ -2266,3 +2266,11 @@ stable 桌面二进制 SHA-256 `58f0b09970b2fb3fe428611bdcaeca0e688af45ff1b700d3
 AAADAW Event Properties 对 Note、CC、Pitch Bend 的相对数值字段支持 `+`、`-`、`*`、`/`，针对各选中事件的当前值逐项计算；Position/Length 的加减支持 BBT offset，Note pitch 支持 `+1o2`。一批事件仍使用单个 Undo 步骤；超出 MIDI/timeline 范围时整批拒绝。最终 Linux 桌面二进制 SHA-256 `eef64c2bf8fc0099bec151f52eb85cfb409bbe516d5500b6fb275080539f0a6b` 在 Xvfb 中验证了可搜索命名 CC combo：搜索 `10` 显示 `10 Pan MSB`，选择并 Apply 将 CC7 改为 CC10，Ctrl+Z 在 Event List 恢复 CC7；搜索、选项、Apply、Undo 四张最终构建实窗图已登记。
 
 AAADAW App 测试目标 **759/759**、Event Properties 定向 Nextest **5/5**、严格 Clippy (`-D warnings`)、stable fmt 与 `git diff --check` 通过。fixture manifest **55/55 文件 SHA-256 有效**，parity matrix **111 项 / 15 列 / 唯一 ID**。混合类型多选、note-off velocity 持久化、CC shape / Bezier tension、非 4/4 meter-map、source-offset / loop BBT 以及精确原厂焦点导航仍未关闭；`MIDI-EVENT-PROPERTIES-001`、`MIDI-EVENT-LIST-001`、UI-019 与 P7 继续为 `in_progress`。
+
+### 2026-10-18 MIDI Event List 上下键导航
+
+REAPER 7.82 / Default 7 原厂四音符 Event List 探针记录：初始三行多选为 `1,1,1,0`；ArrowDown 首次收敛为当前行 `1,0,0,0`，再次下移为 `0,1,0,0`；Ctrl+A 后 Ctrl+ArrowDown 保留 `1,1,1,1`。连续选择状态 watcher、原厂前后截图和序列记录已加入 [Event List fixture manifest](../verification/reaper-parity/fixtures/midi-event-list-ui.tsv)。
+
+AAADAW 在 Event List 模式现在接受未修饰 ArrowUp/Down，沿当前可见、排序后的事件收敛或移动选择；Ctrl+ArrowUp/Down 移动独立事件游标并保留选择。基于含 Note/CC/Pitch Bend 四行的实际工程，当前构建 SHA-256 `c76c9607ac03339e2ee206814f2377b36f2c49da79c0539b7b2e0d870dfbadf6` 的真实窗口已验证多选保持、Ctrl+Up 后普通 Up 收敛到新游标，以及所选行变化。原厂双击数值会打开完整 Event Properties 窗口，因此逐单元格原位编辑不列作差异；Shift+Arrow 范围选择、横向字段焦点和 Home/End 仍待测量/实现。
+
+AAADAW App Nextest **760/760，0 skipped**（Xvfb），严格 all-target Clippy (`-D warnings`)、stable fmt、`git diff --check` 通过；Event List fixture manifest **10/10 文件 SHA-256 有效**，新增的 **6/6** 个 fixture 哈希已核对，parity matrix **111 项 / 15 列 / 唯一 ID**。未建模 MIDI 事件、混合类型属性、note-off velocity、准确 source-offset/loop BBT、列操作与模式持久化仍开放；`MIDI-EVENT-LIST-001`、UI-019 与 P7 保持 `in_progress`。

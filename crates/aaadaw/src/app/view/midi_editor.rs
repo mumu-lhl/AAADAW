@@ -1,6 +1,7 @@
 use super::super::{
     App, MIDI_EDITOR_KEY_WIDTH, Message, MidiEditorChannelSelection, MidiEditorEventKind,
-    MidiEditorEventTypeFilter, MidiEditorLane, MidiEditorMode, MidiEditorTool,
+    MidiEditorEventListCursor, MidiEditorEventTypeFilter, MidiEditorLane, MidiEditorMode,
+    MidiEditorTool,
 };
 use super::tokens::{PANEL_PADDING, ROW_GAP, SPACING_LG, SPACING_MD, SPACING_XS, TOUCH_TARGET_MIN};
 use crate::timeline::{SnapGrid, TimelineEvent, snap_tick_to_grid};
@@ -868,6 +869,14 @@ impl MidiEventListEntry<'_> {
             Self::PitchBend(_) => 2,
         }
     }
+
+    fn cursor(self) -> MidiEditorEventListCursor {
+        match self {
+            Self::Note(note) => MidiEditorEventListCursor::Note(note.id()),
+            Self::Controller(event) => MidiEditorEventListCursor::Controller(event),
+            Self::PitchBend(event) => MidiEditorEventListCursor::PitchBend(event),
+        }
+    }
 }
 
 fn midi_event_list_entries(item: &MidiItem, snap: MidiSnap) -> Vec<MidiEventListEntry<'_>> {
@@ -893,6 +902,16 @@ fn midi_event_list_entries(item: &MidiItem, snap: MidiSnap) -> Vec<MidiEventList
         .collect::<Vec<_>>();
     events.sort_by_key(|event| (event.tick(), event.order()));
     events
+}
+
+pub(in crate::app) fn midi_event_list_cursors(
+    app: &App,
+    item: &MidiItem,
+) -> Vec<MidiEditorEventListCursor> {
+    midi_event_list_entries(item, midi_snap_for_app(app))
+        .into_iter()
+        .map(MidiEventListEntry::cursor)
+        .collect()
 }
 
 fn midi_event_list_view<'a>(

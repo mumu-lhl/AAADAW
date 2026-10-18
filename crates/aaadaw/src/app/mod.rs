@@ -122,9 +122,10 @@ mod x11_plugin_editor;
 
 pub(crate) use messages::{
     MainMenu, MainWorkspace, MenuNavigation, Message, MidiEditorChannelSelection,
-    MidiEditorEventKind, MidiEditorEventTypeFilter, MidiEditorLane, MidiEditorMode, MidiEditorTool,
-    MidiHumanizeScope, MidiQuantizeOperation, MidiQuantizeScope, MidiTransposeScope, MobilePanel,
-    PathPickerTarget, PendingProjectTransition, SettingsCategory, TimeMapTab,
+    MidiEditorEventKind, MidiEditorEventListCursor, MidiEditorEventListCursorDirection,
+    MidiEditorEventTypeFilter, MidiEditorLane, MidiEditorMode, MidiEditorTool, MidiHumanizeScope,
+    MidiQuantizeOperation, MidiQuantizeScope, MidiTransposeScope, MobilePanel, PathPickerTarget,
+    PendingProjectTransition, SettingsCategory, TimeMapTab,
 };
 
 #[derive(Clone)]
@@ -484,6 +485,7 @@ struct App {
     midi_editor_selected_notes: HashSet<aaadaw_core::NoteId>,
     midi_editor_selected_controllers: HashSet<MidiControllerData>,
     midi_editor_selected_pitch_bends: HashSet<MidiPitchBendData>,
+    midi_editor_event_list_cursor: Option<MidiEditorEventListCursor>,
     midi_quantize_dialog: Option<MidiQuantizeDialogState>,
     midi_humanize_dialog: Option<MidiHumanizeDialogState>,
     midi_transpose_dialog: Option<MidiTransposeDialogState>,
@@ -1884,6 +1886,98 @@ impl App {
         remapped
     }
 
+    fn midi_event_list_cursor_is_selected(&self, cursor: MidiEditorEventListCursor) -> bool {
+        match cursor {
+            MidiEditorEventListCursor::Note(note_id) => {
+                self.midi_editor_selected_notes.contains(&note_id)
+            }
+            MidiEditorEventListCursor::Controller(event) => {
+                self.midi_editor_selected_controllers.contains(&event)
+            }
+            MidiEditorEventListCursor::PitchBend(event) => {
+                self.midi_editor_selected_pitch_bends.contains(&event)
+            }
+        }
+    }
+
+    fn move_midi_editor_event_list_cursor(
+        &mut self,
+        direction: MidiEditorEventListCursorDirection,
+        preserve_selection: bool,
+    ) {
+        if self.midi_editor_mode != MidiEditorMode::EventList {
+            return;
+        }
+        let Some(item_id) = self.midi_editor_item_id else {
+            return;
+        };
+        let Some(item) = self
+            .project
+            .midi_items()
+            .iter()
+            .find(|item| item.id() == item_id)
+        else {
+            self.midi_editor_event_list_cursor = None;
+            return;
+        };
+        let candidates = view::midi_event_list_cursors(self, item);
+        if candidates.is_empty() {
+            self.midi_editor_event_list_cursor = None;
+            return;
+        }
+        let cursor = self
+            .midi_editor_event_list_cursor
+            .filter(|cursor| candidates.contains(cursor))
+            .or_else(|| {
+                candidates
+                    .iter()
+                    .copied()
+                    .find(|cursor| self.midi_event_list_cursor_is_selected(*cursor))
+            });
+        let current_index =
+            cursor.and_then(|cursor| candidates.iter().position(|candidate| *candidate == cursor));
+        let has_multiselection = self.midi_editor_selected_notes.len()
+            + self.midi_editor_selected_controllers.len()
+            + self.midi_editor_selected_pitch_bends.len()
+            > 1;
+        let collapse_at_cursor = !preserve_selection && has_multiselection;
+        let next_index = if collapse_at_cursor {
+            current_index.unwrap_or(match direction {
+                MidiEditorEventListCursorDirection::Previous => candidates.len() - 1,
+                MidiEditorEventListCursorDirection::Next => 0,
+            })
+        } else {
+            match (current_index, direction) {
+                (None, MidiEditorEventListCursorDirection::Previous) => candidates.len() - 1,
+                (None, MidiEditorEventListCursorDirection::Next) => 0,
+                (Some(index), MidiEditorEventListCursorDirection::Previous) => {
+                    index.saturating_sub(1)
+                }
+                (Some(index), MidiEditorEventListCursorDirection::Next) => {
+                    (index + 1).min(candidates.len() - 1)
+                }
+            }
+        };
+        let cursor = candidates[next_index];
+        self.midi_editor_event_list_cursor = Some(cursor);
+        if !preserve_selection {
+            self.midi_editor_selected_notes.clear();
+            self.midi_editor_selected_controllers.clear();
+            self.midi_editor_selected_pitch_bends.clear();
+            match cursor {
+                MidiEditorEventListCursor::Note(note_id) => {
+                    self.midi_editor_selected_notes.insert(note_id);
+                }
+                MidiEditorEventListCursor::Controller(event) => {
+                    self.midi_editor_selected_controllers.insert(event);
+                }
+                MidiEditorEventListCursor::PitchBend(event) => {
+                    self.midi_editor_selected_pitch_bends.insert(event);
+                }
+            }
+        }
+    }
+
     fn is_mobile_main_window(&self) -> bool {
         self.shell_profile == ShellProfile::Touch
     }
@@ -1909,6 +2003,7 @@ impl App {
             self.midi_editor_selected_notes.clear();
             self.midi_editor_selected_controllers.clear();
             self.midi_editor_selected_pitch_bends.clear();
+            self.midi_editor_event_list_cursor = None;
             self.midi_editor_edit_cursor_tick = None;
         }
         self.cancel_shortcut_capture();
@@ -4468,6 +4563,7 @@ impl App {
                     self.midi_editor_selected_notes.clear();
                     self.midi_editor_selected_controllers.clear();
                     self.midi_editor_selected_pitch_bends.clear();
+                    self.midi_editor_event_list_cursor = None;
                 } else if self.main_window_id == Some(window_id) {
                     #[cfg(target_os = "android")]
                     tracing::warn!(?window_id, "Android main window closed");
@@ -4506,6 +4602,7 @@ impl App {
                     self.midi_editor_selected_notes.clear();
                     self.midi_editor_selected_controllers.clear();
                     self.midi_editor_selected_pitch_bends.clear();
+                    self.midi_editor_event_list_cursor = None;
                     self.midi_editor_edit_cursor_tick = None;
                     if self.main_window_id == Some(window_id)
                         && self.mobile_panel == MobilePanel::MidiEditor
@@ -4525,6 +4622,9 @@ impl App {
                 if self.midi_editor_item_id.is_some() {
                     self.midi_editor_mode = mode;
                 }
+            }
+            Message::MoveMidiEditorEventListCursor(direction, preserve_selection) => {
+                self.move_midi_editor_event_list_cursor(direction, preserve_selection);
             }
             Message::DeleteSelectedMidiEvents(item_id) => {
                 let Some(item) = self
@@ -4581,6 +4681,7 @@ impl App {
                 self.midi_editor_selected_notes.clear();
                 self.midi_editor_selected_controllers.clear();
                 self.midi_editor_selected_pitch_bends.clear();
+                self.midi_editor_event_list_cursor = None;
             }
             Message::OpenMidiEventProperties(item_id) => {
                 let target = self
@@ -4772,6 +4873,7 @@ impl App {
                 if !visible_note_ids.contains(&note_id) {
                     return task;
                 }
+                self.midi_editor_event_list_cursor = Some(MidiEditorEventListCursor::Note(note_id));
                 if additive {
                     if !self.midi_editor_selected_notes.remove(&note_id) {
                         self.midi_editor_selected_notes.insert(note_id);
@@ -4786,6 +4888,8 @@ impl App {
                 if self.midi_editor_item_id == Some(item_id) =>
             {
                 self.midi_editor_feedback = None;
+                self.midi_editor_event_list_cursor =
+                    Some(MidiEditorEventListCursor::Controller(event));
                 if !additive {
                     self.midi_editor_selected_notes.clear();
                     self.midi_editor_selected_controllers.clear();
@@ -4799,6 +4903,8 @@ impl App {
                 if self.midi_editor_item_id == Some(item_id) =>
             {
                 self.midi_editor_feedback = None;
+                self.midi_editor_event_list_cursor =
+                    Some(MidiEditorEventListCursor::PitchBend(event));
                 if !additive {
                     self.midi_editor_selected_notes.clear();
                     self.midi_editor_selected_controllers.clear();
@@ -5929,6 +6035,38 @@ impl App {
                 }
                 if self.action_list_window_id == Some(window_id) {
                     return self.action_list_keyboard_event(event, status);
+                }
+
+                if self.midi_editor_window_id == Some(window_id)
+                    && self.midi_editor_mode == MidiEditorMode::EventList
+                    && self.midi_event_properties_dialog.is_none()
+                    && self.midi_quantize_dialog.is_none()
+                    && self.midi_humanize_dialog.is_none()
+                    && self.midi_transpose_dialog.is_none()
+                    && !self.midi_editor_filter_dialog_open
+                    && status == iced::event::Status::Ignored
+                    && let iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
+                        key: iced::keyboard::Key::Named(key),
+                        modifiers,
+                        ..
+                    }) = &event
+                    && (modifiers.is_empty() || *modifiers == iced::keyboard::Modifiers::CTRL)
+                {
+                    let direction = match key {
+                        iced::keyboard::key::Named::ArrowUp => {
+                            Some(MidiEditorEventListCursorDirection::Previous)
+                        }
+                        iced::keyboard::key::Named::ArrowDown => {
+                            Some(MidiEditorEventListCursorDirection::Next)
+                        }
+                        _ => None,
+                    };
+                    if let Some(direction) = direction {
+                        return self.update(Message::MoveMidiEditorEventListCursor(
+                            direction,
+                            modifiers == &iced::keyboard::Modifiers::CTRL,
+                        ));
+                    }
                 }
 
                 if self.shortcut_capture_id.is_some() {
@@ -8957,6 +9095,7 @@ impl App {
             self.midi_editor_selected_notes.clear();
             self.midi_editor_selected_controllers.clear();
             self.midi_editor_selected_pitch_bends.clear();
+            self.midi_editor_event_list_cursor = None;
             if item_changed {
                 self.fit_midi_editor_to_item(item_id);
             }
@@ -8978,6 +9117,7 @@ impl App {
             self.midi_editor_selected_notes.clear();
             self.midi_editor_selected_controllers.clear();
             self.midi_editor_selected_pitch_bends.clear();
+            self.midi_editor_event_list_cursor = None;
             return iced::window::gain_focus(window_id);
         }
         let (window_id, task) = iced::window::open(iced::window::Settings {
@@ -8992,6 +9132,7 @@ impl App {
         self.midi_editor_selected_notes.clear();
         self.midi_editor_selected_controllers.clear();
         self.midi_editor_selected_pitch_bends.clear();
+        self.midi_editor_event_list_cursor = None;
         self.midi_editor_origin_tick = 0;
         self.midi_editor_edit_cursor_tick = None;
         self.midi_editor_high_pitch = 84;
