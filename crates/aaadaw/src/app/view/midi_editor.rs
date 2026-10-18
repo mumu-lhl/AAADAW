@@ -1274,6 +1274,21 @@ pub(in crate::app) fn midi_event_list_home_target(
     }
 }
 
+const MIDI_EVENT_LIST_COLUMN_LABELS: [&str; 9] = [
+    "Index",
+    "Position",
+    "Length",
+    "Channel",
+    "Type",
+    "Parameter",
+    "Value",
+    "Off Value",
+    "REAPER Data",
+];
+const MIDI_EVENT_LIST_COLUMN_WIDTHS: [f32; 9] =
+    [48.0, 104.0, 104.0, 68.0, 100.0, 204.0, 72.0, 80.0, 180.0];
+const MIDI_EVENT_LIST_CONTENT_WIDTH: f32 = 976.0;
+
 fn midi_event_list_view<'a>(
     app: &'a App,
     item: &'a MidiItem,
@@ -1326,6 +1341,7 @@ fn midi_event_list_view<'a>(
                 parameter,
                 value,
                 off_value,
+                reaper_data,
                 selected,
                 message,
             ) = match *event {
@@ -1337,6 +1353,7 @@ fn midi_event_list_view<'a>(
                     pitch_name(snap.note_pitch(item_id, &app.midi_editor_selected_notes, note)),
                     note.velocity().to_string(),
                     note.off_velocity().to_string(),
+                    String::new(),
                     app.midi_editor_selected_notes.contains(&note.id()),
                     Message::SelectMidiEditorEventSelection(
                         MidiEditorEventListCursor::Note(note.id()),
@@ -1351,6 +1368,7 @@ fn midi_event_list_view<'a>(
                     midi_event_controller_name(event.controller),
                     event.value.to_string(),
                     String::new(),
+                    String::new(),
                     app.midi_editor_selected_controllers.contains(&event),
                     Message::SelectMidiEditorEventSelection(
                         MidiEditorEventListCursor::Controller(event),
@@ -1364,6 +1382,7 @@ fn midi_event_list_view<'a>(
                     "CC",
                     "Bank Select 14-bit (0/32)".to_owned(),
                     midi_event_bank_select_value(msb, lsb).to_string(),
+                    String::new(),
                     String::new(),
                     app.midi_editor_selected_controllers.contains(&msb)
                         || app.midi_editor_selected_controllers.contains(&lsb),
@@ -1380,6 +1399,7 @@ fn midi_event_list_view<'a>(
                     "Pitch Bend".to_owned(),
                     event.value.to_string(),
                     String::new(),
+                    String::new(),
                     app.midi_editor_selected_pitch_bends.contains(&event),
                     Message::SelectMidiEditorEventSelection(
                         MidiEditorEventListCursor::PitchBend(event),
@@ -1393,6 +1413,7 @@ fn midi_event_list_view<'a>(
                     "PC",
                     midi_event_program_change_parameter(item, event),
                     event.program.to_string(),
+                    String::new(),
                     String::new(),
                     app.midi_editor_selected_program_changes.contains(&event),
                     Message::SelectMidiEditorEventSelection(
@@ -1408,6 +1429,7 @@ fn midi_event_list_view<'a>(
                     pitch_name(event.note),
                     event.value.to_string(),
                     String::new(),
+                    String::new(),
                     app.midi_editor_selected_poly_aftertouches.contains(&event),
                     Message::SelectMidiEditorEventSelection(
                         MidiEditorEventListCursor::PolyAftertouch(event),
@@ -1421,6 +1443,7 @@ fn midi_event_list_view<'a>(
                     "Channel Pressure",
                     String::new(),
                     event.value.to_string(),
+                    String::new(),
                     String::new(),
                     app.midi_editor_selected_channel_pressures.contains(&event),
                     Message::SelectMidiEditorEventSelection(
@@ -1438,6 +1461,7 @@ fn midi_event_list_view<'a>(
                         parameter,
                         String::new(),
                         String::new(),
+                        String::new(),
                         app.midi_editor_selected_opaque_events.contains(&index),
                         Message::SelectMidiEditorEventSelection(
                             MidiEditorEventListCursor::Opaque(index),
@@ -1452,6 +1476,7 @@ fn midi_event_list_view<'a>(
                     "(end) All Notes Off",
                     String::new(),
                     "0".to_owned(),
+                    String::new(),
                     String::new(),
                     app.midi_editor_event_list_cursor == Some(MidiEditorEventListCursor::End)
                         || events.len() == 1,
@@ -1471,12 +1496,15 @@ fn midi_event_list_view<'a>(
                 parameter,
                 value,
                 off_value,
+                reaper_data,
                 selected,
                 message,
             })
         })
         .collect::<Vec<_>>();
-    let event_rows: Element<'_, Message> = column![header].extend(rows).spacing(1).into();
+    let event_rows: Element<'_, Message> = container(column![header].extend(rows).spacing(1))
+        .width(Length::Fixed(MIDI_EVENT_LIST_CONTENT_WIDTH))
+        .into();
     let has_selection = !app.midi_editor_selected_notes.is_empty()
         || !app.midi_editor_selected_controllers.is_empty()
         || !app.midi_editor_selected_pitch_bends.is_empty()
@@ -1552,7 +1580,21 @@ fn midi_event_list_view<'a>(
         content = content.push(text(feedback).size(12));
     }
     content
-        .push(scrollable(event_rows).height(Length::Fill))
+        .push(
+            scrollable(
+                scrollable(event_rows)
+                    .direction(scrollable::Direction::Horizontal(
+                        scrollable::Scrollbar::default(),
+                    ))
+                    .width(Length::Fill)
+                    .height(Length::Fill),
+            )
+            .direction(scrollable::Direction::Vertical(
+                scrollable::Scrollbar::default(),
+            ))
+            .width(Length::Fill)
+            .height(Length::Fill),
+        )
         .push(
             row![
                 text(
@@ -1600,20 +1642,22 @@ struct MidiEventListRow {
     parameter: String,
     value: String,
     off_value: String,
+    reaper_data: String,
     selected: bool,
     message: Message,
 }
 
 fn midi_event_list_row(row: MidiEventListRow) -> Element<'static, Message> {
     let contents = row![
-        text(row.index).width(Length::Fixed(48.0)),
-        text(row.position).width(Length::Fixed(104.0)),
-        text(row.length).width(Length::Fixed(104.0)),
-        text(row.channel).width(Length::Fixed(68.0)),
-        text(row.event_type).width(Length::Fixed(100.0)),
-        text(row.parameter).width(Length::Fixed(204.0)),
-        text(row.value).width(Length::Fixed(72.0)),
-        text(row.off_value).width(Length::Fixed(80.0)),
+        text(row.index).width(Length::Fixed(MIDI_EVENT_LIST_COLUMN_WIDTHS[0])),
+        text(row.position).width(Length::Fixed(MIDI_EVENT_LIST_COLUMN_WIDTHS[1])),
+        text(row.length).width(Length::Fixed(MIDI_EVENT_LIST_COLUMN_WIDTHS[2])),
+        text(row.channel).width(Length::Fixed(MIDI_EVENT_LIST_COLUMN_WIDTHS[3])),
+        text(row.event_type).width(Length::Fixed(MIDI_EVENT_LIST_COLUMN_WIDTHS[4])),
+        text(row.parameter).width(Length::Fixed(MIDI_EVENT_LIST_COLUMN_WIDTHS[5])),
+        text(row.value).width(Length::Fixed(MIDI_EVENT_LIST_COLUMN_WIDTHS[6])),
+        text(row.off_value).width(Length::Fixed(MIDI_EVENT_LIST_COLUMN_WIDTHS[7])),
+        text(row.reaper_data).width(Length::Fixed(MIDI_EVENT_LIST_COLUMN_WIDTHS[8])),
     ]
     .spacing(2)
     .align_y(iced::Alignment::Center);
@@ -1631,14 +1675,24 @@ fn midi_event_list_row(row: MidiEventListRow) -> Element<'static, Message> {
 fn midi_event_list_header() -> Element<'static, Message> {
     container(
         row![
-            text("Index").width(Length::Fixed(48.0)),
-            text("Position").width(Length::Fixed(104.0)),
-            text("Length").width(Length::Fixed(104.0)),
-            text("Channel").width(Length::Fixed(68.0)),
-            text("Type").width(Length::Fixed(100.0)),
-            text("Parameter").width(Length::Fixed(204.0)),
-            text("Value").width(Length::Fixed(72.0)),
-            text("Off Value").width(Length::Fixed(80.0)),
+            text(MIDI_EVENT_LIST_COLUMN_LABELS[0])
+                .width(Length::Fixed(MIDI_EVENT_LIST_COLUMN_WIDTHS[0])),
+            text(MIDI_EVENT_LIST_COLUMN_LABELS[1])
+                .width(Length::Fixed(MIDI_EVENT_LIST_COLUMN_WIDTHS[1])),
+            text(MIDI_EVENT_LIST_COLUMN_LABELS[2])
+                .width(Length::Fixed(MIDI_EVENT_LIST_COLUMN_WIDTHS[2])),
+            text(MIDI_EVENT_LIST_COLUMN_LABELS[3])
+                .width(Length::Fixed(MIDI_EVENT_LIST_COLUMN_WIDTHS[3])),
+            text(MIDI_EVENT_LIST_COLUMN_LABELS[4])
+                .width(Length::Fixed(MIDI_EVENT_LIST_COLUMN_WIDTHS[4])),
+            text(MIDI_EVENT_LIST_COLUMN_LABELS[5])
+                .width(Length::Fixed(MIDI_EVENT_LIST_COLUMN_WIDTHS[5])),
+            text(MIDI_EVENT_LIST_COLUMN_LABELS[6])
+                .width(Length::Fixed(MIDI_EVENT_LIST_COLUMN_WIDTHS[6])),
+            text(MIDI_EVENT_LIST_COLUMN_LABELS[7])
+                .width(Length::Fixed(MIDI_EVENT_LIST_COLUMN_WIDTHS[7])),
+            text(MIDI_EVENT_LIST_COLUMN_LABELS[8])
+                .width(Length::Fixed(MIDI_EVENT_LIST_COLUMN_WIDTHS[8])),
         ]
         .spacing(2)
         .align_y(iced::Alignment::Center),
@@ -5381,6 +5435,31 @@ fn piano_key_rect(pitch: u8, row_y: f32, row_height: f32) -> Rectangle {
 mod tests {
     use super::*;
     use crate::app::MidiTransposeScope;
+
+    #[test]
+    fn event_list_columns_match_the_native_order_and_include_reaper_data() {
+        assert_eq!(
+            MIDI_EVENT_LIST_COLUMN_LABELS,
+            [
+                "Index",
+                "Position",
+                "Length",
+                "Channel",
+                "Type",
+                "Parameter",
+                "Value",
+                "Off Value",
+                "REAPER Data",
+            ]
+        );
+        assert_eq!(
+            MIDI_EVENT_LIST_COLUMN_LABELS.len(),
+            MIDI_EVENT_LIST_COLUMN_WIDTHS.len()
+        );
+        let content_width = MIDI_EVENT_LIST_COLUMN_WIDTHS.iter().sum::<f32>()
+            + 2.0 * (MIDI_EVENT_LIST_COLUMN_WIDTHS.len() - 1) as f32;
+        assert_eq!(MIDI_EVENT_LIST_CONTENT_WIDTH, content_width);
+    }
 
     #[test]
     fn opaque_meta_text_keeps_readable_newlines() {
