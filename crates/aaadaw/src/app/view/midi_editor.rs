@@ -322,6 +322,29 @@ impl MidiSnap {
         self.event_visible(channel, MidiEditorEventKind::ChannelPressure)
     }
 
+    fn opaque_event_visible(self, event: &MidiOpaqueEventData) -> bool {
+        if !self.filter_enabled {
+            return true;
+        }
+        let event_kind = match &event.kind {
+            MidiOpaqueEventKind::SystemExclusive { .. } => MidiEditorEventKind::SysEx,
+            MidiOpaqueEventKind::Meta { .. } => MidiEditorEventKind::Text,
+        };
+        let passes = self.event_type_filter.matches(event_kind);
+        if self.filter_inverted {
+            !passes
+        } else {
+            passes
+        }
+    }
+
+    fn end_row_visible(self) -> bool {
+        if self.filter_enabled && self.event_type_filter != MidiEditorEventTypeFilter::AllEvents {
+            return false;
+        }
+        self.event_visible(0, MidiEditorEventKind::ControlChange)
+    }
+
     fn note_pitch(
         self,
         item_id: ItemId,
@@ -1016,11 +1039,14 @@ fn midi_event_list_entries(item: &MidiItem, snap: MidiSnap) -> Vec<MidiEventList
             item.opaque_events()
                 .iter()
                 .enumerate()
+                .filter(|(_, event)| snap.opaque_event_visible(event))
                 .map(|(index, event)| MidiEventListEntry::Opaque(index as u32, event)),
         )
         .collect::<Vec<_>>();
     events.sort_by_key(|event| (event.tick(), event.order()));
-    events.push(MidiEventListEntry::End(item.length_ticks()));
+    if snap.end_row_visible() {
+        events.push(MidiEventListEntry::End(item.length_ticks()));
+    }
     events
 }
 
@@ -8189,12 +8215,11 @@ mod tests {
             ..MidiSnap::default()
         };
         let events = midi_event_list_entries(item, channel_one);
-        assert_eq!(events.len(), 5);
+        assert_eq!(events.len(), 4);
         assert!(matches!(events[0], MidiEventListEntry::PitchBend(_)));
         assert!(matches!(events[1], MidiEventListEntry::ProgramChange(_)));
         assert!(matches!(events[2], MidiEventListEntry::Note(_)));
         assert!(matches!(events[3], MidiEventListEntry::PolyAftertouch(_)));
-        assert!(matches!(events[4], MidiEventListEntry::End(3_840)));
 
         let programs_only = MidiSnap {
             filter_enabled: true,
@@ -8202,9 +8227,8 @@ mod tests {
             ..MidiSnap::default()
         };
         let events = midi_event_list_entries(item, programs_only);
-        assert_eq!(events.len(), 2);
+        assert_eq!(events.len(), 1);
         assert!(matches!(events[0], MidiEventListEntry::ProgramChange(_)));
-        assert!(matches!(events[1], MidiEventListEntry::End(3_840)));
 
         let poly_only = MidiSnap {
             filter_enabled: true,
@@ -8212,9 +8236,8 @@ mod tests {
             ..MidiSnap::default()
         };
         let events = midi_event_list_entries(item, poly_only);
-        assert_eq!(events.len(), 2);
+        assert_eq!(events.len(), 1);
         assert!(matches!(events[0], MidiEventListEntry::PolyAftertouch(_)));
-        assert!(matches!(events[1], MidiEventListEntry::End(3_840)));
 
         let pressure_only = MidiSnap {
             filter_enabled: true,
@@ -8222,9 +8245,8 @@ mod tests {
             ..MidiSnap::default()
         };
         let events = midi_event_list_entries(item, pressure_only);
-        assert_eq!(events.len(), 2);
+        assert_eq!(events.len(), 1);
         assert!(matches!(events[0], MidiEventListEntry::ChannelPressure(_)));
-        assert!(matches!(events[1], MidiEventListEntry::End(3_840)));
     }
 
     #[test]
@@ -8307,6 +8329,40 @@ mod tests {
         );
         assert!(matches!(events[4], MidiEventListEntry::End(960)));
         assert_eq!(events[0].cursor(), MidiEditorEventListCursor::Opaque(0));
+
+        let metadata_only = MidiSnap {
+            filter_enabled: true,
+            event_type_filter: MidiEditorEventTypeFilter::SysExMeta,
+            ..MidiSnap::default()
+        };
+        let events = midi_event_list_entries(item, metadata_only);
+        assert_eq!(events.len(), 4);
+        assert!(matches!(events[0], MidiEventListEntry::Opaque(0, _)));
+        assert!(matches!(events[1], MidiEventListEntry::Opaque(1, _)));
+        assert!(matches!(events[2], MidiEventListEntry::Opaque(2, _)));
+        assert!(matches!(events[3], MidiEventListEntry::Opaque(3, _)));
+
+        let metadata_ignores_channel_selection = MidiSnap {
+            filter_enabled: true,
+            event_type_filter: MidiEditorEventTypeFilter::SysExMeta,
+            channel_selection: MidiEditorChannelSelection::Channel(7),
+            ..MidiSnap::default()
+        };
+        let events = midi_event_list_entries(item, metadata_ignores_channel_selection);
+        assert_eq!(events.len(), 4);
+        assert!(matches!(events[0], MidiEventListEntry::Opaque(0, _)));
+        assert!(matches!(events[1], MidiEventListEntry::Opaque(1, _)));
+        assert!(matches!(events[2], MidiEventListEntry::Opaque(2, _)));
+        assert!(matches!(events[3], MidiEventListEntry::Opaque(3, _)));
+
+        let inverted_metadata = MidiSnap {
+            filter_enabled: true,
+            filter_inverted: true,
+            event_type_filter: MidiEditorEventTypeFilter::SysExMeta,
+            ..MidiSnap::default()
+        };
+        let events = midi_event_list_entries(item, inverted_metadata);
+        assert!(events.is_empty());
     }
 
     #[test]

@@ -213,17 +213,19 @@ pub(crate) enum MidiEditorEventTypeFilter {
     ProgramChange,
     PolyAftertouch,
     ChannelPressure,
+    SysExMeta,
 }
 
 impl MidiEditorEventTypeFilter {
-    pub(crate) const OPTIONS: [Self; 7] = [
+    pub(crate) const OPTIONS: [Self; 8] = [
         Self::AllEvents,
         Self::Notes,
-        Self::ControlChange,
-        Self::Pitch,
-        Self::ProgramChange,
         Self::PolyAftertouch,
+        Self::ControlChange,
+        Self::ProgramChange,
         Self::ChannelPressure,
+        Self::Pitch,
+        Self::SysExMeta,
     ];
 
     pub(crate) fn matches(self, kind: MidiEditorEventKind) -> bool {
@@ -236,6 +238,10 @@ impl MidiEditorEventTypeFilter {
                 | (Self::ProgramChange, MidiEditorEventKind::ProgramChange)
                 | (Self::PolyAftertouch, MidiEditorEventKind::PolyAftertouch)
                 | (Self::ChannelPressure, MidiEditorEventKind::ChannelPressure)
+                | (
+                    Self::SysExMeta,
+                    MidiEditorEventKind::SysEx | MidiEditorEventKind::Text
+                )
         )
     }
 }
@@ -247,9 +253,10 @@ impl std::fmt::Display for MidiEditorEventTypeFilter {
             Self::Notes => "Note",
             Self::ControlChange => "Control Change (CC)",
             Self::Pitch => "Pitch",
-            Self::ProgramChange => "Program Change",
+            Self::ProgramChange => "Program Change (PC)",
             Self::PolyAftertouch => "Poly Aftertouch",
             Self::ChannelPressure => "Channel Pressure",
+            Self::SysExMeta => "Sysex/Meta",
         })
     }
 }
@@ -262,6 +269,8 @@ pub(crate) enum MidiEditorEventKind {
     ProgramChange,
     PolyAftertouch,
     ChannelPressure,
+    SysEx,
+    Text,
 }
 
 impl MidiEditorChannelSelection {
@@ -1173,6 +1182,8 @@ mod midi_channel_selection_tests {
         assert!(MidiEditorEventTypeFilter::AllEvents.matches(MidiEditorEventKind::ProgramChange));
         assert!(MidiEditorEventTypeFilter::AllEvents.matches(MidiEditorEventKind::PolyAftertouch));
         assert!(MidiEditorEventTypeFilter::AllEvents.matches(MidiEditorEventKind::ChannelPressure));
+        assert!(MidiEditorEventTypeFilter::AllEvents.matches(MidiEditorEventKind::SysEx));
+        assert!(MidiEditorEventTypeFilter::AllEvents.matches(MidiEditorEventKind::Text));
         assert!(MidiEditorEventTypeFilter::Notes.matches(MidiEditorEventKind::Note));
         assert!(!MidiEditorEventTypeFilter::Notes.matches(MidiEditorEventKind::ControlChange));
         assert!(
@@ -1189,22 +1200,33 @@ mod midi_channel_selection_tests {
             MidiEditorEventTypeFilter::ChannelPressure
                 .matches(MidiEditorEventKind::ChannelPressure)
         );
-        assert_eq!(MidiEditorEventTypeFilter::OPTIONS.len(), 7);
+        assert!(MidiEditorEventTypeFilter::SysExMeta.matches(MidiEditorEventKind::SysEx));
+        assert!(MidiEditorEventTypeFilter::SysExMeta.matches(MidiEditorEventKind::Text));
+        assert_eq!(MidiEditorEventTypeFilter::OPTIONS.len(), 8);
         assert_eq!(
             MidiEditorEventTypeFilter::OPTIONS[0].to_string(),
             "<all events>"
         );
         assert_eq!(
             MidiEditorEventTypeFilter::OPTIONS[2].to_string(),
-            "Control Change (CC)"
-        );
-        assert_eq!(
-            MidiEditorEventTypeFilter::OPTIONS[5].to_string(),
             "Poly Aftertouch"
         );
         assert_eq!(
-            MidiEditorEventTypeFilter::OPTIONS[6].to_string(),
+            MidiEditorEventTypeFilter::OPTIONS[3].to_string(),
+            "Control Change (CC)"
+        );
+        assert_eq!(
+            MidiEditorEventTypeFilter::OPTIONS[4].to_string(),
+            "Program Change (PC)"
+        );
+        assert_eq!(
+            MidiEditorEventTypeFilter::OPTIONS[5].to_string(),
             "Channel Pressure"
+        );
+        assert_eq!(MidiEditorEventTypeFilter::OPTIONS[6].to_string(), "Pitch");
+        assert_eq!(
+            MidiEditorEventTypeFilter::OPTIONS[7].to_string(),
+            "Sysex/Meta"
         );
 
         let selection = MidiEditorChannelSelection::Multichannel;
