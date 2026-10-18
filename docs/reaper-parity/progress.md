@@ -2325,3 +2325,12 @@ Linux REAPER 7.82 / Default 7 的隔离探针使用一个 4–8 秒 MIDI Item（
 AAADAW 的 Event List 现在以 Home 选中筛选后首条可见事件（包括空 Item 终点行），并将 MIDI 与工程编辑光标移到该事件位置；End 将两种光标移到 Item 末端，同时保留当前事件选择。应用窗口的 Home/End 截图显示首音符行保持选择，主工程读数分别为 `1.1.480 / 0:00.250` 与 `2.1.00 / 0:02.000`。桌面二进制 SHA-256 `a1a6bb936d43fc4219e511572d4533ded013c3204ec0bd2e4c0de6d1d5ba6f21`，ELF Build ID `8b355d36dc6e34b6e2005cc99083f13e63d46095`。
 
 Home/End 与空 Item 定向 App 测试 **2/2** 通过，包含首事件选择、End 保留选择、空 Item 合成行以及导航不修改工程快照/版本。workspace Nextest、严格 all-target Clippy、fixture manifest 哈希校验随后运行；`MIDI-EVENT-LIST-001`、UI-019 和 P7 继续 `in_progress`。REAPER Data、SysEx/text/meta、混合类型属性、排序/列操作、Shift+click 和 source-offset/loop 显示仍开放。
+
+
+### 2026-10-18 Standard MIDI File 导入基础切片
+
+AAADAW 新增 `Insert > MIDI file…`。文件在后台线程解析；SMF Type 0/1 的每条含通道事件的源轨会在编辑光标处创建一个命名轨道和一个非循环 MIDI item，整份文件通过单个 Project transaction 导入，可一次 Undo/Redo。解析器校验 chunk 边界、VLQ、状态/数据字节、End of Track 与资源上限，展开 running status，并在解码结果中保留原始 SysEx 和 Meta 事件。
+
+当前工程转换支持 Note、CC、Pitch Bend、Program Change、Poly Aftertouch 与 Channel Pressure，按源/工程 PPQ 四舍五入缩放，重复同音事件按 FIFO 配对。畸形文件、未配对 Note On/Off 或零时值音符会拒绝整次导入。Meta-only 源轨不创建空工程轨；SysEx 与未建模 Meta 被计数并在导入状态中告知用户。解析结果可保留原始事件，但工程模型尚不能存储它们；导入不会应用文件 Tempo/Meter，也不保留跨事件类别的同 tick 原始顺序。
+
+SMF parser/import Core 定向测试 **7/7**、AAADAW import 消息处理 **1/1**、SQLite imported-track 保存重开 **1/1** 通过；项目快照恢复、事务回滚、Undo/Redo 均在 Core 测试覆盖。workspace Nextest **1482/1482，0 skipped**（Xvfb）、strict stable all-target Clippy (`-D warnings`)、stable fmt 与 `git diff --check` 通过。文件解码并不等同于 REAPER 行为核验：Linux REAPER 7.82 / Default 7 的导入语义和当前桌面构建截图尚未采集。`MIDI-FILE-IMPORT-001`、FILE-MIDI-EXPORT-001、UI-019 与 P7 仍保持 `in_progress`；SysEx、文本/Meta 持久化、格式 2、SMPTE time division 与 native A/B 仍是未完成项。 JACK/PipeWire feature 编译检查已尝试；当前镜像缺少 `jack.pc` 与 JACK 开发头文件，因而未能完成该环境检查。

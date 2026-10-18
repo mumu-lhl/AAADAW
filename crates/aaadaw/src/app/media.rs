@@ -10,6 +10,7 @@ use aaadaw_app::{
 };
 use aaadaw_core::{DawAction, ItemId, Track, TrackId};
 use iced::Task;
+use std::io::Read;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
@@ -89,6 +90,11 @@ impl App {
                     "Audio files",
                     &["wav", "flac", "mp3", "ogg", "aif", "aiff", "m4a"],
                 )
+                .pick_file(completion),
+            PathPickerTarget::ImportMidiToProject => robius_file_picker::FileDialog::new()
+                .set_title("Insert MIDI file at the edit cursor")
+                .set_mime_type("audio/midi")
+                .add_filter("MIDI files", &["mid", "midi"])
                 .pick_file(completion),
             PathPickerTarget::AddClapPluginPath => robius_file_picker::FileDialog::new()
                 .set_title("Install a trusted Android ARM64 CLAP plugin")
@@ -236,6 +242,10 @@ impl App {
                             )
                             .pick_file()
                     }
+                    PathPickerTarget::ImportMidiToProject => rfd::FileDialog::new()
+                        .set_title("Insert MIDI file at the edit cursor")
+                        .add_filter("MIDI files", &["mid", "midi"])
+                        .pick_file(),
                     PathPickerTarget::RelinkAudio => rfd::FileDialog::new()
                         .set_title("Choose replacement audio")
                         .add_filter(
@@ -343,6 +353,7 @@ impl App {
                     self.audio_file_path_query = path.to_string_lossy().into_owned();
                     self.start_audio_import()
                 }
+                PathPickerTarget::ImportMidiToProject => self.start_midi_file_import(path),
                 PathPickerTarget::RelinkAudio => {
                     self.relink_source_path_query = path.to_string_lossy().into_owned();
                     Task::none()
@@ -444,6 +455,30 @@ impl App {
                     result,
                 )))))
             },
+        )
+    }
+
+    pub(super) fn start_midi_file_import(&mut self, path: PathBuf) -> Task<Message> {
+        if super::commands::project_edit_busy(self) {
+            self.status = "Wait for the current project operation to finish".to_owned();
+            return Task::none();
+        }
+        self.import_busy = true;
+        self.status = format!("Reading MIDI file {}…", path.display());
+        let project_ppq = self.project.settings().ppq();
+        Task::perform(
+            run_blocking("aaadaw-midi-file-import", move || {
+                let file = std::fs::File::open(&path)
+                    .map_err(|error| format!("could not read {}: {error}", path.display()))?;
+                let mut bytes = Vec::new();
+                file.take(aaadaw_core::MAX_MIDI_FILE_IMPORT_BYTES + 1)
+                    .read_to_end(&mut bytes)
+                    .map_err(|error| format!("could not read {}: {error}", path.display()))?;
+                let parsed = aaadaw_core::decode_standard_midi(&bytes)?;
+                let imported = parsed.to_project_import(project_ppq)?;
+                Ok((imported.tracks, imported.unsupported_event_count))
+            }),
+            Message::MidiFileImportFinished,
         )
     }
 

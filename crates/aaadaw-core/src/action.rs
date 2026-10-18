@@ -1,8 +1,8 @@
 use crate::{
     GridFraction, ItemId, MarkerId, MeterPointSnapshot, MidiChannelPressureData,
-    MidiControllerData, MidiItemPosition, MidiNoteData, MidiPitchBendData, MidiPolyAftertouchData,
-    MidiProgramChangeData, NoteId, RegionId, TempoCurve, TimeSignature, TrackFxPlugin, TrackId,
-    TrackInstrument, VolumeAutomationPoint,
+    MidiControllerData, MidiImportedTrack, MidiItemPosition, MidiNoteData, MidiPitchBendData,
+    MidiPolyAftertouchData, MidiProgramChangeData, NoteId, RegionId, TempoCurve, TimeSignature,
+    TrackFxPlugin, TrackId, TrackInstrument, VolumeAutomationPoint,
 };
 
 /// Which note timing values a MIDI quantize action moves to the current grid.
@@ -390,6 +390,11 @@ pub enum DawAction {
         track_id: TrackId,
         start_tick: u64,
         length_ticks: u64,
+    },
+    /// Import one decoded SMF track as a new project track and editable MIDI item.
+    ImportMidiTrack {
+        start_tick: u64,
+        track: MidiImportedTrack,
     },
     /// Set a MIDI item's user-visible name.
     SetMidiItemName {

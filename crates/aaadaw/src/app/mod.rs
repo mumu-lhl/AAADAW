@@ -1296,6 +1296,7 @@ fn action_rebuilds_playback_graph(action: &DawAction) -> bool {
         | DawAction::SetMidiItemLoopSource { .. }
         | DawAction::SetMidiItemMute { .. }
         | DawAction::SetAudioItemTakePlaybackRate { .. }
+        | DawAction::ImportMidiTrack { .. }
         | DawAction::FreezeTrack { .. }
         | DawAction::UnfreezeTrack { .. } => true,
         DawAction::BatchTransaction { actions, .. } => {
@@ -3795,6 +3796,7 @@ impl App {
                 | Message::MeterTick
                 | Message::AudioImportStarted(_)
                 | Message::AudioImportFinished(_)
+                | Message::MidiFileImportFinished(_)
                 | Message::AudioAssetManagementStarted(_)
                 | Message::AudioAssetManagementFinished(_)
         ) || {
@@ -4269,6 +4271,7 @@ impl App {
                     | Message::CancelAudioImport
                     | Message::AudioImportStarted(_)
                     | Message::AudioImportFinished(_)
+                    | Message::MidiFileImportFinished(_)
                     | Message::BackgroundTick
                     | Message::MeterTick
             )
@@ -8407,6 +8410,52 @@ impl App {
             Message::CancelAudioImport => self.cancel_audio_import(),
             Message::AudioImportStarted(worker) => self.audio_import_started(worker),
             Message::AudioImportFinished(result) => task = self.finish_audio_import(result),
+            Message::MidiFileImportFinished(result) => {
+                self.import_busy = false;
+                match result {
+                    Err(error) => self.status = format!("MIDI import failed: {error}"),
+                    Ok((tracks, unsupported_event_count)) if tracks.is_empty() => {
+                        self.status = if unsupported_event_count == 0 {
+                            "MIDI file contains no editable channel events".to_owned()
+                        } else {
+                            format!(
+                                "MIDI file contains no editable channel events; {unsupported_event_count} SysEx/meta event(s) are not supported in project items"
+                            )
+                        };
+                    }
+                    Ok((tracks, unsupported_event_count)) => {
+                        let track_count = tracks.len();
+                        let previous_revision = self.revision;
+                        self.apply_action(
+                            DawAction::BatchTransaction {
+                                tx_id: self.revision,
+                                actions: tracks
+                                    .into_iter()
+                                    .map(|track| DawAction::ImportMidiTrack {
+                                        start_tick: self.timeline.edit_cursor_tick,
+                                        track,
+                                    })
+                                    .collect(),
+                            },
+                            "MIDI file imported",
+                        );
+                        if self.revision != previous_revision {
+                            let count_label = if track_count == 1 {
+                                "1 MIDI track".to_owned()
+                            } else {
+                                format!("{track_count} MIDI tracks")
+                            };
+                            self.status = if unsupported_event_count == 0 {
+                                format!("Inserted {count_label} at the edit cursor")
+                            } else {
+                                format!(
+                                    "Inserted {count_label} at the edit cursor; {unsupported_event_count} SysEx/meta event(s) were not stored in the project"
+                                )
+                            };
+                        }
+                    }
+                }
+            }
             Message::RunAudioAssetManagement(operation) => {
                 task = self.start_audio_asset_management(operation);
             }

@@ -1,0 +1,11 @@
+# MIDI file import
+
+P7 now has a first end-to-end Standard MIDI File import path at `Insert > MIDI file…`. The file is read and decoded off the UI thread. The insertion action creates one new project track and one non-looping MIDI item for each source track with channel events, places the items at the project edit cursor, and groups the entire import in one undoable transaction.
+
+The decoder accepts PPQ-timed SMF format 0 and format 1. It validates chunk bounds, VLQs, status/data bytes, declared track counts, and End of Track placement. It expands running status and retains event order, SysEx payloads, and Meta payloads in `MidiFileImport`. Input is limited to 64 MiB, 1,024 tracks, and 1,000,000 events. SMPTE divisions and format 2 are rejected with an error.
+
+The project conversion scales event positions from the file PPQ to the current project PPQ using nearest-tick rounding. It maps Note On/Off, CC, Pitch Bend, Program Change, Poly Aftertouch, and Channel Pressure to the existing project model. Repeated notes with the same channel and pitch pair FIFO. A Note Off without a Note On, an unmatched Note On, or a note whose converted duration is zero rejects the entire import. Source track names are used when present; meta-only tracks are not materialized as project tracks.
+
+The project model does not yet store raw SMF event order across event classes, SysEx, text/marker/region payloads, tempo, meter, key-signature, or other Meta events. The decoder preserves those events in its parsing result, but the desktop import converts only currently modeled event classes and reports the number of SysEx/Meta events it did not store. Type 1 conductor metadata is therefore not applied to the project tempo or meter map. This work does not complete MIDI file import parity; these differences and the missing REAPER comparison remain open.
+
+Verification covers format 0/1 parsing, running status, track separation, PPQ scaling, supported event conversion, SysEx/Meta counting, malformed input rejection, note pairing, transaction rollback, Undo/Redo, project snapshot restoration, SQLite save/reopen, and the desktop result-message handler. Linux REAPER 7.82 / Default 7 file-import behavior and a current-build desktop screenshot have not yet been captured.

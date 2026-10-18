@@ -1,13 +1,87 @@
 use crate::{
-    FrameRate, ItemId, MidiItem, MidiItemPosition, MidiNote, Project, TempoCurve, TrackId,
+    FrameRate, ItemId, MidiChannelPressureData, MidiControllerData, MidiItem, MidiItemPosition,
+    MidiNote, MidiNoteData, MidiPitchBendData, MidiPolyAftertouchData, MidiProgramChangeData,
+    Project, TempoCurve, TrackId,
 };
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 
 const MAX_MIDI_FILE_EVENTS: usize = 1_000_000;
+/// Maximum byte count accepted by the Standard MIDI File decoder.
+pub const MAX_MIDI_FILE_IMPORT_BYTES: u64 = 64 * 1024 * 1024;
+const MAX_MIDI_FILE_BYTES: usize = MAX_MIDI_FILE_IMPORT_BYTES as usize;
+const MAX_MIDI_FILE_TRACKS: usize = 1_024;
 
 const MAX_VLQ: u64 = 0x0fff_ffff;
 const MAX_TEMPO_EVENTS: usize = 100_000;
 const TEMPO_CURVE_TOLERANCE_BPM: f64 = 0.02;
+
+/// The Standard MIDI File layout decoded from an input file.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum MidiFileFormat {
+    /// A single track containing all MIDI and metadata events.
+    Type0,
+    /// A conductor track and one or more independent MIDI tracks.
+    Type1,
+}
+
+/// A decoded Standard MIDI File that retains each source event in order.
+///
+/// Event payloads are kept in their original form so callers can preserve channel messages,
+/// SysEx and metadata even when the current project model cannot edit every event type yet.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MidiFileImport {
+    pub format: MidiFileFormat,
+    pub ticks_per_quarter_note: u16,
+    pub tracks: Vec<MidiFileTrack>,
+}
+
+/// One decoded track chunk from a Standard MIDI File.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MidiFileTrack {
+    /// Absolute tick of the final event in the source track.
+    pub end_tick: u64,
+    /// Source events in their original order, with running status expanded.
+    pub events: Vec<MidiFileEvent>,
+}
+
+/// One absolute-position event in an imported MIDI file.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MidiFileEvent {
+    pub tick: u64,
+    pub kind: MidiFileEventKind,
+}
+
+/// An SMF event, retaining opaque payloads for future project-model support.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum MidiFileEventKind {
+    /// Channel status byte and its one or two data bytes.
+    Channel { status: u8, data: Vec<u8> },
+    /// SysEx status (`0xF0` or `0xF7`) and its length-prefixed payload.
+    SystemExclusive { status: u8, data: Vec<u8> },
+    /// Meta event type and its length-prefixed payload, including End of Track.
+    Meta { kind: u8, data: Vec<u8> },
+}
+
+/// One SMF track converted to event types supported by the project editor.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MidiImportedTrack {
+    pub name: String,
+    pub length_ticks: u64,
+    pub notes: Vec<MidiNoteData>,
+    pub controllers: Vec<MidiControllerData>,
+    pub pitch_bends: Vec<MidiPitchBendData>,
+    pub program_changes: Vec<MidiProgramChangeData>,
+    pub poly_aftertouches: Vec<MidiPolyAftertouchData>,
+    pub channel_pressures: Vec<MidiChannelPressureData>,
+}
+
+/// Project-compatible event data decoded from an SMF file.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MidiFileProjectImport {
+    pub tracks: Vec<MidiImportedTrack>,
+    /// SysEx and metadata that the current editable MIDI model cannot store.
+    pub unsupported_event_count: usize,
+}
 
 #[derive(Debug)]
 struct Event {
@@ -115,6 +189,428 @@ impl MidiExportOptions {
             ..Self::default()
         }
     }
+}
+
+/// Decodes a Standard MIDI File while preserving channel, SysEx, and metadata events.
+///
+/// Only PPQ-based format 0 and format 1 files are accepted. System-common messages are not part
+/// of SMF track event streams and are rejected. The parser enforces file, track, and event
+/// limits before allocating from untrusted chunk lengths.
+pub fn decode_standard_midi(bytes: &[u8]) -> Result<MidiFileImport, String> {
+    if bytes.len() > MAX_MIDI_FILE_BYTES {
+        return Err("MIDI file exceeds the 64 MiB import limit".to_owned());
+    }
+    if bytes.get(..4) != Some(b"MThd") {
+        return Err("MIDI file is missing its MThd header".to_owned());
+    }
+    let header_length = read_u32(bytes, 4)? as usize;
+    if header_length < 6 {
+        return Err("MIDI header is shorter than six bytes".to_owned());
+    }
+    let header_end = 8_usize
+        .checked_add(header_length)
+        .filter(|end| *end <= bytes.len())
+        .ok_or_else(|| "MIDI header is truncated".to_owned())?;
+    let format_number = read_u16(bytes, 8)?;
+    let format = match format_number {
+        0 => MidiFileFormat::Type0,
+        1 => MidiFileFormat::Type1,
+        2 => return Err("MIDI format 2 patterns are not supported for import".to_owned()),
+        _ => return Err(format!("MIDI file uses unsupported format {format_number}")),
+    };
+    let declared_track_count = read_u16(bytes, 10)? as usize;
+    if declared_track_count == 0 || declared_track_count > MAX_MIDI_FILE_TRACKS {
+        return Err(format!(
+            "MIDI track count must be in the range 1..={MAX_MIDI_FILE_TRACKS}"
+        ));
+    }
+    if format == MidiFileFormat::Type0 && declared_track_count != 1 {
+        return Err("format 0 MIDI files must contain exactly one track".to_owned());
+    }
+    let division = read_u16(bytes, 12)?;
+    if division & 0x8000 != 0 {
+        return Err("SMPTE-timed MIDI files are not supported for import".to_owned());
+    }
+    if division == 0 {
+        return Err("MIDI ticks per quarter note must be greater than zero".to_owned());
+    }
+
+    let mut cursor = header_end;
+    let mut event_count = 0_usize;
+    let mut tracks = Vec::with_capacity(declared_track_count);
+    while tracks.len() < declared_track_count {
+        let chunk_header_end = cursor
+            .checked_add(8)
+            .filter(|end| *end <= bytes.len())
+            .ok_or_else(|| "MIDI track chunk header is truncated".to_owned())?;
+        if bytes.get(cursor..cursor + 4) != Some(b"MTrk") {
+            return Err("MIDI file is missing a declared MTrk chunk".to_owned());
+        }
+        let chunk_length = read_u32(bytes, cursor + 4)? as usize;
+        cursor = chunk_header_end;
+        let chunk_end = cursor
+            .checked_add(chunk_length)
+            .filter(|end| *end <= bytes.len())
+            .ok_or_else(|| "MIDI track chunk is truncated".to_owned())?;
+        tracks.push(decode_midi_track(
+            &bytes[cursor..chunk_end],
+            &mut event_count,
+        )?);
+        cursor = chunk_end;
+    }
+    if cursor != bytes.len() {
+        return Err("MIDI file contains data after its declared track chunks".to_owned());
+    }
+
+    Ok(MidiFileImport {
+        format,
+        ticks_per_quarter_note: division,
+        tracks,
+    })
+}
+
+fn decode_midi_track(bytes: &[u8], event_count: &mut usize) -> Result<MidiFileTrack, String> {
+    let mut cursor = 0_usize;
+    let mut tick = 0_u64;
+    let mut running_status = None;
+    let mut events = Vec::new();
+
+    while cursor < bytes.len() {
+        let delta = read_vlq(bytes, &mut cursor)?;
+        tick = tick
+            .checked_add(delta)
+            .ok_or_else(|| "MIDI event position exceeds the supported timeline".to_owned())?;
+        let first = *bytes
+            .get(cursor)
+            .ok_or_else(|| "MIDI track ends before its event status".to_owned())?;
+        let (status, first_data) = if first & 0x80 != 0 {
+            cursor += 1;
+            (first, None)
+        } else {
+            (
+                running_status.ok_or_else(|| {
+                    "MIDI track uses running status before a channel status".to_owned()
+                })?,
+                Some(first),
+            )
+        };
+
+        let kind = match status {
+            0x80..=0xEF => {
+                let data_length = if matches!(status & 0xF0, 0xC0 | 0xD0) {
+                    1
+                } else {
+                    2
+                };
+                let mut data = Vec::with_capacity(data_length);
+                if let Some(first_data) = first_data {
+                    if first_data >= 0x80 {
+                        return Err("MIDI channel data byte has its status bit set".to_owned());
+                    }
+                    data.push(first_data);
+                    cursor += 1;
+                }
+                while data.len() < data_length {
+                    let byte = *bytes
+                        .get(cursor)
+                        .ok_or_else(|| "MIDI channel event is truncated".to_owned())?;
+                    if byte & 0x80 != 0 {
+                        return Err(
+                            "MIDI channel event contains an unexpected status byte".to_owned()
+                        );
+                    }
+                    data.push(byte);
+                    cursor += 1;
+                }
+                running_status = Some(status);
+                MidiFileEventKind::Channel { status, data }
+            }
+            0xF0 | 0xF7 => {
+                running_status = None;
+                let length = read_vlq(bytes, &mut cursor)? as usize;
+                let end = cursor
+                    .checked_add(length)
+                    .filter(|end| *end <= bytes.len())
+                    .ok_or_else(|| "MIDI SysEx event is truncated".to_owned())?;
+                let data = bytes[cursor..end].to_vec();
+                cursor = end;
+                MidiFileEventKind::SystemExclusive { status, data }
+            }
+            0xFF => {
+                running_status = None;
+                let meta_kind = *bytes
+                    .get(cursor)
+                    .ok_or_else(|| "MIDI meta event is missing its type".to_owned())?;
+                cursor += 1;
+                let length = read_vlq(bytes, &mut cursor)? as usize;
+                let end = cursor
+                    .checked_add(length)
+                    .filter(|end| *end <= bytes.len())
+                    .ok_or_else(|| "MIDI meta event is truncated".to_owned())?;
+                if meta_kind == 0x2F && length != 0 {
+                    return Err("MIDI End of Track event must have an empty payload".to_owned());
+                }
+                let data = bytes[cursor..end].to_vec();
+                cursor = end;
+                let kind = MidiFileEventKind::Meta {
+                    kind: meta_kind,
+                    data,
+                };
+                if meta_kind == 0x2F {
+                    count_midi_event(event_count)?;
+                    events.push(MidiFileEvent { tick, kind });
+                    if cursor != bytes.len() {
+                        return Err("MIDI track contains events after End of Track".to_owned());
+                    }
+                    return Ok(MidiFileTrack {
+                        end_tick: tick,
+                        events,
+                    });
+                }
+                kind
+            }
+            _ => {
+                return Err(format!(
+                    "MIDI track contains unsupported system status 0x{status:02X}"
+                ));
+            }
+        };
+
+        count_midi_event(event_count)?;
+        events.push(MidiFileEvent { tick, kind });
+    }
+
+    Ok(MidiFileTrack {
+        end_tick: tick,
+        events,
+    })
+}
+
+fn count_midi_event(event_count: &mut usize) -> Result<(), String> {
+    *event_count = event_count
+        .checked_add(1)
+        .ok_or_else(|| "MIDI file contains too many events".to_owned())?;
+    if *event_count > MAX_MIDI_FILE_EVENTS {
+        return Err("MIDI file exceeds the event import limit".to_owned());
+    }
+    Ok(())
+}
+
+fn read_vlq(bytes: &[u8], cursor: &mut usize) -> Result<u64, String> {
+    let mut value = 0_u64;
+    for _ in 0..4 {
+        let byte = *bytes
+            .get(*cursor)
+            .ok_or_else(|| "MIDI variable-length quantity is truncated".to_owned())?;
+        *cursor += 1;
+        value = (value << 7) | u64::from(byte & 0x7F);
+        if byte & 0x80 == 0 {
+            return Ok(value);
+        }
+    }
+    Err("MIDI variable-length quantity exceeds four bytes".to_owned())
+}
+
+fn read_u16(bytes: &[u8], offset: usize) -> Result<u16, String> {
+    let field = bytes
+        .get(offset..offset + 2)
+        .ok_or_else(|| "MIDI file header is truncated".to_owned())?;
+    Ok(u16::from_be_bytes([field[0], field[1]]))
+}
+
+fn read_u32(bytes: &[u8], offset: usize) -> Result<u32, String> {
+    let field = bytes
+        .get(offset..offset + 4)
+        .ok_or_else(|| "MIDI file chunk header is truncated".to_owned())?;
+    Ok(u32::from_be_bytes([field[0], field[1], field[2], field[3]]))
+}
+
+impl MidiFileImport {
+    /// Converts supported channel events to editable project data at the project's PPQ rate.
+    ///
+    /// MIDI file metadata and SysEx stay available in [`MidiFileImport::tracks`], but cannot yet
+    /// be stored in a project item. Their count is returned so the caller can report the loss.
+    pub fn to_project_import(&self, project_ppq: u32) -> Result<MidiFileProjectImport, String> {
+        if project_ppq == 0 {
+            return Err("project PPQ resolution must be greater than zero".to_owned());
+        }
+        let mut imported_tracks = Vec::new();
+        let mut unsupported_event_count = 0_usize;
+        for (track_index, track) in self.tracks.iter().enumerate() {
+            let mut track_name = None;
+            let mut notes = Vec::new();
+            let mut controllers = Vec::new();
+            let mut pitch_bends = Vec::new();
+            let mut program_changes = Vec::new();
+            let mut poly_aftertouches = Vec::new();
+            let mut channel_pressures = Vec::new();
+            let mut open_notes = HashMap::<(u8, u8), VecDeque<(u64, u8)>>::new();
+            let mut has_channel_events = false;
+            let mut last_content_tick =
+                scale_import_tick(track.end_tick, self.ticks_per_quarter_note, project_ppq)?;
+
+            for event in &track.events {
+                let tick = scale_import_tick(event.tick, self.ticks_per_quarter_note, project_ppq)?;
+                match &event.kind {
+                    MidiFileEventKind::Channel { status, data } => {
+                        has_channel_events = true;
+                        last_content_tick = last_content_tick.max(tick);
+                        let channel = status & 0x0F;
+                        match status & 0xF0 {
+                            0x80 => {
+                                finish_imported_note(
+                                    &mut open_notes,
+                                    &mut notes,
+                                    channel,
+                                    data[0],
+                                    tick,
+                                    data[1],
+                                )?;
+                            }
+                            0x90 if data[1] == 0 => {
+                                finish_imported_note(
+                                    &mut open_notes,
+                                    &mut notes,
+                                    channel,
+                                    data[0],
+                                    tick,
+                                    0,
+                                )?;
+                            }
+                            0x90 => open_notes
+                                .entry((channel, data[0]))
+                                .or_default()
+                                .push_back((tick, data[1])),
+                            0xA0 => poly_aftertouches.push(MidiPolyAftertouchData {
+                                channel,
+                                tick,
+                                note: data[0],
+                                value: data[1],
+                            }),
+                            0xB0 => controllers.push(MidiControllerData {
+                                channel,
+                                tick,
+                                controller: data[0],
+                                value: data[1],
+                            }),
+                            0xC0 => program_changes.push(MidiProgramChangeData {
+                                channel,
+                                tick,
+                                program: data[0],
+                            }),
+                            0xD0 => channel_pressures.push(MidiChannelPressureData {
+                                channel,
+                                tick,
+                                value: data[0],
+                            }),
+                            0xE0 => pitch_bends.push(MidiPitchBendData {
+                                channel,
+                                tick,
+                                value: u16::from(data[0]) | (u16::from(data[1]) << 7),
+                            }),
+                            _ => unreachable!("the MIDI channel status range is exhaustive"),
+                        }
+                    }
+                    MidiFileEventKind::SystemExclusive { .. } => {
+                        unsupported_event_count = unsupported_event_count.saturating_add(1);
+                    }
+                    MidiFileEventKind::Meta { kind, data } => match kind {
+                        0x2F => {}
+                        0x03 if track_name.is_none() => {
+                            let name = String::from_utf8_lossy(data)
+                                .trim_matches('\0')
+                                .trim()
+                                .chars()
+                                .take(128)
+                                .collect::<String>();
+                            if !name.is_empty() {
+                                track_name = Some(name);
+                            }
+                        }
+                        _ => {
+                            unsupported_event_count = unsupported_event_count.saturating_add(1);
+                        }
+                    },
+                }
+            }
+
+            if open_notes.values().any(|queue| !queue.is_empty()) {
+                return Err(format!(
+                    "MIDI track {} has a Note On without a matching Note Off",
+                    track_index + 1
+                ));
+            }
+            if !has_channel_events {
+                continue;
+            }
+            let length_ticks = last_content_tick.max(1);
+            if notes.iter().any(|note: &MidiNoteData| {
+                note.tick
+                    .checked_add(note.duration)
+                    .is_none_or(|end| end > length_ticks)
+            }) {
+                return Err(format!(
+                    "MIDI track {} contains a note beyond its end position",
+                    track_index + 1
+                ));
+            }
+            imported_tracks.push(MidiImportedTrack {
+                name: track_name.unwrap_or_else(|| format!("MIDI {}", track_index + 1)),
+                length_ticks,
+                notes,
+                controllers,
+                pitch_bends,
+                program_changes,
+                poly_aftertouches,
+                channel_pressures,
+            });
+        }
+        Ok(MidiFileProjectImport {
+            tracks: imported_tracks,
+            unsupported_event_count,
+        })
+    }
+}
+
+fn finish_imported_note(
+    open_notes: &mut HashMap<(u8, u8), VecDeque<(u64, u8)>>,
+    notes: &mut Vec<MidiNoteData>,
+    channel: u8,
+    pitch: u8,
+    tick: u64,
+    off_velocity: u8,
+) -> Result<(), String> {
+    let Some((start_tick, velocity)) = open_notes
+        .get_mut(&(channel, pitch))
+        .and_then(VecDeque::pop_front)
+    else {
+        return Err(format!(
+            "MIDI Note Off at tick {tick} has no matching Note On for channel {} pitch {pitch}",
+            channel + 1
+        ));
+    };
+    if tick <= start_tick {
+        return Err(format!(
+            "MIDI note on channel {} pitch {pitch} has no positive duration",
+            channel + 1
+        ));
+    }
+    notes.push(MidiNoteData {
+        pitch,
+        channel,
+        tick: start_tick,
+        duration: tick - start_tick,
+        velocity,
+        off_velocity,
+    });
+    Ok(())
+}
+
+fn scale_import_tick(tick: u64, source_ppq: u16, project_ppq: u32) -> Result<u64, String> {
+    let numerator = u128::from(tick) * u128::from(project_ppq);
+    let scaled = (numerator + u128::from(source_ppq / 2)) / u128::from(source_ppq);
+    u64::try_from(scaled)
+        .map_err(|_| "scaled MIDI position exceeds the supported timeline".to_owned())
 }
 
 struct MidiExportScope<'a> {

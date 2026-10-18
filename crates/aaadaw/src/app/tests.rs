@@ -24,9 +24,9 @@ use crate::timeline::{SnapGrid, TimelineEvent};
 #[cfg(all(feature = "jack-backend", feature = "pipewire-backend"))]
 use aaadaw_app::PlaybackBackend;
 use aaadaw_core::{
-    DawAction, MidiChannelPressureData, MidiControllerData, MidiItemPosition, MidiNoteData,
-    MidiPitchBendData, MidiPolyAftertouchData, MidiProgramChangeData, Project, RazorEditArea,
-    TrackFxPlugin,
+    DawAction, MidiChannelPressureData, MidiControllerData, MidiImportedTrack, MidiItemPosition,
+    MidiNoteData, MidiPitchBendData, MidiPolyAftertouchData, MidiProgramChangeData, Project,
+    RazorEditArea, TrackFxPlugin,
 };
 use aaadaw_media::{AudioStreamDecoder, AudioWaveform};
 use aaadaw_storage::{ArrangementViewState, ProjectSessionLock, ProjectStore};
@@ -8326,6 +8326,47 @@ fn native_picker_results_fill_the_requested_path_fields() {
         replacement_path.to_string_lossy()
     );
     assert!(!app.path_picker_busy);
+}
+
+#[test]
+fn midi_file_import_message_creates_tracks_and_reports_unmodeled_events() {
+    let mut app = App {
+        import_busy: true,
+        ..App::default()
+    };
+    app.timeline.edit_cursor_tick = 1_440;
+
+    let _ = app.update(Message::MidiFileImportFinished(Ok((
+        vec![MidiImportedTrack {
+            name: "Piano".to_owned(),
+            length_ticks: 960,
+            notes: vec![MidiNoteData {
+                pitch: 60,
+                channel: 0,
+                tick: 0,
+                duration: 480,
+                velocity: 100,
+                off_velocity: 18,
+            }],
+            controllers: Vec::new(),
+            pitch_bends: Vec::new(),
+            program_changes: Vec::new(),
+            poly_aftertouches: Vec::new(),
+            channel_pressures: Vec::new(),
+        }],
+        2,
+    ))));
+
+    assert!(!app.import_busy);
+    assert_eq!(app.project.tracks().len(), 1);
+    assert_eq!(app.project.tracks()[0].name(), "Piano");
+    assert_eq!(app.project.midi_items().len(), 1);
+    assert_eq!(app.project.midi_items()[0].start_tick(), 1_440);
+    assert_eq!(app.project.midi_items()[0].notes()[0].off_velocity(), 18);
+    assert_eq!(
+        app.status,
+        "Inserted 1 MIDI track at the edit cursor; 2 SysEx/meta event(s) were not stored in the project"
+    );
 }
 
 #[test]

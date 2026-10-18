@@ -3090,6 +3090,98 @@ impl Project {
                 }
                 return Ok(ProjectEvent::Transaction { tx_id, events });
             }
+            DawAction::ImportMidiTrack { start_tick, track } => {
+                if track.length_ticks == 0 {
+                    return Err(ActionError::InvalidMidiItemLength);
+                }
+                if start_tick.checked_add(track.length_ticks).is_none() {
+                    return Err(ActionError::InvalidMidiItemPosition);
+                }
+                let mut events = Vec::new();
+                let track_index = state.tracks.len();
+                let track_id = TrackId::from_raw(ids.next_track_id);
+                events.push(Self::apply_action(
+                    state,
+                    ids,
+                    DawAction::CreateTrack {
+                        index: track_index,
+                        name: track.name.clone(),
+                    },
+                )?);
+                let item_id = ItemId::from_raw(ids.next_item_id);
+                events.push(Self::apply_action(
+                    state,
+                    ids,
+                    DawAction::InsertMidiItem {
+                        track_id,
+                        start_tick,
+                        length_ticks: track.length_ticks,
+                    },
+                )?);
+                events.push(Self::apply_action(
+                    state,
+                    ids,
+                    DawAction::SetMidiItemName {
+                        item_id,
+                        name: track.name,
+                    },
+                )?);
+                events.push(Self::apply_action(
+                    state,
+                    ids,
+                    DawAction::SetMidiItemLoopSource {
+                        item_id,
+                        enabled: false,
+                    },
+                )?);
+                if !track.notes.is_empty() {
+                    events.push(Self::apply_action(
+                        state,
+                        ids,
+                        DawAction::AddMidiNotes {
+                            item_id,
+                            notes: track.notes,
+                        },
+                    )?);
+                }
+                for action in [
+                    (!track.controllers.is_empty()).then_some(DawAction::SetMidiControllers {
+                        item_id,
+                        controllers: track.controllers,
+                    }),
+                    (!track.pitch_bends.is_empty()).then_some(DawAction::SetMidiPitchBends {
+                        item_id,
+                        pitch_bends: track.pitch_bends,
+                    }),
+                    (!track.program_changes.is_empty()).then_some(
+                        DawAction::SetMidiProgramChanges {
+                            item_id,
+                            program_changes: track.program_changes,
+                        },
+                    ),
+                    (!track.poly_aftertouches.is_empty()).then_some(
+                        DawAction::SetMidiPolyAftertouches {
+                            item_id,
+                            poly_aftertouches: track.poly_aftertouches,
+                        },
+                    ),
+                    (!track.channel_pressures.is_empty()).then_some(
+                        DawAction::SetMidiChannelPressures {
+                            item_id,
+                            channel_pressures: track.channel_pressures,
+                        },
+                    ),
+                ]
+                .into_iter()
+                .flatten()
+                {
+                    events.push(Self::apply_action(state, ids, action)?);
+                }
+                return Ok(ProjectEvent::Transaction {
+                    tx_id: item_id.value(),
+                    events,
+                });
+            }
             DawAction::InsertLoopedAudioItemWithMix {
                 track_id,
                 media_ref,
@@ -5531,6 +5623,9 @@ impl Project {
                 }
             }
             DawAction::BatchTransaction { .. } => {
+                return Err(ActionError::HistoryInvariantViolation);
+            }
+            DawAction::ImportMidiTrack { .. } => {
                 return Err(ActionError::HistoryInvariantViolation);
             }
             DawAction::InsertLoopedAudioItemWithMix { .. } => {

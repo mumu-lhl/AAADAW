@@ -1,7 +1,7 @@
 use aaadaw_core::{
     BpmBasis, DawAction, MeterPointSnapshot, MidiChannelPressureData, MidiControllerData,
-    MidiNoteData, MidiPitchBendData, MidiPolyAftertouchData, MidiProgramChangeData, Project,
-    RazorEditArea, VolumeAutomationPoint,
+    MidiImportedTrack, MidiNoteData, MidiPitchBendData, MidiPolyAftertouchData,
+    MidiProgramChangeData, Project, RazorEditArea, VolumeAutomationPoint,
 };
 use aaadaw_storage::{CURRENT_SCHEMA_VERSION, ProjectStore, StorageError};
 use rusqlite::Connection;
@@ -14,6 +14,67 @@ use std::thread;
 use std::time::Duration;
 
 static NEXT_FILE_ID: AtomicU64 = AtomicU64::new(0);
+
+#[test]
+fn imported_midi_tracks_round_trip_through_the_project_store() {
+    let path = project_path();
+    let mut project = Project::new();
+    project
+        .apply(DawAction::BatchTransaction {
+            tx_id: 1,
+            actions: vec![DawAction::ImportMidiTrack {
+                start_tick: 480,
+                track: MidiImportedTrack {
+                    name: "Imported piano".to_owned(),
+                    length_ticks: 960,
+                    notes: vec![MidiNoteData {
+                        pitch: 64,
+                        channel: 2,
+                        tick: 12,
+                        duration: 720,
+                        velocity: 101,
+                        off_velocity: 33,
+                    }],
+                    controllers: vec![MidiControllerData {
+                        controller: 7,
+                        channel: 2,
+                        tick: 0,
+                        value: 96,
+                    }],
+                    pitch_bends: vec![MidiPitchBendData {
+                        channel: 2,
+                        tick: 24,
+                        value: 4_321,
+                    }],
+                    program_changes: vec![MidiProgramChangeData {
+                        channel: 2,
+                        tick: 0,
+                        program: 11,
+                    }],
+                    poly_aftertouches: vec![MidiPolyAftertouchData {
+                        channel: 2,
+                        tick: 36,
+                        note: 64,
+                        value: 70,
+                    }],
+                    channel_pressures: vec![MidiChannelPressureData {
+                        channel: 2,
+                        tick: 48,
+                        value: 77,
+                    }],
+                },
+            }],
+        })
+        .unwrap();
+
+    let mut store = ProjectStore::open(&path).unwrap();
+    store.save(&project).unwrap();
+    store.close().unwrap();
+    let store = ProjectStore::open(&path).unwrap();
+    assert_eq!(store.load().unwrap().snapshot(), project.snapshot());
+    store.close().unwrap();
+    remove_database(&path);
+}
 
 #[test]
 fn track_razor_edit_areas_migrate_and_round_trip() {

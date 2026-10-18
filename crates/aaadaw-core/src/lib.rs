@@ -33,8 +33,10 @@ pub use midi::{
     MidiPolyAftertouchData, MidiProgramChangeData, NoteId,
 };
 pub use midi_file::{
-    MidiExportItemScope, MidiExportOptions, MidiExportSelection, MidiExportTimeScope, MidiFileType,
-    MidiMarkerType, encode_standard_midi, encode_standard_midi_with_conductor_track_name,
+    MAX_MIDI_FILE_IMPORT_BYTES, MidiExportItemScope, MidiExportOptions, MidiExportSelection,
+    MidiExportTimeScope, MidiFileEvent, MidiFileEventKind, MidiFileFormat, MidiFileImport,
+    MidiFileProjectImport, MidiFileTrack, MidiFileType, MidiImportedTrack, MidiMarkerType,
+    decode_standard_midi, encode_standard_midi, encode_standard_midi_with_conductor_track_name,
     encode_standard_midi_with_selection, midi_export_has_items_in_scope,
 };
 pub use project::{FxParameterChange, MAX_FX_PARAMETER_AUTOMATION_POINTS, Project};

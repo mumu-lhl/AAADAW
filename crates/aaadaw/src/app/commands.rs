@@ -75,6 +75,7 @@ pub(crate) enum CommandId {
     ToggleSelectedProjectRegions,
     ToggleSelectedProjectRegionsAndMarkers,
     MoveProjectMarkerSlot(u8),
+    ImportMidiFile,
     ImportAudio,
     OpenItemProperties,
     ToggleItemProperties,
@@ -224,6 +225,7 @@ enum CommandKind {
     ToggleSelectedProjectRegions,
     ToggleSelectedProjectRegionsAndMarkers,
     MoveProjectMarkerSlot(u8),
+    ImportMidiFile,
     ImportAudio,
     OpenItemProperties,
     ToggleItemProperties,
@@ -1112,6 +1114,16 @@ const COMMANDS: &[CommandDefinition] = &[
             "marker slot 10",
         ],
         shortcuts: PROJECT_MARKER_SLOT_10_SHORTCUT,
+        destructive: false,
+        separator_before: false,
+    },
+    CommandDefinition {
+        kind: CommandKind::ImportMidiFile,
+        menu: Some(MainMenu::Insert),
+        category: "Insert",
+        label: "MIDI file…",
+        aliases: &["import midi", "import midi file", "midi file"],
+        shortcuts: &[],
         destructive: false,
         separator_before: false,
     },
@@ -2796,6 +2808,7 @@ fn command_kind_id(kind: CommandKind) -> &'static str {
             "ruler.toggle-selected-project-regions-and-markers"
         }
         CommandKind::MoveProjectMarkerSlot(slot) => numbered_project_marker_action_id(slot),
+        CommandKind::ImportMidiFile => "insert.import-midi-file",
         CommandKind::ImportAudio => "insert.import-audio",
         CommandKind::OpenItemProperties => "item.properties",
         CommandKind::ToggleItemProperties => "item.properties.toggle",
@@ -3041,6 +3054,7 @@ pub(super) fn dispatch(app: &mut App, command: CommandId) -> Task<Message> {
         }
         CommandId::MoveProjectMarkerSlot(slot) => Message::MoveProjectMarkerSlot(slot),
         CommandId::ImportAudio => Message::PickPath(PathPickerTarget::ImportAudioToProject),
+        CommandId::ImportMidiFile => Message::PickPath(PathPickerTarget::ImportMidiToProject),
         CommandId::OpenItemProperties => Message::OpenItemProperties,
         CommandId::ToggleItemProperties => Message::ToggleItemProperties,
         CommandId::ToggleMuteSelectedItems => Message::ToggleSelectedItemsMute,
@@ -3541,6 +3555,7 @@ fn command_enabled(app: &App, kind: CommandKind, track: Option<TrackState>) -> b
                 && !app.project.tracks().is_empty()
                 && app.media_store_path().is_some()
         }
+        CommandKind::ImportMidiFile => !project_edit_busy(app),
         CommandKind::DuplicateSelectedAudioItem => {
             !project_edit_busy(app)
                 && app.timeline.selected_items.len() == 1
@@ -3777,6 +3792,7 @@ fn command_id(kind: CommandKind) -> CommandId {
         }
         CommandKind::MoveProjectMarkerSlot(slot) => CommandId::MoveProjectMarkerSlot(slot),
         CommandKind::ImportAudio => CommandId::ImportAudio,
+        CommandKind::ImportMidiFile => CommandId::ImportMidiFile,
         CommandKind::OpenItemProperties => CommandId::OpenItemProperties,
         CommandKind::ToggleItemProperties => CommandId::ToggleItemProperties,
         CommandKind::ToggleMuteSelectedItems => CommandId::ToggleMuteSelectedItems,

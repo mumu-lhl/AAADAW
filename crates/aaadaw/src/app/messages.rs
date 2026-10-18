@@ -8,9 +8,9 @@ use aaadaw_app::{
     AudioAssetManagementOperation, AudioAssetManagementResult, WavChannelCount, WavSampleFormat,
 };
 use aaadaw_core::{
-    DawAction, ItemId, MarkerId, MidiChannelPressureData, MidiControllerData, MidiNoteData,
-    MidiPitchBendData, MidiPolyAftertouchData, MidiProgramChangeData, NoteId, Project, RegionId,
-    TrackId,
+    DawAction, ItemId, MarkerId, MidiChannelPressureData, MidiControllerData, MidiImportedTrack,
+    MidiNoteData, MidiPitchBendData, MidiPolyAftertouchData, MidiProgramChangeData, NoteId,
+    Project, RegionId, TrackId,
 };
 use aaadaw_engine::MasterOutputCeiling;
 use aaadaw_storage::{ArrangementViewState, ProjectSessionLock};
@@ -116,6 +116,7 @@ pub(crate) enum PathPickerTarget {
     ExportWav,
     ExportMidi,
     ImportAudio,
+    ImportMidiToProject,
     ImportAudioToProject,
     RelinkAudio,
     AddClapPluginPath,
@@ -883,6 +884,7 @@ pub(crate) enum Message {
     CancelAudioImport,
     AudioImportStarted(SharedAudioImportWorker),
     AudioImportFinished(Result<DawAction, String>),
+    MidiFileImportFinished(Result<(Vec<MidiImportedTrack>, usize), String>),
     ReimportAudioItem(ItemId),
     RunAudioAssetManagement(AudioAssetManagementOperation),
     CancelAudioAssetManagement,
