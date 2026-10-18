@@ -37,6 +37,7 @@ pub enum MidiFileFormat {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MidiFileImport {
     pub format: MidiFileFormat,
+    /// Raw header division, interpreted as unsigned PPQ by REAPER 7.82 even when bit 15 is set.
     pub ticks_per_quarter_note: u16,
     pub tracks: Vec<MidiFileTrack>,
 }
@@ -252,9 +253,11 @@ impl MidiExportOptions {
 
 /// Decodes a Standard MIDI File while preserving channel, SysEx, and metadata events.
 ///
-/// PPQ-based format 0, format 1, and format 2 files are accepted. SMPTE time divisions and
-/// system-common messages are not part of the supported import model and are rejected. The parser
-/// enforces file, track, and event limits before allocating from untrusted chunk lengths.
+/// Format 0, format 1, and format 2 files are accepted. To match Linux REAPER 7.82, the raw
+/// 16-bit division is treated as unsigned PPQ even when its high bit marks an SMF SMPTE division;
+/// the low-level importer therefore preserves that native behavior. System-common messages are
+/// rejected. The parser enforces file, track, and event limits before allocating from untrusted
+/// chunk lengths.
 pub fn decode_standard_midi(bytes: &[u8]) -> Result<MidiFileImport, String> {
     if bytes.len() > MAX_MIDI_FILE_BYTES {
         return Err("MIDI file exceeds the 64 MiB import limit".to_owned());
@@ -287,9 +290,6 @@ pub fn decode_standard_midi(bytes: &[u8]) -> Result<MidiFileImport, String> {
         return Err("format 0 MIDI files must contain exactly one track".to_owned());
     }
     let division = read_u16(bytes, 12)?;
-    if division & 0x8000 != 0 {
-        return Err("SMPTE-timed MIDI files are not supported for import".to_owned());
-    }
     if division == 0 {
         return Err("MIDI ticks per quarter note must be greater than zero".to_owned());
     }
@@ -772,7 +772,7 @@ impl MidiFileImport {
                     track_index + 1
                 ));
             }
-            let length_ticks = last_content_tick.max(1);
+            let length_ticks = last_content_tick.max(u64::from(project_ppq)).max(1);
             if notes.iter().any(|note: &MidiNoteData| {
                 note.tick
                     .checked_add(note.duration)

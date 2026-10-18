@@ -895,7 +895,7 @@ fn imports_format_two_sequences_as_merged_or_expanded_tracks() {
     assert_eq!(imported.file_type, MidiFileFormat::Type2);
     assert_eq!(imported.tracks[0].name, "Sequence A");
     assert_eq!(imported.tracks[1].name, "Sequence B");
-    assert_eq!(imported.tracks[0].length_ticks, 480);
+    assert_eq!(imported.tracks[0].length_ticks, 960);
     assert_eq!(imported.tracks[1].length_ticks, 960);
 
     let merged = imported.tracks_for_options(MidiFileImportOptions::default());
@@ -919,8 +919,39 @@ fn imports_format_two_sequences_as_merged_or_expanded_tracks() {
 }
 
 #[test]
+fn reaper_782_interprets_smpte_division_as_unsigned_ppq() {
+    let track = [
+        0x00, 0xFF, 0x03, 0x05, b'S', b'M', b'P', b'T', b'E', // Track name
+        0x81, 0x7A, 0x90, 60, 100, // Note On at header division tick 250
+        0x81, 0x7A, 0xFF, 0x01, 0x04, b't', b'e', b'x', b't', // Text at tick 500
+        0x81, 0x7A, 0x80, 60, 24, // Note Off at tick 750
+        0x00, 0xFF, 0x2F, 0x00,
+    ];
+    let decoded = decode_standard_midi(&smf(0, 0xE728, &[&track])).unwrap();
+    assert_eq!(decoded.ticks_per_quarter_note, 59_176);
+
+    let imported = decoded.to_project_import(960).unwrap();
+    let track = &imported.tracks[0];
+    assert_eq!(track.notes[0].tick, 4);
+    assert_eq!(track.notes[0].duration, 8);
+    assert_eq!(track.length_ticks, 960);
+    assert_eq!(track.opaque_events[1].tick, 8);
+    assert!(track.event_order.iter().any(|entry| {
+        entry.target
+            == MidiEventOrderTarget::Note(MidiNoteData {
+                pitch: 60,
+                channel: 0,
+                tick: 4,
+                duration: 8,
+                velocity: 100,
+                off_velocity: 24,
+            })
+    }));
+}
+
+#[test]
 fn rejects_unsupported_time_bases_and_truncated_or_invalid_events() {
-    assert!(decode_standard_midi(&smf(0, 0xE728, &[&[0x00, 0xFF, 0x2F, 0x00]])).is_err());
+    assert!(decode_standard_midi(&smf(0, 0, &[&[0x00, 0xFF, 0x2F, 0x00]])).is_err());
     assert!(decode_standard_midi(&smf(0, 480, &[&[0x80, 0x80, 0x80, 0x80, 0x00]])).is_err());
     assert!(decode_standard_midi(&smf(0, 480, &[&[0x00, 0x90, 60]])).is_err());
     assert!(decode_standard_midi(&smf(0, 480, &[&[0x00, 0xF0, 0x03, 0x01]])).is_err());
