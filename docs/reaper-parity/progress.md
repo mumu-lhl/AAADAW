@@ -2540,3 +2540,11 @@ AAADAW 空白已打开 MIDI item 现在绘制默认稳定音高网格；空白�
 AAADAW inline MIDI 增加每个 item 独立的音符选择、Ctrl 点击增删、选中音符蓝色高亮和整组选中音符的共同时间/音高位移；非循环 MIDI source 上整组时间与音高增量共同限界，编辑通过一次 `EditMidiNotes` 列表提交。Cranelift 桌面程序实窗按相同 tick/网格操作，保存后读回为 840/1090/1640，未选 E4 仍为 550；选区和移动前后截图、工程文件及 SHA-256 在 [inline editor fixture manifest](../verification/reaper-parity/fixtures/midi-inline-editor.tsv)。新增控制点击选择、原厂 tick 值组移动和 `inline_midi_group_edit_is_one_undoable_transaction` 应用层 Undo/Redo 回归后，AAADAW 桌面测试 **797/797** 通过；Stable all-target Clippy (`-D warnings`)、fmt 与 diff 检查通过。
 
 `MIDI-INLINE-EDITOR-001`、UI-020 与 P7 继续 `in_progress`：REAPER 本轮只验证了已选音符的水平组移动，逐音音高映射、resize 手柄、loop-source 边界、多 item 选择与鼠标缩放仍未对照；不得据该组用例判定其他 MIDI 编辑手势已对齐。
+
+### 2026-10-18 Arrange inline MIDI Ctrl-drag 复制所选音符组
+
+REAPER 7.82 Linux / Default 7 已实测 1/32（120 tick）网格上的 Ctrl 拖拽：从 C4 的 840 tick 位置右移 120 tick 后，原 C4/D4/F4 保持在 840/1090/1640 并取消选中；新副本选中在 960/1210/1760，未选 E4 保持 550，音高与 120 tick 音长不变。前后截图与两份保存 RPP 的 raw MIDI event 读回均已登记。
+
+AAADAW inline MIDI 现在将 Control/Command 拖动映射为副本事务：拖动选中音符组时保留原组并按共同时间/音高增量创建新音符，释放时选中新副本；无实际拖动时才提交修饰键点击的选择切换，避免 Ctrl 拖动起始先把锚点从组选择中移除。通过已有 `CopyDragMidiNotes`/`AddMidiNotes` 一次提交并同步编排视图与钢琴卷帘选择。最新 Cranelift 桌面程序在 Xvfb :314 对照同一工程实际拖动、保存并读回精确 7 音状态；实窗 Ctrl+Z 恢复 4 个源音符及源组选区、Ctrl+Shift+Z 重做 7 个音符及副本组选区。应用历史同时保存 inline 与已打开钢琴卷帘的前后选区；新增手势/事务回归后桌面测试 **799/799** 通过；Stable all-target Clippy（`-D warnings`）、fmt 与 diff check 通过，Build ID 与 SHA-256、前后/Undo/Redo 截图和保存工程已列入 [inline editor fixture manifest](../verification/reaper-parity/fixtures/midi-inline-editor.tsv)。
+
+`MIDI-INLINE-EDITOR-001`、UI-020 与 P7 仍为 `in_progress`：本次确认的是 Ctrl-drag 复制和 AAADAW Ctrl-click 行为；原厂 Ctrl-click 增删映射、音高操作、resize 边界、zoom/range、loop source、多 item 等仍需各自实测，不能据此判定内嵌 MIDI 编辑器整体对齐。

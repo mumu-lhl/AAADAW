@@ -29,7 +29,7 @@ aaadaw_blank_gesture_capture_display	Xvfb :312, X11, 1440x900x24, xfwm4 without 
 aaadaw_blank_gesture_test_suite	Cranelift: cargo +nightly -Zcodegen-backend test -p aaadaw --bin aaadaw: 794 passed
 aaadaw_test_suite	cargo test -p aaadaw --bin aaadaw: 792 passed
 aaadaw_clippy	Stable all-target Clippy with -D warnings: no issues
-manual_scope_limit	Native blank-item grid, single-click, double-click, 1/4-grid insertion, and populated-item selected-note group movement were compared. Group movement preserves the 250/550-tick offsets at 1/32 snap; native modifier-based note-selection and Ctrl-drag mappings, item context-menu equivalence, note pitch mapping, resize-edge parity, zoom/range, loop-source edges, cross-item group behavior, and other mouse mappings remain unverified
+manual_scope_limit	Native Ctrl-drag group-copy behavior is now compared. Blank-item grid/single click/double click/1/4 insertion and populated-item movement/copy at 1/32 snap were compared with native REAPER. AAADAW selection, Ctrl-click extension, selected-note highlight, group movement/copy, Undo restoring the source selection, Redo restoring the copy selection, and exact tick readback are live-captured. Native Ctrl-click add/remove selection mapping, item context-menu equivalence, note pitch mapping, resize-edge parity, zoom/range, loop-source edges, cross-item groups and other mouse mappings remain unverified
 native_group_move_input	REAPER 7.82 Linux / Default 7; midi-note-quantize-before.rpp; selected C4 tick 100, D4 tick 350, F4 tick 900; unselected E4 tick 550; all durations 120
 native_group_move_grid	1/32 straight grid; 120 ticks at 960 PPQ
 native_group_move_gesture	Open the inline MIDI editor, drag selected C4 from tick 100 to the snapped tick 840, save the project
@@ -47,6 +47,20 @@ aaadaw_group_move_binary_sha256	fcbe31634b3fe0a09a866b5bd7de8c20a6e1d42423a48933
 aaadaw_group_move_test_suite	Cranelift: cargo +nightly -Zcodegen-backend test -p aaadaw --bin aaadaw: 797 passed, 0 failed, 0 skipped
 aaadaw_group_undo_redo_regression	app::tests::inline_midi_group_edit_is_one_undoable_transaction: one Undo restores the four-note source state; one Redo restores the group move
 aaadaw_group_move_clippy	Stable all-target Clippy with -D warnings: passed; cargo fmt --check and git diff --check: passed
+native_ctrl_drag_input	REAPER 7.82 Linux / Default 7; MIDI item with selected C4/D4/F4 at ticks 840/1090/1640, unselected E4 at 550; straight 1/32 grid (120 ticks)
+native_ctrl_drag_gesture	Ctrl-drag selected C4 by +120 ticks, save; Undo/Redo is used to preserve paired before/after project states
+native_ctrl_drag_result	Original C4/D4/F4 remain at 840/1090/1640 and become deselected; copied C4/D4/F4 are selected at 960/1210/1760; unselected E4 stays at 550; pitches and 120-tick durations are preserved
+native_ctrl_drag_capture_display	Xvfb :313, X11, 1440x900x24, xfwm4 without compositor; direct REAPER client captures 1024x768
+native_ctrl_drag_project_readback	midi-inline-editor-native-ctrl-drag-before.rpp and midi-inline-editor-native-ctrl-drag-after.rpp; raw MIDI events resolve to the positions above
+aaadaw_ctrl_drag_input	Open the same selected-note group at 1/32 in the latest Cranelift desktop build, select C4/D4/F4, then Ctrl-drag C4 by 8 px (120 ticks)
+aaadaw_ctrl_drag_result	Saved SQLite readback: originals remain at 840/1090/1640, unselected E4 stays at 550, copies are at 960/1210/1760; copied notes receive blue selection; Undo removes copies and restores the selected source group, Redo restores the selected copies
+aaadaw_ctrl_drag_capture_display	Xvfb :314, X11, 1440x900x24, xfwm4 without compositor; direct AAADAW client captures 1280x800; isolated XDG profile
+aaadaw_ctrl_drag_build_backend	rustc 1.101.0-nightly with Cranelift
+aaadaw_ctrl_drag_build_id	50ba33f26394d875a0e52c9c4dfe90956624bf6c
+aaadaw_ctrl_drag_binary_sha256	5f8828c66c80ca8794af9d3f3fc9b6666284a5da663596c2e3f110df7ba19bd6
+aaadaw_ctrl_drag_test_suite	Cranelift: cargo +nightly -Zcodegen-backend test -p aaadaw --bin aaadaw: 799 passed, 0 failed, 0 skipped
+aaadaw_ctrl_drag_undo_redo_regression	app::tests::inline_midi_group_copy_selects_copies_and_is_one_undoable_transaction; one Undo removes the three copies, one Redo restores them and inline selection
+aaadaw_ctrl_drag_clippy	Stable all-target Clippy with -D warnings: passed; cargo fmt --check and git diff --check: passed
 artifact	sha256
 midi-note-quantize-before.rpp	4bdbba8bcc46ff7bf74fabcb34031466898a81f74cf6497fd0ac2c8dd6f3174a
 midi-inline-editor-native-open.png	7210bf7c7948dedc1eeb5940f1233fc31c16bebda67a0de8de3f5337d1580b60
@@ -75,3 +89,12 @@ midi-inline-editor-aaadaw-group-before.png	281c1fb194630f2bf3a68da593308aa785445
 midi-inline-editor-aaadaw-group-after.png	94cffecd19ca72e0dc3645ee48543dd614b493721be80f4ab9dcb9a2f33daf21
 midi-inline-editor-aaadaw-group-before.aaadaw	7567a5a3aa779dcc71b8a967e58689ce4754156061034be24a7eec9b6c3722fe
 midi-inline-editor-aaadaw-group-after.aaadaw	0bf4e8b6258deac0467e221aa28a61ad4fbb0a27f54e999fc001f66ae3b3afea
+midi-inline-editor-native-ctrl-drag-before.png	d429e210004560f5f6eb10b936bf16f1f80334799c7d660f633c131d2a3b0eec
+midi-inline-editor-native-ctrl-drag-after.png	ed0a0fe65219d9bd0e75281b0cffdafbd7f7c117734b14a77c1df104d2366284
+midi-inline-editor-native-ctrl-drag-before.rpp	9e7f128274fd469135228bc4494e6708dbd15d837ec21f27a53ce3467e47564c
+midi-inline-editor-native-ctrl-drag-after.rpp	02068a45d7d3647c5d3473eeae1fb2d4dbe6896e356f40b6e825490fca39f03f
+midi-inline-editor-aaadaw-ctrl-drag-selected.png	14ba440409affaa51ae5a088ecbe8d626712fbcabceb9b919f8859bfb4eba99e
+midi-inline-editor-aaadaw-ctrl-drag-after.png	e31dfdb1bc0d3b29f3c9fcb0d20c2b7de736be6295618f22112aa80682d7c90b
+midi-inline-editor-aaadaw-ctrl-drag-undo.png	95c8c5b79aac65efc6711026f24c68486386b765201f3be11da8a46c3f047095
+midi-inline-editor-aaadaw-ctrl-drag-redo.png	0e977b5c42e0411a10f10cd0c7de0ce174a41408901165ff45a4f7b2f47a40bd
+midi-inline-editor-aaadaw-ctrl-drag-after.aaadaw	5bc6a3b02c930ff2e94c77058cd7855cffe92edf6cd8b05915e8bc377bd48c32

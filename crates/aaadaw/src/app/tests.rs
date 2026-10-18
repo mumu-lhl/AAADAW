@@ -15695,6 +15695,115 @@ fn inline_midi_group_edit_is_one_undoable_transaction() {
 }
 
 #[test]
+fn inline_midi_group_copy_selects_copies_and_is_one_undoable_transaction() {
+    let mut app = App::default();
+    let _ = app.update(Message::AddTrack);
+    let track_id = app.project.tracks()[0].id();
+    app.project
+        .apply(DawAction::InsertMidiItem {
+            track_id,
+            start_tick: 0,
+            length_ticks: 3_840,
+        })
+        .expect("test MIDI item should be inserted");
+    let item_id = app.project.midi_items()[0].id();
+    app.project
+        .apply(DawAction::AddMidiNotes {
+            item_id,
+            notes: [(840, 60), (1_090, 62), (550, 64), (1_640, 65)]
+                .into_iter()
+                .map(|(tick, pitch)| MidiNoteData {
+                    channel: 0,
+                    pitch,
+                    tick,
+                    duration: 120,
+                    velocity: 96,
+                    off_velocity: 0,
+                })
+                .collect(),
+        })
+        .expect("test MIDI notes should be inserted");
+    app.timeline.inline_midi_items.insert(item_id);
+    let source_selected_ids = app.project.midi_items()[0]
+        .notes()
+        .iter()
+        .filter(|note| matches!(note.pitch(), 60 | 62 | 65))
+        .map(|note| note.id())
+        .collect::<HashSet<_>>();
+    app.timeline
+        .inline_midi_note_selection
+        .insert(item_id, source_selected_ids.clone());
+    let _ = app.update(Message::OpenMidiEditor(item_id));
+    app.midi_editor_selected_notes = source_selected_ids.clone();
+    let before = app.project.snapshot();
+    let original_ids = app.project.midi_items()[0]
+        .notes()
+        .iter()
+        .map(|note| note.id())
+        .collect::<HashSet<_>>();
+
+    let _ = app.update(Message::CopyDragMidiNotes(
+        item_id,
+        [(960, 60), (1_210, 62), (1_760, 65)]
+            .into_iter()
+            .map(|(tick, pitch)| MidiNoteData {
+                channel: 0,
+                pitch,
+                tick,
+                duration: 120,
+                velocity: 96,
+                off_velocity: 0,
+            })
+            .collect(),
+    ));
+
+    let notes = app.project.midi_items()[0].notes();
+    assert_eq!(notes.len(), 7);
+    assert_eq!(
+        notes
+            .iter()
+            .map(|note| (note.pitch(), note.tick(), note.duration()))
+            .collect::<Vec<_>>(),
+        [
+            (60, 840, 120),
+            (62, 1_090, 120),
+            (64, 550, 120),
+            (65, 1_640, 120),
+            (60, 960, 120),
+            (62, 1_210, 120),
+            (65, 1_760, 120),
+        ]
+    );
+    let copied_ids = notes
+        .iter()
+        .map(|note| note.id())
+        .filter(|id| !original_ids.contains(id))
+        .collect::<HashSet<_>>();
+    assert_eq!(copied_ids.len(), 3);
+    assert_eq!(app.midi_editor_selected_notes, copied_ids);
+    assert_eq!(
+        app.timeline.inline_midi_note_selection.get(&item_id),
+        Some(&copied_ids)
+    );
+    let after = app.project.snapshot();
+
+    let _ = app.update(Message::Undo);
+    assert_eq!(app.project.snapshot(), before);
+    assert_eq!(
+        app.timeline.inline_midi_note_selection.get(&item_id),
+        Some(&source_selected_ids)
+    );
+    assert_eq!(app.midi_editor_selected_notes, source_selected_ids);
+    let _ = app.update(Message::Redo);
+    assert_eq!(app.project.snapshot(), after);
+    assert_eq!(
+        app.timeline.inline_midi_note_selection.get(&item_id),
+        Some(&copied_ids)
+    );
+    assert_eq!(app.midi_editor_selected_notes, copied_ids);
+}
+
+#[test]
 fn midi_quantize_dialog_fix_overlaps_defaults_on_and_can_be_disabled() {
     let mut app = App::default();
     let _ = app.update(Message::AddTrack);

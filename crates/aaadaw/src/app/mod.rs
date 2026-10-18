@@ -135,12 +135,23 @@ pub(crate) use messages::{
 #[derive(Clone)]
 enum AppHistoryEntry {
     Project,
+    ProjectWithInlineMidiSelection(InlineMidiSelectionHistory),
     ItemSelection {
         label: &'static str,
         before: Box<timeline::ItemSelectionState>,
         after: Box<timeline::ItemSelectionState>,
         project_history_cursor: usize,
     },
+}
+
+#[derive(Clone)]
+struct InlineMidiSelectionHistory {
+    item_id: ItemId,
+    before: HashSet<aaadaw_core::NoteId>,
+    after: HashSet<aaadaw_core::NoteId>,
+    editor_before: Option<HashSet<aaadaw_core::NoteId>>,
+    editor_after: Option<HashSet<aaadaw_core::NoteId>>,
+    project_history_cursor: usize,
 }
 
 pub(crate) fn run() -> iced::Result {
@@ -7021,6 +7032,14 @@ impl App {
                     .iter()
                     .map(|note| note.id())
                     .collect::<HashSet<_>>();
+                let selection_before = self
+                    .timeline
+                    .inline_midi_note_selection
+                    .get(&item_id)
+                    .cloned()
+                    .unwrap_or_default();
+                let editor_selection_before = (self.midi_editor_item_id == Some(item_id))
+                    .then(|| self.midi_editor_selected_notes.clone());
                 let revision = self.revision;
                 self.midi_editor_feedback = None;
                 self.apply_action(
@@ -7034,12 +7053,35 @@ impl App {
                         .iter()
                         .find(|item| item.id() == item_id)
                 {
-                    self.midi_editor_selected_notes = item
+                    let copied_ids = item
                         .notes()
                         .iter()
                         .map(|note| note.id())
                         .filter(|id| !old_ids.contains(id))
-                        .collect();
+                        .collect::<HashSet<_>>();
+                    self.timeline
+                        .inline_midi_note_selection
+                        .insert(item_id, copied_ids.clone());
+                    let editor_selection_after =
+                        editor_selection_before.as_ref().map(|_| copied_ids.clone());
+                    if editor_selection_after.is_some() {
+                        self.midi_editor_selected_notes = copied_ids.clone();
+                    }
+                    if matches!(self.app_undo_history.last(), Some(AppHistoryEntry::Project)) {
+                        self.app_undo_history.pop();
+                        self.app_undo_history.push(
+                            AppHistoryEntry::ProjectWithInlineMidiSelection(
+                                InlineMidiSelectionHistory {
+                                    item_id,
+                                    before: selection_before,
+                                    after: copied_ids,
+                                    editor_before: editor_selection_before,
+                                    editor_after: editor_selection_after,
+                                    project_history_cursor: self.project.history_cursor(),
+                                },
+                            ),
+                        );
+                    }
                 }
             }
             Message::EditMidiNotes(item_id, edits) => {
@@ -13729,6 +13771,43 @@ impl App {
         self.item_selection_is_next_redo() || self.project.can_redo()
     }
 
+    fn inline_midi_selection_is_next_undo(&self) -> Option<InlineMidiSelectionHistory> {
+        match self.app_undo_history.last() {
+            Some(AppHistoryEntry::ProjectWithInlineMidiSelection(history))
+                if history.project_history_cursor == self.project.history_cursor() =>
+            {
+                Some(history.clone())
+            }
+            _ => None,
+        }
+    }
+
+    fn restore_inline_midi_selection_history(
+        &mut self,
+        history: &InlineMidiSelectionHistory,
+        redo: bool,
+    ) {
+        let selection = if redo {
+            &history.after
+        } else {
+            &history.before
+        };
+        self.timeline
+            .inline_midi_note_selection
+            .insert(history.item_id, selection.clone());
+
+        if self.midi_editor_item_id == Some(history.item_id) {
+            let editor_selection = if redo {
+                &history.editor_after
+            } else {
+                &history.editor_before
+            };
+            if let Some(editor_selection) = editor_selection {
+                self.midi_editor_selected_notes = editor_selection.clone();
+            }
+        }
+    }
+
     fn item_selection_is_next_undo(&self) -> bool {
         matches!(
             self.app_undo_history.last(),
@@ -13824,6 +13903,7 @@ impl App {
         if self.undo_item_selection_if_next() {
             return;
         }
+        let inline_note_selection_history = self.inline_midi_selection_is_next_undo();
         let selected_fx_instance_id = self.selected_fx_chain_instance_id();
         #[cfg(feature = "audio-device")]
         let tempo_before = self.project.tempo_points().collect::<Vec<_>>();
@@ -13915,10 +13995,15 @@ impl App {
                             item.opaque_events(),
                         );
                 }
-                if matches!(self.app_undo_history.last(), Some(AppHistoryEntry::Project)) {
-                    self.app_undo_history.pop();
+                let project_history_entry = if inline_note_selection_history.is_some()
+                    || matches!(self.app_undo_history.last(), Some(AppHistoryEntry::Project))
+                {
+                    self.app_undo_history.pop()
+                } else {
+                    None
                 }
-                self.app_redo_history.push(AppHistoryEntry::Project);
+                .unwrap_or(AppHistoryEntry::Project);
+                self.app_redo_history.push(project_history_entry);
                 #[cfg(feature = "audio-device")]
                 if self.project.settings().sample_rate() != sample_rate_before {
                     let sample_rate_after = self.project.settings().sample_rate();
@@ -13937,6 +14022,9 @@ impl App {
                 self.midi_note_clipboard.last_paste = None;
                 self.revision = self.revision.wrapping_add(1);
                 self.timeline.rebuild(&self.project);
+                if let Some(history) = inline_note_selection_history.as_ref() {
+                    self.restore_inline_midi_selection_history(history, false);
+                }
                 #[cfg(feature = "audio-device")]
                 {
                     self.playback_graph_dirty = true;
@@ -13961,6 +14049,10 @@ impl App {
         if self.redo_item_selection_if_next() {
             return;
         }
+        let inline_note_selection_history = match self.app_redo_history.last() {
+            Some(AppHistoryEntry::ProjectWithInlineMidiSelection(history)) => Some(history.clone()),
+            _ => None,
+        };
         let selected_fx_instance_id = self.selected_fx_chain_instance_id();
         #[cfg(feature = "audio-device")]
         let tempo_before = self.project.tempo_points().collect::<Vec<_>>();
@@ -14052,10 +14144,15 @@ impl App {
                             item.opaque_events(),
                         );
                 }
-                if matches!(self.app_redo_history.last(), Some(AppHistoryEntry::Project)) {
-                    self.app_redo_history.pop();
+                let project_history_entry = if inline_note_selection_history.is_some()
+                    || matches!(self.app_redo_history.last(), Some(AppHistoryEntry::Project))
+                {
+                    self.app_redo_history.pop()
+                } else {
+                    None
                 }
-                self.app_undo_history.push(AppHistoryEntry::Project);
+                .unwrap_or(AppHistoryEntry::Project);
+                self.app_undo_history.push(project_history_entry);
                 #[cfg(feature = "audio-device")]
                 if self.project.settings().sample_rate() != sample_rate_before {
                     let sample_rate_after = self.project.settings().sample_rate();
@@ -14078,6 +14175,9 @@ impl App {
                     });
                 self.revision = self.revision.wrapping_add(1);
                 self.timeline.rebuild(&self.project);
+                if let Some(history) = inline_note_selection_history.as_ref() {
+                    self.restore_inline_midi_selection_history(history, true);
+                }
                 #[cfg(feature = "audio-device")]
                 {
                     self.playback_graph_dirty = true;

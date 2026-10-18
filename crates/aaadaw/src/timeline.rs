@@ -2957,6 +2957,8 @@ struct PendingInlineNoteMove {
     notes: Vec<(NoteId, MidiNoteData)>,
     start_position: Point,
     resize: bool,
+    copy: bool,
+    click_selection: Option<HashSet<NoteId>>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -4343,9 +4345,8 @@ impl shader::Program<crate::app::Message> for TimelineProgram<'_> {
                             .get(&target.item_id)
                             .cloned()
                             .unwrap_or_default();
-                        let toggles_selection =
-                            state.modifiers.command() || state.modifiers.control();
-                        let selected_after = if toggles_selection {
+                        let copy = state.modifiers.command() || state.modifiers.control();
+                        let selected_after = if copy {
                             let mut selected = selected_before.clone();
                             if !selected.remove(&hit.note.id) {
                                 selected.insert(hit.note.id);
@@ -4356,9 +4357,11 @@ impl shader::Program<crate::app::Message> for TimelineProgram<'_> {
                         } else {
                             HashSet::from([hit.note.id])
                         };
-                        let move_ids = if hit.resize
-                            || (toggles_selection && !selected_after.contains(&hit.note.id))
-                        {
+                        let move_ids = if hit.resize {
+                            HashSet::from([hit.note.id])
+                        } else if copy && selected_before.contains(&hit.note.id) {
+                            selected_before.clone()
+                        } else if copy {
                             HashSet::from([hit.note.id])
                         } else if selected_after.contains(&hit.note.id) {
                             selected_after.clone()
@@ -4386,9 +4389,11 @@ impl shader::Program<crate::app::Message> for TimelineProgram<'_> {
                             notes,
                             start_position: position,
                             resize: hit.resize,
+                            copy,
+                            click_selection: copy.then_some(selected_after.clone()),
                         });
                         state.pending_inline_note_insert = None;
-                        if selected_after != selected_before {
+                        if !copy && selected_after != selected_before {
                             return Some(
                                 shader::Action::publish(crate::app::Message::Timeline(
                                     TimelineEvent::SetInlineMidiNoteSelection {
@@ -4725,6 +4730,29 @@ impl shader::Program<crate::app::Message> for TimelineProgram<'_> {
                     let Some(position) = cursor.position_in(bounds) else {
                         return Some(shader::Action::capture());
                     };
+                    let was_dragged = (position.x - drag.start_position.x)
+                        .hypot(position.y - drag.start_position.y)
+                        >= 3.0;
+                    if drag.copy && !was_dragged {
+                        let selected = drag.click_selection.unwrap_or_default();
+                        let selection_before = self
+                            .inline_midi_note_selection
+                            .get(&drag.target.item_id)
+                            .cloned()
+                            .unwrap_or_default();
+                        if selected == selection_before {
+                            return Some(shader::Action::capture());
+                        }
+                        return Some(
+                            shader::Action::publish(crate::app::Message::Timeline(
+                                TimelineEvent::SetInlineMidiNoteSelection {
+                                    item_id: drag.target.item_id,
+                                    note_ids: selected.into_iter().collect(),
+                                },
+                            ))
+                            .and_capture(),
+                        );
+                    }
                     let original = drag.notes.iter().copied().collect::<HashMap<_, _>>();
                     let Some(edits) = self.inline_note_edits_after_drag(
                         drag.clone(),
@@ -4733,6 +4761,20 @@ impl shader::Program<crate::app::Message> for TimelineProgram<'_> {
                     ) else {
                         return Some(shader::Action::capture());
                     };
+                    if drag.copy {
+                        let copied_notes =
+                            edits.into_iter().map(|(_, data)| data).collect::<Vec<_>>();
+                        if copied_notes.is_empty() {
+                            return Some(shader::Action::capture());
+                        }
+                        return Some(
+                            shader::Action::publish(crate::app::Message::CopyDragMidiNotes(
+                                drag.target.item_id,
+                                copied_notes,
+                            ))
+                            .and_capture(),
+                        );
+                    }
                     let edits = edits
                         .into_iter()
                         .filter(|(note_id, data)| original.get(note_id) != Some(data))
@@ -9882,6 +9924,8 @@ mod tests {
                     notes: vec![(hit.note.id, hit.note.data)],
                     start_position: start,
                     resize: false,
+                    copy: false,
+                    click_selection: None,
                 },
                 Point::new(
                     start.x + 240.0,
@@ -9907,6 +9951,8 @@ mod tests {
                     notes: vec![(resize_hit.note.id, resize_hit.note.data)],
                     start_position: resize_start,
                     resize: resize_hit.resize,
+                    copy: false,
+                    click_selection: None,
                 },
                 Point::new(resize_start.x + 60.0, resize_start.y),
                 false,
@@ -10034,6 +10080,124 @@ mod tests {
     }
 
     #[test]
+    fn inline_midi_control_drag_copies_the_selected_note_group() {
+        let mut project = Project::new();
+        project
+            .apply(DawAction::CreateTrack {
+                index: 0,
+                name: "Inline MIDI group copy".to_owned(),
+            })
+            .unwrap();
+        let track_id = project.tracks()[0].id();
+        project
+            .apply(DawAction::InsertMidiItem {
+                track_id,
+                start_tick: 0,
+                length_ticks: 3_840,
+            })
+            .unwrap();
+        let item_id = project.midi_items()[0].id();
+        project
+            .apply(DawAction::AddMidiNotes {
+                item_id,
+                notes: [(840, 60), (1_090, 62), (550, 64), (1_640, 65)]
+                    .into_iter()
+                    .map(|(tick, pitch)| MidiNoteData {
+                        channel: 0,
+                        pitch,
+                        tick,
+                        duration: 120,
+                        velocity: 96,
+                        off_velocity: 0,
+                    })
+                    .collect(),
+            })
+            .unwrap();
+        let selected = project.midi_items()[0]
+            .notes()
+            .iter()
+            .filter(|note| matches!(note.pitch(), 60 | 62 | 65))
+            .map(|note| note.id())
+            .collect::<HashSet<_>>();
+
+        let mut timeline = TimelineState {
+            pixels_per_tick: 0.5,
+            ..TimelineState::default()
+        };
+        timeline.rebuild(&project);
+        timeline.cache.snap_grid_ticks = Some(120);
+        timeline.inline_midi_items.insert(item_id);
+        timeline
+            .inline_midi_note_selection
+            .insert(item_id, selected.clone());
+        let program = timeline.program(&project, None);
+        let target = program
+            .inline_midi_target_at(Point::new(30.0, 50.0))
+            .expect("an open MIDI item exposes its inline editing surface");
+        let pitch_range = f32::from((target.pitch_high - target.pitch_low).max(1));
+        let note_height = (target.notes_height / (pitch_range + 1.0)).clamp(2.0, 6.0);
+        let start = Point::new(
+            target.item_left + (840.0 + 60.0) / 3_840.0 * target.item_width,
+            target.notes_top
+                + f32::from(target.pitch_high - 60) / pitch_range
+                    * (target.notes_height - note_height).max(0.0)
+                + note_height / 2.0,
+        );
+        let hit = program
+            .inline_midi_note_hit(target, start)
+            .expect("the first selected note is hit");
+        assert_eq!((hit.note.data.tick, hit.note.data.pitch), (840, 60));
+
+        let bounds = Rectangle::new(Point::ORIGIN, Size::new(2_000.0, 480.0));
+        let modifiers =
+            Event::Keyboard(keyboard::Event::ModifiersChanged(keyboard::Modifiers::CTRL));
+        let press = Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left));
+        let release = Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left));
+        let mut interaction = TimelineInteractionState::default();
+        iced::widget::shader::Program::update(
+            &program,
+            &mut interaction,
+            &modifiers,
+            bounds,
+            mouse::Cursor::Available(start),
+        );
+        let press_action = iced::widget::shader::Program::update(
+            &program,
+            &mut interaction,
+            &press,
+            bounds,
+            mouse::Cursor::Available(start),
+        )
+        .expect("Control-drag starts without toggling the source group");
+        let (message, _, _) = press_action.into_inner();
+        assert!(message.is_none());
+
+        let moved = Point::new(start.x + 60.0, start.y);
+        let release_action = iced::widget::shader::Program::update(
+            &program,
+            &mut interaction,
+            &release,
+            bounds,
+            mouse::Cursor::Available(moved),
+        )
+        .expect("releasing the Control-drag submits copied MIDI notes");
+        let (message, _, _) = release_action.into_inner();
+        let crate::app::Message::CopyDragMidiNotes(copied_item, copies) = message.unwrap() else {
+            panic!("Control-drag should submit a note-copy action");
+        };
+        assert_eq!(copied_item, item_id);
+        assert_eq!(copies.len(), selected.len());
+        assert_eq!(
+            copies
+                .iter()
+                .map(|note| (note.tick, note.pitch, note.duration))
+                .collect::<HashSet<_>>(),
+            HashSet::from([(960, 60, 120), (1_210, 62, 120), (1_760, 65, 120)])
+        );
+        assert!(!copies.iter().any(|note| note.pitch == 64));
+    }
+
+    #[test]
     fn inline_midi_control_click_adds_notes_to_the_drag_selection() {
         let mut project = Project::new();
         project
@@ -10155,8 +10319,18 @@ mod tests {
             bounds,
             mouse::Cursor::Available(second_position),
         )
-        .expect("Control-clicking a second note extends the selection");
+        .expect("Control-clicking a second note defers selection until release");
         let (message, _, _) = second_action.into_inner();
+        assert!(message.is_none());
+        let second_release = iced::widget::shader::Program::update(
+            &program,
+            &mut interaction,
+            &release,
+            bounds,
+            mouse::Cursor::Available(second_position),
+        )
+        .expect("releasing the Control-click toggles the selected note");
+        let (message, _, _) = second_release.into_inner();
         let crate::app::Message::Timeline(TimelineEvent::SetInlineMidiNoteSelection {
             item_id: selected_item,
             note_ids: selected,
