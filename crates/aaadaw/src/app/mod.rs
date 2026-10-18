@@ -760,6 +760,12 @@ struct MidiEventPropertiesDialogState {
     value_mixed: bool,
     off_value: String,
     off_value_mixed: bool,
+    bank_msb: String,
+    bank_msb_mixed: bool,
+    bank_msb_dirty: bool,
+    bank_lsb: String,
+    bank_lsb_mixed: bool,
+    bank_lsb_dirty: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1276,6 +1282,42 @@ fn common_midi_event_property(values: impl IntoIterator<Item = String>) -> (Stri
     }
 }
 
+fn effective_midi_bank_value(
+    item: &aaadaw_core::MidiItem,
+    channel: u8,
+    tick: u64,
+    controller: u8,
+) -> u8 {
+    item.controllers()
+        .iter()
+        .filter(|event| {
+            event.channel == channel && event.controller == controller && event.tick <= tick
+        })
+        .max_by_key(|event| event.tick)
+        .map_or(0, |event| event.value)
+}
+
+fn set_midi_bank_value(
+    controllers: &mut Vec<MidiControllerData>,
+    channel: u8,
+    tick: u64,
+    controller: u8,
+    value: u8,
+) {
+    if let Some(event) = controllers.iter_mut().find(|event| {
+        event.channel == channel && event.controller == controller && event.tick == tick
+    }) {
+        event.value = value;
+    } else {
+        controllers.push(MidiControllerData {
+            controller,
+            channel,
+            tick,
+            value,
+        });
+    }
+}
+
 #[cfg(feature = "audio-device")]
 fn action_rebuilds_playback_graph(action: &DawAction) -> bool {
     match action {
@@ -1295,6 +1337,8 @@ fn action_rebuilds_playback_graph(action: &DawAction) -> bool {
         | DawAction::SetMidiItemContents { .. }
         | DawAction::SetMidiItemLoopSource { .. }
         | DawAction::SetMidiItemMute { .. }
+        | DawAction::SetMidiControllers { .. }
+        | DawAction::SetMidiProgramChanges { .. }
         | DawAction::SetAudioItemTakePlaybackRate { .. }
         | DawAction::ImportMidiTrack { .. }
         | DawAction::FreezeTrack { .. }
@@ -2826,6 +2870,18 @@ impl App {
             }
             _ => (String::new(), false),
         };
+        let (bank_msb, bank_msb_mixed, bank_lsb, bank_lsb_mixed) = match &target {
+            MidiEventPropertiesTarget::ProgramChanges(events) => {
+                let (msb, msb_mixed) = common_midi_event_property(events.iter().map(|event| {
+                    effective_midi_bank_value(item, event.channel, event.tick, 0).to_string()
+                }));
+                let (lsb, lsb_mixed) = common_midi_event_property(events.iter().map(|event| {
+                    effective_midi_bank_value(item, event.channel, event.tick, 32).to_string()
+                }));
+                (msb, msb_mixed, lsb, lsb_mixed)
+            }
+            _ => (String::new(), false, String::new(), false),
+        };
         Some(MidiEventPropertiesDialogState {
             item_id,
             target,
@@ -2841,6 +2897,12 @@ impl App {
             value_mixed,
             off_value,
             off_value_mixed,
+            bank_msb,
+            bank_msb_mixed,
+            bank_msb_dirty: false,
+            bank_lsb,
+            bank_lsb_mixed,
+            bank_lsb_dirty: false,
         })
     }
 
@@ -3207,7 +3269,36 @@ impl App {
                     self.midi_editor_feedback = Some("Program number must be from 0 to 127".into());
                     return Task::none();
                 };
+                let bank_msb_edit = if dialog.bank_msb_dirty {
+                    let Some(edit) = parse_midi_event_property_edit(
+                        &dialog.bank_msb,
+                        dialog.bank_msb_mixed,
+                        |value| value.parse::<i128>().ok(),
+                        parse_midi_event_relative_numeric,
+                    ) else {
+                        self.midi_editor_feedback = Some("Bank MSB must be from 0 to 127".into());
+                        return Task::none();
+                    };
+                    edit
+                } else {
+                    MidiEventPropertiesEdit::Preserve
+                };
+                let bank_lsb_edit = if dialog.bank_lsb_dirty {
+                    let Some(edit) = parse_midi_event_property_edit(
+                        &dialog.bank_lsb,
+                        dialog.bank_lsb_mixed,
+                        |value| value.parse::<i128>().ok(),
+                        parse_midi_event_relative_numeric,
+                    ) else {
+                        self.midi_editor_feedback = Some("Bank LSB must be from 0 to 127".into());
+                        return Task::none();
+                    };
+                    edit
+                } else {
+                    MidiEventPropertiesEdit::Preserve
+                };
                 let mut program_changes = item.program_changes().to_vec();
+                let mut controllers = item.controllers().to_vec();
                 let mut updated_events = Vec::with_capacity(events.len());
                 for event in &events {
                     let Some(index) = program_changes
@@ -3253,8 +3344,57 @@ impl App {
                     };
                     program_changes[index] = candidate;
                     updated_events.push(candidate);
+
+                    if bank_msb_edit != MidiEventPropertiesEdit::Preserve {
+                        let Some(value) = apply_midi_event_properties_edit(
+                            i128::from(effective_midi_bank_value(
+                                item,
+                                event.channel,
+                                event.tick,
+                                0,
+                            )),
+                            bank_msb_edit,
+                            0,
+                            127,
+                        ) else {
+                            self.midi_editor_feedback =
+                                Some("Bank MSB must be from 0 to 127".into());
+                            return Task::none();
+                        };
+                        set_midi_bank_value(
+                            &mut controllers,
+                            candidate.channel,
+                            candidate.tick,
+                            0,
+                            value as u8,
+                        );
+                    }
+                    if bank_lsb_edit != MidiEventPropertiesEdit::Preserve {
+                        let Some(value) = apply_midi_event_properties_edit(
+                            i128::from(effective_midi_bank_value(
+                                item,
+                                event.channel,
+                                event.tick,
+                                32,
+                            )),
+                            bank_lsb_edit,
+                            0,
+                            127,
+                        ) else {
+                            self.midi_editor_feedback =
+                                Some("Bank LSB must be from 0 to 127".into());
+                            return Task::none();
+                        };
+                        set_midi_bank_value(
+                            &mut controllers,
+                            candidate.channel,
+                            candidate.tick,
+                            32,
+                            value as u8,
+                        );
+                    }
                 }
-                if program_changes == item.program_changes() {
+                if program_changes == item.program_changes() && controllers == item.controllers() {
                     self.midi_editor_feedback = None;
                     if close_dialog {
                         self.midi_event_properties_dialog = None;
@@ -3262,9 +3402,37 @@ impl App {
                     return Task::none();
                 }
                 self.midi_editor_feedback = None;
-                let task = self.update(Message::SetMidiProgramChanges(item_id, program_changes));
+                let previous_revision = self.revision;
+                let task = if controllers == item.controllers() {
+                    self.update(Message::SetMidiProgramChanges(
+                        item_id,
+                        program_changes.clone(),
+                    ))
+                } else {
+                    let mut actions = vec![DawAction::SetMidiControllers {
+                        item_id,
+                        controllers,
+                    }];
+                    if program_changes != item.program_changes() {
+                        actions.push(DawAction::SetMidiProgramChanges {
+                            item_id,
+                            program_changes,
+                        });
+                    }
+                    self.apply_action(
+                        DawAction::BatchTransaction {
+                            tx_id: item_id.value(),
+                            actions,
+                        },
+                        "MIDI bank/program select edited",
+                    );
+                    Task::none()
+                };
                 if self.status.starts_with("Action failed:") {
                     self.midi_editor_feedback = Some(self.status.clone());
+                    return task;
+                }
+                if self.revision == previous_revision {
                     return task;
                 }
                 self.midi_editor_selected_program_changes =
@@ -3662,6 +3830,8 @@ impl App {
                     | Message::SetMidiEventPropertiesParameter(_)
                     | Message::SetMidiEventPropertiesValue(_)
                     | Message::SetMidiEventPropertiesOffValue(_)
+                    | Message::SetMidiEventPropertiesBankMsb(_)
+                    | Message::SetMidiEventPropertiesBankLsb(_)
                     | Message::ApplyMidiEventProperties
                     | Message::AcceptMidiEventProperties
                     | Message::CancelMidiEventProperties
@@ -5446,6 +5616,20 @@ impl App {
                 if let Some(dialog) = self.midi_event_properties_dialog.as_mut() {
                     dialog.off_value = value;
                     dialog.off_value_mixed = false;
+                }
+            }
+            Message::SetMidiEventPropertiesBankMsb(value) => {
+                if let Some(dialog) = self.midi_event_properties_dialog.as_mut() {
+                    dialog.bank_msb = value;
+                    dialog.bank_msb_mixed = false;
+                    dialog.bank_msb_dirty = true;
+                }
+            }
+            Message::SetMidiEventPropertiesBankLsb(value) => {
+                if let Some(dialog) = self.midi_event_properties_dialog.as_mut() {
+                    dialog.bank_lsb = value;
+                    dialog.bank_lsb_mixed = false;
+                    dialog.bank_lsb_dirty = true;
                 }
             }
             Message::ApplyMidiEventProperties => {

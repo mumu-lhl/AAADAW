@@ -835,6 +835,58 @@ fn program_change_schedule_uses_channel_status_and_chases_the_latest_program() {
 }
 
 #[test]
+fn bank_select_controllers_precede_program_change_at_the_same_tick() {
+    let (mut project, track_id) = project_with_note(69, 960, 240);
+    let item_id = project.midi_items()[0].id();
+    project
+        .apply(DawAction::SetMidiControllers {
+            item_id,
+            controllers: vec![
+                MidiControllerData {
+                    controller: 0,
+                    channel: 6,
+                    tick: 480,
+                    value: 3,
+                },
+                MidiControllerData {
+                    controller: 32,
+                    channel: 6,
+                    tick: 480,
+                    value: 4,
+                },
+            ],
+        })
+        .expect("bank-select controllers should be accepted");
+    project
+        .apply(DawAction::SetMidiProgramChanges {
+            item_id,
+            program_changes: vec![MidiProgramChangeData {
+                channel: 6,
+                tick: 480,
+                program: 41,
+            }],
+        })
+        .expect("program change should be accepted");
+
+    let start = project.sample_at_tick(480).unwrap();
+    let plan = MidiEventPlan::compile(&project).unwrap();
+    let mut output = [None; 3];
+    assert_eq!(plan.events_for_block(start, 1, &mut output).unwrap(), 3);
+    let events = output.map(Option::unwrap);
+    assert_eq!(
+        events.map(|event| (event.kind, event.controller, event.velocity, event.program)),
+        [
+            (MidiEventKind::ControllerChange, Some(0), 3, None),
+            (MidiEventKind::ControllerChange, Some(32), 4, None),
+            (MidiEventKind::ProgramChange, None, 0, Some(41)),
+        ]
+    );
+    assert!(events.iter().all(|event| event.track_id == track_id));
+    assert!(events.iter().all(|event| event.channel == 6));
+    assert!(events.iter().all(|event| event.sample_offset == 0));
+}
+
+#[test]
 fn aftertouch_schedule_preserves_message_data_and_chases_latest_pressure() {
     let (mut project, track_id) = project_with_note(60, 960, 240);
     let item_id = project.midi_items()[0].id();

@@ -1637,6 +1637,14 @@ fn midi_event_properties_dialog(app: &App, touch_targets: bool) -> Element<'_, M
     )
     .on_input(Message::SetMidiEventPropertiesOffValue)
     .width(Length::Fixed(if touch_targets { 104.0 } else { 88.0 }));
+    let bank_msb =
+        iced::widget::text_input(if state.bank_msb_mixed { "" } else { "0" }, &state.bank_msb)
+            .on_input(Message::SetMidiEventPropertiesBankMsb)
+            .width(Length::Fixed(if touch_targets { 104.0 } else { 88.0 }));
+    let bank_lsb =
+        iced::widget::text_input(if state.bank_lsb_mixed { "" } else { "0" }, &state.bank_lsb)
+            .on_input(Message::SetMidiEventPropertiesBankLsb)
+            .width(Length::Fixed(if touch_targets { 104.0 } else { 88.0 }));
     let title = if is_program_change {
         "Bank/Program Select"
     } else {
@@ -1751,7 +1759,20 @@ fn midi_event_properties_dialog(app: &App, touch_targets: bool) -> Element<'_, M
                     .spacing(SPACING_XS)
                     .align_y(iced::Alignment::Center),
             )
-            .push(text("Program number range: 0–127.").size(11));
+            .push(
+                row![text("Bank MSB (CC0)").width(Length::Fixed(160.0)), bank_msb]
+                    .spacing(SPACING_XS)
+                    .align_y(iced::Alignment::Center),
+            )
+            .push(
+                row![
+                    text("Bank LSB (CC32)").width(Length::Fixed(160.0)),
+                    bank_lsb
+                ]
+                .spacing(SPACING_XS)
+                .align_y(iced::Alignment::Center),
+            )
+            .push(text("Bank MSB, Bank LSB, and program ranges: 0–127.").size(11));
     } else if is_poly_aftertouch {
         content = content
             .push(

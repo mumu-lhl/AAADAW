@@ -613,6 +613,8 @@ pub(crate) enum Message {
     SetMidiEventPropertiesParameter(String),
     SetMidiEventPropertiesValue(String),
     SetMidiEventPropertiesOffValue(String),
+    SetMidiEventPropertiesBankMsb(String),
+    SetMidiEventPropertiesBankLsb(String),
     ApplyMidiEventProperties,
     AcceptMidiEventProperties,
     CancelMidiEventProperties,

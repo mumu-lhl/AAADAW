@@ -13721,6 +13721,8 @@ fn midi_event_properties_edits_program_changes_using_reaper_zero_based_values() 
     assert_eq!(dialog.position, "1.1.50");
     assert_eq!(dialog.channel, "3");
     assert_eq!(dialog.value, "41");
+    assert_eq!(dialog.bank_msb, "0");
+    assert_eq!(dialog.bank_lsb, "0");
 
     let history_before = app.project.history_cursor();
     let _ = app.update(Message::SetMidiEventPropertiesPosition("1.2.50".to_owned()));
@@ -13764,6 +13766,154 @@ fn midi_event_properties_edits_program_changes_using_reaper_zero_based_values() 
     assert!(app.midi_editor_feedback.is_some());
     assert_eq!(app.project.midi_items()[0].program_changes(), [accepted]);
     assert_eq!(app.project.history_cursor(), history_before_invalid);
+}
+
+#[test]
+fn midi_bank_program_properties_edit_cc0_and_cc32_atomically_with_program() {
+    let mut app = App::default();
+    let _ = app.update(Message::AddTrack);
+    let track_id = app.project.tracks()[0].id();
+    app.project
+        .apply(DawAction::InsertMidiItem {
+            track_id,
+            start_tick: 0,
+            length_ticks: 3_840,
+        })
+        .expect("test MIDI item should be inserted");
+    let item_id = app.project.midi_items()[0].id();
+    let bank_msb = MidiControllerData {
+        controller: 0,
+        channel: 2,
+        tick: 120,
+        value: 3,
+    };
+    let bank_lsb = MidiControllerData {
+        controller: 32,
+        channel: 2,
+        tick: 240,
+        value: 4,
+    };
+    let bank_msb_at_program = MidiControllerData {
+        tick: 480,
+        value: 5,
+        ..bank_msb
+    };
+    let bank_lsb_at_program = MidiControllerData {
+        tick: 480,
+        value: 6,
+        ..bank_lsb
+    };
+    let program = MidiProgramChangeData {
+        channel: 2,
+        tick: 480,
+        program: 41,
+    };
+    app.project
+        .apply(DawAction::SetMidiControllers {
+            item_id,
+            controllers: vec![bank_msb, bank_lsb, bank_msb_at_program, bank_lsb_at_program],
+        })
+        .expect("bank-select controllers should be inserted");
+    app.project
+        .apply(DawAction::SetMidiProgramChanges {
+            item_id,
+            program_changes: vec![program],
+        })
+        .expect("program change should be inserted");
+    app.midi_editor_item_id = Some(item_id);
+    app.midi_editor_selected_program_changes = HashSet::from([program]);
+
+    let _ = app.update(Message::OpenMidiEventProperties(item_id));
+    let dialog = app
+        .midi_event_properties_dialog
+        .as_ref()
+        .expect("selected program change should open properties");
+    assert_eq!(dialog.bank_msb, "5");
+    assert_eq!(dialog.bank_lsb, "6");
+
+    let history_before = app.project.history_cursor();
+    let _ = app.update(Message::SetMidiEventPropertiesValue("42".to_owned()));
+    let _ = app.update(Message::SetMidiEventPropertiesBankMsb("9".to_owned()));
+    let _ = app.update(Message::SetMidiEventPropertiesBankLsb("12".to_owned()));
+    let _ = app.update(Message::AcceptMidiEventProperties);
+
+    let updated_program = MidiProgramChangeData {
+        program: 42,
+        ..program
+    };
+    let updated_bank_msb = MidiControllerData {
+        value: 9,
+        ..bank_msb_at_program
+    };
+    let updated_bank_lsb = MidiControllerData {
+        value: 12,
+        ..bank_lsb_at_program
+    };
+    let item = &app.project.midi_items()[0];
+    assert_eq!(item.program_changes(), [updated_program]);
+    assert_eq!(
+        item.controllers(),
+        [bank_msb, bank_lsb, updated_bank_msb, updated_bank_lsb]
+    );
+    assert_eq!(app.project.history_cursor(), history_before + 1);
+
+    let _ = app.update(Message::Undo);
+    let item = &app.project.midi_items()[0];
+    assert_eq!(item.program_changes(), [program]);
+    assert_eq!(
+        item.controllers(),
+        [bank_msb, bank_lsb, bank_msb_at_program, bank_lsb_at_program]
+    );
+    let _ = app.update(Message::Redo);
+    let item = &app.project.midi_items()[0];
+    assert_eq!(item.program_changes(), [updated_program]);
+    assert_eq!(
+        item.controllers(),
+        [bank_msb, bank_lsb, updated_bank_msb, updated_bank_lsb]
+    );
+
+    let history_before_invalid = app.project.history_cursor();
+    let _ = app.update(Message::OpenMidiEventProperties(item_id));
+    let _ = app.update(Message::SetMidiEventPropertiesBankMsb("128".to_owned()));
+    let _ = app.update(Message::AcceptMidiEventProperties);
+    assert!(app.midi_event_properties_dialog.is_some());
+    assert!(app.midi_editor_feedback.is_some());
+    assert_eq!(app.project.history_cursor(), history_before_invalid);
+    let _ = app.update(Message::CancelMidiEventProperties);
+}
+
+#[cfg(feature = "audio-device")]
+#[test]
+fn midi_bank_program_batch_invalidates_the_audio_playback_graph() {
+    let mut project = Project::new();
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "MIDI".to_owned(),
+        })
+        .unwrap();
+    project
+        .apply(DawAction::InsertMidiItem {
+            track_id: project.tracks()[0].id(),
+            start_tick: 0,
+            length_ticks: 960,
+        })
+        .unwrap();
+    let item_id = project.midi_items()[0].id();
+    let action = DawAction::BatchTransaction {
+        tx_id: 1,
+        actions: vec![
+            DawAction::SetMidiControllers {
+                item_id,
+                controllers: Vec::new(),
+            },
+            DawAction::SetMidiProgramChanges {
+                item_id,
+                program_changes: Vec::new(),
+            },
+        ],
+    };
+    assert!(super::action_rebuilds_playback_graph(&action));
 }
 
 #[test]

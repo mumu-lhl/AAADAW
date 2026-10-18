@@ -60,3 +60,10 @@ fixtures/midi-event-properties-relative-octave-before-native.png	497fd29695d7363
 fixtures/midi-event-properties-relative-octave-entered-native.png	34a8262bda65d868e44d0821d96aa99fbcb842259f9a8b1201793f1a260131ca
 fixtures/midi-event-properties-relative-plus10-applied-native.png	a1d673ababf5b48abed6eb464da4b0d90a943eaac676e986d84cd811a76432e7
 fixtures/midi-event-properties-relative-plus10-entered-native.png	4ad168d3cb9e1100a2992694582d270b763acf7b708a8ab1b478adc59ca17080
+fixtures/midi-event-properties-bank-program-aaadaw.png	2eeddd906ded1a8050f9c6d78cb6f46dc59c5433910eae31566b3a691d447c8f
+binary_sha256	02670e0c764d88dcafb18732194ca110cfcc8a49ab63e9f4e925e78038786b1f
+build_id	2dd542d14a9fa54d58cccd95373cc23f96cd441d
+assertion	Linux stable AAADAW window in Xvfb shows Event List Program Change Event Properties with Bank MSB (CC0)=0 and Bank LSB (CC32)=0.
+verification	crates/aaadaw/src/app/tests.rs::midi_bank_program_properties_edit_cc0_and_cc32_atomically_with_program verifies inherited values, same-tick CC0/CC32 replacement, one history step, Undo/Redo, and 0..127 validation; crates/aaadaw-engine/tests/midi_schedule.rs::bank_select_controllers_precede_program_change_at_the_same_tick verifies realtime event ordering.
+playback_graph_test	crates/aaadaw/src/app/tests.rs::midi_bank_program_batch_invalidates_the_audio_playback_graph passes with --features audio-device.
+limitation	Screenshot is the initial dialog only; native edited-value A/B and patch-file selection remain open, so MIDI-EVENT-PROPERTIES-001 remains in_progress.
