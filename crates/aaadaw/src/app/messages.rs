@@ -657,6 +657,7 @@ pub(crate) enum Message {
     MidiEditorFeedback(String),
     SelectMidiNotes(HashSet<NoteId>),
     SelectMidiNoteEvent(NoteId, bool),
+    SelectMidiEditorEventSelection(MidiEditorEventListCursor, bool),
     SelectMidiControllerEvent(ItemId, MidiControllerData, bool),
     SelectMidiBankSelectEvent(ItemId, MidiControllerData, MidiControllerData, bool),
     SelectMidiPitchBendEvent(ItemId, MidiPitchBendData, bool),

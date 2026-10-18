@@ -1338,8 +1338,8 @@ fn midi_event_list_view<'a>(
                     note.velocity().to_string(),
                     note.off_velocity().to_string(),
                     app.midi_editor_selected_notes.contains(&note.id()),
-                    Message::SelectMidiNoteEvent(
-                        note.id(),
+                    Message::SelectMidiEditorEventSelection(
+                        MidiEditorEventListCursor::Note(note.id()),
                         app.keyboard_modifiers.command() || app.keyboard_modifiers.control(),
                     ),
                 ),
@@ -1352,9 +1352,8 @@ fn midi_event_list_view<'a>(
                     event.value.to_string(),
                     String::new(),
                     app.midi_editor_selected_controllers.contains(&event),
-                    Message::SelectMidiControllerEvent(
-                        item_id,
-                        event,
+                    Message::SelectMidiEditorEventSelection(
+                        MidiEditorEventListCursor::Controller(event),
                         app.keyboard_modifiers.command() || app.keyboard_modifiers.control(),
                     ),
                 ),
@@ -1368,10 +1367,8 @@ fn midi_event_list_view<'a>(
                     String::new(),
                     app.midi_editor_selected_controllers.contains(&msb)
                         || app.midi_editor_selected_controllers.contains(&lsb),
-                    Message::SelectMidiBankSelectEvent(
-                        item_id,
-                        msb,
-                        lsb,
+                    Message::SelectMidiEditorEventSelection(
+                        MidiEditorEventListCursor::BankSelect(msb, lsb),
                         app.keyboard_modifiers.command() || app.keyboard_modifiers.control(),
                     ),
                 ),
@@ -1384,9 +1381,8 @@ fn midi_event_list_view<'a>(
                     event.value.to_string(),
                     String::new(),
                     app.midi_editor_selected_pitch_bends.contains(&event),
-                    Message::SelectMidiPitchBendEvent(
-                        item_id,
-                        event,
+                    Message::SelectMidiEditorEventSelection(
+                        MidiEditorEventListCursor::PitchBend(event),
                         app.keyboard_modifiers.command() || app.keyboard_modifiers.control(),
                     ),
                 ),
@@ -1399,9 +1395,8 @@ fn midi_event_list_view<'a>(
                     event.program.to_string(),
                     String::new(),
                     app.midi_editor_selected_program_changes.contains(&event),
-                    Message::SelectMidiProgramChangeEvent(
-                        item_id,
-                        event,
+                    Message::SelectMidiEditorEventSelection(
+                        MidiEditorEventListCursor::ProgramChange(event),
                         app.keyboard_modifiers.command() || app.keyboard_modifiers.control(),
                     ),
                 ),
@@ -1414,9 +1409,8 @@ fn midi_event_list_view<'a>(
                     event.value.to_string(),
                     String::new(),
                     app.midi_editor_selected_poly_aftertouches.contains(&event),
-                    Message::SelectMidiPolyAftertouchEvent(
-                        item_id,
-                        event,
+                    Message::SelectMidiEditorEventSelection(
+                        MidiEditorEventListCursor::PolyAftertouch(event),
                         app.keyboard_modifiers.command() || app.keyboard_modifiers.control(),
                     ),
                 ),
@@ -1429,9 +1423,8 @@ fn midi_event_list_view<'a>(
                     event.value.to_string(),
                     String::new(),
                     app.midi_editor_selected_channel_pressures.contains(&event),
-                    Message::SelectMidiChannelPressureEvent(
-                        item_id,
-                        event,
+                    Message::SelectMidiEditorEventSelection(
+                        MidiEditorEventListCursor::ChannelPressure(event),
                         app.keyboard_modifiers.command() || app.keyboard_modifiers.control(),
                     ),
                 ),
@@ -1446,9 +1439,8 @@ fn midi_event_list_view<'a>(
                         String::new(),
                         String::new(),
                         app.midi_editor_selected_opaque_events.contains(&index),
-                        Message::SelectMidiOpaqueEvent(
-                            item_id,
-                            index,
+                        Message::SelectMidiEditorEventSelection(
+                            MidiEditorEventListCursor::Opaque(index),
                             app.keyboard_modifiers.command() || app.keyboard_modifiers.control(),
                         ),
                     )
@@ -1463,7 +1455,8 @@ fn midi_event_list_view<'a>(
                     String::new(),
                     app.midi_editor_event_list_cursor == Some(MidiEditorEventListCursor::End)
                         || events.len() == 1,
-                    Message::SelectMidiEditorEventListEnd(
+                    Message::SelectMidiEditorEventSelection(
+                        MidiEditorEventListCursor::End,
                         app.keyboard_modifiers.command() || app.keyboard_modifiers.control(),
                     ),
                 ),
@@ -2987,9 +2980,8 @@ impl canvas::Program<Message> for ControllerLane<'_> {
                     let additive = state.modifiers.command() || state.modifiers.control();
                     if additive {
                         return Some(
-                            canvas::Action::publish(Message::SelectMidiControllerEvent(
-                                self.item_id,
-                                original,
+                            canvas::Action::publish(Message::SelectMidiEditorEventSelection(
+                                MidiEditorEventListCursor::Controller(original),
                                 true,
                             ))
                             .and_capture(),
@@ -3003,9 +2995,8 @@ impl canvas::Program<Message> for ControllerLane<'_> {
                         display_tick,
                     });
                     return Some(
-                        canvas::Action::publish(Message::SelectMidiControllerEvent(
-                            self.item_id,
-                            original,
+                        canvas::Action::publish(Message::SelectMidiEditorEventSelection(
+                            MidiEditorEventListCursor::Controller(original),
                             false,
                         ))
                         .and_capture(),
@@ -3451,9 +3442,8 @@ impl canvas::Program<Message> for PitchBendLane<'_> {
                     let additive = state.modifiers.command() || state.modifiers.control();
                     if additive {
                         return Some(
-                            canvas::Action::publish(Message::SelectMidiPitchBendEvent(
-                                self.item_id,
-                                original,
+                            canvas::Action::publish(Message::SelectMidiEditorEventSelection(
+                                MidiEditorEventListCursor::PitchBend(original),
                                 true,
                             ))
                             .and_capture(),
@@ -3467,9 +3457,8 @@ impl canvas::Program<Message> for PitchBendLane<'_> {
                         display_tick,
                     });
                     return Some(
-                        canvas::Action::publish(Message::SelectMidiPitchBendEvent(
-                            self.item_id,
-                            original,
+                        canvas::Action::publish(Message::SelectMidiEditorEventSelection(
+                            MidiEditorEventListCursor::PitchBend(original),
                             false,
                         ))
                         .and_capture(),

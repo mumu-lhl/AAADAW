@@ -13831,6 +13831,29 @@ fn midi_event_list_arrow_keys_navigate_visible_events_and_keep_ctrl_multiselecti
     );
     assert_eq!(app.midi_editor_selected_notes, HashSet::from([note_ids[0]]));
 
+    let _ = app.update(Message::MoveMidiEditorEventListCursor(
+        super::messages::MidiEditorEventListCursorDirection::Next,
+        false,
+        false,
+    ));
+    assert_eq!(
+        app.midi_editor_event_list_cursor,
+        Some(super::MidiEditorEventListCursor::Note(note_ids[1]))
+    );
+    assert_eq!(app.midi_editor_selected_notes, HashSet::from([note_ids[1]]));
+    let _ = app.update(Message::Undo);
+    assert_eq!(
+        app.midi_editor_event_list_cursor,
+        Some(super::MidiEditorEventListCursor::Note(note_ids[0]))
+    );
+    assert_eq!(app.midi_editor_selected_notes, HashSet::from([note_ids[0]]));
+    let _ = app.update(Message::Redo);
+    assert_eq!(
+        app.midi_editor_event_list_cursor,
+        Some(super::MidiEditorEventListCursor::Note(note_ids[1]))
+    );
+    assert_eq!(app.midi_editor_selected_notes, HashSet::from([note_ids[1]]));
+
     app.midi_editor_mode = MidiEditorMode::PianoRoll;
     let _ = app.update(Message::RuntimeKeyboardEvent(
         down,
@@ -13839,7 +13862,7 @@ fn midi_event_list_arrow_keys_navigate_visible_events_and_keep_ctrl_multiselecti
     ));
     assert_eq!(
         app.midi_editor_event_list_cursor,
-        Some(super::MidiEditorEventListCursor::Note(note_ids[0]))
+        Some(super::MidiEditorEventListCursor::Note(note_ids[1]))
     );
 }
 
@@ -13920,6 +13943,17 @@ fn midi_event_list_home_selects_first_event_and_end_preserves_selection_at_item_
     );
     assert_eq!(app.project.snapshot(), snapshot_before);
     assert_eq!(app.revision, revision_before);
+
+    let _ = app.update(Message::Undo);
+    assert!(app.midi_editor_selected_notes.is_empty());
+    assert!(app.midi_editor_event_list_cursor.is_none());
+    assert_eq!(app.project.snapshot(), snapshot_before);
+    let _ = app.update(Message::Redo);
+    assert_eq!(
+        app.midi_editor_selected_notes,
+        HashSet::from([first_note_id])
+    );
+    assert_eq!(app.project.snapshot(), snapshot_before);
 }
 
 #[test]
@@ -15952,6 +15986,18 @@ fn piano_roll_note_selection_is_undoable_and_shared_with_inline_arrangement() {
                 .collect(),
         })
         .expect("test MIDI notes should be inserted");
+    let controller = MidiControllerData {
+        controller: 1,
+        channel: 0,
+        tick: 500,
+        value: 64,
+    };
+    app.project
+        .apply(DawAction::SetMidiControllers {
+            item_id,
+            controllers: vec![controller],
+        })
+        .expect("test MIDI controller should be inserted");
     app.timeline.rebuild(&app.project);
     app.timeline.inline_midi_items.insert(item_id);
     let note_ids = app.project.midi_items()[0]
@@ -15962,9 +16008,11 @@ fn piano_roll_note_selection_is_undoable_and_shared_with_inline_arrangement() {
     let first_id = note_ids[&60];
     let second_id = note_ids[&64];
     let _ = app.update(Message::OpenMidiEditor(item_id));
+    app.midi_editor_selected_controllers.insert(controller);
     let project_snapshot = app.project.snapshot();
 
     let _ = app.update(Message::SelectMidiNotes(HashSet::from([first_id])));
+    assert!(app.midi_editor_selected_controllers.is_empty());
     let _ = app.update(Message::SelectMidiNotes(HashSet::from([
         first_id, second_id,
     ])));
@@ -15978,6 +16026,7 @@ fn piano_roll_note_selection_is_undoable_and_shared_with_inline_arrangement() {
 
     let _ = app.update(Message::Undo);
     assert_eq!(app.midi_editor_selected_notes, HashSet::from([first_id]));
+    assert!(app.midi_editor_selected_controllers.is_empty());
     assert_eq!(
         app.timeline.inline_midi_note_selection[&item_id],
         HashSet::from([first_id])
@@ -15985,6 +16034,10 @@ fn piano_roll_note_selection_is_undoable_and_shared_with_inline_arrangement() {
     assert_eq!(app.project.snapshot(), project_snapshot);
     let _ = app.update(Message::Undo);
     assert!(app.midi_editor_selected_notes.is_empty());
+    assert_eq!(
+        app.midi_editor_selected_controllers,
+        HashSet::from([controller])
+    );
     assert!(
         !app.timeline
             .inline_midi_note_selection
@@ -15999,6 +16052,106 @@ fn piano_roll_note_selection_is_undoable_and_shared_with_inline_arrangement() {
     assert_eq!(
         app.timeline.inline_midi_note_selection[&item_id],
         selected_both
+    );
+    assert_eq!(app.project.snapshot(), project_snapshot);
+}
+
+#[test]
+fn event_list_row_selection_undoes_across_event_types_without_project_edits() {
+    let mut app = App::default();
+    let _ = app.update(Message::AddTrack);
+    let track_id = app.project.tracks()[0].id();
+    app.project
+        .apply(DawAction::InsertMidiItem {
+            track_id,
+            start_tick: 0,
+            length_ticks: 960,
+        })
+        .expect("test MIDI item should be inserted");
+    let item_id = app.project.midi_items()[0].id();
+    app.project
+        .apply(DawAction::AddMidiNotes {
+            item_id,
+            notes: vec![MidiNoteData {
+                channel: 0,
+                pitch: 60,
+                tick: 120,
+                duration: 240,
+                velocity: 96,
+                off_velocity: 0,
+            }],
+        })
+        .expect("test MIDI note should be inserted");
+    let note_id = app.project.midi_items()[0].notes()[0].id();
+    let controller = MidiControllerData {
+        controller: 7,
+        channel: 0,
+        tick: 360,
+        value: 80,
+    };
+    app.project
+        .apply(DawAction::SetMidiControllers {
+            item_id,
+            controllers: vec![controller],
+        })
+        .expect("test MIDI controller should be inserted");
+    let _ = app.update(Message::OpenMidiEditor(item_id));
+    app.midi_editor_mode = MidiEditorMode::EventList;
+    let project_snapshot = app.project.snapshot();
+
+    let _ = app.update(Message::SelectMidiEditorEventSelection(
+        super::MidiEditorEventListCursor::Note(note_id),
+        false,
+    ));
+    let _ = app.update(Message::SelectMidiEditorEventSelection(
+        super::MidiEditorEventListCursor::Controller(controller),
+        true,
+    ));
+    assert_eq!(app.midi_editor_selected_notes, HashSet::from([note_id]));
+    assert_eq!(
+        app.midi_editor_selected_controllers,
+        HashSet::from([controller])
+    );
+    assert_eq!(
+        app.midi_editor_event_list_cursor,
+        Some(super::MidiEditorEventListCursor::Controller(controller))
+    );
+    assert_eq!(
+        app.timeline.inline_midi_note_selection[&item_id],
+        HashSet::from([note_id])
+    );
+    assert_eq!(app.project.snapshot(), project_snapshot);
+
+    let _ = app.update(Message::Undo);
+    assert_eq!(app.midi_editor_selected_notes, HashSet::from([note_id]));
+    assert!(app.midi_editor_selected_controllers.is_empty());
+    assert_eq!(
+        app.midi_editor_event_list_cursor,
+        Some(super::MidiEditorEventListCursor::Note(note_id))
+    );
+    assert_eq!(
+        app.timeline.inline_midi_note_selection[&item_id],
+        HashSet::from([note_id])
+    );
+    assert_eq!(app.project.snapshot(), project_snapshot);
+
+    let _ = app.update(Message::Undo);
+    assert!(app.midi_editor_selected_notes.is_empty());
+    assert!(app.midi_editor_selected_controllers.is_empty());
+    assert!(app.midi_editor_event_list_cursor.is_none());
+    assert!(
+        !app.timeline
+            .inline_midi_note_selection
+            .contains_key(&item_id)
+    );
+    assert_eq!(app.project.snapshot(), project_snapshot);
+
+    let _ = app.update(Message::Redo);
+    let _ = app.update(Message::Redo);
+    assert_eq!(app.midi_editor_selected_notes, HashSet::from([note_id]));
+    assert_eq!(
+        app.midi_editor_selected_controllers,
+        HashSet::from([controller])
     );
     assert_eq!(app.project.snapshot(), project_snapshot);
 }

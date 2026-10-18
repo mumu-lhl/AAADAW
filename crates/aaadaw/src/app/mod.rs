@@ -150,9 +150,22 @@ struct InlineMidiSelectionHistory {
     item_id: ItemId,
     before: HashSet<aaadaw_core::NoteId>,
     after: HashSet<aaadaw_core::NoteId>,
-    editor_before: Option<HashSet<aaadaw_core::NoteId>>,
-    editor_after: Option<HashSet<aaadaw_core::NoteId>>,
+    editor_before: Option<MidiEditorSelectionState>,
+    editor_after: Option<MidiEditorSelectionState>,
     project_history_cursor: usize,
+}
+
+#[derive(Clone, Default, PartialEq, Eq)]
+struct MidiEditorSelectionState {
+    notes: HashSet<NoteId>,
+    controllers: HashSet<MidiControllerData>,
+    pitch_bends: HashSet<MidiPitchBendData>,
+    program_changes: HashSet<MidiProgramChangeData>,
+    poly_aftertouches: HashSet<MidiPolyAftertouchData>,
+    channel_pressures: HashSet<MidiChannelPressureData>,
+    opaque_events: HashSet<u32>,
+    event_list_cursor: Option<MidiEditorEventListCursor>,
+    event_list_anchor: Option<MidiEditorEventListCursor>,
 }
 
 pub(crate) fn run() -> iced::Result {
@@ -5997,7 +6010,7 @@ impl App {
                 preserve_selection,
                 extend_selection,
             ) => {
-                self.move_midi_editor_event_list_cursor(
+                self.move_midi_editor_event_list_cursor_with_history(
                     direction,
                     preserve_selection,
                     extend_selection,
@@ -6022,41 +6035,7 @@ impl App {
                         else {
                             return task;
                         };
-                        self.midi_editor_event_list_cursor = Some(cursor);
-                        self.midi_editor_event_list_anchor = Some(cursor);
-                        self.midi_editor_selected_notes.clear();
-                        self.midi_editor_selected_controllers.clear();
-                        self.midi_editor_selected_pitch_bends.clear();
-                        self.midi_editor_selected_program_changes.clear();
-                        self.midi_editor_selected_poly_aftertouches.clear();
-                        self.midi_editor_selected_channel_pressures.clear();
-                        self.midi_editor_selected_opaque_events.clear();
-                        match cursor {
-                            MidiEditorEventListCursor::Note(note_id) => {
-                                self.midi_editor_selected_notes.insert(note_id);
-                            }
-                            MidiEditorEventListCursor::Controller(event) => {
-                                self.midi_editor_selected_controllers.insert(event);
-                            }
-                            MidiEditorEventListCursor::BankSelect(msb, lsb) => {
-                                self.midi_editor_selected_controllers.insert(msb);
-                                self.midi_editor_selected_controllers.insert(lsb);
-                            }
-                            MidiEditorEventListCursor::PitchBend(event) => {
-                                self.midi_editor_selected_pitch_bends.insert(event);
-                            }
-                            MidiEditorEventListCursor::ProgramChange(event) => {
-                                self.midi_editor_selected_program_changes.insert(event);
-                            }
-                            MidiEditorEventListCursor::PolyAftertouch(event) => {
-                                self.midi_editor_selected_poly_aftertouches.insert(event);
-                            }
-                            MidiEditorEventListCursor::ChannelPressure(event) => {
-                                self.midi_editor_selected_channel_pressures.insert(event);
-                            }
-                            MidiEditorEventListCursor::Opaque(_)
-                            | MidiEditorEventListCursor::End => {}
-                        }
+                        let _ = self.update(Message::SelectMidiEditorEventSelection(cursor, false));
                         (local_tick, project_tick)
                     }
                     MidiEditorCursorBoundary::End => (
@@ -6575,6 +6554,9 @@ impl App {
             Message::SelectMidiNotes(note_ids) => {
                 self.with_midi_editor_note_selection_history(note_ids);
             }
+            Message::SelectMidiEditorEventSelection(cursor, additive) => {
+                task = self.with_midi_editor_event_selection_history(cursor, additive);
+            }
             Message::SelectMidiNoteEvent(note_id, additive) => {
                 self.midi_editor_feedback = None;
                 let visible_note_ids = self.visible_midi_note_ids();
@@ -7027,7 +7009,7 @@ impl App {
                     .cloned()
                     .unwrap_or_default();
                 let editor_selection_before = (self.midi_editor_item_id == Some(item_id))
-                    .then(|| self.midi_editor_selected_notes.clone());
+                    .then(|| self.midi_editor_selection_state());
                 let revision = self.revision;
                 self.midi_editor_feedback = None;
                 self.apply_action(
@@ -7050,10 +7032,13 @@ impl App {
                     self.timeline
                         .inline_midi_note_selection
                         .insert(item_id, copied_ids.clone());
-                    let editor_selection_after =
-                        editor_selection_before.as_ref().map(|_| copied_ids.clone());
-                    if editor_selection_after.is_some() {
-                        self.midi_editor_selected_notes = copied_ids.clone();
+                    let editor_selection_after = editor_selection_before.as_ref().map(|before| {
+                        let mut after = before.clone();
+                        after.notes = copied_ids.clone();
+                        after
+                    });
+                    if let Some(editor_selection_after) = editor_selection_after.as_ref() {
+                        self.restore_midi_editor_selection_state(editor_selection_after);
                     }
                     if matches!(self.app_undo_history.last(), Some(AppHistoryEntry::Project)) {
                         self.app_undo_history.pop();
@@ -13827,8 +13812,114 @@ impl App {
                 &history.editor_before
             };
             if let Some(editor_selection) = editor_selection {
-                self.midi_editor_selected_notes = editor_selection.clone();
+                self.restore_midi_editor_selection_state(editor_selection);
             }
+        }
+    }
+
+    fn midi_editor_selection_state(&self) -> MidiEditorSelectionState {
+        MidiEditorSelectionState {
+            notes: self.midi_editor_selected_notes.clone(),
+            controllers: self.midi_editor_selected_controllers.clone(),
+            pitch_bends: self.midi_editor_selected_pitch_bends.clone(),
+            program_changes: self.midi_editor_selected_program_changes.clone(),
+            poly_aftertouches: self.midi_editor_selected_poly_aftertouches.clone(),
+            channel_pressures: self.midi_editor_selected_channel_pressures.clone(),
+            opaque_events: self.midi_editor_selected_opaque_events.clone(),
+            event_list_cursor: self.midi_editor_event_list_cursor,
+            event_list_anchor: self.midi_editor_event_list_anchor,
+        }
+    }
+
+    fn restore_midi_editor_selection_state(&mut self, selection: &MidiEditorSelectionState) {
+        self.midi_editor_selected_notes = selection.notes.clone();
+        self.midi_editor_selected_controllers = selection.controllers.clone();
+        self.midi_editor_selected_pitch_bends = selection.pitch_bends.clone();
+        self.midi_editor_selected_program_changes = selection.program_changes.clone();
+        self.midi_editor_selected_poly_aftertouches = selection.poly_aftertouches.clone();
+        self.midi_editor_selected_channel_pressures = selection.channel_pressures.clone();
+        self.midi_editor_selected_opaque_events = selection.opaque_events.clone();
+        self.midi_editor_event_list_cursor = selection.event_list_cursor;
+        self.midi_editor_event_list_anchor = selection.event_list_anchor;
+    }
+
+    fn midi_editor_selected_events_changed(
+        before: &MidiEditorSelectionState,
+        after: &MidiEditorSelectionState,
+    ) -> bool {
+        before.notes != after.notes
+            || before.controllers != after.controllers
+            || before.pitch_bends != after.pitch_bends
+            || before.program_changes != after.program_changes
+            || before.poly_aftertouches != after.poly_aftertouches
+            || before.channel_pressures != after.channel_pressures
+            || before.opaque_events != after.opaque_events
+    }
+
+    fn record_midi_editor_selection_history(
+        &mut self,
+        item_id: ItemId,
+        before_inline: HashSet<NoteId>,
+        before_editor: MidiEditorSelectionState,
+    ) {
+        if self.midi_editor_selected_notes.is_empty() {
+            self.timeline.inline_midi_note_selection.remove(&item_id);
+        } else {
+            self.timeline
+                .inline_midi_note_selection
+                .insert(item_id, self.midi_editor_selected_notes.clone());
+        }
+        let after_inline = self
+            .timeline
+            .inline_midi_note_selection
+            .get(&item_id)
+            .cloned()
+            .unwrap_or_default();
+        let after_editor = self.midi_editor_selection_state();
+        if before_inline == after_inline && before_editor == after_editor {
+            return;
+        }
+
+        self.project.discard_redo_history();
+        self.app_redo_history.clear();
+        self.app_undo_history
+            .push(AppHistoryEntry::InlineMidiSelection(
+                InlineMidiSelectionHistory {
+                    item_id,
+                    before: before_inline,
+                    after: after_inline,
+                    editor_before: Some(before_editor),
+                    editor_after: Some(after_editor),
+                    project_history_cursor: self.project.history_cursor(),
+                },
+            ));
+    }
+
+    fn move_midi_editor_event_list_cursor_with_history(
+        &mut self,
+        direction: MidiEditorEventListCursorDirection,
+        preserve_selection: bool,
+        extend_selection: bool,
+    ) {
+        let Some(item_id) = self.midi_editor_item_id else {
+            self.move_midi_editor_event_list_cursor(
+                direction,
+                preserve_selection,
+                extend_selection,
+            );
+            return;
+        };
+        let before_editor = self.midi_editor_selection_state();
+        let before_inline = self
+            .timeline
+            .inline_midi_note_selection
+            .get(&item_id)
+            .cloned()
+            .unwrap_or_default();
+        self.move_midi_editor_event_list_cursor(direction, preserve_selection, extend_selection);
+        let after_editor = self.midi_editor_selection_state();
+        if Self::midi_editor_selected_events_changed(&before_editor, &after_editor) {
+            self.record_midi_editor_selection_history(item_id, before_inline, before_editor);
         }
     }
 
@@ -13886,8 +13977,8 @@ impl App {
             .get(&item_id)
             .cloned()
             .unwrap_or_default();
-        let editor_before = (self.midi_editor_item_id == Some(item_id))
-            .then(|| self.midi_editor_selected_notes.clone());
+        let editor_before =
+            (self.midi_editor_item_id == Some(item_id)).then(|| self.midi_editor_selection_state());
 
         self.handle_timeline_view_event(timeline::TimelineEvent::SetInlineMidiNoteSelection {
             item_id,
@@ -13900,9 +13991,13 @@ impl App {
             .get(&item_id)
             .cloned()
             .unwrap_or_default();
-        let editor_after = editor_before.as_ref().map(|_| after.clone());
+        let editor_after = editor_before.as_ref().map(|before| {
+            let mut editor_after = before.clone();
+            editor_after.notes = after.clone();
+            editor_after
+        });
         if let Some(editor_after) = editor_after.as_ref() {
-            self.midi_editor_selected_notes = editor_after.clone();
+            self.restore_midi_editor_selection_state(editor_after);
         }
         if before == after && editor_before == editor_after {
             return;
@@ -13934,7 +14029,7 @@ impl App {
             .get(&item_id)
             .cloned()
             .unwrap_or_default();
-        let editor_before = self.midi_editor_selected_notes.clone();
+        let editor_before = self.midi_editor_selection_state();
 
         self.select_midi_notes(note_ids);
         if self.midi_editor_selected_notes.is_empty() {
@@ -13951,7 +14046,7 @@ impl App {
             .get(&item_id)
             .cloned()
             .unwrap_or_default();
-        let editor_after = self.midi_editor_selected_notes.clone();
+        let editor_after = self.midi_editor_selection_state();
         if before == after && editor_before == editor_after {
             return;
         }
@@ -13969,6 +14064,53 @@ impl App {
                     project_history_cursor: self.project.history_cursor(),
                 },
             ));
+    }
+
+    fn with_midi_editor_event_selection_history(
+        &mut self,
+        cursor: MidiEditorEventListCursor,
+        additive: bool,
+    ) -> Task<Message> {
+        let Some(item_id) = self.midi_editor_item_id else {
+            return Task::none();
+        };
+        let before_editor = self.midi_editor_selection_state();
+        let before_inline = self
+            .timeline
+            .inline_midi_note_selection
+            .get(&item_id)
+            .cloned()
+            .unwrap_or_default();
+        let message = match cursor {
+            MidiEditorEventListCursor::Note(note_id) => {
+                Message::SelectMidiNoteEvent(note_id, additive)
+            }
+            MidiEditorEventListCursor::Controller(event) => {
+                Message::SelectMidiControllerEvent(item_id, event, additive)
+            }
+            MidiEditorEventListCursor::BankSelect(msb, lsb) => {
+                Message::SelectMidiBankSelectEvent(item_id, msb, lsb, additive)
+            }
+            MidiEditorEventListCursor::PitchBend(event) => {
+                Message::SelectMidiPitchBendEvent(item_id, event, additive)
+            }
+            MidiEditorEventListCursor::ProgramChange(event) => {
+                Message::SelectMidiProgramChangeEvent(item_id, event, additive)
+            }
+            MidiEditorEventListCursor::PolyAftertouch(event) => {
+                Message::SelectMidiPolyAftertouchEvent(item_id, event, additive)
+            }
+            MidiEditorEventListCursor::ChannelPressure(event) => {
+                Message::SelectMidiChannelPressureEvent(item_id, event, additive)
+            }
+            MidiEditorEventListCursor::Opaque(index) => {
+                Message::SelectMidiOpaqueEvent(item_id, index, additive)
+            }
+            MidiEditorEventListCursor::End => Message::SelectMidiEditorEventListEnd(additive),
+        };
+        let task = self.update(message);
+        self.record_midi_editor_selection_history(item_id, before_inline, before_editor);
+        task
     }
 
     fn select_midi_notes(&mut self, note_ids: HashSet<aaadaw_core::NoteId>) {
