@@ -2564,3 +2564,11 @@ AAADAW 的 Control-click 处理通过同一释放态事件流回归覆盖：Ctrl
 提交 `faf0af3` 将 MIDI Editor 的 `SelectMidiNotes` 接入应用层选择历史，并在 MIDI Editor 开启时同步 Arrange inline 选区。两次连续选择后，Undo/Redo 在两处视图都逐步恢复选区；回归同时确认工程内容快照不变。Cranelift 桌面测试 **801/801**、Stable Nextest **801/801**、workspace strict all-target Clippy（`-D warnings`）、fmt 与 diff 检查通过。测试记录在 [inline editor fixture manifest](../verification/reaper-parity/fixtures/midi-inline-editor.tsv)。
 
 本增量没有独立 Piano Roll 实窗截图；先前 Xvfb 实窗证据只验证 Arrange inline editor。`MIDI-INLINE-EDITOR-001`、UI-018/UI-020 与 P7 保持 `in_progress`；仍需实测 REAPER Piano Roll 点击/修饰键选择的 Undo 历史，以及 Event List 选择、工具/音高映射、resize、zoom/range、loop-source 与多 item 行为。
+
+### 2026-10-18 MIDI Editor 多类型事件选择 Undo/Redo
+
+提交 `f696fd4` 将 MIDI Editor 选择历史扩展为跨类型快照，覆盖 Note、CC、Pitch Bend、Program Change、Aftertouch、Channel Pressure、opaque event 的选区，以及 Event List 当前行和锚点；Piano Roll、Event List 行、CC/Pitch Bend lane 点击、Event List Arrow 与 Home 选择现共用历史，并同步 note selection 到 Arrange inline 选区。此状态只存在于应用层，不改变工程内容或存储 schema。Undo/Redo 回归验证混合 Note/CC 选区、两视图同步、键盘行选择/范围行为及工程快照不变。
+
+最终 Cranelift 桌面测试 **802/802**、稳定 Nextest **802/802**、workspace strict all-target Clippy（`-D warnings`）、fmt 与 diff 检查通过。当前生产二进制 Build ID `ef5af2d5bfff238c851f69d665348bfadc4533b2`、SHA-256 `6a969b90decbd64766661d8f7cf8564a9c4bcead4aed6a783c8adea90b93cf9a` 在 Xvfb :319 实际打开 7 音符工程；实窗选择 C4、Ctrl-click D4、Ctrl+Z 和 Ctrl+Shift+Z 的四张截图与 hashes 在 [Event List selection fixture](../verification/reaper-parity/fixtures/midi-event-list-selection-history-aaadaw.tsv)。
+
+原厂 REAPER 已确认 MIDI Editor Piano Roll note Ctrl-click 选择会进入 Undo/Redo 顺序；Event List row-click/Arrow/Home 选择的专项 Undo 历史仍须独立原厂 probe，AAADAW 截图不代替该验收。`MIDI-EVENT-LIST-001`、`MIDI-INLINE-EDITOR-001`、UI-018/UI-019/UI-020 与 P7 继续 `in_progress`；下一步先实测 REAPER Event List 的鼠标/键盘选择与 Undo/Redo，再处理 REAPER Data 列、filter 规则与未建模 Meta 行等开放项。

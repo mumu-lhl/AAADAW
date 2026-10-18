@@ -1,0 +1,22 @@
+application	AAADAW current Cranelift desktop build
+build_id	ef5af2d5bfff238c851f69d665348bfadc4533b2
+binary_sha256	6a969b90decbd64766661d8f7cf8564a9c4bcead4aed6a783c8adea90b93cf9a
+build_backend	rustc 1.101.0-nightly with Cranelift
+project_source	midi-inline-editor-aaadaw-ctrl-drag-after.aaadaw; SHA-256 5bc6a3b02c930ff2e94c77058cd7855cffe92edf6cd8b05915e8bc377bd48c32; opened from a temporary copy
+input	Open the MIDI item in Piano Roll, switch to Event List, select C4 at tick 840, then Ctrl-click D4 at tick 1090
+after_ctrl_click	Event List rows 2 (C4) and 4 (D4) are selected
+after_undo	Ctrl+Z restores only row 2 (C4)
+after_redo	Ctrl+Shift+Z restores rows 2 (C4) and 4 (D4)
+project_content	Unchanged; app regression compares the project snapshot through the full selection/Undo/Redo sequence
+app_regressions	app::tests::event_list_row_selection_undoes_across_event_types_without_project_edits; app::tests::midi_event_list_arrow_keys_navigate_visible_events_and_keep_ctrl_multiselection; app::tests::midi_event_list_home_selects_first_event_and_end_preserves_selection_at_item_end
+cranelift_tests	cargo +nightly -Zcodegen-backend test -p aaadaw --bin aaadaw: 802 passed, 0 failed
+nextest	cargo xtest -p aaadaw --bin aaadaw: 802 passed, 0 skipped
+clippy	Stable workspace all-target Clippy with -D warnings: no issues
+format	Stable cargo fmt --all -- --check and git diff --check: passed
+native_scope	REAPER Piano Roll note Ctrl-click selection Undo/Redo is recorded in midi-inline-editor.tsv; Event List row-selection Undo/Redo still needs its own native probe
+capture_display	Xvfb :319, X11, 1440x900x24; xfwm4 with compositor off; isolated XDG profile; real AAADAW main and MIDI Editor windows
+artifact	sha256
+midi-event-list-aaadaw-selection-one.png	49ba376b7377edc61e9f88e5db66fcb0f2269fe172d36b191515daa270510f63
+midi-event-list-aaadaw-selection-multiple.png	556edadeda922a5676df58da26911f82f6a4c5188b000c891fb14eaeb3a545d8
+midi-event-list-aaadaw-selection-undo.png	3e09280ba1588e5295724492d65393e938a755b5599a6b3be6c3d19d7f9703a9
+midi-event-list-aaadaw-selection-redo.png	f055aceced9e1cbcdb72c84a079c66284d71d93d588940996a5d9fbb6dbff563
