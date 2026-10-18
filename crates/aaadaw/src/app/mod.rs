@@ -4243,6 +4243,12 @@ impl App {
                     | Message::SetMidiOpaqueEventPropertiesMultiline(_)
                     | Message::EditMidiOpaqueEventPropertiesText(..)
                     | Message::PickMidiOpaqueSysExFile(_)
+                    | Message::PathPicked(
+                        PathPickerTarget::ImportMidiOpaqueSysEx { .. }
+                            | PathPickerTarget::ExportMidiOpaqueSysEx { .. }
+                            | PathPickerTarget::ImportMidiOpaqueMetaText,
+                        _,
+                    )
                     | Message::MidiOpaqueSysExFileFinished(..)
                     | Message::PickMidiOpaqueMetaTextFile
                     | Message::MidiOpaqueMetaTextFileFinished(..)

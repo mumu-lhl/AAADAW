@@ -13292,6 +13292,57 @@ fn midi_opaque_sysex_properties_reject_invalid_hex_and_undo_valid_edit() {
 }
 
 #[test]
+fn midi_opaque_event_picker_results_reach_the_properties_dialog() {
+    let mut app = App::default();
+    let _ = app.update(Message::AddTrack);
+    let track_id = app.project.tracks()[0].id();
+    app.project
+        .apply(DawAction::InsertMidiItem {
+            track_id,
+            start_tick: 0,
+            length_ticks: 3_840,
+        })
+        .expect("test MIDI item should be inserted");
+    let item_id = app.project.midi_items()[0].id();
+    app.project
+        .apply(DawAction::SetMidiOpaqueEvents {
+            item_id,
+            events: vec![MidiOpaqueEventData {
+                tick: 480,
+                order: 9,
+                kind: MidiOpaqueEventKind::SystemExclusive {
+                    status: 0xF0,
+                    data: vec![0x43, 0x12, 0xF7],
+                },
+            }],
+        })
+        .expect("test SysEx event should be inserted");
+    app.midi_editor_item_id = Some(item_id);
+    app.midi_editor_mode = MidiEditorMode::EventList;
+
+    let _ = app.update(Message::SelectMidiOpaqueEvent(item_id, 0, false));
+    let _ = commands::dispatch(&mut app, CommandId::MidiEventProperties);
+    assert!(app.midi_event_properties_dialog.is_some());
+
+    for target in [
+        PathPickerTarget::ImportMidiOpaqueSysEx { status: 0xF0 },
+        PathPickerTarget::ExportMidiOpaqueSysEx { status: 0xF0 },
+        PathPickerTarget::ImportMidiOpaqueMetaText,
+    ] {
+        app.path_picker_busy = true;
+        let _ = app.update(Message::PathPicked(target, Ok(None)));
+        assert!(
+            !app.path_picker_busy,
+            "picker result should close the picker"
+        );
+        assert!(
+            app.midi_event_properties_dialog.is_some(),
+            "picker cancellation should keep Event Properties open"
+        );
+    }
+}
+
+#[test]
 fn midi_opaque_sysex_f7_continuation_edit_keeps_its_event_status() {
     let mut app = App::default();
     let _ = app.update(Message::AddTrack);
