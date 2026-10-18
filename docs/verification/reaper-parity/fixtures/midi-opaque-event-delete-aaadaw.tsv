@@ -1,0 +1,9 @@
+artifact	sha256
+fixtures/midi-opaque-event-delete-aaadaw-selected.png	df085f1bddc39766309cb07aa8fb4bf4ab51334c4a05a647d3d37e387316cc3c
+fixtures/midi-opaque-event-delete-aaadaw-deleted.png	fb38806ecda946f7f5642c551727a84c0df812cd7631fa237c2c8ceffdba705c
+fixtures/midi-opaque-event-delete-aaadaw-undo.png	bec5cf65d3b1e8a844a9e0f10cae5ddbbbc3c92ffd9aee798226b656befb286b
+binary_sha256	345fe42157f5aa41b3f64f643ec20bbec3a88b940c415b7d7a35dfc27dbbd0a4
+build_id	b2ae430d8c00c41651856f695d938076ea92ee39
+environment	Linux stable debug desktop binary; Xvfb :440; 1280x800; isolated XDG paths and D-Bus FileChooser returning the native Type 1 probe MIDI file; default import options
+assertion	Event List initially shows 12 imported events. Ctrl-click selects both “Unattached text” and “Verse text”; Delete selected removes both and reduces the list to 10. Ctrl+Z restores both rows and the count of 12.
+verification	crates/aaadaw/src/app/tests.rs::midi_event_list_opaque_event_can_be_deleted_and_undo_restores_it; AAADAW binary test suite 771/771; strict workspace all-target Clippy (-D warnings); stable cargo fmt and git diff --check

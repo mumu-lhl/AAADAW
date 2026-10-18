@@ -1285,8 +1285,7 @@ fn midi_event_list_view<'a>(
                         parameter,
                         String::new(),
                         String::new(),
-                        app.midi_editor_event_list_cursor
-                            == Some(MidiEditorEventListCursor::Opaque(index)),
+                        app.midi_editor_selected_opaque_events.contains(&index),
                         Message::SelectMidiOpaqueEvent(
                             item_id,
                             index,
@@ -1330,43 +1329,50 @@ fn midi_event_list_view<'a>(
         || !app.midi_editor_selected_pitch_bends.is_empty()
         || !app.midi_editor_selected_program_changes.is_empty()
         || !app.midi_editor_selected_poly_aftertouches.is_empty()
-        || !app.midi_editor_selected_channel_pressures.is_empty();
+        || !app.midi_editor_selected_channel_pressures.is_empty()
+        || !app.midi_editor_selected_opaque_events.is_empty();
     let has_homogeneous_editable_selection = (!app.midi_editor_selected_notes.is_empty()
         && app.midi_editor_selected_controllers.is_empty()
         && app.midi_editor_selected_pitch_bends.is_empty()
         && app.midi_editor_selected_program_changes.is_empty()
         && app.midi_editor_selected_poly_aftertouches.is_empty()
-        && app.midi_editor_selected_channel_pressures.is_empty())
+        && app.midi_editor_selected_channel_pressures.is_empty()
+        && app.midi_editor_selected_opaque_events.is_empty())
         || (!app.midi_editor_selected_controllers.is_empty()
             && app.midi_editor_selected_notes.is_empty()
             && app.midi_editor_selected_pitch_bends.is_empty()
             && app.midi_editor_selected_program_changes.is_empty()
             && app.midi_editor_selected_poly_aftertouches.is_empty()
-            && app.midi_editor_selected_channel_pressures.is_empty())
+            && app.midi_editor_selected_channel_pressures.is_empty()
+            && app.midi_editor_selected_opaque_events.is_empty())
         || (!app.midi_editor_selected_pitch_bends.is_empty()
             && app.midi_editor_selected_notes.is_empty()
             && app.midi_editor_selected_controllers.is_empty()
             && app.midi_editor_selected_program_changes.is_empty()
             && app.midi_editor_selected_poly_aftertouches.is_empty()
-            && app.midi_editor_selected_channel_pressures.is_empty())
+            && app.midi_editor_selected_channel_pressures.is_empty()
+            && app.midi_editor_selected_opaque_events.is_empty())
         || (!app.midi_editor_selected_program_changes.is_empty()
             && app.midi_editor_selected_notes.is_empty()
             && app.midi_editor_selected_controllers.is_empty()
             && app.midi_editor_selected_pitch_bends.is_empty()
             && app.midi_editor_selected_poly_aftertouches.is_empty()
-            && app.midi_editor_selected_channel_pressures.is_empty())
+            && app.midi_editor_selected_channel_pressures.is_empty()
+            && app.midi_editor_selected_opaque_events.is_empty())
         || (!app.midi_editor_selected_poly_aftertouches.is_empty()
             && app.midi_editor_selected_notes.is_empty()
             && app.midi_editor_selected_controllers.is_empty()
             && app.midi_editor_selected_pitch_bends.is_empty()
             && app.midi_editor_selected_program_changes.is_empty()
-            && app.midi_editor_selected_channel_pressures.is_empty())
+            && app.midi_editor_selected_channel_pressures.is_empty()
+            && app.midi_editor_selected_opaque_events.is_empty())
         || (!app.midi_editor_selected_channel_pressures.is_empty()
             && app.midi_editor_selected_notes.is_empty()
             && app.midi_editor_selected_controllers.is_empty()
             && app.midi_editor_selected_pitch_bends.is_empty()
             && app.midi_editor_selected_program_changes.is_empty()
-            && app.midi_editor_selected_poly_aftertouches.is_empty());
+            && app.midi_editor_selected_poly_aftertouches.is_empty()
+            && app.midi_editor_selected_opaque_events.is_empty());
     let mut content = column![toolbar, channel_toolbar];
     if let Some(channel_filter_dialog) = channel_filter_dialog {
         content = content.push(channel_filter_dialog);
@@ -1378,9 +1384,11 @@ fn midi_event_list_view<'a>(
         .push(scrollable(event_rows).height(Length::Fill))
         .push(
             row![
-                text("Click a row to select an event; Delete removes the selected modeled events.")
-                    .size(11)
-                    .width(Length::Fill),
+                text(
+                    "Click selects; Ctrl/Cmd-click toggles; Shift+Up/Down extends; Delete removes."
+                )
+                .size(11)
+                .width(Length::Fill),
                 button("Edit event…")
                     .style(iced::widget::button::secondary)
                     .on_press_maybe(

@@ -2370,3 +2370,9 @@ AAADAW 的 `Insert > MIDI file…` 已提供 REAPER 对照确认的三项导入�
 ### 2026-10-18 Type 1 首轨通道事件导入保护
 
 修正展开 Type 1 MIDI 时无条件跳过首轨的问题：只有首轨不含 channel events 时才按导体轨跳过；如果首轨含音符或控制事件，它会和其余源轨一起导入，避免静默丢失内容。新增 Core 回归覆盖首轨/第二轨各含一个已配对音符、展开后两轨与音符均保留。MIDI file import 定向套件 **9/9** 通过；首轨含通道数据时 REAPER 原厂的精确处理尚未探测，因此 parity 文档明确保留此项为待核实边缘语义，而不是宣称完全对齐。
+
+### 2026-10-18 Event List opaque Meta/SysEx 删除
+
+MIDI Event List 的 opaque Meta/SysEx 行现进入 Ctrl/Command 多选与 Shift+Up/Down 范围选择；`Delete selected` 与 Delete/Backspace 通过 Project `SetMidiOpaqueEvents` 历史事件批量删除选中行，Undo/Redo 原样恢复 tick/order/kind/payload。底栏提示 Ctrl/Cmd-click 与 Shift+Up/Down 选择方式，混合 opaque/可编辑选择会禁用事件属性编辑。app 回归覆盖两条不同类型 opaque 行的 Ctrl 多选、Shift 范围选择、删除、Undo 与 Redo。Linux Xvfb 实窗加载 Type 1 原厂探针文件：初始 Event List 12 项，Ctrl-click 选中 `Unattached text` 与 `Verse text` 后删除为 10 项，Ctrl+Z 恢复两行和 12 项计数；选中/删除/撤销截图及 Build ID `b2ae430d8c00c41651856f695d938076ea92ee39` 在 [opaque-event delete manifest](../verification/reaper-parity/fixtures/midi-opaque-event-delete-aaadaw.tsv)。
+
+同时重新核对 Default 7 默认导入 Event List 原厂截图：Tempo Map 未勾选时工程 tempo marker 数为 0，合并 item 中也无 tempo/meter Meta 行；AAADAW 默认模式一致。此前将此行为登记为差异的描述已修正；expanded tracks 且关闭 Tempo Map 的组合仍未独立探测。AAADAW app 测试 **771/771**、SMF Core import/export **93/93**、workspace strict all-target Clippy (`-D warnings`)、fmt/diff 检查通过。opaque event 编辑、Event List 类型筛选、SysEx/Meta 播放、完整跨类型同 tick 排序、Format 2 与 SMPTE time division 仍开放；`MIDI-FILE-IMPORT-001`、UI-019、P7 保持 `in_progress`。

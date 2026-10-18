@@ -491,6 +491,7 @@ struct App {
     midi_editor_selected_program_changes: HashSet<MidiProgramChangeData>,
     midi_editor_selected_poly_aftertouches: HashSet<MidiPolyAftertouchData>,
     midi_editor_selected_channel_pressures: HashSet<MidiChannelPressureData>,
+    midi_editor_selected_opaque_events: HashSet<u32>,
     midi_editor_event_list_cursor: Option<MidiEditorEventListCursor>,
     midi_editor_event_list_anchor: Option<MidiEditorEventListCursor>,
     midi_quantize_dialog: Option<MidiQuantizeDialogState>,
@@ -1969,7 +1970,10 @@ impl App {
             MidiEditorEventListCursor::ChannelPressure(event) => {
                 self.midi_editor_selected_channel_pressures.contains(&event)
             }
-            MidiEditorEventListCursor::Opaque(_) | MidiEditorEventListCursor::End => false,
+            MidiEditorEventListCursor::Opaque(index) => {
+                self.midi_editor_selected_opaque_events.contains(&index)
+            }
+            MidiEditorEventListCursor::End => false,
         }
     }
 
@@ -2018,6 +2022,7 @@ impl App {
             + self.midi_editor_selected_program_changes.len()
             + self.midi_editor_selected_poly_aftertouches.len()
             + self.midi_editor_selected_channel_pressures.len()
+            + self.midi_editor_selected_opaque_events.len()
             > 1;
         let collapse_at_cursor = !preserve_selection && !extend_selection && has_multiselection;
         let default_index = match direction {
@@ -2046,6 +2051,7 @@ impl App {
             self.midi_editor_selected_program_changes.clear();
             self.midi_editor_selected_poly_aftertouches.clear();
             self.midi_editor_selected_channel_pressures.clear();
+            self.midi_editor_selected_opaque_events.clear();
             if extend_selection {
                 let anchor_index = self
                     .midi_editor_event_list_anchor
@@ -2082,7 +2088,10 @@ impl App {
                         MidiEditorEventListCursor::ChannelPressure(event) => {
                             self.midi_editor_selected_channel_pressures.insert(event);
                         }
-                        MidiEditorEventListCursor::Opaque(_) | MidiEditorEventListCursor::End => {}
+                        MidiEditorEventListCursor::Opaque(index) => {
+                            self.midi_editor_selected_opaque_events.insert(index);
+                        }
+                        MidiEditorEventListCursor::End => {}
                     }
                 }
             } else {
@@ -2109,7 +2118,10 @@ impl App {
                     MidiEditorEventListCursor::ChannelPressure(event) => {
                         self.midi_editor_selected_channel_pressures.insert(event);
                     }
-                    MidiEditorEventListCursor::Opaque(_) | MidiEditorEventListCursor::End => {}
+                    MidiEditorEventListCursor::Opaque(index) => {
+                        self.midi_editor_selected_opaque_events.insert(index);
+                    }
+                    MidiEditorEventListCursor::End => {}
                 }
             }
         }
@@ -2154,6 +2166,7 @@ impl App {
             self.midi_editor_selected_controllers.clear();
             self.midi_editor_selected_pitch_bends.clear();
             self.midi_editor_selected_program_changes.clear();
+            self.midi_editor_selected_opaque_events.clear();
             self.midi_editor_event_list_cursor = None;
             self.midi_editor_event_list_anchor = None;
             self.midi_editor_edit_cursor_tick = None;
@@ -5262,6 +5275,7 @@ impl App {
                     self.midi_editor_selected_program_changes.clear();
                     self.midi_editor_selected_poly_aftertouches.clear();
                     self.midi_editor_selected_channel_pressures.clear();
+                    self.midi_editor_selected_opaque_events.clear();
                     self.midi_editor_event_list_cursor = None;
                     self.midi_editor_event_list_anchor = None;
                 } else if self.main_window_id == Some(window_id) {
@@ -5305,6 +5319,7 @@ impl App {
                     self.midi_editor_selected_program_changes.clear();
                     self.midi_editor_selected_poly_aftertouches.clear();
                     self.midi_editor_selected_channel_pressures.clear();
+                    self.midi_editor_selected_opaque_events.clear();
                     self.midi_editor_event_list_cursor = None;
                     self.midi_editor_event_list_anchor = None;
                     self.midi_editor_edit_cursor_tick = None;
@@ -5365,6 +5380,7 @@ impl App {
                         self.midi_editor_selected_program_changes.clear();
                         self.midi_editor_selected_poly_aftertouches.clear();
                         self.midi_editor_selected_channel_pressures.clear();
+                        self.midi_editor_selected_opaque_events.clear();
                         match cursor {
                             MidiEditorEventListCursor::Note(note_id) => {
                                 self.midi_editor_selected_notes.insert(note_id);
@@ -5447,6 +5463,17 @@ impl App {
                     .filter(|event| !self.midi_editor_selected_channel_pressures.contains(event))
                     .copied()
                     .collect::<Vec<_>>();
+                let opaque_events = item
+                    .opaque_events()
+                    .iter()
+                    .enumerate()
+                    .filter(|(index, _)| {
+                        !self
+                            .midi_editor_selected_opaque_events
+                            .contains(&(*index as u32))
+                    })
+                    .map(|(_, event)| event.clone())
+                    .collect::<Vec<_>>();
                 let mut actions = Vec::new();
                 if !note_ids.is_empty() {
                     actions.push(DawAction::DeleteMidiNotes { item_id, note_ids });
@@ -5481,6 +5508,12 @@ impl App {
                         channel_pressures,
                     });
                 }
+                if opaque_events.len() != item.opaque_events().len() {
+                    actions.push(DawAction::SetMidiOpaqueEvents {
+                        item_id,
+                        events: opaque_events,
+                    });
+                }
                 if !actions.is_empty() {
                     self.apply_action(
                         DawAction::BatchTransaction {
@@ -5496,6 +5529,7 @@ impl App {
                 self.midi_editor_selected_program_changes.clear();
                 self.midi_editor_selected_poly_aftertouches.clear();
                 self.midi_editor_selected_channel_pressures.clear();
+                self.midi_editor_selected_opaque_events.clear();
                 self.midi_editor_event_list_cursor = None;
                 self.midi_editor_event_list_anchor = None;
             }
@@ -5512,6 +5546,7 @@ impl App {
                             && self.midi_editor_selected_program_changes.is_empty()
                             && self.midi_editor_selected_poly_aftertouches.is_empty()
                             && self.midi_editor_selected_channel_pressures.is_empty()
+                            && self.midi_editor_selected_opaque_events.is_empty()
                         {
                             Some(MidiEventPropertiesTarget::Notes(
                                 item.notes()
@@ -5528,6 +5563,7 @@ impl App {
                             && self.midi_editor_selected_program_changes.is_empty()
                             && self.midi_editor_selected_poly_aftertouches.is_empty()
                             && self.midi_editor_selected_channel_pressures.is_empty()
+                            && self.midi_editor_selected_opaque_events.is_empty()
                         {
                             Some(MidiEventPropertiesTarget::Controllers(
                                 item.controllers()
@@ -5544,6 +5580,7 @@ impl App {
                             && self.midi_editor_selected_program_changes.is_empty()
                             && self.midi_editor_selected_poly_aftertouches.is_empty()
                             && self.midi_editor_selected_channel_pressures.is_empty()
+                            && self.midi_editor_selected_opaque_events.is_empty()
                         {
                             Some(MidiEventPropertiesTarget::PitchBends(
                                 item.pitch_bends()
@@ -5560,6 +5597,7 @@ impl App {
                             && self.midi_editor_selected_pitch_bends.is_empty()
                             && self.midi_editor_selected_poly_aftertouches.is_empty()
                             && self.midi_editor_selected_channel_pressures.is_empty()
+                            && self.midi_editor_selected_opaque_events.is_empty()
                         {
                             Some(MidiEventPropertiesTarget::ProgramChanges(
                                 item.program_changes()
@@ -5576,6 +5614,7 @@ impl App {
                             && self.midi_editor_selected_pitch_bends.is_empty()
                             && self.midi_editor_selected_program_changes.is_empty()
                             && self.midi_editor_selected_channel_pressures.is_empty()
+                            && self.midi_editor_selected_opaque_events.is_empty()
                         {
                             Some(MidiEventPropertiesTarget::PolyAftertouches(
                                 item.poly_aftertouches()
@@ -5592,6 +5631,7 @@ impl App {
                             && self.midi_editor_selected_pitch_bends.is_empty()
                             && self.midi_editor_selected_program_changes.is_empty()
                             && self.midi_editor_selected_poly_aftertouches.is_empty()
+                            && self.midi_editor_selected_opaque_events.is_empty()
                         {
                             Some(MidiEventPropertiesTarget::ChannelPressures(
                                 item.channel_pressures()
@@ -5756,6 +5796,7 @@ impl App {
                     self.midi_editor_selected_program_changes.clear();
                     self.midi_editor_selected_poly_aftertouches.clear();
                     self.midi_editor_selected_channel_pressures.clear();
+                    self.midi_editor_selected_opaque_events.clear();
                 }
                 let visible_note_ids = self.visible_midi_note_ids();
                 self.midi_editor_selected_notes = note_ids
@@ -5784,6 +5825,7 @@ impl App {
                     self.midi_editor_selected_program_changes.clear();
                     self.midi_editor_selected_poly_aftertouches.clear();
                     self.midi_editor_selected_channel_pressures.clear();
+                    self.midi_editor_selected_opaque_events.clear();
                     self.midi_editor_selected_notes = HashSet::from([note_id]);
                 }
             }
@@ -5804,6 +5846,7 @@ impl App {
                     self.midi_editor_selected_program_changes.clear();
                     self.midi_editor_selected_poly_aftertouches.clear();
                     self.midi_editor_selected_channel_pressures.clear();
+                    self.midi_editor_selected_opaque_events.clear();
                     self.midi_editor_selected_controllers.insert(event);
                 } else if !self.midi_editor_selected_controllers.remove(&event) {
                     self.midi_editor_selected_controllers.insert(event);
@@ -5836,6 +5879,7 @@ impl App {
                     self.midi_editor_selected_program_changes.clear();
                     self.midi_editor_selected_poly_aftertouches.clear();
                     self.midi_editor_selected_channel_pressures.clear();
+                    self.midi_editor_selected_opaque_events.clear();
                     self.midi_editor_selected_controllers.extend([msb, lsb]);
                 } else if self.midi_editor_selected_controllers.contains(&msb)
                     || self.midi_editor_selected_controllers.contains(&lsb)
@@ -5863,6 +5907,7 @@ impl App {
                     self.midi_editor_selected_program_changes.clear();
                     self.midi_editor_selected_poly_aftertouches.clear();
                     self.midi_editor_selected_channel_pressures.clear();
+                    self.midi_editor_selected_opaque_events.clear();
                     self.midi_editor_selected_pitch_bends.insert(event);
                 } else if !self.midi_editor_selected_pitch_bends.remove(&event) {
                     self.midi_editor_selected_pitch_bends.insert(event);
@@ -5885,6 +5930,7 @@ impl App {
                     self.midi_editor_selected_program_changes.clear();
                     self.midi_editor_selected_poly_aftertouches.clear();
                     self.midi_editor_selected_channel_pressures.clear();
+                    self.midi_editor_selected_opaque_events.clear();
                     self.midi_editor_selected_program_changes.insert(event);
                 } else if !self.midi_editor_selected_program_changes.remove(&event) {
                     self.midi_editor_selected_program_changes.insert(event);
@@ -5917,6 +5963,7 @@ impl App {
                     self.midi_editor_selected_program_changes.clear();
                     self.midi_editor_selected_poly_aftertouches.clear();
                     self.midi_editor_selected_channel_pressures.clear();
+                    self.midi_editor_selected_opaque_events.clear();
                     self.midi_editor_selected_poly_aftertouches.insert(event);
                 } else if !self.midi_editor_selected_poly_aftertouches.remove(&event) {
                     self.midi_editor_selected_poly_aftertouches.insert(event);
@@ -5949,6 +5996,7 @@ impl App {
                     self.midi_editor_selected_program_changes.clear();
                     self.midi_editor_selected_poly_aftertouches.clear();
                     self.midi_editor_selected_channel_pressures.clear();
+                    self.midi_editor_selected_opaque_events.clear();
                     self.midi_editor_selected_channel_pressures.insert(event);
                 } else if !self.midi_editor_selected_channel_pressures.remove(&event) {
                     self.midi_editor_selected_channel_pressures.insert(event);
@@ -5982,6 +6030,10 @@ impl App {
                     self.midi_editor_selected_program_changes.clear();
                     self.midi_editor_selected_poly_aftertouches.clear();
                     self.midi_editor_selected_channel_pressures.clear();
+                    self.midi_editor_selected_opaque_events.clear();
+                    self.midi_editor_selected_opaque_events.insert(index);
+                } else if !self.midi_editor_selected_opaque_events.remove(&index) {
+                    self.midi_editor_selected_opaque_events.insert(index);
                 }
             }
             Message::SelectMidiEditorEventListEnd(additive) => {
@@ -5996,6 +6048,7 @@ impl App {
                     self.midi_editor_selected_program_changes.clear();
                     self.midi_editor_selected_poly_aftertouches.clear();
                     self.midi_editor_selected_channel_pressures.clear();
+                    self.midi_editor_selected_opaque_events.clear();
                 }
             }
             Message::SelectMidiControllerEvent(..)
@@ -10337,6 +10390,7 @@ impl App {
             self.midi_editor_selected_controllers.clear();
             self.midi_editor_selected_pitch_bends.clear();
             self.midi_editor_selected_program_changes.clear();
+            self.midi_editor_selected_opaque_events.clear();
             self.midi_editor_event_list_cursor = None;
             self.midi_editor_event_list_anchor = None;
             if item_changed {
@@ -10361,6 +10415,7 @@ impl App {
             self.midi_editor_selected_controllers.clear();
             self.midi_editor_selected_pitch_bends.clear();
             self.midi_editor_selected_program_changes.clear();
+            self.midi_editor_selected_opaque_events.clear();
             self.midi_editor_event_list_cursor = None;
             self.midi_editor_event_list_anchor = None;
             return iced::window::gain_focus(window_id);
@@ -10378,6 +10433,7 @@ impl App {
         self.midi_editor_selected_controllers.clear();
         self.midi_editor_selected_pitch_bends.clear();
         self.midi_editor_selected_program_changes.clear();
+        self.midi_editor_selected_opaque_events.clear();
         self.midi_editor_event_list_cursor = None;
         self.midi_editor_event_list_anchor = None;
         self.midi_editor_origin_tick = 0;

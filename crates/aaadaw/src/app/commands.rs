@@ -3451,6 +3451,7 @@ fn command_enabled(app: &App, kind: CommandKind, track: Option<TrackState>) -> b
         CommandKind::MidiEventProperties => {
             !project_edit_busy(app)
                 && app.midi_editor_item_id.is_some()
+                && app.midi_editor_selected_opaque_events.is_empty()
                 && ((!app.midi_editor_selected_notes.is_empty()
                     && app.midi_editor_selected_controllers.is_empty()
                     && app.midi_editor_selected_pitch_bends.is_empty())

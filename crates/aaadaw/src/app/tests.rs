@@ -13005,6 +13005,77 @@ fn midi_event_list_bank_select_row_selects_and_deletes_both_controller_events() 
 }
 
 #[test]
+fn midi_event_list_opaque_event_can_be_deleted_and_undo_restores_it() {
+    let mut app = App::default();
+    let _ = app.update(Message::AddTrack);
+    let track_id = app.project.tracks()[0].id();
+    app.project
+        .apply(DawAction::InsertMidiItem {
+            track_id,
+            start_tick: 0,
+            length_ticks: 3_840,
+        })
+        .expect("test MIDI item should be inserted");
+    let item_id = app.project.midi_items()[0].id();
+    let opaque_event = MidiOpaqueEventData {
+        tick: 480,
+        order: 7,
+        kind: MidiOpaqueEventKind::Meta {
+            kind: 0x01,
+            data: b"verse text".to_vec(),
+        },
+    };
+    let second_opaque_event = MidiOpaqueEventData {
+        tick: 960,
+        order: 12,
+        kind: MidiOpaqueEventKind::SystemExclusive {
+            status: 0xF0,
+            data: vec![0x43, 0x12, 0xF7],
+        },
+    };
+    app.project
+        .apply(DawAction::SetMidiOpaqueEvents {
+            item_id,
+            events: vec![opaque_event.clone(), second_opaque_event.clone()],
+        })
+        .expect("test opaque event should be inserted");
+    app.midi_editor_item_id = Some(item_id);
+    app.midi_editor_mode = MidiEditorMode::EventList;
+
+    let _ = app.update(Message::SelectMidiOpaqueEvent(item_id, 0, false));
+    let _ = app.update(Message::SelectMidiOpaqueEvent(item_id, 1, true));
+    assert_eq!(
+        app.midi_editor_selected_opaque_events,
+        HashSet::from([0, 1])
+    );
+    assert!(app.midi_event_list_cursor_is_selected(super::MidiEditorEventListCursor::Opaque(0)));
+    assert!(app.midi_event_list_cursor_is_selected(super::MidiEditorEventListCursor::Opaque(1)));
+    let _ = app.update(Message::DeleteSelectedMidiEvents(item_id));
+    assert!(app.project.midi_items()[0].opaque_events().is_empty());
+    assert!(app.midi_editor_selected_opaque_events.is_empty());
+
+    let _ = app.update(Message::Undo);
+    assert_eq!(
+        app.project.midi_items()[0].opaque_events(),
+        [opaque_event.clone(), second_opaque_event.clone()]
+    );
+    let _ = app.update(Message::Redo);
+    assert!(app.project.midi_items()[0].opaque_events().is_empty());
+
+    let _ = app.update(Message::Undo);
+    let _ = app.update(Message::SelectMidiOpaqueEvent(item_id, 0, false));
+    let _ = app.update(Message::MoveMidiEditorEventListCursor(
+        super::messages::MidiEditorEventListCursorDirection::Next,
+        false,
+        true,
+    ));
+    assert_eq!(
+        app.midi_editor_selected_opaque_events,
+        HashSet::from([0, 1])
+    );
+}
+
+#[test]
 fn midi_event_list_arrow_keys_navigate_visible_events_and_keep_ctrl_multiselection() {
     let editor_window_id = iced::window::Id::unique();
     let mut app = App {
