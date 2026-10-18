@@ -2218,3 +2218,12 @@ AAADAW Action List 新增 `midi-editor.transpose-notes` / `T`。`Transpose…` �
 AAADAW 最新 Cranelift 桌面二进制已在 Xvfb 中启动并显示 MIDI Editor 对话框；[实窗截图](../verification/reaper-parity/fixtures/midi-note-transpose-dialog-aaadaw.png)记录 All notes / +2 状态（Build ID `0a27d42e4b67484760aeb0a35c3638a9ea1dd336`）。它只验证真实窗口与控件布局，不替代自动化音高预览、取消及提交验证。
 
 App Nextest **772/772，0 skipped**，严格 AAADAW all-target Clippy、`cargo fmt --all -- --check`、`git diff --check` 通过；native 和 AAADAW fixture manifest **5/5 个条目 SHA-256 匹配**。原厂 `Snap to scale`、From/To scale/key 和 octave 控件、跨启动 scope 设置、40759 自身的 pitch 越界行为均未完成或验证，`MIDI-NOTE-TRANSPOSE-DIALOG-001`、UI-019、P7 继续 `in_progress`。
+
+
+### 2026-10-18 MIDI Editor Event List 基础模式
+
+Linux REAPER 7.82 / Default 7 的 MIDI Editor action 40056 在 Alt+3 打开 Event List，Alt+1 返回 Piano Roll。隔离配置下运行的 ReaScript 实际读回 4 个音符、0 个 CC/text event：PPQ ticks 分别为 0、240、480、720，长度均为 120，显示通道 2–5、C4/E4/G4/C5 及力度 91–94。原厂实窗列出 Index、Position、Length、Channel、Type、Parameter、Value、Off Value、REAPER Data，并在 MIDI item 终点显示 `(end) All Notes Off`；复现脚本、原厂读回、两张实窗截图和 SHA-256 见 [Event List fixture manifest](../verification/reaper-parity/fixtures/midi-event-list-ui.tsv)。
+
+AAADAW 新增 Event List/Piano Roll 两种编辑模式、对应 Action List 动作与默认快捷键；列表现显示工程 BBT 的 Note、CC、Pitch Bend 行，使用现有 channel/type filters。点击和 Ctrl/Cmd-click 可单选/多选，Delete 将选中建模事件合并为一个可 Undo/Redo 的事务。当前 Cranelift 桌面 Build ID `90499bbfde9965ac5092810d27f6e233c53ff0c9` 的真实窗口截图验证了当前布局。此为基础切片：终端 All Notes Off、Program/Bank、Poly Aftertouch、Channel Pressure、SysEx/text/meta、REAPER Data、逐单元格编辑和原厂键盘导航、列操作、准确 loop/source-offset BBT 与跨窗口/重启的模式记忆仍未实现；不计为完整 Event List。
+
+AAADAW Nextest **775/775，0 skipped**（Xvfb）通过；严格 all-target Clippy (`-D warnings`)、`cargo +stable fmt --all -- --check`、`git diff --check` 通过。parity matrix 为 **110 项 / 15 列 / 唯一 ID**，本切片 fixture manifest **4/4 个文件 SHA-256 匹配**。`MIDI-EVENT-LIST-001`、UI-019 与 P7 保持 `in_progress`。

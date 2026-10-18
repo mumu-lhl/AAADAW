@@ -1,0 +1,5 @@
+artifact	sha256
+scripts/reaper_parity/probe-midi-event-list.lua	dd4f6e0cf6aeb120f128e2f3220bc322f3a1114e286cc41374a812d837f7f1b4
+fixtures/midi-event-list-native.tsv	48aff6c57020dc49d28edb13221bdc979c2fd0dfd034f218b3f8ca9063478477
+fixtures/midi-event-list-native.png	67b2dab43a014d652550a8007bc3a436be6a1d4fb40cc5008b4003079218261e
+fixtures/midi-event-list-aaadaw.png	da589fb25cb59089a32eb43f3852426c7f6e0838c700f578605d7cf69f4155c9

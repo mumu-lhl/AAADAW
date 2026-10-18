@@ -161,6 +161,13 @@ pub(crate) enum MidiEditorTool {
     Erase,
 }
 
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum MidiEditorMode {
+    #[default]
+    PianoRoll,
+    EventList,
+}
+
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) enum MidiEditorChannelSelection {
     #[default]
@@ -557,6 +564,8 @@ pub(crate) enum Message {
     ReleaseMidiPreview,
     SelectMidiEditorLane(MidiEditorLane),
     SelectMidiEditorTool(MidiEditorTool),
+    SetMidiEditorMode(MidiEditorMode),
+    DeleteSelectedMidiEvents(ItemId),
     SelectMidiEditorChannel(MidiEditorChannelSelection),
     SetMidiEditorDrawChannel(u8),
     ToggleMidiEditorChannelFilter,
@@ -568,6 +577,7 @@ pub(crate) enum Message {
     CloseMidiEditorFilter,
     MidiEditorFeedback(String),
     SelectMidiNotes(HashSet<NoteId>),
+    SelectMidiNoteEvent(NoteId, bool),
     SelectMidiControllerEvent(ItemId, MidiControllerData, bool),
     SelectMidiPitchBendEvent(ItemId, MidiPitchBendData, bool),
     CopyMidiNotes(ItemId, Vec<NoteId>),

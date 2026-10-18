@@ -122,7 +122,7 @@ mod x11_plugin_editor;
 
 pub(crate) use messages::{
     MainMenu, MainWorkspace, MenuNavigation, Message, MidiEditorChannelSelection,
-    MidiEditorEventKind, MidiEditorEventTypeFilter, MidiEditorLane, MidiEditorTool,
+    MidiEditorEventKind, MidiEditorEventTypeFilter, MidiEditorLane, MidiEditorMode, MidiEditorTool,
     MidiHumanizeScope, MidiQuantizeOperation, MidiQuantizeScope, MidiTransposeScope, MobilePanel,
     PathPickerTarget, PendingProjectTransition, SettingsCategory, TimeMapTab,
 };
@@ -489,6 +489,7 @@ struct App {
     midi_transpose_dialog: Option<MidiTransposeDialogState>,
     midi_editor_lane: MidiEditorLane,
     midi_editor_tool: MidiEditorTool,
+    midi_editor_mode: MidiEditorMode,
     midi_editor_channel_selection: MidiEditorChannelSelection,
     midi_editor_event_type_filter: MidiEditorEventTypeFilter,
     midi_editor_draw_channel: u8,
@@ -2524,6 +2525,8 @@ impl App {
                         | commands::CommandId::MidiNotesUpSemitoneIgnoringScale
                         | commands::CommandId::MidiNotesDownSemitoneIgnoringScale
                         | commands::CommandId::MidiTransposeNotes
+                        | commands::CommandId::MidiEditorPianoRoll
+                        | commands::CommandId::MidiEditorEventList
                 ) | Message::OpenTrackRouting(_)
                     | Message::CloseTrackRouting
                     | Message::RoutingSendDraft(..)
@@ -2677,6 +2680,7 @@ impl App {
                     | Message::CloseMidiEditor
                     | Message::SelectMidiEditorLane(_)
                     | Message::SelectMidiEditorTool(_)
+                    | Message::SetMidiEditorMode(_)
                     | Message::AndroidAppFocusChanged(_)
                     | Message::CloseTrackFxChain
                     | Message::ClosePluginPicker
@@ -3696,6 +3700,67 @@ impl App {
                 self.midi_editor_lane = lane;
             }
             Message::SelectMidiEditorTool(tool) => self.midi_editor_tool = tool,
+            Message::SetMidiEditorMode(mode) => {
+                if self.midi_editor_item_id.is_some() {
+                    self.midi_editor_mode = mode;
+                }
+            }
+            Message::DeleteSelectedMidiEvents(item_id) => {
+                let Some(item) = self
+                    .project
+                    .midi_items()
+                    .iter()
+                    .find(|item| item.id() == item_id)
+                else {
+                    return task;
+                };
+                let note_ids = item
+                    .notes()
+                    .iter()
+                    .filter(|note| self.midi_editor_selected_notes.contains(&note.id()))
+                    .map(|note| note.id())
+                    .collect::<Vec<_>>();
+                let controllers = item
+                    .controllers()
+                    .iter()
+                    .filter(|event| !self.midi_editor_selected_controllers.contains(event))
+                    .copied()
+                    .collect::<Vec<_>>();
+                let pitch_bends = item
+                    .pitch_bends()
+                    .iter()
+                    .filter(|event| !self.midi_editor_selected_pitch_bends.contains(event))
+                    .copied()
+                    .collect::<Vec<_>>();
+                let mut actions = Vec::new();
+                if !note_ids.is_empty() {
+                    actions.push(DawAction::DeleteMidiNotes { item_id, note_ids });
+                }
+                if controllers.len() != item.controllers().len() {
+                    actions.push(DawAction::SetMidiControllers {
+                        item_id,
+                        controllers,
+                    });
+                }
+                if pitch_bends.len() != item.pitch_bends().len() {
+                    actions.push(DawAction::SetMidiPitchBends {
+                        item_id,
+                        pitch_bends,
+                    });
+                }
+                if !actions.is_empty() {
+                    self.apply_action(
+                        DawAction::BatchTransaction {
+                            tx_id: self.revision,
+                            actions,
+                        },
+                        "MIDI events deleted",
+                    );
+                }
+                self.midi_editor_selected_notes.clear();
+                self.midi_editor_selected_controllers.clear();
+                self.midi_editor_selected_pitch_bends.clear();
+            }
             Message::SelectMidiEditorChannel(selection) => {
                 self.midi_editor_channel_selection = selection;
                 match selection {
@@ -3777,6 +3842,22 @@ impl App {
                     .into_iter()
                     .filter(|note_id| visible_note_ids.contains(note_id))
                     .collect();
+            }
+            Message::SelectMidiNoteEvent(note_id, additive) => {
+                self.midi_editor_feedback = None;
+                let visible_note_ids = self.visible_midi_note_ids();
+                if !visible_note_ids.contains(&note_id) {
+                    return task;
+                }
+                if additive {
+                    if !self.midi_editor_selected_notes.remove(&note_id) {
+                        self.midi_editor_selected_notes.insert(note_id);
+                    }
+                } else {
+                    self.midi_editor_selected_controllers.clear();
+                    self.midi_editor_selected_pitch_bends.clear();
+                    self.midi_editor_selected_notes = HashSet::from([note_id]);
+                }
             }
             Message::SelectMidiControllerEvent(item_id, event, additive)
                 if self.midi_editor_item_id == Some(item_id) =>

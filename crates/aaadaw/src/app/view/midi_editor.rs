@@ -1,11 +1,12 @@
 use super::super::{
     App, MIDI_EDITOR_KEY_WIDTH, Message, MidiEditorChannelSelection, MidiEditorEventKind,
-    MidiEditorEventTypeFilter, MidiEditorLane, MidiEditorTool,
+    MidiEditorEventTypeFilter, MidiEditorLane, MidiEditorMode, MidiEditorTool,
 };
 use super::tokens::{PANEL_PADDING, ROW_GAP, SPACING_LG, SPACING_MD, SPACING_XS, TOUCH_TARGET_MIN};
 use crate::timeline::{SnapGrid, TimelineEvent, snap_tick_to_grid};
 use aaadaw_core::{
-    ItemId, MidiControllerData, MidiItem, MidiNoteData, MidiPitchBendData, NoteId, Project,
+    ItemId, MidiControllerData, MidiItem, MidiNote, MidiNoteData, MidiPitchBendData, NoteId,
+    Project, TimeSignature,
 };
 use iced::advanced::text::{Alignment as TextAlignment, LineHeight, Shaping};
 use iced::widget::canvas::{self, Text};
@@ -762,32 +763,36 @@ fn view_with_profile(app: &App, touch_targets: bool) -> Element<'_, Message> {
             ticks_per_beat,
         ),
     };
-    let mut content = column![edit_toolbar];
-    if let Some(feedback) = app.midi_editor_feedback.as_deref() {
-        content = content.push(text(feedback).size(12));
-    }
-    content = content.push(navigation_toolbar);
-    if touch_targets {
-        content = content.push(touch_tool_toolbar);
-    }
-    let mut content = content.push(grid_toolbar).push(channel_toolbar);
-    if let Some(channel_filter_dialog) = channel_filter_dialog {
-        content = content.push(channel_filter_dialog);
-    }
-    let content: Element<'_, Message> = content
-        .push(gesture_hints)
-        .push(lane_toolbar)
-        .push(pitch_canvas)
-        .push(active_lane)
-        .spacing(ROW_GAP)
-        .padding(if touch_targets {
-            SPACING_XS
-        } else {
-            PANEL_PADDING
-        })
-        .width(Length::Fill)
-        .height(Length::Fill)
-        .into();
+    let content: Element<'_, Message> = if app.midi_editor_mode == MidiEditorMode::EventList {
+        midi_event_list_view(app, item, item_id, title, touch_targets)
+    } else {
+        let mut content = column![edit_toolbar];
+        if let Some(feedback) = app.midi_editor_feedback.as_deref() {
+            content = content.push(text(feedback).size(12));
+        }
+        content = content.push(navigation_toolbar);
+        if touch_targets {
+            content = content.push(touch_tool_toolbar);
+        }
+        let mut content = content.push(grid_toolbar).push(channel_toolbar);
+        if let Some(channel_filter_dialog) = channel_filter_dialog {
+            content = content.push(channel_filter_dialog);
+        }
+        content
+            .push(gesture_hints)
+            .push(lane_toolbar)
+            .push(pitch_canvas)
+            .push(active_lane)
+            .spacing(ROW_GAP)
+            .padding(if touch_targets {
+                SPACING_XS
+            } else {
+                PANEL_PADDING
+            })
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .into()
+    };
     if app.midi_quantize_dialog.is_some()
         || app.midi_humanize_dialog.is_some()
         || app.midi_transpose_dialog.is_some()
@@ -833,6 +838,312 @@ fn view_with_profile(app: &App, touch_targets: bool) -> Element<'_, Message> {
     } else {
         content
     }
+}
+
+#[derive(Clone, Copy)]
+enum MidiEventListEntry<'a> {
+    Note(&'a MidiNote),
+    Controller(MidiControllerData),
+    PitchBend(MidiPitchBendData),
+}
+
+impl MidiEventListEntry<'_> {
+    fn tick(self) -> u64 {
+        match self {
+            Self::Note(note) => note.tick(),
+            Self::Controller(event) => event.tick,
+            Self::PitchBend(event) => event.tick,
+        }
+    }
+
+    fn order(self) -> u8 {
+        match self {
+            Self::Note(_) => 0,
+            Self::Controller(_) => 1,
+            Self::PitchBend(_) => 2,
+        }
+    }
+}
+
+fn midi_event_list_entries(item: &MidiItem, snap: MidiSnap) -> Vec<MidiEventListEntry<'_>> {
+    let mut events = item
+        .notes()
+        .iter()
+        .filter(|note| snap.note_visible(note.channel()))
+        .map(MidiEventListEntry::Note)
+        .chain(
+            item.controllers()
+                .iter()
+                .copied()
+                .filter(|event| snap.controller_visible(event.channel))
+                .map(MidiEventListEntry::Controller),
+        )
+        .chain(
+            item.pitch_bends()
+                .iter()
+                .copied()
+                .filter(|event| snap.pitch_bend_visible(event.channel))
+                .map(MidiEventListEntry::PitchBend),
+        )
+        .collect::<Vec<_>>();
+    events.sort_by_key(|event| (event.tick(), event.order()));
+    events
+}
+
+fn midi_event_list_view<'a>(
+    app: &'a App,
+    item: &'a MidiItem,
+    item_id: ItemId,
+    track_name: &'a str,
+    touch_targets: bool,
+) -> Element<'a, Message> {
+    let snap = midi_snap_for_app(app);
+    let events = midi_event_list_entries(item, snap);
+    let ppq = u64::from(app.project.settings().ppq());
+    let meter = app.project.time_signature_at_tick(0);
+    let toolbar = row![
+        text(format!(
+            "Event List · Track {track_name} · {} events",
+            events.len()
+        ))
+        .width(Length::Fill),
+        button("Piano Roll")
+            .style(iced::widget::button::secondary)
+            .on_press(Message::SetMidiEditorMode(MidiEditorMode::PianoRoll)),
+        button("Event List")
+            .style(iced::widget::button::primary)
+            .on_press(Message::SetMidiEditorMode(MidiEditorMode::EventList)),
+    ]
+    .spacing(ROW_GAP)
+    .align_y(iced::Alignment::Center);
+    let channel_toolbar = row![
+        text("MIDI channel").size(if touch_targets { 14 } else { 12 }),
+        pick_list(
+            &MidiEditorChannelSelection::OPTIONS[..],
+            Some(app.midi_editor_channel_selection),
+            Message::SelectMidiEditorChannel,
+        )
+        .width(Length::Fixed(if touch_targets { 180.0 } else { 164.0 })),
+        button("Filter events…").on_press(Message::OpenMidiEditorFilter),
+    ]
+    .spacing(ROW_GAP)
+    .align_y(iced::Alignment::Center);
+    let header = midi_event_list_header();
+    let rows = events
+        .iter()
+        .enumerate()
+        .map(|(index, event)| {
+            let (
+                position_tick,
+                length_tick,
+                channel,
+                event_type,
+                parameter,
+                value,
+                selected,
+                message,
+            ) = match *event {
+                MidiEventListEntry::Note(note) => (
+                    note.tick(),
+                    note.duration(),
+                    note.channel(),
+                    "Note",
+                    pitch_name(snap.note_pitch(item_id, &app.midi_editor_selected_notes, note)),
+                    note.velocity().to_string(),
+                    app.midi_editor_selected_notes.contains(&note.id()),
+                    Message::SelectMidiNoteEvent(
+                        note.id(),
+                        app.keyboard_modifiers.command() || app.keyboard_modifiers.control(),
+                    ),
+                ),
+                MidiEventListEntry::Controller(event) => (
+                    event.tick,
+                    0,
+                    event.channel,
+                    "CC",
+                    midi_event_controller_name(event.controller),
+                    event.value.to_string(),
+                    app.midi_editor_selected_controllers.contains(&event),
+                    Message::SelectMidiControllerEvent(
+                        item_id,
+                        event,
+                        app.keyboard_modifiers.command() || app.keyboard_modifiers.control(),
+                    ),
+                ),
+                MidiEventListEntry::PitchBend(event) => (
+                    event.tick,
+                    0,
+                    event.channel,
+                    "Pitch",
+                    "Pitch Bend".to_owned(),
+                    event.value.to_string(),
+                    app.midi_editor_selected_pitch_bends.contains(&event),
+                    Message::SelectMidiPitchBendEvent(
+                        item_id,
+                        event,
+                        app.keyboard_modifiers.command() || app.keyboard_modifiers.control(),
+                    ),
+                ),
+            };
+            midi_event_list_row(MidiEventListRow {
+                index: (index + 1).to_string(),
+                position: midi_event_list_position(position_tick, ppq, meter),
+                length: midi_event_list_length(length_tick, ppq, meter),
+                channel: (channel + 1).to_string(),
+                event_type: event_type.to_owned(),
+                parameter,
+                value,
+                off_value: "0".to_owned(),
+                selected,
+                message,
+            })
+        })
+        .collect::<Vec<_>>();
+    let event_rows: Element<'_, Message> = if rows.is_empty() {
+        column![text("No modeled MIDI events.").size(13)]
+            .padding(SPACING_MD)
+            .into()
+    } else {
+        column![header].extend(rows).spacing(1).into()
+    };
+    let has_selection = !app.midi_editor_selected_notes.is_empty()
+        || !app.midi_editor_selected_controllers.is_empty()
+        || !app.midi_editor_selected_pitch_bends.is_empty();
+    let mut content = column![toolbar, channel_toolbar];
+    if let Some(feedback) = app.midi_editor_feedback.as_deref() {
+        content = content.push(text(feedback).size(12));
+    }
+    content
+        .push(scrollable(event_rows).height(Length::Fill))
+        .push(
+            row![
+                text("Click a row to select an event; Delete removes the selected modeled events.")
+                    .size(11)
+                    .width(Length::Fill),
+                button("Delete selected")
+                    .style(if has_selection {
+                        iced::widget::button::danger
+                    } else {
+                        iced::widget::button::secondary
+                    })
+                    .on_press_maybe(
+                        has_selection.then_some(Message::DeleteSelectedMidiEvents(item_id)),
+                    ),
+            ]
+            .align_y(iced::Alignment::Center),
+        )
+        .spacing(ROW_GAP)
+        .padding(if touch_targets {
+            SPACING_XS
+        } else {
+            PANEL_PADDING
+        })
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .into()
+}
+
+struct MidiEventListRow {
+    index: String,
+    position: String,
+    length: String,
+    channel: String,
+    event_type: String,
+    parameter: String,
+    value: String,
+    off_value: String,
+    selected: bool,
+    message: Message,
+}
+
+fn midi_event_list_row(row: MidiEventListRow) -> Element<'static, Message> {
+    let contents = row![
+        text(row.index).width(Length::Fixed(48.0)),
+        text(row.position).width(Length::Fixed(104.0)),
+        text(row.length).width(Length::Fixed(104.0)),
+        text(row.channel).width(Length::Fixed(68.0)),
+        text(row.event_type).width(Length::Fixed(100.0)),
+        text(row.parameter).width(Length::Fixed(150.0)),
+        text(row.value).width(Length::Fixed(72.0)),
+        text(row.off_value).width(Length::Fixed(80.0)),
+    ]
+    .spacing(2)
+    .align_y(iced::Alignment::Center);
+    let button = button(contents)
+        .width(Length::Fill)
+        .padding([2, 3])
+        .style(if row.selected {
+            iced::widget::button::primary
+        } else {
+            iced::widget::button::secondary
+        });
+    button.on_press(row.message).into()
+}
+
+fn midi_event_list_header() -> Element<'static, Message> {
+    container(
+        row![
+            text("Index").width(Length::Fixed(48.0)),
+            text("Position").width(Length::Fixed(104.0)),
+            text("Length").width(Length::Fixed(104.0)),
+            text("Channel").width(Length::Fixed(68.0)),
+            text("Type").width(Length::Fixed(100.0)),
+            text("Parameter").width(Length::Fixed(150.0)),
+            text("Value").width(Length::Fixed(72.0)),
+            text("Off Value").width(Length::Fixed(80.0)),
+        ]
+        .spacing(2)
+        .align_y(iced::Alignment::Center),
+    )
+    .width(Length::Fill)
+    .padding([4, 3])
+    .style(container::bordered_box)
+    .into()
+}
+
+fn midi_event_controller_name(controller: u8) -> String {
+    match controller {
+        1 => "Modulation (CC1)".to_owned(),
+        7 => "Volume (CC7)".to_owned(),
+        10 => "Pan (CC10)".to_owned(),
+        11 => "Expression (CC11)".to_owned(),
+        64 => "Sustain (CC64)".to_owned(),
+        _ => format!("CC {controller}"),
+    }
+}
+
+fn midi_event_list_position(tick: u64, ppq: u64, meter: TimeSignature) -> String {
+    let beat_ticks = ppq
+        .saturating_mul(4)
+        .checked_div(u64::from(meter.denominator()))
+        .unwrap_or(0)
+        .max(1);
+    let measure_ticks = beat_ticks
+        .saturating_mul(u64::from(meter.numerator()))
+        .max(1);
+    let bar = tick / measure_ticks + 1;
+    let within_measure = tick % measure_ticks;
+    let beat = within_measure / beat_ticks + 1;
+    let beat_subticks = within_measure % beat_ticks;
+    let hundredth = (u128::from(beat_subticks) * 100 / u128::from(beat_ticks)) as u8;
+    format!("{bar}.{beat}.{hundredth:02}")
+}
+
+fn midi_event_list_length(ticks: u64, ppq: u64, meter: TimeSignature) -> String {
+    let beat_ticks = ppq
+        .saturating_mul(4)
+        .checked_div(u64::from(meter.denominator()))
+        .unwrap_or(0)
+        .max(1);
+    let measure_ticks = beat_ticks
+        .saturating_mul(u64::from(meter.numerator()))
+        .max(1);
+    let bars = ticks / measure_ticks;
+    let within_measure = ticks % measure_ticks;
+    let beats = within_measure / beat_ticks;
+    let beat_subticks = within_measure % beat_ticks;
+    let hundredth = (u128::from(beat_subticks) * 100 / u128::from(beat_ticks)) as u8;
+    format!("{bars}.{beats}.{hundredth:02}")
 }
 
 fn midi_humanize_dialog(app: &App, touch_targets: bool) -> Element<'_, Message> {
@@ -6934,6 +7245,90 @@ mod tests {
             velocity_note_at_x(notes, mapping, 0, 3_840, second + 4.0),
             Some(notes[1].id())
         );
+    }
+
+    #[test]
+    fn event_list_positions_and_lengths_use_project_bbt_ticks() {
+        let common_time = TimeSignature::new(4, 4).expect("valid common time");
+        assert_eq!(midi_event_list_position(0, 960, common_time), "1.1.00");
+        assert_eq!(midi_event_list_position(480, 960, common_time), "1.1.50");
+        assert_eq!(midi_event_list_position(960, 960, common_time), "1.2.00");
+        assert_eq!(midi_event_list_position(3_840, 960, common_time), "2.1.00");
+        assert_eq!(midi_event_list_length(240, 960, common_time), "0.0.25");
+        assert_eq!(midi_event_list_length(960, 960, common_time), "0.1.00");
+        assert_eq!(midi_event_list_length(3_840, 960, common_time), "1.0.00");
+
+        let six_eight = TimeSignature::new(6, 8).expect("valid compound meter");
+        assert_eq!(midi_event_list_position(480, 960, six_eight), "1.2.00");
+        assert_eq!(midi_event_list_length(2_880, 960, six_eight), "1.0.00");
+    }
+
+    #[test]
+    fn event_list_orders_and_filters_the_modeled_event_types() {
+        let mut project = Project::new();
+        project
+            .apply(aaadaw_core::DawAction::CreateTrack {
+                index: 0,
+                name: "Track".to_owned(),
+            })
+            .unwrap();
+        let track_id = project.tracks()[0].id();
+        project
+            .apply(aaadaw_core::DawAction::InsertMidiItem {
+                track_id,
+                start_tick: 0,
+                length_ticks: 3_840,
+            })
+            .unwrap();
+        let item_id = project.midi_items()[0].id();
+        project
+            .apply(aaadaw_core::DawAction::AddMidiNotes {
+                item_id,
+                notes: vec![MidiNoteData {
+                    channel: 1,
+                    pitch: 64,
+                    tick: 240,
+                    duration: 120,
+                    velocity: 90,
+                }],
+            })
+            .unwrap();
+        project
+            .apply(aaadaw_core::DawAction::SetMidiControllers {
+                item_id,
+                controllers: vec![MidiControllerData {
+                    controller: 1,
+                    channel: 0,
+                    tick: 120,
+                    value: 70,
+                }],
+            })
+            .unwrap();
+        project
+            .apply(aaadaw_core::DawAction::SetMidiPitchBends {
+                item_id,
+                pitch_bends: vec![MidiPitchBendData {
+                    channel: 1,
+                    tick: 120,
+                    value: 12_000,
+                }],
+            })
+            .unwrap();
+        let item = &project.midi_items()[0];
+        let events = midi_event_list_entries(item, MidiSnap::default());
+        assert!(matches!(events[0], MidiEventListEntry::Controller(_)));
+        assert!(matches!(events[1], MidiEventListEntry::PitchBend(_)));
+        assert!(matches!(events[2], MidiEventListEntry::Note(_)));
+
+        let channel_one = MidiSnap {
+            channel_selection: MidiEditorChannelSelection::Channel(1),
+            filter_enabled: true,
+            ..MidiSnap::default()
+        };
+        let events = midi_event_list_entries(item, channel_one);
+        assert_eq!(events.len(), 2);
+        assert!(matches!(events[0], MidiEventListEntry::PitchBend(_)));
+        assert!(matches!(events[1], MidiEventListEntry::Note(_)));
     }
 
     #[test]

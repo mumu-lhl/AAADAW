@@ -60,6 +60,8 @@ pub(crate) enum CommandId {
     MidiNotesUpSemitoneIgnoringScale,
     MidiNotesDownSemitoneIgnoringScale,
     MidiTransposeNotes,
+    MidiEditorPianoRoll,
+    MidiEditorEventList,
     AddProjectMarker,
     InsertRegionFromTimeSelection,
     DeleteProjectRegionNearCursor,
@@ -206,6 +208,8 @@ enum CommandKind {
     MidiNotesUpSemitoneIgnoringScale,
     MidiNotesDownSemitoneIgnoringScale,
     MidiTransposeNotes,
+    MidiEditorPianoRoll,
+    MidiEditorEventList,
     AddProjectMarker,
     InsertRegionFromTimeSelection,
     DeleteProjectRegionNearCursor,
@@ -398,6 +402,8 @@ const MIDI_NOTES_DOWN_SEMITONE_IGNORE_SCALE_SHORTCUT: &[Shortcut] = &[
     ),
 ];
 const MIDI_TRANSPOSE_NOTES_SHORTCUT: &[Shortcut] = &[Shortcut::character('t', Modifiers::NONE)];
+const MIDI_EDITOR_PIANO_ROLL_SHORTCUT: &[Shortcut] = &[Shortcut::character('1', Modifiers::ALT)];
+const MIDI_EDITOR_EVENT_LIST_SHORTCUT: &[Shortcut] = &[Shortcut::character('3', Modifiers::ALT)];
 
 const COMMANDS: &[CommandDefinition] = &[
     CommandDefinition {
@@ -1792,6 +1798,26 @@ const COMMANDS: &[CommandDefinition] = &[
         destructive: false,
         separator_before: false,
     },
+    CommandDefinition {
+        kind: CommandKind::MidiEditorPianoRoll,
+        menu: None,
+        category: "MIDI Editor",
+        label: "Mode: Piano roll",
+        aliases: &["piano roll mode"],
+        shortcuts: MIDI_EDITOR_PIANO_ROLL_SHORTCUT,
+        destructive: false,
+        separator_before: false,
+    },
+    CommandDefinition {
+        kind: CommandKind::MidiEditorEventList,
+        menu: None,
+        category: "MIDI Editor",
+        label: "Mode: Event List",
+        aliases: &["event list mode"],
+        shortcuts: MIDI_EDITOR_EVENT_LIST_SHORTCUT,
+        destructive: false,
+        separator_before: false,
+    },
 ];
 
 #[derive(Clone)]
@@ -2720,6 +2746,8 @@ fn command_kind_id(kind: CommandKind) -> &'static str {
             "midi-editor.notes-down-semitone-ignoring-scale"
         }
         CommandKind::MidiTransposeNotes => "midi-editor.transpose-notes",
+        CommandKind::MidiEditorPianoRoll => "midi-editor.mode-piano-roll",
+        CommandKind::MidiEditorEventList => "midi-editor.mode-event-list",
         CommandKind::AddProjectMarker => "insert.project-marker",
         CommandKind::InsertRegionFromTimeSelection => "regions.insert-from-time-selection",
         CommandKind::DeleteProjectRegionNearCursor => "regions.delete-near-cursor",
@@ -2822,10 +2850,23 @@ fn command_kind_id(kind: CommandKind) -> &'static str {
 }
 
 pub(super) fn dispatch(app: &mut App, command: CommandId) -> Task<Message> {
-    if command == CommandId::MidiTransposeNotes {
-        return app.midi_editor_item_id.map_or_else(Task::none, |item_id| {
-            app.update(Message::OpenMidiTransposeDialog(item_id))
-        });
+    match command {
+        CommandId::MidiTransposeNotes => {
+            return app.midi_editor_item_id.map_or_else(Task::none, |item_id| {
+                app.update(Message::OpenMidiTransposeDialog(item_id))
+            });
+        }
+        CommandId::MidiEditorPianoRoll => {
+            return app.midi_editor_item_id.map_or_else(Task::none, |_| {
+                app.update(Message::SetMidiEditorMode(super::MidiEditorMode::PianoRoll))
+            });
+        }
+        CommandId::MidiEditorEventList => {
+            return app.midi_editor_item_id.map_or_else(Task::none, |_| {
+                app.update(Message::SetMidiEditorMode(super::MidiEditorMode::EventList))
+            });
+        }
+        _ => {}
     }
     if let CommandId::OpenProjectTemplate(index) = command {
         let Some(path) = app.project_template_paths.get(index).cloned() else {
@@ -2932,6 +2973,9 @@ pub(super) fn dispatch(app: &mut App, command: CommandId) -> Task<Message> {
         CommandId::MidiNotesUpOctave => Message::TransposeSelectedMidiNotes(12),
         CommandId::MidiNotesDownOctave => Message::TransposeSelectedMidiNotes(-12),
         CommandId::MidiTransposeNotes => unreachable!("transpose dialog dispatch returned above"),
+        CommandId::MidiEditorPianoRoll | CommandId::MidiEditorEventList => {
+            unreachable!("MIDI Editor mode dispatch returned above")
+        }
         CommandId::AddProjectMarker => Message::AddProjectMarker,
         CommandId::InsertRegionFromTimeSelection => Message::InsertRegionFromTimeSelection,
         CommandId::DeleteProjectRegionNearCursor => Message::DeleteProjectRegionNearCursor,
@@ -3365,6 +3409,9 @@ fn command_enabled(app: &App, kind: CommandKind, track: Option<TrackState>) -> b
                         .any(|item| item.id() == item_id)
                 })
         }
+        CommandKind::MidiEditorPianoRoll | CommandKind::MidiEditorEventList => {
+            !project_edit_busy(app) && app.midi_editor_item_id.is_some()
+        }
         CommandKind::AddProjectMarker => !project_edit_busy(app),
         CommandKind::InsertRegionFromTimeSelection => {
             !project_edit_busy(app) && app.timeline.time_selection.is_some()
@@ -3677,6 +3724,8 @@ fn command_id(kind: CommandKind) -> CommandId {
             CommandId::MidiNotesDownSemitoneIgnoringScale
         }
         CommandKind::MidiTransposeNotes => CommandId::MidiTransposeNotes,
+        CommandKind::MidiEditorPianoRoll => CommandId::MidiEditorPianoRoll,
+        CommandKind::MidiEditorEventList => CommandId::MidiEditorEventList,
         CommandKind::AddProjectMarker => CommandId::AddProjectMarker,
         CommandKind::InsertRegionFromTimeSelection => CommandId::InsertRegionFromTimeSelection,
         CommandKind::DeleteProjectRegionNearCursor => CommandId::DeleteProjectRegionNearCursor,

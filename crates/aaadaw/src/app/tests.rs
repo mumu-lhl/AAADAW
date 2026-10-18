@@ -11,11 +11,12 @@ use super::shortcut;
 #[cfg(feature = "audio-device")]
 use super::{ActiveRecording, SharedRecordingStart};
 use super::{
-    App, ItemSnapDirection, MainMenu, MainWorkspace, MenuNavigation, Message, MidiEditorTool,
-    MidiHumanizeScope, MidiQuantizeOperation, MidiQuantizeScope, MidiTransposeScope, MobilePanel,
-    PathPickerTarget, fx_chain_plugin_drag_event, keyboard_shortcut_event, menu_navigation_event,
-    midi_editor_shortcut_event, midi_expression_context_menu_event, midi_item_swing_snap_target,
-    mobile_back_event, shortcut_message,
+    App, ItemSnapDirection, MainMenu, MainWorkspace, MenuNavigation, Message, MidiEditorMode,
+    MidiEditorTool, MidiHumanizeScope, MidiQuantizeOperation, MidiQuantizeScope,
+    MidiTransposeScope, MobilePanel, PathPickerTarget, fx_chain_plugin_drag_event,
+    keyboard_shortcut_event, menu_navigation_event, midi_editor_shortcut_event,
+    midi_expression_context_menu_event, midi_item_swing_snap_target, mobile_back_event,
+    shortcut_message,
 };
 #[cfg(feature = "audio-device")]
 use super::{prepare_project_playback_file, prepare_project_playback_file_with_loop_points};
@@ -12649,6 +12650,124 @@ fn midi_transpose_dialog_previews_and_cancels_then_commits_all_notes_as_one_edit
             .collect::<Vec<_>>(),
         [58, 62, 70]
     );
+}
+
+#[test]
+fn midi_event_list_mode_switches_by_reaper_shortcuts_and_deletes_selected_events_atomically() {
+    let mut app = App::default();
+    let _ = app.update(Message::AddTrack);
+    let track_id = app.project.tracks()[0].id();
+    app.project
+        .apply(DawAction::InsertMidiItem {
+            track_id,
+            start_tick: 0,
+            length_ticks: 3_840,
+        })
+        .expect("test MIDI item should be inserted");
+    let item_id = app.project.midi_items()[0].id();
+    app.project
+        .apply(DawAction::AddMidiNotes {
+            item_id,
+            notes: vec![MidiNoteData {
+                channel: 0,
+                pitch: 60,
+                tick: 120,
+                duration: 240,
+                velocity: 90,
+            }],
+        })
+        .expect("test MIDI note should be inserted");
+    let controller = MidiControllerData {
+        controller: 1,
+        channel: 0,
+        tick: 240,
+        value: 64,
+    };
+    app.project
+        .apply(DawAction::SetMidiControllers {
+            item_id,
+            controllers: vec![controller],
+        })
+        .expect("test MIDI controller should be inserted");
+    let pitch_bend = MidiPitchBendData {
+        channel: 0,
+        tick: 360,
+        value: 12_000,
+    };
+    app.project
+        .apply(DawAction::SetMidiPitchBends {
+            item_id,
+            pitch_bends: vec![pitch_bend],
+        })
+        .expect("test MIDI pitch bend should be inserted");
+    app.midi_editor_item_id = Some(item_id);
+    let note_id = app.project.midi_items()[0].notes()[0].id();
+    let before_revision = app.revision;
+
+    assert_eq!(
+        commands::from_shortcut(
+            &Key::Character("3"),
+            Modifiers::ALT,
+            &commands::ShortcutBindings::new(),
+            &[],
+        ),
+        Some(CommandId::MidiEditorEventList)
+    );
+    assert_eq!(
+        commands::find(&app, "Mode: Event List"),
+        Some(CommandId::MidiEditorEventList)
+    );
+    assert!(commands::is_enabled(&app, CommandId::MidiEditorEventList));
+    let _ = commands::dispatch(&mut app, CommandId::MidiEditorEventList);
+    assert_eq!(app.midi_editor_mode, MidiEditorMode::EventList);
+    assert_eq!(
+        commands::from_shortcut(
+            &Key::Character("1"),
+            Modifiers::ALT,
+            &commands::ShortcutBindings::new(),
+            &[],
+        ),
+        Some(CommandId::MidiEditorPianoRoll)
+    );
+    let _ = commands::dispatch(&mut app, CommandId::MidiEditorPianoRoll);
+    assert_eq!(app.midi_editor_mode, MidiEditorMode::PianoRoll);
+    let _ = app.update(Message::SetMidiEditorMode(MidiEditorMode::EventList));
+
+    let _ = app.update(Message::SelectMidiNoteEvent(note_id, false));
+    let _ = app.update(Message::SelectMidiControllerEvent(
+        item_id, controller, true,
+    ));
+    let _ = app.update(Message::SelectMidiPitchBendEvent(item_id, pitch_bend, true));
+    assert_eq!(app.midi_editor_selected_notes, HashSet::from([note_id]));
+    assert_eq!(
+        app.midi_editor_selected_controllers,
+        HashSet::from([controller])
+    );
+    assert_eq!(
+        app.midi_editor_selected_pitch_bends,
+        HashSet::from([pitch_bend])
+    );
+
+    let _ = app.update(Message::DeleteSelectedMidiEvents(item_id));
+    let item = &app.project.midi_items()[0];
+    assert!(item.notes().is_empty());
+    assert!(item.controllers().is_empty());
+    assert!(item.pitch_bends().is_empty());
+    assert_eq!(app.revision, before_revision + 1);
+    assert!(app.midi_editor_selected_notes.is_empty());
+    assert!(app.midi_editor_selected_controllers.is_empty());
+    assert!(app.midi_editor_selected_pitch_bends.is_empty());
+
+    let _ = app.update(Message::Undo);
+    let item = &app.project.midi_items()[0];
+    assert_eq!(item.notes().len(), 1);
+    assert_eq!(item.controllers(), [controller]);
+    assert_eq!(item.pitch_bends(), [pitch_bend]);
+    let _ = app.update(Message::Redo);
+    let item = &app.project.midi_items()[0];
+    assert!(item.notes().is_empty());
+    assert!(item.controllers().is_empty());
+    assert!(item.pitch_bends().is_empty());
 }
 
 #[test]
