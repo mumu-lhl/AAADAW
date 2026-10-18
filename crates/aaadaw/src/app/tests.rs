@@ -14005,6 +14005,39 @@ fn empty_midi_event_list_contains_the_terminal_cursor() {
         Some(super::MidiEditorEventListCursor::End)
     );
     assert!(app.midi_editor_selected_notes.is_empty());
+
+    let project_before = app.project.snapshot();
+    let history_before = app.project.history_cursor();
+    app.midi_editor_event_list_cursor = None;
+    app.midi_editor_event_list_anchor = None;
+    assert!(commands::is_enabled(&app, CommandId::MidiEventProperties));
+    let _ = commands::dispatch(&mut app, CommandId::MidiEventProperties);
+    assert_eq!(
+        app.midi_editor_event_list_cursor,
+        Some(super::MidiEditorEventListCursor::End)
+    );
+    let dialog = app
+        .midi_event_properties_dialog
+        .as_ref()
+        .expect("the synthetic terminal row should open the blank properties dialog");
+    assert!(matches!(
+        &dialog.target,
+        super::MidiEventPropertiesTarget::Terminal
+    ));
+    assert!(dialog.position.is_empty());
+    assert!(dialog.length.is_empty());
+    assert!(dialog.channel.is_empty());
+    assert!(dialog.parameter.is_empty());
+    assert!(dialog.value.is_empty());
+
+    let _ = app.update(Message::ApplyMidiEventProperties);
+    assert!(app.midi_event_properties_dialog.is_some());
+    assert_eq!(app.project.snapshot(), project_before);
+    assert_eq!(app.project.history_cursor(), history_before);
+    let _ = app.update(Message::AcceptMidiEventProperties);
+    assert!(app.midi_event_properties_dialog.is_none());
+    assert_eq!(app.project.snapshot(), project_before);
+    assert_eq!(app.project.history_cursor(), history_before);
 }
 
 #[test]

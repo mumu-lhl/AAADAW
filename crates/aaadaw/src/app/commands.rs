@@ -3464,12 +3464,27 @@ fn command_enabled(app: &App, kind: CommandKind, track: Option<TrackState>) -> b
                 !app.midi_editor_selected_channel_pressures.is_empty(),
                 !app.midi_editor_selected_opaque_events.is_empty(),
             ];
-            if selected_types
+            let selected_type_count = selected_types
                 .into_iter()
                 .filter(|selected| *selected)
-                .count()
-                != 1
-            {
+                .count();
+            if selected_type_count == 0 {
+                return app.midi_editor_mode == super::MidiEditorMode::EventList
+                    && app
+                        .project
+                        .midi_items()
+                        .iter()
+                        .find(|item| item.id() == item_id)
+                        .is_some_and(|item| {
+                            let cursors = super::view::midi_event_list_cursors(app, item);
+                            cursors.contains(&super::MidiEditorEventListCursor::End)
+                                && (app.midi_editor_event_list_cursor
+                                    == Some(super::MidiEditorEventListCursor::End)
+                                    || cursors.as_slice()
+                                        == [super::MidiEditorEventListCursor::End])
+                        });
+            }
+            if selected_type_count != 1 {
                 return false;
             }
             if app.midi_editor_selected_opaque_events.is_empty() {

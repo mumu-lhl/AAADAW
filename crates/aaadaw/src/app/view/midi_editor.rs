@@ -1539,6 +1539,9 @@ fn midi_event_list_view<'a>(
             .is_some_and(|event| {
                 super::super::midi_opaque_event_properties_type_and_payload(&event.kind).is_some()
             });
+    let has_terminal_cursor = !has_selection
+        && (app.midi_editor_event_list_cursor == Some(MidiEditorEventListCursor::End)
+            || (events.len() == 1 && matches!(events.first(), Some(MidiEventListEntry::End(_)))));
     let mut content = column![toolbar, channel_toolbar];
     if let Some(channel_filter_dialog) = channel_filter_dialog {
         content = content.push(channel_filter_dialog);
@@ -1559,7 +1562,8 @@ fn midi_event_list_view<'a>(
                     .style(iced::widget::button::secondary)
                     .on_press_maybe(
                         (has_homogeneous_editable_selection
-                            || has_single_opaque_editable_selection)
+                            || has_single_opaque_editable_selection
+                            || has_terminal_cursor)
                             .then_some(Message::OpenMidiEventProperties(item_id)),
                     ),
                 button("Delete selected")
@@ -1942,6 +1946,10 @@ fn midi_event_properties_dialog(app: &App, touch_targets: bool) -> Element<'_, M
         &state.target,
         super::super::MidiEventPropertiesTarget::Opaque(..)
     );
+    let is_terminal = matches!(
+        &state.target,
+        super::super::MidiEventPropertiesTarget::Terminal
+    );
     let is_opaque_sysex =
         state.opaque_type == Some(super::super::MidiOpaqueEventPropertiesType::SysEx);
     let is_opaque_meta = is_opaque && !is_opaque_sysex;
@@ -2007,8 +2015,40 @@ fn midi_event_properties_dialog(app: &App, touch_targets: bool) -> Element<'_, M
         ) => midi_sysex_frame_labels(*status),
         _ => ("F0", Some("F7")),
     };
-    let mut content = column![text(title).size(16)];
-    if is_opaque_sysex {
+    let mut content = if is_terminal {
+        column![]
+    } else {
+        column![text(title).size(16)]
+    };
+    if is_terminal {
+        content = content
+            .push(
+                row![
+                    text("Type:").width(Length::Fixed(84.0)),
+                    midi_event_properties_blank_field(240.0, true),
+                ]
+                .spacing(SPACING_XS)
+                .align_y(iced::Alignment::Center),
+            )
+            .push(
+                row![
+                    text("Position:").width(Length::Fixed(84.0)),
+                    midi_event_properties_blank_field(88.0, false),
+                ]
+                .spacing(SPACING_XS)
+                .align_y(iced::Alignment::Center),
+            )
+            .push(
+                row![
+                    text("Channel:").width(Length::Fixed(84.0)),
+                    midi_event_properties_blank_field(96.0, true),
+                ]
+                .spacing(SPACING_XS)
+                .align_y(iced::Alignment::Center),
+            )
+            .push(text("Use +, -, *, / for relative changes in any field.").size(11))
+            .push(text("Use +1o2 to add 1 octave and 2").size(11));
+    } else if is_opaque_sysex {
         let mut sysex_data_row = row![text(sysex_start), opaque_sysex_data]
             .spacing(SPACING_XS)
             .align_y(iced::Alignment::Center);
@@ -2377,6 +2417,25 @@ fn midi_event_properties_dialog(app: &App, touch_targets: bool) -> Element<'_, M
         .width(Length::Fixed(if touch_targets { 560.0 } else { 520.0 }))
         .padding(SPACING_MD)
         .style(container::rounded_box)
+        .into()
+}
+
+fn midi_event_properties_blank_field(width: f32, dropdown: bool) -> Element<'static, Message> {
+    let content: Element<'static, Message> = if dropdown {
+        row![
+            iced::widget::Space::new().width(Length::Fill),
+            text("▾").size(12),
+        ]
+        .align_y(iced::Alignment::Center)
+        .into()
+    } else {
+        iced::widget::Space::new().width(Length::Fill).into()
+    };
+    container(content)
+        .width(Length::Fixed(width))
+        .height(Length::Fixed(24.0))
+        .padding([2, 4])
+        .style(container::bordered_box)
         .into()
 }
 

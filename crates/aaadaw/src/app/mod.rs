@@ -787,6 +787,7 @@ enum MidiEventPropertiesTarget {
     PolyAftertouches(Vec<MidiPolyAftertouchData>),
     ChannelPressures(Vec<MidiChannelPressureData>),
     Opaque(u32, MidiOpaqueEventData),
+    Terminal,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -2832,6 +2833,18 @@ impl App {
             value,
             value_mixed,
         ) = match &target {
+            MidiEventPropertiesTarget::Terminal => (
+                String::new(),
+                false,
+                String::new(),
+                false,
+                String::new(),
+                false,
+                String::new(),
+                false,
+                String::new(),
+                false,
+            ),
             MidiEventPropertiesTarget::Notes(note_ids) => {
                 if note_ids.is_empty() {
                     return None;
@@ -3147,6 +3160,13 @@ impl App {
         let Some(dialog) = self.midi_event_properties_dialog.clone() else {
             return Task::none();
         };
+        if matches!(&dialog.target, MidiEventPropertiesTarget::Terminal) {
+            self.midi_editor_feedback = None;
+            if close_dialog {
+                self.midi_event_properties_dialog = None;
+            }
+            return Task::none();
+        }
         if matches!(&dialog.target, MidiEventPropertiesTarget::Opaque(..)) {
             return self.commit_midi_opaque_event_properties(dialog, close_dialog);
         }
@@ -3852,7 +3872,9 @@ impl App {
                 }
                 task
             }
-            MidiEventPropertiesTarget::Opaque(..) => unreachable!("handled above"),
+            MidiEventPropertiesTarget::Opaque(..) | MidiEventPropertiesTarget::Terminal => {
+                unreachable!("handled above")
+            }
         }
     }
 
@@ -6050,6 +6072,19 @@ impl App {
                             let event = item.opaque_events().get(index as usize)?.clone();
                             midi_opaque_event_properties_type_and_payload(&event.kind)?;
                             Some(MidiEventPropertiesTarget::Opaque(index, event))
+                        } else if (self.midi_editor_event_list_cursor
+                            == Some(MidiEditorEventListCursor::End)
+                            || view::midi_event_list_cursors(self, item).as_slice()
+                                == [MidiEditorEventListCursor::End])
+                            && self.midi_editor_selected_notes.is_empty()
+                            && self.midi_editor_selected_controllers.is_empty()
+                            && self.midi_editor_selected_pitch_bends.is_empty()
+                            && self.midi_editor_selected_program_changes.is_empty()
+                            && self.midi_editor_selected_poly_aftertouches.is_empty()
+                            && self.midi_editor_selected_channel_pressures.is_empty()
+                            && self.midi_editor_selected_opaque_events.is_empty()
+                        {
+                            Some(MidiEventPropertiesTarget::Terminal)
                         } else {
                             None
                         }
@@ -6061,6 +6096,10 @@ impl App {
                     self.midi_quantize_dialog = None;
                     self.midi_humanize_dialog = None;
                     self.midi_transpose_dialog = None;
+                    if matches!(&target, MidiEventPropertiesTarget::Terminal) {
+                        self.midi_editor_event_list_cursor = Some(MidiEditorEventListCursor::End);
+                        self.midi_editor_event_list_anchor = Some(MidiEditorEventListCursor::End);
+                    }
                     self.midi_event_properties_dialog =
                         self.midi_event_properties_state(item_id, target);
                     self.reset_midi_event_properties_controller_options();

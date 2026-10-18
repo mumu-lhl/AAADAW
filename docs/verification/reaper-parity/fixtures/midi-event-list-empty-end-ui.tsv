@@ -16,3 +16,9 @@ aaadaw_populated_delete_note	Delete removes the selected first note; three notes
 aaadaw_desktop_sha256	b0562fe90b2a72570024fddf50a2f275f3566dbf2e66f3bebad80cb852ec0564
 aaadaw_elf_build_id	3044a174aeb547f866dc8c55ed43b1f585d30f2e
 aaadaw_build_profile	stable Linux desktop debug build, Xvfb :416 real-window input and captures
+aaadaw_empty_end_ctrl_f2	Opens the blank Event Properties form with Type, Position, and Channel unset; Apply does not create a project event; OK closes without changing the project
+aaadaw_empty_end_initial_cursor	The sole visible terminal row can open Event Properties before an explicit keyboard or mouse cursor action
+aaadaw_empty_end_properties_screenshot	fixtures/midi-event-list-empty-end-aaadaw-properties.png; SHA-256 d88a5ca3a9e4a7687fb5bab092b062c20ecc720f5e0013ca20f87112774f2544
+aaadaw_desktop_sha256	4ae0d41b16a1d02a7a97e5b243ea0574e7cc73ad1e843e34107bdd9fb2a0b570
+aaadaw_elf_build_id	65cd6c6ff56e7d6ad747bcd8e56e1dd2f58493e9
+aaadaw_build_profile	stable Linux desktop debug build, Xorg dummy :99; created an empty default-length MIDI item and opened Event List -> Edit event...

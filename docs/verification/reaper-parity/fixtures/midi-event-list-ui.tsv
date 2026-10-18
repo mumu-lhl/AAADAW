@@ -27,7 +27,7 @@ fixtures/midi-event-list-empty-end-aaadaw-delete.png	09b638269d10c4221651a001601
 fixtures/midi-event-list-populated-end-aaadaw-selected.png	493bd1d4dbf7fa1a90582f08cc029c5f8f690b6b07196a9eb0998fcfea877ee1
 fixtures/midi-event-list-populated-end-aaadaw-delete-end.png	eb150335649e94e95eaf3f4a393920197f147b3395b7402b390e6c8f9abd4875
 fixtures/midi-event-list-populated-end-aaadaw-delete-note.png	b0dc9d2635ff90b40cb9cccb324a771fed69d147ea06edc72aaf1b67555b5ae6
-fixtures/midi-event-list-empty-end-ui.tsv	aa0b237a7b6eed29f6d23d26f54eab0e32c49703a907ce60b5d344781aeeacc6
+fixtures/midi-event-list-empty-end-ui.tsv	895ea5973bd423f38a564f744421238f9332cb776e8e7c66cf1ea43824cd48c8
 crates/aaadaw/examples/generate_midi_aftertouch_fixture.rs	0fe697a8d0e534a2c6c95194f826dd978efffc5c7da9e05a28a4851b6968445f
 fixtures/midi-aftertouch-aaadaw-event-list.png	2afa63e40e3b56c360db439232441d36a1c94e2f26bc655cc2f45127e1ca1588
 fixtures/midi-aftertouch-aaadaw-event-list-undo.png	815b960c0c3c3109c6be0866d4996b1edea715f5a8794bf45dd691bf709149b3
@@ -49,3 +49,5 @@ fixtures/midi-event-list-bank-program-aaadaw.png	0bec0cbe0ae6868d9273355668a245c
 fixtures/midi-event-list-bank-program-selected.png	302aa57f3ac7b7aa0c53f83011aeb071adf533750f438aa14c36ab239c21e527
 fixtures/midi-event-list-bank-program-deleted.png	829c4c8095059a37f6039dea02897c9b653b1ec30672b140aa8300297dfe8ebf
 fixtures/midi-event-list-bank-program-undo.png	4af7c8f35a4e548e266dbb703ae1e65a7c4e9e07e96772fec36b26a801418a2d
+fixtures/midi-event-list-empty-end-aaadaw-properties-action.png	86012683914568118816714f927f5b8614b7b49e592bf9dd3f078e9fe88a6d14
+fixtures/midi-event-list-empty-end-aaadaw-properties.png	d88a5ca3a9e4a7687fb5bab092b062c20ecc720f5e0013ca20f87112774f2544
