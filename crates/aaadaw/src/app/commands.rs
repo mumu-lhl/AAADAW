@@ -4,7 +4,7 @@ use super::{App, MainMenu, MainWorkspace, Message, PathPickerTarget};
 use crate::timeline::{DeleteFocusTarget, HoveredItemSelectionMode, TimelineEvent};
 use aaadaw_core::TrackId;
 use iced::Task;
-use iced::keyboard::key::Named;
+use iced::keyboard::key::{Code, Named};
 use iced::keyboard::{Key, Modifiers};
 use std::collections::HashMap;
 
@@ -53,6 +53,12 @@ pub(crate) enum CommandId {
     ToggleProjectRegionsAndMarkersOnRuler,
     ToggleMixerPanel,
     AddMidiItem,
+    MidiNotesUpSemitone,
+    MidiNotesDownSemitone,
+    MidiNotesUpOctave,
+    MidiNotesDownOctave,
+    MidiNotesUpSemitoneIgnoringScale,
+    MidiNotesDownSemitoneIgnoringScale,
     AddProjectMarker,
     InsertRegionFromTimeSelection,
     DeleteProjectRegionNearCursor,
@@ -192,6 +198,12 @@ enum CommandKind {
     ToggleProjectRegionsAndMarkersOnRuler,
     ToggleMixerPanel,
     AddMidiItem,
+    MidiNotesUpSemitone,
+    MidiNotesDownSemitone,
+    MidiNotesUpOctave,
+    MidiNotesDownOctave,
+    MidiNotesUpSemitoneIgnoringScale,
+    MidiNotesDownSemitoneIgnoringScale,
     AddProjectMarker,
     InsertRegionFromTimeSelection,
     DeleteProjectRegionNearCursor,
@@ -353,6 +365,36 @@ const PLAYBACK_SHORTCUT: &[Shortcut] = &[
 const PLAY_STOP_SHORTCUT: &[Shortcut] = &[Shortcut::named(Named::Space, Modifiers::NONE)];
 #[cfg(feature = "audio-device")]
 const STOP_PLAYBACK_SHORTCUT: &[Shortcut] = &[];
+const MIDI_NOTES_UP_SEMITONE_SHORTCUT: &[Shortcut] = &[
+    Shortcut::numpad(Code::Numpad8, Modifiers::NONE),
+    Shortcut::named(Named::ArrowUp, Modifiers::CTRL),
+];
+const MIDI_NOTES_DOWN_SEMITONE_SHORTCUT: &[Shortcut] = &[
+    Shortcut::numpad(Code::Numpad2, Modifiers::NONE),
+    Shortcut::named(Named::ArrowDown, Modifiers::CTRL),
+];
+const MIDI_NOTES_UP_OCTAVE_SHORTCUT: &[Shortcut] =
+    &[Shortcut::numpad(Code::Numpad8, Modifiers::ALT)];
+const MIDI_NOTES_DOWN_OCTAVE_SHORTCUT: &[Shortcut] =
+    &[Shortcut::numpad(Code::Numpad2, Modifiers::ALT)];
+const MIDI_NOTES_UP_SEMITONE_IGNORE_SCALE_SHORTCUT: &[Shortcut] = &[
+    Shortcut::numpad(Code::Numpad8, Modifiers::CTRL.union(Modifiers::ALT)),
+    Shortcut::named(
+        Named::ArrowUp,
+        Modifiers::CTRL
+            .union(Modifiers::ALT)
+            .union(Modifiers::SHIFT),
+    ),
+];
+const MIDI_NOTES_DOWN_SEMITONE_IGNORE_SCALE_SHORTCUT: &[Shortcut] = &[
+    Shortcut::numpad(Code::Numpad2, Modifiers::CTRL.union(Modifiers::ALT)),
+    Shortcut::named(
+        Named::ArrowDown,
+        Modifiers::CTRL
+            .union(Modifiers::ALT)
+            .union(Modifiers::SHIFT),
+    ),
+];
 
 const COMMANDS: &[CommandDefinition] = &[
     CommandDefinition {
@@ -1671,6 +1713,72 @@ const COMMANDS: &[CommandDefinition] = &[
         destructive: true,
         separator_before: false,
     },
+    CommandDefinition {
+        kind: CommandKind::MidiNotesUpSemitone,
+        menu: None,
+        category: "MIDI Editor",
+        label: "Edit: Move notes up one semitone",
+        aliases: &["transpose notes up one semitone", "move midi notes up"],
+        shortcuts: MIDI_NOTES_UP_SEMITONE_SHORTCUT,
+        destructive: false,
+        separator_before: false,
+    },
+    CommandDefinition {
+        kind: CommandKind::MidiNotesDownSemitone,
+        menu: None,
+        category: "MIDI Editor",
+        label: "Edit: Move notes down one semitone",
+        aliases: &["transpose notes down one semitone", "move midi notes down"],
+        shortcuts: MIDI_NOTES_DOWN_SEMITONE_SHORTCUT,
+        destructive: false,
+        separator_before: false,
+    },
+    CommandDefinition {
+        kind: CommandKind::MidiNotesUpOctave,
+        menu: None,
+        category: "MIDI Editor",
+        label: "Edit: Move notes up one octave",
+        aliases: &["transpose notes up one octave"],
+        shortcuts: MIDI_NOTES_UP_OCTAVE_SHORTCUT,
+        destructive: false,
+        separator_before: false,
+    },
+    CommandDefinition {
+        kind: CommandKind::MidiNotesDownOctave,
+        menu: None,
+        category: "MIDI Editor",
+        label: "Edit: Move notes down one octave",
+        aliases: &["transpose notes down one octave"],
+        shortcuts: MIDI_NOTES_DOWN_OCTAVE_SHORTCUT,
+        destructive: false,
+        separator_before: false,
+    },
+    CommandDefinition {
+        kind: CommandKind::MidiNotesUpSemitoneIgnoringScale,
+        menu: None,
+        category: "MIDI Editor",
+        label: "Edit: Move notes up one semitone ignoring scale/key",
+        aliases: &[
+            "move notes up semitone ignoring scale",
+            "chromatic transpose up",
+        ],
+        shortcuts: MIDI_NOTES_UP_SEMITONE_IGNORE_SCALE_SHORTCUT,
+        destructive: false,
+        separator_before: false,
+    },
+    CommandDefinition {
+        kind: CommandKind::MidiNotesDownSemitoneIgnoringScale,
+        menu: None,
+        category: "MIDI Editor",
+        label: "Edit: Move notes down one semitone ignoring scale/key",
+        aliases: &[
+            "move notes down semitone ignoring scale",
+            "chromatic transpose down",
+        ],
+        shortcuts: MIDI_NOTES_DOWN_SEMITONE_IGNORE_SCALE_SHORTCUT,
+        destructive: false,
+        separator_before: false,
+    },
 ];
 
 #[derive(Clone)]
@@ -2588,6 +2696,16 @@ fn command_kind_id(kind: CommandKind) -> &'static str {
         }
         CommandKind::ToggleMixerPanel => "view.toggle-mixer",
         CommandKind::AddMidiItem => "insert.midi-item",
+        CommandKind::MidiNotesUpSemitone => "midi-editor.notes-up-semitone",
+        CommandKind::MidiNotesDownSemitone => "midi-editor.notes-down-semitone",
+        CommandKind::MidiNotesUpOctave => "midi-editor.notes-up-octave",
+        CommandKind::MidiNotesDownOctave => "midi-editor.notes-down-octave",
+        CommandKind::MidiNotesUpSemitoneIgnoringScale => {
+            "midi-editor.notes-up-semitone-ignoring-scale"
+        }
+        CommandKind::MidiNotesDownSemitoneIgnoringScale => {
+            "midi-editor.notes-down-semitone-ignoring-scale"
+        }
         CommandKind::AddProjectMarker => "insert.project-marker",
         CommandKind::InsertRegionFromTimeSelection => "regions.insert-from-time-selection",
         CommandKind::DeleteProjectRegionNearCursor => "regions.delete-near-cursor",
@@ -2786,6 +2904,14 @@ pub(super) fn dispatch(app: &mut App, command: CommandId) -> Task<Message> {
         }
         CommandId::ToggleMixerPanel => Message::ToggleMixerPanel,
         CommandId::AddMidiItem => Message::AddMidiItem,
+        CommandId::MidiNotesUpSemitone | CommandId::MidiNotesUpSemitoneIgnoringScale => {
+            Message::TransposeSelectedMidiNotes(1)
+        }
+        CommandId::MidiNotesDownSemitone | CommandId::MidiNotesDownSemitoneIgnoringScale => {
+            Message::TransposeSelectedMidiNotes(-1)
+        }
+        CommandId::MidiNotesUpOctave => Message::TransposeSelectedMidiNotes(12),
+        CommandId::MidiNotesDownOctave => Message::TransposeSelectedMidiNotes(-12),
         CommandId::AddProjectMarker => Message::AddProjectMarker,
         CommandId::InsertRegionFromTimeSelection => Message::InsertRegionFromTimeSelection,
         CommandId::DeleteProjectRegionNearCursor => Message::DeleteProjectRegionNearCursor,
@@ -3200,6 +3326,16 @@ fn command_enabled(app: &App, kind: CommandKind, track: Option<TrackState>) -> b
                         .any(|track| track.id() == selected_track && !track.is_bus())
                 })
         }
+        CommandKind::MidiNotesUpSemitone
+        | CommandKind::MidiNotesDownSemitone
+        | CommandKind::MidiNotesUpOctave
+        | CommandKind::MidiNotesDownOctave
+        | CommandKind::MidiNotesUpSemitoneIgnoringScale
+        | CommandKind::MidiNotesDownSemitoneIgnoringScale => {
+            !project_edit_busy(app)
+                && app.midi_editor_item_id.is_some()
+                && !app.midi_editor_selected_notes.is_empty()
+        }
         CommandKind::AddProjectMarker => !project_edit_busy(app),
         CommandKind::InsertRegionFromTimeSelection => {
             !project_edit_busy(app) && app.timeline.time_selection.is_some()
@@ -3501,6 +3637,16 @@ fn command_id(kind: CommandKind) -> CommandId {
         }
         CommandKind::ToggleMixerPanel => CommandId::ToggleMixerPanel,
         CommandKind::AddMidiItem => CommandId::AddMidiItem,
+        CommandKind::MidiNotesUpSemitone => CommandId::MidiNotesUpSemitone,
+        CommandKind::MidiNotesDownSemitone => CommandId::MidiNotesDownSemitone,
+        CommandKind::MidiNotesUpOctave => CommandId::MidiNotesUpOctave,
+        CommandKind::MidiNotesDownOctave => CommandId::MidiNotesDownOctave,
+        CommandKind::MidiNotesUpSemitoneIgnoringScale => {
+            CommandId::MidiNotesUpSemitoneIgnoringScale
+        }
+        CommandKind::MidiNotesDownSemitoneIgnoringScale => {
+            CommandId::MidiNotesDownSemitoneIgnoringScale
+        }
         CommandKind::AddProjectMarker => CommandId::AddProjectMarker,
         CommandKind::InsertRegionFromTimeSelection => CommandId::InsertRegionFromTimeSelection,
         CommandKind::DeleteProjectRegionNearCursor => CommandId::DeleteProjectRegionNearCursor,

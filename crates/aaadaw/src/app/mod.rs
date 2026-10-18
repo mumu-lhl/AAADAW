@@ -17,8 +17,8 @@ use aaadaw_app::{
 use aaadaw_core::ProjectSnapshot;
 use aaadaw_core::{
     AudioItem, DawAction, FxParameterChange, GridFraction, ItemId, MarkerId, MeterPointSnapshot,
-    MidiControllerData, MidiItem, MidiItemPosition, MidiPitchBendData, Project, RazorEditArea,
-    RegionId, TempoCurve, TimeSignature, TrackId,
+    MidiControllerData, MidiItem, MidiItemPosition, MidiNoteData, MidiPitchBendData, Project,
+    RazorEditArea, RegionId, TempoCurve, TimeSignature, TrackId,
 };
 #[cfg(feature = "audio-device")]
 use aaadaw_engine::{
@@ -2439,7 +2439,12 @@ impl App {
                         command: commands::TrackCommand::Routing
                             | commands::TrackCommand::CycleFolderCompact,
                         ..
-                    }
+                    } | commands::CommandId::MidiNotesUpSemitone
+                        | commands::CommandId::MidiNotesDownSemitone
+                        | commands::CommandId::MidiNotesUpOctave
+                        | commands::CommandId::MidiNotesDownOctave
+                        | commands::CommandId::MidiNotesUpSemitoneIgnoringScale
+                        | commands::CommandId::MidiNotesDownSemitoneIgnoringScale
                 ) | Message::OpenTrackRouting(_)
                     | Message::CloseTrackRouting
                     | Message::RoutingSendDraft(..)
@@ -2531,6 +2536,7 @@ impl App {
                     | Message::ItemNudgeGetCursor
                     | Message::ApplyItemNudgeSet
                     | Message::NudgeSelectedItems(_)
+                    | Message::TransposeSelectedMidiNotes(_)
                     | Message::ItemPropertiesUnitChanged(_)
                     | Message::ItemPropertyFieldChanged(..)
                     | Message::ItemPropertyNameChanged(_)
@@ -3948,6 +3954,44 @@ impl App {
                     "MIDI notes edited",
                 );
             }
+            Message::TransposeSelectedMidiNotes(semitones) if semitones != 0 => {
+                let Some(item_id) = self.midi_editor_item_id else {
+                    return task;
+                };
+                let Some(item) = self
+                    .project
+                    .midi_items()
+                    .iter()
+                    .find(|item| item.id() == item_id)
+                else {
+                    return task;
+                };
+                let selected = &self.midi_editor_selected_notes;
+                let mut edits = Vec::with_capacity(selected.len());
+                for note in item
+                    .notes()
+                    .iter()
+                    .filter(|note| selected.contains(&note.id()))
+                {
+                    let Some(pitch) = note.pitch().checked_add_signed(semitones) else {
+                        return task;
+                    };
+                    edits.push((
+                        note.id(),
+                        MidiNoteData {
+                            pitch,
+                            channel: note.channel(),
+                            tick: note.tick(),
+                            duration: note.duration(),
+                            velocity: note.velocity(),
+                        },
+                    ));
+                }
+                if !edits.is_empty() {
+                    task = self.update(Message::EditMidiNotes(item_id, edits));
+                }
+            }
+            Message::TransposeSelectedMidiNotes(_) => {}
             Message::DeleteMidiNotes(item_id, note_ids) => {
                 if !note_ids.is_empty() {
                     self.midi_editor_feedback = None;

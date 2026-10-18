@@ -435,6 +435,13 @@ impl Shortcut {
         }
     }
 
+    pub(super) const fn numpad(key: Code, modifiers: Modifiers) -> Self {
+        Self {
+            key: ShortcutKey::NumPad(key),
+            modifiers,
+        }
+    }
+
     #[cfg(test)]
     pub(super) const fn delete_backspace() -> Self {
         Self {

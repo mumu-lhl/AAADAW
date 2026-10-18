@@ -12388,6 +12388,152 @@ fn midi_editor_multichannel_invert_shows_the_complement_and_drops_hidden_selecti
 }
 
 #[test]
+fn midi_editor_transpose_actions_preserve_note_data_and_reject_out_of_range_batches() {
+    let mut app = App::default();
+    let _ = app.update(Message::AddTrack);
+    let track_id = app.project.tracks()[0].id();
+    app.project
+        .apply(DawAction::InsertMidiItem {
+            track_id,
+            start_tick: 0,
+            length_ticks: 3_840,
+        })
+        .expect("test MIDI item should be inserted");
+    let item_id = app.project.midi_items()[0].id();
+    app.project
+        .apply(DawAction::AddMidiNotes {
+            item_id,
+            notes: vec![
+                MidiNoteData {
+                    channel: 0,
+                    pitch: 60,
+                    tick: 100,
+                    duration: 90,
+                    velocity: 80,
+                },
+                MidiNoteData {
+                    channel: 1,
+                    pitch: 61,
+                    tick: 300,
+                    duration: 90,
+                    velocity: 81,
+                },
+                MidiNoteData {
+                    channel: 2,
+                    pitch: 62,
+                    tick: 500,
+                    duration: 90,
+                    velocity: 82,
+                },
+                MidiNoteData {
+                    channel: 15,
+                    pitch: 127,
+                    tick: 700,
+                    duration: 90,
+                    velocity: 83,
+                },
+            ],
+        })
+        .expect("test notes should be inserted");
+    app.midi_editor_item_id = Some(item_id);
+    let notes = app.project.midi_items()[0].notes();
+    let note_ids = notes.iter().map(|note| note.id()).collect::<Vec<_>>();
+    app.midi_editor_selected_notes = HashSet::from([note_ids[0], note_ids[1], note_ids[2]]);
+    let before = notes
+        .iter()
+        .map(|note| {
+            (
+                note.id(),
+                note.pitch(),
+                note.channel(),
+                note.tick(),
+                note.duration(),
+                note.velocity(),
+            )
+        })
+        .collect::<Vec<_>>();
+
+    assert!(commands::is_enabled(&app, CommandId::MidiNotesUpSemitone));
+    assert_eq!(
+        commands::from_shortcut(
+            &Key::Named(iced::keyboard::key::Named::ArrowUp),
+            Modifiers::CTRL,
+            &commands::ShortcutBindings::new(),
+            &[],
+        ),
+        Some(CommandId::MidiNotesUpSemitone)
+    );
+    let mut numpad_input = test_shortcut_input(
+        Key::Named(iced::keyboard::key::Named::ArrowUp),
+        Modifiers::NONE,
+    );
+    numpad_input.physical_key =
+        iced::keyboard::key::Physical::Code(iced::keyboard::key::Code::Numpad8);
+    numpad_input.location = iced::keyboard::Location::Numpad;
+    assert_eq!(
+        commands::from_shortcut_input(&numpad_input, &commands::ShortcutBindings::new(), &[]),
+        Some(CommandId::MidiNotesUpSemitone)
+    );
+    assert_eq!(
+        commands::find(&app, "Edit: Move notes up one octave"),
+        Some(CommandId::MidiNotesUpOctave)
+    );
+
+    let _ = commands::dispatch(&mut app, CommandId::MidiNotesUpSemitone);
+    let after = app.project.midi_items()[0]
+        .notes()
+        .iter()
+        .map(|note| {
+            (
+                note.id(),
+                note.pitch(),
+                note.channel(),
+                note.tick(),
+                note.duration(),
+                note.velocity(),
+            )
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(after[0].1, 61);
+    assert_eq!(after[1].1, 62);
+    assert_eq!(after[2].1, 63);
+    assert_eq!(after[3], before[3]);
+    assert!(app.midi_editor_selected_notes.contains(&note_ids[0]));
+
+    let _ = app.update(Message::Undo);
+    assert_eq!(
+        app.project.midi_items()[0]
+            .notes()
+            .iter()
+            .map(|note| {
+                (
+                    note.id(),
+                    note.pitch(),
+                    note.channel(),
+                    note.tick(),
+                    note.duration(),
+                    note.velocity(),
+                )
+            })
+            .collect::<Vec<_>>(),
+        before
+    );
+    let _ = app.update(Message::Redo);
+    assert_eq!(app.project.midi_items()[0].notes()[0].pitch(), 61);
+
+    app.midi_editor_selected_notes = HashSet::from([note_ids[0], note_ids[3]]);
+    let revision = app.revision;
+    let before_overflow = app.project.midi_items()[0].notes().to_vec();
+    let _ = app.update(Message::TransposeSelectedMidiNotes(1));
+    assert_eq!(app.revision, revision);
+    assert_eq!(app.project.midi_items()[0].notes(), before_overflow);
+    assert_eq!(
+        app.midi_editor_selected_notes,
+        HashSet::from([note_ids[0], note_ids[3]])
+    );
+}
+
+#[test]
 fn midi_editor_quantize_positions_and_ends_changes_only_selected_notes() {
     let mut app = App::default();
     let _ = app.update(Message::AddTrack);

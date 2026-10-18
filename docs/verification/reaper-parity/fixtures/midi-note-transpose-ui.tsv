@@ -1,0 +1,3 @@
+artifact	sha256
+scripts/reaper_parity/probe-midi-note-transpose.lua	6f936559555dd7df1984f328cc98e4f0054c34fff50f49efb382d41f9b926574
+fixtures/midi-note-transpose-native.tsv	593e4ee0f9406586b38d6a7995dd50ae6aa6e6cdbc5d840d2e18ee60fdc611d0

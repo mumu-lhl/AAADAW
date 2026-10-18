@@ -557,6 +557,7 @@ pub(crate) enum Message {
     AddMidiNoteAt(ItemId, MidiNoteData),
     CopyDragMidiNotes(ItemId, Vec<MidiNoteData>),
     EditMidiNotes(ItemId, Vec<(NoteId, MidiNoteData)>),
+    TransposeSelectedMidiNotes(i8),
     DeleteMidiNotes(ItemId, Vec<NoteId>),
     SetMidiControllers(ItemId, Vec<MidiControllerData>),
     SetMidiPitchBends(ItemId, Vec<MidiPitchBendData>),

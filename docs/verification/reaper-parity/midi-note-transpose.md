@@ -1,0 +1,9 @@
+# MIDI Editor note transposition actions
+
+Linux REAPER 7.82 / Default 7 exposes MIDI Editor actions 40177/40178 for moving selected notes up/down one semitone, 40179/40180 for one octave, and 41026/41027 for semitones ignoring scale/key. The native probe used the default project with no key/scale restriction. Selected notes moved by exactly ±1 or ±12 pitch steps; start, end, channel, velocity, selection, and unselected notes remained unchanged. Selecting a note at pitch 127 and moving up, pitch 0 and moving down, or a mixed selection containing an out-of-range result caused the whole operation to leave all selected notes unchanged. The action names and default key bindings are present in the [Linux REAPER action inventory](linux-7.82/actions.tsv); event readbacks and the repeatable Lua setup are in the [fixture manifest](fixtures/midi-note-transpose-ui.tsv).
+
+AAADAW registers the four semitone/octave actions and the two ignoring-scale variants in Action List, with the native NumPad and Ctrl/Alt+Arrow bindings. They edit selected notes in one Core batch transaction, preserving timing, length, channel, velocity and selection; if any selected pitch would leave MIDI's 0–127 range, the whole operation is a no-op. The App regression exercises shortcuts, selected/unselected notes, all-or-nothing boundary behavior, and one-step Undo/Redo.
+
+This implements the unconfigured-key behavior measured above. AAADAW does not yet model a MIDI Editor scale/key map, so scale-aware actions currently behave chromatically like the ignoring-scale variants. The Transpose notes… dialog (action 40759), cent offsets, and its stored options remain open; `MIDI-NOTE-TRANSPOSE-001`, UI-019 and P7 remain `in_progress`.
+
+Validation: AAADAW App Nextest 770/770 tests passed with zero skipped under Xvfb; strict all-target Clippy, formatting, diff checks, and both fixture hashes passed. No AAADAW feature screenshot was captured for this slice.
