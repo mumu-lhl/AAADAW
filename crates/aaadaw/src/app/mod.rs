@@ -6573,20 +6573,7 @@ impl App {
                 self.midi_editor_feedback = Some(feedback);
             }
             Message::SelectMidiNotes(note_ids) => {
-                self.midi_editor_feedback = None;
-                if !self.keyboard_modifiers.command() && !self.keyboard_modifiers.control() {
-                    self.midi_editor_selected_controllers.clear();
-                    self.midi_editor_selected_pitch_bends.clear();
-                    self.midi_editor_selected_program_changes.clear();
-                    self.midi_editor_selected_poly_aftertouches.clear();
-                    self.midi_editor_selected_channel_pressures.clear();
-                    self.midi_editor_selected_opaque_events.clear();
-                }
-                let visible_note_ids = self.visible_midi_note_ids();
-                self.midi_editor_selected_notes = note_ids
-                    .into_iter()
-                    .filter(|note_id| visible_note_ids.contains(note_id))
-                    .collect();
+                self.with_midi_editor_note_selection_history(note_ids);
             }
             Message::SelectMidiNoteEvent(note_id, additive) => {
                 self.midi_editor_feedback = None;
@@ -13934,6 +13921,71 @@ impl App {
                     project_history_cursor: self.project.history_cursor(),
                 },
             ));
+    }
+
+    fn with_midi_editor_note_selection_history(&mut self, note_ids: HashSet<aaadaw_core::NoteId>) {
+        let Some(item_id) = self.midi_editor_item_id else {
+            self.select_midi_notes(note_ids);
+            return;
+        };
+        let before = self
+            .timeline
+            .inline_midi_note_selection
+            .get(&item_id)
+            .cloned()
+            .unwrap_or_default();
+        let editor_before = self.midi_editor_selected_notes.clone();
+
+        self.select_midi_notes(note_ids);
+        if self.midi_editor_selected_notes.is_empty() {
+            self.timeline.inline_midi_note_selection.remove(&item_id);
+        } else {
+            self.timeline
+                .inline_midi_note_selection
+                .insert(item_id, self.midi_editor_selected_notes.clone());
+        }
+
+        let after = self
+            .timeline
+            .inline_midi_note_selection
+            .get(&item_id)
+            .cloned()
+            .unwrap_or_default();
+        let editor_after = self.midi_editor_selected_notes.clone();
+        if before == after && editor_before == editor_after {
+            return;
+        }
+
+        self.project.discard_redo_history();
+        self.app_redo_history.clear();
+        self.app_undo_history
+            .push(AppHistoryEntry::InlineMidiSelection(
+                InlineMidiSelectionHistory {
+                    item_id,
+                    before,
+                    after,
+                    editor_before: Some(editor_before),
+                    editor_after: Some(editor_after),
+                    project_history_cursor: self.project.history_cursor(),
+                },
+            ));
+    }
+
+    fn select_midi_notes(&mut self, note_ids: HashSet<aaadaw_core::NoteId>) {
+        self.midi_editor_feedback = None;
+        if !self.keyboard_modifiers.command() && !self.keyboard_modifiers.control() {
+            self.midi_editor_selected_controllers.clear();
+            self.midi_editor_selected_pitch_bends.clear();
+            self.midi_editor_selected_program_changes.clear();
+            self.midi_editor_selected_poly_aftertouches.clear();
+            self.midi_editor_selected_channel_pressures.clear();
+            self.midi_editor_selected_opaque_events.clear();
+        }
+        let visible_note_ids = self.visible_midi_note_ids();
+        self.midi_editor_selected_notes = note_ids
+            .into_iter()
+            .filter(|note_id| visible_note_ids.contains(note_id))
+            .collect();
     }
 
     fn undo_inline_midi_note_selection_if_next(&mut self) -> bool {

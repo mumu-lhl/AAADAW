@@ -15924,6 +15924,86 @@ fn inline_midi_note_selection_is_undoable_without_changing_project_content() {
 }
 
 #[test]
+fn piano_roll_note_selection_is_undoable_and_shared_with_inline_arrangement() {
+    let mut app = App::default();
+    let _ = app.update(Message::AddTrack);
+    let track_id = app.project.tracks()[0].id();
+    app.project
+        .apply(DawAction::InsertMidiItem {
+            track_id,
+            start_tick: 0,
+            length_ticks: 960,
+        })
+        .expect("test MIDI item should be inserted");
+    let item_id = app.project.midi_items()[0].id();
+    app.project
+        .apply(DawAction::AddMidiNotes {
+            item_id,
+            notes: [(100, 60), (350, 64)]
+                .into_iter()
+                .map(|(tick, pitch)| MidiNoteData {
+                    channel: 0,
+                    pitch,
+                    tick,
+                    duration: 120,
+                    velocity: 96,
+                    off_velocity: 0,
+                })
+                .collect(),
+        })
+        .expect("test MIDI notes should be inserted");
+    app.timeline.rebuild(&app.project);
+    app.timeline.inline_midi_items.insert(item_id);
+    let note_ids = app.project.midi_items()[0]
+        .notes()
+        .iter()
+        .map(|note| (note.pitch(), note.id()))
+        .collect::<HashMap<_, _>>();
+    let first_id = note_ids[&60];
+    let second_id = note_ids[&64];
+    let _ = app.update(Message::OpenMidiEditor(item_id));
+    let project_snapshot = app.project.snapshot();
+
+    let _ = app.update(Message::SelectMidiNotes(HashSet::from([first_id])));
+    let _ = app.update(Message::SelectMidiNotes(HashSet::from([
+        first_id, second_id,
+    ])));
+    let selected_both = HashSet::from([first_id, second_id]);
+    assert_eq!(app.midi_editor_selected_notes, selected_both);
+    assert_eq!(
+        app.timeline.inline_midi_note_selection[&item_id],
+        selected_both
+    );
+    assert_eq!(app.project.snapshot(), project_snapshot);
+
+    let _ = app.update(Message::Undo);
+    assert_eq!(app.midi_editor_selected_notes, HashSet::from([first_id]));
+    assert_eq!(
+        app.timeline.inline_midi_note_selection[&item_id],
+        HashSet::from([first_id])
+    );
+    assert_eq!(app.project.snapshot(), project_snapshot);
+    let _ = app.update(Message::Undo);
+    assert!(app.midi_editor_selected_notes.is_empty());
+    assert!(
+        !app.timeline
+            .inline_midi_note_selection
+            .contains_key(&item_id)
+    );
+    assert_eq!(app.project.snapshot(), project_snapshot);
+
+    let _ = app.update(Message::Redo);
+    assert_eq!(app.midi_editor_selected_notes, HashSet::from([first_id]));
+    let _ = app.update(Message::Redo);
+    assert_eq!(app.midi_editor_selected_notes, selected_both);
+    assert_eq!(
+        app.timeline.inline_midi_note_selection[&item_id],
+        selected_both
+    );
+    assert_eq!(app.project.snapshot(), project_snapshot);
+}
+
+#[test]
 fn midi_quantize_dialog_fix_overlaps_defaults_on_and_can_be_disabled() {
     let mut app = App::default();
     let _ = app.update(Message::AddTrack);
