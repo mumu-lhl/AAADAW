@@ -2465,4 +2465,6 @@ REAPER 7.82 的 `MIDI_GetProjTimeFromPPQPos` 实测表明，SMF header division 
 
 MIDI 播放计划现在保留预编译的 F0/F7 字节区间，并将 SysEx 作为带样本偏移的 CLAP MIDI 事件发送。进程内插件直接引用不可变计划字节；隔离插件使用固定共享内存区域传输，每个请求最多 16 KiB，音频回调不分配内存。Meta 事件仍不发送给乐器插件，物理 MIDI 输出的 SysEx 也尚未实现。
 
-验证通过：MIDI 调度与引擎库/实时分配套件合计 125/125，隔离 helper 样本偏移 SysEx 集成测试 1/1，strict engine all-target Clippy (`-D warnings`)、stable fmt 通过。`MIDI-FILE-IMPORT-001`、UI-019 和 P7 继续为 `in_progress`；待处理包括超过单块上限的隔离 SysEx、物理 MIDI SysEx 输出、文件选择器及更多原厂导入边界行为。
+验证通过：MIDI 调度与引擎库/实时分配套件合计 126/126，隔离 helper 样本偏移 SysEx 集成测试 1/1，strict engine all-target Clippy (`-D warnings`)、stable fmt 通过。`MIDI-FILE-IMPORT-001`、UI-019 和 P7 继续为 `in_progress`；待处理包括超过单块上限的隔离 SysEx、物理 MIDI SysEx 输出、文件选择器及更多原厂导入边界行为。
+
+追加的端到端回归从 960 PPQ 的 SMF 字节解码 F0@tick 0 与 F7@tick 240 continuation，经 REAPER 规则归并并导入 Project，再验证播放计划仅在 tick 240 所在的半开采样块发出一条完整 `F0 43 12 34 F7` 事件。这把文件解码、项目转换、持久事件和样本调度连成同一条测试路径。

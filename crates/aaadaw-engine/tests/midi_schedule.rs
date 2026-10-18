@@ -1,7 +1,7 @@
 use aaadaw_core::{
-    DawAction, MidiChannelPressureData, MidiControllerData, MidiItemPosition, MidiNoteData,
-    MidiOpaqueEventData, MidiOpaqueEventKind, MidiPitchBendData, MidiPolyAftertouchData,
-    MidiProgramChangeData, Project, TempoCurve,
+    DawAction, MidiChannelPressureData, MidiControllerData, MidiFileImportOptions,
+    MidiItemPosition, MidiNoteData, MidiOpaqueEventData, MidiOpaqueEventKind, MidiPitchBendData,
+    MidiPolyAftertouchData, MidiProgramChangeData, Project, TempoCurve, decode_standard_midi,
 };
 use aaadaw_engine::{
     MidiEventKind, MidiEventPlan, MidiScheduleError, MidiSegmentCursor, ScheduledMidiEvent,
@@ -102,6 +102,64 @@ fn midi_sysex_is_scheduled_with_framed_bytes_and_meta_is_not_sent_to_instruments
     );
     assert_eq!(sysex_events[0].sample_offset, 3_000);
     assert_eq!(sysex_events[1].sample_offset, 9_000);
+}
+
+#[test]
+fn imported_f0_f7_continuation_reaches_the_sample_accurate_playback_plan() {
+    let smf = [
+        b'M', b'T', b'h', b'd', 0, 0, 0, 6, 0, 0, 0, 1, 0x03, 0xC0, // format 0, 960 PPQ
+        b'M', b'T', b'r', b'k', 0, 0, 0, 15, // one track, 15 bytes
+        0, 0xF0, 2, 0x43, 0x12, // open F0 packet at tick zero
+        0x81, 0x70, 0xF7, 2, 0x34, 0xF7, // F7 continuation at tick 240
+        0, 0xFF, 0x2F, 0, // End of Track
+    ];
+    let decoded = decode_standard_midi(&smf).expect("fixture SMF should decode");
+    let mut imported_tracks = decoded
+        .to_project_import(960)
+        .expect("source events should convert to project PPQ")
+        .tracks_for_options(MidiFileImportOptions::default());
+    let imported_track = imported_tracks.remove(0);
+
+    assert_eq!(imported_track.opaque_events.len(), 1);
+    assert_eq!(imported_track.opaque_events[0].tick, 240);
+    assert_eq!(
+        imported_track.opaque_events[0].kind,
+        MidiOpaqueEventKind::SystemExclusive {
+            status: 0xF0,
+            data: vec![0x43, 0x12, 0x34, 0xF7],
+        }
+    );
+
+    let mut project = Project::new();
+    project
+        .apply(DawAction::ImportMidiTrack {
+            start_tick: 0,
+            track: imported_track,
+        })
+        .expect("decoded MIDI track should be imported into the project");
+    let plan = MidiEventPlan::compile(&project).expect("project playback plan should compile");
+    let sysex_sample = project
+        .sample_at_tick_position(240.0)
+        .expect("imported event position should resolve") as u64;
+    let mut events = [None; 2];
+
+    assert_eq!(
+        plan.events_for_block(sysex_sample - 1, 1, &mut events)
+            .unwrap(),
+        0,
+        "the event must not leak into the preceding half-open sample block"
+    );
+    assert_eq!(
+        plan.events_for_block(sysex_sample, 1, &mut events).unwrap(),
+        1
+    );
+    let event = events[0].expect("the continuation should schedule one SysEx event");
+    assert_eq!(event.kind, MidiEventKind::SystemExclusive);
+    assert_eq!(event.sample_offset, 0);
+    assert_eq!(
+        plan.sysex_data_for_event(event).unwrap(),
+        [0xF0, 0x43, 0x12, 0x34, 0xF7]
+    );
 }
 
 #[test]
