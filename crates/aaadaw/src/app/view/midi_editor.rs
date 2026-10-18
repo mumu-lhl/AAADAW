@@ -1014,13 +1014,13 @@ fn midi_event_list_view<'a>(
     let has_selection = !app.midi_editor_selected_notes.is_empty()
         || !app.midi_editor_selected_controllers.is_empty()
         || !app.midi_editor_selected_pitch_bends.is_empty();
-    let has_single_editable_event = (app.midi_editor_selected_notes.len() == 1
+    let has_homogeneous_editable_selection = (!app.midi_editor_selected_notes.is_empty()
         && app.midi_editor_selected_controllers.is_empty()
         && app.midi_editor_selected_pitch_bends.is_empty())
-        || (app.midi_editor_selected_controllers.len() == 1
+        || (!app.midi_editor_selected_controllers.is_empty()
             && app.midi_editor_selected_notes.is_empty()
             && app.midi_editor_selected_pitch_bends.is_empty())
-        || (app.midi_editor_selected_pitch_bends.len() == 1
+        || (!app.midi_editor_selected_pitch_bends.is_empty()
             && app.midi_editor_selected_notes.is_empty()
             && app.midi_editor_selected_controllers.is_empty());
     let mut content = column![toolbar, channel_toolbar];
@@ -1037,7 +1037,7 @@ fn midi_event_list_view<'a>(
                 button("Edit event…")
                     .style(iced::widget::button::secondary)
                     .on_press_maybe(
-                        has_single_editable_event
+                        has_homogeneous_editable_selection
                             .then_some(Message::OpenMidiEventProperties(item_id)),
                     ),
                 button("Delete selected")
@@ -1391,12 +1391,12 @@ fn midi_event_properties_dialog(app: &App, touch_targets: bool) -> Element<'_, M
         return iced::widget::Space::new().into();
     };
     let is_controller = matches!(
-        state.target,
-        super::super::MidiEventPropertiesTarget::Controller(_)
+        &state.target,
+        super::super::MidiEventPropertiesTarget::Controllers(_)
     );
     let is_pitch_bend = matches!(
-        state.target,
-        super::super::MidiEventPropertiesTarget::PitchBend(_)
+        &state.target,
+        super::super::MidiEventPropertiesTarget::PitchBends(_)
     );
     let position = iced::widget::text_input("1.1.00", &state.position)
         .on_input(Message::SetMidiEventPropertiesPosition)
@@ -1494,6 +1494,11 @@ fn midi_event_properties_dialog(app: &App, touch_targets: bool) -> Element<'_, M
             .push(text("Use absolute values in bar.beat.hundredths format.").size(11));
     } else {
         content = content
+            .push(
+                row![text("Type").width(Length::Fixed(76.0)), text("Note")]
+                    .spacing(SPACING_XS)
+                    .align_y(iced::Alignment::Center),
+            )
             .push(
                 row![
                     text("Position").width(Length::Fixed(64.0)),

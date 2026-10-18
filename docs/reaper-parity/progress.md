@@ -2247,3 +2247,13 @@ AAADAW 的 `Edit event…`、action 40004 / Ctrl+F2 现可打开恰好单选的 
 最终普通 Linux 桌面二进制 SHA-256 `735e6339962f2faede8cc56612fe85bf99bd357c9a171a6ec3dbe61a5fd3ded1`。当前 AAADAW 窗口截图分别记录 CC 下拉和 Pitch Bend 14-bit Value；真实输入把 CC 90→95、Pitch Bend 9000→10000 后 Apply，关闭后 Ctrl+Z / Ctrl+Shift+Z 还原与重做均在 Event List 实际显示正确值。AAADAW 包级 Nextest **778/778，0 skipped**（6 个测试二进制）、严格 all-target Clippy (`-D warnings`)、fmt、diff 检查通过；Event Properties manifest **18/18 文件哈希一致**，parity matrix **111 项 / 15 列 / 唯一 ID**。
 
 原生 CC shape / Bezier tension 仍未建模，Note off velocity 仍未持久化；多事件编辑、相对值快捷语法、meter map/source offset/loop BBT 与精确原厂键盘焦点继续开放。因此 `MIDI-EVENT-PROPERTIES-001`、`MIDI-EVENT-LIST-001`、UI-019 与 P7 仍为 `in_progress`。
+
+### 2026-10-18 MIDI Event Properties 同类多选
+
+Linux REAPER 7.82 / Default 7 的 action 40004 原厂窗口以两个同类已选事件复测 Note、CC、Pitch Bend。各类型的 Position、Channel 与对应的 Length/Note/Controller/Value 在选值不同时显示空白；CC 与 Pitch Bend 的共同 CC shape / Bezier tension 仍显示 `Square` / `0.00`。窗口说明数值字段还接受 `+`、`-`、`*`、`/` 相对输入及 `+1o` 八度语法。三组真实窗口、原始事件选中状态、读数和复用探针见 [Event Properties fixture manifest](../verification/reaper-parity/fixtures/midi-event-properties-ui.tsv)。
+
+AAADAW 现对同一 MIDI item 中一个或多个同类 Note、CC、Pitch Bend 事件启用 Event Properties。共同值正常显示，不同值留空；只编辑单个 Value 会保留每个事件原有的 Position、Channel、Pitch/Controller 等混合字段，并将整组更改纳入一个可撤销事务。Apply、OK、Cancel/Escape 与单事件行为保持一致。新增 App 回归分别验证三类两事件选择、混合字段保持、选择状态更新以及 Undo/Redo。
+
+stable 桌面二进制 SHA-256 `58f0b09970b2fb3fe428611bdcaeca0e688af45ff1b700d37b5646aae21e0f27` 在 Xvfb :313 打开包含两个音符的真实 AAADAW 工程；实操切换 Event List、Ctrl-click 多选、Ctrl+F2、仅修改 Velocity 并 Apply，关闭后 Undo/Redo 均在两行实际显示 96/100 → 110 → 96/100 → 110。初始多选属性窗、Apply 后属性窗、事件行及 Undo/Redo 截图收入 manifest。MIDI Event Properties 定向 Nextest **4/4**、AAADAW App 单元测试二进制 **758/758**、strict all-target Clippy (`-D warnings`)、fmt、diff 检查通过；fixture manifest **30/30 SHA-256 有效**，parity matrix **111 项 / 15 列 / 唯一 ID**。
+
+同类型多选已覆盖，混合事件类型的属性编辑、`+` / `-` / `*` / `/` 与 `+1o` 输入、note-off velocity 持久化、CC shape / Bezier tension、meter-map/source-offset/loop BBT 和原厂精确焦点导航仍未实现；`MIDI-EVENT-PROPERTIES-001`、`MIDI-EVENT-LIST-001`、UI-019 与 P7 继续 `in_progress`。

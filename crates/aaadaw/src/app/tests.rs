@@ -13087,6 +13087,256 @@ fn midi_event_properties_edits_pitch_bend_fields_with_apply_and_undo() {
 }
 
 #[test]
+fn midi_event_properties_edits_homogeneous_multiselections_and_preserves_mixed_fields() {
+    let mut app = App::default();
+    let _ = app.update(Message::AddTrack);
+    let track_id = app.project.tracks()[0].id();
+    app.project
+        .apply(DawAction::InsertMidiItem {
+            track_id,
+            start_tick: 0,
+            length_ticks: 3_840,
+        })
+        .expect("test MIDI item should be inserted");
+    let item_id = app.project.midi_items()[0].id();
+    app.project
+        .apply(DawAction::AddMidiNotes {
+            item_id,
+            notes: vec![
+                MidiNoteData {
+                    channel: 0,
+                    pitch: 60,
+                    tick: 240,
+                    duration: 120,
+                    velocity: 90,
+                },
+                MidiNoteData {
+                    channel: 2,
+                    pitch: 64,
+                    tick: 480,
+                    duration: 240,
+                    velocity: 100,
+                },
+            ],
+        })
+        .expect("test MIDI notes should be inserted");
+    let original_notes = app.project.midi_items()[0]
+        .notes()
+        .iter()
+        .map(|note| MidiNoteData {
+            channel: note.channel(),
+            pitch: note.pitch(),
+            tick: note.tick(),
+            duration: note.duration(),
+            velocity: note.velocity(),
+        })
+        .collect::<Vec<_>>();
+    let note_ids = app.project.midi_items()[0]
+        .notes()
+        .iter()
+        .map(|note| note.id())
+        .collect::<Vec<_>>();
+    let original_controllers = [
+        MidiControllerData {
+            controller: 7,
+            channel: 2,
+            tick: 480,
+            value: 90,
+        },
+        MidiControllerData {
+            controller: 10,
+            channel: 5,
+            tick: 960,
+            value: 100,
+        },
+    ];
+    app.project
+        .apply(DawAction::SetMidiControllers {
+            item_id,
+            controllers: original_controllers.to_vec(),
+        })
+        .expect("test MIDI controllers should be inserted");
+    let original_pitch_bends = [
+        MidiPitchBendData {
+            channel: 2,
+            tick: 480,
+            value: 9_000,
+        },
+        MidiPitchBendData {
+            channel: 5,
+            tick: 960,
+            value: 10_000,
+        },
+    ];
+    app.project
+        .apply(DawAction::SetMidiPitchBends {
+            item_id,
+            pitch_bends: original_pitch_bends.to_vec(),
+        })
+        .expect("test MIDI pitch bends should be inserted");
+    app.midi_editor_item_id = Some(item_id);
+
+    app.midi_editor_selected_notes = HashSet::from_iter(note_ids);
+    assert!(commands::is_enabled(&app, CommandId::MidiEventProperties));
+    let _ = app.update(Message::OpenMidiEventProperties(item_id));
+    let dialog = app
+        .midi_event_properties_dialog
+        .as_ref()
+        .expect("selected notes should open event properties");
+    assert_eq!(dialog.position, "");
+    assert_eq!(dialog.length, "");
+    assert_eq!(dialog.channel, "");
+    assert_eq!(dialog.parameter, "");
+    assert_eq!(dialog.value, "");
+    assert!(dialog.position_mixed && dialog.length_mixed && dialog.channel_mixed);
+    assert!(dialog.parameter_mixed && dialog.value_mixed);
+    let history_before_notes = app.project.history_cursor();
+    let _ = app.update(Message::SetMidiEventPropertiesValue("110".to_owned()));
+    let _ = app.update(Message::ApplyMidiEventProperties);
+    let notes = &app.project.midi_items()[0].notes();
+    assert_eq!(notes.len(), 2);
+    assert_eq!(notes[0].velocity(), 110);
+    assert_eq!(notes[1].velocity(), 110);
+    assert_eq!(
+        (
+            notes[0].tick(),
+            notes[0].duration(),
+            notes[0].channel(),
+            notes[0].pitch()
+        ),
+        (
+            original_notes[0].tick,
+            original_notes[0].duration,
+            original_notes[0].channel,
+            original_notes[0].pitch
+        )
+    );
+    assert_eq!(
+        (
+            notes[1].tick(),
+            notes[1].duration(),
+            notes[1].channel(),
+            notes[1].pitch()
+        ),
+        (
+            original_notes[1].tick,
+            original_notes[1].duration,
+            original_notes[1].channel,
+            original_notes[1].pitch
+        )
+    );
+    assert_eq!(app.project.history_cursor(), history_before_notes + 1);
+    assert_eq!(app.midi_editor_selected_notes.len(), 2);
+    let _ = app.update(Message::CancelMidiEventProperties);
+    let _ = app.update(Message::Undo);
+    assert!(
+        app.project.midi_items()[0]
+            .notes()
+            .iter()
+            .zip(&original_notes)
+            .all(|(note, original)| {
+                note.tick() == original.tick
+                    && note.duration() == original.duration
+                    && note.channel() == original.channel
+                    && note.pitch() == original.pitch
+                    && note.velocity() == original.velocity
+            })
+    );
+    let _ = app.update(Message::Redo);
+    assert!(
+        app.project.midi_items()[0]
+            .notes()
+            .iter()
+            .all(|note| note.velocity() == 110)
+    );
+
+    app.midi_editor_selected_notes.clear();
+    app.midi_editor_selected_controllers = HashSet::from(original_controllers);
+    let _ = app.update(Message::OpenMidiEventProperties(item_id));
+    let dialog = app
+        .midi_event_properties_dialog
+        .as_ref()
+        .expect("selected CCs should open event properties");
+    assert!(dialog.position.is_empty() && dialog.channel.is_empty());
+    assert!(dialog.parameter.is_empty() && dialog.value.is_empty());
+    assert!(dialog.position_mixed && dialog.channel_mixed);
+    assert!(dialog.parameter_mixed && dialog.value_mixed);
+    let history_before_controllers = app.project.history_cursor();
+    let _ = app.update(Message::SetMidiEventPropertiesValue("105".to_owned()));
+    let _ = app.update(Message::ApplyMidiEventProperties);
+    let controllers = app.project.midi_items()[0].controllers();
+    assert_eq!(controllers.len(), 2);
+    assert!(controllers.iter().all(|event| event.value == 105));
+    assert_eq!(
+        controllers
+            .iter()
+            .map(|event| (event.tick, event.channel, event.controller))
+            .collect::<Vec<_>>(),
+        original_controllers
+            .iter()
+            .map(|event| (event.tick, event.channel, event.controller))
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(app.project.history_cursor(), history_before_controllers + 1);
+    assert_eq!(app.midi_editor_selected_controllers.len(), 2);
+    let _ = app.update(Message::CancelMidiEventProperties);
+    let _ = app.update(Message::Undo);
+    assert_eq!(
+        app.project.midi_items()[0].controllers(),
+        original_controllers
+    );
+    let _ = app.update(Message::Redo);
+    assert!(
+        app.project.midi_items()[0]
+            .controllers()
+            .iter()
+            .all(|event| event.value == 105)
+    );
+
+    app.midi_editor_selected_controllers.clear();
+    app.midi_editor_selected_pitch_bends = HashSet::from(original_pitch_bends);
+    let _ = app.update(Message::OpenMidiEventProperties(item_id));
+    let dialog = app
+        .midi_event_properties_dialog
+        .as_ref()
+        .expect("selected pitch bends should open event properties");
+    assert!(dialog.position.is_empty() && dialog.channel.is_empty());
+    assert!(dialog.value.is_empty());
+    assert!(dialog.position_mixed && dialog.channel_mixed && dialog.value_mixed);
+    let history_before_pitch_bends = app.project.history_cursor();
+    let _ = app.update(Message::SetMidiEventPropertiesValue("8192".to_owned()));
+    let _ = app.update(Message::ApplyMidiEventProperties);
+    let pitch_bends = app.project.midi_items()[0].pitch_bends();
+    assert_eq!(pitch_bends.len(), 2);
+    assert!(pitch_bends.iter().all(|event| event.value == 8_192));
+    assert_eq!(
+        pitch_bends
+            .iter()
+            .map(|event| (event.tick, event.channel))
+            .collect::<Vec<_>>(),
+        original_pitch_bends
+            .iter()
+            .map(|event| (event.tick, event.channel))
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(app.project.history_cursor(), history_before_pitch_bends + 1);
+    assert_eq!(app.midi_editor_selected_pitch_bends.len(), 2);
+    let _ = app.update(Message::CancelMidiEventProperties);
+    let _ = app.update(Message::Undo);
+    assert_eq!(
+        app.project.midi_items()[0].pitch_bends(),
+        original_pitch_bends
+    );
+    let _ = app.update(Message::Redo);
+    assert!(
+        app.project.midi_items()[0]
+            .pitch_bends()
+            .iter()
+            .all(|event| event.value == 8_192)
+    );
+}
+
+#[test]
 fn midi_editor_quantize_positions_and_ends_changes_only_selected_notes() {
     let mut app = App::default();
     let _ = app.update(Message::AddTrack);
