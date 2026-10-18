@@ -166,6 +166,34 @@ fn converts_conductor_data_and_selects_reaper_default_or_expanded_tracks() {
 }
 
 #[test]
+fn expanded_type1_import_keeps_channel_events_in_the_first_source_track() {
+    let first = [
+        0x00, 0xFF, 0x03, 0x0D, b'F', b'i', b'r', b's', b't', b' ', b'C', b'h', b'a', b'n', b'n',
+        b'e', b'l', 0x00, 0x90, 60, 100, 0x78, 0x80, 60, 64, 0x00, 0xFF, 0x2F, 0x00,
+    ];
+    let second = [
+        0x00, 0xFF, 0x03, 0x04, b'L', b'e', b'a', b'd', 0x00, 0x91, 64, 96, 0x78, 0x81, 64, 32,
+        0x00, 0xFF, 0x2F, 0x00,
+    ];
+    let imported = decode_standard_midi(&smf(1, 480, &[&first, &second]))
+        .unwrap()
+        .to_project_import(480)
+        .unwrap();
+
+    let expanded = imported.tracks_for_options(MidiFileImportOptions {
+        expand_tracks: true,
+        ..MidiFileImportOptions::default()
+    });
+
+    assert_eq!(expanded.len(), 2);
+    assert_eq!(expanded[0].name, "First Channel");
+    assert_eq!(expanded[0].notes.len(), 1);
+    assert_eq!(expanded[0].notes[0].pitch, 60);
+    assert_eq!(expanded[1].name, "Lead");
+    assert_eq!(expanded[1].notes.len(), 1);
+}
+
+#[test]
 fn rejects_unsupported_time_bases_and_truncated_or_invalid_events() {
     assert!(decode_standard_midi(&smf(2, 480, &[&[0x00, 0xFF, 0x2F, 0x00]])).is_err());
     assert!(decode_standard_midi(&smf(0, 0xE728, &[&[0x00, 0xFF, 0x2F, 0x00]])).is_err());

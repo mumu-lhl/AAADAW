@@ -690,7 +690,13 @@ impl MidiFileProjectImport {
     pub fn tracks_for_options(&self, options: MidiFileImportOptions) -> Vec<MidiImportedTrack> {
         if options.expand_tracks && self.file_type == MidiFileFormat::Type1 && self.tracks.len() > 1
         {
-            return self.tracks.iter().skip(1).cloned().collect();
+            let first_track_is_conductor = !self.tracks[0].has_channel_events;
+            return self
+                .tracks
+                .iter()
+                .skip(usize::from(first_track_is_conductor))
+                .cloned()
+                .collect();
         }
         let Some(first) = self.tracks.first() else {
             return Vec::new();

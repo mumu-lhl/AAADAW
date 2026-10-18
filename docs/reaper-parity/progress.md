@@ -2366,3 +2366,7 @@ AAADAW 的 `Insert > MIDI file…` 已提供 REAPER 对照确认的三项导入�
 在 Linux Xvfb 实窗运行当前桌面 Build ID `2afc7079777827714f5e174ba72c3cf2a6e1bdd1`，通过隔离的 D-Bus FileChooser 返回仓库中的原厂探针 MIDI 文件，实际打开导入选项、全选三项并完成导入。实窗结果为 Lead 与 Meta only 两条轨、两个工程标记，以及导入点的 150 BPM / 3/4；对话框默认状态、导入后 Arrangement 和 Tempo/Meter 状态截图连同二进制/fixture 哈希登记于 [AAADAW live import manifest](../verification/reaper-parity/fixtures/midi-file-import-aaadaw.tsv)。该截图验证覆盖 AAADAW 导入 UI 到结果，不替代原厂 REAPER 读回；原厂语义截图继续保存在 [native fixture](fixtures/midi-file-import-native/)。
 
 验证：AAADAW 二进制测试 **770/770**、SMF Core import/export **92/92**、Storage project-store **67/67** 通过；完整 workspace Nextest **1490/1490，0 skipped** 在本轮 off-bar meter snapping 改动前通过。稳定 `cargo fmt --all` 与 `git diff --check` 通过。实现仍未完成：Type 1 展开会漏掉首轨通道事件；关闭 Tempo Map 时源 tempo/meter Meta 被丢弃；opaque 行尚不可编辑、删除或筛选；音频播放不调度 Meta/SysEx；不同事件类别的同 tick 次序未完整保留；Format 2 与 SMPTE division 不支持。故 `MIDI-FILE-IMPORT-001`、UI-019 与 P7 仍为 `in_progress`，不会按已完成登记。
+
+### 2026-10-18 Type 1 首轨通道事件导入保护
+
+修正展开 Type 1 MIDI 时无条件跳过首轨的问题：只有首轨不含 channel events 时才按导体轨跳过；如果首轨含音符或控制事件，它会和其余源轨一起导入，避免静默丢失内容。新增 Core 回归覆盖首轨/第二轨各含一个已配对音符、展开后两轨与音符均保留。MIDI file import 定向套件 **9/9** 通过；首轨含通道数据时 REAPER 原厂的精确处理尚未探测，因此 parity 文档明确保留此项为待核实边缘语义，而不是宣称完全对齐。
