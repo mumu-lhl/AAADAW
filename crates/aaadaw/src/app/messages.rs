@@ -669,6 +669,40 @@ impl MidiEditorFilterState {
         editor_channel_matches && event_filter_matches
     }
 
+    pub(crate) fn poly_aftertouch_visible_at(
+        self,
+        channel: u8,
+        note: u8,
+        pressure: u8,
+        position_in_measure: u32,
+    ) -> bool {
+        let editor_channel_matches = !self.channel_filter_enabled
+            || match self.channel_selection {
+                MidiEditorChannelSelection::AllChannels => true,
+                MidiEditorChannelSelection::Channel(selected) => channel == selected,
+                MidiEditorChannelSelection::Multichannel => {
+                    self.channels & (1_u16.checked_shl(u32::from(channel)).unwrap_or(0)) != 0
+                }
+            };
+        let event_filter_matches = !self.event_filter_enabled || {
+            let channel_matches =
+                self.channels & (1_u16.checked_shl(u32::from(channel)).unwrap_or(0)) != 0;
+            let note_matches = !self.note.pitch_enabled
+                || !self.note.pitch_range_initialized
+                || (note >= self.note.pitch_low && note <= self.note.pitch_high);
+            let pressure_matches = !self.note.velocity_enabled
+                || !self.note.velocity_range_initialized
+                || (pressure >= self.note.velocity_low && pressure <= self.note.velocity_high);
+            let passes = channel_matches
+                && self.event_type.matches(MidiEditorEventKind::PolyAftertouch)
+                && note_matches
+                && pressure_matches
+                && self.position.matches(position_in_measure);
+            if self.inverted { !passes } else { passes }
+        };
+        editor_channel_matches && event_filter_matches
+    }
+
     pub(crate) fn note_visible(self, channel: u8, event: MidiEditorNoteFilterEvent) -> bool {
         let editor_channel_matches = !self.channel_filter_enabled
             || match self.channel_selection {
@@ -1931,6 +1965,53 @@ mod midi_channel_selection_tests {
             ..filter
         };
         assert!(without_program_range.program_change_visible_at(1, 127, 125_000_000));
+    }
+
+    #[test]
+    fn poly_aftertouch_filter_matches_note_pressure_position_and_inversion() {
+        let filter = MidiEditorFilterState {
+            channel_selection: MidiEditorChannelSelection::AllChannels,
+            channel_filter_enabled: false,
+            event_filter_enabled: true,
+            channels: 0b110,
+            inverted: false,
+            event_type: MidiEditorEventTypeFilter::PolyAftertouch,
+            note: MidiEditorNoteFilter {
+                pitch_enabled: true,
+                pitch_range_initialized: true,
+                pitch_low: 60,
+                pitch_high: 72,
+                velocity_enabled: true,
+                velocity_range_initialized: true,
+                velocity_low: 32,
+                velocity_high: 100,
+                ..MidiEditorNoteFilter::default()
+            },
+            controller: MidiEditorControllerFilter::default(),
+            pitch_bend: MidiEditorPitchBendFilter::default(),
+            program_change: MidiEditorProgramChangeFilter::default(),
+            position: MidiEditorPositionFilter {
+                enabled: true,
+                range_initialized: true,
+                low: 125_000_000,
+                high: 250_260_420,
+                repeat_every: MidiEditorFilterRepeat::Measure,
+            },
+        };
+
+        assert!(filter.poly_aftertouch_visible_at(1, 60, 32, 125_000_000));
+        assert!(filter.poly_aftertouch_visible_at(2, 72, 100, 250_000_000));
+        assert!(!filter.poly_aftertouch_visible_at(1, 59, 64, 200_000_000));
+        assert!(!filter.poly_aftertouch_visible_at(1, 64, 31, 200_000_000));
+        assert!(!filter.poly_aftertouch_visible_at(1, 64, 64, 250_260_421));
+        assert!(!filter.poly_aftertouch_visible_at(3, 64, 64, 200_000_000));
+
+        let inverted = MidiEditorFilterState {
+            inverted: true,
+            ..filter
+        };
+        assert!(!inverted.poly_aftertouch_visible_at(1, 60, 32, 125_000_000));
+        assert!(inverted.poly_aftertouch_visible_at(1, 59, 64, 200_000_000));
     }
 
     #[test]

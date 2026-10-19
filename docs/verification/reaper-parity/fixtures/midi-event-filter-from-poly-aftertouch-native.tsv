@@ -1,0 +1,20 @@
+artifact	sha256
+scripts/reaper_parity/probe-midi-event-filter-from-aftertouch-selection.lua	55caeed050e396158f96d9da891fd4b636cff531ab6f9e29f7e639850000a186
+fixtures/midi-event-filter-from-poly-aftertouch-native-readback.tsv	0a0a2748f8ab77be405f10a2758765b0ca5e880d4ec51d428d528711abd4a68c
+fixtures/midi-event-filter-from-poly-aftertouch-native-after-set-readback.tsv	0a0a2748f8ab77be405f10a2758765b0ca5e880d4ec51d428d528711abd4a68c
+fixtures/midi-event-filter-from-poly-aftertouch-native-before.rpp	98406bed7eb21a7fab189ea86f59040f9c58ad405574acd8fbe6f20615cf2433
+fixtures/midi-event-filter-from-poly-aftertouch-native-after-set.rpp	dc64b5e04753bcc4030e1297bca2b452acbea5917bb596d1c66f2776c7bf7d6a
+fixtures/midi-event-filter-from-poly-aftertouch-reaper-native-after-set.png	6467cddfcfe5c9c3127841fad5b9ac7faa2c5dd8def2ebe188a57c4823ffe178
+fixtures/midi-event-filter-from-poly-aftertouch-reaper-native-list-unfiltered.png	fd6b863225cb164d6abc941d1c5b32c6503e069b74377bf761c34cd7627cccf7
+fixtures/midi-event-filter-from-poly-aftertouch-reaper-native-list-filtered.png	4768a0b17db1a5b93a8fc6571c6605b60f1e268768a75411a5770ec38551fdac
+native_build_id	fb9ade2f211bc91a3ee6193630ef17bcf5f6528b
+native_binary_sha256	9976f5608068b7a58518969001b00b527fb0de6ed7459e0e5dda6f29878ee254
+theme	REAPER 7.82 Linux Default 7; theme SHA-256 575544606736a395520703e532209ad9635f13a41b7ea000bb9810d60025be48
+environment	Linux dummy Xorg :546, 1600x1000; isolated REAPER 7.82 Default 7 profile; audio unavailable
+starting_state	One C4 note; selected Poly Aftertouch note60/value32 on channel 2 @ tick 480 and note72/value100 on channel 3 @ tick 960; unselected note64/value64 on channel 2 @ tick 600; CC7 @720 and Channel Pressure @840; Event List funnel off
+action	Event List > Filter Events > Set filter from selection
+assertion	The dialog derives Poly Aftertouch, channels 2–3, Note 60–72 (C4–C5), Pressure 32–100, and Position 0.125–0.25026042; Repeat every measure and Draw events on channel 2. Set leaves Show-only and funnel off.
+filter_toggle	After explicitly enabling Show-only, exactly the three Poly Aftertouch rows remain, including the unselected middle event; Note, CC, Channel Pressure, and terminal rows are hidden.
+selection_and_data	The selected endpoint events remain selected. Before/after MIDI_GetCC readbacks are byte-identical. The RPP records EVTFILTER 6 160 -1 32 100 1 0 1 0 -1 -1 0.125 0.25026042 1 -1 1 60 72.
+verification	Native MIDI_GetCC and RPP readbacks; interactive Filter Events and Event List screenshots; manual Show-only toggle
+limitation	Mixed event-type selection and Channel Pressure, Meta, and SysEx Set-from-selection behavior remain unprobed. Screenshots verify behavior, not pixel identity.

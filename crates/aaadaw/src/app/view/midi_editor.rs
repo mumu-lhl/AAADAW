@@ -446,8 +446,19 @@ impl MidiSnap {
             .program_change_visible_at(event.channel, event.program, position)
     }
 
-    fn poly_aftertouch_visible(self, channel: u8) -> bool {
-        self.event_visible(channel, MidiEditorEventKind::PolyAftertouch)
+    fn poly_aftertouch_visible(self, event: MidiPolyAftertouchData) -> bool {
+        let position = midi_editor_filter_repeat_position_value(
+            event.tick,
+            self.ppq,
+            self.measure_ticks,
+            self.position_filter.repeat_every,
+        );
+        self.filter_state().poly_aftertouch_visible_at(
+            event.channel,
+            event.note,
+            event.value,
+            position,
+        )
     }
 
     fn channel_pressure_visible(self, channel: u8) -> bool {
@@ -1245,7 +1256,7 @@ fn midi_event_list_entries(item: &MidiItem, snap: MidiSnap) -> Vec<MidiEventList
             item.poly_aftertouches()
                 .iter()
                 .copied()
-                .filter(|event| snap.poly_aftertouch_visible(event.channel))
+                .filter(|event| snap.poly_aftertouch_visible(*event))
                 .map(MidiEventListEntry::PolyAftertouch),
         )
         .chain(
@@ -2752,6 +2763,9 @@ fn channel_filter_dialog(app: &App, touch_targets: bool) -> Element<'_, Message>
         app.midi_editor_event_type_filter,
         MidiEditorEventTypeFilter::AllEvents | MidiEditorEventTypeFilter::Notes
     );
+    let poly_aftertouch_filter_visible =
+        app.midi_editor_event_type_filter == MidiEditorEventTypeFilter::PolyAftertouch;
+    let note_pitch_filter_visible = note_filter_visible || poly_aftertouch_filter_visible;
     let controller_filter_visible =
         app.midi_editor_event_type_filter == MidiEditorEventTypeFilter::ControlChange;
     let pitch_bend_filter_visible =
@@ -2759,11 +2773,14 @@ fn channel_filter_dialog(app: &App, touch_targets: bool) -> Element<'_, Message>
     let program_change_filter_visible =
         app.midi_editor_event_type_filter == MidiEditorEventTypeFilter::ProgramChange;
     let position_filter_visible = note_filter_visible
+        || poly_aftertouch_filter_visible
         || controller_filter_visible
         || pitch_bend_filter_visible
         || program_change_filter_visible;
-    let repeat_filter_visible =
-        note_filter_visible || controller_filter_visible || program_change_filter_visible;
+    let repeat_filter_visible = note_filter_visible
+        || poly_aftertouch_filter_visible
+        || controller_filter_visible
+        || program_change_filter_visible;
     let pitch_options = if note_filter.pitch_enabled {
         &MidiEditorPitchFilterValue::OPTIONS[..]
     } else {
@@ -2872,7 +2889,11 @@ fn channel_filter_dialog(app: &App, touch_targets: bool) -> Element<'_, Message>
     .align_y(iced::Alignment::Center);
     let velocity_filter = row![
         checkbox(note_filter.velocity_enabled)
-            .label("Velocity")
+            .label(if poly_aftertouch_filter_visible {
+                "Pressure"
+            } else {
+                "Velocity"
+            })
             .on_toggle(Message::SetMidiEditorFilterNoteVelocityEnabled),
         text("Low").size(11),
         pick_list(
@@ -3065,8 +3086,11 @@ fn channel_filter_dialog(app: &App, touch_targets: bool) -> Element<'_, Message>
     .spacing(ROW_GAP)
     .align_y(iced::Alignment::Center);
     let mut criteria_rows: Vec<Element<'_, Message>> = Vec::new();
-    if note_filter_visible {
-        criteria_rows.extend([pitch_filter.into(), velocity_filter.into()]);
+    if note_pitch_filter_visible {
+        criteria_rows.push(pitch_filter.into());
+    }
+    if note_filter_visible || poly_aftertouch_filter_visible {
+        criteria_rows.push(velocity_filter.into());
     }
     if controller_filter_visible {
         criteria_rows.extend([controller_filter_row.into(), value_filter_row.into()]);
