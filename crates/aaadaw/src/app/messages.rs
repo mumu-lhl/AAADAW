@@ -1378,6 +1378,7 @@ pub(crate) enum Message {
     EncloseMediaItemsInRazorEdit,
     PasteItems,
     PasteAudioItemAsTake,
+    ImplodeSelectedAudioItemsAsTakes,
     SelectAllItems,
     SelectAllItemsInTrack,
     SelectAllItemsInTimeSelection,

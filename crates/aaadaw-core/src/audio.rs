@@ -182,6 +182,30 @@ impl AudioItem {
         }
     }
 
+    /// Returns every Take as a serializable snapshot in its displayed order.
+    pub fn take_snapshots(&self) -> Vec<crate::AudioItemTakeSnapshot> {
+        let mut takes = self
+            .other_takes
+            .iter()
+            .map(|take| crate::AudioItemTakeSnapshot {
+                index: take.index,
+                media_ref: take.media_ref.clone(),
+                name: take.name.clone(),
+                source_offset_samples: take.source_offset_samples,
+                phase_inverted: take.phase_inverted,
+                loop_source: take.loop_source,
+                source_section_start_samples: take.source_section_start_samples,
+                source_section_length_samples: take.source_section_length_samples,
+                volume: take.volume,
+                pan: take.pan,
+                playback_rate: take.playback_rate,
+            })
+            .collect::<Vec<_>>();
+        takes.push(self.active_take_snapshot());
+        takes.sort_unstable_by_key(|take| take.index);
+        takes
+    }
+
     /// Inactive takes in their original list positions.
     pub fn other_takes(&self) -> &[AudioItemTake] {
         &self.other_takes

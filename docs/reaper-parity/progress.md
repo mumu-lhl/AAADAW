@@ -2859,3 +2859,9 @@ Linux REAPER 7.82 / Default 7 实测 Main action 40603：复制两个选中的�
 AAADAW 的 Copy items 现按项目顺序保存所有选中音频项的活动 Take；Paste as takes 将完整顺序应用到每个选中音频目标，单来源广播路径维持原行为，多个来源与多个目标在一个 `BatchTransaction` 内提交。回归覆盖 2→3 Take 的双目标、多来源进入单目标、来源保留、单次历史事务与完整 Undo/Redo 快照。真实 Cranelift AAADAW 窗口四态截图显示两个目标的 3/3 活动 Source B、来源 Item、撤销和重做；原厂与 AAADAW 工程、探针脚本和 SHA-256 见[多来源 Paste as takes manifest](../verification/reaper-parity/fixtures/audio-paste-as-takes-multiple-sources-aaadaw.tsv)。
 
 Stable LLVM AAADAW 包测试 **1612/1612**（79 个 test binary，0 skipped）、严格 all-target Clippy、fmt、capture shell 语法、diff check、parity matrix **113 行 / 15 列**及 manifest 制品哈希审计通过。nightly Cranelift 桌面构建成功，保留既有 recursion-depth future-incompatible warning；Xvfb 实窗未启用 audio-device，因此截图只核验界面与 Take 状态。`EDIT-TAKE-001` 仍 `in_progress`：录音生成、跨工程剪贴板、MIDI/Track Copy、其他 Take 操作、Show all takes、Fixed Lanes 与 Comp Areas 尚未完成。
+
+### 2026-10-19 P5 Take: Implode same-track items into takes
+
+Linux REAPER 7.82 / Default 7 Main action 40543 实测三类选择：起点不同的 Item 以最早者为目标，同一起点则以 Arrange 最上方者为目标；目标保留位置、长度、原 Take 顺序和活动索引，所有 donor Take 按 Arrange 顺序追加，donor Item 删除。Take 的 source、名称、offset、rate、volume、pan 均保留。单次 Undo 恢复全部源 Item 并清除选区，Redo 恢复并选中合并项；原厂读回、RPP 状态和主窗口截图见[证据页](../verification/reaper-parity/audio-implode-same-track-takes.md)。
+
+AAADAW Item 菜单和 Action List 现提供同名 40543 命令，要求至少两个同轨音频 Item，冻结 Render Item 会阻止整批操作。操作复制 donor 的完整 Take 列表、保留目标原活动 Take，并以一条 `BatchTransaction` 删除来源；一次 Undo/Redo 与原厂选区行为一致。Stable LLVM AAADAW 桌面测试 **859/859**、严格 all-target Clippy、fmt、capture shell 语法和 diff check 通过。nightly Cranelift 二进制的 1280×800 实窗四态截图、Build ID 与所有原厂/AAADAW 工件哈希见[AAADAW manifest](../verification/reaper-parity/fixtures/audio-implode-same-track-aaadaw.tsv)。截图构建未启用 audio-device，只核验窗口与 Take 状态。`EDIT-TAKE-001` 仍 `in_progress`；跨轨 implode、Explode、录音 Take、Show all takes、Fixed Lanes、Comp Areas、MIDI Take 和跨工程剪贴板仍开放。

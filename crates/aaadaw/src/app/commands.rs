@@ -6,6 +6,7 @@ use aaadaw_core::{ItemId, TrackId};
 use iced::Task;
 use iced::keyboard::key::{Code, Named};
 use iced::keyboard::{Key, Modifiers};
+use std::cmp::Reverse;
 use std::collections::HashMap;
 
 pub(crate) type ShortcutBindings = HashMap<String, String>;
@@ -44,6 +45,7 @@ pub(crate) enum CommandId {
     CopyItems,
     PasteItems,
     PasteAudioItemAsTake,
+    ImplodeAudioItemsOnSameTrackIntoTakes,
     MoveActiveTakesToTop,
     CropAudioItemToActiveTake,
     ToggleMediaBrowserPanel,
@@ -204,6 +206,7 @@ enum CommandKind {
     CopyItems,
     PasteItems,
     PasteAudioItemAsTake,
+    ImplodeAudioItemsOnSameTrackIntoTakes,
     MoveActiveTakesToTop,
     CropAudioItemToActiveTake,
     ToggleMediaBrowserPanel,
@@ -1534,6 +1537,16 @@ const COMMANDS: &[CommandDefinition] = &[
         aliases: &["paste as takes", "paste take into item"],
         shortcuts: &[],
         destructive: false,
+        separator_before: false,
+    },
+    CommandDefinition {
+        kind: CommandKind::ImplodeAudioItemsOnSameTrackIntoTakes,
+        menu: Some(MainMenu::Item),
+        category: "Take",
+        label: "Implode items on same track into takes",
+        aliases: &["implode items into takes", "implode same-track takes"],
+        shortcuts: &[],
+        destructive: true,
         separator_before: false,
     },
     CommandDefinition {
@@ -2874,6 +2887,7 @@ fn command_kind_id(kind: CommandKind) -> &'static str {
         CommandKind::CopyItems => "edit.copy-items",
         CommandKind::PasteItems => "edit.paste-items",
         CommandKind::PasteAudioItemAsTake => "take.paste-as-takes",
+        CommandKind::ImplodeAudioItemsOnSameTrackIntoTakes => "take.implode-same-track",
         CommandKind::DeleteActiveAudioItemTake => "take.delete-active",
         CommandKind::MoveActiveTakesToTop => "take.move-active-to-top",
         CommandKind::CropAudioItemToActiveTake => "take.crop-active",
@@ -3120,6 +3134,22 @@ pub(super) fn dispatch(app: &mut App, command: CommandId) -> Task<Message> {
         CommandId::CopyItems => Message::CopyItems,
         CommandId::PasteItems => Message::PasteItems,
         CommandId::PasteAudioItemAsTake => Message::PasteAudioItemAsTake,
+        CommandId::ImplodeAudioItemsOnSameTrackIntoTakes => {
+            let Some(item_ids) = audio_items_for_implode(app) else {
+                app.status = "Select at least two audio items on the same track".to_owned();
+                return Task::none();
+            };
+            if item_ids.iter().any(|item_id| {
+                app.project
+                    .tracks()
+                    .iter()
+                    .any(|track| track.frozen_audio_item_id() == Some(*item_id))
+            }) {
+                app.status = "Frozen render items cannot be imploded into takes".to_owned();
+                return Task::none();
+            }
+            Message::ImplodeSelectedAudioItemsAsTakes
+        }
         CommandId::DuplicateActiveTake => {
             if selected_audio_item_ids(app).is_empty() {
                 app.status = "Select an audio item to duplicate its active take".to_owned();
@@ -3559,6 +3589,32 @@ pub(super) fn selected_audio_item_ids(app: &App) -> Vec<ItemId> {
         .collect()
 }
 
+pub(super) fn audio_items_for_implode(app: &App) -> Option<Vec<ItemId>> {
+    if app.timeline.selected_items.len() < 2 {
+        return None;
+    }
+    let selected_audio_ids = selected_audio_item_ids(app);
+    if selected_audio_ids.len() != app.timeline.selected_items.len() {
+        return None;
+    }
+    let mut items = selected_audio_ids
+        .into_iter()
+        .filter_map(|item_id| {
+            app.project
+                .audio_items()
+                .iter()
+                .find(|item| item.id() == item_id)
+        })
+        .collect::<Vec<_>>();
+    let track_id = items.first()?.track_id();
+    if items.len() < 2 || items.iter().any(|item| item.track_id() != track_id) {
+        return None;
+    }
+    // REAPER keeps the topmost item first when several items share a start.
+    items.sort_unstable_by_key(|item| (item.start_sample(), Reverse(item.id().value())));
+    Some(items.into_iter().map(|item| item.id()).collect())
+}
+
 pub(super) fn switch_audio_item_take_targets(app: &App) -> Vec<ItemId> {
     selected_audio_item_ids(app)
         .into_iter()
@@ -3699,6 +3755,17 @@ fn command_enabled(app: &App, kind: CommandKind, track: Option<TrackState>) -> b
         CommandKind::PasteItems => !project_edit_busy(app) && app.can_paste_audio_items(),
         CommandKind::PasteAudioItemAsTake => {
             !project_edit_busy(app) && app.can_paste_audio_item_as_take()
+        }
+        CommandKind::ImplodeAudioItemsOnSameTrackIntoTakes => {
+            !project_edit_busy(app)
+                && audio_items_for_implode(app).is_some_and(|item_ids| {
+                    !item_ids.iter().any(|item_id| {
+                        app.project
+                            .tracks()
+                            .iter()
+                            .any(|track| track.frozen_audio_item_id() == Some(*item_id))
+                    })
+                })
         }
         CommandKind::CopyLoopOfSelectedArea => true,
         CommandKind::EncloseMediaItemsInRazorEdit => true,
@@ -4257,6 +4324,9 @@ fn command_id(kind: CommandKind) -> CommandId {
         CommandKind::DuplicateSelectedAudioItem => CommandId::DuplicateSelectedAudioItem,
         CommandKind::DuplicateActiveTake => CommandId::DuplicateActiveTake,
         CommandKind::PasteAudioItemAsTake => CommandId::PasteAudioItemAsTake,
+        CommandKind::ImplodeAudioItemsOnSameTrackIntoTakes => {
+            CommandId::ImplodeAudioItemsOnSameTrackIntoTakes
+        }
         CommandKind::DeleteActiveAudioItemTake => CommandId::DeleteActiveAudioItemTake,
         CommandKind::MoveActiveTakesToTop => CommandId::MoveActiveTakesToTop,
         CommandKind::CropAudioItemToActiveTake => CommandId::CropAudioItemToActiveTake,

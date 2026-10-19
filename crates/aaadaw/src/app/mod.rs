@@ -267,6 +267,7 @@ pub(crate) use messages::{
 enum AppHistoryEntry {
     Project,
     ProjectWithInlineMidiSelection(InlineMidiSelectionHistory),
+    ProjectWithItemSelection(ItemSelectionHistory),
     InlineMidiSelection(InlineMidiSelectionHistory),
     ItemSelection {
         label: &'static str,
@@ -274,6 +275,14 @@ enum AppHistoryEntry {
         after: Box<timeline::ItemSelectionState>,
         project_history_cursor: usize,
     },
+}
+
+#[derive(Clone)]
+struct ItemSelectionHistory {
+    before: Box<timeline::ItemSelectionState>,
+    after: Box<timeline::ItemSelectionState>,
+    project_history_cursor_before: usize,
+    project_history_cursor_after: usize,
 }
 
 #[derive(Clone)]
@@ -5454,6 +5463,7 @@ impl App {
                             | Message::DuplicateSelectedAudioItemActiveTakes
                             | Message::DeleteSelectedAudioItemActiveTakes
                             | Message::MoveSelectedAudioItemActiveTakesToTop
+                            | Message::ImplodeSelectedAudioItemsAsTakes
                             | Message::CropSelectedAudioItemsToActiveTake
                             | Message::SwitchSelectedAudioItemTakes(..)
                             | Message::SwitchAudioItemTake(..)
@@ -9595,6 +9605,9 @@ impl App {
             Message::EncloseMediaItemsInRazorEdit => self.enclose_media_items_in_razor_edit(),
             Message::PasteItems => self.paste_audio_items(),
             Message::PasteAudioItemAsTake => self.paste_audio_item_as_take(),
+            Message::ImplodeSelectedAudioItemsAsTakes => {
+                self.implode_selected_audio_items_as_takes()
+            }
             Message::SelectAllItems => {
                 self.with_item_selection_history("Select all items", Self::select_all_items)
             }
@@ -14430,6 +14443,40 @@ impl App {
         }
     }
 
+    fn project_item_selection_is_next_undo(&self) -> Option<ItemSelectionHistory> {
+        match self.app_undo_history.last() {
+            Some(AppHistoryEntry::ProjectWithItemSelection(history))
+                if history.project_history_cursor_after == self.project.history_cursor() =>
+            {
+                Some(history.clone())
+            }
+            _ => None,
+        }
+    }
+
+    fn project_item_selection_is_next_redo(&self) -> Option<ItemSelectionHistory> {
+        match self.app_redo_history.last() {
+            Some(AppHistoryEntry::ProjectWithItemSelection(history))
+                if history.project_history_cursor_before == self.project.history_cursor() =>
+            {
+                Some(history.clone())
+            }
+            _ => None,
+        }
+    }
+
+    fn restore_project_item_selection_history(
+        &mut self,
+        history: &ItemSelectionHistory,
+        redo: bool,
+    ) {
+        self.timeline.restore_item_selection_state(if redo {
+            &history.after
+        } else {
+            &history.before
+        });
+    }
+
     fn restore_inline_midi_selection_history(
         &mut self,
         history: &InlineMidiSelectionHistory,
@@ -16828,6 +16875,7 @@ impl App {
             return;
         }
         let inline_note_selection_history = self.inline_midi_copy_selection_is_next_undo();
+        let project_item_selection_history = self.project_item_selection_is_next_undo();
         let selected_fx_instance_id = self.selected_fx_chain_instance_id();
         #[cfg(feature = "audio-device")]
         let tempo_before = self.project.tempo_points().collect::<Vec<_>>();
@@ -16920,6 +16968,7 @@ impl App {
                         );
                 }
                 let project_history_entry = if inline_note_selection_history.is_some()
+                    || project_item_selection_history.is_some()
                     || matches!(self.app_undo_history.last(), Some(AppHistoryEntry::Project))
                 {
                     self.app_undo_history.pop()
@@ -16947,6 +16996,9 @@ impl App {
                 self.revision = self.revision.wrapping_add(1);
                 self.timeline.rebuild(&self.project);
                 self.refresh_item_properties_take_selection();
+                if let Some(history) = project_item_selection_history.as_ref() {
+                    self.restore_project_item_selection_history(history, false);
+                }
                 if let Some(history) = inline_note_selection_history.as_ref() {
                     self.restore_inline_midi_selection_history(history, false);
                 }
@@ -16981,6 +17033,7 @@ impl App {
             Some(AppHistoryEntry::ProjectWithInlineMidiSelection(history)) => Some(history.clone()),
             _ => None,
         };
+        let project_item_selection_history = self.project_item_selection_is_next_redo();
         let selected_fx_instance_id = self.selected_fx_chain_instance_id();
         #[cfg(feature = "audio-device")]
         let tempo_before = self.project.tempo_points().collect::<Vec<_>>();
@@ -17073,6 +17126,7 @@ impl App {
                         );
                 }
                 let project_history_entry = if inline_note_selection_history.is_some()
+                    || project_item_selection_history.is_some()
                     || matches!(self.app_redo_history.last(), Some(AppHistoryEntry::Project))
                 {
                     self.app_redo_history.pop()
@@ -17104,6 +17158,9 @@ impl App {
                 self.revision = self.revision.wrapping_add(1);
                 self.timeline.rebuild(&self.project);
                 self.refresh_item_properties_take_selection();
+                if let Some(history) = project_item_selection_history.as_ref() {
+                    self.restore_project_item_selection_history(history, true);
+                }
                 if let Some(history) = inline_note_selection_history.as_ref() {
                     self.restore_inline_midi_selection_history(history, true);
                 }
@@ -19351,6 +19408,107 @@ impl App {
                 "Takes pasted into selected audio items"
             },
         );
+    }
+
+    fn implode_selected_audio_items_as_takes(&mut self) {
+        if commands::project_edit_busy(self) {
+            self.status =
+                "Stop playback or finish the current project operation before imploding items"
+                    .to_owned();
+            return;
+        }
+        let Some(item_ids) = commands::audio_items_for_implode(self) else {
+            self.status = "Select at least two audio items on the same track".to_owned();
+            return;
+        };
+        if item_ids.iter().any(|item_id| {
+            self.project
+                .tracks()
+                .iter()
+                .any(|track| track.frozen_audio_item_id() == Some(*item_id))
+        }) {
+            self.status = "Frozen render items cannot be imploded into takes".to_owned();
+            return;
+        }
+        let target_id = item_ids[0];
+        let Some(target) = self
+            .project
+            .audio_items()
+            .iter()
+            .find(|item| item.id() == target_id)
+        else {
+            return;
+        };
+        let track_id = target.track_id();
+        let original_active_take = target.active_take_index();
+        let donors = item_ids
+            .iter()
+            .skip(1)
+            .filter_map(|item_id| {
+                self.project
+                    .audio_items()
+                    .iter()
+                    .find(|item| item.id() == *item_id)
+                    .map(|item| (*item_id, item.take_snapshots()))
+            })
+            .collect::<Vec<_>>();
+        if donors.len() + 1 != item_ids.len() {
+            return;
+        }
+
+        let mut actions = donors
+            .iter()
+            .flat_map(|(_, takes)| {
+                takes
+                    .iter()
+                    .cloned()
+                    .map(move |take| DawAction::PasteAudioItemAsTake {
+                        item_id: target_id,
+                        take,
+                    })
+            })
+            .collect::<Vec<_>>();
+        actions.push(DawAction::SetAudioItemActiveTake {
+            item_id: target_id,
+            take_index: original_active_take,
+        });
+        actions.extend(
+            donors
+                .iter()
+                .map(|(item_id, _)| DawAction::DeleteAudioItem { item_id: *item_id }),
+        );
+
+        for item_id in &item_ids {
+            self.audio_item_start_edits.remove(item_id);
+        }
+        let previous_revision = self.revision;
+        let project_history_cursor_before = self.project.history_cursor();
+        self.apply_action(
+            DawAction::BatchTransaction {
+                tx_id: self.revision,
+                actions,
+            },
+            "Selected audio items imploded into takes",
+        );
+        if self.revision != previous_revision {
+            self.timeline.select_items(vec![(target_id, track_id)]);
+            let after = self.timeline.item_selection_state();
+            self.timeline.clear_selected_items();
+            let before = self.timeline.item_selection_state();
+            self.timeline.restore_item_selection_state(&after);
+            if matches!(self.app_undo_history.last(), Some(AppHistoryEntry::Project)) {
+                self.app_undo_history.pop();
+                self.app_undo_history
+                    .push(AppHistoryEntry::ProjectWithItemSelection(
+                        ItemSelectionHistory {
+                            before: Box::new(before),
+                            after: Box::new(after),
+                            project_history_cursor_before,
+                            project_history_cursor_after: self.project.history_cursor(),
+                        },
+                    ));
+            }
+        }
     }
 
     fn copy_loop_of_selected_area(&mut self) {

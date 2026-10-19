@@ -14,6 +14,8 @@ The native Properties capture lists `1: Take B` and `2: Take A`, with the active
 
 Native action 40603 also accepts multiple copied source items: it appends the full clipboard sequence, in order, to each selected audio target and activates the last copied take. AAADAW now follows this behavior; the separate [multiple-source paste evidence](audio-paste-as-takes-multiple-sources.md) includes pairwise target readback, a one-target case, and one-step Undo/Redo.
 
+Native action 40543, **Take: Implode items on same track into takes**, keeps the earliest selected item (topmost item for equal starts), appends every take from each selected donor in Arrange order, and removes the donor items. AAADAW now applies the same operation as one undoable transaction while preserving the destination's position, length, take order, and active index. See the [same-track implode evidence](audio-implode-same-track-takes.md) for native readback, screenshots, and one-step Undo/Redo verification.
+
 ![REAPER 7.82 Default 7 with two audio takes shown in Arrange](fixtures/audio-multi-take-native-arrange.png)
 
 ![REAPER 7.82 Default 7 Media Item Properties with the take selector open](fixtures/audio-multi-take-native-properties-list.png)

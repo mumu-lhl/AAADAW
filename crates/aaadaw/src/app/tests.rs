@@ -98,6 +98,207 @@ fn audio_take_actions_switch_with_undo_and_require_multiple_takes() {
 }
 
 #[test]
+fn imploding_selected_audio_items_keeps_track_order_all_takes_and_one_step_history() {
+    let mut app = App::default();
+    for (index, name) in ["Implode", "Other"].into_iter().enumerate() {
+        app.project
+            .apply(DawAction::CreateTrack {
+                index,
+                name: name.to_owned(),
+            })
+            .expect("track should be created");
+    }
+    let track_id = app.project.tracks()[0].id();
+    app.project
+        .apply(DawAction::InsertAudioItem {
+            track_id,
+            media_ref: "asset://late-active".to_owned(),
+            start_sample: 48_000,
+            source_offset_samples: 900,
+            length_samples: 72_000,
+        })
+        .expect("late source should be inserted");
+    app.project
+        .apply(DawAction::InsertAudioItem {
+            track_id,
+            media_ref: "asset://base-active".to_owned(),
+            start_sample: 0,
+            source_offset_samples: 100,
+            length_samples: 48_000,
+        })
+        .expect("base item should be inserted");
+    app.project
+        .apply(DawAction::InsertAudioItem {
+            track_id,
+            media_ref: "asset://middle-old".to_owned(),
+            start_sample: 48_000,
+            source_offset_samples: 500,
+            length_samples: 60_000,
+        })
+        .expect("middle source should be inserted");
+    let late_id = app.project.audio_items()[0].id();
+    let base_id = app.project.audio_items()[1].id();
+    let middle_id = app.project.audio_items()[2].id();
+
+    let mut base_alternate = app
+        .project
+        .audio_items()
+        .iter()
+        .find(|item| item.id() == base_id)
+        .unwrap()
+        .active_take_snapshot();
+    base_alternate.media_ref = "asset://base-alternate".to_owned();
+    base_alternate.name = "Base alternate".to_owned();
+    base_alternate.phase_inverted = true;
+    base_alternate.volume = 0.5;
+    base_alternate.pan = -0.25;
+    base_alternate.playback_rate = 0.9;
+    app.project
+        .apply(DawAction::PasteAudioItemAsTake {
+            item_id: base_id,
+            take: base_alternate,
+        })
+        .expect("base should retain its existing take");
+
+    let mut middle_active = app
+        .project
+        .audio_items()
+        .iter()
+        .find(|item| item.id() == middle_id)
+        .unwrap()
+        .active_take_snapshot();
+    middle_active.media_ref = "asset://middle-active".to_owned();
+    middle_active.name = "Middle active".to_owned();
+    middle_active.volume = 0.7;
+    middle_active.pan = 0.3;
+    middle_active.playback_rate = 1.1;
+    app.project
+        .apply(DawAction::PasteAudioItemAsTake {
+            item_id: middle_id,
+            take: middle_active,
+        })
+        .expect("middle source should have an active alternate");
+
+    app.timeline.rebuild(&app.project);
+    app.timeline.select_items(vec![
+        (late_id, track_id),
+        (middle_id, track_id),
+        (base_id, track_id),
+    ]);
+    let before = app.project.snapshot();
+    let history_cursor = app.project.history_cursor();
+    let menu_entry = commands::for_menu(&app, MainMenu::Item)
+        .into_iter()
+        .find(|entry| entry.id == CommandId::ImplodeAudioItemsOnSameTrackIntoTakes)
+        .expect("Item menu should expose the same-track Take action");
+    assert!(menu_entry.enabled);
+    let action = commands::shortcut_entries(&app)
+        .into_iter()
+        .find(|entry| entry.id == "take.implode-same-track")
+        .expect("REAPER's 40543 action should be registered");
+    assert!(action.default_binding.is_empty());
+
+    let _ = app.update(Message::ExecuteCommand(
+        CommandId::ImplodeAudioItemsOnSameTrackIntoTakes,
+    ));
+
+    assert_eq!(app.project.history_cursor(), history_cursor + 1);
+    assert_eq!(app.status, "Selected audio items imploded into takes");
+    assert_eq!(app.project.audio_items().len(), 1);
+    let target = &app.project.audio_items()[0];
+    assert_eq!(target.id(), base_id);
+    assert_eq!(target.start_sample(), 0);
+    assert_eq!(target.length_samples(), 48_000);
+    assert_eq!(target.take_count(), 5);
+    assert_eq!(target.active_take_index(), 1);
+    assert_eq!(target.media_ref(), "asset://base-alternate");
+    assert_eq!(
+        target
+            .take_snapshots()
+            .iter()
+            .map(|take| (take.index, take.name.as_str(), take.media_ref.as_str()))
+            .collect::<Vec<_>>(),
+        [
+            (0, "", "asset://base-active"),
+            (1, "Base alternate", "asset://base-alternate"),
+            (2, "", "asset://middle-old"),
+            (3, "Middle active", "asset://middle-active"),
+            (4, "", "asset://late-active"),
+        ]
+    );
+    let middle_active = &target.take_snapshots()[3];
+    assert_eq!(middle_active.source_offset_samples, 500);
+    assert_eq!(middle_active.volume, 0.7);
+    assert_eq!(middle_active.pan, 0.3);
+    assert_eq!(middle_active.playback_rate, 1.1);
+    assert_eq!(app.timeline.selected_items, HashSet::from([base_id]));
+    assert_eq!(app.timeline.selected_item, Some(base_id));
+
+    let after = app.project.snapshot();
+    let _ = app.update(Message::Undo);
+    assert_eq!(app.project.snapshot(), before);
+    assert!(app.timeline.selected_items.is_empty());
+    assert_eq!(app.timeline.selected_item, None);
+    let _ = app.update(Message::Redo);
+    assert_eq!(app.project.snapshot(), after);
+    assert_eq!(app.timeline.selected_items, HashSet::from([base_id]));
+    assert_eq!(app.timeline.selected_item, Some(base_id));
+}
+
+#[test]
+fn implode_same_track_takes_rejects_single_and_cross_track_selections() {
+    let mut app = App::default();
+    for (index, name) in ["First", "Second"].into_iter().enumerate() {
+        app.project
+            .apply(DawAction::CreateTrack {
+                index,
+                name: name.to_owned(),
+            })
+            .expect("track should be created");
+    }
+    let first_track = app.project.tracks()[0].id();
+    let second_track = app.project.tracks()[1].id();
+    for (track_id, media_ref) in [
+        (first_track, "asset://first"),
+        (second_track, "asset://second"),
+    ] {
+        app.project
+            .apply(DawAction::InsertAudioItem {
+                track_id,
+                media_ref: media_ref.to_owned(),
+                start_sample: 0,
+                source_offset_samples: 0,
+                length_samples: 48_000,
+            })
+            .expect("audio item should be inserted");
+    }
+    let first_item = app.project.audio_items()[0].id();
+    let second_item = app.project.audio_items()[1].id();
+    app.timeline.rebuild(&app.project);
+    app.timeline.select_items(vec![(first_item, first_track)]);
+    assert!(!commands::is_enabled(
+        &app,
+        CommandId::ImplodeAudioItemsOnSameTrackIntoTakes
+    ));
+
+    app.timeline
+        .select_items(vec![(first_item, first_track), (second_item, second_track)]);
+    assert!(!commands::is_enabled(
+        &app,
+        CommandId::ImplodeAudioItemsOnSameTrackIntoTakes
+    ));
+    let before = app.project.snapshot();
+    let _ = app.update(Message::ExecuteCommand(
+        CommandId::ImplodeAudioItemsOnSameTrackIntoTakes,
+    ));
+    assert_eq!(
+        app.status,
+        "Select at least two audio items on the same track"
+    );
+    assert_eq!(app.project.snapshot(), before);
+}
+
+#[test]
 fn item_properties_take_selector_lists_ordered_names_and_tracks_undo_redo() {
     use super::item_properties::{ItemProperties, TimeUnit};
 

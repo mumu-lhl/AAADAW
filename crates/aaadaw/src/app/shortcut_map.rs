@@ -41,6 +41,11 @@ const REAPER_ACTIONS: &[(&str, u32, &str)] = &[
         "Take: Paste as takes in items",
     ),
     (
+        "take.implode-same-track",
+        40543,
+        "Take: Implode items on same track into takes",
+    ),
+    (
         "take.switch-previous",
         40126,
         "Take: Switch items to previous take",
@@ -746,7 +751,7 @@ mod tests {
 
     #[test]
     fn reaper_main_mapping_table_round_trips_all_unique_native_action_ids() {
-        assert_eq!(REAPER_ACTIONS.len(), 110);
+        assert_eq!(REAPER_ACTIONS.len(), 111);
         let mut action_ids = REAPER_ACTIONS
             .iter()
             .map(|(_, action_id, _)| *action_id)
