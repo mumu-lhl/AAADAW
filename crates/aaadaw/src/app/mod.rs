@@ -660,6 +660,7 @@ struct App {
     midi_editor_draw_channel: u8,
     midi_editor_filter_enabled: bool,
     midi_editor_event_filter_enabled: bool,
+    midi_editor_event_list_filter_active: bool,
     midi_editor_filter_channels: u16,
     midi_editor_note_filter: MidiEditorNoteFilter,
     midi_editor_controller_filter: MidiEditorControllerFilter,
@@ -6649,6 +6650,10 @@ impl App {
             }
             Message::ToggleMidiEditorEventFilter => {
                 self.midi_editor_event_filter_enabled = !self.midi_editor_event_filter_enabled;
+            }
+            Message::ToggleMidiEditorEventListFilter => {
+                self.midi_editor_event_list_filter_active =
+                    !self.midi_editor_event_list_filter_active;
             }
             Message::SetMidiEditorFilterNotePitchEnabled(enabled) => {
                 self.midi_editor_note_filter.pitch_enabled = enabled;
@@ -14462,6 +14467,7 @@ impl App {
         self.midi_editor_draw_channel = 0;
         self.midi_editor_filter_enabled = false;
         self.midi_editor_event_filter_enabled = false;
+        self.midi_editor_event_list_filter_active = false;
         self.midi_editor_filter_channels = u16::MAX;
         self.midi_editor_filter_channels_initialized = true;
         self.midi_editor_filter_inverted = false;
@@ -14606,6 +14612,7 @@ impl App {
         self.midi_editor_filter_note_length_high =
             format_midi_editor_filter_length(length_high_ticks, ppq);
         self.midi_editor_draw_channel = 0;
+        self.midi_editor_event_list_filter_active = true;
     }
 
     fn set_midi_editor_filter_from_selected_controllers(&mut self) {
@@ -14634,12 +14641,9 @@ impl App {
         let Some(first_controller) = selected_controllers.first().copied() else {
             return;
         };
-        if selected_controllers
+        let controller_enabled = !selected_controllers
             .iter()
-            .any(|event| event.controller != first_controller.controller)
-        {
-            return;
-        }
+            .any(|event| event.controller != first_controller.controller);
 
         let (channels, value_low, value_high, position_low, position_high) =
             selected_controllers.iter().fold(
@@ -14678,8 +14682,12 @@ impl App {
         self.midi_editor_event_type_filter = MidiEditorEventTypeFilter::ControlChange;
         self.midi_editor_note_filter = MidiEditorNoteFilter::default();
         self.midi_editor_controller_filter = MidiEditorControllerFilter {
-            controller_enabled: true,
-            controller: first_controller.controller,
+            controller_enabled,
+            controller: if controller_enabled {
+                first_controller.controller
+            } else {
+                0
+            },
             value_enabled: true,
             value_range_initialized: true,
             value_low,
@@ -14699,6 +14707,7 @@ impl App {
         self.midi_editor_filter_note_length_low.clear();
         self.midi_editor_filter_note_length_high.clear();
         self.midi_editor_draw_channel = 0;
+        self.midi_editor_event_list_filter_active = true;
     }
 
     fn midi_editor_filter_event_selection(

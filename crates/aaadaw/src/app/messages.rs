@@ -956,6 +956,7 @@ pub(crate) enum Message {
     OpenMidiEditorFilter,
     SetMidiEditorEventTypeFilter(MidiEditorEventTypeFilter),
     ToggleMidiEditorEventFilter,
+    ToggleMidiEditorEventListFilter,
     SetMidiEditorFilterNotePitchEnabled(bool),
     SetMidiEditorFilterNotePitchLow(u8),
     SetMidiEditorFilterNotePitchHigh(u8),

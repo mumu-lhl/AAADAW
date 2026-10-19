@@ -1,0 +1,16 @@
+artifact	sha256
+crates/aaadaw/examples/generate_midi_filter_from_mixed_cc_selection_fixture.rs	09d937a19d4fa5375d94c2580ce33b447ca084d671def75df4fbdce810a9640c
+fixtures/midi-event-filter-from-mixed-cc-aaadaw.aaadaw	2d1da8331c5d95478f1cc5cbddec0d57fec481553c9bf339b03555531089e44e
+fixtures/midi-event-filter-from-mixed-cc-aaadaw-filter-after.png	bd17a6a9150c6d2c7388470e2140de845c05013e17e796a868ebae60985bf048
+fixtures/midi-event-filter-from-mixed-cc-aaadaw-list-filtered.png	c866d8140b58f2dbaf57b5a72fd0376d578da07e46e5170f0322670bb53cdd8a
+fixtures/midi-event-filter-from-mixed-cc-aaadaw-list-unfiltered.png	b5f75ffdaeebab8a0c81a7cfd93fc1fcb6e04c147f549e857d84b2eaafb943d6
+binary_sha256	de10e0e90628e27fa6e80a3eb101202cfabf79436f7ca5fd6470543960262e30
+binary_build_id	b0c1075c0e39194efa3278bfc800a969dca52eda
+build_backend	rustc nightly with Cranelift codegen backend
+environment	Linux Xvfb :327, 1440x900 root; MIDI Editor 1000x620; isolated AAADAW profile; audio unavailable
+starting_state	One C4 note; selected CC7 ch2 value64 @480 and CC10 ch3 value100 @960; unselected CC1 ch3 value90 @600, CC10 ch2 value80 @720, and CC7 ch2 value127 @1440
+action	Event List > Filter events > Set filter from selection
+assertion	The app derives channels 2–3, Multichannel, Control Change, Control <all> disabled, Value 64–100, Position 0.125–0.25026042, and Repeat measure; Show-only stays off; Event List filter becomes active and displays the same four matching CC rows as native REAPER
+filter_toggle	Turning the Event List Filter button off restores all 7 rows while leaving the selected CCs and Show-only state unchanged
+verification	Three current-build real-window captures; app regression verifies the derived fields, exact filtered row set, separate Filter and Show-only toggles, Clear filter, selection preservation, and unchanged project/undo history
+limitation	Mixed CC parameters only; mixed event types and selected Pitch Bend, Program Change, Aftertouch, Channel Pressure, Meta, and SysEx remain open. Screenshots are behavior evidence, not pixel-diff certification

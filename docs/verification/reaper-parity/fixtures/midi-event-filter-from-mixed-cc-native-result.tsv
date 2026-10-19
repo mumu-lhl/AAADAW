@@ -1,0 +1,14 @@
+field	readback
+version	REAPER 7.82/linux-x86_64
+theme	Default_7.0.ReaperThemeZip; SHA-256 575544606736a395520703e532209ad9635f13a41b7ea000bb9810d60025be48
+filter_state	EVTFILTER 6 176 -1 64 100 1 1 1 0 -1 -1 0.125 0.25026042 1 -1 0 -1 -1
+channels	MIDI channels 2 and 3 (mask 6); editor channel Multichannel; draw channel Channel 1
+event_type	Control Change
+control	Disabled; dropdown shows <all>
+value	Enabled, 64–100 inclusive
+position	Enabled, 0.125–0.25026042 (1/8–0.25026042)
+repeat	measure
+show_only	Off
+visible_event_list_rows	CC7 ch2 value64 @480; CC1 ch3 value90 @600; CC10 ch2 value80 @720; CC10 ch3 value100 @960
+selected_ccs	CC7 ch2 value64 @480 and CC10 ch3 value100 @960 remain selected; other CCs remain unselected
+midi_source	All eight MIDI event lines and selected bits are identical before and after the filter action

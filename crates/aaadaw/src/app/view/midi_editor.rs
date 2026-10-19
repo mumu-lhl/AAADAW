@@ -303,6 +303,13 @@ fn midi_snap_for_app(app: &App) -> MidiSnap {
     }
 }
 
+fn midi_event_list_snap_for_app(app: &App) -> MidiSnap {
+    let mut snap = midi_snap_for_app(app);
+    snap.event_filter_enabled =
+        app.midi_editor_event_list_filter_active || app.midi_editor_event_filter_enabled;
+    snap
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct MidiTransposePreview {
     item_id: ItemId,
@@ -1339,7 +1346,7 @@ pub(in crate::app) fn midi_event_list_cursors(
     app: &App,
     item: &MidiItem,
 ) -> Vec<MidiEditorEventListCursor> {
-    midi_event_list_entries(item, midi_snap_for_app(app))
+    midi_event_list_entries(item, midi_event_list_snap_for_app(app))
         .into_iter()
         .map(MidiEventListEntry::cursor)
         .collect()
@@ -1349,7 +1356,7 @@ pub(in crate::app) fn midi_event_list_home_target(
     app: &App,
     item: &MidiItem,
 ) -> Option<(MidiEditorEventListCursor, u64, u64)> {
-    let entry = *midi_event_list_entries(item, midi_snap_for_app(app)).first()?;
+    let entry = *midi_event_list_entries(item, midi_event_list_snap_for_app(app)).first()?;
     match entry {
         MidiEventListEntry::End(tick) => Some((
             MidiEditorEventListCursor::End,
@@ -1399,7 +1406,7 @@ fn midi_event_list_view<'a>(
     touch_targets: bool,
     channel_filter_dialog: Option<Element<'a, Message>>,
 ) -> Element<'a, Message> {
-    let snap = midi_snap_for_app(app);
+    let snap = midi_event_list_snap_for_app(app);
     let events = midi_event_list_entries(item, snap);
     let ppq = u64::from(app.project.settings().ppq());
     let meter = app.project.time_signature_at_tick(0);
@@ -1427,6 +1434,13 @@ fn midi_event_list_view<'a>(
         )
         .width(Length::Fixed(if touch_targets { 180.0 } else { 164.0 })),
         button("Filter events…").on_press(Message::OpenMidiEditorFilter),
+        button("Filter")
+            .style(if app.midi_editor_event_list_filter_active {
+                iced::widget::button::primary
+            } else {
+                iced::widget::button::secondary
+            })
+            .on_press(Message::ToggleMidiEditorEventListFilter),
     ]
     .spacing(ROW_GAP)
     .align_y(iced::Alignment::Center);
@@ -2893,7 +2907,11 @@ fn channel_filter_dialog(app: &App, touch_targets: bool) -> Element<'_, Message>
                 )),
             |value| Message::SetMidiEditorFilterController(value.0),
         )
-        .placeholder("")
+        .placeholder(if controller_filter.controller_enabled {
+            ""
+        } else {
+            "<all>"
+        })
         .width(Length::Fixed(220.0)),
     ]
     .spacing(ROW_GAP)

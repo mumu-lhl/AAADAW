@@ -1,0 +1,8 @@
+version	7.82/linux-x86_64
+theme	Default_7.0.ReaperThemeZip
+counts	1	5	0
+cc	0	1	480.0	176	1	7	64
+cc	1	0	600.0	176	2	1	90
+cc	2	0	720.0	176	1	10	80
+cc	3	1	960.0	176	2	10	100
+cc	4	0	1440.0	176	1	7	127
