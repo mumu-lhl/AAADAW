@@ -46,6 +46,7 @@ pub(crate) enum CommandId {
     PasteItems,
     PasteAudioItemAsTake,
     ImplodeAudioItemsOnSameTrackIntoTakes,
+    ImplodeAudioItemsAcrossTracksIntoTakes,
     MoveActiveTakesToTop,
     CropAudioItemToActiveTake,
     ToggleMediaBrowserPanel,
@@ -207,6 +208,7 @@ enum CommandKind {
     PasteItems,
     PasteAudioItemAsTake,
     ImplodeAudioItemsOnSameTrackIntoTakes,
+    ImplodeAudioItemsAcrossTracksIntoTakes,
     MoveActiveTakesToTop,
     CropAudioItemToActiveTake,
     ToggleMediaBrowserPanel,
@@ -1550,6 +1552,16 @@ const COMMANDS: &[CommandDefinition] = &[
         separator_before: false,
     },
     CommandDefinition {
+        kind: CommandKind::ImplodeAudioItemsAcrossTracksIntoTakes,
+        menu: Some(MainMenu::Item),
+        category: "Take",
+        label: "Implode items across tracks into takes",
+        aliases: &["implode across tracks into takes"],
+        shortcuts: &[],
+        destructive: true,
+        separator_before: false,
+    },
+    CommandDefinition {
         kind: CommandKind::SwitchItemsToNextTake,
         menu: Some(MainMenu::Item),
         category: "Take",
@@ -2888,6 +2900,7 @@ fn command_kind_id(kind: CommandKind) -> &'static str {
         CommandKind::PasteItems => "edit.paste-items",
         CommandKind::PasteAudioItemAsTake => "take.paste-as-takes",
         CommandKind::ImplodeAudioItemsOnSameTrackIntoTakes => "take.implode-same-track",
+        CommandKind::ImplodeAudioItemsAcrossTracksIntoTakes => "take.implode-across-tracks",
         CommandKind::DeleteActiveAudioItemTake => "take.delete-active",
         CommandKind::MoveActiveTakesToTop => "take.move-active-to-top",
         CommandKind::CropAudioItemToActiveTake => "take.crop-active",
@@ -3149,6 +3162,22 @@ pub(super) fn dispatch(app: &mut App, command: CommandId) -> Task<Message> {
                 return Task::none();
             }
             Message::ImplodeSelectedAudioItemsAsTakes
+        }
+        CommandId::ImplodeAudioItemsAcrossTracksIntoTakes => {
+            let Some(item_ids) = audio_items_for_cross_track_implode(app) else {
+                app.status = "Select audio items on at least two tracks".to_owned();
+                return Task::none();
+            };
+            if item_ids.iter().any(|item_id| {
+                app.project
+                    .tracks()
+                    .iter()
+                    .any(|track| track.frozen_audio_item_id() == Some(*item_id))
+            }) {
+                app.status = "Frozen render items cannot be imploded into takes".to_owned();
+                return Task::none();
+            }
+            Message::ImplodeSelectedAudioItemsAcrossTracksAsTakes
         }
         CommandId::DuplicateActiveTake => {
             if selected_audio_item_ids(app).is_empty() {
@@ -3615,6 +3644,58 @@ pub(super) fn audio_items_for_implode(app: &App) -> Option<Vec<ItemId>> {
     Some(items.into_iter().map(|item| item.id()).collect())
 }
 
+pub(super) fn audio_items_for_cross_track_implode(app: &App) -> Option<Vec<ItemId>> {
+    if app.timeline.selected_items.len() < 2 {
+        return None;
+    }
+    let selected_audio_ids = selected_audio_item_ids(app);
+    if selected_audio_ids.len() != app.timeline.selected_items.len() {
+        return None;
+    }
+    let track_order = app
+        .project
+        .tracks()
+        .iter()
+        .enumerate()
+        .map(|(index, track)| (track.id(), index))
+        .collect::<HashMap<_, _>>();
+    let mut items = selected_audio_ids
+        .into_iter()
+        .filter_map(|item_id| {
+            app.project
+                .audio_items()
+                .iter()
+                .find(|item| item.id() == item_id)
+        })
+        .collect::<Vec<_>>();
+    let selected_track_count = items
+        .iter()
+        .map(|item| item.track_id())
+        .collect::<std::collections::HashSet<_>>()
+        .len();
+    if items.len() < 2 || selected_track_count < 2 {
+        return None;
+    }
+    if !items.iter().enumerate().any(|(index, item)| {
+        items.iter().skip(index + 1).any(|other| {
+            item.start_sample() < other.end_sample() && other.start_sample() < item.end_sample()
+        })
+    }) {
+        return None;
+    }
+    items.sort_unstable_by_key(|item| {
+        (
+            track_order
+                .get(&item.track_id())
+                .copied()
+                .unwrap_or(usize::MAX),
+            item.start_sample(),
+            Reverse(item.id().value()),
+        )
+    });
+    Some(items.into_iter().map(|item| item.id()).collect())
+}
+
 pub(super) fn switch_audio_item_take_targets(app: &App) -> Vec<ItemId> {
     selected_audio_item_ids(app)
         .into_iter()
@@ -3759,6 +3840,17 @@ fn command_enabled(app: &App, kind: CommandKind, track: Option<TrackState>) -> b
         CommandKind::ImplodeAudioItemsOnSameTrackIntoTakes => {
             !project_edit_busy(app)
                 && audio_items_for_implode(app).is_some_and(|item_ids| {
+                    !item_ids.iter().any(|item_id| {
+                        app.project
+                            .tracks()
+                            .iter()
+                            .any(|track| track.frozen_audio_item_id() == Some(*item_id))
+                    })
+                })
+        }
+        CommandKind::ImplodeAudioItemsAcrossTracksIntoTakes => {
+            !project_edit_busy(app)
+                && audio_items_for_cross_track_implode(app).is_some_and(|item_ids| {
                     !item_ids.iter().any(|item_id| {
                         app.project
                             .tracks()
@@ -4326,6 +4418,9 @@ fn command_id(kind: CommandKind) -> CommandId {
         CommandKind::PasteAudioItemAsTake => CommandId::PasteAudioItemAsTake,
         CommandKind::ImplodeAudioItemsOnSameTrackIntoTakes => {
             CommandId::ImplodeAudioItemsOnSameTrackIntoTakes
+        }
+        CommandKind::ImplodeAudioItemsAcrossTracksIntoTakes => {
+            CommandId::ImplodeAudioItemsAcrossTracksIntoTakes
         }
         CommandKind::DeleteActiveAudioItemTake => CommandId::DeleteActiveAudioItemTake,
         CommandKind::MoveActiveTakesToTop => CommandId::MoveActiveTakesToTop,

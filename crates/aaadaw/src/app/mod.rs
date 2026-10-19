@@ -285,6 +285,35 @@ struct ItemSelectionHistory {
     project_history_cursor_after: usize,
 }
 
+fn rebase_audio_take_source_offset_samples(
+    source_offset_samples: i64,
+    target_start_sample: u64,
+    donor_start_sample: u64,
+    source_sample_rate: u32,
+    project_sample_rate: u32,
+    playback_rate: f64,
+) -> Option<i64> {
+    if source_sample_rate == 0
+        || project_sample_rate == 0
+        || !playback_rate.is_finite()
+        || playback_rate <= 0.0
+    {
+        return None;
+    }
+    let project_delta_samples = i128::from(target_start_sample) - i128::from(donor_start_sample);
+    let source_delta_samples = project_delta_samples as f64 * f64::from(source_sample_rate)
+        / f64::from(project_sample_rate)
+        * playback_rate;
+    if !source_delta_samples.is_finite() {
+        return None;
+    }
+    let source_delta_samples = source_delta_samples.round();
+    if source_delta_samples < i64::MIN as f64 || source_delta_samples >= -(i64::MIN as f64) {
+        return None;
+    }
+    source_offset_samples.checked_add(source_delta_samples as i64)
+}
+
 #[derive(Clone)]
 struct InlineMidiSelectionHistory {
     item_id: ItemId,
@@ -5464,6 +5493,7 @@ impl App {
                             | Message::DeleteSelectedAudioItemActiveTakes
                             | Message::MoveSelectedAudioItemActiveTakesToTop
                             | Message::ImplodeSelectedAudioItemsAsTakes
+                            | Message::ImplodeSelectedAudioItemsAcrossTracksAsTakes
                             | Message::CropSelectedAudioItemsToActiveTake
                             | Message::SwitchSelectedAudioItemTakes(..)
                             | Message::SwitchAudioItemTake(..)
@@ -9607,6 +9637,9 @@ impl App {
             Message::PasteAudioItemAsTake => self.paste_audio_item_as_take(),
             Message::ImplodeSelectedAudioItemsAsTakes => {
                 self.implode_selected_audio_items_as_takes()
+            }
+            Message::ImplodeSelectedAudioItemsAcrossTracksAsTakes => {
+                self.implode_selected_audio_items_across_tracks_as_takes()
             }
             Message::SelectAllItems => {
                 self.with_item_selection_history("Select all items", Self::select_all_items)
@@ -19492,6 +19525,147 @@ impl App {
         );
         if self.revision != previous_revision {
             self.timeline.select_items(vec![(target_id, track_id)]);
+            let after = self.timeline.item_selection_state();
+            self.timeline.clear_selected_items();
+            let before = self.timeline.item_selection_state();
+            self.timeline.restore_item_selection_state(&after);
+            if matches!(self.app_undo_history.last(), Some(AppHistoryEntry::Project)) {
+                self.app_undo_history.pop();
+                self.app_undo_history
+                    .push(AppHistoryEntry::ProjectWithItemSelection(
+                        ItemSelectionHistory {
+                            before: Box::new(before),
+                            after: Box::new(after),
+                            project_history_cursor_before,
+                            project_history_cursor_after: self.project.history_cursor(),
+                        },
+                    ));
+            }
+        }
+    }
+
+    fn implode_selected_audio_items_across_tracks_as_takes(&mut self) {
+        if commands::project_edit_busy(self) {
+            self.status =
+                "Stop playback or finish the current project operation before imploding items"
+                    .to_owned();
+            return;
+        }
+        let Some(item_ids) = commands::audio_items_for_cross_track_implode(self) else {
+            self.status = "Select audio items on at least two tracks".to_owned();
+            return;
+        };
+        if item_ids.iter().any(|item_id| {
+            self.project
+                .tracks()
+                .iter()
+                .any(|track| track.frozen_audio_item_id() == Some(*item_id))
+        }) {
+            self.status = "Frozen render items cannot be imploded into takes".to_owned();
+            return;
+        }
+        let target_id = item_ids[0];
+        let Some(target) = self
+            .project
+            .audio_items()
+            .iter()
+            .find(|item| item.id() == target_id)
+        else {
+            return;
+        };
+        let target_track_id = target.track_id();
+        let target_start_sample = target.start_sample();
+        let original_active_take = target.active_take_index();
+        let donors = item_ids
+            .iter()
+            .skip(1)
+            .filter_map(|item_id| {
+                self.project
+                    .audio_items()
+                    .iter()
+                    .find(|item| item.id() == *item_id)
+                    .map(|item| (*item_id, item.start_sample(), item.take_snapshots()))
+            })
+            .collect::<Vec<_>>();
+        if donors.len() + 1 != item_ids.len() {
+            return;
+        }
+
+        let media_refs = donors
+            .iter()
+            .filter(|(_, start_sample, _)| *start_sample != target_start_sample)
+            .flat_map(|(_, _, takes)| takes.iter().map(|take| take.media_ref.clone()))
+            .collect::<Vec<_>>();
+        let source_sample_rates = match self.audio_source_sample_rates(media_refs) {
+            Ok(rates) => rates,
+            Err(error) => {
+                self.status =
+                    format!("Could not align source takes for cross-track implode: {error}");
+                return;
+            }
+        };
+        let project_sample_rate = self.project.settings().sample_rate();
+        let mut actions = Vec::new();
+        for (_, donor_start_sample, takes) in &donors {
+            let project_positions_differ = *donor_start_sample != target_start_sample;
+            for mut take in takes.iter().cloned() {
+                if project_positions_differ {
+                    let Some(source_sample_rate) =
+                        source_sample_rates.get(&take.media_ref).copied()
+                    else {
+                        self.status = format!(
+                            "Could not align source take {}; sample rate is unavailable",
+                            take.name
+                        );
+                        return;
+                    };
+                    let Some(source_offset_samples) = rebase_audio_take_source_offset_samples(
+                        take.source_offset_samples,
+                        target_start_sample,
+                        *donor_start_sample,
+                        source_sample_rate,
+                        project_sample_rate,
+                        take.playback_rate,
+                    ) else {
+                        self.status = format!(
+                            "Could not align source take {}; resulting offset is out of range",
+                            take.name
+                        );
+                        return;
+                    };
+                    take.source_offset_samples = source_offset_samples;
+                }
+                actions.push(DawAction::PasteAudioItemAsTake {
+                    item_id: target_id,
+                    take,
+                });
+            }
+        }
+        actions.push(DawAction::SetAudioItemActiveTake {
+            item_id: target_id,
+            take_index: original_active_take,
+        });
+        actions.extend(
+            donors
+                .iter()
+                .map(|(item_id, _, _)| DawAction::DeleteAudioItem { item_id: *item_id }),
+        );
+
+        for item_id in &item_ids {
+            self.audio_item_start_edits.remove(item_id);
+        }
+        let previous_revision = self.revision;
+        let project_history_cursor_before = self.project.history_cursor();
+        self.apply_action(
+            DawAction::BatchTransaction {
+                tx_id: self.revision,
+                actions,
+            },
+            "Selected audio items imploded into takes",
+        );
+        if self.revision != previous_revision {
+            self.timeline
+                .select_items(vec![(target_id, target_track_id)]);
             let after = self.timeline.item_selection_state();
             self.timeline.clear_selected_items();
             let before = self.timeline.item_selection_state();

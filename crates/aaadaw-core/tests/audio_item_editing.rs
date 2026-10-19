@@ -183,14 +183,14 @@ fn disabled_bounded_source_section_accepts_and_restores_negative_offset() {
             .audio_items()[0],
         edited
     );
-    assert!(matches!(
-        project.apply(DawAction::SetAudioItemLoopSource {
+    project
+        .apply(DawAction::SetAudioItemLoopSource {
             item_id: item.id(),
             enabled: true,
-        }),
-        Err(aaadaw_core::ActionError::InvalidAudioItemPosition)
-    ));
-    assert_eq!(project.audio_items()[0], edited);
+        })
+        .expect("negative offsets should wrap within a bounded loop section");
+    assert!(project.audio_items()[0].is_loop_source());
+    assert_eq!(project.audio_items()[0].source_offset_samples(), -7_200);
 }
 
 #[test]
@@ -218,15 +218,14 @@ fn non_looping_audio_items_support_signed_source_offsets() {
         -12
     );
 
-    let rejected = project.apply(DawAction::SetAudioItemLoopSource {
-        item_id: item.id(),
-        enabled: true,
-    });
-    assert!(matches!(
-        rejected,
-        Err(aaadaw_core::ActionError::InvalidAudioItemPosition)
-    ));
-    assert_eq!(project.audio_items()[0], item);
+    project
+        .apply(DawAction::SetAudioItemLoopSource {
+            item_id: item.id(),
+            enabled: true,
+        })
+        .expect("negative full-source offsets should wrap by source length");
+    assert!(project.audio_items()[0].is_loop_source());
+    assert_eq!(project.audio_items()[0].source_offset_samples(), -12);
 
     project
         .apply(DawAction::EditAudioItem {

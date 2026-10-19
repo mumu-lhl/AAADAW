@@ -299,6 +299,299 @@ fn implode_same_track_takes_rejects_single_and_cross_track_selections() {
 }
 
 #[test]
+fn imploding_selected_audio_items_across_tracks_rebases_each_take_and_keeps_top_track_target() {
+    let file_id = NEXT_TEST_FILE.fetch_add(1, Ordering::Relaxed);
+    let project_path = std::env::temp_dir().join(format!(
+        "aaadaw-ui-cross-track-implode-{}-{file_id}.aaadaw",
+        std::process::id()
+    ));
+    let source_rates = [
+        ("asset://cross-target", 48_000),
+        ("asset://cross-target-alt", 48_000),
+        ("asset://cross-middle", 44_100),
+        ("asset://cross-middle-alt", 48_000),
+        ("asset://cross-bottom", 48_000),
+    ];
+    let mut store = ProjectStore::open(&project_path).expect("project media store should open");
+    for (media_ref, sample_rate) in source_rates {
+        store
+            .import_audio_asset(
+                media_ref,
+                "cross-track.wav",
+                std::io::Cursor::new([0_u8; 4]),
+            )
+            .expect("test source should import");
+        store
+            .set_audio_asset_metadata(
+                media_ref,
+                &aaadaw_storage::AudioAssetMetadata {
+                    container: "wav".to_owned(),
+                    codec: "pcm".to_owned(),
+                    sample_rate: Some(sample_rate),
+                    channel_count: Some(1),
+                    bits_per_sample: Some(16),
+                    frame_count: Some(500_000),
+                    duration_nanos: None,
+                    byte_len: Some(4),
+                },
+            )
+            .expect("source metadata should be stored");
+    }
+    store.close().expect("project media store should close");
+
+    let mut app = App {
+        project_path: Some(project_path.clone()),
+        ..App::default()
+    };
+    for (index, name) in ["Top", "Middle", "Bottom"].into_iter().enumerate() {
+        app.project
+            .apply(DawAction::CreateTrack {
+                index,
+                name: name.to_owned(),
+            })
+            .expect("track should be created");
+    }
+    let track_ids = app
+        .project
+        .tracks()
+        .iter()
+        .map(|track| track.id())
+        .collect::<Vec<_>>();
+    let top_track = track_ids[0];
+    let middle_track = track_ids[1];
+    let bottom_track = track_ids[2];
+
+    app.project
+        .apply(DawAction::InsertAudioItem {
+            track_id: top_track,
+            media_ref: "asset://cross-target".to_owned(),
+            start_sample: 48_000,
+            source_offset_samples: 6_000,
+            length_samples: 48_000,
+        })
+        .expect("target should be inserted");
+    let target_id = app.project.audio_items()[0].id();
+    let mut target_alternate = app
+        .project
+        .audio_items()
+        .iter()
+        .find(|item| item.id() == target_id)
+        .unwrap()
+        .active_take_snapshot();
+    target_alternate.media_ref = "asset://cross-target-alt".to_owned();
+    target_alternate.name = "Target alternate".to_owned();
+    target_alternate.source_offset_samples = 18_000;
+    target_alternate.playback_rate = 0.9;
+    app.project
+        .apply(DawAction::PasteAudioItemAsTake {
+            item_id: target_id,
+            take: target_alternate,
+        })
+        .expect("target should keep its alternate take");
+
+    app.project
+        .apply(DawAction::InsertAudioItem {
+            track_id: middle_track,
+            media_ref: "asset://cross-middle".to_owned(),
+            start_sample: 24_000,
+            source_offset_samples: 11_025,
+            length_samples: 48_000,
+        })
+        .expect("middle donor should be inserted");
+    let middle_id = app.project.audio_items()[1].id();
+    app.project
+        .apply(DawAction::SetAudioItemTakePlaybackRate {
+            item_id: middle_id,
+            rate: 1.1,
+        })
+        .expect("middle source rate should be set");
+    let mut middle_alternate = app
+        .project
+        .audio_items()
+        .iter()
+        .find(|item| item.id() == middle_id)
+        .unwrap()
+        .active_take_snapshot();
+    middle_alternate.media_ref = "asset://cross-middle-alt".to_owned();
+    middle_alternate.name = "Middle alternate".to_owned();
+    middle_alternate.source_offset_samples = 24_000;
+    middle_alternate.playback_rate = 0.8;
+    app.project
+        .apply(DawAction::PasteAudioItemAsTake {
+            item_id: middle_id,
+            take: middle_alternate,
+        })
+        .expect("middle donor should keep its second take");
+
+    app.project
+        .apply(DawAction::InsertAudioItem {
+            track_id: bottom_track,
+            media_ref: "asset://cross-bottom".to_owned(),
+            start_sample: 72_000,
+            source_offset_samples: 18_000,
+            length_samples: 48_000,
+        })
+        .expect("bottom donor should be inserted");
+    let bottom_id = app.project.audio_items()[2].id();
+    app.project
+        .apply(DawAction::SetAudioItemTakePlaybackRate {
+            item_id: bottom_id,
+            rate: 1.2,
+        })
+        .expect("bottom source rate should be set");
+
+    app.timeline.rebuild(&app.project);
+    app.timeline.select_items(vec![
+        (bottom_id, bottom_track),
+        (middle_id, middle_track),
+        (target_id, top_track),
+    ]);
+    assert!(commands::audio_items_for_cross_track_implode(&app).is_some());
+    assert!(!commands::project_edit_busy(&app));
+    let before = app.project.snapshot();
+    let history_cursor = app.project.history_cursor();
+    let menu_entry = commands::for_menu(&app, MainMenu::Item)
+        .into_iter()
+        .find(|entry| entry.id == CommandId::ImplodeAudioItemsAcrossTracksIntoTakes)
+        .expect("Item menu should expose cross-track implode");
+    assert!(menu_entry.enabled);
+    let keymap_action = commands::shortcut_entries(&app)
+        .into_iter()
+        .find(|entry| entry.id == "take.implode-across-tracks")
+        .expect("REAPER action 40438 should be registered");
+    assert!(keymap_action.default_binding.is_empty());
+
+    let _ = app.update(Message::ExecuteCommand(
+        CommandId::ImplodeAudioItemsAcrossTracksIntoTakes,
+    ));
+
+    assert_eq!(app.project.history_cursor(), history_cursor + 1);
+    assert_eq!(app.project.audio_items().len(), 1);
+    let target = &app.project.audio_items()[0];
+    assert_eq!(target.id(), target_id);
+    assert_eq!(target.track_id(), top_track);
+    assert_eq!(target.start_sample(), 48_000);
+    assert_eq!(target.length_samples(), 48_000);
+    assert_eq!(target.active_take_index(), 1);
+    assert_eq!(target.take_count(), 5);
+    let takes = target.take_snapshots();
+    assert_eq!(takes[0].media_ref, "asset://cross-target");
+    assert_eq!(takes[1].name, "Target alternate");
+    assert_eq!(takes[1].source_offset_samples, 18_000);
+    assert_eq!(takes[2].source_offset_samples, 35_280);
+    assert_eq!(takes[2].playback_rate, 1.1);
+    assert_eq!(takes[3].media_ref, "asset://cross-middle-alt");
+    assert_eq!(takes[3].source_offset_samples, 43_200);
+    assert_eq!(takes[3].playback_rate, 0.8);
+    assert_eq!(takes[4].source_offset_samples, -10_800);
+    assert_eq!(takes[4].playback_rate, 1.2);
+    assert_eq!(app.timeline.selected_items, HashSet::from([target_id]));
+    assert_eq!(app.timeline.selected_item, Some(target_id));
+
+    let after = app.project.snapshot();
+    let _ = app.update(Message::Undo);
+    assert_eq!(app.project.snapshot(), before);
+    assert!(app.timeline.selected_items.is_empty());
+    let _ = app.update(Message::Redo);
+    assert_eq!(app.project.snapshot(), after);
+    assert_eq!(app.timeline.selected_items, HashSet::from([target_id]));
+}
+
+#[test]
+fn cross_track_implode_rejects_single_track_selections_and_accepts_loop_sources() {
+    let mut app = App::default();
+    for (index, name) in ["First", "Second"].into_iter().enumerate() {
+        app.project
+            .apply(DawAction::CreateTrack {
+                index,
+                name: name.to_owned(),
+            })
+            .expect("track should be created");
+    }
+    let first_track = app.project.tracks()[0].id();
+    let second_track = app.project.tracks()[1].id();
+    for (track_id, media_ref) in [
+        (first_track, "asset://first"),
+        (first_track, "asset://same-track"),
+        (second_track, "asset://second"),
+    ] {
+        app.project
+            .apply(DawAction::InsertAudioItem {
+                track_id,
+                media_ref: media_ref.to_owned(),
+                start_sample: 0,
+                source_offset_samples: 0,
+                length_samples: 48_000,
+            })
+            .expect("audio item should be inserted");
+    }
+    let first_item = app.project.audio_items()[0].id();
+    let same_track_item = app.project.audio_items()[1].id();
+    let second_item = app.project.audio_items()[2].id();
+    app.timeline.rebuild(&app.project);
+    app.timeline.select_items(vec![
+        (first_item, first_track),
+        (same_track_item, first_track),
+    ]);
+    assert!(!commands::is_enabled(
+        &app,
+        CommandId::ImplodeAudioItemsAcrossTracksIntoTakes
+    ));
+
+    app.timeline
+        .select_items(vec![(first_item, first_track), (second_item, second_track)]);
+    assert!(commands::is_enabled(
+        &app,
+        CommandId::ImplodeAudioItemsAcrossTracksIntoTakes
+    ));
+}
+
+#[test]
+fn cross_track_implode_requires_overlapping_selected_items() {
+    let mut app = App::default();
+    for (index, name) in ["Top", "Bottom"].into_iter().enumerate() {
+        app.project
+            .apply(DawAction::CreateTrack {
+                index,
+                name: name.to_owned(),
+            })
+            .expect("track should be created");
+    }
+    let top_track = app.project.tracks()[0].id();
+    let bottom_track = app.project.tracks()[1].id();
+    app.project
+        .apply(DawAction::InsertAudioItem {
+            track_id: top_track,
+            media_ref: "asset://abutting-top".to_owned(),
+            start_sample: 0,
+            source_offset_samples: 0,
+            length_samples: 48_000,
+        })
+        .expect("top audio item should be inserted");
+    app.project
+        .apply(DawAction::InsertAudioItem {
+            track_id: bottom_track,
+            media_ref: "asset://abutting-bottom".to_owned(),
+            start_sample: 48_000,
+            source_offset_samples: 0,
+            length_samples: 48_000,
+        })
+        .expect("bottom audio item should be inserted");
+    let items = app.project.audio_items();
+    app.timeline.rebuild(&app.project);
+    app.timeline.select_items(vec![
+        (items[0].id(), top_track),
+        (items[1].id(), bottom_track),
+    ]);
+
+    assert!(commands::audio_items_for_cross_track_implode(&app).is_none());
+    assert!(!commands::is_enabled(
+        &app,
+        CommandId::ImplodeAudioItemsAcrossTracksIntoTakes
+    ));
+}
+
+#[test]
 fn item_properties_take_selector_lists_ordered_names_and_tracks_undo_redo() {
     use super::item_properties::{ItemProperties, TimeUnit};
 

@@ -708,9 +708,6 @@ fn valid_audio_source_offset(
     section_start_samples: Option<u64>,
     section_length_samples: Option<u64>,
 ) -> bool {
-    if loop_source && source_offset_samples < 0 {
-        return false;
-    }
     match (section_start_samples, section_length_samples) {
         (None, None) => true,
         (Some(start), Some(length)) => {
@@ -718,7 +715,8 @@ fn valid_audio_source_offset(
                 return false;
             }
             if loop_source {
-                u64::try_from(source_offset_samples).is_ok_and(|offset| offset < length)
+                source_offset_samples < 0
+                    || u64::try_from(source_offset_samples).is_ok_and(|offset| offset < length)
             } else {
                 true
             }

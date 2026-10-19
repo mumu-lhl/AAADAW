@@ -918,12 +918,13 @@ enum WorkerDecoder {
 }
 
 impl WorkerDecoder {
-    fn open(input: DecoderInput) -> Result<(Self, usize, Option<u32>), MediaError> {
+    fn open(input: DecoderInput) -> Result<(Self, usize, Option<u32>, Option<u64>), MediaError> {
         match input.clone() {
             DecoderInput::Path(path) => {
                 let decoder = AudioStreamDecoder::open(path)?;
                 let channels = decoder.metadata().channel_count.unwrap_or(0) as usize;
                 let sample_rate = decoder.metadata().sample_rate;
+                let frame_count = decoder.metadata().frame_count;
                 Ok((
                     Self::Streaming {
                         decoder: Some(Box::new(decoder)),
@@ -931,6 +932,7 @@ impl WorkerDecoder {
                     },
                     channels,
                     sample_rate,
+                    frame_count,
                 ))
             }
             DecoderInput::Reader {
@@ -942,6 +944,7 @@ impl WorkerDecoder {
                     AudioStreamDecoder::from_reader(reader, byte_len, extension.as_deref())?;
                 let channels = decoder.metadata().channel_count.unwrap_or(0) as usize;
                 let sample_rate = decoder.metadata().sample_rate;
+                let frame_count = decoder.metadata().frame_count;
                 Ok((
                     Self::Streaming {
                         decoder: Some(Box::new(decoder)),
@@ -949,11 +952,13 @@ impl WorkerDecoder {
                     },
                     channels,
                     sample_rate,
+                    frame_count,
                 ))
             }
             DecoderInput::Cached(source) => {
                 let channels = source.channels();
                 let sample_rate = source.sample_rate();
+                let frame_count = source.samples().len() / channels;
                 Ok((
                     Self::Cached {
                         source,
@@ -961,6 +966,7 @@ impl WorkerDecoder {
                     },
                     channels,
                     Some(sample_rate),
+                    Some(u64::try_from(frame_count).map_err(|_| MediaError::AudioTooLong)?),
                 ))
             }
         }
@@ -996,9 +1002,22 @@ impl WorkerDecoder {
         if let DecoderInput::Reader { reader, .. } = &input {
             reader.rewind().map_err(MediaError::Io)?;
         }
-        let (decoder, channels, sample_rate) = Self::open(input)?;
+        let (decoder, channels, sample_rate, _) = Self::open(input)?;
         *self = decoder;
         Ok((channels, sample_rate))
+    }
+
+    fn count_source_frames(&mut self) -> Result<u64, MediaError> {
+        let mut frame_count = 0_u64;
+        while let Some(chunk) = self.next_chunk()? {
+            frame_count = frame_count
+                .checked_add(
+                    u64::try_from(chunk.frame_count()).map_err(|_| MediaError::AudioTooLong)?,
+                )
+                .ok_or(MediaError::AudioTooLong)?;
+        }
+        self.restart()?;
+        Ok(frame_count)
     }
 }
 
@@ -1082,6 +1101,18 @@ fn source_loop_section(item: &AudioItem) -> Option<SourceLoopSection> {
     }
 }
 
+fn source_offset_within_loop_cycle(source_offset: i64, cycle_length: u64) -> Option<u64> {
+    if cycle_length == 0 {
+        return None;
+    }
+    let offset_within_cycle = source_offset.unsigned_abs() % cycle_length;
+    Some(if source_offset < 0 && offset_within_cycle > 0 {
+        cycle_length - offset_within_cycle
+    } else {
+        offset_within_cycle
+    })
+}
+
 trait FeedFrame: Copy + Send + 'static {
     fn copy_from_chunk(chunk: &DecodedAudioChunk, output: &mut Vec<Self>);
     fn zero() -> Self;
@@ -1154,6 +1185,7 @@ fn run_worker<P: FeedProducer>(
     startup: SyncSender<WorkerStartupResult>,
     position: AudioStreamPosition,
 ) -> Result<(), MediaError> {
+    let signed_source_offset = config.source_offset_remaining;
     let WorkerConfig {
         output_sample_rate,
         playback_rate,
@@ -1166,7 +1198,7 @@ fn run_worker<P: FeedProducer>(
     } = config;
     let output_sample_rate = PreciseSampleRate::from_hz(output_sample_rate)
         .ok_or(MediaError::InvalidOutputSampleRate)?;
-    let (negative_source_offset_frames, mut source_offset_remaining) =
+    let (mut negative_source_offset_frames, mut source_offset_remaining) =
         if source_offset_remaining < 0 {
             (source_offset_remaining.unsigned_abs(), 0)
         } else {
@@ -1177,16 +1209,17 @@ fn run_worker<P: FeedProducer>(
             )
         };
     let decoder_result = WorkerDecoder::open(input);
-    let (mut decoder, initial_channels, initial_sample_rate) = match decoder_result {
-        Ok((decoder, channels, sample_rate)) => {
-            producer.set_source_channels(channels);
-            (decoder, channels, sample_rate)
-        }
-        Err(error) => {
-            let _ = startup.send(Err(worker_startup_error(&error)));
-            return Err(error);
-        }
-    };
+    let (mut decoder, initial_channels, initial_sample_rate, mut source_frame_count) =
+        match decoder_result {
+            Ok((decoder, channels, sample_rate, frame_count)) => {
+                producer.set_source_channels(channels);
+                (decoder, channels, sample_rate, frame_count)
+            }
+            Err(error) => {
+                let _ = startup.send(Err(worker_startup_error(&error)));
+                return Err(error);
+            }
+        };
     if !playback_rate.is_finite() || playback_rate <= 0.0 {
         let error = MediaError::InvalidAudioTakePlaybackRate;
         let _ = startup.send(Err(worker_startup_error(&error)));
@@ -1208,7 +1241,19 @@ fn run_worker<P: FeedProducer>(
             return Err(error);
         }
     };
-    let source_loop_section = match source_loop_section {
+    if signed_source_offset < 0
+        && source_loop_section.is_some_and(|section| section.looping)
+        && source_frame_count.is_none()
+    {
+        source_frame_count = match decoder.count_source_frames() {
+            Ok(frame_count) => Some(frame_count),
+            Err(error) => {
+                let _ = startup.send(Err(worker_startup_error(&error)));
+                return Err(error);
+            }
+        };
+    }
+    let mut source_loop_section = match source_loop_section {
         Some(section) => match resolve_project_loop_source_section(
             section,
             effective_sample_rate,
@@ -1222,6 +1267,30 @@ fn run_worker<P: FeedProducer>(
         },
         None => None,
     };
+    if let Some(mut section) = source_loop_section
+        && section.looping
+    {
+        let cycle_length = section.length_frames.or(source_frame_count);
+        if let Some(cycle_length) = cycle_length {
+            let Some(offset_within_cycle) =
+                source_offset_within_loop_cycle(signed_source_offset, cycle_length)
+            else {
+                let error = MediaError::InvalidAudioLoopSection;
+                let _ = startup.send(Err(worker_startup_error(&error)));
+                return Err(error);
+            };
+            source_offset_remaining = offset_within_cycle;
+            negative_source_offset_frames = 0;
+        } else if negative_source_offset_frames > 0 {
+            let error = MediaError::InvalidAudioLoopSection;
+            let _ = startup.send(Err(worker_startup_error(&error)));
+            return Err(error);
+        }
+        if section.length_frames.is_none() {
+            section.length_frames = cycle_length;
+        }
+        source_loop_section = Some(section);
+    }
     let (loop_base_source_offset, loop_section_length, mut loop_source_frames_remaining, looping) =
         match source_loop_section {
             Some(section) => {
@@ -2775,10 +2844,10 @@ impl DecodedAudioChunk {
 #[cfg(test)]
 mod tests {
     use super::{
-        AudioStreamPosition, DecoderInput, FeedProducer, MAX_CACHED_LOOP_SECTION_BYTES,
-        PreciseSampleRate, ResamplingQuality, SourceLoopPrefix, SourceLoopSection,
-        StreamingResampler, WorkerConfig, WorkerStartupResult, cyclic_loop_history, run_worker,
-        scale_sample_rate,
+        AudioStreamPosition, DecodedAudioSource, DecoderInput, FeedProducer,
+        MAX_CACHED_LOOP_SECTION_BYTES, PreciseSampleRate, ResamplingQuality, SourceLoopPrefix,
+        SourceLoopSection, StreamingResampler, WorkerConfig, WorkerStartupResult,
+        cyclic_loop_history, run_worker, scale_sample_rate, source_offset_within_loop_cycle,
     };
     use aaadaw_engine::TransportLoopRange;
     use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -2881,6 +2950,79 @@ mod tests {
         assert_eq!(output.len() as u128, expected_output_frames);
         assert_ne!(expected_output_frames, rounded_hertz_output_frames);
         assert!(output.iter().all(|sample| (*sample - 0.25).abs() < 1e-5));
+    }
+
+    #[test]
+    fn signed_source_offsets_wrap_within_loop_cycles() {
+        assert_eq!(source_offset_within_loop_cycle(-1, 4), Some(3));
+        assert_eq!(source_offset_within_loop_cycle(-4, 4), Some(0));
+        assert_eq!(source_offset_within_loop_cycle(-6, 4), Some(2));
+        assert_eq!(source_offset_within_loop_cycle(6, 4), Some(2));
+        assert_eq!(source_offset_within_loop_cycle(i64::MIN, 8), Some(0));
+        assert_eq!(source_offset_within_loop_cycle(0, 0), None);
+    }
+
+    #[test]
+    fn negative_full_loop_offset_decodes_from_the_equivalent_cycle_position() {
+        fn render(source: Arc<DecodedAudioSource>, source_offset_remaining: i64) -> Vec<[f32; 2]> {
+            let frames = Arc::new(Mutex::new(Vec::with_capacity(32)));
+            let cancelled = Arc::new(AtomicBool::new(false));
+            let producer = CollectingStereoProducer {
+                frames: Arc::clone(&frames),
+                cancelled: Arc::clone(&cancelled),
+                maximum_frames: 32,
+            };
+            let config = WorkerConfig {
+                output_sample_rate: 48_000,
+                playback_rate: 1.0,
+                source_offset_remaining,
+                output_samples_remaining: None,
+                output_samples_to_skip: 0,
+                quality: ResamplingQuality::Sinc64,
+                source_loop_section: Some(SourceLoopSection {
+                    start_frame: 0,
+                    length_frames: None,
+                    looping: true,
+                    prefix: None,
+                    project_mapping: None,
+                }),
+                timeline_loop_range: None,
+            };
+            let (startup_sender, startup_receiver) =
+                std::sync::mpsc::sync_channel::<WorkerStartupResult>(1);
+            run_worker(
+                DecoderInput::Cached(source),
+                config,
+                producer,
+                cancelled,
+                startup_sender,
+                AudioStreamPosition::new(0),
+            )
+            .expect("a valid loop take should stream");
+            startup_receiver
+                .recv()
+                .expect("worker should report startup")
+                .expect("loop offset should be accepted");
+            let frames = frames.lock().expect("collector mutex should be healthy");
+            assert_eq!(frames.len(), 32);
+            frames.clone()
+        }
+
+        let cycle = [0.1_f32, -0.25, 0.5, -0.75, 0.35, 0.9, -0.4, 0.2];
+        let source = Arc::new(DecodedAudioSource {
+            sample_rate: 48_000,
+            channels: 2,
+            samples: cycle
+                .into_iter()
+                .flat_map(|sample| [sample, sample])
+                .collect(),
+        });
+
+        let negative = render(Arc::clone(&source), -2);
+        let equivalent_positive = render(source, 6);
+
+        assert_eq!(negative, equivalent_positive);
+        assert!(negative.iter().any(|frame| frame[0].abs() > 0.05));
     }
 
     #[test]
