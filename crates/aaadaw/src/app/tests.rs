@@ -99,7 +99,7 @@ fn audio_take_actions_switch_with_undo_and_require_multiple_takes() {
 }
 
 #[test]
-fn midi_take_inspector_and_action_list_switch_the_active_take_with_undo() {
+fn midi_take_action_list_switches_and_adds_empty_takes_with_undo() {
     let mut app = App::default();
     let _ = app.update(Message::AddTrack);
     let track_id = app.project.tracks()[0].id();
@@ -180,6 +180,76 @@ fn midi_take_inspector_and_action_list_switch_the_active_take_with_undo() {
     ));
     assert_eq!(app.project.midi_items()[0].active_take_index(), 0);
     assert_eq!(app.project.midi_items()[0].name(), "Take A");
+
+    for (id, command) in [
+        (
+            "take.add-empty-before-active",
+            CommandId::AddEmptyMidiTakeBeforeActive,
+        ),
+        (
+            "take.add-empty-after-active",
+            CommandId::AddEmptyMidiTakeAfterActive,
+        ),
+    ] {
+        let action = commands::shortcut_entries(&app)
+            .into_iter()
+            .find(|entry| entry.id == id)
+            .expect("the REAPER empty-take action should be registered");
+        assert!(action.default_binding.is_empty());
+        assert!(commands::is_enabled(&app, command));
+    }
+
+    let before_insert = app.project.snapshot();
+    let cursor = app.project.history_cursor();
+    let _ = app.update(Message::ExecuteCommand(
+        CommandId::AddEmptyMidiTakeBeforeActive,
+    ));
+    let item = &app.project.midi_items()[0];
+    assert_eq!(app.project.history_cursor(), cursor + 1);
+    assert_eq!(item.active_take_index(), 1);
+    assert_eq!(item.name(), "Take A");
+    assert!(item.take_snapshots()[0].name.is_empty());
+    assert_eq!(item.take_snapshots()[1].name, "Take A");
+    assert_eq!(item.take_snapshots()[2].name, "Take B");
+    let after_insert = app.project.snapshot();
+    let _ = app.update(Message::Undo);
+    assert_eq!(app.project.snapshot(), before_insert);
+    let _ = app.update(Message::Redo);
+    assert_eq!(app.project.snapshot(), after_insert);
+
+    let _ = app.update(Message::ExecuteCommand(
+        CommandId::AddEmptyMidiTakeAfterActive,
+    ));
+    let item = &app.project.midi_items()[0];
+    assert_eq!(item.active_take_index(), 1);
+    assert_eq!(item.take_snapshots()[1].name, "Take A");
+    assert!(item.take_snapshots()[2].name.is_empty());
+    assert_eq!(item.take_snapshots()[3].name, "Take B");
+
+    app.project
+        .apply(DawAction::InsertMidiItem {
+            track_id,
+            start_tick: 3_840,
+            length_ticks: 3_840,
+        })
+        .unwrap();
+    let second_item_id = app.project.midi_items()[1].id();
+    app.timeline.rebuild(&app.project);
+    app.timeline
+        .select_items(vec![(item_id, track_id), (second_item_id, track_id)]);
+    let before_multi = app.project.snapshot();
+    let cursor = app.project.history_cursor();
+    let _ = app.update(Message::AddEmptyMidiTakes(false));
+    assert_eq!(app.project.history_cursor(), cursor + 1);
+    assert_eq!(app.project.midi_items()[0].take_count(), 5);
+    assert_eq!(app.project.midi_items()[0].active_take_index(), 1);
+    assert_eq!(app.project.midi_items()[1].take_count(), 2);
+    assert_eq!(app.project.midi_items()[1].active_take_index(), 0);
+    let after_multi = app.project.snapshot();
+    let _ = app.update(Message::Undo);
+    assert_eq!(app.project.snapshot(), before_multi);
+    let _ = app.update(Message::Redo);
+    assert_eq!(app.project.snapshot(), after_multi);
 }
 
 #[test]

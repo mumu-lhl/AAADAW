@@ -27,7 +27,9 @@ use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 /// Latest database schema version understood by this release.
-pub const CURRENT_SCHEMA_VERSION: u32 = 67;
+pub const CURRENT_SCHEMA_VERSION: u32 = 68;
+
+const EMPTY_ACTIVE_MIDI_TAKE_NAME: &str = "__AAADAW_EMPTY_ACTIVE_MIDI_TAKE__";
 
 const MIGRATION_29: &str = "ALTER TABLE project_meta ADD COLUMN start_measure INTEGER NOT NULL DEFAULT 1 CHECK(start_measure BETWEEN -2147483648 AND 2147483647);";
 const MIGRATION_30: &str = "ALTER TABLE project_meta ADD COLUMN bpm_basis INTEGER NOT NULL DEFAULT 1 CHECK(bpm_basis BETWEEN 0 AND 5);";
@@ -366,6 +368,11 @@ ALTER TABLE items ADD COLUMN name TEXT NOT NULL DEFAULT 'MIDI'
 const MIGRATION_17: &str = r#"
 ALTER TABLE items ADD COLUMN source_offset_ticks INTEGER NOT NULL DEFAULT 0
     CHECK (source_offset_ticks >= 0);
+"#;
+
+const MIGRATION_68_MIDI_ACTIVE_EMPTY_TAKE: &str = r#"
+ALTER TABLE items ADD COLUMN active_take_name_is_empty INTEGER NOT NULL DEFAULT 0
+    CHECK(active_take_name_is_empty IN (0, 1));
 "#;
 
 const AUDIO_ASSET_CHUNK_SIZE: usize = 256 * 1024;
@@ -3722,6 +3729,11 @@ fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
                 transaction.execute_batch(MIGRATION_66_AUDIO_TAKES)?;
             }
             67 => transaction.execute_batch(MIGRATION_67_MIDI_TAKES)?,
+            68 => {
+                if !table_has_column(&transaction, "items", "active_take_name_is_empty")? {
+                    transaction.execute_batch(MIGRATION_68_MIDI_ACTIVE_EMPTY_TAKE)?;
+                }
+            }
             missing => return Err(StorageError::MissingMigration(missing - 1)),
         }
         transaction.pragma_update(None, "user_version", next_version)?;
@@ -3988,8 +4000,8 @@ fn write_snapshot(
 
     for (position, item) in snapshot.midi_items.iter().enumerate() {
         transaction.execute(
-            "INSERT INTO items(id, track_id, position, start_tick, start_tick_subtick, length_ticks, name, source_offset_ticks, loop_source, source_loop_length_ticks, muted) \
-             VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+            "INSERT INTO items(id, track_id, position, start_tick, start_tick_subtick, length_ticks, name, source_offset_ticks, loop_source, source_loop_length_ticks, muted, active_take_name_is_empty) \
+             VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
             params![
                 to_sql_integer(item.id)?,
                 to_sql_integer(item.track_id)?,
@@ -3997,11 +4009,16 @@ fn write_snapshot(
                 to_sql_integer(item.start_tick)?,
                 i64::from(item.start_tick_subtick),
                 to_sql_integer(item.length_ticks)?,
-                item.name,
+                if item.name.is_empty() {
+                    EMPTY_ACTIVE_MIDI_TAKE_NAME
+                } else {
+                    item.name.as_str()
+                },
                 to_sql_integer(item.source_offset_ticks)?,
                 item.loop_source,
                 to_sql_integer(item.source_loop_length_ticks)?,
-                item.muted
+                item.muted,
+                item.name.is_empty(),
             ],
         )?;
         for (position, note) in item.notes.iter().enumerate() {
@@ -5895,7 +5912,7 @@ fn read_midi_items(connection: &Connection) -> Result<(Vec<MidiItemSnapshot>, bo
     }
 
     let mut item_statement = connection.prepare(
-        "SELECT id, track_id, position, start_tick, start_tick_subtick, length_ticks, name, source_offset_ticks, loop_source, source_loop_length_ticks, muted \
+        "SELECT id, track_id, position, start_tick, start_tick_subtick, length_ticks, name, source_offset_ticks, loop_source, source_loop_length_ticks, muted, active_take_name_is_empty \
          FROM items ORDER BY position",
     )?;
     let item_rows = item_statement
@@ -5912,6 +5929,7 @@ fn read_midi_items(connection: &Connection) -> Result<(Vec<MidiItemSnapshot>, bo
                 row.get::<_, i64>(8)?,
                 row.get::<_, i64>(9)?,
                 row.get::<_, i64>(10)?,
+                row.get::<_, i64>(11)?,
             ))
         })?
         .collect::<Result<Vec<_>, _>>()?;
@@ -5928,6 +5946,7 @@ fn read_midi_items(connection: &Connection) -> Result<(Vec<MidiItemSnapshot>, bo
         loop_source,
         source_loop_length_ticks,
         muted,
+        active_take_name_is_empty,
     ) in item_rows
     {
         let muted = match muted {
@@ -5950,6 +5969,31 @@ fn read_midi_items(connection: &Connection) -> Result<(Vec<MidiItemSnapshot>, bo
         let channel_pressures = pressures_by_item.remove(&id).unwrap_or_default();
         let opaque_events = opaque_by_item.remove(&id).unwrap_or_default();
         let event_order = event_order_by_item.remove(&id).unwrap_or_default();
+        let name = match active_take_name_is_empty {
+            0 => name,
+            1 if name == EMPTY_ACTIVE_MIDI_TAKE_NAME
+                && notes.is_empty()
+                && controllers.is_empty()
+                && pitch_bends.is_empty()
+                && program_changes.is_empty()
+                && poly_aftertouches.is_empty()
+                && channel_pressures.is_empty()
+                && opaque_events.is_empty()
+                && event_order.is_empty() =>
+            {
+                String::new()
+            }
+            1 => {
+                return Err(StorageError::InvalidStoredData(
+                    "invalid empty active MIDI Take name marker",
+                ));
+            }
+            _ => {
+                return Err(StorageError::InvalidStoredData(
+                    "invalid empty active MIDI Take flag",
+                ));
+            }
+        };
         let (active_take_index, other_takes) = match takes_by_item.remove(&id) {
             Some((active_index, other_takes)) => (active_index, other_takes),
             None => (0, Vec::new()),

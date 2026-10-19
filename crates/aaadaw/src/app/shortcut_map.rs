@@ -61,6 +61,16 @@ const REAPER_ACTIONS: &[(&str, u32, &str)] = &[
         "Take: Switch items to previous take",
     ),
     (
+        "take.add-empty-before-active",
+        41351,
+        "Item: Add an empty take before the active take",
+    ),
+    (
+        "take.add-empty-after-active",
+        41352,
+        "Item: Add an empty take after the active take",
+    ),
+    (
         "item.split-at-cursor",
         40012,
         "Item: Split items at edit or play cursor (select right)",
@@ -722,6 +732,8 @@ mod tests {
             "KEY 1 115 40886 0\t\t # Main : F4 : File: Close all projects\n",
             "KEY 1 114 40860 0\t\t # Main : F3 : Close current project tab\n",
             "KEY 1 116 40071 0\t\t # Main : F5 : Options: Show snap/grid settings\n",
+            "KEY 9 79 41352 0\t\t # Main : Ctrl+O : Item: Add an empty take after the active take\n",
+            "KEY 9 73 41351 0\t\t # Main : Ctrl+I : Item: Add an empty take before the active take\n",
             "KEY 1 121 40639 0\t\t # Main : F10 : Take: Duplicate active take\n",
             "KEY 1 88 40642 0\t\t # Main : X : Take: Explode takes of items in place\n",
             "KEY 1 73 40438 0\t\t # Main : I : Take: Implode items across tracks into takes\n",
@@ -737,7 +749,7 @@ mod tests {
             "KEY 1 120 1016 0\t\t # Main : F9 : Transport: Stop\n",
         );
         let bindings = parse_reaper(contents).unwrap();
-        assert_eq!(bindings.len(), 18);
+        assert_eq!(bindings.len(), 20);
         for (action, key) in [
             ("actions.show-list", "F2"),
             ("file.close-project", "F3"),
@@ -753,6 +765,8 @@ mod tests {
             ("take.duplicate-active", "F10"),
             ("take.switch-next", "F11"),
             ("take.switch-previous", "F12"),
+            ("take.add-empty-before-active", "Mod+I"),
+            ("take.add-empty-after-active", "Mod+O"),
             ("edit.copy-items", "Mod+C"),
             ("take.paste-as-takes", "Mod+T"),
             ("take.implode-across-tracks", "I"),
@@ -765,7 +779,7 @@ mod tests {
 
     #[test]
     fn reaper_main_mapping_table_round_trips_all_unique_native_action_ids() {
-        assert_eq!(REAPER_ACTIONS.len(), 113);
+        assert_eq!(REAPER_ACTIONS.len(), 115);
         let mut action_ids = REAPER_ACTIONS
             .iter()
             .map(|(_, action_id, _)| *action_id)

@@ -5,6 +5,42 @@ use aaadaw_core::{
     MidiProgramChangeData, Project,
 };
 use aaadaw_storage::ProjectStore;
+use rusqlite::Connection;
+
+#[test]
+fn schema_67_migrates_midi_items_without_changing_active_take_names() {
+    let path = tempfile::NamedTempFile::new().unwrap();
+    let mut project = Project::new();
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Migration".to_owned(),
+        })
+        .unwrap();
+    project
+        .apply(DawAction::InsertMidiItem {
+            track_id: project.tracks()[0].id(),
+            start_tick: 0,
+            length_ticks: 1_920,
+        })
+        .unwrap();
+    let mut store = ProjectStore::open(path.path()).unwrap();
+    store.save(&project).unwrap();
+    store.close().unwrap();
+
+    Connection::open(path.path())
+        .unwrap()
+        .execute_batch(
+            "ALTER TABLE items DROP COLUMN active_take_name_is_empty; PRAGMA user_version = 67;",
+        )
+        .unwrap();
+
+    let mut migrated = ProjectStore::open(path.path()).unwrap();
+    assert_eq!(migrated.schema_version().unwrap(), 68);
+    assert_eq!(migrated.load().unwrap().snapshot(), project.snapshot());
+    migrated.save(&project).unwrap();
+    assert_eq!(migrated.load().unwrap().snapshot(), project.snapshot());
+}
 
 #[test]
 fn midi_item_takes_round_trip_all_event_kinds_and_active_index() {
@@ -80,73 +116,101 @@ fn midi_item_takes_round_trip_all_event_kinds_and_active_index() {
         order: 4,
         note_off_order: Some(5),
     }];
-    item.other_takes = vec![MidiItemTakeSnapshot {
-        index: 0,
-        name: "Take A".into(),
-        source_offset_ticks: 12,
-        loop_source: true,
-        source_loop_length_ticks: 960,
-        notes: vec![MidiNoteSnapshot {
-            id: 11,
-            data: MidiNoteData {
-                pitch: 60,
-                channel: 1,
-                tick: 12,
-                duration: 240,
-                velocity: 80,
-                off_velocity: 9,
-            },
-        }],
-        controllers: vec![MidiControllerData {
-            controller: 10,
-            channel: 1,
-            tick: 36,
-            value: 22,
-        }],
-        pitch_bends: vec![MidiPitchBendData {
-            channel: 1,
-            tick: 60,
-            value: 7_777,
-        }],
-        program_changes: vec![MidiProgramChangeData {
-            channel: 1,
-            tick: 84,
-            program: 22,
-        }],
-        poly_aftertouches: vec![MidiPolyAftertouchData {
-            channel: 1,
-            tick: 108,
-            note: 60,
-            value: 33,
-        }],
-        channel_pressures: vec![MidiChannelPressureData {
-            channel: 1,
-            tick: 132,
-            value: 44,
-        }],
-        opaque_events: vec![MidiOpaqueEventData {
-            tick: 156,
-            order: 2,
-            kind: MidiOpaqueEventKind::SystemExclusive {
-                status: 0xF0,
-                data: vec![0x7D, 1, 2, 0xF7],
-            },
-        }],
-        event_order: vec![MidiEventOrderData {
-            target: MidiEventOrderTarget::Controller(MidiControllerData {
+    item.other_takes = vec![
+        MidiItemTakeSnapshot {
+            index: 0,
+            name: "Take A".into(),
+            source_offset_ticks: 12,
+            loop_source: true,
+            source_loop_length_ticks: 960,
+            notes: vec![MidiNoteSnapshot {
+                id: 11,
+                data: MidiNoteData {
+                    pitch: 60,
+                    channel: 1,
+                    tick: 12,
+                    duration: 240,
+                    velocity: 80,
+                    off_velocity: 9,
+                },
+            }],
+            controllers: vec![MidiControllerData {
                 controller: 10,
                 channel: 1,
                 tick: 36,
                 value: 22,
-            }),
-            order: 6,
-            note_off_order: None,
-        }],
-    }];
+            }],
+            pitch_bends: vec![MidiPitchBendData {
+                channel: 1,
+                tick: 60,
+                value: 7_777,
+            }],
+            program_changes: vec![MidiProgramChangeData {
+                channel: 1,
+                tick: 84,
+                program: 22,
+            }],
+            poly_aftertouches: vec![MidiPolyAftertouchData {
+                channel: 1,
+                tick: 108,
+                note: 60,
+                value: 33,
+            }],
+            channel_pressures: vec![MidiChannelPressureData {
+                channel: 1,
+                tick: 132,
+                value: 44,
+            }],
+            opaque_events: vec![MidiOpaqueEventData {
+                tick: 156,
+                order: 2,
+                kind: MidiOpaqueEventKind::SystemExclusive {
+                    status: 0xF0,
+                    data: vec![0x7D, 1, 2, 0xF7],
+                },
+            }],
+            event_order: vec![MidiEventOrderData {
+                target: MidiEventOrderTarget::Controller(MidiControllerData {
+                    controller: 10,
+                    channel: 1,
+                    tick: 36,
+                    value: 22,
+                }),
+                order: 6,
+                note_off_order: None,
+            }],
+        },
+        MidiItemTakeSnapshot {
+            index: 2,
+            name: String::new(),
+            source_offset_ticks: 0,
+            loop_source: false,
+            source_loop_length_ticks: 1_920,
+            notes: Vec::new(),
+            controllers: Vec::new(),
+            pitch_bends: Vec::new(),
+            program_changes: Vec::new(),
+            poly_aftertouches: Vec::new(),
+            channel_pressures: Vec::new(),
+            opaque_events: Vec::new(),
+            event_order: Vec::new(),
+        },
+    ];
 
-    let project = Project::from_snapshot(snapshot).unwrap();
+    let mut project = Project::from_snapshot(snapshot).unwrap();
     let expected = project.snapshot();
     let mut store = ProjectStore::open(path.path()).unwrap();
     store.save(&project).unwrap();
     assert_eq!(store.load().unwrap().snapshot(), expected);
+
+    let item_id = project.midi_items()[0].id();
+    project
+        .apply(DawAction::SetMidiItemActiveTake {
+            item_id,
+            take_index: 2,
+        })
+        .unwrap();
+    assert!(project.midi_items()[0].name().is_empty());
+    store.save(&project).unwrap();
+    assert_eq!(store.load().unwrap().snapshot(), project.snapshot());
 }

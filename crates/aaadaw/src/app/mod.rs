@@ -5499,6 +5499,7 @@ impl App {
                             | Message::SwitchSelectedAudioItemTakes(..)
                             | Message::SwitchAudioItemTake(..)
                             | Message::SwitchMidiItemTake(..)
+                            | Message::AddEmptyMidiTakes(..)
                             | Message::DuplicateMidiItem(_)
                             | Message::SplitSelectedItemsAtCursor
                             | Message::SplitSelectedItemsAtTimeSelection
@@ -10047,6 +10048,58 @@ impl App {
                         take_index,
                     },
                     "Active take changed",
+                );
+            }
+            Message::AddEmptyMidiTakes(before_active) => {
+                if commands::project_edit_busy(self) {
+                    self.status =
+                        "Stop playback or finish the current project operation before adding takes"
+                            .to_owned();
+                    return Task::none();
+                }
+                let item_ids = commands::selected_midi_item_ids(self);
+                if item_ids.is_empty() {
+                    self.status = "Select a MIDI item to add an empty take".to_owned();
+                    return Task::none();
+                }
+                if item_ids.iter().any(|item_id| {
+                    self.project.midi_items().iter().any(|item| {
+                        item.id() == *item_id
+                            && self
+                                .project
+                                .tracks()
+                                .iter()
+                                .any(|track| track.id() == item.track_id() && track.is_frozen())
+                    })
+                }) {
+                    self.status = "Frozen items cannot have takes added".to_owned();
+                    return Task::none();
+                }
+                let actions = item_ids
+                    .into_iter()
+                    .map(|item_id| {
+                        if before_active {
+                            DawAction::AddEmptyMidiItemTakeBefore { item_id }
+                        } else {
+                            DawAction::AddEmptyMidiItemTakeAfter { item_id }
+                        }
+                    })
+                    .collect::<Vec<_>>();
+                let action = if actions.len() == 1 {
+                    actions.into_iter().next().unwrap()
+                } else {
+                    DawAction::BatchTransaction {
+                        tx_id: self.revision,
+                        actions,
+                    }
+                };
+                self.apply_action(
+                    action,
+                    if before_active {
+                        "Empty take added before active take"
+                    } else {
+                        "Empty take added after active take"
+                    },
                 );
             }
             Message::SwitchAudioItemTake(item_id, next) => {

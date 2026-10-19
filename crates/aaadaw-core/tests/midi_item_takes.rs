@@ -4,6 +4,141 @@ use aaadaw_core::{
 };
 
 #[test]
+fn adding_empty_midi_takes_preserves_the_active_source_and_round_trips() {
+    let mut project = Project::new();
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Takes".to_owned(),
+        })
+        .unwrap();
+    let track_id = project.tracks()[0].id();
+    project
+        .apply(DawAction::InsertMidiItem {
+            track_id,
+            start_tick: 0,
+            length_ticks: 3_840,
+        })
+        .unwrap();
+    let item_id = project.midi_items()[0].id();
+    project
+        .apply(DawAction::AddMidiNotes {
+            item_id,
+            notes: vec![
+                MidiNoteData {
+                    pitch: 60,
+                    channel: 0,
+                    tick: 0,
+                    duration: 480,
+                    velocity: 100,
+                    off_velocity: 0,
+                },
+                MidiNoteData {
+                    pitch: 64,
+                    channel: 0,
+                    tick: 960,
+                    duration: 480,
+                    velocity: 92,
+                    off_velocity: 12,
+                },
+            ],
+        })
+        .unwrap();
+    let mut snapshot = project.snapshot();
+    let item = &mut snapshot.midi_items[0];
+    let take_a_note = item.notes[0].clone();
+    item.notes = vec![item.notes[1].clone()];
+    item.name = "Take B".to_owned();
+    item.active_take_index = 1;
+    item.source_offset_ticks = 120;
+    item.other_takes = vec![MidiItemTakeSnapshot {
+        index: 0,
+        name: "Take A".to_owned(),
+        source_offset_ticks: 0,
+        loop_source: false,
+        source_loop_length_ticks: 3_840,
+        notes: vec![take_a_note],
+        controllers: Vec::new(),
+        pitch_bends: Vec::new(),
+        program_changes: Vec::new(),
+        poly_aftertouches: Vec::new(),
+        channel_pressures: Vec::new(),
+        opaque_events: Vec::new(),
+        event_order: Vec::new(),
+    }];
+    let mut project = Project::from_snapshot(snapshot).unwrap();
+
+    let before = project.snapshot();
+    let cursor = project.history_cursor();
+    project
+        .apply(DawAction::AddEmptyMidiItemTakeBefore { item_id })
+        .unwrap();
+    let item = &project.midi_items()[0];
+    assert_eq!(project.history_cursor(), cursor + 1);
+    assert_eq!(item.active_take_index(), 2);
+    assert_eq!(item.name(), "Take B");
+    assert_eq!(item.source_offset_ticks(), 120);
+    let takes = item.take_snapshots();
+    assert_eq!(
+        takes.iter().map(|take| take.index).collect::<Vec<_>>(),
+        [0, 1, 2]
+    );
+    assert_eq!(takes[0].name, "Take A");
+    assert!(takes[1].name.is_empty() && takes[1].notes.is_empty());
+    assert_eq!(takes[1].source_loop_length_ticks, 3_840);
+    assert_eq!(takes[2].name, "Take B");
+    assert_eq!(takes[2].notes[0].data.pitch, 64);
+    let after_before = project.snapshot();
+    project.undo().unwrap();
+    assert_eq!(project.snapshot(), before);
+    project.redo().unwrap();
+    assert_eq!(project.snapshot(), after_before);
+    project.undo().unwrap();
+    assert_eq!(project.snapshot(), before);
+
+    project
+        .apply(DawAction::SetMidiItemActiveTake {
+            item_id,
+            take_index: 0,
+        })
+        .unwrap();
+    project
+        .apply(DawAction::AddEmptyMidiItemTakeAfter { item_id })
+        .unwrap();
+    let item = &project.midi_items()[0];
+    assert_eq!(item.active_take_index(), 0);
+    let takes = item.take_snapshots();
+    assert_eq!(
+        takes.iter().map(|take| take.index).collect::<Vec<_>>(),
+        [0, 1, 2]
+    );
+    assert_eq!(takes[0].name, "Take A");
+    assert!(takes[1].name.is_empty() && takes[1].notes.is_empty());
+    assert_eq!(takes[2].name, "Take B");
+    assert_eq!(
+        Project::from_snapshot(project.snapshot())
+            .unwrap()
+            .snapshot(),
+        project.snapshot()
+    );
+
+    project
+        .apply(DawAction::SetMidiItemActiveTake {
+            item_id,
+            take_index: 1,
+        })
+        .unwrap();
+    assert!(project.midi_items()[0].name().is_empty());
+    assert!(project.midi_items()[0].notes().is_empty());
+    assert_eq!(
+        Project::from_snapshot(project.snapshot())
+            .unwrap()
+            .snapshot(),
+        project.snapshot()
+    );
+}
+
+#[test]
 fn switching_midi_item_active_take_preserves_both_take_states_and_undo_history() {
     let mut project = Project::new();
     project

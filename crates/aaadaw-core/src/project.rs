@@ -2132,6 +2132,72 @@ fn midi_item_from_take(original: &MidiItem, take: MidiItemTakeSnapshot, id: Item
     }
 }
 
+fn insert_empty_midi_take(item: &mut MidiItem, before_active: bool) -> Result<(), ActionError> {
+    let insert_index = if before_active {
+        item.active_take_index
+    } else {
+        item.active_take_index
+            .checked_add(1)
+            .ok_or(ActionError::MidiTakeIndexExhausted)?
+    };
+    for take in &mut item.other_takes {
+        if take.index >= insert_index {
+            take.index = take
+                .index
+                .checked_add(1)
+                .ok_or(ActionError::MidiTakeIndexExhausted)?;
+        }
+    }
+    if item.active_take_index >= insert_index {
+        item.active_take_index = item
+            .active_take_index
+            .checked_add(1)
+            .ok_or(ActionError::MidiTakeIndexExhausted)?;
+    }
+    item.other_takes.push(MidiItemTake {
+        index: insert_index,
+        name: String::new(),
+        source_offset_ticks: 0,
+        loop_source: false,
+        source_loop_length_ticks: item.length_ticks,
+        notes: Arc::new(Vec::new()),
+        controllers: Arc::new(Vec::new()),
+        pitch_bends: Arc::new(Vec::new()),
+        program_changes: Arc::new(Vec::new()),
+        poly_aftertouches: Arc::new(Vec::new()),
+        channel_pressures: Arc::new(Vec::new()),
+        opaque_events: Arc::new(Vec::new()),
+        event_order: Arc::new(Vec::new()),
+    });
+    item.other_takes.sort_unstable_by_key(|take| take.index);
+    Ok(())
+}
+
+fn empty_midi_take_changed_event(
+    state: &ProjectState,
+    item_id: ItemId,
+    before_active: bool,
+) -> Result<ProjectEvent, ActionError> {
+    let before = state
+        .midi_items
+        .iter()
+        .find(|item| item.id == item_id)
+        .ok_or(ActionError::MidiItemNotFound { item_id })?;
+    let track_id = before.track_id;
+    let track = state
+        .tracks
+        .iter()
+        .find(|track| track.id == track_id)
+        .ok_or(ActionError::TrackNotFound { track_id })?;
+    if track.is_frozen() {
+        return Err(ActionError::CannotEditFrozenTrackSource { track_id });
+    }
+    let before = before.clone();
+    let mut after = before.clone();
+    insert_empty_midi_take(&mut after, before_active)?;
+    Ok(ProjectEvent::MidiItemChanged { before, after })
+}
+
 fn split_midi_take(
     original: &MidiItem,
     absolute_points: &[u64],
@@ -3577,7 +3643,7 @@ impl Project {
                     (take.index as usize) < take_count
                         && take.index != item.active_take_index
                         && take_indices.insert(take.index)
-                        && !take.name.trim().is_empty()
+                        && (!take.name.trim().is_empty() || midi_item_take_snapshot_is_empty(take))
                         && take.name.chars().count() <= 128
                         && take.source_loop_length_ticks > 0
                         && take
@@ -3588,7 +3654,7 @@ impl Project {
                 && take_indices.len() == item.other_takes.len();
             if !item_ids.insert(item.id)
                 || !track_ids.contains(&item.track_id)
-                || item.name.trim().is_empty()
+                || (item.name.trim().is_empty() && !midi_item_snapshot_active_take_is_empty(&item))
                 || item.name.chars().count() > 128
                 || item.length_ticks == 0
                 || item.source_loop_length_ticks == 0
@@ -5494,6 +5560,12 @@ impl Project {
                 let mut after = before.clone();
                 after.switch_active_take(take_index);
                 ProjectEvent::MidiItemChanged { before, after }
+            }
+            DawAction::AddEmptyMidiItemTakeBefore { item_id } => {
+                empty_midi_take_changed_event(state, item_id, true)?
+            }
+            DawAction::AddEmptyMidiItemTakeAfter { item_id } => {
+                empty_midi_take_changed_event(state, item_id, false)?
             }
             DawAction::DuplicateAudioItemAt {
                 item_id,
@@ -7921,6 +7993,28 @@ fn source_track_for_action(state: &ProjectState, action: &DawAction) -> Option<T
             .map(|item| item.track_id),
         _ => None,
     }
+}
+
+fn midi_item_take_snapshot_is_empty(take: &MidiItemTakeSnapshot) -> bool {
+    take.notes.is_empty()
+        && take.controllers.is_empty()
+        && take.pitch_bends.is_empty()
+        && take.program_changes.is_empty()
+        && take.poly_aftertouches.is_empty()
+        && take.channel_pressures.is_empty()
+        && take.opaque_events.is_empty()
+        && take.event_order.is_empty()
+}
+
+fn midi_item_snapshot_active_take_is_empty(item: &MidiItemSnapshot) -> bool {
+    item.notes.is_empty()
+        && item.controllers.is_empty()
+        && item.pitch_bends.is_empty()
+        && item.program_changes.is_empty()
+        && item.poly_aftertouches.is_empty()
+        && item.channel_pressures.is_empty()
+        && item.opaque_events.is_empty()
+        && item.event_order.is_empty()
 }
 
 fn valid_midi_controllers(controllers: &[MidiControllerData]) -> bool {

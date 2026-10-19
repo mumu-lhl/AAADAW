@@ -1,0 +1,34 @@
+evidence	REAPER 7.82 / Linux x86_64 / Default_7.0.ReaperThemeZip; Main actions 41351 and 41352
+native_environment	Xvfb 1280x800; isolated -cfgfile profile; audio device closed; first-run evaluation prompt dismissed before capture
+native_binary	target/reaper-7.82/reaper_linux_x86_64/REAPER/reaper; SHA-256 9976f5608068b7a58518969001b00b527fb0de6ed7459e0e5dda6f29878ee254; REAPER 7.82/linux-x86_64 rev 338578
+native_action_before	41351; Item: Add an empty take before the active take
+native_action_after	41352; Item: Add an empty take after the active take
+native_probe	scripts/reaper_parity/probe-midi-empty-takes.lua; SHA-256 9e1f9c0cd226370bdf4e42ccda1d9cf795a99530f1d7d7458460ef732a907c20
+native_capture_script	scripts/reaper_parity/capture-midi-empty-takes-native.sh; SHA-256 5a6b81af7af4b64a2c1447d8adf733b1a6ce4e2fe270b6072e50769452567419
+native_fixture	Two ordered MIDI Takes named Take A and Take B; Take B active at index 1; one distinct MIDI note in each Take
+native_before	1 item / 2 Takes / active index 1 / selected; SHA-256 readback below
+native_before_action	41351 inserts TAKE NULL at index 1; active Take B is retained at index 2; the empty placeholder has no API take object
+native_after_action	41352 inserts TAKE NULL at index 2; active Take B remains at index 1; both existing Take sources remain unchanged
+native_history	One Undo returns each action to 2 Takes / active index 1; one Redo restores its matching empty slot; selection remains on the item
+native_readback	docs/verification/reaper-parity/fixtures/midi-empty-takes-native.tsv; SHA-256 61c7429d470bd4486aed12404faf5712e7791645c0525145878ed11abeaf5e3a
+native_rpp_before	docs/verification/reaper-parity/fixtures/midi-empty-takes-before.rpp; SHA-256 6035f229ddb990c6c922dfb54776f16bf019eca448a7714f5b487288374c35d3
+native_rpp_before_active	docs/verification/reaper-parity/fixtures/midi-empty-takes-before-active.rpp; SHA-256 7736a30298040018f053560ac80791851ed555524df90d9d799060d99a7598d1
+native_rpp_undo_before_active	docs/verification/reaper-parity/fixtures/midi-empty-takes-undo-before-active.rpp; SHA-256 6035f229ddb990c6c922dfb54776f16bf019eca448a7714f5b487288374c35d3
+native_rpp_redo_before_active	docs/verification/reaper-parity/fixtures/midi-empty-takes-redo-before-active.rpp; SHA-256 7736a30298040018f053560ac80791851ed555524df90d9d799060d99a7598d1
+native_rpp_after_active	docs/verification/reaper-parity/fixtures/midi-empty-takes-after-active.rpp; SHA-256 76c1e7f3a48f06e6cfb43ca1d3949be996caf816c85e2946f1f709477191bb15
+native_rpp_undo_after_active	docs/verification/reaper-parity/fixtures/midi-empty-takes-undo-after-active.rpp; SHA-256 6035f229ddb990c6c922dfb54776f16bf019eca448a7714f5b487288374c35d3
+native_rpp_redo_after_active	docs/verification/reaper-parity/fixtures/midi-empty-takes-redo-after-active.rpp; SHA-256 76c1e7f3a48f06e6cfb43ca1d3949be996caf816c85e2946f1f709477191bb15
+native_screenshot	docs/verification/reaper-parity/fixtures/midi-empty-takes-native-after.png; 1280x800; SHA-256 36822841641975bee1b66388576bba17a508bc192c9ab9ddef7ea502da6a8230
+aaadaw_fixture_generator	crates/aaadaw/examples/generate_midi_multi_take_split_fixture.rs; SHA-256 1a6b5681e6a7cbc25ce7276cce0bb740cb5a18691190a32a8a61297756d10569
+aaadaw_fixture	docs/verification/reaper-parity/fixtures/midi-multi-take-split-aaadaw.aaadaw; SHA-256 ff53e07e125e5fa8e79b5105ac79b05b411cd7f1abe9c5d7ed6d7b4160d053cf
+aaadaw_capture_script	scripts/reaper_parity/capture-midi-empty-takes-aaadaw.sh; SHA-256 f3efa10d3ba305605122f41949aa7fca88938298c871ef7663949b973e47b7b5; custom Action List shortcut Ctrl+Shift+O invokes 41352
+aaadaw_binary	target/cranelift/debug/aaadaw; rustc 1.101.0-nightly (5d8fec066 2026-10-16); Build ID 37db8b4ed8d8151b94cd753d28a66984ae79a296; SHA-256 10159ff388ba00e2a21d8f6356dbdcd71730c87b90fbe534484daa80049ec4b2; Cranelift backend; audio-device disabled
+aaadaw_screenshot_before	docs/verification/reaper-parity/fixtures/midi-empty-takes-aaadaw-before.png; 1280x800; Inspector shows Take 2/2; SHA-256 924df24bfd3e451a100f68128edb1c96d96b9ea5a91bf627d05d012c41a02e81
+aaadaw_screenshot_after	docs/verification/reaper-parity/fixtures/midi-empty-takes-aaadaw-after.png; 1280x800; Inspector shows Take 2/3; SHA-256 7d3b941a771fab2f8db2ad1211eda1e311debdc5af7660723a1ff0e863a85cd4
+aaadaw_screenshot_undo	docs/verification/reaper-parity/fixtures/midi-empty-takes-aaadaw-undo.png; 1280x800; Inspector shows Take 2/2; SHA-256 2e2cadd67c8e3f32830f1d619cfa958f08f8b353ee8a81fa3570605e8e6e418b
+aaadaw_screenshot_redo	docs/verification/reaper-parity/fixtures/midi-empty-takes-aaadaw-redo.png; 1280x800; Inspector shows Take 2/3; SHA-256 bc91d70ce0ae022055e9896ea0df92ce569515735b194931b355e6d2bdf1d33c
+core_verification	cargo +stable test -p aaadaw-core; full Core suite passed, including empty MIDI Take insertion, source identity, and snapshot Undo/Redo
+app_verification	cargo +stable test -p aaadaw --bin aaadaw; 868/868 passed, including action registration, before/after insertion, and Undo/Redo
+storage_verification	cargo +stable test -p aaadaw-storage; 105/105 passed; Take-focused 2/2 verifies empty/active-empty persistence and schema 67→68 migration
+static_verification	strict Clippy for aaadaw-core, aaadaw-storage, and aaadaw all targets; cargo fmt --check; both capture scripts pass bash -n; git diff --check
+scope_note	Actions currently process selected MIDI items; empty audio Takes and full REAPER Take/Lane/Comp behavior remain open. Screenshots verify UI/project state, not audio playback or pixel identity.

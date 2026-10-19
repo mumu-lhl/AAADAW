@@ -120,6 +120,8 @@ pub(crate) enum CommandId {
     DeleteActiveAudioItemTake,
     SwitchItemsToNextTake,
     SwitchItemsToPreviousTake,
+    AddEmptyMidiTakeBeforeActive,
+    AddEmptyMidiTakeAfterActive,
     DuplicateSelectedMidiItem,
     DeleteSelectedItems,
     DeleteByFocus,
@@ -283,6 +285,8 @@ enum CommandKind {
     DeleteActiveAudioItemTake,
     SwitchItemsToNextTake,
     SwitchItemsToPreviousTake,
+    AddEmptyMidiTakeBeforeActive,
+    AddEmptyMidiTakeAfterActive,
     DuplicateSelectedMidiItem,
     DeleteSelectedItems,
     DeleteByFocus,
@@ -1589,6 +1593,32 @@ const COMMANDS: &[CommandDefinition] = &[
         category: "Take",
         label: "Switch items to previous take",
         aliases: &["previous take", "switch to previous take"],
+        shortcuts: &[],
+        destructive: false,
+        separator_before: false,
+    },
+    CommandDefinition {
+        kind: CommandKind::AddEmptyMidiTakeBeforeActive,
+        menu: Some(MainMenu::Item),
+        category: "Take",
+        label: "Add an empty take before the active take",
+        aliases: &[
+            "add empty take before active",
+            "insert empty midi take before",
+        ],
+        shortcuts: &[],
+        destructive: false,
+        separator_before: false,
+    },
+    CommandDefinition {
+        kind: CommandKind::AddEmptyMidiTakeAfterActive,
+        menu: Some(MainMenu::Item),
+        category: "Take",
+        label: "Add an empty take after the active take",
+        aliases: &[
+            "add empty take after active",
+            "insert empty midi take after",
+        ],
         shortcuts: &[],
         destructive: false,
         separator_before: false,
@@ -3016,6 +3046,8 @@ fn command_kind_id(kind: CommandKind) -> &'static str {
         CommandKind::DuplicateActiveTake => "take.duplicate-active",
         CommandKind::SwitchItemsToNextTake => "take.switch-next",
         CommandKind::SwitchItemsToPreviousTake => "take.switch-previous",
+        CommandKind::AddEmptyMidiTakeBeforeActive => "take.add-empty-before-active",
+        CommandKind::AddEmptyMidiTakeAfterActive => "take.add-empty-after-active",
         CommandKind::DuplicateSelectedMidiItem => "item.duplicate-midi",
         CommandKind::DeleteSelectedItems => "item.delete-selected",
         CommandKind::DeleteByFocus => "edit.delete-focused",
@@ -3419,6 +3451,20 @@ pub(super) fn dispatch(app: &mut App, command: CommandId) -> Task<Message> {
             }
             Message::SwitchSelectedAudioItemTakes(false)
         }
+        CommandId::AddEmptyMidiTakeBeforeActive => {
+            if selected_midi_item_ids(app).is_empty() {
+                app.status = "Select a MIDI item to add an empty take".to_owned();
+                return Task::none();
+            }
+            Message::AddEmptyMidiTakes(true)
+        }
+        CommandId::AddEmptyMidiTakeAfterActive => {
+            if selected_midi_item_ids(app).is_empty() {
+                app.status = "Select a MIDI item to add an empty take".to_owned();
+                return Task::none();
+            }
+            Message::AddEmptyMidiTakes(false)
+        }
         CommandId::DuplicateSelectedMidiItem => {
             let selected_midi = app.timeline.selected_item.filter(|item_id| {
                 app.timeline.selected_items.len() == 1
@@ -3664,6 +3710,15 @@ fn entry_for(
 pub(super) fn selected_audio_item_ids(app: &App) -> Vec<ItemId> {
     app.project
         .audio_items()
+        .iter()
+        .filter(|item| app.timeline.selected_items.contains(&item.id()))
+        .map(|item| item.id())
+        .collect()
+}
+
+pub(super) fn selected_midi_item_ids(app: &App) -> Vec<ItemId> {
+    app.project
+        .midi_items()
         .iter()
         .filter(|item| app.timeline.selected_items.contains(&item.id()))
         .map(|item| item.id())
@@ -4271,6 +4326,21 @@ fn command_enabled(app: &App, kind: CommandKind, track: Option<TrackState>) -> b
                     })
                 })
         }
+        CommandKind::AddEmptyMidiTakeBeforeActive | CommandKind::AddEmptyMidiTakeAfterActive => {
+            let item_ids = selected_midi_item_ids(app);
+            !project_edit_busy(app)
+                && !item_ids.is_empty()
+                && !item_ids.iter().any(|item_id| {
+                    app.project.midi_items().iter().any(|item| {
+                        item.id() == *item_id
+                            && app
+                                .project
+                                .tracks()
+                                .iter()
+                                .any(|track| track.id() == item.track_id() && track.is_frozen())
+                    })
+                })
+        }
         CommandKind::DuplicateSelectedMidiItem => {
             !project_edit_busy(app)
                 && app.timeline.selected_items.len() == 1
@@ -4552,6 +4622,8 @@ fn command_id(kind: CommandKind) -> CommandId {
         CommandKind::CropAudioItemToActiveTake => CommandId::CropAudioItemToActiveTake,
         CommandKind::SwitchItemsToNextTake => CommandId::SwitchItemsToNextTake,
         CommandKind::SwitchItemsToPreviousTake => CommandId::SwitchItemsToPreviousTake,
+        CommandKind::AddEmptyMidiTakeBeforeActive => CommandId::AddEmptyMidiTakeBeforeActive,
+        CommandKind::AddEmptyMidiTakeAfterActive => CommandId::AddEmptyMidiTakeAfterActive,
         CommandKind::DuplicateSelectedMidiItem => CommandId::DuplicateSelectedMidiItem,
         CommandKind::DeleteSelectedItems => CommandId::DeleteSelectedItems,
         CommandKind::DeleteByFocus => CommandId::DeleteByFocus,

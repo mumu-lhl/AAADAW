@@ -399,6 +399,14 @@ pub enum DawAction {
         item_id: ItemId,
         take_index: u32,
     },
+    /// Insert an empty MIDI Take immediately before the active Take.
+    AddEmptyMidiItemTakeBefore {
+        item_id: ItemId,
+    },
+    /// Insert an empty MIDI Take immediately after the active Take.
+    AddEmptyMidiItemTakeAfter {
+        item_id: ItemId,
+    },
     /// Duplicate the complete audio Item at a new track and position.
     DuplicateAudioItemAt {
         item_id: ItemId,
