@@ -418,6 +418,12 @@ struct AudioItemClipboard {
 }
 
 #[derive(Clone, Debug, PartialEq)]
+struct AudioTakeClipboard {
+    project_generation: u64,
+    take: aaadaw_core::AudioItemTakeSnapshot,
+}
+
+#[derive(Clone, Debug, PartialEq)]
 struct AudioItemClipboardEntry {
     media_ref: String,
     name: String,
@@ -692,6 +698,7 @@ struct App {
     midi_editor_window_size: iced::Size,
     midi_note_clipboard: MidiNoteClipboard,
     audio_item_clipboard: Option<AudioItemClipboard>,
+    audio_take_clipboard: Option<AudioTakeClipboard>,
     plugin_picker_window_id: Option<iced::window::Id>,
     plugin_picker_track_id: Option<TrackId>,
     plugin_picker_instrument_track_id: Option<TrackId>,
@@ -1694,6 +1701,7 @@ fn action_rebuilds_playback_graph(action: &DawAction) -> bool {
         | DawAction::SetTempoCurve { .. }
         | DawAction::SetTrackFxParameterAutomation { .. }
         | DawAction::SetAudioItemActiveTake { .. }
+        | DawAction::PasteAudioItemAsTake { .. }
         | DawAction::SetMidiItemPosition { .. }
         | DawAction::EditMidiItemPlacement { .. }
         | DawAction::SetMidiItemContents { .. }
@@ -9571,9 +9579,11 @@ impl App {
             }
             Message::DeleteSelectedItems => self.delete_selected_items(),
             Message::TrimItemsToSelectedArea => self.trim_items_to_selected_area(),
+            Message::CopyItems => self.copy_selected_audio_item(),
             Message::CopyLoopOfSelectedArea => self.copy_loop_of_selected_area(),
             Message::EncloseMediaItemsInRazorEdit => self.enclose_media_items_in_razor_edit(),
             Message::PasteItems => self.paste_audio_items(),
+            Message::PasteAudioItemAsTake => self.paste_audio_item_as_take(),
             Message::SelectAllItems => {
                 self.with_item_selection_history("Select all items", Self::select_all_items)
             }
@@ -18952,6 +18962,80 @@ impl App {
             }
         };
         self.apply_action(action, "Selected items trimmed to selected area");
+    }
+
+    fn selected_audio_item_for_take_clipboard(&self) -> Option<&aaadaw_core::AudioItem> {
+        let item_id = self
+            .timeline
+            .selected_item
+            .filter(|_| self.timeline.selected_items.len() == 1)?;
+        self.project
+            .audio_items()
+            .iter()
+            .find(|item| item.id() == item_id)
+    }
+
+    pub(super) fn can_copy_selected_audio_item(&self) -> bool {
+        self.selected_audio_item_for_take_clipboard().is_some()
+    }
+
+    fn copy_selected_audio_item(&mut self) {
+        let Some(item) = self.selected_audio_item_for_take_clipboard() else {
+            self.status = "Select one audio item to copy its active take".to_owned();
+            return;
+        };
+        let take = item.active_take_snapshot();
+        self.audio_take_clipboard = Some(AudioTakeClipboard {
+            project_generation: self.project_generation,
+            take,
+        });
+        self.status = "Active audio take copied".to_owned();
+    }
+
+    pub(super) fn can_paste_audio_item_as_take(&self) -> bool {
+        let Some(clipboard) = self.audio_take_clipboard.as_ref() else {
+            return false;
+        };
+        if clipboard.project_generation != self.project_generation {
+            return false;
+        }
+        let Some(item) = self.selected_audio_item_for_take_clipboard() else {
+            return false;
+        };
+        !self
+            .project
+            .tracks()
+            .iter()
+            .any(|track| track.frozen_audio_item_id() == Some(item.id()))
+    }
+
+    fn paste_audio_item_as_take(&mut self) {
+        if commands::project_edit_busy(self) {
+            self.status =
+                "Stop playback or finish the current project operation before pasting takes"
+                    .to_owned();
+            return;
+        }
+        if !self.can_paste_audio_item_as_take() {
+            return;
+        }
+        let Some(item_id) = self
+            .selected_audio_item_for_take_clipboard()
+            .map(|item| item.id())
+        else {
+            return;
+        };
+        let Some(take) = self
+            .audio_take_clipboard
+            .as_ref()
+            .map(|clipboard| clipboard.take.clone())
+        else {
+            return;
+        };
+        self.apply_action(
+            DawAction::PasteAudioItemAsTake { item_id, take },
+            "Take pasted into audio item",
+        );
     }
 
     fn copy_loop_of_selected_area(&mut self) {

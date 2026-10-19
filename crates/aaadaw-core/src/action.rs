@@ -362,6 +362,11 @@ pub enum DawAction {
     DuplicateAudioItemTake {
         item_id: ItemId,
     },
+    /// Append a copied take after the item's existing takes and make it active.
+    PasteAudioItemAsTake {
+        item_id: ItemId,
+        take: crate::AudioItemTakeSnapshot,
+    },
     /// Activate an existing take using its zero-based position in the item.
     SetAudioItemActiveTake {
         item_id: ItemId,

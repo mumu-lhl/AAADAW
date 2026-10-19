@@ -1,0 +1,22 @@
+kind	artifact_or_check	result_or_sha256
+native_reference	Linux REAPER	7.82/linux-x86_64; Default 7 theme; Main actions 40057 Copy items/tracks and 40603 Take: Paste as takes in items
+native_probe	scripts/reaper_parity/probe-audio-paste-as-takes.lua	SHA-256 79e44e52b0cf3ccfdfdb1d30d402adbeaa1fc8cf1f4486b5d65b91e4c192a36b; captures target take list, retained source item, undo, redo, and RPP states
+native_action_catalog	audio-paste-as-takes-native-action-catalog.tsv	SHA-256 ef82465af1483c1cd197d0ee7b5b3e9bb265a9d6ab299623def78616e272a25e; native Main action IDs 40057 and 40603
+native_state	fixtures/audio-paste-as-takes-native.tsv	SHA-256 038ab420d82275277520ac0d946d4e6863de40cdc0bb39fa9de6600fb31cbe53; target count 1 -> 2, active index 0 -> 1, source item count remains 2, undo returns to one take, redo restores active Source B
+native_capture	fixtures/audio-paste-as-takes-native-after.png	1024x740; SHA-256 f54743b1b0e6e4ab79f8d3ee199cc851e5efde81fcd7f27838b8e70be6785788; Arrange shows Target A with active Source B and the original Source B item
+native_project	fixtures/audio-paste-as-takes-native-before.rpp	SHA-256 1a511c18383fce06c2f38729f324a0755733d1f6ab3b445c8997a6d2417281f4
+native_project	fixtures/audio-paste-as-takes-native-after.rpp	SHA-256 9365596d527bba5f070089c878d3f5df221ef93e73d9bd7919f2ec5d5970233b
+native_project	fixtures/audio-paste-as-takes-native-undo.rpp	SHA-256 977878aa1deb43229e368c9dc744807bdb2c6f98d19aeabb6e15f7b92a983182
+native_project	fixtures/audio-paste-as-takes-native-redo.rpp	SHA-256 ca7100e6d4acb62c36fa816e1b5f69d2eed78b9a4282dc4c9887a61f1b629f04
+aaadaw_project	fixtures/audio-paste-as-takes-aaadaw.aaadaw	SHA-256 cd76a314dc1ee6f04c878eb9c69dd91fa255c1f31ce5cbd25b0070290eb7742b; two one-second source items, separate active takes
+aaadaw_project_generator	fixtures/audio-paste-as-takes-aaadaw-generator.rs	SHA-256 fcf546f0263465654fbb1177866c46efc027902733c334e5e6b4cbf59805d3fb; embeds existing Hit-01 and Hit-02 fixtures
+aaadaw_capture	fixtures/audio-paste-as-takes-aaadaw-after.png	1280x800; SHA-256 c4d25a23d8f03c9bc63300f8f92c4e99ad4a6e05b6a0d845786b537413e6f399; selected target shows Take 2/2 · Source B while Source B remains as a separate item
+aaadaw_action_list_capture	fixtures/audio-paste-as-takes-aaadaw-action-list.png	1280x800; SHA-256 93633a2f255a340fdfea33d4ee1d4ff83e7d0c517ecde367d90ce0b15cbd43b9; exact Action List name is visible with no default shortcut
+aaadaw_capture_script	scripts/reaper_parity/capture-audio-paste-as-takes-aaadaw.sh	SHA-256 ff402e9f623158eeebbbd7ddc956fcbf8a6c669e3c394459b5582cd313c9fc92; isolated Xvfb, clean XDG profile, temporary Ctrl+Alt+Shift+T binding
+capture_binary	Linux desktop AAADAW 0.1.0; target/debug/debug/aaadaw	Stable LLVM binary SHA-256 0db8e9c1650182e1f0bf0c03763506708c0e7d85874b5625bc2cd944ca985332; audio-device feature disabled
+capture_build	CARGO_TARGET_DIR=target/debug CARGO_PROFILE_DEV_DEBUG=0 cargo +stable build -p aaadaw --bin aaadaw --locked	passed; generated the stable binary used for the live capture
+capture_command	scripts/reaper_parity/capture-audio-paste-as-takes-aaadaw.sh target/debug/debug/aaadaw	passed; opened the saved project, copied Source B, pasted into Target A, captured actual desktop window
+stable_tests	cargo +stable nextest run -p aaadaw --bin aaadaw --locked	846 passed, 0 skipped
+stable_tests	cargo +stable nextest run -p aaadaw-core -p aaadaw-storage --locked	371 passed, 0 skipped
+validation	Stable all-target Clippy with warnings denied, cargo fmt --check, bash -n capture script, git diff --check	passed
+open_scope	EDIT-TAKE-001	Remains in_progress: multi-selection, recording-created takes, lanes, comp, take removal/reordering, MIDI items, and cross-project clipboard behavior remain unimplemented

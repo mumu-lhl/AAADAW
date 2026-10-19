@@ -112,6 +112,84 @@ fn switching_active_take_changes_playback_source_and_is_undoable() {
 }
 
 #[test]
+fn paste_as_take_appends_and_activates_the_copied_source_with_undo_redo() {
+    let (mut project, item_id) = project_with_audio_item();
+    let placement = (
+        project.audio_items()[0].start_sample(),
+        project.audio_items()[0].source_offset_samples(),
+        project.audio_items()[0].length_samples(),
+    );
+    let mut copied_take = project.audio_items()[0].active_take_snapshot();
+    copied_take.index = 53;
+    copied_take.media_ref = "asset://take-b".to_owned();
+    copied_take.name = "Take B".to_owned();
+    copied_take.source_offset_samples = 960;
+    copied_take.phase_inverted = true;
+    copied_take.volume = 0.75;
+    copied_take.pan = 0.25;
+    copied_take.playback_rate = 1.25;
+
+    project
+        .apply(DawAction::PasteAudioItemAsTake {
+            item_id,
+            take: copied_take,
+        })
+        .expect("copied take should append and activate");
+    let item = &project.audio_items()[0];
+    assert_eq!(item.take_count(), 2);
+    assert_eq!(item.active_take_index(), 1);
+    assert_eq!(item.media_ref(), "asset://take-b");
+    assert_eq!(item.name(), "Take B");
+    assert_eq!(item.source_offset_samples(), 960);
+    assert!(item.is_phase_inverted());
+    assert_eq!(item.take_volume(), 0.75);
+    assert_eq!(item.take_pan(), 0.25);
+    assert_eq!(item.take_playback_rate(), 1.25);
+    assert_eq!(item.other_takes()[0].index(), 0);
+    assert_eq!(item.other_takes()[0].media_ref(), "asset://take-a");
+    assert_eq!(
+        (
+            item.start_sample(),
+            item.source_offset_samples(),
+            item.length_samples()
+        ),
+        (placement.0, 960, placement.2)
+    );
+    let snapshot = project.snapshot();
+    assert_eq!(
+        Project::from_snapshot(snapshot.clone()).unwrap().snapshot(),
+        snapshot
+    );
+
+    assert!(project.undo().expect("paste as takes should undo"));
+    assert_eq!(project.audio_items()[0].take_count(), 1);
+    assert_eq!(project.audio_items()[0].media_ref(), "asset://take-a");
+    assert!(project.redo().expect("paste as takes should redo"));
+    assert_eq!(project.audio_items()[0].take_count(), 2);
+    assert_eq!(project.audio_items()[0].active_take_index(), 1);
+    assert_eq!(project.audio_items()[0].media_ref(), "asset://take-b");
+}
+
+#[test]
+fn paste_as_take_rejects_invalid_source_data_without_changing_project_or_history() {
+    let (mut project, item_id) = project_with_audio_item();
+    let mut copied_take = project.audio_items()[0].active_take_snapshot();
+    copied_take.playback_rate = f64::NAN;
+    let before = project.snapshot();
+    let history_cursor = project.history_cursor();
+
+    assert!(matches!(
+        project.apply(DawAction::PasteAudioItemAsTake {
+            item_id,
+            take: copied_take,
+        }),
+        Err(ActionError::InvalidAudioItemTakePlaybackRate)
+    ));
+    assert_eq!(project.snapshot(), before);
+    assert_eq!(project.history_cursor(), history_cursor);
+}
+
+#[test]
 fn invalid_or_missing_take_indices_do_not_change_state_or_history() {
     let (mut project, item_id) = project_with_audio_item();
     let before = project.snapshot();

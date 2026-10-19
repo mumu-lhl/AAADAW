@@ -41,7 +41,9 @@ pub(crate) enum CommandId {
     OpenActionList,
     Undo,
     Redo,
+    CopyItems,
     PasteItems,
+    PasteAudioItemAsTake,
     ToggleMediaBrowserPanel,
     ToggleOfflineJobsPanel,
     ShowArrangement,
@@ -196,7 +198,9 @@ enum CommandKind {
     OpenActionList,
     Undo,
     Redo,
+    CopyItems,
     PasteItems,
+    PasteAudioItemAsTake,
     ToggleMediaBrowserPanel,
     ToggleOfflineJobsPanel,
     ShowArrangement,
@@ -326,6 +330,7 @@ const RENDER_PROJECT_SHORTCUT: &[Shortcut] = &[Shortcut::character(
 )];
 const PREFERENCES_SHORTCUT: &[Shortcut] = &[Shortcut::character('p', Modifiers::COMMAND)];
 const UNDO_SHORTCUT: &[Shortcut] = &[Shortcut::character('z', Modifiers::COMMAND)];
+const COPY_ITEMS_SHORTCUT: &[Shortcut] = &[Shortcut::character('c', Modifiers::CTRL)];
 const PASTE_ITEMS_SHORTCUT: &[Shortcut] = &[Shortcut::character('v', Modifiers::CTRL)];
 const REDO_SHORTCUT: &[Shortcut] = &[
     Shortcut::character('z', Modifiers::COMMAND.union(Modifiers::SHIFT)),
@@ -672,6 +677,16 @@ const COMMANDS: &[CommandDefinition] = &[
         shortcuts: REDO_SHORTCUT,
         destructive: false,
         separator_before: false,
+    },
+    CommandDefinition {
+        kind: CommandKind::CopyItems,
+        menu: Some(MainMenu::Edit),
+        category: "Edit",
+        label: "Copy selected audio item",
+        aliases: &["copy items", "copy items/tracks", "copy selected item"],
+        shortcuts: COPY_ITEMS_SHORTCUT,
+        destructive: false,
+        separator_before: true,
     },
     CommandDefinition {
         kind: CommandKind::PasteItems,
@@ -1474,6 +1489,16 @@ const COMMANDS: &[CommandDefinition] = &[
         shortcuts: &[],
         destructive: false,
         separator_before: true,
+    },
+    CommandDefinition {
+        kind: CommandKind::PasteAudioItemAsTake,
+        menu: Some(MainMenu::Item),
+        category: "Take",
+        label: "Paste as takes in items",
+        aliases: &["paste as takes", "paste take into item"],
+        shortcuts: &[],
+        destructive: false,
+        separator_before: false,
     },
     CommandDefinition {
         kind: CommandKind::SwitchItemsToNextTake,
@@ -2810,7 +2835,9 @@ fn command_kind_id(kind: CommandKind) -> &'static str {
         CommandKind::OpenActionList => "actions.show-list",
         CommandKind::Undo => "edit.undo",
         CommandKind::Redo => "edit.redo",
+        CommandKind::CopyItems => "edit.copy-items",
         CommandKind::PasteItems => "edit.paste-items",
+        CommandKind::PasteAudioItemAsTake => "take.paste-as-takes",
         CommandKind::ToggleMediaBrowserPanel => "view.media-browser-panel",
         CommandKind::ToggleOfflineJobsPanel => "view.offline-jobs-panel",
         CommandKind::ShowArrangement => "view.arrangement-workspace",
@@ -3051,7 +3078,9 @@ pub(super) fn dispatch(app: &mut App, command: CommandId) -> Task<Message> {
         CommandId::OpenActionList => Message::OpenActionList,
         CommandId::Undo => Message::Undo,
         CommandId::Redo => Message::Redo,
+        CommandId::CopyItems => Message::CopyItems,
         CommandId::PasteItems => Message::PasteItems,
+        CommandId::PasteAudioItemAsTake => Message::PasteAudioItemAsTake,
         CommandId::ToggleMediaBrowserPanel => Message::ToggleMediaBrowserPanel,
         CommandId::ToggleOfflineJobsPanel => Message::ToggleOfflineJobsPanel,
         CommandId::ShowArrangement => Message::ShowMainWorkspace(MainWorkspace::Arrangement),
@@ -3512,7 +3541,11 @@ fn command_enabled(app: &App, kind: CommandKind, track: Option<TrackState>) -> b
                     app.item_selection_is_next_redo() || app.project.can_redo_track_mix(),
                 )
         }
+        CommandKind::CopyItems => app.can_copy_selected_audio_item(),
         CommandKind::PasteItems => !project_edit_busy(app) && app.can_paste_audio_items(),
+        CommandKind::PasteAudioItemAsTake => {
+            !project_edit_busy(app) && app.can_paste_audio_item_as_take()
+        }
         CommandKind::CopyLoopOfSelectedArea => true,
         CommandKind::EncloseMediaItemsInRazorEdit => true,
         CommandKind::ToggleMediaBrowserPanel => true,
@@ -3926,6 +3959,7 @@ fn command_id(kind: CommandKind) -> CommandId {
         CommandKind::OpenActionList => CommandId::OpenActionList,
         CommandKind::Undo => CommandId::Undo,
         CommandKind::Redo => CommandId::Redo,
+        CommandKind::CopyItems => CommandId::CopyItems,
         CommandKind::ToggleMediaBrowserPanel => CommandId::ToggleMediaBrowserPanel,
         CommandKind::ToggleOfflineJobsPanel => CommandId::ToggleOfflineJobsPanel,
         CommandKind::ShowArrangement => CommandId::ShowArrangement,
@@ -4009,6 +4043,7 @@ fn command_id(kind: CommandKind) -> CommandId {
         CommandKind::DuplicateSelectedItem => CommandId::DuplicateSelectedItem,
         CommandKind::DuplicateSelectedAudioItem => CommandId::DuplicateSelectedAudioItem,
         CommandKind::DuplicateActiveTake => CommandId::DuplicateActiveTake,
+        CommandKind::PasteAudioItemAsTake => CommandId::PasteAudioItemAsTake,
         CommandKind::SwitchItemsToNextTake => CommandId::SwitchItemsToNextTake,
         CommandKind::SwitchItemsToPreviousTake => CommandId::SwitchItemsToPreviousTake,
         CommandKind::DuplicateSelectedMidiItem => CommandId::DuplicateSelectedMidiItem,

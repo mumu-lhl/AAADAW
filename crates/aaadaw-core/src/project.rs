@@ -4690,6 +4690,47 @@ impl Project {
                 }
                 ProjectEvent::AudioItemChanged { before, after }
             }
+            DawAction::PasteAudioItemAsTake { item_id, take } => {
+                if take.media_ref.trim().is_empty() {
+                    return Err(ActionError::InvalidAudioMediaRef);
+                }
+                if take.name.chars().count() > 128 {
+                    return Err(ActionError::InvalidAudioItemName);
+                }
+                if !take.volume.is_finite()
+                    || !(0.0..=crate::MAX_AUDIO_ITEM_TAKE_VOLUME).contains(&take.volume)
+                {
+                    return Err(ActionError::InvalidAudioItemTakeVolume);
+                }
+                if !take.pan.is_finite() || !(-1.0..=1.0).contains(&take.pan) {
+                    return Err(ActionError::InvalidAudioItemTakePan);
+                }
+                if !take.playback_rate.is_finite() || take.playback_rate <= 0.0 {
+                    return Err(ActionError::InvalidAudioItemTakePlaybackRate);
+                }
+                if !valid_audio_source_offset(
+                    take.source_offset_samples,
+                    take.loop_source,
+                    take.source_section_start_samples,
+                    take.source_section_length_samples,
+                ) {
+                    return Err(ActionError::InvalidAudioItemTakeSource);
+                }
+                let before = state
+                    .audio_items
+                    .iter()
+                    .find(|item| item.id == item_id)
+                    .ok_or(ActionError::AudioItemNotFound { item_id })?;
+                if is_frozen_render(state, item_id) {
+                    return Err(ActionError::FrozenRenderCannotBeEdited { item_id });
+                }
+                let before = before.clone();
+                let mut after = before.clone();
+                if !after.append_take_snapshot(&take) {
+                    return Err(ActionError::AudioTakeIndexExhausted);
+                }
+                ProjectEvent::AudioItemChanged { before, after }
+            }
             DawAction::SetAudioItemActiveTake {
                 item_id,
                 take_index,

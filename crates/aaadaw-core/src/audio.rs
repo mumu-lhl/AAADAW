@@ -165,6 +165,23 @@ impl AudioItem {
         self.active_take_index
     }
 
+    /// Returns a serializable copy of the take currently used for playback.
+    pub fn active_take_snapshot(&self) -> crate::AudioItemTakeSnapshot {
+        crate::AudioItemTakeSnapshot {
+            index: self.active_take_index,
+            media_ref: self.media_ref.clone(),
+            name: self.name.clone(),
+            source_offset_samples: self.source_offset_samples,
+            phase_inverted: self.phase_inverted,
+            loop_source: self.loop_source,
+            source_section_start_samples: self.source_section_start_samples,
+            source_section_length_samples: self.source_section_length_samples,
+            volume: self.take_volume,
+            pan: self.take_pan,
+            playback_rate: self.take_playback_rate,
+        }
+    }
+
     /// Inactive takes in their original list positions.
     pub fn other_takes(&self) -> &[AudioItemTake] {
         &self.other_takes
@@ -237,5 +254,25 @@ impl AudioItem {
         self.other_takes.sort_unstable_by_key(|take| take.index);
         self.active_take_index = next_active_index;
         true
+    }
+
+    pub(crate) fn append_take_snapshot(&mut self, take: &crate::AudioItemTakeSnapshot) -> bool {
+        let Ok(index) = u32::try_from(self.take_count()) else {
+            return false;
+        };
+        self.other_takes.push(AudioItemTake {
+            index,
+            media_ref: take.media_ref.clone(),
+            name: take.name.clone(),
+            source_offset_samples: take.source_offset_samples,
+            phase_inverted: take.phase_inverted,
+            loop_source: take.loop_source,
+            source_section_start_samples: take.source_section_start_samples,
+            source_section_length_samples: take.source_section_length_samples,
+            volume: take.volume,
+            pan: take.pan,
+            playback_rate: take.playback_rate,
+        });
+        self.switch_active_take(index)
     }
 }

@@ -21,6 +21,11 @@ const REAPER_ACTIONS: &[(&str, u32, &str)] = &[
     ),
     ("take.switch-next", 40125, "Take: Switch items to next take"),
     (
+        "take.paste-as-takes",
+        40603,
+        "Take: Paste as takes in items",
+    ),
+    (
         "take.switch-previous",
         40126,
         "Take: Switch items to previous take",
@@ -35,6 +40,7 @@ const REAPER_ACTIONS: &[(&str, u32, &str)] = &[
         40014,
         "Item: Copy loop of selected area of audio items",
     ),
+    ("edit.copy-items", 40057, "Edit: Copy items/tracks"),
     ("audio.export-wav", 40015, "File: Render project to disk..."),
     ("file.settings", 40016, "Options: Preferences..."),
     (
@@ -682,10 +688,12 @@ mod tests {
     fn reaper_main_catalog_maps_additional_exact_actions() {
         let contents = concat!(
             "KEY 1 113 40605 0\t\t # Main : F2 : Show action list\n",
+            "KEY 9 67 40057 0\t\t # Main : Ctrl+C : Edit: Copy items/tracks\n",
             "KEY 1 115 40886 0\t\t # Main : F4 : File: Close all projects\n",
             "KEY 1 114 40860 0\t\t # Main : F3 : Close current project tab\n",
             "KEY 1 116 40071 0\t\t # Main : F5 : Options: Show snap/grid settings\n",
             "KEY 1 121 40639 0\t\t # Main : F10 : Take: Duplicate active take\n",
+            "KEY 9 84 40603 0\t\t # Main : Ctrl+T : Take: Paste as takes in items\n",
             "KEY 1 122 40125 0\t\t # Main : F11 : Take: Switch items to next take\n",
             "KEY 1 123 40126 0\t\t # Main : F12 : Take: Switch items to previous take\n",
             "KEY 1 117 40001 0\t\t # Main : F6 : Track: Insert new track\n",
@@ -697,7 +705,7 @@ mod tests {
             "KEY 1 120 1016 0\t\t # Main : F9 : Transport: Stop\n",
         );
         let bindings = parse_reaper(contents).unwrap();
-        assert_eq!(bindings.len(), 14);
+        assert_eq!(bindings.len(), 16);
         for (action, key) in [
             ("actions.show-list", "F2"),
             ("file.close-project", "F3"),
@@ -713,6 +721,8 @@ mod tests {
             ("take.duplicate-active", "F10"),
             ("take.switch-next", "F11"),
             ("take.switch-previous", "F12"),
+            ("edit.copy-items", "Mod+C"),
+            ("take.paste-as-takes", "Mod+T"),
         ] {
             assert_eq!(bindings[action], key, "{action}");
         }
@@ -721,7 +731,7 @@ mod tests {
 
     #[test]
     fn reaper_main_mapping_table_round_trips_all_unique_native_action_ids() {
-        assert_eq!(REAPER_ACTIONS.len(), 105);
+        assert_eq!(REAPER_ACTIONS.len(), 107);
         let mut action_ids = REAPER_ACTIONS
             .iter()
             .map(|(_, action_id, _)| *action_id)

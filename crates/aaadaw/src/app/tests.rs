@@ -98,6 +98,91 @@ fn audio_take_actions_switch_with_undo_and_require_multiple_takes() {
 }
 
 #[test]
+fn copied_audio_take_pastes_into_selected_item_without_removing_source_item() {
+    let mut app = App::default();
+    let _ = app.update(Message::AddTrack);
+    let track_id = app.project.tracks()[0].id();
+    for (media_ref, start_sample) in [("asset://copied-take", 0), ("asset://target", 96_000)] {
+        app.project
+            .apply(DawAction::InsertAudioItem {
+                track_id,
+                media_ref: media_ref.to_owned(),
+                start_sample,
+                source_offset_samples: 0,
+                length_samples: 48_000,
+            })
+            .expect("test audio item should be inserted");
+    }
+    let source_item_id = app.project.audio_items()[0].id();
+    let target_item_id = app.project.audio_items()[1].id();
+    app.timeline.rebuild(&app.project);
+    let shortcuts = commands::shortcut_entries(&app);
+    let copy_action = shortcuts
+        .iter()
+        .find(|entry| entry.id == "edit.copy-items")
+        .expect("REAPER's Edit: Copy items/tracks action should be registered");
+    assert_eq!(copy_action.default_binding, "Ctrl+C");
+    let paste_as_takes = shortcuts
+        .iter()
+        .find(|entry| entry.id == "take.paste-as-takes")
+        .expect("REAPER's Take: Paste as takes in items action should be registered");
+    assert!(paste_as_takes.default_binding.is_empty());
+    let item_menu_entry = commands::for_menu(&app, MainMenu::Item)
+        .into_iter()
+        .find(|entry| entry.id == CommandId::PasteAudioItemAsTake)
+        .expect("Item menu should expose Paste as takes in items");
+    assert_eq!(item_menu_entry.label, "Paste as takes in items");
+    assert!(!item_menu_entry.enabled);
+    app.timeline.select_items(vec![(source_item_id, track_id)]);
+
+    assert!(commands::is_enabled(&app, CommandId::CopyItems));
+    let _ = app.update(Message::ExecuteCommand(CommandId::CopyItems));
+    assert_eq!(app.project.audio_items().len(), 2);
+    app.timeline.select_items(vec![(target_item_id, track_id)]);
+    assert!(commands::is_enabled(&app, CommandId::PasteAudioItemAsTake));
+    assert_eq!(
+        commands::find(&app, "paste as takes in items"),
+        Some(CommandId::PasteAudioItemAsTake)
+    );
+    let _ = app.update(Message::ExecuteCommand(CommandId::PasteAudioItemAsTake));
+
+    let target = app
+        .project
+        .audio_items()
+        .iter()
+        .find(|item| item.id() == target_item_id)
+        .unwrap();
+    assert_eq!(target.take_count(), 2);
+    assert_eq!(target.active_take_index(), 1);
+    assert_eq!(target.media_ref(), "asset://copied-take");
+    assert_eq!(
+        app.project.audio_items()[0].media_ref(),
+        "asset://copied-take"
+    );
+    assert_eq!(app.project.audio_items().len(), 2);
+
+    let _ = app.update(Message::Undo);
+    let target = app
+        .project
+        .audio_items()
+        .iter()
+        .find(|item| item.id() == target_item_id)
+        .unwrap();
+    assert_eq!(target.take_count(), 1);
+    assert_eq!(target.media_ref(), "asset://target");
+    let _ = app.update(Message::Redo);
+    let target = app
+        .project
+        .audio_items()
+        .iter()
+        .find(|item| item.id() == target_item_id)
+        .unwrap();
+    assert_eq!(target.take_count(), 2);
+    assert_eq!(target.active_take_index(), 1);
+    assert_eq!(target.media_ref(), "asset://copied-take");
+}
+
+#[test]
 fn mobile_midi_editor_uses_main_window_and_back_returns_to_arrangement() {
     let window_id = iced::window::Id::unique();
     let mut app = App {

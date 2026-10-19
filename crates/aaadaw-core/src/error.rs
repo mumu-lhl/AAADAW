@@ -110,6 +110,8 @@ pub enum ActionError {
     InvalidAudioItemTakePan,
     /// An audio item's active take playback rate must be finite and greater than zero.
     InvalidAudioItemTakePlaybackRate,
+    /// An audio take's source offset and optional section must form a valid source view.
+    InvalidAudioItemTakeSource,
     /// The requested take index does not exist on the audio item.
     AudioTakeNotFound {
         item_id: ItemId,
@@ -314,6 +316,9 @@ impl fmt::Display for ActionError {
             }
             Self::InvalidAudioItemTakePlaybackRate => {
                 formatter.write_str("active take playback rate must be finite and greater than zero")
+            }
+            Self::InvalidAudioItemTakeSource => {
+                formatter.write_str("audio take source offset or section is invalid")
             }
             Self::AudioTakeNotFound { item_id, take_index } => write!(
                 formatter,
