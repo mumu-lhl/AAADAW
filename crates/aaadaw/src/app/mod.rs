@@ -14563,6 +14563,7 @@ impl App {
             && !(selected_kinds == 3 && has_notes && has_controllers)
             && !(selected_kinds == 3 && has_notes && has_pitch_bends)
             && !(selected_kinds == 3 && has_controllers && has_pitch_bends)
+            && !(selected_kinds == 3 && has_controllers && has_program_changes)
             && !(selected_kinds == 3 && has_program_changes && has_channel_pressures)
             && !(selected_kinds == 3 && has_program_changes && has_poly_aftertouches)
             && !(selected_kinds == 4
@@ -14600,6 +14601,10 @@ impl App {
                     self.set_midi_editor_filter_from_mixed_note_pitch_and_opaque_selection(item_id);
                 } else if has_controllers && has_pitch_bends {
                     self.set_midi_editor_filter_from_mixed_controller_pitch_and_opaque_selection(
+                        item_id,
+                    );
+                } else if has_controllers && has_program_changes {
+                    self.set_midi_editor_filter_from_mixed_controller_program_and_opaque_selection(
                         item_id,
                     );
                 } else if has_program_changes && has_poly_aftertouches && has_channel_pressures {
@@ -14771,6 +14776,47 @@ impl App {
             .iter()
             .filter(|event| self.midi_editor_selected_program_changes.contains(event))
             .map(|event| event.tick)
+            .chain(
+                item.opaque_events()
+                    .iter()
+                    .enumerate()
+                    .filter(|(index, _)| {
+                        self.midi_editor_selected_opaque_events
+                            .contains(&(*index as u32))
+                    })
+                    .map(|(_, event)| event.tick),
+            )
+            .collect();
+        self.set_midi_editor_filter_from_mixed_opaque_selection_ticks(
+            item_id,
+            selected_ticks,
+            false,
+        );
+    }
+
+    fn set_midi_editor_filter_from_mixed_controller_program_and_opaque_selection(
+        &mut self,
+        item_id: ItemId,
+    ) {
+        let Some(item) = self
+            .project
+            .midi_items()
+            .iter()
+            .find(|item| item.id() == item_id)
+        else {
+            return;
+        };
+        let selected_ticks = item
+            .controllers()
+            .iter()
+            .filter(|event| self.midi_editor_selected_controllers.contains(event))
+            .map(|event| event.tick)
+            .chain(
+                item.program_changes()
+                    .iter()
+                    .filter(|event| self.midi_editor_selected_program_changes.contains(event))
+                    .map(|event| event.tick),
+            )
             .chain(
                 item.opaque_events()
                     .iter()

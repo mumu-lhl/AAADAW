@@ -14836,6 +14836,215 @@ fn midi_editor_set_filter_from_program_poly_channel_pressure_and_opaque_selectio
 }
 
 #[test]
+fn midi_editor_set_filter_from_controller_program_and_opaque_selection_uses_native_criteria() {
+    let mut app = App::default();
+    let _ = app.update(Message::AddTrack);
+    let track_id = app.project.tracks()[0].id();
+    app.project
+        .apply(DawAction::InsertMidiItem {
+            track_id,
+            start_tick: 0,
+            length_ticks: 3_840,
+        })
+        .expect("test MIDI item should be inserted");
+    let item_id = app.project.midi_items()[0].id();
+    app.project
+        .apply(DawAction::AddMidiNotes {
+            item_id,
+            notes: vec![MidiNoteData {
+                channel: 0,
+                pitch: 60,
+                tick: 0,
+                duration: 240,
+                velocity: 90,
+                off_velocity: 0,
+            }],
+        })
+        .expect("out-of-range MIDI note should be inserted");
+    let controllers = [
+        MidiControllerData {
+            channel: 1,
+            controller: 7,
+            tick: 480,
+            value: 64,
+        },
+        MidiControllerData {
+            channel: 1,
+            controller: 7,
+            tick: 600,
+            value: 64,
+        },
+    ];
+    let programs = [
+        MidiProgramChangeData {
+            channel: 1,
+            tick: 600,
+            program: 8,
+        },
+        MidiProgramChangeData {
+            channel: 3,
+            tick: 840,
+            program: 32,
+        },
+    ];
+    let poly_aftertouches = [
+        MidiPolyAftertouchData {
+            channel: 1,
+            tick: 480,
+            note: 60,
+            value: 32,
+        },
+        MidiPolyAftertouchData {
+            channel: 3,
+            tick: 720,
+            note: 64,
+            value: 64,
+        },
+    ];
+    let channel_pressure = MidiChannelPressureData {
+        channel: 1,
+        tick: 720,
+        value: 48,
+    };
+    app.project
+        .apply(DawAction::SetMidiControllers {
+            item_id,
+            controllers: controllers.to_vec(),
+        })
+        .expect("test MIDI controllers should be inserted");
+    app.project
+        .apply(DawAction::SetMidiProgramChanges {
+            item_id,
+            program_changes: programs.to_vec(),
+        })
+        .expect("test Program Change events should be inserted");
+    app.project
+        .apply(DawAction::SetMidiPolyAftertouches {
+            item_id,
+            poly_aftertouches: poly_aftertouches.to_vec(),
+        })
+        .expect("test Poly Aftertouch events should be inserted");
+    app.project
+        .apply(DawAction::SetMidiChannelPressures {
+            item_id,
+            channel_pressures: vec![channel_pressure],
+        })
+        .expect("test Channel Pressure event should be inserted");
+    app.project
+        .apply(DawAction::SetMidiOpaqueEvents {
+            item_id,
+            events: vec![
+                MidiOpaqueEventData {
+                    tick: 720,
+                    order: 0,
+                    kind: MidiOpaqueEventKind::Meta {
+                        kind: 0x01,
+                        data: b"Unselected Text Meta in range".to_vec(),
+                    },
+                },
+                MidiOpaqueEventData {
+                    tick: 960,
+                    order: 1,
+                    kind: MidiOpaqueEventKind::Meta {
+                        kind: 0x01,
+                        data: b"Selected Text Meta".to_vec(),
+                    },
+                },
+                MidiOpaqueEventData {
+                    tick: 1_500,
+                    order: 2,
+                    kind: MidiOpaqueEventKind::SystemExclusive {
+                        status: 0xF0,
+                        data: vec![0x43, 0x12, 0xF7],
+                    },
+                },
+            ],
+        })
+        .expect("test opaque MIDI events should be inserted");
+    app.midi_editor_item_id = Some(item_id);
+    app.midi_editor_selected_controllers = HashSet::from([controllers[0]]);
+    app.midi_editor_selected_program_changes = HashSet::from([programs[0]]);
+    app.midi_editor_selected_opaque_events = HashSet::from([1]);
+    app.midi_editor_filter_channels = 1 << 4;
+    app.midi_editor_filter_channels_initialized = true;
+    app.midi_editor_event_type_filter = super::messages::MidiEditorEventTypeFilter::Notes;
+    app.midi_editor_event_filter_enabled = true;
+    app.midi_editor_event_list_filter_active = true;
+    let project_snapshot = app.project.snapshot();
+    let undo_history_len = app.app_undo_history.len();
+    let redo_history_len = app.app_redo_history.len();
+
+    let _ = app.update(Message::SetMidiEditorFilterFromSelection);
+
+    assert_eq!(
+        app.midi_editor_channel_selection,
+        super::messages::MidiEditorChannelSelection::AllChannels
+    );
+    assert_eq!(app.midi_editor_filter_channels, u16::MAX);
+    assert!(app.midi_editor_filter_channels_initialized);
+    assert_eq!(app.midi_editor_draw_channel, 0);
+    assert_eq!(
+        app.midi_editor_event_type_filter,
+        super::messages::MidiEditorEventTypeFilter::AllEvents
+    );
+    assert_eq!(
+        app.midi_editor_position_filter,
+        super::messages::MidiEditorPositionFilter {
+            enabled: true,
+            range_initialized: true,
+            low: 125_000_000,
+            high: 250_260_417,
+            repeat_every: super::messages::MidiEditorFilterRepeat::Measure,
+        }
+    );
+    assert_eq!(app.midi_editor_filter_position_low, "0.12500000");
+    assert_eq!(app.midi_editor_filter_position_high, "0.25026042");
+    assert!(!app.midi_editor_event_filter_enabled);
+    assert!(app.midi_editor_event_list_filter_active);
+    assert_eq!(
+        app.midi_editor_selected_controllers,
+        HashSet::from([controllers[0]])
+    );
+    assert_eq!(
+        app.midi_editor_selected_program_changes,
+        HashSet::from([programs[0]])
+    );
+    assert_eq!(app.midi_editor_selected_opaque_events, HashSet::from([1]));
+
+    let matching = app
+        .midi_editor_filter_event_selection(item_id)
+        .expect("MIDI item should be available for filtering");
+    assert!(matching.notes.is_empty());
+    assert_eq!(matching.controllers, HashSet::from(controllers));
+    assert_eq!(matching.program_changes, HashSet::from(programs));
+    assert_eq!(matching.poly_aftertouches, HashSet::from(poly_aftertouches));
+    assert_eq!(
+        matching.channel_pressures,
+        HashSet::from([channel_pressure])
+    );
+    assert_eq!(matching.opaque_events, HashSet::from([0, 1]));
+    let item = app.project.midi_items()[0].clone();
+    assert_eq!(super::view::midi_event_list_cursors(&app, &item).len(), 9);
+
+    let _ = app.update(Message::ToggleMidiEditorEventListFilter);
+    assert!(!app.midi_editor_event_list_filter_active);
+    assert!(!app.midi_editor_event_filter_enabled);
+    assert_eq!(super::view::midi_event_list_cursors(&app, &item).len(), 12);
+    assert_eq!(
+        app.midi_editor_selected_controllers,
+        HashSet::from([controllers[0]])
+    );
+    assert_eq!(
+        app.midi_editor_selected_program_changes,
+        HashSet::from([programs[0]])
+    );
+    assert_eq!(app.midi_editor_selected_opaque_events, HashSet::from([1]));
+    assert_eq!(app.project.snapshot(), project_snapshot);
+    assert_eq!(app.app_undo_history.len(), undo_history_len);
+    assert_eq!(app.app_redo_history.len(), redo_history_len);
+}
+
+#[test]
 fn midi_editor_set_filter_from_poly_aftertouch_selection_derives_native_criteria() {
     let mut app = App::default();
     let _ = app.update(Message::AddTrack);
