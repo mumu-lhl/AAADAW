@@ -1,0 +1,69 @@
+check_first-take target before deletion	position=0	exists=1	track_item_count=3
+check_first-take target before deletion	take_count=2	active_index=0
+check_first-take target before deletion	take_0	name=Take B	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-02.wav
+check_first-take target before deletion	take_1	name=Take A	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav
+check_last-take target before deletion	position=2	exists=1	track_item_count=3
+check_last-take target before deletion	take_count=2	active_index=1
+check_last-take target before deletion	take_0	name=Take A	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav
+check_last-take target before deletion	take_1	name=Take B	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-02.wav
+check_single-take target before deletion	position=4	exists=1	track_item_count=3
+check_single-take target before deletion	take_count=1	active_index=0
+check_single-take target before deletion	take_0	name=Single take	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav
+before_1	position=0	exists=1	track_item_count=3
+before_1	take_count=2	active_index=0
+before_1	take_0	name=Take B	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-02.wav
+before_1	take_1	name=Take A	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav
+before_2	position=2	exists=1	track_item_count=3
+before_2	take_count=2	active_index=1
+before_2	take_0	name=Take A	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav
+before_2	take_1	name=Take B	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-02.wav
+before_3	position=4	exists=1	track_item_count=3
+before_3	take_count=1	active_index=0
+before_3	take_0	name=Single take	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav
+check_first-take target after deletion	position=0	exists=1	track_item_count=2
+check_first-take target after deletion	take_count=1	active_index=0
+check_first-take target after deletion	take_0	name=Take A	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav
+check_last-take target after deletion	position=2	exists=1	track_item_count=2
+check_last-take target after deletion	take_count=1	active_index=0
+check_last-take target after deletion	take_0	name=Take A	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav
+after_3	position=4	exists=0	track_item_count=2
+undo_description	Delete active take
+check_first-take target after one Undo	position=0	exists=1	track_item_count=3
+check_first-take target after one Undo	take_count=2	active_index=0
+check_first-take target after one Undo	take_0	name=Take B	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-02.wav
+check_first-take target after one Undo	take_1	name=Take A	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav
+check_last-take target after one Undo	position=2	exists=1	track_item_count=3
+check_last-take target after one Undo	take_count=2	active_index=1
+check_last-take target after one Undo	take_0	name=Take A	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav
+check_last-take target after one Undo	take_1	name=Take B	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-02.wav
+check_single-take target after one Undo	position=4	exists=1	track_item_count=3
+check_single-take target after one Undo	take_count=1	active_index=0
+check_single-take target after one Undo	take_0	name=Single take	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav
+undo	position=0	exists=1	track_item_count=3
+undo	take_count=2	active_index=0
+undo	take_0	name=Take B	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-02.wav
+undo	take_1	name=Take A	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav
+undo	position=2	exists=1	track_item_count=3
+undo	take_count=2	active_index=1
+undo	take_0	name=Take A	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav
+undo	take_1	name=Take B	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-02.wav
+undo	position=4	exists=1	track_item_count=3
+undo	take_count=1	active_index=0
+undo	take_0	name=Single take	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav
+redo_description	Delete active take
+undo_complete	true
+check_first-take target after one Redo	position=0	exists=1	track_item_count=2
+check_first-take target after one Redo	take_count=1	active_index=0
+check_first-take target after one Redo	take_0	name=Take A	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav
+check_last-take target after one Redo	position=2	exists=1	track_item_count=2
+check_last-take target after one Redo	take_count=1	active_index=0
+check_last-take target after one Redo	take_0	name=Take A	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav
+redo_3	position=4	exists=0	track_item_count=2
+redo	position=0	exists=1	track_item_count=2
+redo	take_count=1	active_index=0
+redo	take_0	name=Take A	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav
+redo	position=2	exists=1	track_item_count=2
+redo	take_count=1	active_index=0
+redo	take_0	name=Take A	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav
+redo	position=4	exists=0	track_item_count=2
+action	40129	Take: Delete active take from items

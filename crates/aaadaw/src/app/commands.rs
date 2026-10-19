@@ -3121,11 +3121,11 @@ pub(super) fn dispatch(app: &mut App, command: CommandId) -> Task<Message> {
         CommandId::PasteItems => Message::PasteItems,
         CommandId::PasteAudioItemAsTake => Message::PasteAudioItemAsTake,
         CommandId::DeleteActiveAudioItemTake => {
-            let Some(item_id) = selected_audio_item_id(app) else {
-                app.status = "Select one audio item to delete its active take".to_owned();
+            if selected_audio_item_ids(app).is_empty() {
+                app.status = "Select an audio item to delete its active take".to_owned();
                 return Task::none();
-            };
-            Message::DeleteActiveAudioItemTake(item_id)
+            }
+            Message::DeleteSelectedAudioItemActiveTakes
         }
         CommandId::MoveActiveTakesToTop => {
             if move_active_take_to_top_targets(app).is_empty()
@@ -3863,12 +3863,14 @@ fn command_enabled(app: &App, kind: CommandKind, track: Option<TrackState>) -> b
             !project_edit_busy(app) && selected_audio_item_id(app).is_some()
         }
         CommandKind::DeleteActiveAudioItemTake => {
+            let selected_audio_ids = selected_audio_item_ids(app);
             !project_edit_busy(app)
-                && selected_audio_item_id(app).is_some_and(|item_id| {
-                    !app.project
+                && !selected_audio_ids.is_empty()
+                && !selected_audio_ids.iter().any(|item_id| {
+                    app.project
                         .tracks()
                         .iter()
-                        .any(|track| track.frozen_audio_item_id() == Some(item_id))
+                        .any(|track| track.frozen_audio_item_id() == Some(*item_id))
                 })
         }
         CommandKind::MoveActiveTakesToTop => {

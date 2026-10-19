@@ -629,6 +629,99 @@ fn delete_active_take_action_keeps_the_other_take_and_undo_redo_restore_it() {
 }
 
 #[test]
+fn deleting_active_takes_from_multiple_selected_audio_items_is_one_undoable_transaction() {
+    let mut app = App::default();
+    let _ = app.update(Message::AddTrack);
+    let track_id = app.project.tracks()[0].id();
+    for start_sample in [0, 48_000, 96_000] {
+        app.project
+            .apply(DawAction::InsertAudioItem {
+                track_id,
+                media_ref: "asset://take-a".to_owned(),
+                start_sample,
+                source_offset_samples: 0,
+                length_samples: 48_000,
+            })
+            .expect("audio item should be inserted");
+    }
+    let first_id = app.project.audio_items()[0].id();
+    let last_id = app.project.audio_items()[1].id();
+    let single_id = app.project.audio_items()[2].id();
+    for (item_id, media_ref, take_index) in [
+        (first_id, "asset://take-b", 0),
+        (last_id, "asset://take-b", 1),
+    ] {
+        let mut take = app
+            .project
+            .audio_items()
+            .iter()
+            .find(|item| item.id() == item_id)
+            .expect("multi-take target should exist")
+            .active_take_snapshot();
+        take.media_ref = media_ref.to_owned();
+        take.name = "Take B".to_owned();
+        app.project
+            .apply(DawAction::PasteAudioItemAsTake { item_id, take })
+            .expect("second take should be appended");
+        app.project
+            .apply(DawAction::SetAudioItemActiveTake {
+                item_id,
+                take_index,
+            })
+            .expect("target active take should be selected");
+    }
+    app.timeline.rebuild(&app.project);
+    app.timeline.select_items(vec![
+        (first_id, track_id),
+        (last_id, track_id),
+        (single_id, track_id),
+    ]);
+    let before = app.project.snapshot();
+    let history_cursor = app.project.history_cursor();
+    assert!(commands::is_enabled(
+        &app,
+        CommandId::DeleteActiveAudioItemTake
+    ));
+
+    let _ = app.update(Message::ExecuteCommand(
+        CommandId::DeleteActiveAudioItemTake,
+    ));
+    assert_eq!(app.project.history_cursor(), history_cursor + 1);
+    assert_eq!(app.status, "Selected active takes deleted");
+    assert_eq!(app.project.audio_items().len(), 2);
+    let remaining_first = app
+        .project
+        .audio_items()
+        .iter()
+        .find(|item| item.id() == first_id)
+        .expect("first multi-take item should remain");
+    assert_eq!(remaining_first.take_count(), 1);
+    assert_eq!(remaining_first.active_take_index(), 0);
+    assert_eq!(remaining_first.media_ref(), "asset://take-b");
+    let remaining_last = app
+        .project
+        .audio_items()
+        .iter()
+        .find(|item| item.id() == last_id)
+        .expect("last multi-take item should remain");
+    assert_eq!(remaining_last.take_count(), 1);
+    assert_eq!(remaining_last.active_take_index(), 0);
+    assert_eq!(remaining_last.media_ref(), "asset://take-a");
+    assert!(
+        app.project
+            .audio_items()
+            .iter()
+            .all(|item| item.id() != single_id)
+    );
+
+    let after = app.project.snapshot();
+    let _ = app.update(Message::Undo);
+    assert_eq!(app.project.snapshot(), before);
+    let _ = app.update(Message::Redo);
+    assert_eq!(app.project.snapshot(), after);
+}
+
+#[test]
 fn mobile_midi_editor_uses_main_window_and_back_returns_to_arrangement() {
     let window_id = iced::window::Id::unique();
     let mut app = App {

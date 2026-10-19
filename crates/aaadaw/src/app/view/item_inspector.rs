@@ -109,12 +109,6 @@ fn selected_item_view(app: &App, item_id: ItemId, touch_targets: bool) -> Elemen
                     Message::CropSelectedAudioItemsToActiveTake,
                 ));
             }
-            if app.can_delete_selected_audio_item_take() {
-                take_controls = take_controls.push(buttons.danger(
-                    "Delete active take",
-                    Message::DeleteActiveAudioItemTake(item_id),
-                ));
-            }
         }
         if multi_take_selection {
             take_controls = take_controls.push(buttons.action(
@@ -129,7 +123,6 @@ fn selected_item_view(app: &App, item_id: ItemId, touch_targets: bool) -> Elemen
         let mut actions = row![
             text(format!("Audio · {}", item.media_ref())).width(Length::Fill),
             buttons.action("Duplicate", Message::DuplicateAudioItem(item_id)),
-            buttons.danger("Delete", Message::DeleteAudioItem(item_id)),
         ]
         .spacing(if touch_targets {
             tokens::SPACING_SM
@@ -144,6 +137,19 @@ fn selected_item_view(app: &App, item_id: ItemId, touch_targets: bool) -> Elemen
         if status.is_some_and(can_relink_source) {
             actions = actions.push(buttons.action("Relink", Message::RelinkAudioItem(item_id)));
         }
+        if super::super::commands::is_enabled(
+            app,
+            super::super::commands::CommandId::DeleteActiveAudioItemTake,
+        ) {
+            let label = if app.timeline.selected_items.len() > 1 {
+                "Delete selected active takes"
+            } else {
+                "Delete active take"
+            };
+            actions =
+                actions.push(buttons.danger(label, Message::DeleteSelectedAudioItemActiveTakes));
+        }
+        actions = actions.push(buttons.danger("Delete", Message::DeleteAudioItem(item_id)));
         let position_controls = if let Some(query) = app.audio_item_start_edits.get(&item_id) {
             row![
                 text("Start sample"),

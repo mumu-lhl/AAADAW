@@ -28,6 +28,6 @@ Stable LLVM validation passed 847/847 AAADAW desktop tests and 373/373 Core/Stor
 
 ## Remaining parity work
 
-This does not complete `EDIT-TAKE-001`. Copy/paste and delete still operate on one selected audio item; recording-created takes, multi-selection for those actions, other take-order operations, and cross-project clipboard behavior remain open. The REAPER `Show all takes (when room)` lane layout, take selector in a full Media Item Properties window, and more-than-two-take interaction still need implementation and native measurement. Fixed lanes, comp areas, and cross-item comp remain open P5 work. The matrix entry therefore remains `in_progress`.
+This does not complete `EDIT-TAKE-001`. Copy/paste still operate on one selected audio item; delete now follows REAPER's multi-selection behavior in one transaction. Recording-created takes, multi-selection for other take actions, other take-order operations, and cross-project clipboard behavior remain open. The REAPER `Show all takes (when room)` lane layout, take selector in a full Media Item Properties window, and more-than-two-take interaction still need implementation and native measurement. Fixed lanes, comp areas, and cross-item comp remain open P5 work. The matrix entry therefore remains `in_progress`.
 
 The AAADAW screenshot, test results, binary identity, and artifact hashes are recorded alongside the native evidence in the fixture set.

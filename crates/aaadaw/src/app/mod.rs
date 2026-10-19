@@ -5449,7 +5449,7 @@ impl App {
                             | Message::DuplicateSelectedItems
                             | Message::DuplicateAudioItem(_)
                             | Message::DuplicateAudioItemTake(_)
-                            | Message::DeleteActiveAudioItemTake(_)
+                            | Message::DeleteSelectedAudioItemActiveTakes
                             | Message::MoveSelectedAudioItemActiveTakesToTop
                             | Message::CropSelectedAudioItemsToActiveTake
                             | Message::SwitchAudioItemTake(..)
@@ -9657,20 +9657,51 @@ impl App {
                     "Active take duplicated",
                 );
             }
-            Message::DeleteActiveAudioItemTake(item_id) => {
+            Message::DeleteSelectedAudioItemActiveTakes => {
                 if commands::project_edit_busy(self) {
                     self.status =
                         "Stop playback or finish the current project operation before deleting takes"
                             .to_owned();
                     return Task::none();
                 }
-                if !self.can_delete_selected_audio_item_take() {
+                let selected_audio_ids = commands::selected_audio_item_ids(self);
+                if selected_audio_ids.is_empty() {
+                    self.status = "Select an audio item to delete its active take".to_owned();
                     return Task::none();
                 }
-                self.audio_item_start_edits.remove(&item_id);
+                if selected_audio_ids.iter().any(|item_id| {
+                    self.project
+                        .tracks()
+                        .iter()
+                        .any(|track| track.frozen_audio_item_id() == Some(*item_id))
+                }) {
+                    self.status = "Frozen render items cannot have takes deleted".to_owned();
+                    return Task::none();
+                }
+                for item_id in &selected_audio_ids {
+                    self.audio_item_start_edits.remove(item_id);
+                }
+                let mut actions = selected_audio_ids
+                    .iter()
+                    .map(|item_id| DawAction::DeleteActiveAudioItemTake { item_id: *item_id })
+                    .collect::<Vec<_>>();
+                let action = if actions.len() == 1 {
+                    actions
+                        .pop()
+                        .expect("one selected audio item action is present")
+                } else {
+                    DawAction::BatchTransaction {
+                        tx_id: self.revision,
+                        actions,
+                    }
+                };
                 self.apply_action(
-                    DawAction::DeleteActiveAudioItemTake { item_id },
-                    "Active take deleted",
+                    action,
+                    if selected_audio_ids.len() == 1 {
+                        "Active take deleted"
+                    } else {
+                        "Selected active takes deleted"
+                    },
                 );
             }
             Message::MoveSelectedAudioItemActiveTakesToTop => {
@@ -19105,17 +19136,6 @@ impl App {
 
     pub(super) fn can_copy_selected_audio_item(&self) -> bool {
         self.selected_audio_item_for_take_clipboard().is_some()
-    }
-
-    pub(super) fn can_delete_selected_audio_item_take(&self) -> bool {
-        self.selected_audio_item_for_take_clipboard()
-            .is_some_and(|item| {
-                !self
-                    .project
-                    .tracks()
-                    .iter()
-                    .any(|track| track.frozen_audio_item_id() == Some(item.id()))
-            })
     }
 
     fn copy_selected_audio_item(&mut self) {
