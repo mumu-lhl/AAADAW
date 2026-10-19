@@ -2500,6 +2500,9 @@ impl Project {
         ) || matches!(
             &event,
             ProjectEvent::TrackRazorEditAreasChanged { before, after } if before == after
+        ) || matches!(
+            &event,
+            ProjectEvent::AudioItemChanged { before, after } if before == after
         ) {
             return Ok(());
         }
@@ -2699,6 +2702,24 @@ impl Project {
                     loop_source: item.loop_source,
                     source_section_start_samples: item.source_section_start_samples,
                     source_section_length_samples: item.source_section_length_samples,
+                    active_take_index: item.active_take_index,
+                    other_takes: item
+                        .other_takes
+                        .iter()
+                        .map(|take| crate::AudioItemTakeSnapshot {
+                            index: take.index,
+                            media_ref: take.media_ref.clone(),
+                            name: take.name.clone(),
+                            source_offset_samples: take.source_offset_samples,
+                            phase_inverted: take.phase_inverted,
+                            loop_source: take.loop_source,
+                            source_section_start_samples: take.source_section_start_samples,
+                            source_section_length_samples: take.source_section_length_samples,
+                            volume: take.volume,
+                            pan: take.pan,
+                            playback_rate: take.playback_rate,
+                        })
+                        .collect(),
                 })
                 .collect(),
             midi_items: self
@@ -2997,6 +3018,29 @@ impl Project {
         let mut midi_items = Vec::with_capacity(snapshot.midi_items.len());
         let mut max_item_id = None;
         for item in snapshot.audio_items {
+            let take_count = item.other_takes.len().saturating_add(1);
+            let mut take_indices = HashSet::with_capacity(item.other_takes.len());
+            let valid_other_takes = (item.active_take_index as usize) < take_count
+                && item.other_takes.iter().all(|take| {
+                    (take.index as usize) < take_count
+                        && take.index != item.active_take_index
+                        && take_indices.insert(take.index)
+                        && !take.media_ref.trim().is_empty()
+                        && take.name.chars().count() <= 128
+                        && take.volume.is_finite()
+                        && (0.0..=crate::MAX_AUDIO_ITEM_TAKE_VOLUME).contains(&take.volume)
+                        && take.pan.is_finite()
+                        && (-1.0..=1.0).contains(&take.pan)
+                        && take.playback_rate.is_finite()
+                        && take.playback_rate > 0.0
+                        && valid_audio_source_offset(
+                            take.source_offset_samples,
+                            take.loop_source,
+                            take.source_section_start_samples,
+                            take.source_section_length_samples,
+                        )
+                })
+                && take_indices.len() == item.other_takes.len();
             if !item_ids.insert(item.id)
                 || !track_ids.contains(&item.track_id)
                 || item.media_ref.trim().is_empty()
@@ -3017,6 +3061,7 @@ impl Project {
                     item.source_section_start_samples,
                     item.source_section_length_samples,
                 )
+                || !valid_other_takes
             {
                 return Err(SnapshotError::InvalidProjectData);
             }
@@ -3039,6 +3084,24 @@ impl Project {
                 loop_source: item.loop_source,
                 source_section_start_samples: item.source_section_start_samples,
                 source_section_length_samples: item.source_section_length_samples,
+                active_take_index: item.active_take_index,
+                other_takes: item
+                    .other_takes
+                    .into_iter()
+                    .map(|take| crate::AudioItemTake {
+                        index: take.index,
+                        media_ref: take.media_ref,
+                        name: take.name,
+                        source_offset_samples: take.source_offset_samples,
+                        phase_inverted: take.phase_inverted,
+                        loop_source: take.loop_source,
+                        source_section_start_samples: take.source_section_start_samples,
+                        source_section_length_samples: take.source_section_length_samples,
+                        volume: take.volume,
+                        pan: take.pan,
+                        playback_rate: take.playback_rate,
+                    })
+                    .collect(),
             });
         }
         let mut note_ids = HashSet::new();
@@ -4156,6 +4219,8 @@ impl Project {
                     take_volume: 1.0,
                     take_pan: 0.0,
                     take_playback_rate: 1.0,
+                    other_takes: Vec::new(),
+                    active_take_index: 0,
                     id: ItemId::from_raw(ids.next_item_id),
                     track_id,
                     media_ref,
@@ -4379,6 +4444,8 @@ impl Project {
                     take_volume: 1.0,
                     take_pan: 0.0,
                     take_playback_rate: 1.0,
+                    other_takes: Vec::new(),
+                    active_take_index: 0,
                     id: ItemId::from_raw(ids.next_item_id),
                     track_id,
                     media_ref,
@@ -4450,6 +4517,8 @@ impl Project {
                     take_volume: 1.0,
                     take_pan: 0.0,
                     take_playback_rate: 1.0,
+                    other_takes: Vec::new(),
+                    active_take_index: 0,
                     id: ItemId::from_raw(ids.next_item_id),
                     track_id,
                     media_ref,
@@ -4604,6 +4673,45 @@ impl Project {
                     before: item.take_playback_rate,
                     after: rate,
                 }
+            }
+            DawAction::DuplicateAudioItemTake { item_id } => {
+                let before = state
+                    .audio_items
+                    .iter()
+                    .find(|item| item.id == item_id)
+                    .ok_or(ActionError::AudioItemNotFound { item_id })?;
+                if is_frozen_render(state, item_id) {
+                    return Err(ActionError::FrozenRenderCannotBeEdited { item_id });
+                }
+                let before = before.clone();
+                let mut after = before.clone();
+                if !after.duplicate_active_take() {
+                    return Err(ActionError::AudioTakeIndexExhausted);
+                }
+                ProjectEvent::AudioItemChanged { before, after }
+            }
+            DawAction::SetAudioItemActiveTake {
+                item_id,
+                take_index,
+            } => {
+                let before = state
+                    .audio_items
+                    .iter()
+                    .find(|item| item.id == item_id)
+                    .ok_or(ActionError::AudioItemNotFound { item_id })?;
+                if is_frozen_render(state, item_id) {
+                    return Err(ActionError::FrozenRenderCannotBeEdited { item_id });
+                }
+                if (take_index as usize) >= before.take_count() {
+                    return Err(ActionError::AudioTakeNotFound {
+                        item_id,
+                        take_index,
+                    });
+                }
+                let before = before.clone();
+                let mut after = before.clone();
+                after.switch_active_take(take_index);
+                ProjectEvent::AudioItemChanged { before, after }
             }
             DawAction::DuplicateAudioItemAt {
                 item_id,

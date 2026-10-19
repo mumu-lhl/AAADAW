@@ -27,7 +27,7 @@ use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 /// Latest database schema version understood by this release.
-pub const CURRENT_SCHEMA_VERSION: u32 = 65;
+pub const CURRENT_SCHEMA_VERSION: u32 = 66;
 
 const MIGRATION_29: &str = "ALTER TABLE project_meta ADD COLUMN start_measure INTEGER NOT NULL DEFAULT 1 CHECK(start_measure BETWEEN -2147483648 AND 2147483647);";
 const MIGRATION_30: &str = "ALTER TABLE project_meta ADD COLUMN bpm_basis INTEGER NOT NULL DEFAULT 1 CHECK(bpm_basis BETWEEN 0 AND 5);";
@@ -430,6 +430,7 @@ CREATE TABLE IF NOT EXISTS audio_items (
     take_playback_rate REAL NOT NULL DEFAULT 1.0 CHECK (take_playback_rate > 0.0),
     muted INTEGER NOT NULL DEFAULT 0 CHECK (muted IN (0, 1)),
     phase_inverted INTEGER NOT NULL DEFAULT 0 CHECK (phase_inverted IN (0, 1)),
+    active_take_index INTEGER NOT NULL DEFAULT 0 CHECK (active_take_index >= 0),
     UNIQUE (track_id, position)
 );
 CREATE INDEX IF NOT EXISTS audio_items_by_project_position ON audio_items(position, id);
@@ -611,6 +612,24 @@ const MIGRATION_65_MIDI_NOTE_OFF_ORDER: &str = r#"
 ALTER TABLE midi_event_order
     ADD COLUMN note_off_order INTEGER
     CHECK (note_off_order IS NULL OR note_off_order BETWEEN 0 AND 4294967295);
+"#;
+const MIGRATION_66_AUDIO_TAKES: &str = r#"
+CREATE TABLE IF NOT EXISTS audio_item_takes (
+    item_id INTEGER NOT NULL REFERENCES audio_items(id) ON DELETE CASCADE,
+    take_index INTEGER NOT NULL CHECK(take_index >= 0),
+    media_ref TEXT NOT NULL CHECK(length(trim(media_ref)) > 0),
+    name TEXT NOT NULL,
+    source_offset_samples INTEGER NOT NULL,
+    phase_inverted INTEGER NOT NULL CHECK(phase_inverted IN (0,1)),
+    loop_source INTEGER NOT NULL CHECK(loop_source IN (0,1)),
+    source_section_start_samples INTEGER CHECK(source_section_start_samples IS NULL OR source_section_start_samples >= 0),
+    source_section_length_samples INTEGER CHECK(source_section_length_samples IS NULL OR source_section_length_samples > 0),
+    take_volume REAL NOT NULL CHECK(take_volume >= 0.0 AND take_volume <= 16.0),
+    take_pan REAL NOT NULL CHECK(take_pan >= -1.0 AND take_pan <= 1.0),
+    take_playback_rate REAL NOT NULL CHECK(take_playback_rate > 0.0),
+    PRIMARY KEY(item_id, take_index),
+    CHECK((source_section_start_samples IS NULL) = (source_section_length_samples IS NULL))
+);
 "#;
 
 /// SQLite persistence failures, including incompatible project files.
@@ -3234,6 +3253,16 @@ fn ensure_audio_item_loop_section_start_column(
     Ok(())
 }
 
+fn ensure_audio_item_take_schema(connection: &Connection) -> Result<(), StorageError> {
+    if !table_has_column(connection, "audio_items", "active_take_index")? {
+        connection.execute_batch(
+            "ALTER TABLE audio_items ADD COLUMN active_take_index INTEGER NOT NULL DEFAULT 0 CHECK(active_take_index >= 0);",
+        )?;
+    }
+    connection.execute_batch(MIGRATION_66_AUDIO_TAKES)?;
+    Ok(())
+}
+
 fn ensure_audio_item_mute_column(connection: &Connection) -> Result<(), StorageError> {
     if !table_has_column(connection, "audio_items", "muted")? {
         connection.execute_batch(
@@ -3643,6 +3672,16 @@ fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
                     transaction.execute_batch(MIGRATION_65_MIDI_NOTE_OFF_ORDER)?;
                 }
             }
+            66 => {
+                if table_exists(&transaction, "audio_items")?
+                    && !table_has_column(&transaction, "audio_items", "active_take_index")?
+                {
+                    transaction.execute_batch(
+                        "ALTER TABLE audio_items ADD COLUMN active_take_index INTEGER NOT NULL DEFAULT 0 CHECK(active_take_index >= 0);",
+                    )?;
+                }
+                transaction.execute_batch(MIGRATION_66_AUDIO_TAKES)?;
+            }
             missing => return Err(StorageError::MissingMigration(missing - 1)),
         }
         transaction.pragma_update(None, "user_version", next_version)?;
@@ -3652,6 +3691,7 @@ fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
     connection.execute_batch(AUDIO_ITEMS_TABLE)?;
     ensure_audio_item_loop_columns(connection)?;
     ensure_audio_item_loop_section_start_column(connection)?;
+    ensure_audio_item_take_schema(connection)?;
     ensure_audio_item_mute_column(connection)?;
     ensure_audio_item_phase_column(connection)?;
     ensure_audio_item_signed_source_offset_column(connection)?;
@@ -3680,6 +3720,7 @@ fn write_snapshot(
     transaction.execute("DELETE FROM items", [])?;
     transaction.execute("DELETE FROM audio_item_fade_curves", [])?;
     transaction.execute("DELETE FROM audio_item_fades", [])?;
+    transaction.execute("DELETE FROM audio_item_takes", [])?;
     transaction.execute("DELETE FROM audio_items", [])?;
     transaction.execute("DELETE FROM tracks", [])?;
     transaction.execute("DELETE FROM tempo_points", [])?;
@@ -3841,8 +3882,8 @@ fn write_snapshot(
         transaction.execute(
             "INSERT INTO audio_items(id, track_id, position, media_ref, name, start_sample, \
              source_offset_samples, signed_source_offset_samples, length_samples, volume, take_volume, take_pan, take_playback_rate, muted, phase_inverted, loop_source, \
-             source_section_start_samples, source_section_length_samples) \
-             VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)",
+             source_section_start_samples, source_section_length_samples, active_take_index) \
+             VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)",
             params![
                 to_sql_integer(item.id)?,
                 to_sql_integer(item.track_id)?,
@@ -3866,8 +3907,31 @@ fn write_snapshot(
                 item.source_section_length_samples
                     .map(to_sql_integer)
                     .transpose()?,
+                i64::from(item.active_take_index),
             ],
         )?;
+        for take in &item.other_takes {
+            transaction.execute(
+                "INSERT INTO audio_item_takes(item_id, take_index, media_ref, name, source_offset_samples, \
+                 phase_inverted, loop_source, source_section_start_samples, source_section_length_samples, \
+                 take_volume, take_pan, take_playback_rate) \
+                 VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+                params![
+                    to_sql_integer(item.id)?,
+                    i64::from(take.index),
+                    take.media_ref,
+                    take.name,
+                    take.source_offset_samples,
+                    take.phase_inverted,
+                    take.loop_source,
+                    take.source_section_start_samples.map(to_sql_integer).transpose()?,
+                    take.source_section_length_samples.map(to_sql_integer).transpose()?,
+                    f64::from(take.volume),
+                    f64::from(take.pan),
+                    take.playback_rate,
+                ],
+            )?;
+        }
         transaction.execute(
             "INSERT INTO audio_item_fades(item_id, fade_in_samples, fade_out_samples, fade_in_shape, fade_out_shape) VALUES(?1, ?2, ?3, ?4, ?5)",
             params![to_sql_integer(item.id)?, item.fades.fade_in.length_samples(), item.fades.fade_out.length_samples(), legacy_fade_code(item.fades.fade_in.curve()), legacy_fade_code(item.fades.fade_out.curve())],
@@ -4677,10 +4741,93 @@ fn read_audio_items(connection: &Connection) -> Result<Vec<AudioItemSnapshot>, S
     if !curves.is_empty() {
         return Err(StorageError::Snapshot(SnapshotError::InvalidProjectData));
     }
+    let mut other_takes = HashMap::<u64, Vec<aaadaw_core::AudioItemTakeSnapshot>>::new();
+    let mut take_statement = connection.prepare(
+        "SELECT item_id, take_index, media_ref, name, source_offset_samples, phase_inverted, \
+         loop_source, source_section_start_samples, source_section_length_samples, take_volume, \
+         take_pan, take_playback_rate FROM audio_item_takes ORDER BY item_id, take_index",
+    )?;
+    let take_rows = take_statement
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, i64>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, String>(3)?,
+                row.get::<_, i64>(4)?,
+                row.get::<_, i64>(5)?,
+                row.get::<_, i64>(6)?,
+                row.get::<_, Option<i64>>(7)?,
+                row.get::<_, Option<i64>>(8)?,
+                row.get::<_, f64>(9)?,
+                row.get::<_, f64>(10)?,
+                row.get::<_, f64>(11)?,
+            ))
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    for (
+        item_id,
+        take_index,
+        media_ref,
+        name,
+        source_offset_samples,
+        phase_inverted_value,
+        loop_source_value,
+        source_section_start_samples,
+        source_section_length_samples,
+        volume,
+        pan,
+        playback_rate,
+    ) in take_rows
+    {
+        let invalid = || StorageError::Snapshot(SnapshotError::InvalidProjectData);
+        let phase_inverted = match phase_inverted_value {
+            0 => false,
+            1 => true,
+            _ => return Err(invalid()),
+        };
+        let loop_source = match loop_source_value {
+            0 => false,
+            1 => true,
+            _ => return Err(invalid()),
+        };
+        if !volume.is_finite()
+            || !(0.0..=16.0).contains(&volume)
+            || !pan.is_finite()
+            || !(-1.0..=1.0).contains(&pan)
+            || !playback_rate.is_finite()
+            || playback_rate <= 0.0
+        {
+            return Err(invalid());
+        }
+        let source_section_start_samples =
+            source_section_start_samples.map(from_sql_u64).transpose()?;
+        let source_section_length_samples = source_section_length_samples
+            .map(from_sql_u64)
+            .transpose()?;
+        if source_section_start_samples.is_some() != source_section_length_samples.is_some() {
+            return Err(invalid());
+        }
+        other_takes.entry(from_sql_u64(item_id)?).or_default().push(
+            aaadaw_core::AudioItemTakeSnapshot {
+                index: u32::try_from(from_sql_u64(take_index)?).map_err(|_| invalid())?,
+                media_ref,
+                name,
+                source_offset_samples,
+                phase_inverted,
+                loop_source,
+                source_section_start_samples,
+                source_section_length_samples,
+                volume: volume as f32,
+                pan: pan as f32,
+                playback_rate,
+            },
+        );
+    }
     let mut statement = connection.prepare(
         "SELECT id, track_id, position, media_ref, name, start_sample, signed_source_offset_samples, \
          length_samples, volume, take_volume, take_pan, take_playback_rate, muted, phase_inverted, loop_source, \
-         source_section_start_samples, source_section_length_samples \
+         source_section_start_samples, source_section_length_samples, active_take_index \
          FROM audio_items ORDER BY position",
     )?;
     let rows = statement
@@ -4703,6 +4850,7 @@ fn read_audio_items(connection: &Connection) -> Result<Vec<AudioItemSnapshot>, S
                 row.get::<_, i64>(14)?,
                 row.get::<_, Option<i64>>(15)?,
                 row.get::<_, Option<i64>>(16)?,
+                row.get::<_, i64>(17)?,
             ))
         })?
         .collect::<Result<Vec<_>, _>>()?;
@@ -4727,6 +4875,7 @@ fn read_audio_items(connection: &Connection) -> Result<Vec<AudioItemSnapshot>, S
                 loop_source,
                 source_section_start,
                 source_section_length,
+                active_take_index,
             )| {
                 let _ = from_sql_u64(position)?;
                 if !volume.is_finite() || !(0.0..=16.0).contains(&volume) {
@@ -4782,11 +4931,17 @@ fn read_audio_items(connection: &Connection) -> Result<Vec<AudioItemSnapshot>, S
                     loop_source,
                     source_section_start_samples,
                     source_section_length_samples,
+                    active_take_index: u32::try_from(from_sql_u64(active_take_index)?)
+                        .map_err(|_| StorageError::Snapshot(SnapshotError::InvalidProjectData))?,
+                    other_takes: other_takes.remove(&from_sql_u64(id)?).unwrap_or_default(),
                 })
             },
         )
         .collect::<Result<Vec<_>, StorageError>>()?;
     if !fades.is_empty() {
+        return Err(StorageError::Snapshot(SnapshotError::InvalidProjectData));
+    }
+    if !other_takes.is_empty() {
         return Err(StorageError::Snapshot(SnapshotError::InvalidProjectData));
     }
     Ok(items)

@@ -110,6 +110,13 @@ pub enum ActionError {
     InvalidAudioItemTakePan,
     /// An audio item's active take playback rate must be finite and greater than zero.
     InvalidAudioItemTakePlaybackRate,
+    /// The requested take index does not exist on the audio item.
+    AudioTakeNotFound {
+        item_id: ItemId,
+        take_index: u32,
+    },
+    /// No further take can be inserted within the supported index range.
+    AudioTakeIndexExhausted,
     /// An audio item's project start and duration exceed the sample range.
     InvalidAudioItemPosition,
     /// The requested audio item does not exist in the project.
@@ -307,6 +314,14 @@ impl fmt::Display for ActionError {
             }
             Self::InvalidAudioItemTakePlaybackRate => {
                 formatter.write_str("active take playback rate must be finite and greater than zero")
+            }
+            Self::AudioTakeNotFound { item_id, take_index } => write!(
+                formatter,
+                "audio take {take_index} was not found on item {}",
+                item_id.value()
+            ),
+            Self::AudioTakeIndexExhausted => {
+                formatter.write_str("audio item take index space is exhausted")
             }
             Self::InvalidAudioItemLength => {
                 formatter.write_str("audio item length must be positive")

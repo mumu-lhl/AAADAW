@@ -22,7 +22,7 @@ mod timecode;
 mod track;
 
 pub use action::{DawAction, MidiNoteQuantizeOperation};
-pub use audio::{AudioItem, MAX_AUDIO_ITEM_TAKE_VOLUME, MAX_AUDIO_ITEM_VOLUME};
+pub use audio::{AudioItem, AudioItemTake, MAX_AUDIO_ITEM_TAKE_VOLUME, MAX_AUDIO_ITEM_VOLUME};
 pub use error::ActionError;
 pub use fades::{AudioFade, AudioItemFades, FadeCurve, FadeCurveParameters, FadeShape};
 pub use markers::{MAX_PROJECT_MARKER_NUMBER, MarkerId, ProjectMarker};
@@ -45,8 +45,8 @@ pub use project::{FxParameterChange, MAX_FX_PARAMETER_AUTOMATION_POINTS, Project
 pub use project_notes::ProjectNotes;
 pub use regions::{MAX_PROJECT_REGION_NUMBER, MAX_PROJECT_REGION_TICKS, ProjectRegion, RegionId};
 pub use snapshot::{
-    AudioItemSnapshot, MeterPointSnapshot, MidiItemSnapshot, MidiNoteSnapshot,
-    ProjectMarkerSnapshot, ProjectRegionSnapshot, ProjectSnapshot, SnapshotError,
+    AudioItemSnapshot, AudioItemTakeSnapshot, MeterPointSnapshot, MidiItemSnapshot,
+    MidiNoteSnapshot, ProjectMarkerSnapshot, ProjectRegionSnapshot, ProjectSnapshot, SnapshotError,
     TempoPointSnapshot, TrackFxParameterAutomationLaneSnapshot,
     TrackFxParameterAutomationPointSnapshot, TrackFxParameterValueSnapshot, TrackFxPluginSnapshot,
     TrackInstrumentSnapshot, TrackSnapshot,

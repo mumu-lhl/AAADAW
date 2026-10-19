@@ -2,7 +2,7 @@ use super::action_macros::ActionMacro;
 use super::shortcut::{Shortcut, parse_bindings, serialize_bindings};
 use super::{App, MainMenu, MainWorkspace, Message, PathPickerTarget};
 use crate::timeline::{DeleteFocusTarget, HoveredItemSelectionMode, TimelineEvent};
-use aaadaw_core::TrackId;
+use aaadaw_core::{ItemId, TrackId};
 use iced::Task;
 use iced::keyboard::key::{Code, Named};
 use iced::keyboard::{Key, Modifiers};
@@ -108,6 +108,9 @@ pub(crate) enum CommandId {
     ToggleSelectionOfItemUnderMouse,
     DuplicateSelectedItem,
     DuplicateSelectedAudioItem,
+    DuplicateActiveTake,
+    SwitchItemsToNextTake,
+    SwitchItemsToPreviousTake,
     DuplicateSelectedMidiItem,
     DeleteSelectedItems,
     DeleteByFocus,
@@ -260,6 +263,9 @@ enum CommandKind {
     ToggleSelectionOfItemUnderMouse,
     DuplicateSelectedItem,
     DuplicateSelectedAudioItem,
+    DuplicateActiveTake,
+    SwitchItemsToNextTake,
+    SwitchItemsToPreviousTake,
     DuplicateSelectedMidiItem,
     DeleteSelectedItems,
     DeleteByFocus,
@@ -1460,6 +1466,36 @@ const COMMANDS: &[CommandDefinition] = &[
         separator_before: false,
     },
     CommandDefinition {
+        kind: CommandKind::DuplicateActiveTake,
+        menu: Some(MainMenu::Item),
+        category: "Take",
+        label: "Duplicate active take",
+        aliases: &["duplicate take", "take duplicate active"],
+        shortcuts: &[],
+        destructive: false,
+        separator_before: true,
+    },
+    CommandDefinition {
+        kind: CommandKind::SwitchItemsToNextTake,
+        menu: Some(MainMenu::Item),
+        category: "Take",
+        label: "Switch items to next take",
+        aliases: &["next take", "switch to next take"],
+        shortcuts: &[],
+        destructive: false,
+        separator_before: false,
+    },
+    CommandDefinition {
+        kind: CommandKind::SwitchItemsToPreviousTake,
+        menu: Some(MainMenu::Item),
+        category: "Take",
+        label: "Switch items to previous take",
+        aliases: &["previous take", "switch to previous take"],
+        shortcuts: &[],
+        destructive: false,
+        separator_before: false,
+    },
+    CommandDefinition {
         kind: CommandKind::DuplicateSelectedMidiItem,
         menu: None,
         category: "Item",
@@ -1997,6 +2033,9 @@ fn macro_step_supported(kind: CommandKind) -> bool {
             | CommandKind::AddItemUnderMouseToSelection
             | CommandKind::ToggleSelectionOfItemUnderMouse
             | CommandKind::DuplicateSelectedAudioItem
+            | CommandKind::DuplicateActiveTake
+            | CommandKind::SwitchItemsToNextTake
+            | CommandKind::SwitchItemsToPreviousTake
             | CommandKind::DuplicateSelectedMidiItem
             | CommandKind::PasteItems
             | CommandKind::CopyLoopOfSelectedArea
@@ -2868,6 +2907,9 @@ fn command_kind_id(kind: CommandKind) -> &'static str {
         CommandKind::ToggleSelectionOfItemUnderMouse => "item.toggle-under-mouse-selection",
         CommandKind::DuplicateSelectedItem => "item.duplicate",
         CommandKind::DuplicateSelectedAudioItem => "item.duplicate-audio",
+        CommandKind::DuplicateActiveTake => "take.duplicate-active",
+        CommandKind::SwitchItemsToNextTake => "take.switch-next",
+        CommandKind::SwitchItemsToPreviousTake => "take.switch-previous",
         CommandKind::DuplicateSelectedMidiItem => "item.duplicate-midi",
         CommandKind::DeleteSelectedItems => "item.delete-selected",
         CommandKind::DeleteByFocus => "edit.delete-focused",
@@ -3141,6 +3183,27 @@ pub(super) fn dispatch(app: &mut App, command: CommandId) -> Task<Message> {
             };
             Message::DuplicateAudioItem(item_id)
         }
+        CommandId::DuplicateActiveTake => {
+            let Some(item_id) = selected_audio_item_id(app) else {
+                app.status = "Select one audio item to duplicate its active take".to_owned();
+                return Task::none();
+            };
+            Message::DuplicateAudioItemTake(item_id)
+        }
+        CommandId::SwitchItemsToNextTake => {
+            let Some(item_id) = selected_audio_item_id(app) else {
+                app.status = "Select one audio item with multiple takes".to_owned();
+                return Task::none();
+            };
+            Message::SwitchAudioItemTake(item_id, true)
+        }
+        CommandId::SwitchItemsToPreviousTake => {
+            let Some(item_id) = selected_audio_item_id(app) else {
+                app.status = "Select one audio item with multiple takes".to_owned();
+                return Task::none();
+            };
+            Message::SwitchAudioItemTake(item_id, false)
+        }
         CommandId::DuplicateSelectedMidiItem => {
             let selected_midi = app.timeline.selected_item.filter(|item_id| {
                 app.timeline.selected_items.len() == 1
@@ -3381,6 +3444,17 @@ fn entry_for(
             .map(|alias| (*alias).to_owned())
             .collect(),
     }
+}
+
+fn selected_audio_item_id(app: &App) -> Option<ItemId> {
+    app.timeline.selected_item.filter(|item_id| {
+        app.timeline.selected_items.len() == 1
+            && app
+                .project
+                .audio_items()
+                .iter()
+                .any(|item| item.id() == *item_id)
+    })
 }
 
 fn command_enabled(app: &App, kind: CommandKind, track: Option<TrackState>) -> bool {
@@ -3655,6 +3729,19 @@ fn command_enabled(app: &App, kind: CommandKind, track: Option<TrackState>) -> b
                         .any(|item| item.id() == item_id)
                 })
         }
+        CommandKind::DuplicateActiveTake => {
+            !project_edit_busy(app) && selected_audio_item_id(app).is_some()
+        }
+        CommandKind::SwitchItemsToNextTake | CommandKind::SwitchItemsToPreviousTake => {
+            !project_edit_busy(app)
+                && selected_audio_item_id(app).is_some_and(|item_id| {
+                    app.project
+                        .audio_items()
+                        .iter()
+                        .find(|item| item.id() == item_id)
+                        .is_some_and(|item| item.take_count() > 1)
+                })
+        }
         CommandKind::DuplicateSelectedMidiItem => {
             !project_edit_busy(app)
                 && app.timeline.selected_items.len() == 1
@@ -3921,6 +4008,9 @@ fn command_id(kind: CommandKind) -> CommandId {
         CommandKind::ToggleSelectionOfItemUnderMouse => CommandId::ToggleSelectionOfItemUnderMouse,
         CommandKind::DuplicateSelectedItem => CommandId::DuplicateSelectedItem,
         CommandKind::DuplicateSelectedAudioItem => CommandId::DuplicateSelectedAudioItem,
+        CommandKind::DuplicateActiveTake => CommandId::DuplicateActiveTake,
+        CommandKind::SwitchItemsToNextTake => CommandId::SwitchItemsToNextTake,
+        CommandKind::SwitchItemsToPreviousTake => CommandId::SwitchItemsToPreviousTake,
         CommandKind::DuplicateSelectedMidiItem => CommandId::DuplicateSelectedMidiItem,
         CommandKind::DeleteSelectedItems => CommandId::DeleteSelectedItems,
         CommandKind::DeleteByFocus => CommandId::DeleteByFocus,

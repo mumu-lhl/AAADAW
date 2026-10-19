@@ -54,6 +54,50 @@ fn transport_details_can_toggle_during_project_io() {
 }
 
 #[test]
+fn audio_take_actions_switch_with_undo_and_require_multiple_takes() {
+    let mut app = App::default();
+    let _ = app.update(Message::AddTrack);
+    let track_id = app.project.tracks()[0].id();
+    app.project
+        .apply(DawAction::InsertAudioItem {
+            track_id,
+            media_ref: "asset://audio-take-actions".to_owned(),
+            start_sample: 0,
+            source_offset_samples: 0,
+            length_samples: 48_000,
+        })
+        .unwrap();
+    let item_id = app.project.audio_items()[0].id();
+    app.timeline.rebuild(&app.project);
+    app.timeline.select_items(vec![(item_id, track_id)]);
+
+    assert!(!commands::is_enabled(
+        &app,
+        CommandId::SwitchItemsToNextTake
+    ));
+    let _ = app.update(Message::ExecuteCommand(CommandId::DuplicateActiveTake));
+    let item = &app.project.audio_items()[0];
+    assert_eq!(item.take_count(), 2);
+    assert_eq!(item.active_take_index(), 1);
+    assert!(commands::is_enabled(&app, CommandId::SwitchItemsToNextTake));
+
+    let _ = app.update(Message::ExecuteCommand(CommandId::SwitchItemsToNextTake));
+    assert_eq!(app.project.audio_items()[0].active_take_index(), 0);
+    let _ = app.update(Message::Undo);
+    assert_eq!(app.project.audio_items()[0].active_take_index(), 1);
+    let _ = app.update(Message::Redo);
+    assert_eq!(app.project.audio_items()[0].active_take_index(), 0);
+
+    let _ = app.update(Message::Undo);
+    let _ = app.update(Message::Undo);
+    assert_eq!(app.project.audio_items()[0].take_count(), 1);
+    assert!(!commands::is_enabled(
+        &app,
+        CommandId::SwitchItemsToPreviousTake
+    ));
+}
+
+#[test]
 fn mobile_midi_editor_uses_main_window_and_back_returns_to_arrangement() {
     let window_id = iced::window::Id::unique();
     let mut app = App {

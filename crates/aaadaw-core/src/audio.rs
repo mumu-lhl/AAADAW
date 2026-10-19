@@ -12,6 +12,39 @@ pub const MAX_AUDIO_ITEM_VOLUME: f32 = 16.0;
 /// Maximum linear volume for an audio item's active take.
 pub const MAX_AUDIO_ITEM_TAKE_VOLUME: f32 = 16.0;
 
+/// An inactive audio take stored alongside the active take's playback fields.
+#[derive(Clone, Debug, PartialEq)]
+pub struct AudioItemTake {
+    pub(crate) index: u32,
+    pub(crate) media_ref: String,
+    pub(crate) name: String,
+    pub(crate) source_offset_samples: i64,
+    pub(crate) phase_inverted: bool,
+    pub(crate) loop_source: bool,
+    pub(crate) source_section_start_samples: Option<u64>,
+    pub(crate) source_section_length_samples: Option<u64>,
+    pub(crate) volume: f32,
+    pub(crate) pan: f32,
+    pub(crate) playback_rate: f64,
+}
+
+impl AudioItemTake {
+    /// Take's zero-based position in the item's ordered take list.
+    pub fn index(&self) -> u32 {
+        self.index
+    }
+
+    /// Opaque reference to the take's media source.
+    pub fn media_ref(&self) -> &str {
+        &self.media_ref
+    }
+
+    /// User-assigned take name.
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct AudioItem {
     pub(crate) id: ItemId,
@@ -31,6 +64,8 @@ pub struct AudioItem {
     pub(crate) take_volume: f32,
     pub(crate) take_pan: f32,
     pub(crate) take_playback_rate: f64,
+    pub(crate) other_takes: Vec<AudioItemTake>,
+    pub(crate) active_take_index: u32,
 }
 
 impl AudioItem {
@@ -120,8 +155,87 @@ impl AudioItem {
         self.take_playback_rate
     }
 
+    /// Number of takes stored on this item.
+    pub fn take_count(&self) -> usize {
+        self.other_takes.len() + 1
+    }
+
+    /// Zero-based index of the take currently used for playback.
+    pub fn active_take_index(&self) -> u32 {
+        self.active_take_index
+    }
+
+    /// Inactive takes in their original list positions.
+    pub fn other_takes(&self) -> &[AudioItemTake] {
+        &self.other_takes
+    }
+
     /// Returns the exclusive end position in project samples.
     pub fn end_sample(&self) -> u64 {
         self.start_sample + self.length_samples
+    }
+
+    pub(crate) fn active_take(&self) -> AudioItemTake {
+        AudioItemTake {
+            index: self.active_take_index,
+            media_ref: self.media_ref.clone(),
+            name: self.name.clone(),
+            source_offset_samples: self.source_offset_samples,
+            phase_inverted: self.phase_inverted,
+            loop_source: self.loop_source,
+            source_section_start_samples: self.source_section_start_samples,
+            source_section_length_samples: self.source_section_length_samples,
+            volume: self.take_volume,
+            pan: self.take_pan,
+            playback_rate: self.take_playback_rate,
+        }
+    }
+
+    pub(crate) fn set_active_take(&mut self, take: &AudioItemTake) {
+        self.media_ref.clone_from(&take.media_ref);
+        self.name.clone_from(&take.name);
+        self.source_offset_samples = take.source_offset_samples;
+        self.phase_inverted = take.phase_inverted;
+        self.loop_source = take.loop_source;
+        self.source_section_start_samples = take.source_section_start_samples;
+        self.source_section_length_samples = take.source_section_length_samples;
+        self.take_volume = take.volume;
+        self.take_pan = take.pan;
+        self.take_playback_rate = take.playback_rate;
+        self.active_take_index = take.index;
+    }
+
+    pub(crate) fn switch_active_take(&mut self, index: u32) -> bool {
+        if index == self.active_take_index {
+            return false;
+        }
+        let Some(position) = self.other_takes.iter().position(|take| take.index == index) else {
+            return false;
+        };
+        let mut previous = self.active_take();
+        let next = self.other_takes.remove(position);
+        previous.index = self.active_take_index;
+        self.set_active_take(&next);
+        self.other_takes.push(previous);
+        self.other_takes.sort_unstable_by_key(|take| take.index);
+        true
+    }
+
+    pub(crate) fn duplicate_active_take(&mut self) -> bool {
+        let Some(next_active_index) = self.active_take_index.checked_add(1) else {
+            return false;
+        };
+        for take in &mut self.other_takes {
+            let Some(index) = take.index.checked_add(1) else {
+                return false;
+            };
+            take.index = index;
+        }
+        let mut duplicate = self.active_take();
+        duplicate.index = 0;
+        self.other_takes.push(duplicate);
+        self.other_takes.sort_unstable_by_key(|take| take.index);
+        self.active_take_index = next_active_index;
+        true
     }
 }

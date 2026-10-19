@@ -1391,6 +1391,8 @@ pub(crate) enum Message {
     SnapSelectedItemsToNearestPoint,
     DuplicateSelectedItems,
     DuplicateAudioItem(ItemId),
+    DuplicateAudioItemTake(ItemId),
+    SwitchAudioItemTake(ItemId, bool),
     DuplicateMidiItem(ItemId),
     SplitSelectedItemsAtCursor,
     SplitSelectedItemsAtTimeSelection,

@@ -3648,3 +3648,58 @@ fn native_fade_mode_roundtrip_and_schema25_legacy_shape_preservation() {
     store.close().unwrap();
     remove_database(&path);
 }
+
+#[test]
+fn audio_item_takes_round_trip_and_schema_65_migrates_with_one_active_take() {
+    let path = project_path();
+    let mut project = Project::new();
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Audio".into(),
+        })
+        .unwrap();
+    let track_id = project.tracks()[0].id();
+    project
+        .apply(DawAction::InsertAudioItem {
+            track_id,
+            media_ref: "asset://take-a".into(),
+            start_sample: 0,
+            source_offset_samples: 0,
+            length_samples: 48_000,
+        })
+        .unwrap();
+    let item_id = project.audio_items()[0].id();
+    project
+        .apply(DawAction::DuplicateAudioItemTake { item_id })
+        .unwrap();
+    let mut snapshot = project.snapshot();
+    snapshot.audio_items[0].other_takes[0].media_ref = "asset://take-b".into();
+    snapshot.audio_items[0].other_takes[0].name = "Take B".into();
+    let mut project = Project::from_snapshot(snapshot).unwrap();
+    project
+        .apply(DawAction::SetAudioItemActiveTake {
+            item_id,
+            take_index: 0,
+        })
+        .unwrap();
+
+    let mut store = ProjectStore::open(&path).unwrap();
+    store.save(&project).unwrap();
+    assert_eq!(store.load().unwrap().snapshot(), project.snapshot());
+    store.close().unwrap();
+
+    let connection = Connection::open(&path).unwrap();
+    connection
+        .execute_batch("DROP TABLE audio_item_takes; ALTER TABLE audio_items DROP COLUMN active_take_index; PRAGMA user_version = 65;")
+        .unwrap();
+    drop(connection);
+    let store = ProjectStore::open(&path).unwrap();
+    let migrated = store.load().unwrap();
+    assert_eq!(migrated.audio_items()[0].take_count(), 1);
+    assert_eq!(migrated.audio_items()[0].active_take_index(), 0);
+    assert_eq!(migrated.audio_items()[0].media_ref(), "asset://take-b");
+    assert_eq!(migrated.audio_items()[0].name(), "Take B");
+    store.close().unwrap();
+    remove_database(&path);
+}

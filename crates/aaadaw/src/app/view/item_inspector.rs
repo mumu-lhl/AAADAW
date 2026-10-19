@@ -62,6 +62,35 @@ fn selected_item_view(app: &App, item_id: ItemId, touch_targets: bool) -> Elemen
         .find(|item| item.id() == item_id)
     {
         let status = app.audio_asset_source_statuses.get(item.media_ref());
+        let take_count = item.take_count();
+        let take_name = if item.name().is_empty() {
+            item.media_ref()
+        } else {
+            item.name()
+        };
+        let mut take_controls = row![
+            text(format!(
+                "Take {}/{} · {}",
+                item.active_take_index() + 1,
+                take_count,
+                take_name
+            ))
+            .width(Length::Fill),
+            buttons.action("Duplicate take", Message::DuplicateAudioItemTake(item_id)),
+        ]
+        .spacing(if touch_targets {
+            tokens::SPACING_SM
+        } else {
+            tokens::SPACING_COMPACT
+        });
+        if take_count > 1 {
+            take_controls = take_controls
+                .push(buttons.action(
+                    "Previous take",
+                    Message::SwitchAudioItemTake(item_id, false),
+                ))
+                .push(buttons.action("Next take", Message::SwitchAudioItemTake(item_id, true)));
+        }
         let mut actions = row![
             text(format!("Audio · {}", item.media_ref())).width(Length::Fill),
             buttons.action("Duplicate", Message::DuplicateAudioItem(item_id)),
@@ -120,6 +149,7 @@ fn selected_item_view(app: &App, item_id: ItemId, touch_targets: bool) -> Elemen
         }
         column![
             action_row(actions, touch_targets),
+            action_row(take_controls, touch_targets),
             row![text(format!(
                 "Position {start_seconds:.3} s · Length {duration_seconds:.3} s"
             )),]

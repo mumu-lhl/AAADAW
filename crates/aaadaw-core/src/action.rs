@@ -358,6 +358,15 @@ pub enum DawAction {
         item_id: ItemId,
         rate: f64,
     },
+    /// Insert a copy of the active take at the front of the ordered take list.
+    DuplicateAudioItemTake {
+        item_id: ItemId,
+    },
+    /// Activate an existing take using its zero-based position in the item.
+    SetAudioItemActiveTake {
+        item_id: ItemId,
+        take_index: u32,
+    },
     /// Duplicate the complete audio Item at a new track and position.
     DuplicateAudioItemAt {
         item_id: ItemId,

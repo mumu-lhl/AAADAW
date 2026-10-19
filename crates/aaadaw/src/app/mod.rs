@@ -1693,6 +1693,7 @@ fn action_rebuilds_playback_graph(action: &DawAction) -> bool {
         | DawAction::DeleteTempoPoint { .. }
         | DawAction::SetTempoCurve { .. }
         | DawAction::SetTrackFxParameterAutomation { .. }
+        | DawAction::SetAudioItemActiveTake { .. }
         | DawAction::SetMidiItemPosition { .. }
         | DawAction::EditMidiItemPlacement { .. }
         | DawAction::SetMidiItemContents { .. }
@@ -5438,6 +5439,8 @@ impl App {
                             | Message::EncloseMediaItemsInRazorEdit
                             | Message::DuplicateSelectedItems
                             | Message::DuplicateAudioItem(_)
+                            | Message::DuplicateAudioItemTake(_)
+                            | Message::SwitchAudioItemTake(..)
                             | Message::DuplicateMidiItem(_)
                             | Message::SplitSelectedItemsAtCursor
                             | Message::SplitSelectedItemsAtTimeSelection
@@ -9633,6 +9636,41 @@ impl App {
             Message::DuplicateAudioItem(item_id) => {
                 let action = duplicate_audio_item(&self.project, item_id);
                 self.apply_edit(action, "Audio item duplicated");
+            }
+            Message::DuplicateAudioItemTake(item_id) => {
+                self.apply_action(
+                    DawAction::DuplicateAudioItemTake { item_id },
+                    "Active take duplicated",
+                );
+            }
+            Message::SwitchAudioItemTake(item_id, next) => {
+                let Some(item) = self
+                    .project
+                    .audio_items()
+                    .iter()
+                    .find(|item| item.id() == item_id)
+                else {
+                    self.status = "Audio item no longer exists".to_owned();
+                    return Task::none();
+                };
+                let take_count = item.take_count() as u64;
+                if take_count <= 1 {
+                    self.status = "Audio item has only one take".to_owned();
+                    return Task::none();
+                }
+                let active = u64::from(item.active_take_index());
+                let take_index = if next {
+                    (active + 1) % take_count
+                } else {
+                    (active + take_count - 1) % take_count
+                } as u32;
+                self.apply_action(
+                    DawAction::SetAudioItemActiveTake {
+                        item_id,
+                        take_index,
+                    },
+                    "Active take changed",
+                );
             }
             Message::DuplicateMidiItem(item_id) => {
                 self.apply_action(

@@ -189,6 +189,23 @@ pub struct AudioItemSnapshot {
     pub loop_source: bool,
     pub source_section_start_samples: Option<u64>,
     pub source_section_length_samples: Option<u64>,
+    pub active_take_index: u32,
+    pub other_takes: Vec<AudioItemTakeSnapshot>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct AudioItemTakeSnapshot {
+    pub index: u32,
+    pub media_ref: String,
+    pub name: String,
+    pub source_offset_samples: i64,
+    pub phase_inverted: bool,
+    pub loop_source: bool,
+    pub source_section_start_samples: Option<u64>,
+    pub source_section_length_samples: Option<u64>,
+    pub volume: f32,
+    pub pan: f32,
+    pub playback_rate: f64,
 }
 
 #[derive(Clone, Debug, PartialEq)]

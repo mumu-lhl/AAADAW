@@ -15,6 +15,17 @@ const REAPER_ACTIONS: &[(&str, u32, &str)] = &[
     ("file.close-all-projects", 40886, "File: Close all projects"),
     ("item.delete-selected", 40006, "Item: Remove items"),
     (
+        "take.duplicate-active",
+        40639,
+        "Take: Duplicate active take",
+    ),
+    ("take.switch-next", 40125, "Take: Switch items to next take"),
+    (
+        "take.switch-previous",
+        40126,
+        "Take: Switch items to previous take",
+    ),
+    (
         "item.split-at-cursor",
         40012,
         "Item: Split items at edit or play cursor (select right)",
@@ -674,6 +685,9 @@ mod tests {
             "KEY 1 115 40886 0\t\t # Main : F4 : File: Close all projects\n",
             "KEY 1 114 40860 0\t\t # Main : F3 : Close current project tab\n",
             "KEY 1 116 40071 0\t\t # Main : F5 : Options: Show snap/grid settings\n",
+            "KEY 1 121 40639 0\t\t # Main : F10 : Take: Duplicate active take\n",
+            "KEY 1 122 40125 0\t\t # Main : F11 : Take: Switch items to next take\n",
+            "KEY 1 123 40126 0\t\t # Main : F12 : Take: Switch items to previous take\n",
             "KEY 1 117 40001 0\t\t # Main : F6 : Track: Insert new track\n",
             "KEY 1 118 1042 0\t\t # Main : F7 : Track: Cycle folder collapsed state\n",
             "KEY 1 119 40005 0\t\t # Main : F8 : Track: Remove tracks\n",
@@ -683,7 +697,7 @@ mod tests {
             "KEY 1 120 1016 0\t\t # Main : F9 : Transport: Stop\n",
         );
         let bindings = parse_reaper(contents).unwrap();
-        assert_eq!(bindings.len(), 11);
+        assert_eq!(bindings.len(), 14);
         for (action, key) in [
             ("actions.show-list", "F2"),
             ("file.close-project", "F3"),
@@ -696,6 +710,9 @@ mod tests {
             ("track.toggle-record-arm", "R"),
             ("track.toggle-solo", "S"),
             ("transport.stop-playback", "F9"),
+            ("take.duplicate-active", "F10"),
+            ("take.switch-next", "F11"),
+            ("take.switch-previous", "F12"),
         ] {
             assert_eq!(bindings[action], key, "{action}");
         }
@@ -704,7 +721,7 @@ mod tests {
 
     #[test]
     fn reaper_main_mapping_table_round_trips_all_unique_native_action_ids() {
-        assert_eq!(REAPER_ACTIONS.len(), 102);
+        assert_eq!(REAPER_ACTIONS.len(), 105);
         let mut action_ids = REAPER_ACTIONS
             .iter()
             .map(|(_, action_id, _)| *action_id)
