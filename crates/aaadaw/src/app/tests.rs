@@ -26,9 +26,9 @@ use aaadaw_app::PlaybackBackend;
 use aaadaw_core::{
     DawAction, ItemId, MidiChannelPressureData, MidiControllerData, MidiFileFormat,
     MidiFileProjectImport, MidiImportedMarker, MidiImportedMeterPoint, MidiImportedTempoPoint,
-    MidiImportedTrack, MidiItemPosition, MidiNoteData, MidiOpaqueEventData, MidiOpaqueEventKind,
-    MidiPitchBendData, MidiPolyAftertouchData, MidiProgramChangeData, Project, RazorEditArea,
-    TrackFxPlugin, TrackId,
+    MidiImportedTrack, MidiItemPosition, MidiItemTakeSnapshot, MidiNoteData, MidiOpaqueEventData,
+    MidiOpaqueEventKind, MidiPitchBendData, MidiPolyAftertouchData, MidiProgramChangeData, Project,
+    RazorEditArea, TrackFxPlugin, TrackId,
 };
 use aaadaw_media::{AudioStreamDecoder, AudioWaveform};
 use aaadaw_storage::{ArrangementViewState, ProjectSessionLock, ProjectStore};
@@ -709,7 +709,7 @@ fn exploding_selected_audio_takes_in_place_preserves_order_and_is_one_undo_step(
     ));
 
     assert_eq!(app.project.history_cursor(), history_cursor + 1);
-    assert_eq!(app.status, "Selected audio items exploded in place");
+    assert_eq!(app.status, "Selected item takes exploded in place");
     assert_eq!(app.project.audio_items().len(), 6);
     let names = app
         .project
@@ -749,6 +749,97 @@ fn exploding_selected_audio_takes_in_place_preserves_order_and_is_one_undo_step(
     let _ = app.update(Message::Undo);
     assert_eq!(app.project.snapshot(), before);
     assert!(app.timeline.selected_items.is_empty());
+    let _ = app.update(Message::Redo);
+    assert_eq!(app.project.snapshot(), after);
+    assert!(app.timeline.selected_items.is_empty());
+}
+
+#[test]
+fn exploding_mixed_audio_and_midi_takes_is_one_undo_step() {
+    let mut app = App::default();
+    app.project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Mixed takes".into(),
+        })
+        .unwrap();
+    let track_id = app.project.tracks()[0].id();
+    app.project
+        .apply(DawAction::InsertAudioItem {
+            track_id,
+            media_ref: "asset://mixed-take-a".into(),
+            start_sample: 0,
+            source_offset_samples: 0,
+            length_samples: 48_000,
+        })
+        .unwrap();
+    let audio_id = app.project.audio_items()[0].id();
+    app.project
+        .apply(DawAction::DuplicateAudioItemTake { item_id: audio_id })
+        .unwrap();
+    app.project
+        .apply(DawAction::InsertMidiItem {
+            track_id,
+            start_tick: 0,
+            length_ticks: 1_920,
+        })
+        .unwrap();
+    let midi_id = app.project.midi_items()[0].id();
+    let mut snapshot = app.project.snapshot();
+    let midi = &mut snapshot.midi_items[0];
+    midi.active_take_index = 1;
+    midi.name = "MIDI take B".into();
+    midi.other_takes = vec![MidiItemTakeSnapshot {
+        index: 0,
+        name: "MIDI take A".into(),
+        source_offset_ticks: 0,
+        loop_source: false,
+        source_loop_length_ticks: midi.length_ticks,
+        notes: Vec::new(),
+        controllers: Vec::new(),
+        pitch_bends: Vec::new(),
+        program_changes: Vec::new(),
+        poly_aftertouches: Vec::new(),
+        channel_pressures: Vec::new(),
+        opaque_events: Vec::new(),
+        event_order: Vec::new(),
+    }];
+    app.project = Project::from_snapshot(snapshot).unwrap();
+    app.timeline.rebuild(&app.project);
+    app.timeline
+        .select_items(vec![(audio_id, track_id), (midi_id, track_id)]);
+    let before = app.project.snapshot();
+    let history_cursor = app.project.history_cursor();
+
+    assert!(commands::is_enabled(
+        &app,
+        CommandId::ExplodeAudioItemTakesInPlace
+    ));
+    let _ = app.update(Message::ExecuteCommand(
+        CommandId::ExplodeAudioItemTakesInPlace,
+    ));
+
+    assert_eq!(app.project.history_cursor(), history_cursor + 1);
+    assert_eq!(app.status, "Selected item takes exploded in place");
+    assert_eq!(app.project.audio_items().len(), 2);
+    assert_eq!(app.project.midi_items().len(), 2);
+    assert!(
+        app.project
+            .audio_items()
+            .iter()
+            .all(|item| item.take_count() == 1)
+    );
+    assert!(
+        app.project
+            .midi_items()
+            .iter()
+            .all(|item| item.take_count() == 1)
+    );
+    assert!(app.timeline.selected_items.is_empty());
+    let after = app.project.snapshot();
+
+    let _ = app.update(Message::Undo);
+    assert_eq!(app.project.snapshot(), before);
     let _ = app.update(Message::Redo);
     assert_eq!(app.project.snapshot(), after);
     assert!(app.timeline.selected_items.is_empty());

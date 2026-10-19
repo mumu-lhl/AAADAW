@@ -19696,46 +19696,107 @@ impl App {
                     .to_owned();
             return;
         }
-        let Some(item_ids) = commands::audio_items_for_explode_takes(self) else {
-            self.status = "Select audio items to explode their takes".to_owned();
+        let Some(item_ids) = commands::media_items_for_explode_takes(self) else {
+            self.status = "Select media items to explode their takes".to_owned();
             return;
         };
-        let explodable_ids = item_ids
+        let audio_ids = item_ids
             .iter()
             .filter(|item_id| {
                 self.project
                     .audio_items()
                     .iter()
                     .find(|item| item.id() == **item_id)
-                    .is_some_and(|item| item.take_count() > 1)
+                    .is_some()
             })
             .copied()
             .collect::<Vec<_>>();
-        if explodable_ids.is_empty() {
+        let midi_ids = item_ids
+            .iter()
+            .filter(|item_id| {
+                self.project
+                    .midi_items()
+                    .iter()
+                    .find(|item| item.id() == **item_id)
+                    .is_some()
+            })
+            .copied()
+            .collect::<Vec<_>>();
+        let has_multi_take_audio = audio_ids.iter().any(|item_id| {
+            self.project
+                .audio_items()
+                .iter()
+                .find(|item| item.id() == *item_id)
+                .is_some_and(|item| item.take_count() > 1)
+        });
+        let has_multi_take_midi = midi_ids.iter().any(|item_id| {
+            self.project
+                .midi_items()
+                .iter()
+                .find(|item| item.id() == *item_id)
+                .is_some_and(|item| item.take_count() > 1)
+        });
+        if !has_multi_take_audio && !has_multi_take_midi {
             self.timeline.clear_selected_items();
-            self.status = "No multi-take audio items selected".to_owned();
+            self.status = "No multi-take items selected".to_owned();
             return;
         }
-        if explodable_ids.iter().any(|item_id| {
+        if audio_ids.iter().any(|item_id| {
             self.project
-                .tracks()
+                .audio_items()
                 .iter()
-                .any(|track| track.frozen_audio_item_id() == Some(*item_id))
+                .find(|item| item.id() == *item_id)
+                .is_some_and(|item| {
+                    item.take_count() > 1
+                        && self
+                            .project
+                            .tracks()
+                            .iter()
+                            .any(|track| track.frozen_audio_item_id() == Some(*item_id))
+                })
+        }) || midi_ids.iter().any(|item_id| {
+            self.project
+                .midi_items()
+                .iter()
+                .find(|item| item.id() == *item_id)
+                .is_some_and(|item| {
+                    item.take_count() > 1
+                        && self
+                            .project
+                            .tracks()
+                            .iter()
+                            .any(|track| track.id() == item.track_id() && track.is_frozen())
+                })
         }) {
-            self.status = "Frozen render items cannot be exploded".to_owned();
+            self.status = "Frozen items cannot be exploded".to_owned();
             return;
         }
 
-        for item_id in &explodable_ids {
+        for item_id in &audio_ids {
             self.audio_item_start_edits.remove(item_id);
         }
-        self.apply_action(
-            DawAction::ExplodeAudioItemTakesInPlace {
+        let mut actions = Vec::with_capacity(2);
+        if has_multi_take_audio {
+            actions.push(DawAction::ExplodeAudioItemTakesInPlace {
                 tx_id: self.revision,
-                item_ids,
-            },
-            "Selected audio items exploded in place",
-        );
+                item_ids: audio_ids,
+            });
+        }
+        if has_multi_take_midi {
+            actions.push(DawAction::ExplodeMidiItemTakesInPlace {
+                tx_id: self.revision,
+                item_ids: midi_ids,
+            });
+        }
+        let action = if actions.len() == 1 {
+            actions.pop().expect("one take explode action exists")
+        } else {
+            DawAction::BatchTransaction {
+                tx_id: self.revision,
+                actions,
+            }
+        };
+        self.apply_action(action, "Selected item takes exploded in place");
         self.timeline.clear_selected_items();
     }
 

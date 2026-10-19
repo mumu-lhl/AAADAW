@@ -46,8 +46,8 @@ pub use project_notes::ProjectNotes;
 pub use regions::{MAX_PROJECT_REGION_NUMBER, MAX_PROJECT_REGION_TICKS, ProjectRegion, RegionId};
 pub use snapshot::{
     AudioItemSnapshot, AudioItemTakeSnapshot, MeterPointSnapshot, MidiItemSnapshot,
-    MidiNoteSnapshot, ProjectMarkerSnapshot, ProjectRegionSnapshot, ProjectSnapshot, SnapshotError,
-    TempoPointSnapshot, TrackFxParameterAutomationLaneSnapshot,
+    MidiItemTakeSnapshot, MidiNoteSnapshot, ProjectMarkerSnapshot, ProjectRegionSnapshot,
+    ProjectSnapshot, SnapshotError, TempoPointSnapshot, TrackFxParameterAutomationLaneSnapshot,
     TrackFxParameterAutomationPointSnapshot, TrackFxParameterValueSnapshot, TrackFxPluginSnapshot,
     TrackInstrumentSnapshot, TrackSnapshot,
 };

@@ -384,6 +384,11 @@ pub enum DawAction {
         tx_id: u64,
         item_ids: Vec<ItemId>,
     },
+    /// Split every selected multi-take MIDI item into ordered single-take items.
+    ExplodeMidiItemTakesInPlace {
+        tx_id: u64,
+        item_ids: Vec<ItemId>,
+    },
     /// Activate an existing take using its zero-based position in the item.
     SetAudioItemActiveTake {
         item_id: ItemId,

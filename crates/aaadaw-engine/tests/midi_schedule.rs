@@ -1,7 +1,8 @@
 use aaadaw_core::{
     DawAction, MidiChannelPressureData, MidiControllerData, MidiFileImportOptions,
-    MidiItemPosition, MidiNoteData, MidiOpaqueEventData, MidiOpaqueEventKind, MidiPitchBendData,
-    MidiPolyAftertouchData, MidiProgramChangeData, Project, TempoCurve, decode_standard_midi,
+    MidiItemPosition, MidiItemTakeSnapshot, MidiNoteData, MidiNoteSnapshot, MidiOpaqueEventData,
+    MidiOpaqueEventKind, MidiPitchBendData, MidiPolyAftertouchData, MidiProgramChangeData, Project,
+    TempoCurve, decode_standard_midi,
 };
 use aaadaw_engine::{
     MidiEventKind, MidiEventPlan, MidiScheduleError, MidiSegmentCursor, ScheduledMidiEvent,
@@ -42,6 +43,53 @@ fn project_with_note(pitch: u8, tick: u64, duration: u64) -> (Project, aaadaw_co
         })
         .expect("MIDI note insertion should succeed");
     (project, track_id)
+}
+
+#[test]
+fn midi_playback_compiles_only_the_active_take() {
+    let (project, track_id) = project_with_note(60, 0, 120);
+    let mut snapshot = project.snapshot();
+    let item = &mut snapshot.midi_items[0];
+    item.active_take_index = 1;
+    item.notes[0].data.pitch = 64;
+    item.other_takes = vec![MidiItemTakeSnapshot {
+        index: 0,
+        name: "Inactive take".into(),
+        source_offset_ticks: 0,
+        loop_source: false,
+        source_loop_length_ticks: item.length_ticks,
+        notes: vec![MidiNoteSnapshot {
+            id: 10_000,
+            data: MidiNoteData {
+                pitch: 72,
+                channel: 0,
+                tick: 0,
+                duration: 120,
+                velocity: 100,
+                off_velocity: 0,
+            },
+        }],
+        controllers: Vec::new(),
+        pitch_bends: Vec::new(),
+        program_changes: Vec::new(),
+        poly_aftertouches: Vec::new(),
+        channel_pressures: Vec::new(),
+        opaque_events: Vec::new(),
+        event_order: Vec::new(),
+    }];
+    let project = Project::from_snapshot(snapshot).unwrap();
+    let plan = MidiEventPlan::compile(&project).unwrap();
+    let mut events = [None; 4];
+
+    assert_eq!(plan.events_for_block(0, 12_000, &mut events).unwrap(), 2);
+    let events = events.into_iter().flatten().collect::<Vec<_>>();
+    assert_eq!(
+        events.iter().map(|event| event.pitch).collect::<Vec<_>>(),
+        [64, 64]
+    );
+    assert!(events.iter().all(|event| event.track_id == track_id));
+    assert_eq!(events[0].kind, MidiEventKind::NoteOn);
+    assert_eq!(events[1].kind, MidiEventKind::NoteOff);
 }
 
 #[test]

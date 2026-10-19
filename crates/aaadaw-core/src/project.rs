@@ -1,8 +1,9 @@
+use crate::midi::MidiItemTake;
 use crate::snapshot::{
-    AudioItemSnapshot, MeterPointSnapshot, MidiItemSnapshot, MidiNoteSnapshot, ProjectSnapshot,
-    SnapshotError, TempoPointSnapshot, TrackFxParameterAutomationLaneSnapshot,
-    TrackFxParameterAutomationPointSnapshot, TrackFxParameterValueSnapshot, TrackFxPluginSnapshot,
-    TrackSnapshot,
+    AudioItemSnapshot, MeterPointSnapshot, MidiItemSnapshot, MidiItemTakeSnapshot,
+    MidiNoteSnapshot, ProjectSnapshot, SnapshotError, TempoPointSnapshot,
+    TrackFxParameterAutomationLaneSnapshot, TrackFxParameterAutomationPointSnapshot,
+    TrackFxParameterValueSnapshot, TrackFxPluginSnapshot, TrackSnapshot,
 };
 use crate::timebase::{MeterMap, TempoMap};
 use crate::{
@@ -2053,10 +2054,27 @@ fn duplicate_midi_item_to_track_at_position(
         });
         next_note_id = next_id;
     }
+    let mut other_takes = original.other_takes.clone();
+    for take in &mut other_takes {
+        let mut notes = Vec::with_capacity(take.notes.len());
+        for note in take.notes.iter() {
+            let next_id = next_note_id
+                .checked_add(1)
+                .ok_or(ActionError::NoteIdExhausted)?;
+            notes.push(MidiNote {
+                id: NoteId::from_raw(next_note_id),
+                data: note.data,
+            });
+            next_note_id = next_id;
+        }
+        take.notes = Arc::new(notes);
+    }
     let duplicate = MidiItem {
         id: ItemId::from_raw(ids.next_item_id),
         track_id,
         name: original.name.clone(),
+        active_take_index: original.active_take_index,
+        other_takes,
         start_tick: start_position.tick(),
         start_tick_subtick: start_position.subtick(),
         source_offset_ticks: original.source_offset_ticks,
@@ -2079,6 +2097,39 @@ fn duplicate_midi_item_to_track_at_position(
         index: state.midi_items.len(),
         item: duplicate,
     })
+}
+
+fn midi_item_from_take(original: &MidiItem, take: MidiItemTakeSnapshot, id: ItemId) -> MidiItem {
+    MidiItem {
+        id,
+        track_id: original.track_id,
+        name: take.name,
+        active_take_index: 0,
+        other_takes: Vec::new(),
+        start_tick: original.start_tick,
+        start_tick_subtick: original.start_tick_subtick,
+        source_offset_ticks: take.source_offset_ticks,
+        loop_source: take.loop_source,
+        source_loop_length_ticks: take.source_loop_length_ticks,
+        length_ticks: original.length_ticks,
+        muted: original.muted,
+        notes: Arc::new(
+            take.notes
+                .into_iter()
+                .map(|note| MidiNote {
+                    id: NoteId::from_raw(note.id),
+                    data: note.data,
+                })
+                .collect(),
+        ),
+        controllers: Arc::new(take.controllers),
+        pitch_bends: Arc::new(take.pitch_bends),
+        program_changes: Arc::new(take.program_changes),
+        poly_aftertouches: Arc::new(take.poly_aftertouches),
+        channel_pressures: Arc::new(take.channel_pressures),
+        opaque_events: Arc::new(take.opaque_events),
+        event_order: Arc::new(take.event_order),
+    }
 }
 
 impl Project {
@@ -2728,6 +2779,12 @@ impl Project {
                     id: item.id.value(),
                     track_id: item.track_id.value(),
                     name: item.name.clone(),
+                    active_take_index: item.active_take_index,
+                    other_takes: item
+                        .take_snapshots()
+                        .into_iter()
+                        .filter(|take| take.index != item.active_take_index)
+                        .collect(),
                     start_tick: item.start_tick,
                     start_tick_subtick: item.start_tick_subtick,
                     source_offset_ticks: item.source_offset_ticks,
@@ -3105,6 +3162,22 @@ impl Project {
         let mut note_ids = HashSet::new();
         let mut max_note_id = None;
         for item in snapshot.midi_items {
+            let take_count = item.other_takes.len().saturating_add(1);
+            let mut take_indices = HashSet::with_capacity(item.other_takes.len());
+            let valid_other_takes = (item.active_take_index as usize) < take_count
+                && item.other_takes.iter().all(|take| {
+                    (take.index as usize) < take_count
+                        && take.index != item.active_take_index
+                        && take_indices.insert(take.index)
+                        && !take.name.trim().is_empty()
+                        && take.name.chars().count() <= 128
+                        && take.source_loop_length_ticks > 0
+                        && take
+                            .source_offset_ticks
+                            .checked_add(item.length_ticks)
+                            .is_some()
+                })
+                && take_indices.len() == item.other_takes.len();
             if !item_ids.insert(item.id)
                 || !track_ids.contains(&item.track_id)
                 || item.name.trim().is_empty()
@@ -3117,6 +3190,7 @@ impl Project {
                     .source_offset_ticks
                     .checked_add(item.length_ticks)
                     .is_none()
+                || !valid_other_takes
             {
                 return Err(SnapshotError::InvalidProjectData);
             }
@@ -3176,10 +3250,83 @@ impl Project {
             if !valid_midi_event_order_data(&event_order) {
                 return Err(SnapshotError::InvalidProjectData);
             }
+            let mut other_takes = Vec::with_capacity(item.other_takes.len());
+            for take in item.other_takes {
+                let mut notes = Vec::with_capacity(take.notes.len());
+                for note in take.notes {
+                    let data = note.data;
+                    if !note_ids.insert(note.id)
+                        || data.pitch > 127
+                        || data.channel >= crate::MIDI_CHANNEL_COUNT
+                        || data.velocity > 127
+                        || data.off_velocity > 127
+                        || data.duration == 0
+                        || data.tick.checked_add(data.duration).is_none()
+                    {
+                        return Err(SnapshotError::InvalidProjectData);
+                    }
+                    max_note_id = Some(max_note_id.map_or(note.id, |max: u64| max.max(note.id)));
+                    notes.push(MidiNote {
+                        id: NoteId::from_raw(note.id),
+                        data,
+                    });
+                }
+                let mut controllers = take.controllers;
+                controllers.sort_unstable_by_key(|controller| {
+                    (controller.tick, controller.channel, controller.controller)
+                });
+                if !valid_midi_controllers(&controllers) {
+                    return Err(SnapshotError::InvalidProjectData);
+                }
+                let mut pitch_bends = take.pitch_bends;
+                pitch_bends.sort_unstable_by_key(|bend| (bend.tick, bend.channel));
+                if !valid_midi_pitch_bends(&pitch_bends) {
+                    return Err(SnapshotError::InvalidProjectData);
+                }
+                let mut program_changes = take.program_changes;
+                program_changes.sort_unstable_by_key(|event| (event.tick, event.channel));
+                if !valid_midi_program_changes(&program_changes) {
+                    return Err(SnapshotError::InvalidProjectData);
+                }
+                let mut poly_aftertouches = take.poly_aftertouches;
+                poly_aftertouches.sort_by_key(|event| (event.tick, event.channel, event.note));
+                if !valid_midi_poly_aftertouches(&poly_aftertouches) {
+                    return Err(SnapshotError::InvalidProjectData);
+                }
+                let mut channel_pressures = take.channel_pressures;
+                channel_pressures.sort_unstable_by_key(|event| (event.tick, event.channel));
+                if !valid_midi_channel_pressures(&channel_pressures) {
+                    return Err(SnapshotError::InvalidProjectData);
+                }
+                let mut opaque_events = take.opaque_events;
+                opaque_events.sort_unstable_by_key(|event| (event.tick, event.order));
+                if !valid_midi_opaque_events(&opaque_events)
+                    || !valid_midi_event_order_data(&take.event_order)
+                {
+                    return Err(SnapshotError::InvalidProjectData);
+                }
+                other_takes.push(MidiItemTake {
+                    index: take.index,
+                    name: take.name,
+                    source_offset_ticks: take.source_offset_ticks,
+                    loop_source: take.loop_source,
+                    source_loop_length_ticks: take.source_loop_length_ticks,
+                    notes: Arc::new(notes),
+                    controllers: Arc::new(controllers),
+                    pitch_bends: Arc::new(pitch_bends),
+                    program_changes: Arc::new(program_changes),
+                    poly_aftertouches: Arc::new(poly_aftertouches),
+                    channel_pressures: Arc::new(channel_pressures),
+                    opaque_events: Arc::new(opaque_events),
+                    event_order: Arc::new(take.event_order),
+                });
+            }
             midi_items.push(MidiItem {
                 id: ItemId::from_raw(item.id),
                 track_id: TrackId::from_raw(item.track_id),
                 name: item.name,
+                active_take_index: item.active_take_index,
+                other_takes,
                 start_tick: item.start_tick,
                 start_tick_subtick: item.start_tick_subtick,
                 source_offset_ticks: item.source_offset_ticks,
@@ -4830,6 +4977,64 @@ impl Project {
                 }
                 ProjectEvent::Transaction { tx_id, events }
             }
+            DawAction::ExplodeMidiItemTakesInPlace { tx_id, item_ids } => {
+                let mut seen = HashSet::with_capacity(item_ids.len());
+                let mut selected_items = Vec::with_capacity(item_ids.len());
+                for item_id in item_ids {
+                    if !seen.insert(item_id) {
+                        continue;
+                    }
+                    let (index, item) = state
+                        .midi_items
+                        .iter()
+                        .enumerate()
+                        .find(|(_, item)| item.id == item_id)
+                        .ok_or(ActionError::MidiItemNotFound { item_id })?;
+                    if item.take_count() > 1 {
+                        let track = state
+                            .tracks
+                            .iter()
+                            .find(|track| track.id == item.track_id)
+                            .ok_or(ActionError::TrackNotFound {
+                                track_id: item.track_id,
+                            })?;
+                        if track.is_frozen() {
+                            return Err(ActionError::CannotEditFrozenTrackSource {
+                                track_id: item.track_id,
+                            });
+                        }
+                        selected_items.push((index, item.clone()));
+                    }
+                }
+                selected_items.sort_unstable_by_key(|(index, _)| std::cmp::Reverse(*index));
+                let mut events = Vec::new();
+                for (index, original) in selected_items {
+                    events.push(ProjectEvent::MidiItemRemoved {
+                        index,
+                        item: original.clone(),
+                    });
+                    for (take_offset, take) in original.take_snapshots().into_iter().enumerate() {
+                        let next_item_id = ids
+                            .next_item_id
+                            .checked_add(1)
+                            .ok_or(ActionError::ItemIdExhausted)?;
+                        let exploded = midi_item_from_take(
+                            &original,
+                            take,
+                            ItemId::from_raw(ids.next_item_id),
+                        );
+                        ids.next_item_id = next_item_id;
+                        let insert_index = index
+                            .checked_add(take_offset)
+                            .ok_or(ActionError::HistoryInvariantViolation)?;
+                        events.push(ProjectEvent::MidiItemInserted {
+                            index: insert_index,
+                            item: exploded,
+                        });
+                    }
+                }
+                ProjectEvent::Transaction { tx_id, events }
+            }
             DawAction::SetAudioItemActiveTake {
                 item_id,
                 take_index,
@@ -5022,6 +5227,8 @@ impl Project {
                     id: ItemId::from_raw(ids.next_item_id),
                     track_id,
                     name: "MIDI".to_owned(),
+                    active_take_index: 0,
+                    other_takes: Vec::new(),
                     start_tick,
                     start_tick_subtick: 0,
                     source_offset_ticks: 0,
@@ -5381,6 +5588,9 @@ impl Project {
                     .position(|item| item.id == item_id)
                     .ok_or(ActionError::MidiItemNotFound { item_id })?;
                 let original = state.midi_items[index].clone();
+                if original.take_count() > 1 {
+                    return Err(ActionError::MidiItemHasMultipleTakes);
+                }
                 let item_end = original
                     .start_tick
                     .checked_add(original.length_ticks)
@@ -5480,6 +5690,8 @@ impl Project {
                         id: segment_id,
                         track_id: original.track_id,
                         name: original.name.clone(),
+                        active_take_index: original.active_take_index,
+                        other_takes: original.other_takes.clone(),
                         start_tick: segment_start,
                         start_tick_subtick: if index == 0 {
                             original.start_tick_subtick

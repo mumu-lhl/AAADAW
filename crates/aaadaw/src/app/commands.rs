@@ -3193,12 +3193,13 @@ pub(super) fn dispatch(app: &mut App, command: CommandId) -> Task<Message> {
             Message::ImplodeSelectedAudioItemsAcrossTracksAsTakes
         }
         CommandId::ExplodeAudioItemTakesInPlace => {
-            let Some(item_ids) = audio_items_for_explode_takes(app) else {
-                app.status = "Select audio items to explode their takes".to_owned();
+            let Some(item_ids) = media_items_for_explode_takes(app) else {
+                app.status = "Select media items to explode their takes".to_owned();
                 return Task::none();
             };
             if item_ids.iter().any(|item_id| {
-                app.project
+                let frozen_audio = app
+                    .project
                     .audio_items()
                     .iter()
                     .find(|item| item.id() == *item_id)
@@ -3209,9 +3210,23 @@ pub(super) fn dispatch(app: &mut App, command: CommandId) -> Task<Message> {
                                 .tracks()
                                 .iter()
                                 .any(|track| track.frozen_audio_item_id() == Some(*item_id))
-                    })
+                    });
+                let frozen_midi = app
+                    .project
+                    .midi_items()
+                    .iter()
+                    .find(|item| item.id() == *item_id)
+                    .is_some_and(|item| {
+                        item.take_count() > 1
+                            && app
+                                .project
+                                .tracks()
+                                .iter()
+                                .any(|track| track.id() == item.track_id() && track.is_frozen())
+                    });
+                frozen_audio || frozen_midi
             }) {
-                app.status = "Frozen render items cannot be exploded".to_owned();
+                app.status = "Frozen items cannot be exploded".to_owned();
                 return Task::none();
             }
             Message::ExplodeSelectedAudioItemTakesInPlace
@@ -3733,15 +3748,25 @@ pub(super) fn audio_items_for_cross_track_implode(app: &App) -> Option<Vec<ItemI
     Some(items.into_iter().map(|item| item.id()).collect())
 }
 
-pub(super) fn audio_items_for_explode_takes(app: &App) -> Option<Vec<ItemId>> {
+pub(super) fn media_items_for_explode_takes(app: &App) -> Option<Vec<ItemId>> {
     if app.timeline.selected_items.is_empty() {
         return None;
     }
-    let selected_audio_ids = selected_audio_item_ids(app);
-    if selected_audio_ids.len() != app.timeline.selected_items.len() {
+    let selected_ids = &app.timeline.selected_items;
+    if selected_ids.iter().any(|item_id| {
+        !app.project
+            .audio_items()
+            .iter()
+            .any(|item| item.id() == *item_id)
+            && !app
+                .project
+                .midi_items()
+                .iter()
+                .any(|item| item.id() == *item_id)
+    }) {
         return None;
     }
-    Some(selected_audio_ids.into_iter().collect())
+    Some(selected_ids.iter().copied().collect())
 }
 
 pub(super) fn switch_audio_item_take_targets(app: &App) -> Vec<ItemId> {
@@ -3909,20 +3934,31 @@ fn command_enabled(app: &App, kind: CommandKind, track: Option<TrackState>) -> b
         }
         CommandKind::ExplodeAudioItemTakesInPlace => {
             !project_edit_busy(app)
-                && audio_items_for_explode_takes(app).is_some_and(|item_ids| {
+                && media_items_for_explode_takes(app).is_some_and(|item_ids| {
                     !item_ids.iter().any(|item_id| {
-                        app.project
-                            .audio_items()
+                        let frozen_audio =
+                            app.project
+                                .audio_items()
+                                .iter()
+                                .find(|item| item.id() == *item_id)
+                                .is_some_and(|item| {
+                                    item.take_count() > 1
+                                        && app.project.tracks().iter().any(|track| {
+                                            track.frozen_audio_item_id() == Some(*item_id)
+                                        })
+                                });
+                        let frozen_midi = app
+                            .project
+                            .midi_items()
                             .iter()
                             .find(|item| item.id() == *item_id)
                             .is_some_and(|item| {
                                 item.take_count() > 1
-                                    && app
-                                        .project
-                                        .tracks()
-                                        .iter()
-                                        .any(|track| track.frozen_audio_item_id() == Some(*item_id))
-                            })
+                                    && app.project.tracks().iter().any(|track| {
+                                        track.id() == item.track_id() && track.is_frozen()
+                                    })
+                            });
+                        frozen_audio || frozen_midi
                     })
                 })
         }

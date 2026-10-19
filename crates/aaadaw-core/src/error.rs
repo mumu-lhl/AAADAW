@@ -137,6 +137,8 @@ pub enum ActionError {
     MidiItemNotFound {
         item_id: ItemId,
     },
+    /// Splitting a multi-take MIDI item requires take-aware event partitioning.
+    MidiItemHasMultipleTakes,
     /// The requested audio or MIDI item does not exist in the project.
     ItemNotFound {
         item_id: ItemId,
@@ -349,6 +351,9 @@ impl fmt::Display for ActionError {
             }
             Self::MidiItemNotFound { item_id } => {
                 write!(formatter, "MIDI item {} does not exist", item_id.value())
+            }
+            Self::MidiItemHasMultipleTakes => {
+                formatter.write_str("multi-take MIDI items cannot be split yet")
             }
             Self::ItemNotFound { item_id } => {
                 write!(formatter, "item {} does not exist", item_id.value())

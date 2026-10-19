@@ -213,6 +213,8 @@ pub struct MidiItemSnapshot {
     pub id: u64,
     pub track_id: u64,
     pub name: String,
+    pub active_take_index: u32,
+    pub other_takes: Vec<MidiItemTakeSnapshot>,
     pub start_tick: u64,
     pub start_tick_subtick: u8,
     pub source_offset_ticks: u64,
@@ -220,6 +222,23 @@ pub struct MidiItemSnapshot {
     pub source_loop_length_ticks: u64,
     pub length_ticks: u64,
     pub muted: bool,
+    pub notes: Vec<MidiNoteSnapshot>,
+    pub controllers: Vec<MidiControllerData>,
+    pub pitch_bends: Vec<MidiPitchBendData>,
+    pub program_changes: Vec<MidiProgramChangeData>,
+    pub poly_aftertouches: Vec<MidiPolyAftertouchData>,
+    pub channel_pressures: Vec<MidiChannelPressureData>,
+    pub opaque_events: Vec<MidiOpaqueEventData>,
+    pub event_order: Vec<crate::MidiEventOrderData>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MidiItemTakeSnapshot {
+    pub index: u32,
+    pub name: String,
+    pub source_offset_ticks: u64,
+    pub loop_source: bool,
+    pub source_loop_length_ticks: u64,
     pub notes: Vec<MidiNoteSnapshot>,
     pub controllers: Vec<MidiControllerData>,
     pub pitch_bends: Vec<MidiPitchBendData>,

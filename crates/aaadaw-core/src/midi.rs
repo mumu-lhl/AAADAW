@@ -271,12 +271,31 @@ impl MidiNote {
     }
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct MidiItemTake {
+    pub(crate) index: u32,
+    pub(crate) name: String,
+    pub(crate) source_offset_ticks: u64,
+    pub(crate) loop_source: bool,
+    pub(crate) source_loop_length_ticks: u64,
+    pub(crate) notes: Arc<Vec<MidiNote>>,
+    pub(crate) controllers: Arc<Vec<MidiControllerData>>,
+    pub(crate) pitch_bends: Arc<Vec<MidiPitchBendData>>,
+    pub(crate) program_changes: Arc<Vec<MidiProgramChangeData>>,
+    pub(crate) poly_aftertouches: Arc<Vec<MidiPolyAftertouchData>>,
+    pub(crate) channel_pressures: Arc<Vec<MidiChannelPressureData>>,
+    pub(crate) opaque_events: Arc<Vec<MidiOpaqueEventData>>,
+    pub(crate) event_order: Arc<Vec<MidiEventOrderData>>,
+}
+
 /// A MIDI clip positioned on a track.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MidiItem {
     pub(crate) id: ItemId,
     pub(crate) track_id: TrackId,
     pub(crate) name: String,
+    pub(crate) active_take_index: u32,
+    pub(crate) other_takes: Vec<MidiItemTake>,
     pub(crate) start_tick: u64,
     pub(crate) start_tick_subtick: u8,
     pub(crate) source_offset_ticks: u64,
@@ -308,6 +327,69 @@ impl MidiItem {
     /// Returns the user-visible name of this MIDI item.
     pub fn name(&self) -> &str {
         &self.name
+    }
+
+    /// Returns the zero-based index of the active Take.
+    pub fn active_take_index(&self) -> u32 {
+        self.active_take_index
+    }
+
+    /// Returns the number of Takes stored in this item.
+    pub fn take_count(&self) -> usize {
+        self.other_takes.len() + 1
+    }
+
+    /// Returns the item Takes in their original order, including the active Take.
+    pub fn take_snapshots(&self) -> Vec<crate::MidiItemTakeSnapshot> {
+        let mut takes = Vec::with_capacity(self.take_count());
+        takes.push(crate::MidiItemTakeSnapshot {
+            index: self.active_take_index,
+            name: self.name.clone(),
+            source_offset_ticks: self.source_offset_ticks,
+            loop_source: self.loop_source,
+            source_loop_length_ticks: self.source_loop_length_ticks,
+            notes: self
+                .notes
+                .iter()
+                .map(|note| crate::MidiNoteSnapshot {
+                    id: note.id.value(),
+                    data: note.data,
+                })
+                .collect(),
+            controllers: self.controllers.as_ref().clone(),
+            pitch_bends: self.pitch_bends.as_ref().clone(),
+            program_changes: self.program_changes.as_ref().clone(),
+            poly_aftertouches: self.poly_aftertouches.as_ref().clone(),
+            channel_pressures: self.channel_pressures.as_ref().clone(),
+            opaque_events: self.opaque_events.as_ref().clone(),
+            event_order: self.event_order.as_ref().clone(),
+        });
+        takes.extend(self.other_takes.iter().map(|take| {
+            crate::MidiItemTakeSnapshot {
+                index: take.index,
+                name: take.name.clone(),
+                source_offset_ticks: take.source_offset_ticks,
+                loop_source: take.loop_source,
+                source_loop_length_ticks: take.source_loop_length_ticks,
+                notes: take
+                    .notes
+                    .iter()
+                    .map(|note| crate::MidiNoteSnapshot {
+                        id: note.id.value(),
+                        data: note.data,
+                    })
+                    .collect(),
+                controllers: take.controllers.as_ref().clone(),
+                pitch_bends: take.pitch_bends.as_ref().clone(),
+                program_changes: take.program_changes.as_ref().clone(),
+                poly_aftertouches: take.poly_aftertouches.as_ref().clone(),
+                channel_pressures: take.channel_pressures.as_ref().clone(),
+                opaque_events: take.opaque_events.as_ref().clone(),
+                event_order: take.event_order.as_ref().clone(),
+            }
+        }));
+        takes.sort_unstable_by_key(|take| take.index);
+        takes
     }
 
     /// Returns the item's start position in project ticks.
