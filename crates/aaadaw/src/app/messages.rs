@@ -286,10 +286,6 @@ pub(crate) struct MidiEditorNoteFilter {
     pub(crate) velocity_range_initialized: bool,
     pub(crate) velocity_low: u8,
     pub(crate) velocity_high: u8,
-    pub(crate) position_enabled: bool,
-    pub(crate) position_range_initialized: bool,
-    pub(crate) position_low: u32,
-    pub(crate) position_high: u32,
     pub(crate) length_enabled: bool,
     pub(crate) length_range_initialized: bool,
     pub(crate) length_low_ticks: u64,
@@ -314,11 +310,6 @@ impl MidiEditorNoteFilter {
             && (!self.velocity_enabled
                 || !self.velocity_range_initialized
                 || (event.velocity >= self.velocity_low && event.velocity <= self.velocity_high))
-            && (!self.position_enabled
-                || !self.position_range_initialized
-                || (self.position_low <= self.position_high
-                    && event.position_in_measure >= self.position_low
-                    && event.position_in_measure <= self.position_high))
             && (!self.length_enabled
                 || !self.length_range_initialized
                 || (self.length_low_ticks <= self.length_high_ticks
@@ -338,10 +329,6 @@ impl Default for MidiEditorNoteFilter {
             velocity_range_initialized: false,
             velocity_low: 0,
             velocity_high: 127,
-            position_enabled: false,
-            position_range_initialized: false,
-            position_low: 0,
-            position_high: MIDI_EDITOR_FILTER_POSITION_SCALE,
             length_enabled: false,
             length_range_initialized: false,
             length_low_ticks: 0,
@@ -380,6 +367,88 @@ impl Default for MidiEditorControllerFilter {
             value_range_initialized: false,
             value_low: 0,
             value_high: 127,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) enum MidiEditorFilterRepeat {
+    EighthTriplet,
+    Eighth,
+    QuarterTriplet,
+    Quarter,
+    HalfTriplet,
+    Half,
+    #[default]
+    Measure,
+}
+
+impl MidiEditorFilterRepeat {
+    pub(crate) const OPTIONS: [Self; 7] = [
+        Self::EighthTriplet,
+        Self::Eighth,
+        Self::QuarterTriplet,
+        Self::Quarter,
+        Self::HalfTriplet,
+        Self::Half,
+        Self::Measure,
+    ];
+
+    pub(crate) fn period_ticks(self, ppq: u32, measure_ticks: u64) -> u64 {
+        let (numerator, denominator) = match self {
+            Self::EighthTriplet => (1_u64, 12_u64),
+            Self::Eighth => (1, 8),
+            Self::QuarterTriplet => (1, 6),
+            Self::Quarter => (1, 4),
+            Self::HalfTriplet => (1, 3),
+            Self::Half => (1, 2),
+            Self::Measure => return measure_ticks.max(1),
+        };
+        (u64::from(ppq).saturating_mul(4).saturating_mul(numerator) / denominator).max(1)
+    }
+}
+
+impl std::fmt::Display for MidiEditorFilterRepeat {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(match self {
+            Self::EighthTriplet => "1/8T",
+            Self::Eighth => "1/8",
+            Self::QuarterTriplet => "1/4T",
+            Self::Quarter => "1/4",
+            Self::HalfTriplet => "1/2T",
+            Self::Half => "1/2",
+            Self::Measure => "measure",
+        })
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct MidiEditorPositionFilter {
+    pub(crate) enabled: bool,
+    pub(crate) range_initialized: bool,
+    pub(crate) low: u32,
+    pub(crate) high: u32,
+    pub(crate) repeat_every: MidiEditorFilterRepeat,
+}
+
+impl MidiEditorPositionFilter {
+    pub(crate) const fn matches(self, position_in_repeat: u32) -> bool {
+        !self.enabled
+            || !self.range_initialized
+            || (self.low <= self.high
+                && position_in_repeat >= self.low
+                && position_in_repeat <= self.high)
+    }
+}
+
+impl Default for MidiEditorPositionFilter {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            range_initialized: false,
+            low: 0,
+            high: MIDI_EDITOR_FILTER_POSITION_SCALE,
+            repeat_every: MidiEditorFilterRepeat::Measure,
         }
     }
 }
@@ -431,6 +500,7 @@ pub(crate) struct MidiEditorFilterState {
     pub(crate) event_type: MidiEditorEventTypeFilter,
     pub(crate) note: MidiEditorNoteFilter,
     pub(crate) controller: MidiEditorControllerFilter,
+    pub(crate) position: MidiEditorPositionFilter,
 }
 
 impl MidiEditorFilterState {
@@ -457,7 +527,18 @@ impl MidiEditorFilterState {
         editor_channel_matches && event_filter_matches
     }
 
+    #[cfg(test)]
     pub(crate) fn controller_visible(self, channel: u8, controller: u8, value: u8) -> bool {
+        self.controller_visible_at(channel, controller, value, 0)
+    }
+
+    pub(crate) fn controller_visible_at(
+        self,
+        channel: u8,
+        controller: u8,
+        value: u8,
+        position_in_repeat: u32,
+    ) -> bool {
         let editor_channel_matches = !self.channel_filter_enabled
             || match self.channel_selection {
                 MidiEditorChannelSelection::AllChannels => true,
@@ -471,7 +552,8 @@ impl MidiEditorFilterState {
                 self.channels & (1_u16.checked_shl(u32::from(channel)).unwrap_or(0)) != 0;
             let passes = channel_matches
                 && self.event_type.matches(MidiEditorEventKind::ControlChange)
-                && self.controller.matches(controller, value);
+                && self.controller.matches(controller, value)
+                && self.position.matches(position_in_repeat);
             if self.inverted { !passes } else { passes }
         };
         editor_channel_matches && event_filter_matches
@@ -491,7 +573,8 @@ impl MidiEditorFilterState {
                 self.channels & (1_u16.checked_shl(u32::from(channel)).unwrap_or(0)) != 0;
             let passes = channel_matches
                 && self.event_type.matches(MidiEditorEventKind::Note)
-                && self.note.matches(event);
+                && self.note.matches(event)
+                && self.position.matches(event.position_in_measure);
             if self.inverted { !passes } else { passes }
         };
         editor_channel_matches && event_filter_matches
@@ -506,7 +589,8 @@ impl MidiEditorFilterState {
             self.channels & (1_u16.checked_shl(u32::from(channel)).unwrap_or(0)) != 0;
         let passes = channel_matches
             && self.event_type.matches(MidiEditorEventKind::Note)
-            && self.note.matches(event);
+            && self.note.matches(event)
+            && self.position.matches(event.position_in_measure);
         if self.inverted { !passes } else { passes }
     }
 }
@@ -878,9 +962,9 @@ pub(crate) enum Message {
     SetMidiEditorFilterNoteVelocityEnabled(bool),
     SetMidiEditorFilterNoteVelocityLow(u8),
     SetMidiEditorFilterNoteVelocityHigh(u8),
-    SetMidiEditorFilterNotePositionEnabled(bool),
-    SetMidiEditorFilterNotePositionLow(String),
-    SetMidiEditorFilterNotePositionHigh(String),
+    SetMidiEditorFilterPositionEnabled(bool),
+    SetMidiEditorFilterPositionLow(String),
+    SetMidiEditorFilterPositionHigh(String),
     SetMidiEditorFilterNoteLengthEnabled(bool),
     SetMidiEditorFilterNoteLengthLow(String),
     SetMidiEditorFilterNoteLengthHigh(String),
@@ -889,6 +973,7 @@ pub(crate) enum Message {
     SetMidiEditorFilterValueEnabled(bool),
     SetMidiEditorFilterValueLow(String),
     SetMidiEditorFilterValueHigh(String),
+    SetMidiEditorFilterRepeatEvery(MidiEditorFilterRepeat),
     SetMidiEditorFilterFromSelection,
     ClearMidiEditorFilter,
     ApplyMidiEditorFilterSelection(MidiEditorFilterSelectionOperation),
@@ -1328,8 +1413,9 @@ pub(crate) struct FreezeTrackResult {
 mod midi_channel_selection_tests {
     use super::{
         MidiEditorChannelSelection, MidiEditorControllerFilter, MidiEditorEventKind,
-        MidiEditorEventTypeFilter, MidiEditorFilterState, MidiEditorNoteFilter,
-        MidiEditorNoteFilterEvent, MidiEditorPitchFilterValue,
+        MidiEditorEventTypeFilter, MidiEditorFilterRepeat, MidiEditorFilterState,
+        MidiEditorNoteFilter, MidiEditorNoteFilterEvent, MidiEditorPitchFilterValue,
+        MidiEditorPositionFilter,
     };
 
     #[test]
@@ -1348,6 +1434,7 @@ mod midi_channel_selection_tests {
                 event_type: MidiEditorEventTypeFilter::AllEvents,
                 note: MidiEditorNoteFilter::default(),
                 controller: MidiEditorControllerFilter::default(),
+                position: MidiEditorPositionFilter::default(),
             }
             .event_visible(Some(channel), MidiEditorEventKind::Note)
         };
@@ -1505,6 +1592,7 @@ mod midi_channel_selection_tests {
                 event_type: MidiEditorEventTypeFilter::Notes,
                 note: MidiEditorNoteFilter::default(),
                 controller: MidiEditorControllerFilter::default(),
+                position: MidiEditorPositionFilter::default(),
             }
             .event_visible(Some(channel), kind)
         };
@@ -1524,6 +1612,7 @@ mod midi_channel_selection_tests {
             event_type: MidiEditorEventTypeFilter::Notes,
             note: MidiEditorNoteFilter::default(),
             controller: MidiEditorControllerFilter::default(),
+            position: MidiEditorPositionFilter::default(),
         };
         assert!(!inverted_filter.event_visible(Some(0), MidiEditorEventKind::Note,));
         assert!(inverted_filter.event_visible(Some(0), MidiEditorEventKind::Pitch,));
@@ -1547,16 +1636,19 @@ mod midi_channel_selection_tests {
                 velocity_range_initialized: true,
                 velocity_low: 91,
                 velocity_high: 93,
-                position_enabled: true,
-                position_range_initialized: true,
-                position_low: 250_000_000,
-                position_high: 750_000_000,
                 length_enabled: true,
                 length_range_initialized: true,
                 length_low_ticks: 240,
                 length_high_ticks: 480,
             },
             controller: MidiEditorControllerFilter::default(),
+            position: MidiEditorPositionFilter {
+                enabled: true,
+                range_initialized: true,
+                low: 250_000_000,
+                high: 750_000_000,
+                repeat_every: MidiEditorFilterRepeat::Measure,
+            },
         };
         let selected_event = MidiEditorNoteFilterEvent {
             pitch: 64,
@@ -1651,6 +1743,7 @@ mod midi_channel_selection_tests {
                 value_low: 64,
                 value_high: 100,
             },
+            position: MidiEditorPositionFilter::default(),
         };
 
         assert!(filter.controller_visible(0, 7, 64));

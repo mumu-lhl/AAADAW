@@ -1,0 +1,36 @@
+assert(reaper.GetAppVersion() == "7.82/linux-x86_64")
+assert(reaper.GetLastColorThemeFile():match("Default_7%.0%.ReaperThemeZip$"))
+assert(reaper.GetPlayStateEx(0) == 0)
+local _, project_path = reaper.EnumProjects(-1, "")
+assert(project_path == "")
+assert(reaper.CountTracks(0) == 0)
+reaper.InsertTrackAtIndex(0, true)
+local track = assert(reaper.GetTrack(0, 0))
+reaper.GetSetMediaTrackInfo_String(track, "P_NAME", "Filter Position Repeat", true)
+reaper.SetOnlyTrackSelected(track)
+local item = assert(reaper.CreateNewMIDIItemInProj(track, 0, 8, false))
+local take = assert(reaper.GetActiveTake(item))
+for tick = 0, 15240, 120 do
+  assert(reaper.MIDI_InsertCC(take, false, false, tick, 0xB0, 0, 7, 64))
+end
+for _, tick in ipairs({60, 180, 420, 3900, 7740, 11580}) do
+  assert(reaper.MIDI_InsertNote(take, false, false, tick, tick + 120, 0, 60, 90, false))
+end
+reaper.MIDI_Sort(take)
+local output = assert(io.open("/tmp/probe_filter_position_repeat.tsv", "w"))
+local _, notes, ccs, texts = reaper.MIDI_CountEvts(take)
+output:write("version\t", reaper.GetAppVersion(), "\ncounts\t", notes, "\t", ccs, "\t", texts, "\n")
+for i = 0, ccs - 1 do
+  local ok, selected, muted, tick, status, channel, number, value = reaper.MIDI_GetCC(take, i)
+  assert(ok)
+  output:write(table.concat({"cc", i, selected and 1 or 0, tick, status, channel, number, value}, "\t"), "\n")
+end
+output:close()
+reaper.SetMediaItemSelected(item, true)
+reaper.SetEditCurPos(0, false, false)
+reaper.UpdateItemInProject(item)
+reaper.UpdateArrange()
+reaper.Main_OnCommand(40153, 0)
+local editor = assert(reaper.MIDIEditor_GetActive())
+assert(reaper.MIDIEditor_GetTake(editor) == take)
+reaper.MIDIEditor_OnCommand(editor, 40056)

@@ -12896,6 +12896,12 @@ fn midi_event_filter_selects_controller_parameter_and_inclusive_value_range() {
             tick: 720,
             value: 127,
         },
+        MidiControllerData {
+            controller: 7,
+            channel: 0,
+            tick: 480,
+            value: 80,
+        },
     ];
     app.project
         .apply(DawAction::SetMidiControllers {
@@ -12921,7 +12927,7 @@ fn midi_event_filter_selects_controller_parameter_and_inclusive_value_range() {
         .expect("MIDI item should be available to filter");
     assert_eq!(
         filtered.controllers,
-        HashSet::from([controllers[0], controllers[1]])
+        HashSet::from([controllers[0], controllers[1], controllers[4]])
     );
     assert!(filtered.notes.is_empty());
     assert_eq!(app.project.snapshot(), project_snapshot);
@@ -12930,6 +12936,31 @@ fn midi_event_filter_selects_controller_parameter_and_inclusive_value_range() {
         super::MidiEditorFilterSelectionOperation::Set,
     ));
     assert_eq!(app.midi_editor_selected_controllers, filtered.controllers);
+    assert_eq!(app.project.snapshot(), project_snapshot);
+
+    let _ = app.update(Message::SetMidiEditorFilterPositionEnabled(true));
+    let _ = app.update(Message::SetMidiEditorFilterPositionLow("0.125".to_owned()));
+    let _ = app.update(Message::SetMidiEditorFilterPositionHigh("0.125".to_owned()));
+    let _ = app.update(Message::SetMidiEditorFilterRepeatEvery(
+        super::messages::MidiEditorFilterRepeat::Quarter,
+    ));
+    assert!(app.midi_editor_position_filter.range_initialized);
+    assert_eq!(app.midi_editor_position_filter.low, 125_000_000);
+    assert_eq!(app.midi_editor_position_filter.high, 125_000_000);
+    let position_filtered = app
+        .midi_editor_filter_event_selection(item_id)
+        .expect("MIDI item should be available for position filtering");
+    assert_eq!(
+        position_filtered.controllers,
+        HashSet::from([controllers[4]])
+    );
+    let _ = app.update(Message::ApplyMidiEditorFilterSelection(
+        super::MidiEditorFilterSelectionOperation::Set,
+    ));
+    assert_eq!(
+        app.midi_editor_selected_controllers,
+        position_filtered.controllers
+    );
     assert_eq!(app.project.snapshot(), project_snapshot);
 }
 
@@ -12987,15 +13018,20 @@ fn midi_editor_filter_clear_resets_filter_and_draw_channel_without_changing_sele
         velocity_range_initialized: true,
         velocity_low: 90,
         velocity_high: 100,
-        position_enabled: true,
-        position_range_initialized: true,
-        position_low: 0,
-        position_high: super::messages::MIDI_EDITOR_FILTER_POSITION_SCALE,
         length_enabled: true,
         length_range_initialized: true,
         length_low_ticks: 0,
         length_high_ticks: 480,
     };
+    app.midi_editor_position_filter = super::messages::MidiEditorPositionFilter {
+        enabled: true,
+        range_initialized: true,
+        low: 0,
+        high: 125_000_000,
+        repeat_every: super::messages::MidiEditorFilterRepeat::Half,
+    };
+    app.midi_editor_filter_position_low = "0".to_owned();
+    app.midi_editor_filter_position_high = "0.125".to_owned();
     app.midi_editor_draw_channel = 4;
     app.midi_editor_filter_dialog_open = true;
     let note_ids = app.project.midi_items()[0]
@@ -13028,8 +13064,12 @@ fn midi_editor_filter_clear_resets_filter_and_draw_channel_without_changing_sele
         app.midi_editor_note_filter,
         super::messages::MidiEditorNoteFilter::default()
     );
-    assert!(app.midi_editor_filter_note_position_low.is_empty());
-    assert!(app.midi_editor_filter_note_position_high.is_empty());
+    assert_eq!(
+        app.midi_editor_position_filter,
+        super::messages::MidiEditorPositionFilter::default()
+    );
+    assert!(app.midi_editor_filter_position_low.is_empty());
+    assert!(app.midi_editor_filter_position_high.is_empty());
     assert!(app.midi_editor_filter_note_length_low.is_empty());
     assert!(app.midi_editor_filter_note_length_high.is_empty());
     assert_eq!(
@@ -13135,10 +13175,6 @@ fn midi_editor_set_filter_from_selected_notes_derives_channel_type_pitch_velocit
             velocity_range_initialized: true,
             velocity_low: 91,
             velocity_high: 93,
-            position_enabled: true,
-            position_range_initialized: true,
-            position_low: 62_500_000,
-            position_high: 187_760_417,
             length_enabled: true,
             length_range_initialized: true,
             length_low_ticks: 240,
@@ -13153,8 +13189,16 @@ fn midi_editor_set_filter_from_selected_notes_derives_channel_type_pitch_velocit
     assert!(app.midi_editor_filter_enabled);
     assert!(!app.midi_editor_event_filter_enabled);
     assert!(app.midi_editor_filter_dialog_open);
-    assert_eq!(app.midi_editor_filter_note_position_low, "0.06250000");
-    assert_eq!(app.midi_editor_filter_note_position_high, "0.18776042");
+    assert_eq!(app.midi_editor_position_filter.low, 62_500_000);
+    assert_eq!(app.midi_editor_position_filter.high, 187_760_417);
+    assert!(app.midi_editor_position_filter.enabled);
+    assert!(app.midi_editor_position_filter.range_initialized);
+    assert_eq!(
+        app.midi_editor_position_filter.repeat_every,
+        super::messages::MidiEditorFilterRepeat::Measure
+    );
+    assert_eq!(app.midi_editor_filter_position_low, "0.06250000");
+    assert_eq!(app.midi_editor_filter_position_high, "0.18776042");
     assert_eq!(app.midi_editor_filter_note_length_low, "1/16");
     assert_eq!(app.midi_editor_filter_note_length_high, "1/16");
     assert_eq!(app.midi_editor_selected_notes, selected);
@@ -13176,29 +13220,23 @@ fn midi_editor_set_filter_from_selected_notes_derives_channel_type_pitch_velocit
 fn midi_editor_note_filter_position_and_length_inputs_parse_reaper_units() {
     let mut app = App::default();
 
-    let _ = app.update(Message::SetMidiEditorFilterNotePositionLow(
-        "0.125".to_owned(),
-    ));
-    let _ = app.update(Message::SetMidiEditorFilterNotePositionHigh(
-        "0.25".to_owned(),
-    ));
+    let _ = app.update(Message::SetMidiEditorFilterPositionLow("0.125".to_owned()));
+    let _ = app.update(Message::SetMidiEditorFilterPositionHigh("0.25".to_owned()));
     let _ = app.update(Message::SetMidiEditorFilterNoteLengthLow("1/16".to_owned()));
     let _ = app.update(Message::SetMidiEditorFilterNoteLengthHigh(
         "3/16".to_owned(),
     ));
 
-    assert!(app.midi_editor_note_filter.position_range_initialized);
-    assert_eq!(app.midi_editor_note_filter.position_low, 125_000_000);
-    assert_eq!(app.midi_editor_note_filter.position_high, 250_000_000);
+    assert!(app.midi_editor_position_filter.range_initialized);
+    assert_eq!(app.midi_editor_position_filter.low, 125_000_000);
+    assert_eq!(app.midi_editor_position_filter.high, 250_000_000);
     assert!(app.midi_editor_note_filter.length_range_initialized);
     assert_eq!(app.midi_editor_note_filter.length_low_ticks, 240);
     assert_eq!(app.midi_editor_note_filter.length_high_ticks, 720);
 
-    let _ = app.update(Message::SetMidiEditorFilterNotePositionHigh(
-        "1.01".to_owned(),
-    ));
-    assert!(!app.midi_editor_note_filter.position_range_initialized);
-    assert_eq!(app.midi_editor_filter_note_position_high, "1.01");
+    let _ = app.update(Message::SetMidiEditorFilterPositionHigh("1.01".to_owned()));
+    assert!(!app.midi_editor_position_filter.range_initialized);
+    assert_eq!(app.midi_editor_filter_position_high, "1.01");
 }
 
 #[test]

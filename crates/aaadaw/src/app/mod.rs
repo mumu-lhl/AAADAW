@@ -84,6 +84,20 @@ fn midi_editor_filter_position_value(tick: u64, measure_ticks: u64) -> u32 {
         / u128::from(measure_ticks.max(1))) as u32
 }
 
+fn midi_editor_filter_repeat_position_value(
+    tick: u64,
+    ppq: u32,
+    measure_ticks: u64,
+    repeat_every: MidiEditorFilterRepeat,
+) -> u32 {
+    let measure_ticks = measure_ticks.max(1);
+    let period_ticks = repeat_every.period_ticks(ppq, measure_ticks);
+    let position = tick % period_ticks;
+    (u128::from(position) * u128::from(MIDI_EDITOR_FILTER_POSITION_SCALE)
+        / u128::from(measure_ticks))
+    .min(u128::from(MIDI_EDITOR_FILTER_POSITION_SCALE)) as u32
+}
+
 fn midi_editor_filter_position_high_value(tick: u64, measure_ticks: u64) -> u32 {
     let measure_ticks = measure_ticks.max(1);
     let end_tick = (tick % measure_ticks).saturating_add(1).min(measure_ticks);
@@ -158,12 +172,19 @@ fn gcd_u64(mut left: u64, mut right: u64) -> u64 {
 
 fn midi_editor_note_filter_event(
     note: &aaadaw_core::MidiNote,
+    ppq: u32,
     measure_ticks: u64,
+    repeat_every: MidiEditorFilterRepeat,
 ) -> MidiEditorNoteFilterEvent {
     MidiEditorNoteFilterEvent {
         pitch: note.pitch(),
         velocity: note.velocity(),
-        position_in_measure: midi_editor_filter_position_value(note.tick(), measure_ticks),
+        position_in_measure: midi_editor_filter_repeat_position_value(
+            note.tick(),
+            ppq,
+            measure_ticks,
+            repeat_every,
+        ),
         length_ticks: note.duration(),
     }
 }
@@ -229,10 +250,11 @@ pub(crate) use messages::{
     MainMenu, MainWorkspace, MenuNavigation, Message, MidiEditorChannelSelection,
     MidiEditorControllerFilter, MidiEditorCursorBoundary, MidiEditorEventKind,
     MidiEditorEventListCursor, MidiEditorEventListCursorDirection, MidiEditorEventTypeFilter,
-    MidiEditorFilterSelectionOperation, MidiEditorFilterState, MidiEditorLane, MidiEditorMode,
-    MidiEditorNoteFilter, MidiEditorNoteFilterEvent, MidiEditorPitchFilterValue, MidiEditorTool,
-    MidiHumanizeScope, MidiQuantizeOperation, MidiQuantizeScope, MidiTransposeScope, MobilePanel,
-    PathPickerTarget, PendingProjectTransition, SettingsCategory, TimeMapTab,
+    MidiEditorFilterRepeat, MidiEditorFilterSelectionOperation, MidiEditorFilterState,
+    MidiEditorLane, MidiEditorMode, MidiEditorNoteFilter, MidiEditorNoteFilterEvent,
+    MidiEditorPitchFilterValue, MidiEditorPositionFilter, MidiEditorTool, MidiHumanizeScope,
+    MidiQuantizeOperation, MidiQuantizeScope, MidiTransposeScope, MobilePanel, PathPickerTarget,
+    PendingProjectTransition, SettingsCategory, TimeMapTab,
 };
 
 #[derive(Clone)]
@@ -641,8 +663,9 @@ struct App {
     midi_editor_filter_channels: u16,
     midi_editor_note_filter: MidiEditorNoteFilter,
     midi_editor_controller_filter: MidiEditorControllerFilter,
-    midi_editor_filter_note_position_low: String,
-    midi_editor_filter_note_position_high: String,
+    midi_editor_position_filter: MidiEditorPositionFilter,
+    midi_editor_filter_position_low: String,
+    midi_editor_filter_position_high: String,
     midi_editor_filter_note_length_low: String,
     midi_editor_filter_note_length_high: String,
     midi_editor_filter_value_low: String,
@@ -2205,13 +2228,19 @@ impl App {
             event_type: self.midi_editor_event_type_filter,
             note: self.midi_editor_note_filter,
             controller: self.midi_editor_controller_filter,
+            position: self.midi_editor_position_filter,
         };
         item.notes()
             .iter()
             .filter(|note| {
                 filter.note_visible(
                     note.channel(),
-                    midi_editor_note_filter_event(note, measure_ticks),
+                    midi_editor_note_filter_event(
+                        note,
+                        self.project.settings().ppq(),
+                        measure_ticks,
+                        self.midi_editor_position_filter.repeat_every,
+                    ),
                 )
             })
             .map(|note| note.id())
@@ -6649,27 +6678,29 @@ impl App {
                     .min(127)
                     .max(self.midi_editor_note_filter.velocity_low);
             }
-            Message::SetMidiEditorFilterNotePositionEnabled(enabled) => {
-                self.midi_editor_note_filter.position_enabled = enabled;
+            Message::SetMidiEditorFilterPositionEnabled(enabled) => {
+                self.midi_editor_position_filter.enabled = enabled;
             }
-            Message::SetMidiEditorFilterNotePositionLow(value) => {
-                self.midi_editor_filter_note_position_low = value;
-                self.midi_editor_note_filter.position_range_initialized = false;
+            Message::SetMidiEditorFilterPositionLow(value) => {
+                self.midi_editor_filter_position_low = value;
+                self.midi_editor_position_filter.range_initialized = false;
                 if let Some(position) =
-                    parse_midi_editor_filter_position(&self.midi_editor_filter_note_position_low)
+                    parse_midi_editor_filter_position(&self.midi_editor_filter_position_low)
                 {
-                    self.midi_editor_note_filter.position_low = position;
-                    self.midi_editor_note_filter.position_range_initialized = true;
+                    self.midi_editor_position_filter.low =
+                        position.min(self.midi_editor_position_filter.high);
+                    self.midi_editor_position_filter.range_initialized = true;
                 }
             }
-            Message::SetMidiEditorFilterNotePositionHigh(value) => {
-                self.midi_editor_filter_note_position_high = value;
-                self.midi_editor_note_filter.position_range_initialized = false;
+            Message::SetMidiEditorFilterPositionHigh(value) => {
+                self.midi_editor_filter_position_high = value;
+                self.midi_editor_position_filter.range_initialized = false;
                 if let Some(position) =
-                    parse_midi_editor_filter_position(&self.midi_editor_filter_note_position_high)
+                    parse_midi_editor_filter_position(&self.midi_editor_filter_position_high)
                 {
-                    self.midi_editor_note_filter.position_high = position;
-                    self.midi_editor_note_filter.position_range_initialized = true;
+                    self.midi_editor_position_filter.high =
+                        position.max(self.midi_editor_position_filter.low);
+                    self.midi_editor_position_filter.range_initialized = true;
                 }
             }
             Message::SetMidiEditorFilterNoteLengthEnabled(enabled) => {
@@ -6727,6 +6758,9 @@ impl App {
                         value.max(self.midi_editor_controller_filter.value_low);
                     self.midi_editor_controller_filter.value_range_initialized = true;
                 }
+            }
+            Message::SetMidiEditorFilterRepeatEvery(repeat_every) => {
+                self.midi_editor_position_filter.repeat_every = repeat_every;
             }
             Message::ToggleMidiEditorFilterChannel(channel) if channel < 16 => {
                 self.midi_editor_filter_channels ^= 1_u16 << channel;
@@ -14418,8 +14452,9 @@ impl App {
         self.midi_editor_event_type_filter = MidiEditorEventTypeFilter::AllEvents;
         self.midi_editor_note_filter = MidiEditorNoteFilter::default();
         self.midi_editor_controller_filter = MidiEditorControllerFilter::default();
-        self.midi_editor_filter_note_position_low.clear();
-        self.midi_editor_filter_note_position_high.clear();
+        self.midi_editor_position_filter = MidiEditorPositionFilter::default();
+        self.midi_editor_filter_position_low.clear();
+        self.midi_editor_filter_position_high.clear();
         self.midi_editor_filter_note_length_low.clear();
         self.midi_editor_filter_note_length_high.clear();
         self.midi_editor_filter_value_low.clear();
@@ -14540,22 +14575,23 @@ impl App {
             velocity_range_initialized: true,
             velocity_low,
             velocity_high,
-            position_enabled: true,
-            position_range_initialized: true,
-            position_low,
-            position_high,
             length_enabled: true,
             length_range_initialized: true,
             length_low_ticks,
             length_high_ticks,
         };
         self.midi_editor_controller_filter = MidiEditorControllerFilter::default();
+        self.midi_editor_position_filter = MidiEditorPositionFilter {
+            enabled: true,
+            range_initialized: true,
+            low: position_low,
+            high: position_high,
+            repeat_every: MidiEditorFilterRepeat::Measure,
+        };
         self.midi_editor_filter_value_low.clear();
         self.midi_editor_filter_value_high.clear();
-        self.midi_editor_filter_note_position_low =
-            format_midi_editor_filter_position(position_low);
-        self.midi_editor_filter_note_position_high =
-            format_midi_editor_filter_position(position_high);
+        self.midi_editor_filter_position_low = format_midi_editor_filter_position(position_low);
+        self.midi_editor_filter_position_high = format_midi_editor_filter_position(position_high);
         self.midi_editor_filter_note_length_low =
             format_midi_editor_filter_length(length_low_ticks, ppq);
         self.midi_editor_filter_note_length_high =
@@ -14583,7 +14619,7 @@ impl App {
             item.controllers()
                 .iter()
                 .copied()
-                .filter(|event| self.midi_editor_filter_controller_matches(*event)),
+                .filter(|event| self.midi_editor_filter_controller_matches(item, *event)),
         );
         selection
             .pitch_bends
@@ -14647,11 +14683,26 @@ impl App {
             event_type: self.midi_editor_event_type_filter,
             note: self.midi_editor_note_filter,
             controller: self.midi_editor_controller_filter,
+            position: self.midi_editor_position_filter,
         }
         .event_visible(channel, event_kind)
     }
 
-    fn midi_editor_filter_controller_matches(&self, event: MidiControllerData) -> bool {
+    fn midi_editor_filter_controller_matches(
+        &self,
+        item: &MidiItem,
+        event: MidiControllerData,
+    ) -> bool {
+        let measure_ticks = midi_editor_measure_length_ticks(
+            self.project.settings().ppq(),
+            self.project.time_signature_at_tick(item.start_tick()),
+        );
+        let position = midi_editor_filter_repeat_position_value(
+            event.tick,
+            self.project.settings().ppq(),
+            measure_ticks,
+            self.midi_editor_position_filter.repeat_every,
+        );
         MidiEditorFilterState {
             channel_selection: MidiEditorChannelSelection::AllChannels,
             channel_filter_enabled: false,
@@ -14661,8 +14712,9 @@ impl App {
             event_type: self.midi_editor_event_type_filter,
             note: self.midi_editor_note_filter,
             controller: self.midi_editor_controller_filter,
+            position: self.midi_editor_position_filter,
         }
-        .controller_visible(event.channel, event.controller, event.value)
+        .controller_visible_at(event.channel, event.controller, event.value, position)
     }
 
     fn midi_editor_filter_note_matches(
@@ -14683,10 +14735,16 @@ impl App {
             event_type: self.midi_editor_event_type_filter,
             note: self.midi_editor_note_filter,
             controller: self.midi_editor_controller_filter,
+            position: self.midi_editor_position_filter,
         }
         .note_passes_event_filter(
             note.channel(),
-            midi_editor_note_filter_event(note, measure_ticks),
+            midi_editor_note_filter_event(
+                note,
+                self.project.settings().ppq(),
+                measure_ticks,
+                self.midi_editor_position_filter.repeat_every,
+            ),
         )
     }
 
