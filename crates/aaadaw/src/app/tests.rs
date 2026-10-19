@@ -98,6 +98,137 @@ fn audio_take_actions_switch_with_undo_and_require_multiple_takes() {
 }
 
 #[test]
+fn switching_selected_audio_takes_wraps_skips_single_takes_and_uses_one_undo_step() {
+    let mut app = App::default();
+    let _ = app.update(Message::AddTrack);
+    let track_id = app.project.tracks()[0].id();
+    for (media_ref, start_sample) in [
+        ("asset://two-take-item", 0),
+        ("asset://single-take-item", 96_000),
+        ("asset://three-take-item", 192_000),
+    ] {
+        app.project
+            .apply(DawAction::InsertAudioItem {
+                track_id,
+                media_ref: media_ref.to_owned(),
+                start_sample,
+                source_offset_samples: 0,
+                length_samples: 48_000,
+            })
+            .expect("audio item should be inserted");
+    }
+    let first_id = app.project.audio_items()[0].id();
+    let single_id = app.project.audio_items()[1].id();
+    let last_id = app.project.audio_items()[2].id();
+    app.project
+        .apply(DawAction::DuplicateAudioItemTake { item_id: first_id })
+        .expect("two-take item should be created");
+    app.project
+        .apply(DawAction::SetAudioItemActiveTake {
+            item_id: first_id,
+            take_index: 0,
+        })
+        .expect("first take should be active");
+    app.project
+        .apply(DawAction::DuplicateAudioItemTake { item_id: last_id })
+        .expect("second take should be created");
+    app.project
+        .apply(DawAction::DuplicateAudioItemTake { item_id: last_id })
+        .expect("third take should be created");
+    assert_eq!(
+        app.project
+            .audio_items()
+            .iter()
+            .map(|item| item.active_take_index())
+            .collect::<Vec<_>>(),
+        [0, 0, 2]
+    );
+
+    app.timeline.rebuild(&app.project);
+    app.timeline.select_items(vec![
+        (first_id, track_id),
+        (single_id, track_id),
+        (last_id, track_id),
+    ]);
+    assert!(commands::is_enabled(&app, CommandId::SwitchItemsToNextTake));
+    assert!(commands::is_enabled(
+        &app,
+        CommandId::SwitchItemsToPreviousTake
+    ));
+
+    let before = app.project.snapshot();
+    let history_cursor = app.project.history_cursor();
+    let _ = app.update(Message::ExecuteCommand(CommandId::SwitchItemsToNextTake));
+    let after_next = app.project.snapshot();
+    assert_eq!(app.project.history_cursor(), history_cursor + 1);
+    assert_eq!(
+        app.project
+            .audio_items()
+            .iter()
+            .map(|item| item.active_take_index())
+            .collect::<Vec<_>>(),
+        [0, 0, 0]
+    );
+    assert_eq!(app.status, "Selected active takes changed");
+
+    let _ = app.update(Message::Undo);
+    assert_eq!(app.project.snapshot(), before);
+    let _ = app.update(Message::Redo);
+    assert_eq!(app.project.snapshot(), after_next);
+
+    let next_history_cursor = app.project.history_cursor();
+    let _ = app.update(Message::ExecuteCommand(
+        CommandId::SwitchItemsToPreviousTake,
+    ));
+    assert_eq!(app.project.history_cursor(), next_history_cursor + 1);
+    assert_eq!(
+        app.project
+            .audio_items()
+            .iter()
+            .map(|item| item.active_take_index())
+            .collect::<Vec<_>>(),
+        [1, 0, 2]
+    );
+    let after_previous = app.project.snapshot();
+    let _ = app.update(Message::Undo);
+    assert_eq!(app.project.snapshot(), after_next);
+    let _ = app.update(Message::Redo);
+    assert_eq!(app.project.snapshot(), after_previous);
+
+    let previous_history_cursor = app.project.history_cursor();
+    let _ = app.update(Message::ExecuteCommand(
+        CommandId::SwitchItemsToPreviousTake,
+    ));
+    assert_eq!(app.project.history_cursor(), previous_history_cursor + 1);
+    assert_eq!(
+        app.project
+            .audio_items()
+            .iter()
+            .map(|item| item.active_take_index())
+            .collect::<Vec<_>>(),
+        [1, 0, 1]
+    );
+    let after_second_previous = app.project.snapshot();
+
+    let shared_slot_history_cursor = app.project.history_cursor();
+    let _ = app.update(Message::ExecuteCommand(CommandId::SwitchItemsToNextTake));
+    assert_eq!(app.project.history_cursor(), shared_slot_history_cursor + 1);
+    assert_eq!(
+        app.project
+            .audio_items()
+            .iter()
+            .map(|item| item.active_take_index())
+            .collect::<Vec<_>>(),
+        [1, 0, 2]
+    );
+    let after_shared_slot_next = app.project.snapshot();
+    let _ = app.update(Message::Undo);
+    assert_eq!(app.project.snapshot(), after_second_previous);
+    let _ = app.update(Message::Redo);
+    assert_eq!(app.project.snapshot(), after_shared_slot_next);
+}
+
+#[test]
 fn duplicating_multiple_selected_audio_item_takes_is_one_undoable_transaction() {
     let mut app = App::default();
     let _ = app.update(Message::AddTrack);

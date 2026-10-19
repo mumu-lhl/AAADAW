@@ -101,14 +101,27 @@ fn selected_item_view(app: &App, item_id: ItemId, touch_targets: bool) -> Elemen
             take_controls = take_controls
                 .push(buttons.action("Duplicate take", Message::DuplicateAudioItemTake(item_id)));
         }
-        if take_count > 1 {
+        if take_count > 1 || multi_take_selection {
+            let (previous_label, previous_message, next_label, next_message) =
+                if multi_take_selection {
+                    (
+                        "Previous takes",
+                        Message::SwitchSelectedAudioItemTakes(false),
+                        "Next takes",
+                        Message::SwitchSelectedAudioItemTakes(true),
+                    )
+                } else {
+                    (
+                        "Previous take",
+                        Message::SwitchAudioItemTake(item_id, false),
+                        "Next take",
+                        Message::SwitchAudioItemTake(item_id, true),
+                    )
+                };
             take_controls = take_controls
-                .push(buttons.action(
-                    "Previous take",
-                    Message::SwitchAudioItemTake(item_id, false),
-                ))
-                .push(buttons.action("Next take", Message::SwitchAudioItemTake(item_id, true)));
-            if !multi_take_selection {
+                .push(buttons.action(previous_label, previous_message))
+                .push(buttons.action(next_label, next_message));
+            if take_count > 1 && !multi_take_selection {
                 take_controls = take_controls.push(buttons.action(
                     "Move active to top",
                     Message::MoveSelectedAudioItemActiveTakesToTop,

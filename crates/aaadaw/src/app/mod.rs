@@ -5453,6 +5453,7 @@ impl App {
                             | Message::DeleteSelectedAudioItemActiveTakes
                             | Message::MoveSelectedAudioItemActiveTakesToTop
                             | Message::CropSelectedAudioItemsToActiveTake
+                            | Message::SwitchSelectedAudioItemTakes(..)
                             | Message::SwitchAudioItemTake(..)
                             | Message::DuplicateMidiItem(_)
                             | Message::SplitSelectedItemsAtCursor
@@ -9872,6 +9873,51 @@ impl App {
                 };
                 self.apply_action(action, "Inactive takes removed");
             }
+            Message::SwitchSelectedAudioItemTakes(next) => {
+                if commands::project_edit_busy(self) {
+                    self.status =
+                        "Stop playback or finish the current project operation before switching takes"
+                            .to_owned();
+                    return Task::none();
+                }
+                let targets = commands::audio_item_take_switch_targets(self, next);
+                if targets.is_empty() {
+                    self.status = "Select a multi-take audio item".to_owned();
+                    return Task::none();
+                }
+                if targets.iter().any(|(item_id, _)| {
+                    self.project
+                        .tracks()
+                        .iter()
+                        .any(|track| track.frozen_audio_item_id() == Some(*item_id))
+                }) {
+                    self.status = "Frozen render items cannot be edited".to_owned();
+                    return Task::none();
+                }
+                let actions = targets
+                    .iter()
+                    .map(|(item_id, take_index)| DawAction::SetAudioItemActiveTake {
+                        item_id: *item_id,
+                        take_index: *take_index,
+                    })
+                    .collect::<Vec<_>>();
+                let action = if actions.len() == 1 {
+                    actions.into_iter().next().unwrap()
+                } else {
+                    DawAction::BatchTransaction {
+                        tx_id: self.revision,
+                        actions,
+                    }
+                };
+                self.apply_action(
+                    action,
+                    if targets.len() == 1 {
+                        "Active take changed"
+                    } else {
+                        "Selected active takes changed"
+                    },
+                );
+            }
             Message::SwitchAudioItemTake(item_id, next) => {
                 let Some(item) = self
                     .project
@@ -9882,6 +9928,15 @@ impl App {
                     self.status = "Audio item no longer exists".to_owned();
                     return Task::none();
                 };
+                if self
+                    .project
+                    .tracks()
+                    .iter()
+                    .any(|track| track.frozen_audio_item_id() == Some(item_id))
+                {
+                    self.status = "Frozen render items cannot be edited".to_owned();
+                    return Task::none();
+                }
                 let take_count = item.take_count() as u64;
                 if take_count <= 1 {
                     self.status = "Audio item has only one take".to_owned();

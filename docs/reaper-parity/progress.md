@@ -2837,3 +2837,11 @@ AAADAW Core 已按实测改为 append + activate；Action List、Item 菜单和 
 Linux REAPER 7.82 / Default 7 action 40603 对选中的全部 Audio Item 追加同一个剪贴板活动 Take 并激活副本；单 Take 目标也参与，原剪贴板来源 Item 仍留在 Arrange。首 Take 活动索引 0、单 Take、末 Take 活动索引 1 的三个目标从 Take 数量 2/1/2 变为 3/2/3，新增来源均在列表末尾并成为活动 Take；目标位置/长度未变化。真实 Ctrl+Z 一步恢复所有 Take 列表，Ctrl+Shift+Z 重做。原厂四个 RPP 状态读回和清理浮动窗口后的 1280×800 Arrange 截图见[多选 Paste as takes manifest](../verification/reaper-parity/fixtures/audio-paste-as-takes-multi-aaadaw.tsv)。
 
 AAADAW 现将同一个项目内的剪贴板活动 Take 以一条 `BatchTransaction` 追加到选中的每个音频目标；单选仍走单个 Core action，混合 Audio/MIDI 选择只处理 Audio Item，任一冻结目标使整个操作不可用/拒绝。Inspector 增加可用的 **Paste as takes** 按钮。nightly Cranelift 二进制实窗四态截图显示来源项保留、三项目标变化、按钮状态和单步 Undo/Redo；测试构建未启用 audio-device，因此截图不验证播放声音。Stable LLVM Nextest **1609/1609**、严格 all-target Clippy、fmt、capture shell 语法和 diff 检查通过；nightly Cranelift 桌面构建与实际截图成功，仍产生 recursion-depth future-incompatible warning；parity matrix **113 条 / 15 列**与本组 manifest **19/19 哈希**核对通过。`EDIT-TAKE-001` 继续 `in_progress`：多来源 Clipboard、跨工程媒体、MIDI/Track Copy、录音 Take、Lane/Comp、Take 重排以外的 Take 管理仍开放。
+
+### 2026-10-19 P5 Take: 多选 Next/Previous take
+
+Linux REAPER 7.82 / Default 7 原厂 action 40125/40126 对选中的多 Take 项采用共享 Take 槽位。Take 数量 2/1/3、起始索引 0/0/2 时，Next 得到 0/0/0，单 Take 项不变；一次 Undo/Redo 撤销或重做整组，随后 Previous 得到 1/0/2。混合索引对照从 1/0/0 开始，Next 得到 1/0/2，紧接 Previous 得到 1/0/1。读回表、所有 RPP 状态和 Linux REAPER 实窗截图见[多选切换 manifest](../verification/reaper-parity/fixtures/audio-switch-takes-multi-aaadaw.tsv)。
+
+AAADAW Action List、Item 菜单和多选 Inspector 的 Next takes / Previous takes 按钮现按同一共享槽位规则切换；较短的多 Take 项限制在其最后一个 Take，单 Take 和 MIDI 项不变，冻结目标阻止整批修改。所有选中目标由一条 `BatchTransaction` 记录，单次 Undo/Redo 恢复完整快照。nightly Cranelift 二进制在 Linux Xvfb 实窗完成按钮操作和四态截图，显示活动 Take、状态栏反馈及撤销重做。
+
+Stable LLVM workspace Nextest **1610/1610**、AAADAW 桌面单元测试 **855/855**、严格 all-target Clippy、fmt、capture shell 语法、diff 检查、parity matrix **113 条 / 15 列**及本组 manifest SHA-256 核对均通过。Cranelift 构建报告 Build ID `fe30f3cfd39b6b47203fe75bf5479ae5e359c811`，保留既有 recursion-depth future-incompatible warning。该构建禁用了 audio-device，实窗截图验证界面和 Take 状态，不代表播放声音已验收。`EDIT-TAKE-001` 仍 `in_progress`：录音生成、更多剪贴板来源、跨工程剪贴板、Lane/Comp、MIDI/Track Copy、完整 Media Item Properties 和其他 Take 操作仍开放。
