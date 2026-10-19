@@ -1,0 +1,71 @@
+before_1	take_count=2	active_index=1
+before_1	take_0	name=Take B	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-02.wav
+before_1	take_1	name=Take A	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav
+before_2	take_count=1	active_index=0
+before_2	take_0	name=Single take	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav
+before_3	take_count=2	active_index=1
+before_3	take_0	name=Take A	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav
+before_3	take_1	name=Take B	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-02.wav
+before_4	take_count=2	active_index=0
+before_4	take_0	name=Take B	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-02.wav
+before_4	take_1	name=Take A	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav
+after_1	take_count=2	active_index=0
+after_1	take_0	name=Take A	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav
+after_1	take_1	name=Take B	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-02.wav
+after_2	take_count=1	active_index=0
+after_2	take_0	name=Single take	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav
+after_3	take_count=2	active_index=0
+after_3	take_0	name=Take B	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-02.wav
+after_3	take_1	name=Take A	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav
+after_4	take_count=2	active_index=0
+after_4	take_0	name=Take B	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-02.wav
+after_4	take_1	name=Take A	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav
+undo_description	Move take to top lane
+undo_observed_1	take_count=2	active_index=1
+undo_observed_1	take_0	name=Take B	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-02.wav
+undo_observed_1	take_1	name=Take A	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav
+undo_observed_2	take_count=1	active_index=0
+undo_observed_2	take_0	name=Single take	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav
+undo_observed_3	take_count=2	active_index=1
+undo_observed_3	take_0	name=Take A	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav
+undo_observed_3	take_1	name=Take B	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-02.wav
+undo_observed_4	take_count=2	active_index=0
+undo_observed_4	take_0	name=Take B	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-02.wav
+undo_observed_4	take_1	name=Take A	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav
+undo_1	take_count=2	active_index=1
+undo_1	take_0	name=Take B	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-02.wav
+undo_1	take_1	name=Take A	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav
+undo_2	take_count=1	active_index=0
+undo_2	take_0	name=Single take	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav
+undo_3	take_count=2	active_index=1
+undo_3	take_0	name=Take A	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav
+undo_3	take_1	name=Take B	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-02.wav
+undo_4	take_count=2	active_index=0
+undo_4	take_0	name=Take B	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-02.wav
+undo_4	take_1	name=Take A	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav
+redo_description	Move take to top lane
+undo_complete	true
+redo_1	take_count=2	active_index=0
+redo_1	take_0	name=Take A	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav
+redo_1	take_1	name=Take B	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-02.wav
+redo_2	take_count=1	active_index=0
+redo_2	take_0	name=Single take	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav
+redo_3	take_count=2	active_index=0
+redo_3	take_0	name=Take B	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-02.wav
+redo_3	take_1	name=Take A	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav
+redo_4	take_count=2	active_index=0
+redo_4	take_0	name=Take B	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-02.wav
+redo_4	take_1	name=Take A	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav
+already_top_1	take_count=2	active_index=0
+already_top_1	take_0	name=Take A	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav
+already_top_1	take_1	name=Take B	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-02.wav
+already_top_2	take_count=1	active_index=0
+already_top_2	take_0	name=Single take	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav
+already_top_3	take_count=2	active_index=0
+already_top_3	take_0	name=Take B	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-02.wav
+already_top_3	take_1	name=Take A	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav
+already_top_4	take_count=2	active_index=0
+already_top_4	take_0	name=Take B	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-02.wav
+already_top_4	take_1	name=Take A	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav
+already_top_undo	Move take to top lane
+action	41380	Item: Move active takes to top

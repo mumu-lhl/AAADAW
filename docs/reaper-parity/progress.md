@@ -2813,3 +2813,9 @@ AAADAW Core 新增单步、可撤销的活动 Take 删除动作：保留其他 T
 Linux REAPER 7.82 / Default 7 原厂 action 40131 对选中的每个多 Take 音频 Item 分别保留活动源，选中的单 Take Item 不变；一次 Undo 恢复全部多 Take 状态，一次 Redo 重做全部裁切。Take A 在 index 1、Take B 在 index 0 的两个项目及单 Take 项的 RPP before/after/undo/redo 读回和 Arrange 截图已归档。
 
 AAADAW 将 40131 扩展为一条批量事务：Action List、Item 菜单和 Inspector 都作用于选中的多 Take 音频项；混合选择内的单 Take 项无变化，任何裁切目标若为冻结渲染则整批拒绝。稳定 Stable LLVM 窗口的四张 1280×800 截图记录 Inspector 控件、裁切、单步 Undo 与 Redo；自包含工程、生成器、原厂 RPP 与状态读回见[多选裁切 manifest](../verification/reaper-parity/fixtures/audio-crop-multi-selection-aaadaw.tsv)。Stable Nextest **1246/1246**、严格 all-target Clippy、fmt、capture shell 语法、diff 检查及 parity matrix **113 条 / 15 列**校验通过，本组 manifest **17/17** 制品哈希匹配。`EDIT-TAKE-001` 继续 `in_progress`：其他 Take 操作的多选、录音生成、Lane/Comp、MIDI Item Take 与跨工程剪贴板仍开放。
+
+### 2026-10-19 P5 Take: 多选 Move active takes to top
+
+Linux REAPER 7.82 / Default 7 原厂 action 41380 将选中的两个 active index-1 Take 项同时移至 index 0；单 Take 项和已在顶部的多 Take 项不变。真实 Ctrl+Z 一步恢复两个顺序，Ctrl+Shift+Z 重做；再次运行原厂动作不改变撤销描述。Before/after/undo/redo/already-top 的 RPP、Arrange 截图和状态读回见[多选重排 manifest](../verification/reaper-parity/fixtures/audio-move-active-take-to-top-multi-aaadaw.tsv)。
+
+AAADAW 的 Action List、Item 菜单和 Inspector 现对选中多 Take 音频项按项目顺序执行原子批事务；单 Take/已在顶部项目不变，冻结渲染目标会阻止整批修改。Stable LLVM 实窗四态截图显示 Inspector 操作、单步 Undo 与 Redo；回归核对来源顺序、混合选择和单一历史步。Stable Nextest **1247/1247**、严格 all-target Clippy、fmt、capture shell 语法和 diff 检查通过。`EDIT-TAKE-001` 保持 `in_progress`：其他 Take 操作的多选、录音生成、Lane/Comp、MIDI Item Take 与跨工程剪贴板仍开放。

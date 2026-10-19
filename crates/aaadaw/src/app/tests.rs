@@ -157,9 +157,129 @@ fn moving_active_audio_take_to_top_is_registered_and_undoable() {
     assert_eq!(app.project.audio_items()[0].active_take_index(), 0);
     assert_eq!(app.project.audio_items()[0].media_ref(), "asset://take-b");
     let history_cursor = app.project.history_cursor();
-    let _ = app.update(Message::MoveAudioItemActiveTakeToTop(item_id));
+    let _ = app.update(Message::MoveSelectedAudioItemActiveTakesToTop);
     assert_eq!(app.project.history_cursor(), history_cursor);
     assert_eq!(app.status, "Active take is already at the top");
+}
+
+#[test]
+fn moving_multiple_selected_audio_items_to_top_is_one_undoable_transaction() {
+    let mut app = App::default();
+    let _ = app.update(Message::AddTrack);
+    let track_id = app.project.tracks()[0].id();
+    for (media_ref, start_sample) in [
+        ("asset://take-b-first", 0),
+        ("asset://single-take", 48_000),
+        ("asset://take-a-second", 96_000),
+        ("asset://take-b-already-top", 144_000),
+    ] {
+        app.project
+            .apply(DawAction::InsertAudioItem {
+                track_id,
+                media_ref: media_ref.to_owned(),
+                start_sample,
+                source_offset_samples: 0,
+                length_samples: 48_000,
+            })
+            .expect("audio item should be inserted");
+    }
+    let first_id = app.project.audio_items()[0].id();
+    let single_id = app.project.audio_items()[1].id();
+    let second_id = app.project.audio_items()[2].id();
+    let already_top_id = app.project.audio_items()[3].id();
+    for (item_id, media_ref, name, active_index) in [
+        (first_id, "asset://take-a-first", "Take A", None),
+        (second_id, "asset://take-b-second", "Take B", None),
+        (
+            already_top_id,
+            "asset://take-a-already-top",
+            "Take A",
+            Some(0),
+        ),
+    ] {
+        let mut take = app
+            .project
+            .audio_items()
+            .iter()
+            .find(|item| item.id() == item_id)
+            .expect("target audio item should exist")
+            .active_take_snapshot();
+        take.media_ref = media_ref.to_owned();
+        take.name = name.to_owned();
+        app.project
+            .apply(DawAction::PasteAudioItemAsTake { item_id, take })
+            .expect("second take should be appended and active");
+        if let Some(take_index) = active_index {
+            app.project
+                .apply(DawAction::SetAudioItemActiveTake {
+                    item_id,
+                    take_index,
+                })
+                .expect("already-top item should select its first take");
+        }
+    }
+    app.timeline.rebuild(&app.project);
+    app.timeline.select_items(vec![
+        (first_id, track_id),
+        (single_id, track_id),
+        (second_id, track_id),
+        (already_top_id, track_id),
+    ]);
+    let before = app.project.snapshot();
+    let history_cursor = app.project.history_cursor();
+    assert!(commands::is_enabled(&app, CommandId::MoveActiveTakesToTop));
+
+    let _ = app.update(Message::ExecuteCommand(CommandId::MoveActiveTakesToTop));
+    let moved_first = app
+        .project
+        .audio_items()
+        .iter()
+        .find(|item| item.id() == first_id)
+        .unwrap();
+    assert_eq!(moved_first.active_take_index(), 0);
+    assert_eq!(moved_first.media_ref(), "asset://take-a-first");
+    assert_eq!(moved_first.other_takes()[0].index(), 1);
+    assert_eq!(
+        moved_first.other_takes()[0].media_ref(),
+        "asset://take-b-first"
+    );
+    let moved_second = app
+        .project
+        .audio_items()
+        .iter()
+        .find(|item| item.id() == second_id)
+        .unwrap();
+    assert_eq!(moved_second.active_take_index(), 0);
+    assert_eq!(moved_second.media_ref(), "asset://take-b-second");
+    assert_eq!(moved_second.other_takes()[0].index(), 1);
+    assert_eq!(
+        moved_second.other_takes()[0].media_ref(),
+        "asset://take-a-second"
+    );
+    let single = app
+        .project
+        .audio_items()
+        .iter()
+        .find(|item| item.id() == single_id)
+        .unwrap();
+    assert_eq!(single.take_count(), 1);
+    assert_eq!(single.media_ref(), "asset://single-take");
+    let already_top = app
+        .project
+        .audio_items()
+        .iter()
+        .find(|item| item.id() == already_top_id)
+        .unwrap();
+    assert_eq!(already_top.active_take_index(), 0);
+    assert_eq!(already_top.media_ref(), "asset://take-b-already-top");
+    assert_eq!(app.project.history_cursor(), history_cursor + 1);
+    assert_eq!(app.status, "Active takes moved to top");
+
+    let moved = app.project.snapshot();
+    let _ = app.update(Message::Undo);
+    assert_eq!(app.project.snapshot(), before);
+    let _ = app.update(Message::Redo);
+    assert_eq!(app.project.snapshot(), moved);
 }
 
 #[test]

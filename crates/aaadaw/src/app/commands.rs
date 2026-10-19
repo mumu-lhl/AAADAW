@@ -3128,11 +3128,20 @@ pub(super) fn dispatch(app: &mut App, command: CommandId) -> Task<Message> {
             Message::DeleteActiveAudioItemTake(item_id)
         }
         CommandId::MoveActiveTakesToTop => {
-            let Some(item_id) = selected_audio_item_id(app) else {
-                app.status = "Select one audio item to move its active take to the top".to_owned();
+            if move_active_take_to_top_targets(app).is_empty()
+                && !selected_audio_item_ids(app).iter().any(|item_id| {
+                    app.project
+                        .audio_items()
+                        .iter()
+                        .find(|item| item.id() == *item_id)
+                        .is_some_and(|item| item.take_count() > 1)
+                })
+            {
+                app.status =
+                    "Select a multi-take audio item to move its active take to the top".to_owned();
                 return Task::none();
-            };
-            Message::MoveAudioItemActiveTakeToTop(item_id)
+            }
+            Message::MoveSelectedAudioItemActiveTakesToTop
         }
         CommandId::CropAudioItemToActiveTake => {
             if !selected_audio_item_ids(app).iter().any(|item_id| {
@@ -3561,6 +3570,19 @@ pub(super) fn selected_audio_item_ids(app: &App) -> Vec<ItemId> {
         .collect()
 }
 
+pub(super) fn move_active_take_to_top_targets(app: &App) -> Vec<ItemId> {
+    selected_audio_item_ids(app)
+        .into_iter()
+        .filter(|item_id| {
+            app.project
+                .audio_items()
+                .iter()
+                .find(|item| item.id() == *item_id)
+                .is_some_and(|item| item.take_count() > 1 && item.active_take_index() > 0)
+        })
+        .collect()
+}
+
 fn command_enabled(app: &App, kind: CommandKind, track: Option<TrackState>) -> bool {
     match kind {
         CommandKind::NewProject
@@ -3850,18 +3872,21 @@ fn command_enabled(app: &App, kind: CommandKind, track: Option<TrackState>) -> b
                 })
         }
         CommandKind::MoveActiveTakesToTop => {
+            let selected_multi_take_item = selected_audio_item_ids(app).iter().any(|item_id| {
+                app.project
+                    .audio_items()
+                    .iter()
+                    .find(|item| item.id() == *item_id)
+                    .is_some_and(|item| item.take_count() > 1)
+            });
+            let move_targets = move_active_take_to_top_targets(app);
             !project_edit_busy(app)
-                && selected_audio_item_id(app).is_some_and(|item_id| {
+                && selected_multi_take_item
+                && !move_targets.iter().any(|item_id| {
                     app.project
-                        .audio_items()
+                        .tracks()
                         .iter()
-                        .find(|item| item.id() == item_id)
-                        .is_some_and(|item| item.take_count() > 1)
-                        && !app
-                            .project
-                            .tracks()
-                            .iter()
-                            .any(|track| track.frozen_audio_item_id() == Some(item_id))
+                        .any(|track| track.frozen_audio_item_id() == Some(*item_id))
                 })
         }
         CommandKind::CropAudioItemToActiveTake => {

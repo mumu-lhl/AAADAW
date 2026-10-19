@@ -5450,7 +5450,7 @@ impl App {
                             | Message::DuplicateAudioItem(_)
                             | Message::DuplicateAudioItemTake(_)
                             | Message::DeleteActiveAudioItemTake(_)
-                            | Message::MoveAudioItemActiveTakeToTop(_)
+                            | Message::MoveSelectedAudioItemActiveTakesToTop
                             | Message::CropSelectedAudioItemsToActiveTake
                             | Message::SwitchAudioItemTake(..)
                             | Message::DuplicateMidiItem(_)
@@ -9673,43 +9673,68 @@ impl App {
                     "Active take deleted",
                 );
             }
-            Message::MoveAudioItemActiveTakeToTop(item_id) => {
+            Message::MoveSelectedAudioItemActiveTakesToTop => {
                 if commands::project_edit_busy(self) {
                     self.status =
                         "Stop playback or finish the current project operation before reordering takes"
                             .to_owned();
                     return Task::none();
                 }
-                let Some(item) = self
-                    .project
-                    .audio_items()
+                let selected_audio_ids = commands::selected_audio_item_ids(self);
+                let selected_multi_take_count = selected_audio_ids
                     .iter()
-                    .find(|item| item.id() == item_id)
-                else {
-                    self.status = "Audio item no longer exists".to_owned();
-                    return Task::none();
-                };
-                if item.take_count() <= 1 {
-                    self.status = "Audio item has only one take".to_owned();
+                    .filter(|item_id| {
+                        self.project
+                            .audio_items()
+                            .iter()
+                            .find(|item| item.id() == **item_id)
+                            .is_some_and(|item| item.take_count() > 1)
+                    })
+                    .count();
+                let move_targets = commands::move_active_take_to_top_targets(self);
+                if selected_multi_take_count == 0 {
+                    self.status =
+                        "Select a multi-take audio item to move its active take to the top"
+                            .to_owned();
                     return Task::none();
                 }
-                if item.active_take_index() == 0 {
-                    self.status = "Active take is already at the top".to_owned();
+                if move_targets.is_empty() {
+                    self.status = if selected_multi_take_count == 1 {
+                        "Active take is already at the top"
+                    } else {
+                        "Active takes are already at the top"
+                    }
+                    .to_owned();
                     return Task::none();
                 }
-                if self
-                    .project
-                    .tracks()
-                    .iter()
-                    .any(|track| track.frozen_audio_item_id() == Some(item_id))
-                {
+                if move_targets.iter().any(|item_id| {
+                    self.project
+                        .tracks()
+                        .iter()
+                        .any(|track| track.frozen_audio_item_id() == Some(*item_id))
+                }) {
                     self.status = "Frozen render items cannot be edited".to_owned();
                     return Task::none();
                 }
-                self.apply_action(
-                    DawAction::MoveAudioItemActiveTakeToTop { item_id },
-                    "Active take moved to top",
-                );
+                let moved_count = move_targets.len();
+                let actions = move_targets
+                    .into_iter()
+                    .map(|item_id| DawAction::MoveAudioItemActiveTakeToTop { item_id })
+                    .collect::<Vec<_>>();
+                let action = if actions.len() == 1 {
+                    actions.into_iter().next().unwrap()
+                } else {
+                    DawAction::BatchTransaction {
+                        tx_id: self.revision,
+                        actions,
+                    }
+                };
+                let status = if moved_count == 1 {
+                    "Active take moved to top"
+                } else {
+                    "Active takes moved to top"
+                };
+                self.apply_action(action, status);
             }
             Message::CropSelectedAudioItemsToActiveTake => {
                 if commands::project_edit_busy(self) {

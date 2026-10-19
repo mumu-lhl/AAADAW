@@ -1395,7 +1395,7 @@ pub(crate) enum Message {
     DuplicateAudioItem(ItemId),
     DuplicateAudioItemTake(ItemId),
     DeleteActiveAudioItemTake(ItemId),
-    MoveAudioItemActiveTakeToTop(ItemId),
+    MoveSelectedAudioItemActiveTakesToTop,
     CropSelectedAudioItemsToActiveTake,
     SwitchAudioItemTake(ItemId, bool),
     DuplicateMidiItem(ItemId),

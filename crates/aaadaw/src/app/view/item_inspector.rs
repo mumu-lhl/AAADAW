@@ -68,6 +68,15 @@ fn selected_item_view(app: &App, item_id: ItemId, touch_targets: bool) -> Elemen
         } else {
             item.name()
         };
+        let selected_audio_ids = super::super::commands::selected_audio_item_ids(app);
+        let multi_take_selection = app.timeline.selected_items.len() > 1
+            && selected_audio_ids.iter().any(|selected_id| {
+                app.project
+                    .audio_items()
+                    .iter()
+                    .find(|selected_item| selected_item.id() == *selected_id)
+                    .is_some_and(|selected_item| selected_item.take_count() > 1)
+            });
         let mut take_controls = row![
             text(format!(
                 "Take {}/{} · {}",
@@ -90,23 +99,32 @@ fn selected_item_view(app: &App, item_id: ItemId, touch_targets: bool) -> Elemen
                     Message::SwitchAudioItemTake(item_id, false),
                 ))
                 .push(buttons.action("Next take", Message::SwitchAudioItemTake(item_id, true)));
-            take_controls = take_controls.push(buttons.action(
-                "Move active to top",
-                Message::MoveAudioItemActiveTakeToTop(item_id),
-            ));
-            let crop_label = if app.timeline.selected_items.len() > 1 {
-                "Crop selected to active"
-            } else {
-                "Crop to active take"
-            };
-            take_controls = take_controls
-                .push(buttons.danger(crop_label, Message::CropSelectedAudioItemsToActiveTake));
+            if !multi_take_selection {
+                take_controls = take_controls.push(buttons.action(
+                    "Move active to top",
+                    Message::MoveSelectedAudioItemActiveTakesToTop,
+                ));
+                take_controls = take_controls.push(buttons.danger(
+                    "Crop to active take",
+                    Message::CropSelectedAudioItemsToActiveTake,
+                ));
+            }
             if app.can_delete_selected_audio_item_take() {
                 take_controls = take_controls.push(buttons.danger(
                     "Delete active take",
                     Message::DeleteActiveAudioItemTake(item_id),
                 ));
             }
+        }
+        if multi_take_selection {
+            take_controls = take_controls.push(buttons.action(
+                "Move selected to top",
+                Message::MoveSelectedAudioItemActiveTakesToTop,
+            ));
+            take_controls = take_controls.push(buttons.danger(
+                "Crop selected to active",
+                Message::CropSelectedAudioItemsToActiveTake,
+            ));
         }
         let mut actions = row![
             text(format!("Audio · {}", item.media_ref())).width(Length::Fill),
