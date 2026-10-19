@@ -1,0 +1,19 @@
+artifact	sha256
+crates/aaadaw/examples/generate_midi_filter_from_pitch_opaque_selection_fixture.rs	c9dd68399cfa464e6e7d9d7488238c7e8d7f0b394eab4123360278d9cfe48aab
+fixtures/midi-event-filter-from-pitch-opaque-selection-aaadaw.aaadaw	b07f9dbb1d87155826ea19b1290dc60222c8f90eaaa8d367009ba254a635fe61
+fixtures/midi-event-filter-from-pitch-opaque-selection-aaadaw-selected-before-set.png	155e2b0db7dd693c1618ee7708ea1ad3372555a17c3c4b9050636e751ed35684
+fixtures/midi-event-filter-from-pitch-opaque-selection-aaadaw-filter-before-set.png	cfcf65db3ef1df502ea42beedbdfcf2504be01ff890bfe10f156eddd05845fc5
+fixtures/midi-event-filter-from-pitch-opaque-selection-aaadaw-after-set.png	f3005d92bf48b757fd99b6a724120a1422353bc9bf699b17992cc7092a32249c
+fixtures/midi-event-filter-from-pitch-opaque-selection-aaadaw-list-filtered.png	dddb63130157c26df66f61979b6c4aec58a5bf0a1622c9361c11e178ade6b50f
+fixtures/midi-event-filter-from-pitch-opaque-selection-aaadaw-funnel-off.png	75001cc1d2196a156a86473452c3ddb0e027a5b878e96c125b07464a5b6fa296
+binary_sha256	3594eacaf57a95c146496424d65276eeb75d9db1c8de4d4f0dd309d6052e2c90
+binary_build_id	84fd3e6db96f4e93bf121a591ef4ca3fb1234cb9
+build_backend	rustc nightly with Cranelift codegen backend
+environment	Linux Xvfb :557 at 1600x900; AAADAW MIDI Event List live window; isolated XDG runtime/config/data/cache/state; audio unavailable
+starting_state	Eight Event List rows, All events and All channels, Show-only off, funnel off. Pitch Bend +4096 ch3 @ tick 480 and Text Meta @ tick 960 were selected in the Event List before opening Filter Events.
+action	Filter events > Set filter from selection; Done; toggle the Event List Filter button off
+assertion	Set derives <all events>, All channels, Position 0.12500000–0.25026042, Repeat measure, Show-only checked, and Draw events on Channel 1; the selected Pitch Bend and Text Meta remain selected.
+list_result	Six in-range rows pass immediately: Pitch Bend, C4, CC7, unselected Text Meta, G4, and selected Text Meta. The out-of-range F0 SysEx and terminal row are hidden. Turning the funnel off restores all eight rows and clears Show-only.
+selection_and_data	The App regression verifies matching Note/CC/Pitch Bend/Meta event IDs, retained selected endpoints, unchanged project snapshot, and unchanged Undo/Redo history.
+verification	Focused App Nextest 1/1; AAADAW package Nextest 833/833; strict all-target Clippy; nightly Cranelift desktop build; fmt --check and git diff --check. The exact current Cranelift binary was launched in the live Xvfb window for five screenshots covering selected rows, the pre-Set panel, derived filter, filtered list, and funnel-off list.
+limitation	REAPER uses Position combo boxes showing 1/8–0.250; AAADAW currently shows editable decimal fields 0.12500000–0.25026042. The native filtered readback did not return the out-of-range SysEx row; unchanged raw MIDI bytes and RPP files document its preservation. Other mixed event-type combinations remain open; screenshots verify behavior and controls, not pixel identity.
