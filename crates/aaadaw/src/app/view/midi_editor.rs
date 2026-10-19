@@ -473,7 +473,14 @@ impl MidiSnap {
             MidiOpaqueEventKind::SystemExclusive { .. } => MidiEditorEventKind::SysEx,
             MidiOpaqueEventKind::Meta { .. } => MidiEditorEventKind::Text,
         };
-        self.filter_state().event_visible(None, event_kind)
+        let position = midi_editor_filter_repeat_position_value(
+            event.tick,
+            self.ppq,
+            self.measure_ticks,
+            self.position_filter.repeat_every,
+        );
+        self.filter_state()
+            .event_visible_at(None, event_kind, position)
     }
 
     fn end_row_visible(self, item_end_tick: u64) -> bool {

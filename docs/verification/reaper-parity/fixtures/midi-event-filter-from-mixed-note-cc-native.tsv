@@ -1,0 +1,22 @@
+artifact	sha256
+scripts/reaper_parity/probe-midi-event-filter-from-mixed-event-selection.lua	65800cfc4e95ab87dfe7fdd30c587a8756d4200de0ce36299850e489979a0185
+crates/aaadaw/examples/generate_midi_filter_from_mixed_event_selection_fixture.rs	0dd9921a9ebe9080ea668918ec7ca4bb6404df9f3a33a7e4b61bdcef8b2a57bb
+fixtures/midi-event-filter-from-mixed-note-cc-native-before.bin	b73da565e91c8a9b3ea803a9263812112019a77a9b055f4048c0618291eb20b2
+fixtures/midi-event-filter-from-mixed-note-cc-native-after-set.bin	b73da565e91c8a9b3ea803a9263812112019a77a9b055f4048c0618291eb20b2
+fixtures/midi-event-filter-from-mixed-note-cc-native-readback.tsv	740a67faf03f2f04265f9d206859fd38e4025c841d63b9aeeb5ec9649f973648
+fixtures/midi-event-filter-from-mixed-note-cc-native-before.rpp	7053158765cdf3a8ce475d382a0d8df4da46e5440e15ec35849478b2b64e9b44
+fixtures/midi-event-filter-from-mixed-note-cc-native-after-set.rpp	2895128828e3580c5577b6d15c7dd0d71a1afc91c3854456ce087e8d503c6b30
+fixtures/midi-event-filter-from-mixed-note-cc-reaper-native-after-set.png	7a6c8fb35a139c7844623b01c2f6692aa749dc1ff3f1bde427fe8db48897f925
+fixtures/midi-event-filter-from-mixed-note-cc-reaper-native-list-unfiltered.png	8e8ad71bdde63194bd3c042eb93717e4088bee207e7309ad2b2c65cca0610dfd
+fixtures/midi-event-filter-from-mixed-note-cc-reaper-native-list-filtered.png	63dd634878ef71f7c590f18dbd904b1605d16d814d25303c44f27e34434f7f3b
+native_build_id	fb9ade2f211bc91a3ee6193630ef17bcf5f6528b
+native_binary_sha256	9976f5608068b7a58518969001b00b527fb0de6ed7459e0e5dda6f29878ee254
+theme	REAPER 7.82 Linux Default 7; theme SHA-256 575544606736a395520703e532209ad9635f13a41b7ea000bb9810d60025be48
+environment	Linux Xorg :546, 1600x1000; isolated REAPER profile; audio unavailable
+starting_state	Selected C4 Note ch2 @ tick 480 and CC7 value100 ch3 @ tick 960; unselected G4 ch5 @ tick 600, CC7 value64 ch2 @480, CC10 value70 ch2 @720, Text Meta @ tick 600, and F0 SysEx @ tick 1500; Event List funnel off
+action	Event List > Filter Events > Set filter from selection; then enable Show-only
+assertion	REAPER sets Event type to <all events>, channels 2–3, Position 0.125–0.25026042, Repeat every measure, Draw events on channel 2; Note, Velocity, Parameter, Value, and Length criteria are disabled; Set turns Show-only off.
+filter_toggle	Exactly five rows remain: CC7/64 ch2 @480, selected C4 ch2 @480, channel-less Text Meta @600, CC10/70 ch2 @720, and selected CC7/100 ch3 @960. G4, out-of-range SysEx, and the terminal row are hidden.
+selection_and_data	The selected Note and CC remain selected. MIDI_GetAllEvts raw source is 139 bytes before and after and byte-identical. RPP EVTFILTER is `EVTFILTER 6 -1 -1 -1 -1 1 1 0 0 -1 -1 0.125 0.25026042 1 -1 0 -1 -1`.
+verification	Native ReaScript note/CC/Text/SysEx readback, byte-identical MIDI_GetAllEvts blobs, before/after RPP files, after-Set dialog and unfiltered/filtered Event List screenshots
+limitation	This probe covers mixed Note+CC Set-from-selection plus channel-less Text and out-of-range SysEx under Position filtering. Other heterogeneous combinations and selected Meta/SysEx derivation remain unprobed. Screenshots verify behavior and controls, not pixel identity.

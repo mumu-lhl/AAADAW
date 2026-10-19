@@ -562,10 +562,20 @@ pub(crate) struct MidiEditorFilterState {
 }
 
 impl MidiEditorFilterState {
+    #[cfg(test)]
     pub(crate) fn event_visible(
         self,
         channel: Option<u8>,
         event_kind: MidiEditorEventKind,
+    ) -> bool {
+        self.event_visible_at(channel, event_kind, 0)
+    }
+
+    pub(crate) fn event_visible_at(
+        self,
+        channel: Option<u8>,
+        event_kind: MidiEditorEventKind,
+        position_in_repeat: u32,
     ) -> bool {
         let editor_channel_matches = !self.channel_filter_enabled
             || channel.is_none_or(|channel| match self.channel_selection {
@@ -579,7 +589,9 @@ impl MidiEditorFilterState {
             let channel_matches = channel.is_none_or(|channel| {
                 self.channels & (1_u16.checked_shl(u32::from(channel)).unwrap_or(0)) != 0
             });
-            let passes = channel_matches && self.event_type.matches(event_kind);
+            let passes = channel_matches
+                && self.event_type.matches(event_kind)
+                && self.position.matches(position_in_repeat);
             if self.inverted { !passes } else { passes }
         };
         editor_channel_matches && event_filter_matches
@@ -1802,6 +1814,38 @@ mod midi_channel_selection_tests {
         };
         assert!(!inverted_filter.event_visible(Some(0), MidiEditorEventKind::Note,));
         assert!(inverted_filter.event_visible(Some(0), MidiEditorEventKind::Pitch,));
+    }
+
+    #[test]
+    fn event_position_filter_applies_to_channel_less_text_and_sysex_rows() {
+        let filter = MidiEditorFilterState {
+            channel_selection: MidiEditorChannelSelection::Multichannel,
+            channel_filter_enabled: false,
+            event_filter_enabled: true,
+            channels: 0b110,
+            inverted: false,
+            event_type: MidiEditorEventTypeFilter::AllEvents,
+            note: MidiEditorNoteFilter::default(),
+            controller: MidiEditorControllerFilter::default(),
+            pitch_bend: MidiEditorPitchBendFilter::default(),
+            program_change: MidiEditorProgramChangeFilter::default(),
+            position: MidiEditorPositionFilter {
+                enabled: true,
+                range_initialized: true,
+                low: 125_000_000,
+                high: 250_000_000,
+                repeat_every: MidiEditorFilterRepeat::Measure,
+            },
+        };
+
+        assert!(filter.event_visible_at(None, MidiEditorEventKind::Text, 156_250_000));
+        assert!(!filter.event_visible_at(None, MidiEditorEventKind::SysEx, 390_625_000));
+        let inverted = MidiEditorFilterState {
+            inverted: true,
+            ..filter
+        };
+        assert!(!inverted.event_visible_at(None, MidiEditorEventKind::Text, 156_250_000));
+        assert!(inverted.event_visible_at(None, MidiEditorEventKind::SysEx, 390_625_000));
     }
 
     #[test]

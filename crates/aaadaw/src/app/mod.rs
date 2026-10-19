@@ -14551,14 +14551,7 @@ impl App {
         .into_iter()
         .filter(|selected| *selected)
         .count();
-        if selected_kinds != 1
-            || !(has_notes
-                || has_controllers
-                || has_pitch_bends
-                || has_program_changes
-                || has_poly_aftertouches
-                || has_channel_pressures)
-        {
+        if selected_kinds == 0 || has_opaque_events {
             return;
         }
         let Some(item_id) = self.midi_editor_item_id else {
@@ -14580,6 +14573,11 @@ impl App {
         self.midi_editor_event_list_filter_active = false;
         self.midi_editor_event_filter_enabled = false;
 
+        if selected_kinds > 1 {
+            self.set_midi_editor_filter_from_mixed_channel_event_selection(item_id);
+            return;
+        }
+
         match () {
             _ if has_notes => self.set_midi_editor_filter_from_selected_notes(),
             _ if has_controllers => self.set_midi_editor_filter_from_selected_controllers(),
@@ -14593,6 +14591,110 @@ impl App {
             }
             _ => {}
         }
+    }
+
+    fn set_midi_editor_filter_from_mixed_channel_event_selection(&mut self, item_id: ItemId) {
+        let Some(item) = self
+            .project
+            .midi_items()
+            .iter()
+            .find(|item| item.id() == item_id)
+        else {
+            return;
+        };
+        let mut selected_events = Vec::new();
+        selected_events.extend(
+            item.notes()
+                .iter()
+                .filter(|event| self.midi_editor_selected_notes.contains(&event.id()))
+                .map(|event| (event.tick(), event.channel())),
+        );
+        selected_events.extend(
+            item.controllers()
+                .iter()
+                .filter(|event| self.midi_editor_selected_controllers.contains(event))
+                .map(|event| (event.tick, event.channel)),
+        );
+        selected_events.extend(
+            item.pitch_bends()
+                .iter()
+                .filter(|event| self.midi_editor_selected_pitch_bends.contains(event))
+                .map(|event| (event.tick, event.channel)),
+        );
+        selected_events.extend(
+            item.program_changes()
+                .iter()
+                .filter(|event| self.midi_editor_selected_program_changes.contains(event))
+                .map(|event| (event.tick, event.channel)),
+        );
+        selected_events.extend(
+            item.poly_aftertouches()
+                .iter()
+                .filter(|event| self.midi_editor_selected_poly_aftertouches.contains(event))
+                .map(|event| (event.tick, event.channel)),
+        );
+        selected_events.extend(
+            item.channel_pressures()
+                .iter()
+                .filter(|event| self.midi_editor_selected_channel_pressures.contains(event))
+                .map(|event| (event.tick, event.channel)),
+        );
+        let Some((first_tick, first_channel)) = selected_events
+            .iter()
+            .copied()
+            .min_by_key(|(tick, channel)| (*tick, *channel))
+        else {
+            return;
+        };
+        let ppq = self.project.settings().ppq();
+        let measure_ticks = midi_editor_measure_length_ticks(
+            ppq,
+            self.project.time_signature_at_tick(item.start_tick()),
+        );
+        let (channels, position_low, position_high) = selected_events.iter().fold(
+            (
+                0_u16,
+                midi_editor_filter_position_value(first_tick, measure_ticks),
+                midi_editor_filter_position_high_value(first_tick, measure_ticks),
+            ),
+            |(channels, position_low, position_high), (tick, channel)| {
+                (
+                    channels | (1_u16 << (*channel).min(15)),
+                    position_low.min(midi_editor_filter_position_value(*tick, measure_ticks)),
+                    position_high.max(midi_editor_filter_position_high_value(*tick, measure_ticks)),
+                )
+            },
+        );
+        if channels == 0 {
+            return;
+        }
+
+        self.midi_editor_channel_selection = if channels.count_ones() == 1 {
+            MidiEditorChannelSelection::Channel(channels.trailing_zeros() as u8)
+        } else {
+            MidiEditorChannelSelection::Multichannel
+        };
+        self.midi_editor_filter_channels = channels;
+        self.midi_editor_filter_channels_initialized = true;
+        self.midi_editor_event_type_filter = MidiEditorEventTypeFilter::AllEvents;
+        self.midi_editor_note_filter = MidiEditorNoteFilter::default();
+        self.midi_editor_controller_filter = MidiEditorControllerFilter::default();
+        self.midi_editor_pitch_bend_filter = MidiEditorPitchBendFilter::default();
+        self.midi_editor_program_change_filter = MidiEditorProgramChangeFilter::default();
+        self.midi_editor_position_filter = MidiEditorPositionFilter {
+            enabled: true,
+            range_initialized: true,
+            low: position_low,
+            high: position_high,
+            repeat_every: MidiEditorFilterRepeat::Measure,
+        };
+        self.midi_editor_filter_value_low.clear();
+        self.midi_editor_filter_value_high.clear();
+        self.midi_editor_filter_position_low = format_midi_editor_filter_position(position_low);
+        self.midi_editor_filter_position_high = format_midi_editor_filter_position(position_high);
+        self.midi_editor_filter_note_length_low.clear();
+        self.midi_editor_filter_note_length_high.clear();
+        self.midi_editor_draw_channel = first_channel.min(15);
     }
 
     fn set_midi_editor_filter_from_selected_notes(&mut self) {
@@ -15171,6 +15273,10 @@ impl App {
             .midi_items()
             .iter()
             .find(|item| item.id() == item_id)?;
+        let measure_ticks = midi_editor_measure_length_ticks(
+            self.project.settings().ppq(),
+            self.project.time_signature_at_tick(item.start_tick()),
+        );
         let mut selection = MidiEditorSelectionState::default();
         selection.notes.extend(
             item.notes()
@@ -15217,7 +15323,13 @@ impl App {
                         MidiOpaqueEventKind::SystemExclusive { .. } => MidiEditorEventKind::SysEx,
                         MidiOpaqueEventKind::Meta { .. } => MidiEditorEventKind::Text,
                     };
-                    self.midi_editor_filter_event_matches(None, event_kind)
+                    let position = midi_editor_filter_repeat_position_value(
+                        event.tick,
+                        self.project.settings().ppq(),
+                        measure_ticks,
+                        self.midi_editor_position_filter.repeat_every,
+                    );
+                    self.midi_editor_filter_event_matches(None, event_kind, position)
                 })
                 .map(|(index, _)| index as u32),
         );
@@ -15228,6 +15340,7 @@ impl App {
         &self,
         channel: Option<u8>,
         event_kind: MidiEditorEventKind,
+        position_in_repeat: u32,
     ) -> bool {
         MidiEditorFilterState {
             channel_selection: MidiEditorChannelSelection::AllChannels,
@@ -15242,7 +15355,7 @@ impl App {
             program_change: self.midi_editor_program_change_filter,
             position: self.midi_editor_position_filter,
         }
-        .event_visible(channel, event_kind)
+        .event_visible_at(channel, event_kind, position_in_repeat)
     }
 
     fn midi_editor_filter_controller_matches(
