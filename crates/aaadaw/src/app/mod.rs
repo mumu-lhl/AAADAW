@@ -14557,6 +14557,7 @@ impl App {
         if has_opaque_events
             && selected_kinds != 1
             && !(selected_kinds == 2 && (has_controllers || has_notes))
+            && !(selected_kinds == 3 && has_notes && has_controllers)
         {
             return;
         }
@@ -14580,7 +14581,11 @@ impl App {
 
         if selected_kinds > 1 {
             if has_opaque_events {
-                if has_notes {
+                if has_notes && has_controllers {
+                    self.set_midi_editor_filter_from_mixed_note_controller_and_opaque_selection(
+                        item_id,
+                    );
+                } else if has_notes {
                     self.set_midi_editor_filter_from_mixed_note_and_opaque_selection(item_id);
                 } else {
                     self.set_midi_editor_filter_from_mixed_controller_and_opaque_selection(item_id);
@@ -14743,6 +14748,47 @@ impl App {
         );
     }
 
+    fn set_midi_editor_filter_from_mixed_note_controller_and_opaque_selection(
+        &mut self,
+        item_id: ItemId,
+    ) {
+        let Some(item) = self
+            .project
+            .midi_items()
+            .iter()
+            .find(|item| item.id() == item_id)
+        else {
+            return;
+        };
+        let selected_ticks = item
+            .notes()
+            .iter()
+            .filter(|event| self.midi_editor_selected_notes.contains(&event.id()))
+            .map(|event| event.tick())
+            .chain(
+                item.controllers()
+                    .iter()
+                    .filter(|event| self.midi_editor_selected_controllers.contains(event))
+                    .map(|event| event.tick),
+            )
+            .chain(
+                item.opaque_events()
+                    .iter()
+                    .enumerate()
+                    .filter(|(index, _)| {
+                        self.midi_editor_selected_opaque_events
+                            .contains(&(*index as u32))
+                    })
+                    .map(|(_, event)| event.tick),
+            )
+            .collect();
+        self.set_midi_editor_filter_from_mixed_opaque_selection_ticks(
+            item_id,
+            selected_ticks,
+            true,
+        );
+    }
+
     fn set_midi_editor_filter_from_mixed_opaque_selection_ticks(
         &mut self,
         item_id: ItemId,
@@ -14780,8 +14826,8 @@ impl App {
         );
 
         // REAPER expands the measured mixed Note/CC + opaque selections to all
-        // event types and channels and uses their shared Position range. The
-        // Note path activates the funnel without Show-only; the CC path enables it.
+        // event types and channels and uses their shared Position range. Note +
+        // opaque activates the funnel without Show-only; any selected CC enables it.
         self.midi_editor_channel_selection = MidiEditorChannelSelection::AllChannels;
         self.midi_editor_filter_channels = u16::MAX;
         self.midi_editor_filter_channels_initialized = true;

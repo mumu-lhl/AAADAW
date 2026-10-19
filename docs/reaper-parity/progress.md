@@ -2717,3 +2717,10 @@ Linux REAPER 7.82 / Default 7 原厂探针选中 channel 2 的 C4 Note @ tick 48
 AAADAW 按该实测组合单独实现：通道和事件类型扩展为 All，派生共同 Position，开启 Event List funnel，但关闭 Show-only。Cranelift 实窗五张截图记录七行初始列表、两个选中端点、Set 面板、五行筛选结果及漏斗关闭后的七行恢复。App 回归覆盖所有匹配 Note/CC/opaque 事件、选区保留、漏斗切换、工程快照和 Undo/Redo 不变；项目生成器、fixture、截图和二进制身份见 [AAADAW manifest](../verification/reaper-parity/fixtures/midi-event-filter-from-mixed-note-opaque-selection-aaadaw.tsv)。
 
 workspace Nextest **1,574/1,574，78 个测试目标，0 skipped**；定向回归 **1/1**；AAADAW all-target strict Clippy（`-D warnings -A future-incompatible`）、nightly Cranelift 桌面构建、fmt 和 diff check 均通过。四份混合选择 manifest 的 **30/30** 个制品哈希匹配。CC + opaque 仍启用 Show-only，Note + opaque 则只激活漏斗；其余混合类型组合仍开放。Position 小数文本与 REAPER 组合框仍存在可见差异，因此 `MIDI-EVENT-LIST-001`、UI-019 与 P7 保持 `in_progress`；截图验证行为和控件，不代表像素级一致。
+
+
+### 2026-10-19 MIDI Event List Filter 混合 Note + CC + Text Meta 选区
+
+Linux REAPER 7.82 / Default 7 实测同时选中 C4 Note @ tick 480、CC7 @ tick 960 和 Text Meta @ tick 960：Set 推导 All events、All channels、共同 Position `1/8–0.250`、Repeat measure，勾选 Show-only 并启用漏斗；六行通过，关闭漏斗恢复八行，三个选中端点与 MIDI 数据保持不变。168 字节 `MIDI_GetAllEvts` before/after SHA-256 均为 `daf6aa01ef0e6c634f7e310febf9900da9191c9eb5c929ff19de250cca34e3e5`。筛选开启时 `MIDI_GetTextSysexEvt` 未返回范围外 SysEx；其保留由相同原始 MIDI 字节及 RPP before/after 支持。原厂探针、读回、RPP 和三张 REAPER 实窗截图见 [native manifest](../verification/reaper-parity/fixtures/midi-event-filter-from-mixed-note-cc-opaque-selection-native.tsv)。
+
+AAADAW 现在将精确的三类选区分支交给共享 mixed-opaque Position helper，自动派生共同 tick 范围并启用 Show-only；App 回归验证 All events / All channels、六个匹配事件、三个选区、漏斗关闭后的八行恢复以及 project/Undo/Redo 不变。Cranelift 桌面二进制 Build ID `8c9574dfe4ffef4d0472a1c4eecf80460d6f1e4e`、SHA-256 `d264a056ea9c1792785d047809a4b00e9a2590773b0ea5641cfccdbe69882c10` 的真实 Xvfb 窗口截图、fixture 和生成器见 [AAADAW manifest](../verification/reaper-parity/fixtures/midi-event-filter-from-mixed-note-cc-opaque-selection-aaadaw.tsv)。定向回归 **1/1**、AAADAW package Nextest **831/831**、严格 all-target Clippy、nightly Cranelift 桌面构建、fmt、diff check 通过；两个本轮 manifest 的 **17/17** 个 artifact SHA-256 匹配。其他异构选区组合仍待测量与实现；Position 小数文本与 REAPER 组合框仍有界面差异，所以 `MIDI-EVENT-LIST-001`、UI-019 与 P7 保持 `in_progress`，截图验证行为和控件而非像素级一致。

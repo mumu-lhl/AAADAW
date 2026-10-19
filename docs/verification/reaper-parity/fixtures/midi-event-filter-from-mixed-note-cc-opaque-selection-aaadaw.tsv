@@ -1,0 +1,19 @@
+artifact	sha256
+crates/aaadaw/examples/generate_midi_filter_from_mixed_note_cc_opaque_selection_fixture.rs	5b70d4ff843800459a35d3c05e76d3d43b8913ebf18b2d4a41b433ac9eb25f51
+fixtures/midi-event-filter-from-mixed-note-cc-opaque-selection-aaadaw.aaadaw	67398b1bb5212e8741574cbbf2638769b68e160d70408de625dd645bd717ee1e
+fixtures/midi-event-filter-from-mixed-note-cc-opaque-selection-aaadaw-selected-before-set.png	44bbec3519d922f23c68a5e34de46f106ae3eca2d2cf9d4e861aef50f60efea3
+fixtures/midi-event-filter-from-mixed-note-cc-opaque-selection-aaadaw-filter-before-set.png	68e1b7e7859411125c81e72a19fd8b5a327b7dbf2146e20392ea5e36811c9e12
+fixtures/midi-event-filter-from-mixed-note-cc-opaque-selection-aaadaw-after-set.png	d9d259e39d1ca6545ad222eb4feb44c9d15b9a8329e2d77fa345c0bc1110837c
+fixtures/midi-event-filter-from-mixed-note-cc-opaque-selection-aaadaw-list-filtered.png	c53f4af00225eb94d75fa52e4807959243b8ffc1a6e0bbf1fda64753da6411ae
+fixtures/midi-event-filter-from-mixed-note-cc-opaque-selection-aaadaw-list-filter-off.png	ceee59c40f4eb54725cb56afa18e86f295233214eae283b200ad456ffa4e1ac4
+binary_sha256	d264a056ea9c1792785d047809a4b00e9a2590773b0ea5641cfccdbe69882c10
+binary_build_id	8c9574dfe4ffef4d0472a1c4eecf80460d6f1e4e
+build_backend	rustc nightly with Cranelift codegen backend
+environment	Linux Xvfb :551, 1600x900; actual AAADAW MIDI Event List window; isolated XDG runtime/config/data/cache/state; audio unavailable
+starting_state	Eight Event List rows; initially no event selection, Show-only off, and funnel off
+action	Click C4; Ctrl-click Selected Text Meta; Filter events > Set filter from selection
+assertion	The live panel shows <all events>, All channels, Position 0.12500000–0.25026042, Repeat measure, Show-only checked, and Draw events on Channel 1; both selected endpoints remain selected
+list_result	The eight-row list filters immediately to six in-range events, including unselected CC, Note, and Text Meta; out-of-range SysEx and terminal row are hidden. Turning the funnel off restores all eight rows.
+selection_and_data	The App regression verifies selected Note/CC/Text Meta retention, all six matching event IDs, the eight-row restored list, and unchanged project snapshot and Undo/Redo history.
+verification	Focused App Nextest 1/1; AAADAW package Nextest 831/831; final nightly Cranelift binary launched in a real Xvfb window; five screenshots capture selected rows, pre-Set controls, derived filter, filtered list, and the restored unfiltered list; fixture project and binary identity are recorded above.
+limitation	REAPER uses Position combo boxes displaying 1/8–0.250 while AAADAW uses editable decimal fields. Screenshots verify behavior and controls, not pixel identity.
