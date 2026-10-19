@@ -1,0 +1,18 @@
+artifact	sha256
+scripts/reaper_parity/probe-midi-event-filter-from-cc-selection.lua	a00a98b411a8f1d011fb5bc944a5859090bb89f6b86e6404e0ee1c5c35df104f
+fixtures/midi-event-filter-from-cc-native-event-list-before.png	ab8f121d93b5d7ffed931fa66abc87914f145be1b3b9ac571fd9ea405803923b
+fixtures/midi-event-filter-from-cc-native-after.png	b941f06b9108de7c12583eedb080d2d6312fbad6ace460eef5c97c2c019823a6
+fixtures/midi-event-filter-from-cc-native-before.rpp	861a6fce084da8c00960bf31ae0f2dd2e225c1ea182783fd003d48d2ee6e6b27
+fixtures/midi-event-filter-from-cc-native.rpp	b9d4fde0b3c0b2c646996fcbbf35b1a6908079dcb7a2930e003cc09aeb3b3772
+fixtures/midi-event-filter-from-cc-native-readback.tsv	f2add9a531e1eaaab62ea0896fcf65523317d882f594f5ad3820c46bbe38ec67
+native_build_id	fb9ade2f211bc91a3ee6193630ef17bcf5f6528b
+native_binary_sha256	9976f5608068b7a58518969001b00b527fb0de6ed7459e0e5dda6f29878ee254
+theme	REAPER 7.82 Linux Default 7; theme sha256 575544606736a395520703e532209ad9635f13a41b7ea000bb9810d60025be48
+environment	Linux Xvfb :510, 1600x1000; isolated REAPER 7.82 Default 7 profile; audio device unavailable
+starting_state	One C4 note; selected CC7 value 64 on MIDI channel 2 at tick 480 and selected CC7 value 100 on channel 3 at tick 960; unselected CC10 value 80 and CC7 value 127
+action	Event List Filter Events > Set filter from selection
+assertion	Channel mask becomes channels 2 and 3; Event type becomes Control Change (CC); Control 07 Volume MSB and Value 64–100 are enabled; Position in measure becomes 1/8–0.25026042; Repeat every remains measure; editor channel becomes Multichannel and draw channel remains Channel 1. Show-only, Invert, and Solo remain off.
+evtfilter_readback	EVTFILTER 6 176 -1 64 100 1 1 1 0 -1 -1 0.125 0.25026042 1 -1 1 7 7
+project_data	MIDI source data and CC selected flags are identical before/after; only item selection, cursor, editor/filter state, and REAPER project metadata differ
+verification	MIDI_GetCC selected-bit readback, interactive Filter Events dialog, Event List screenshot, before/after RPP EVTFILTER and MIDI source comparison
+limitation	Only a homogeneous selected CC7 parameter across channels 2 and 3 is measured; mixed CC parameters, mixed event types, and other selected event kinds remain open. Screenshots are behavior evidence, not pixel-diff certification.

@@ -14468,8 +14468,9 @@ impl App {
     }
 
     fn set_midi_editor_filter_from_selection(&mut self) {
-        if self.midi_editor_selected_notes.is_empty()
-            || !self.midi_editor_selected_controllers.is_empty()
+        let has_notes = !self.midi_editor_selected_notes.is_empty();
+        let has_controllers = !self.midi_editor_selected_controllers.is_empty();
+        if has_notes == has_controllers
             || !self.midi_editor_selected_pitch_bends.is_empty()
             || !self.midi_editor_selected_program_changes.is_empty()
             || !self.midi_editor_selected_poly_aftertouches.is_empty()
@@ -14478,6 +14479,14 @@ impl App {
         {
             return;
         }
+        if has_controllers {
+            self.set_midi_editor_filter_from_selected_controllers();
+        } else {
+            self.set_midi_editor_filter_from_selected_notes();
+        }
+    }
+
+    fn set_midi_editor_filter_from_selected_notes(&mut self) {
         let Some(item_id) = self.midi_editor_item_id else {
             return;
         };
@@ -14596,6 +14605,99 @@ impl App {
             format_midi_editor_filter_length(length_low_ticks, ppq);
         self.midi_editor_filter_note_length_high =
             format_midi_editor_filter_length(length_high_ticks, ppq);
+        self.midi_editor_draw_channel = 0;
+    }
+
+    fn set_midi_editor_filter_from_selected_controllers(&mut self) {
+        let Some(item_id) = self.midi_editor_item_id else {
+            return;
+        };
+        let Some(item) = self
+            .project
+            .midi_items()
+            .iter()
+            .find(|item| item.id() == item_id)
+        else {
+            return;
+        };
+        let ppq = self.project.settings().ppq();
+        let measure_ticks = midi_editor_measure_length_ticks(
+            ppq,
+            self.project.time_signature_at_tick(item.start_tick()),
+        );
+        let selected_controllers = item
+            .controllers()
+            .iter()
+            .copied()
+            .filter(|event| self.midi_editor_selected_controllers.contains(event))
+            .collect::<Vec<_>>();
+        let Some(first_controller) = selected_controllers.first().copied() else {
+            return;
+        };
+        if selected_controllers
+            .iter()
+            .any(|event| event.controller != first_controller.controller)
+        {
+            return;
+        }
+
+        let (channels, value_low, value_high, position_low, position_high) =
+            selected_controllers.iter().fold(
+                (
+                    1_u16 << first_controller.channel.min(15),
+                    first_controller.value,
+                    first_controller.value,
+                    midi_editor_filter_position_value(first_controller.tick, measure_ticks),
+                    midi_editor_filter_position_high_value(first_controller.tick, measure_ticks),
+                ),
+                |(channels, value_low, value_high, position_low, position_high), event| {
+                    (
+                        channels | (1_u16 << event.channel.min(15)),
+                        value_low.min(event.value),
+                        value_high.max(event.value),
+                        position_low
+                            .min(midi_editor_filter_position_value(event.tick, measure_ticks)),
+                        position_high.max(midi_editor_filter_position_high_value(
+                            event.tick,
+                            measure_ticks,
+                        )),
+                    )
+                },
+            );
+        if channels == 0 {
+            return;
+        }
+
+        self.midi_editor_channel_selection = if channels.count_ones() == 1 {
+            MidiEditorChannelSelection::Channel(channels.trailing_zeros() as u8)
+        } else {
+            MidiEditorChannelSelection::Multichannel
+        };
+        self.midi_editor_filter_channels = channels;
+        self.midi_editor_filter_channels_initialized = true;
+        self.midi_editor_event_type_filter = MidiEditorEventTypeFilter::ControlChange;
+        self.midi_editor_note_filter = MidiEditorNoteFilter::default();
+        self.midi_editor_controller_filter = MidiEditorControllerFilter {
+            controller_enabled: true,
+            controller: first_controller.controller,
+            value_enabled: true,
+            value_range_initialized: true,
+            value_low,
+            value_high,
+        };
+        self.midi_editor_position_filter = MidiEditorPositionFilter {
+            enabled: true,
+            range_initialized: true,
+            low: position_low,
+            high: position_high,
+            repeat_every: MidiEditorFilterRepeat::Measure,
+        };
+        self.midi_editor_filter_value_low = value_low.to_string();
+        self.midi_editor_filter_value_high = value_high.to_string();
+        self.midi_editor_filter_position_low = format_midi_editor_filter_position(position_low);
+        self.midi_editor_filter_position_high = format_midi_editor_filter_position(position_high);
+        self.midi_editor_filter_note_length_low.clear();
+        self.midi_editor_filter_note_length_high.clear();
         self.midi_editor_draw_channel = 0;
     }
 

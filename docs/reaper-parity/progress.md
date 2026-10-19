@@ -9,7 +9,7 @@
 | 唯一开发分支 | `feat/reaper-parity` |
 | 唯一 PR | [#282](https://github.com/mumu-lhl/AAADAW/pull/282)，Draft；后续阶段只更新此 PR |
 | 当前交付 | 唯一开发分支与 Draft PR #282 持续推进；P4 已提交 Contents Nudge 的原厂边界与 EOF 静音证据，并已接入 schema 49 有符号 source offset、负偏移 pre-roll/seek、持久化、属性编辑与波形显示；looped MIDI Contents Nudge 已贯穿 source-loop 模型，Snap 开/关一致性已按原厂 probe 修正，non-loop MIDI Contents Nudge 已按原厂 source boundary 对齐并覆盖 notes/CC/pitch bend、PPQ clamp、source offset remainder 与单步 Undo/Redo；Audio、混合 Audio/looped-MIDI 与 non-loop MIDI 的绝对 Set Contents 已有原厂对照和单事务 Undo/Redo；已有 P10 纵向切片覆盖 Project Settings Notes、General BPM/拍号/采样率、有符号 Start measure、BPM basis、标尺间隔锚点、Project start time 显示偏移、受支持字段的默认工程设置保存、64-tap sinc 播放、192-tap sinc 离线渲染、Entire project/Time selection/Custom time range/All project regions/All project markers 范围、默认关闭的毫秒尾音控制、Project/常用预设输出采样率转换、Mono/Stereo WAV、PCM8/16/24/32、Float32/64、4-bit IMA ADPCM、2-bit cADPCM 与 8-bit u-Law、可选 sample-peak 归一化（−60 至 0 dBFS）、Selected tracks (stems)、pre-fader stems、Selected tracks via master 与 Master mix and stems；另有 Project Marker 稳定身份/可见编号、schema36 保存/迁移、插入/导航/删除/快捷动作/拖动/属性编辑；Loop Ruler 已补充 Shift 整段移动/Snap、底栏建点、项目级 Loop/Time Selection 保存恢复、全局 link 偏好持久化、Action List link on/off 状态与 40632/40633 范围导航；Repeat 按钮/Action R 已接入 Transport，MIDI 与受限 PCM loop playback 有回归及原厂 start-after-loop 参照；工程 MIDI Note/CC/Pitch Bend 通道已进入 schema 59，MIDI Editor 默认网格已对齐 1/32，并接入选中音符起点/起点+结尾网格量化、Quantize Events 五种 note timing 操作、Strength/Bypass/Fix overlaps、对 modeled note/CC/Pitch Bend 的 All events 与 Swing 网格支持，以及通道选择、Filter、多通道集合与绘制目标；Selected events 已实现；Fix overlaps 关闭时，已测量一个已选音符的移动 note-off 越过下一未选同音邻接音符的原厂读回，并补充 Core/App 回归；未建模事件、复杂混合选择链、Humanize 控件、可撤销编辑与 OK 后全局设置保存已实现，但随机分布仍未验证；cADPCM 编码、Repeat 持久化与完整 loop/原厂验收仍未完成 |
-| 最新里程碑 | Event List Filter 已加入共享 Note/CC Position 与 Repeat；Linux REAPER 7.82 原厂四小节探测和 AAADAW Cranelift 实窗都验证每小节 Repeat 的 4/8/16 事件结果，自动化回归 813/813；完整记录见下方 2026-10-19 条目 |
+| 最新里程碑 | Event List Filter 的 Set filter from selection 已扩展到同参数 CC 选区；原厂 Linux REAPER 7.82 RPP/事件读回与 AAADAW Cranelift 实窗共同验证 channel mask、CC7、Value、Position、Repeat、选区保留和 Show-only；AAADAW 测试 814/814；完整记录见下方 2026-10-19 条目 |
 | 产品覆盖率 | 尚不可计算：P0 原子清单未封闭 |
 
 ## 阶段
@@ -2621,3 +2621,14 @@ Linux REAPER 7.82 / Default 7 的四小节原厂工程包含 960 PPQ、4/4、每
 AAADAW 现在以单一 Position range 与 Repeat period 过滤 Note 和 CC，并将相同条件用于 Event List、CC lane、Set/Add/Remove selection。Repeat choices 覆盖 `1/8T`、`1/8`、`1/4T`、`1/4`、`1/2T`、`1/2`、`measure`；Position 当前使用 0–1 的归一化数值输入。App 回归对 Note 和 CC 都核验 Measure/1/2/1/4 的事件数与位置，并补入 Position `3/4` 下 Measure 命中而 Repeat `1/4` 无匹配的原厂边界。实际打开 AAADAW Cranelift 桌面窗口，选 CC7、Position `0.125`–`0.125`、Repeat `1/4` 后，Event List 报告 16 条，实窗截图和二进制身份在 [AAADAW fixture manifest](../verification/reaper-parity/fixtures/midi-event-filter-position-repeat-aaadaw.tsv)。
 
 Cranelift `aaadaw --bin` 单测 **813/813** 通过；Stable workspace all-target Clippy (`-D warnings`)、fmt 与 `git diff --check` 通过。REAPER 与 AAADAW 截图是实机行为证据，不代表像素级一致验收。剩余工作包括其他 MIDI 事件类型的 Position、非 4/4 meter、CC selection 推导 Filter、Position 的原厂 musical-value picker，以及 Solo 和其他尚未测量的过滤组合；`MIDI-EVENT-LIST-001`、UI-019 与 P7 继续 `in_progress`。
+
+
+### 2026-10-19 Event List Filter 从同参数 CC 选区生成筛选条件
+
+AAADAW 的 `Set filter from selection` 现支持同一 Control Change 参数的多事件选区。它从所选 CC 推导 MIDI 通道 mask、Control Change 类型、控制器编号、闭区间 Value 和 measure Position；多通道时将编辑器通道设为 Multichannel，Repeat every 设为 measure，绘制通道回到 Channel 1。混合 CC 参数、混合事件类型及其他 CC 以外的事件类型仍保持未实现。
+
+Linux REAPER 7.82 / Default 7 原厂探针选中 channel 2 的 CC7 value 64 @ tick 480 与 channel 3 的 CC7 value 100 @ tick 960。`EVTFILTER` 读回为 `EVTFILTER 6 176 -1 64 100 1 1 1 0 -1 -1 0.125 0.25026042 1 -1 1 7 7`；保存前后 MIDI source 与 CC 选中位未变化。原厂脚本、Event List/Filter Events 截图和 RPP 读回在 [native fixture manifest](../verification/reaper-parity/fixtures/midi-event-filter-from-cc-native.tsv)。
+
+AAADAW Cranelift 当前实窗截图复核了推导的 channels 2–3、Control `07 Volume MSB`、Value 64–100、Position 0.125–0.25026042、Repeat `measure`、Multichannel 和 draw channel 1；对话框关闭后两条 CC 仍选中，开启 Show-only 后可见行正好是 value 64 和 100。项目生成器、来源工程、三张实窗截图、二进制 SHA-256 `c242de990decaf6f85dbc504c481e55b9b006af986842b3c9f9b6686a0b390f9` / Build ID `41a64de0ae0b1a91746de21039e797c4fd7a4515` 与逐项哈希见 [AAADAW fixture manifest](../verification/reaper-parity/fixtures/midi-event-filter-from-cc-aaadaw.tsv)。App 回归检查推导条件、选区、工程快照与 Undo/Redo 历史均符合预期。AAADAW 测试套件 **814/814**、Stable workspace all-target strict Clippy（`-D warnings`）、fmt、Cranelift 桌面构建及 `git diff --check` 通过；Cranelift 保留已知 `TimelinePipeline: MaybeSync` future-incompatibility warning。截图验证行为和字段，不构成像素级一致证明。
+
+`MIDI-EVENT-LIST-001`、UI-019、P7 仍为 `in_progress`。下一步继续验证和实现 Event List 其他筛选类型、Repeat 的非 4/4 行为与其余未覆盖交互。
