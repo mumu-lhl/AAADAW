@@ -1,0 +1,18 @@
+artifact	sha256
+crates/aaadaw/examples/generate_midi_filter_from_mixed_opaque_selection_fixture.rs	23379b439870cf4f97e454d3dd3d0de09f0c3299c477d222de247a6cf80a0cb1
+fixtures/midi-event-filter-from-mixed-opaque-selection-aaadaw.aaadaw	8ab3187c6d09685ffa629aeabf6605d8d495274fc521d8b045c8a04ef9ebfcbc
+fixtures/midi-event-filter-from-mixed-opaque-selection-aaadaw-list-unfiltered.png	332a4b231e406124b3ddbd4f06dc9142ec5697db8dbf8f899e6d75ef07a376d3
+fixtures/midi-event-filter-from-mixed-opaque-selection-aaadaw-selected-before-set.png	0f79735d7930ec0167b2b4e22f1470eed0c2160bde4a67a873d8d90d2c6649d8
+fixtures/midi-event-filter-from-mixed-opaque-selection-aaadaw-after-set.png	b37421c4b427ae205fd6e64eaea533df417a0fc1ebbd91ef288bce53db237a28
+fixtures/midi-event-filter-from-mixed-opaque-selection-aaadaw-list-filtered.png	19cb8067663b3c564b6a133e21c9d2f64d61828ccbba019c0b6f3b120d29984b
+binary_sha256	11987e80b1f0cc8d8c52fb1376373c08e2165c88cf1fafcf48de5ce1f62d01c0
+binary_build_id	707e6890e8a801208d7c8346546945e162aeb8dc
+build_backend	rustc nightly with Cranelift codegen backend
+environment	Linux dummy Xorg :549, 1600x900; MIDI Editor/Event List 1000x620; isolated XDG runtime/config/data/cache/state; audio unavailable
+starting_state	Seven Event List rows: selected CC7 ch2 @ tick 480 and Text Meta @ tick 960; unselected CC10, Note, Text Meta, SysEx and terminal rows; All events/channels; Show-only off
+action	Open Event List, select CC7 and Ctrl-click Text Meta, open Filter events, choose Set filter from selection
+assertion	The live filter panel shows <all events>, All channels, Position 0.12500000–0.25026042, Repeat measure, Show-only checked, Draw events on Channel 1; selected CC and Text Meta remain selected.
+list_result	The seven-row unfiltered list becomes five rows: both CCs, Note, and both in-range Text Meta rows; out-of-range SysEx and terminal row are hidden.
+selection_and_data	App regression verifies matching IDs, selection retention, unchanged project snapshot, and unchanged Undo/Redo history.
+verification	Focused App test passed; workspace Nextest 1,573/1,573 across 78 binaries, 0 skipped; strict AAADAW all-target Clippy (-D warnings -A future-incompatible); Cranelift desktop build; fmt --check; git diff --check; both fixture manifests 14/14 artifact SHA-256 values match; current Cranelift binary launched in a real Xorg window and screenshots record the seven-row list, selected endpoints, derived filter, and five-row result.
+limitation	REAPER uses Position combo boxes displaying 1/8–0.250 while AAADAW uses editable decimal fields. Other heterogeneous type combinations remain open. Screenshots verify behavior and controls, not pixel identity.

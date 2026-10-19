@@ -14554,7 +14554,7 @@ impl App {
         if selected_kinds == 0 {
             return;
         }
-        if has_opaque_events && selected_kinds != 1 {
+        if has_opaque_events && selected_kinds != 1 && !(selected_kinds == 2 && has_controllers) {
             return;
         }
         let Some(item_id) = self.midi_editor_item_id else {
@@ -14569,14 +14569,18 @@ impl App {
             return;
         }
 
-        // Channel-bearing selections derive criteria with the Event List
-        // funnel off. The opaque-event path below restores Show-only because
-        // REAPER enables it when deriving its combined Sysex/Meta filter.
+        // Channel-bearing-only selections derive criteria with the Event List
+        // funnel off. REAPER enables Show-only for selections containing
+        // opaque events, whether they are homogeneous or paired with a CC.
         self.midi_editor_event_list_filter_active = false;
         self.midi_editor_event_filter_enabled = false;
 
         if selected_kinds > 1 {
-            self.set_midi_editor_filter_from_mixed_channel_event_selection(item_id);
+            if has_opaque_events {
+                self.set_midi_editor_filter_from_mixed_controller_and_opaque_selection(item_id);
+            } else {
+                self.set_midi_editor_filter_from_mixed_channel_event_selection(item_id);
+            }
             return;
         }
 
@@ -14644,6 +14648,81 @@ impl App {
         self.midi_editor_filter_channels = u16::MAX;
         self.midi_editor_filter_channels_initialized = true;
         self.midi_editor_event_type_filter = MidiEditorEventTypeFilter::SysExMeta;
+        self.midi_editor_note_filter = MidiEditorNoteFilter::default();
+        self.midi_editor_controller_filter = MidiEditorControllerFilter::default();
+        self.midi_editor_pitch_bend_filter = MidiEditorPitchBendFilter::default();
+        self.midi_editor_program_change_filter = MidiEditorProgramChangeFilter::default();
+        self.midi_editor_position_filter = MidiEditorPositionFilter {
+            enabled: true,
+            range_initialized: true,
+            low: position_low,
+            high: position_high,
+            repeat_every: MidiEditorFilterRepeat::Measure,
+        };
+        self.midi_editor_filter_value_low.clear();
+        self.midi_editor_filter_value_high.clear();
+        self.midi_editor_filter_position_low = format_midi_editor_filter_position(position_low);
+        self.midi_editor_filter_position_high = format_midi_editor_filter_position(position_high);
+        self.midi_editor_filter_note_length_low.clear();
+        self.midi_editor_filter_note_length_high.clear();
+        self.midi_editor_event_filter_enabled = true;
+        self.midi_editor_event_list_filter_active = true;
+    }
+
+    fn set_midi_editor_filter_from_mixed_controller_and_opaque_selection(
+        &mut self,
+        item_id: ItemId,
+    ) {
+        let Some(item) = self
+            .project
+            .midi_items()
+            .iter()
+            .find(|item| item.id() == item_id)
+        else {
+            return;
+        };
+        let mut selected_ticks = item
+            .controllers()
+            .iter()
+            .filter(|event| self.midi_editor_selected_controllers.contains(event))
+            .map(|event| event.tick)
+            .chain(
+                item.opaque_events()
+                    .iter()
+                    .enumerate()
+                    .filter(|(index, _)| {
+                        self.midi_editor_selected_opaque_events
+                            .contains(&(*index as u32))
+                    })
+                    .map(|(_, event)| event.tick),
+            );
+        let Some(first_tick) = selected_ticks.next() else {
+            return;
+        };
+        let ppq = self.project.settings().ppq();
+        let measure_ticks = midi_editor_measure_length_ticks(
+            ppq,
+            self.project.time_signature_at_tick(item.start_tick()),
+        );
+        let (position_low, position_high) = selected_ticks.fold(
+            (
+                midi_editor_filter_position_value(first_tick, measure_ticks),
+                midi_editor_filter_position_high_value(first_tick, measure_ticks),
+            ),
+            |(position_low, position_high), tick| {
+                (
+                    position_low.min(midi_editor_filter_position_value(tick, measure_ticks)),
+                    position_high.max(midi_editor_filter_position_high_value(tick, measure_ticks)),
+                )
+            },
+        );
+
+        // REAPER expands a CC+opaque selection to all event types and channels,
+        // then uses their shared Position range with Show-only enabled.
+        self.midi_editor_channel_selection = MidiEditorChannelSelection::AllChannels;
+        self.midi_editor_filter_channels = u16::MAX;
+        self.midi_editor_filter_channels_initialized = true;
+        self.midi_editor_event_type_filter = MidiEditorEventTypeFilter::AllEvents;
         self.midi_editor_note_filter = MidiEditorNoteFilter::default();
         self.midi_editor_controller_filter = MidiEditorControllerFilter::default();
         self.midi_editor_pitch_bend_filter = MidiEditorPitchBendFilter::default();

@@ -2699,3 +2699,12 @@ Linux REAPER 7.82 / Default 7 原厂探针选中 Text Meta @ tick 480 与 F0 Sys
 AAADAW 现支持仅由 Text Meta 与 SysEx 组成的选区：推导 `Sysex/Meta`、All channels、事件 Position 范围，保持 Draw channel，并按原厂启用 Show-only。筛选面板现在也会为 `Sysex/Meta` 显示 Position 与 Repeat。Xorg :549 下的真实 Cranelift 窗口截图记录了五行未筛选列表、两条 opaque 选中行、派生筛选控件和两行结果；项目、生成器、截图与二进制 Build ID/SHA-256 在 [AAADAW manifest](../verification/reaper-parity/fixtures/midi-event-filter-from-opaque-selection-aaadaw.tsv)。截图也暴露了尚存的显示差异：AAADAW 用八位小数的可编辑文本，REAPER 用组合框显示 `1/8` 和 `0.250`；原厂 after-set RPP 未保存筛选值，因此 opaque 选择的内部精确上界仍未独立读回。
 
 新增的 Set-from-selection 与筛选控件回归通过；workspace Nextest **1,572/1,572，78 个测试目标，0 skipped**，断言加强后的两个定向回归 **2/2**；AAADAW all-target strict Clippy（`-D warnings -A future-incompatible`）、Cranelift 桌面构建、fmt 和 diff check 均通过。`MIDI-EVENT-LIST-001`、UI-019 和 P7 保持 `in_progress`：混合 channel-bearing/opaque 选区、更多异构组合、Position 控件形态/格式以及原厂窗口其他未覆盖交互仍待处理。
+
+
+### 2026-10-19 MIDI Event List Filter 混合 CC + opaque 选区
+
+Linux REAPER 7.82 / Default 7 原厂探针选中 channel 2 的 CC7 @ tick 480 与 Text Meta @ tick 960，同时放置未选中的 CC10、channel 5 Note、范围内 Text Meta、范围外 F0 SysEx 和终止行。`Set filter from selection` 将类型扩展为 `<all events>`、通道设为 All、按两个端点派生 Position `0.125–0.25026042`（控件显示 `1/8–0.250`），Repeat every 为 measure，自动启用 Show-only，并保持 Draw events on Channel 1。列表显示五条范围内事件，包含未选中的 CC、Note 和 Text Meta；范围外 SysEx 与终止行隐藏。两端选区保留，144 字节 `MIDI_GetAllEvts` 前后 SHA-256 相同；after-set RPP 的 `EVTFILTER` 保存了精确 Position 上界。脚本、readback、原始 MIDI、RPP 和 REAPER 实窗截图见 [native manifest](../verification/reaper-parity/fixtures/midi-event-filter-from-mixed-opaque-selection-native.tsv)。
+
+AAADAW 对该已测组合实现相同公共条件：All events / All channels、合并 Position、Repeat measure、Show-only 开启、Draw channel 保持 Channel 1；CC、Note 与无通道 Meta 按共同 Position 过滤。Cranelift 实窗截图记录七行原始列表、CC 与 Text Meta 两端选中、派生面板以及五行过滤结果。回归断言匹配事件、选区、工程快照与 Undo/Redo 历史；fixture、项目生成器、截图、Build ID/SHA-256 见 [AAADAW manifest](../verification/reaper-parity/fixtures/midi-event-filter-from-mixed-opaque-selection-aaadaw.tsv)。
+
+workspace Nextest **1,573/1,573，78 个测试目标，0 skipped**；定向回归 **1/1**；AAADAW all-target strict Clippy（`-D warnings -A future-incompatible`）、nightly Cranelift 桌面构建、fmt、diff check 均通过。两份 fixture manifest 的 **14/14** 个制品 SHA-256 匹配。REAPER 的 Position 组合框显示 `1/8–0.250`，AAADAW 仍使用可编辑小数文本 `0.12500000–0.25026042`；其他异构事件类型组合仍待测量和实现。`MIDI-EVENT-LIST-001`、UI-019 与 P7 保持 `in_progress`，截图验证行为和控件而非像素级一致。
