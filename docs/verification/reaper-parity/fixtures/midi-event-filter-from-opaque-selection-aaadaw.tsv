@@ -1,0 +1,17 @@
+artifact	sha256
+crates/aaadaw/examples/generate_midi_filter_from_opaque_selection_fixture.rs	ee8c01048d2ac0fd9ce80c84f72ab2dfe487290343910d841068f410e12d5c52
+fixtures/midi-event-filter-from-opaque-selection-aaadaw.aaadaw	b6e224fe211fdae51a3f69e46d82368710454ec00765821a1133b7f4e4aa439f
+fixtures/midi-event-filter-from-opaque-selection-aaadaw-list-unfiltered.png	f18aafb1919a987db6b85ba4b8110ee05a8b99a43f1e8aa275b24b0c989a2654
+fixtures/midi-event-filter-from-opaque-selection-aaadaw-selected-before-set.png	aead3e7f2e63b6a8fee817066f8c2bf5c2df7287685924861936c3d58e90d3a0
+fixtures/midi-event-filter-from-opaque-selection-aaadaw-after-set.png	0a0cad3cf3b45d4cc8eafdad388531e0880d6737b809c2b375925c46a669382a
+fixtures/midi-event-filter-from-opaque-selection-aaadaw-list-filtered.png	4d6ad3fd408dcdee93ea804b3ef6aaf3f077e47a516c7652778aee05309123ac
+binary_sha256	8173049752087cadfc1dd98a3fab7ad70a9a96ec20e1dfd903e5b859519afea6
+binary_build_id	185817bbd737775b8f25b4e31f03525b54bf46b1
+build_backend	rustc nightly with Cranelift codegen backend
+environment	Linux dummy Xorg :549, 1600x900; MIDI Editor/Event List 1000x620; isolated XDG profile; audio unavailable
+starting_state	Five Event List rows: selected Text Meta @ tick 480, CC @ tick 600, Note @ tick 720, selected F0 SysEx @ tick 960, plus terminal row; All channels; Show-only off
+action	Open fixture in AAADAW, open MIDI Editor > Event List, select Text Meta then Ctrl-click SysEx, Filter events… > Set filter from selection
+assertion	The live filter panel shows Sysex/Meta, all channels, Position 0.12500000–0.25026042, Repeat measure, Show-only checked, Draw events on channel 1; the two selected opaque rows remain selected.
+list_result	The unfiltered list has five rows. After Set, only the selected Text Meta and SysEx rows remain (two rows); selection and project MIDI data are unchanged.
+verification	Current Cranelift binary launched in a real Xorg window; screenshots capture the five-row unfiltered list, selected endpoints, derived filter controls, and two-row filtered list. App regression verifies derived criteria, exact matching opaque IDs, selected-event retention, unchanged project snapshot, and unchanged Undo/Redo history.
+limitation	This real-window comparison covers homogeneous Text Meta+SysEx selection. AAADAW currently shows Position as editable decimals (0.12500000–0.25026042), while REAPER uses combo boxes showing 1/8–0.250. Mixed channel-bearing and opaque selections and other derived-filter combinations remain open. Screenshots verify behavior and controls, not pixel identity.

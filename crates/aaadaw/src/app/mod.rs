@@ -14551,7 +14551,10 @@ impl App {
         .into_iter()
         .filter(|selected| *selected)
         .count();
-        if selected_kinds == 0 || has_opaque_events {
+        if selected_kinds == 0 {
+            return;
+        }
+        if has_opaque_events && selected_kinds != 1 {
             return;
         }
         let Some(item_id) = self.midi_editor_item_id else {
@@ -14566,10 +14569,9 @@ impl App {
             return;
         }
 
-        // REAPER 7.82 derives the criteria without leaving the Event List
-        // funnel enabled. A Note probe that starts with the funnel on ends
-        // with it off; CC and Pitch probes also require an explicit toggle to
-        // apply the derived criteria to the list.
+        // Channel-bearing selections derive criteria with the Event List
+        // funnel off. The opaque-event path below restores Show-only because
+        // REAPER enables it when deriving its combined Sysex/Meta filter.
         self.midi_editor_event_list_filter_active = false;
         self.midi_editor_event_filter_enabled = false;
 
@@ -14579,6 +14581,7 @@ impl App {
         }
 
         match () {
+            _ if has_opaque_events => self.set_midi_editor_filter_from_selected_opaque_events(),
             _ if has_notes => self.set_midi_editor_filter_from_selected_notes(),
             _ if has_controllers => self.set_midi_editor_filter_from_selected_controllers(),
             _ if has_pitch_bends => self.set_midi_editor_filter_from_selected_pitch_bends(),
@@ -14591,6 +14594,75 @@ impl App {
             }
             _ => {}
         }
+    }
+
+    fn set_midi_editor_filter_from_selected_opaque_events(&mut self) {
+        let Some(item_id) = self.midi_editor_item_id else {
+            return;
+        };
+        let Some(item) = self
+            .project
+            .midi_items()
+            .iter()
+            .find(|item| item.id() == item_id)
+        else {
+            return;
+        };
+        let mut selected_ticks = item
+            .opaque_events()
+            .iter()
+            .enumerate()
+            .filter(|(index, _)| {
+                self.midi_editor_selected_opaque_events
+                    .contains(&(*index as u32))
+            })
+            .map(|(_, event)| event.tick);
+        let Some(first_tick) = selected_ticks.next() else {
+            return;
+        };
+        let ppq = self.project.settings().ppq();
+        let measure_ticks = midi_editor_measure_length_ticks(
+            ppq,
+            self.project.time_signature_at_tick(item.start_tick()),
+        );
+        let (position_low, position_high) = selected_ticks.fold(
+            (
+                midi_editor_filter_position_value(first_tick, measure_ticks),
+                midi_editor_filter_position_high_value(first_tick, measure_ticks),
+            ),
+            |(position_low, position_high), tick| {
+                (
+                    position_low.min(midi_editor_filter_position_value(tick, measure_ticks)),
+                    position_high.max(midi_editor_filter_position_high_value(tick, measure_ticks)),
+                )
+            },
+        );
+
+        // REAPER groups Text Meta and SysEx under one type and automatically
+        // enables Show-only when deriving the filter from opaque selections.
+        self.midi_editor_channel_selection = MidiEditorChannelSelection::AllChannels;
+        self.midi_editor_filter_channels = u16::MAX;
+        self.midi_editor_filter_channels_initialized = true;
+        self.midi_editor_event_type_filter = MidiEditorEventTypeFilter::SysExMeta;
+        self.midi_editor_note_filter = MidiEditorNoteFilter::default();
+        self.midi_editor_controller_filter = MidiEditorControllerFilter::default();
+        self.midi_editor_pitch_bend_filter = MidiEditorPitchBendFilter::default();
+        self.midi_editor_program_change_filter = MidiEditorProgramChangeFilter::default();
+        self.midi_editor_position_filter = MidiEditorPositionFilter {
+            enabled: true,
+            range_initialized: true,
+            low: position_low,
+            high: position_high,
+            repeat_every: MidiEditorFilterRepeat::Measure,
+        };
+        self.midi_editor_filter_value_low.clear();
+        self.midi_editor_filter_value_high.clear();
+        self.midi_editor_filter_position_low = format_midi_editor_filter_position(position_low);
+        self.midi_editor_filter_position_high = format_midi_editor_filter_position(position_high);
+        self.midi_editor_filter_note_length_low.clear();
+        self.midi_editor_filter_note_length_high.clear();
+        self.midi_editor_event_filter_enabled = true;
+        self.midi_editor_event_list_filter_active = true;
     }
 
     fn set_midi_editor_filter_from_mixed_channel_event_selection(&mut self, item_id: ItemId) {

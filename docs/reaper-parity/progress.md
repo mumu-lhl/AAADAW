@@ -2691,3 +2691,11 @@ Linux REAPER 7.82 / Default 7 原厂工程选中 channel 2 的 C4 Note @ tick 48
 AAADAW 的混合 channel-bearing 事件选择现采用相同公共条件：合并所选事件的通道和 Position 范围，将事件类型设为 All events，清空类型专属范围并把绘制通道设为最早选中事件的通道。opaque Event List 行也应用通用 Position 谓词。Cranelift 实窗确认八行未筛选表、Set 后的 All events / channels 2–3 / Position 对话框，以及显式启用筛选后的五行列表；Text Meta 通过，SysEx 隐藏。回归检查所选 Note/CC 保持选中，匹配结果、工程快照与 Undo/Redo 历史稳定；fixture、截图、二进制身份和逐项哈希见 [AAADAW manifest](../verification/reaper-parity/fixtures/midi-event-filter-from-mixed-note-cc-aaadaw.tsv)。
 
 workspace Nextest **1,570/1,570，78 个测试目标，0 skipped**；AAADAW all-target strict Clippy（`-D warnings -A future-incompatible`）、Cranelift 桌面构建、fmt、diff check 与 fixture 哈希校验通过。Nextest `--all-targets` 会把 render benchmark 的性能输出误解析为测试清单，因此完整回归使用 workspace 默认测试目标，排除 benchmark。其他混合类型组合和 Meta/SysEx 选中后 Set-from-selection 行为仍未核验，`MIDI-EVENT-LIST-001`、UI-019 与 P7 保持 `in_progress`；截图验证行为和控件，不代表像素级一致验收。
+
+### 2026-10-19 MIDI Set Filter from Text Meta + SysEx
+
+Linux REAPER 7.82 / Default 7 原厂探针选中 Text Meta @ tick 480 与 F0 SysEx @ tick 960，并以未选中的 CC 和 Note 作控制。`Set filter from selection` 将类型设为 `Sysex/Meta`、通道设为 All、Position 显示为 `1/8`–`0.250`、Repeat every 设为 measure，并自动启用 Show-only；Draw events on channel 保持 Channel 1。Event List 立即只显示仍保持选中的两条 opaque 行。`MIDI_GetAllEvts` 的 92 字节源数据前后 SHA-256 均为 `f7a0bb4f2c862b4dd4a142161277d894d10354b99f634544c796aa4e19300458`。原厂筛选状态由实窗截图确认；after-set RPP 未持久化所见 EVTFILTER。脚本、读回、字节数据、RPP 和截图在 [native manifest](../verification/reaper-parity/fixtures/midi-event-filter-from-opaque-selection-native.tsv)。
+
+AAADAW 现支持仅由 Text Meta 与 SysEx 组成的选区：推导 `Sysex/Meta`、All channels、事件 Position 范围，保持 Draw channel，并按原厂启用 Show-only。筛选面板现在也会为 `Sysex/Meta` 显示 Position 与 Repeat。Xorg :549 下的真实 Cranelift 窗口截图记录了五行未筛选列表、两条 opaque 选中行、派生筛选控件和两行结果；项目、生成器、截图与二进制 Build ID/SHA-256 在 [AAADAW manifest](../verification/reaper-parity/fixtures/midi-event-filter-from-opaque-selection-aaadaw.tsv)。截图也暴露了尚存的显示差异：AAADAW 用八位小数的可编辑文本，REAPER 用组合框显示 `1/8` 和 `0.250`；原厂 after-set RPP 未保存筛选值，因此 opaque 选择的内部精确上界仍未独立读回。
+
+新增的 Set-from-selection 与筛选控件回归通过；workspace Nextest **1,572/1,572，78 个测试目标，0 skipped**，断言加强后的两个定向回归 **2/2**；AAADAW all-target strict Clippy（`-D warnings -A future-incompatible`）、Cranelift 桌面构建、fmt 和 diff check 均通过。`MIDI-EVENT-LIST-001`、UI-019 和 P7 保持 `in_progress`：混合 channel-bearing/opaque 选区、更多异构组合、Position 控件形态/格式以及原厂窗口其他未覆盖交互仍待处理。

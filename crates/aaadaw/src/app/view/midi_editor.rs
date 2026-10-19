@@ -2766,6 +2766,33 @@ fn midi_quantize_dialog(app: &App, touch_targets: bool) -> Element<'_, Message> 
     .into()
 }
 
+fn midi_event_filter_shows_position(event_type: MidiEditorEventTypeFilter) -> bool {
+    matches!(
+        event_type,
+        MidiEditorEventTypeFilter::AllEvents
+            | MidiEditorEventTypeFilter::Notes
+            | MidiEditorEventTypeFilter::PolyAftertouch
+            | MidiEditorEventTypeFilter::ControlChange
+            | MidiEditorEventTypeFilter::ChannelPressure
+            | MidiEditorEventTypeFilter::Pitch
+            | MidiEditorEventTypeFilter::ProgramChange
+            | MidiEditorEventTypeFilter::SysExMeta
+    )
+}
+
+fn midi_event_filter_shows_repeat(event_type: MidiEditorEventTypeFilter) -> bool {
+    matches!(
+        event_type,
+        MidiEditorEventTypeFilter::AllEvents
+            | MidiEditorEventTypeFilter::Notes
+            | MidiEditorEventTypeFilter::PolyAftertouch
+            | MidiEditorEventTypeFilter::ControlChange
+            | MidiEditorEventTypeFilter::ChannelPressure
+            | MidiEditorEventTypeFilter::ProgramChange
+            | MidiEditorEventTypeFilter::SysExMeta
+    )
+}
+
 fn channel_filter_dialog(app: &App, touch_targets: bool) -> Element<'_, Message> {
     let note_filter = app.midi_editor_note_filter;
     let controller_filter = app.midi_editor_controller_filter;
@@ -2784,17 +2811,9 @@ fn channel_filter_dialog(app: &App, touch_targets: bool) -> Element<'_, Message>
         app.midi_editor_event_type_filter == MidiEditorEventTypeFilter::Pitch;
     let program_change_filter_visible =
         app.midi_editor_event_type_filter == MidiEditorEventTypeFilter::ProgramChange;
-    let position_filter_visible = note_filter_visible
-        || poly_aftertouch_filter_visible
-        || channel_pressure_filter_visible
-        || controller_filter_visible
-        || pitch_bend_filter_visible
-        || program_change_filter_visible;
-    let repeat_filter_visible = note_filter_visible
-        || poly_aftertouch_filter_visible
-        || channel_pressure_filter_visible
-        || controller_filter_visible
-        || program_change_filter_visible;
+    let position_filter_visible =
+        midi_event_filter_shows_position(app.midi_editor_event_type_filter);
+    let repeat_filter_visible = midi_event_filter_shows_repeat(app.midi_editor_event_type_filter);
     let pitch_options = if note_filter.pitch_enabled {
         &MidiEditorPitchFilterValue::OPTIONS[..]
     } else {
@@ -5959,6 +5978,22 @@ mod tests {
         assert_eq!(format_midi_pitch_bend_value(8_192), "0");
         assert_eq!(format_midi_pitch_bend_value(10_000), "+1808");
         assert_eq!(format_midi_pitch_bend_value(16_383), "+8191");
+    }
+
+    #[test]
+    fn sysex_meta_filter_shows_position_and_repeat_controls() {
+        assert!(midi_event_filter_shows_position(
+            MidiEditorEventTypeFilter::SysExMeta
+        ));
+        assert!(midi_event_filter_shows_repeat(
+            MidiEditorEventTypeFilter::SysExMeta
+        ));
+        assert!(midi_event_filter_shows_position(
+            MidiEditorEventTypeFilter::Pitch
+        ));
+        assert!(!midi_event_filter_shows_repeat(
+            MidiEditorEventTypeFilter::Pitch
+        ));
     }
 
     #[test]

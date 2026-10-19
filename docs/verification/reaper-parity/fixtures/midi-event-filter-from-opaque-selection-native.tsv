@@ -1,0 +1,19 @@
+artifact	sha256
+scripts/reaper_parity/probe-midi-event-filter-from-opaque-selection.lua	1286048099c08b65dcb7751f137eb41295a6c3f43cf4f072093369658285bab0
+fixtures/midi-event-filter-from-opaque-selection-native-before.png	9513cf9c8175a33bb632b579632df9b74c0d92912f6b6571d0b2ad5ee38432f7
+fixtures/midi-event-filter-from-opaque-selection-native-after-set.png	ca6d41cefb1149b3b7a27824318004bee4b0086881db8d5dc902ba7ce92161e7
+fixtures/midi-event-filter-from-opaque-selection-native-readback.tsv	694eab2a499ea82cc8e04bc598d8a4d3f8b9159e5202035d30cdd96cc1b53792
+fixtures/midi-event-filter-from-opaque-selection-native-before.bin	f7a0bb4f2c862b4dd4a142161277d894d10354b99f634544c796aa4e19300458
+fixtures/midi-event-filter-from-opaque-selection-native-after-set.bin	f7a0bb4f2c862b4dd4a142161277d894d10354b99f634544c796aa4e19300458
+fixtures/midi-event-filter-from-opaque-selection-native-before.rpp	5a77081644fcf5ec8a9a16b04778a9ab8013a9e5b7753742be03bc2301e854e0
+fixtures/midi-event-filter-from-opaque-selection-native-after-set.rpp	2240167aba8b62fc148afb1d33fa9abeb3705e4d890c6b0c2fb462d4cb5bdee7
+native_build_id	fb9ade2f211bc91a3ee6193630ef17bcf5f6528b
+native_binary_sha256	9976f5608068b7a58518969001b00b527fb0de6ed7459e0e5dda6f29878ee254
+theme	REAPER 7.82 Linux Default 7; theme SHA-256 575544606736a395520703e532209ad9635f13a41b7ea000bb9810d60025be48
+environment	Linux Xorg :546, 1600x1000; isolated REAPER profile; audio unavailable
+starting_state	Five Event List rows: selected Text Meta @ tick 480 and F0 SysEx @ tick 960; unselected CC @ tick 600 and Note @ tick 720; All channels; Show-only off
+action	Event List > Filter Events > Set filter from selection
+assertion	REAPER sets type Sysex/Meta, all channels, Position in measure displayed as 1/8–0.250, Repeat every measure, Show-only on, Invert/Solo off; Draw events on channel remains Channel 1. The Event List immediately shows only the selected Text Meta and SysEx rows.
+selection_and_data	Text Meta and SysEx remain selected. MIDI_GetAllEvts is 92 bytes before and after and byte-identical (SHA-256 f7a0bb4f2c862b4dd4a142161277d894d10354b99f634544c796aa4e19300458).
+verification	ReaScript selection/data readback, identical raw MIDI event blobs, before/after RPP files, initial Event List and after-Set filter/Event List screenshots
+limitation	RPP EVTFILTER in the after-set save does not serialize the derived filter shown in the live UI; screenshots establish filter control state. This probe covers homogeneous Text Meta+SysEx selection; mixed channel-bearing and opaque selections and other derived-filter combinations remain open. Screenshots verify behavior and controls, not pixel identity.
