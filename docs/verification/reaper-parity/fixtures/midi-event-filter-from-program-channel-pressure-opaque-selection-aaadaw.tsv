@@ -1,0 +1,19 @@
+artifact	sha256
+crates/aaadaw/examples/generate_midi_filter_from_program_channel_pressure_opaque_selection_fixture.rs	4778a14b2419f6b9b0698c289bedad629bb68af055f28d5bebccaf927b2ac38a
+docs/verification/reaper-parity/fixtures/midi-event-filter-from-program-channel-pressure-opaque-selection-aaadaw.aaadaw	05b19e2de97e07ddc8c7f902423ed6183830e30abd72bbd0c92f7dd103192c4c
+fixtures/midi-event-filter-from-program-channel-pressure-opaque-selection-aaadaw-selected-before-set.png	037cac37ba6d6e12fe34d74b5f80ce2247e84d1ad1308e06aa01c7a54c6fbed4
+fixtures/midi-event-filter-from-program-channel-pressure-opaque-selection-aaadaw-filter-before-set.png	dc87d376e768b26c2a8984d6539cd96a48820b39d1c9054889c623315e7796be
+fixtures/midi-event-filter-from-program-channel-pressure-opaque-selection-aaadaw-after-set.png	8803519a85f38f483c844cef9866f62b1fd3949618de202145d2dd608bc6a940
+fixtures/midi-event-filter-from-program-channel-pressure-opaque-selection-aaadaw-list-filtered.png	7db9d3f7e4d15c85865491f7d15811933f631287880998670adc77c66ec193a6
+fixtures/midi-event-filter-from-program-channel-pressure-opaque-selection-aaadaw-funnel-off.png	5b6554180f41ce07d991b63eeded3012c5987979362d099be0b0ba8869fe32d6
+binary_sha256	9d064c15f1e082a66da635b0d38199ed1da0afef15f378cb18bcd91d07d06e39
+binary_build_id	4b0efd847d74dd25a4449a1806d43b16050f8c6b
+build_backend	rustc 1.101.0-nightly with RUSTFLAGS=-Zcodegen-backend=cranelift and CARGO_PROFILE_DEV_DEBUG=0
+environment	Linux Xvfb :558, 1600x900; actual AAADAW MIDI Editor/Event List window; isolated XDG runtime/config/data/cache/state; audio unavailable
+starting_state	Ten Event List rows; Channel Pressure value 32/channel 2/tick 480, Program Change 8/channel 2/tick 600, and Text Meta/tick 960 selected; Show-only and funnel off
+action	Filter events > Set filter from selection; close dialog; turn Event List funnel off
+assertion	Dialog derives All events, All channels, Position 0.12500000–0.25026042, Repeat measure; Show-only becomes checked and the funnel activates; all three endpoints stay selected
+list_result	Seven in-range rows pass; disabling the funnel restores all ten rows and clears Show-only while preserving selection
+selection_and_data	App regression checks matching Program Change, Channel Pressure, CC, and opaque events; retained selection; seven matching/ten restored rows; and unchanged project snapshot and Undo/Redo history. Native REAPER readbacks confirm selected bits and unchanged MIDI bytes.
+verification	Focused App Nextest 1/1; full AAADAW package Nextest 859/859; strict all-target Clippy (-D warnings -A future-incompatible); nightly Cranelift desktop build; final binary launched in an actual Xvfb window; five screenshots capture selected rows, pre-Set controls, derived filter, filtered list, and restored list
+limitation	AAADAW Position fields display editable decimals while REAPER displays combo-box values 1/8–0.250; screenshots verify behavior and controls, not pixel identity
