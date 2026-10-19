@@ -2132,6 +2132,414 @@ fn midi_item_from_take(original: &MidiItem, take: MidiItemTakeSnapshot, id: Item
     }
 }
 
+fn split_midi_take(
+    original: &MidiItem,
+    absolute_points: &[u64],
+    relative_points: &[u64],
+    segment_ids: &[ItemId],
+    next_note_id: &mut u64,
+) -> Result<Vec<MidiItem>, ActionError> {
+    let segment_count = segment_ids.len();
+    let mut segment_notes = vec![Vec::new(); segment_count];
+    let mut segment_note_data = vec![Vec::new(); segment_count];
+    let mut segment_source_ranges = Vec::with_capacity(segment_count);
+    let mut preserve_source = Vec::with_capacity(segment_count);
+    let mut segment_source_offsets = Vec::with_capacity(segment_count);
+
+    for segment_index in 0..segment_count {
+        let relative_start = relative_points[segment_index];
+        let relative_end = relative_points[segment_index + 1];
+        let segment_length = relative_end - relative_start;
+        let unwrapped_start = original
+            .source_offset_ticks
+            .checked_add(relative_start)
+            .ok_or(ActionError::InvalidMidiItemPosition)?;
+        let unwrapped_end = original
+            .source_offset_ticks
+            .checked_add(relative_end)
+            .ok_or(ActionError::InvalidMidiItemPosition)?;
+        let keep_original_source = segment_index > 0
+            && original.loop_source
+            && original.source_offset_ticks > 0
+            && unwrapped_start < original.source_loop_length_ticks;
+        preserve_source.push(keep_original_source);
+        segment_source_offsets.push(if segment_index == 0 {
+            original.source_offset_ticks
+        } else if keep_original_source {
+            unwrapped_start
+        } else {
+            0
+        });
+
+        let source_start = if segment_index == 0 {
+            0
+        } else if original.loop_source {
+            unwrapped_start % original.source_loop_length_ticks
+        } else {
+            unwrapped_start
+        };
+        let source_end = if segment_index == 0 {
+            unwrapped_end
+        } else {
+            source_start
+                .checked_add(segment_length)
+                .ok_or(ActionError::InvalidMidiItemPosition)?
+        };
+        segment_source_ranges.push((source_start, source_end));
+    }
+
+    for note in original.notes.iter() {
+        let note_start = note.data.tick;
+        let note_end = note_start
+            .checked_add(note.data.duration)
+            .ok_or(ActionError::InvalidMidiNote)?;
+        let mut first_piece = true;
+        for segment_index in 0..segment_count {
+            if preserve_source[segment_index] {
+                let note_id = if first_piece {
+                    first_piece = false;
+                    note.id
+                } else {
+                    let id = NoteId::from_raw(*next_note_id);
+                    *next_note_id = next_note_id
+                        .checked_add(1)
+                        .ok_or(ActionError::NoteIdExhausted)?;
+                    id
+                };
+                segment_notes[segment_index].push(MidiNote {
+                    id: note_id,
+                    data: note.data,
+                });
+                segment_note_data[segment_index].push((note.data, note.data));
+                continue;
+            }
+
+            let (segment_source_start, segment_source_end) = segment_source_ranges[segment_index];
+            let overlap_start = note_start.max(segment_source_start);
+            let is_last_segment = segment_index + 1 == segment_count;
+            let overlap_end = if is_last_segment {
+                note_end
+            } else {
+                note_end.min(segment_source_end)
+            };
+            if overlap_start >= overlap_end {
+                continue;
+            }
+            let note_id = if first_piece {
+                first_piece = false;
+                note.id
+            } else {
+                let id = NoteId::from_raw(*next_note_id);
+                *next_note_id = next_note_id
+                    .checked_add(1)
+                    .ok_or(ActionError::NoteIdExhausted)?;
+                id
+            };
+            let data = crate::MidiNoteData {
+                channel: note.data.channel,
+                pitch: note.data.pitch,
+                tick: if segment_index == 0 {
+                    overlap_start
+                } else {
+                    overlap_start - segment_source_start
+                },
+                duration: overlap_end - overlap_start,
+                velocity: note.data.velocity,
+                off_velocity: if overlap_end == note_end {
+                    note.data.off_velocity
+                } else {
+                    0
+                },
+            };
+            segment_note_data[segment_index].push((note.data, data));
+            segment_notes[segment_index].push(MidiNote { id: note_id, data });
+        }
+    }
+
+    let mut segments = Vec::with_capacity(segment_count);
+    for segment_index in 0..segment_count {
+        let (segment_source_start, segment_source_end) = segment_source_ranges[segment_index];
+        let segment_start = absolute_points[segment_index];
+        let segment_end = absolute_points[segment_index + 1];
+        let is_last_segment = segment_index + 1 == segment_count;
+        let (
+            controllers,
+            pitch_bends,
+            program_changes,
+            poly_aftertouches,
+            channel_pressures,
+            opaque_events,
+        ) = if preserve_source[segment_index] {
+            (
+                Arc::clone(&original.controllers),
+                Arc::clone(&original.pitch_bends),
+                Arc::clone(&original.program_changes),
+                Arc::clone(&original.poly_aftertouches),
+                Arc::clone(&original.channel_pressures),
+                Arc::clone(&original.opaque_events),
+            )
+        } else {
+            (
+                Arc::new(controllers_for_segment(
+                    &original.controllers,
+                    segment_source_start,
+                    segment_source_end,
+                    is_last_segment,
+                )),
+                Arc::new(pitch_bends_for_segment(
+                    &original.pitch_bends,
+                    segment_source_start,
+                    segment_source_end,
+                    is_last_segment,
+                )),
+                Arc::new(program_changes_for_segment(
+                    &original.program_changes,
+                    segment_source_start,
+                    segment_source_end,
+                    is_last_segment,
+                )),
+                Arc::new(poly_aftertouches_for_segment(
+                    &original.poly_aftertouches,
+                    segment_source_start,
+                    segment_source_end,
+                    is_last_segment,
+                )),
+                Arc::new(channel_pressures_for_segment(
+                    &original.channel_pressures,
+                    segment_source_start,
+                    segment_source_end,
+                    is_last_segment,
+                )),
+                Arc::new(opaque_events_for_segment(
+                    &original.opaque_events,
+                    segment_source_start,
+                    segment_source_end,
+                    is_last_segment,
+                )),
+            )
+        };
+        let event_order = if preserve_source[segment_index] {
+            Arc::clone(&original.event_order)
+        } else {
+            Arc::new(midi_event_order_for_segment(
+                original,
+                &segment_note_data[segment_index],
+                segment_source_start,
+                segment_source_end,
+                is_last_segment,
+                &segment_notes[segment_index],
+                &controllers,
+                &pitch_bends,
+                &program_changes,
+                &poly_aftertouches,
+                &channel_pressures,
+            ))
+        };
+        segments.push(MidiItem {
+            id: segment_ids[segment_index],
+            track_id: original.track_id,
+            name: original.name.clone(),
+            active_take_index: original.active_take_index,
+            other_takes: Vec::new(),
+            start_tick: segment_start,
+            start_tick_subtick: if segment_index == 0 {
+                original.start_tick_subtick
+            } else {
+                0
+            },
+            source_offset_ticks: segment_source_offsets[segment_index],
+            loop_source: original.loop_source,
+            source_loop_length_ticks: original.source_loop_length_ticks,
+            length_ticks: segment_end - segment_start,
+            muted: original.muted,
+            notes: Arc::new(std::mem::take(&mut segment_notes[segment_index])),
+            controllers,
+            pitch_bends,
+            program_changes,
+            poly_aftertouches,
+            channel_pressures,
+            opaque_events,
+            event_order,
+        });
+    }
+    Ok(segments)
+}
+
+fn midi_item_take_from_segment(item: &MidiItem) -> MidiItemTake {
+    MidiItemTake {
+        index: item.active_take_index,
+        name: item.name.clone(),
+        source_offset_ticks: item.source_offset_ticks,
+        loop_source: item.loop_source,
+        source_loop_length_ticks: item.source_loop_length_ticks,
+        notes: Arc::clone(&item.notes),
+        controllers: Arc::clone(&item.controllers),
+        pitch_bends: Arc::clone(&item.pitch_bends),
+        program_changes: Arc::clone(&item.program_changes),
+        poly_aftertouches: Arc::clone(&item.poly_aftertouches),
+        channel_pressures: Arc::clone(&item.channel_pressures),
+        opaque_events: Arc::clone(&item.opaque_events),
+        event_order: Arc::clone(&item.event_order),
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn midi_event_order_for_segment(
+    original: &MidiItem,
+    note_data: &[(crate::MidiNoteData, crate::MidiNoteData)],
+    source_start: u64,
+    source_end: u64,
+    preserve_tail: bool,
+    notes: &[MidiNote],
+    controllers: &[MidiControllerData],
+    pitch_bends: &[MidiPitchBendData],
+    program_changes: &[MidiProgramChangeData],
+    poly_aftertouches: &[MidiPolyAftertouchData],
+    channel_pressures: &[MidiChannelPressureData],
+) -> Vec<MidiEventOrderData> {
+    original
+        .event_order
+        .iter()
+        .filter_map(|event| {
+            let target = match event.target {
+                MidiEventOrderTarget::Note(source) => note_data
+                    .iter()
+                    .find(|(before, _)| *before == source)
+                    .map(|(_, after)| MidiEventOrderTarget::Note(*after))
+                    .filter(|target| {
+                        let MidiEventOrderTarget::Note(note) = target else {
+                            return false;
+                        };
+                        notes.iter().any(|candidate| candidate.data == *note)
+                    }),
+                MidiEventOrderTarget::Controller(source) => {
+                    let tick = if source.tick >= source_start
+                        && (preserve_tail || source.tick < source_end)
+                    {
+                        Some(source.tick - source_start)
+                    } else if source.tick < source_start
+                        && original
+                            .controllers
+                            .iter()
+                            .filter(|candidate| {
+                                candidate.channel == source.channel
+                                    && candidate.controller == source.controller
+                                    && candidate.tick < source_start
+                            })
+                            .max_by_key(|candidate| candidate.tick)
+                            == Some(&source)
+                    {
+                        Some(0)
+                    } else {
+                        None
+                    };
+                    tick.map(|tick| MidiControllerData { tick, ..source })
+                        .filter(|target| controllers.contains(target))
+                        .map(MidiEventOrderTarget::Controller)
+                }
+                MidiEventOrderTarget::PitchBend(source) => {
+                    let tick = if source.tick > source_start
+                        && (preserve_tail || source.tick < source_end)
+                    {
+                        Some(source.tick - source_start)
+                    } else if source.tick <= source_start
+                        && original
+                            .pitch_bends
+                            .iter()
+                            .filter(|candidate| {
+                                candidate.channel == source.channel
+                                    && candidate.tick <= source_start
+                            })
+                            .min_by_key(|candidate| std::cmp::Reverse(candidate.tick))
+                            == Some(&source)
+                    {
+                        Some(0)
+                    } else {
+                        None
+                    };
+                    tick.map(|tick| MidiPitchBendData { tick, ..source })
+                        .filter(|target| pitch_bends.contains(target))
+                        .map(MidiEventOrderTarget::PitchBend)
+                }
+                MidiEventOrderTarget::ProgramChange(source) => {
+                    let tick = if source.tick > source_start
+                        && (preserve_tail || source.tick < source_end)
+                    {
+                        Some(source.tick - source_start)
+                    } else if source.tick <= source_start
+                        && original
+                            .program_changes
+                            .iter()
+                            .filter(|candidate| {
+                                candidate.channel == source.channel
+                                    && candidate.tick <= source_start
+                            })
+                            .max_by_key(|candidate| candidate.tick)
+                            == Some(&source)
+                    {
+                        Some(0)
+                    } else {
+                        None
+                    };
+                    tick.map(|tick| MidiProgramChangeData { tick, ..source })
+                        .filter(|target| program_changes.contains(target))
+                        .map(MidiEventOrderTarget::ProgramChange)
+                }
+                MidiEventOrderTarget::PolyAftertouch(source) => {
+                    let tick = if source.tick > source_start
+                        && (preserve_tail || source.tick < source_end)
+                    {
+                        Some(source.tick - source_start)
+                    } else if source.tick <= source_start
+                        && original
+                            .poly_aftertouches
+                            .iter()
+                            .filter(|candidate| {
+                                candidate.channel == source.channel
+                                    && candidate.note == source.note
+                                    && candidate.tick <= source_start
+                            })
+                            .max_by_key(|candidate| candidate.tick)
+                            == Some(&source)
+                    {
+                        Some(0)
+                    } else {
+                        None
+                    };
+                    tick.map(|tick| MidiPolyAftertouchData { tick, ..source })
+                        .filter(|target| poly_aftertouches.contains(target))
+                        .map(MidiEventOrderTarget::PolyAftertouch)
+                }
+                MidiEventOrderTarget::ChannelPressure(source) => {
+                    let tick = if source.tick > source_start
+                        && (preserve_tail || source.tick < source_end)
+                    {
+                        Some(source.tick - source_start)
+                    } else if source.tick <= source_start
+                        && original
+                            .channel_pressures
+                            .iter()
+                            .filter(|candidate| {
+                                candidate.channel == source.channel
+                                    && candidate.tick <= source_start
+                            })
+                            .max_by_key(|candidate| candidate.tick)
+                            == Some(&source)
+                    {
+                        Some(0)
+                    } else {
+                        None
+                    };
+                    tick.map(|tick| MidiChannelPressureData { tick, ..source })
+                        .filter(|target| channel_pressures.contains(target))
+                        .map(MidiEventOrderTarget::ChannelPressure)
+                }
+            }?;
+            Some(MidiEventOrderData { target, ..*event })
+        })
+        .collect()
+}
+
 impl Project {
     /// Current stereo Master controls, separate from ordinary track IDs.
     pub fn master_mix(&self) -> crate::MasterMix {
@@ -5617,9 +6025,6 @@ impl Project {
                     .position(|item| item.id == item_id)
                     .ok_or(ActionError::MidiItemNotFound { item_id })?;
                 let original = state.midi_items[index].clone();
-                if original.take_count() > 1 {
-                    return Err(ActionError::MidiItemHasMultipleTakes);
-                }
                 let item_end = original
                     .start_tick
                     .checked_add(original.length_ticks)
@@ -5642,139 +6047,56 @@ impl Project {
                     .iter()
                     .map(|tick| tick - original.start_tick)
                     .collect::<Vec<_>>();
-                let content_points = relative_points
-                    .iter()
-                    .map(|tick| original.source_offset_ticks.saturating_add(*tick))
-                    .collect::<Vec<_>>();
-                let mut segment_notes = vec![Vec::new(); absolute_points.len() - 1];
-                let mut next_note_id = ids.next_note_id;
-                for note in original.notes.iter() {
-                    let note_start = note.data.tick;
-                    let note_end = note_start
-                        .checked_add(note.data.duration)
-                        .ok_or(ActionError::InvalidMidiNote)?;
-                    let mut first_piece = true;
-                    for (segment_index, segment) in content_points.windows(2).enumerate() {
-                        let segment_source_start = if segment_index == 0 { 0 } else { segment[0] };
-                        let overlap_start = note_start.max(segment_source_start);
-                        let is_last_segment = segment_index + 1 == segment_notes.len();
-                        let overlap_end = if is_last_segment {
-                            note_end
-                        } else {
-                            note_end.min(segment[1])
-                        };
-                        if overlap_start >= overlap_end {
-                            continue;
-                        }
-                        let note_id = if first_piece {
-                            first_piece = false;
-                            note.id
-                        } else {
-                            let id = NoteId::from_raw(next_note_id);
-                            next_note_id = next_note_id
-                                .checked_add(1)
-                                .ok_or(ActionError::NoteIdExhausted)?;
-                            id
-                        };
-                        segment_notes[segment_index].push(MidiNote {
-                            id: note_id,
-                            data: crate::MidiNoteData {
-                                channel: note.data.channel,
-                                pitch: note.data.pitch,
-                                tick: if segment_index == 0 {
-                                    overlap_start
-                                } else {
-                                    overlap_start - segment_source_start
-                                },
-                                duration: overlap_end - overlap_start,
-                                velocity: note.data.velocity,
-                                off_velocity: if overlap_end
-                                    == note.data.tick.saturating_add(note.data.duration)
-                                {
-                                    note.data.off_velocity
-                                } else {
-                                    0
-                                },
-                            },
-                        });
-                    }
+                let mut next_item_id = ids.next_item_id;
+                let segment_count = absolute_points.len() - 1;
+                let mut segment_ids = Vec::with_capacity(segment_count);
+                segment_ids.push(original.id);
+                for _ in 1..segment_count {
+                    segment_ids.push(ItemId::from_raw(next_item_id));
+                    next_item_id = next_item_id
+                        .checked_add(1)
+                        .ok_or(ActionError::ItemIdExhausted)?;
                 }
 
-                let mut next_item_id = ids.next_item_id;
-                let segment_count = segment_notes.len();
-                let mut after = Vec::with_capacity(segment_notes.len());
-                for (index, notes) in segment_notes.into_iter().enumerate() {
-                    let segment_start = absolute_points[index];
-                    let segment_end = absolute_points[index + 1];
-                    let segment_id = if index == 0 {
-                        original.id
-                    } else {
-                        let id = ItemId::from_raw(next_item_id);
-                        next_item_id = next_item_id
-                            .checked_add(1)
-                            .ok_or(ActionError::ItemIdExhausted)?;
-                        id
-                    };
-                    after.push(MidiItem {
-                        id: segment_id,
-                        track_id: original.track_id,
-                        name: original.name.clone(),
-                        active_take_index: original.active_take_index,
-                        other_takes: original.other_takes.clone(),
-                        start_tick: segment_start,
-                        start_tick_subtick: if index == 0 {
-                            original.start_tick_subtick
-                        } else {
-                            0
-                        },
-                        source_offset_ticks: if index == 0 {
-                            original.source_offset_ticks
-                        } else {
-                            0
-                        },
-                        loop_source: original.loop_source,
-                        source_loop_length_ticks: original.source_loop_length_ticks,
-                        length_ticks: segment_end - segment_start,
-                        muted: original.muted,
-                        notes: Arc::new(notes),
-                        controllers: Arc::new(controllers_for_segment(
-                            &original.controllers,
-                            if index == 0 { 0 } else { content_points[index] },
-                            content_points[index + 1],
-                            index + 1 == segment_count,
-                        )),
-                        pitch_bends: Arc::new(pitch_bends_for_segment(
-                            &original.pitch_bends,
-                            if index == 0 { 0 } else { content_points[index] },
-                            content_points[index + 1],
-                            index + 1 == segment_count,
-                        )),
-                        program_changes: Arc::new(program_changes_for_segment(
-                            &original.program_changes,
-                            if index == 0 { 0 } else { content_points[index] },
-                            content_points[index + 1],
-                            index + 1 == segment_count,
-                        )),
-                        poly_aftertouches: Arc::new(poly_aftertouches_for_segment(
-                            &original.poly_aftertouches,
-                            if index == 0 { 0 } else { content_points[index] },
-                            content_points[index + 1],
-                            index + 1 == segment_count,
-                        )),
-                        channel_pressures: Arc::new(channel_pressures_for_segment(
-                            &original.channel_pressures,
-                            if index == 0 { 0 } else { content_points[index] },
-                            content_points[index + 1],
-                            index + 1 == segment_count,
-                        )),
-                        opaque_events: Arc::new(opaque_events_for_segment(
-                            &original.opaque_events,
-                            if index == 0 { 0 } else { content_points[index] },
-                            content_points[index + 1],
-                            index + 1 == segment_count,
-                        )),
-                        event_order: Arc::new(Vec::new()),
-                    });
+                let mut next_note_id = ids.next_note_id;
+                let mut take_segments = Vec::with_capacity(original.take_count());
+                for (take_index, _) in original.take_names() {
+                    let mut take = original.clone();
+                    if take_index != take.active_take_index && !take.switch_active_take(take_index)
+                    {
+                        return Err(ActionError::MidiTakeNotFound {
+                            item_id,
+                            take_index,
+                        });
+                    }
+                    take.other_takes.clear();
+                    let segments = split_midi_take(
+                        &take,
+                        &absolute_points,
+                        &relative_points,
+                        &segment_ids,
+                        &mut next_note_id,
+                    )?;
+                    take_segments.push((take_index, segments));
+                }
+
+                let active_take_position = take_segments
+                    .iter()
+                    .position(|(take_index, _)| *take_index == original.active_take_index)
+                    .ok_or(ActionError::HistoryInvariantViolation)?;
+                let mut after = Vec::with_capacity(segment_count);
+                for segment_index in 0..segment_count {
+                    let mut item = take_segments[active_take_position].1[segment_index].clone();
+                    item.other_takes = take_segments
+                        .iter()
+                        .enumerate()
+                        .filter(|(take_position, _)| *take_position != active_take_position)
+                        .map(|(_, (_, segments))| {
+                            midi_item_take_from_segment(&segments[segment_index])
+                        })
+                        .collect();
+                    item.other_takes.sort_unstable_by_key(|take| take.index);
+                    after.push(item);
                 }
                 ids.next_item_id = next_item_id;
                 ids.next_note_id = next_note_id;

@@ -30927,6 +30927,90 @@ fn cursor_split_runs_from_action_search_and_boundary_noops_do_not_change_history
 }
 
 #[test]
+fn cursor_split_preserves_multi_take_midi_and_selects_the_right_segment() {
+    let mut app = App::default();
+    let _ = app.update(Message::AddTrack);
+    let track_id = app.project.tracks()[0].id();
+    app.project
+        .apply(DawAction::InsertMidiItem {
+            track_id,
+            start_tick: 0,
+            length_ticks: 3_840,
+        })
+        .unwrap();
+    let item_id = app.project.midi_items()[0].id();
+    app.project
+        .apply(DawAction::AddMidiNotes {
+            item_id,
+            notes: vec![
+                MidiNoteData {
+                    channel: 0,
+                    pitch: 60,
+                    tick: 960,
+                    duration: 1_920,
+                    velocity: 100,
+                    off_velocity: 37,
+                },
+                MidiNoteData {
+                    channel: 0,
+                    pitch: 64,
+                    tick: 1_200,
+                    duration: 960,
+                    velocity: 92,
+                    off_velocity: 0,
+                },
+            ],
+        })
+        .unwrap();
+    let mut snapshot = app.project.snapshot();
+    let item = &mut snapshot.midi_items[0];
+    let take_a_note = item.notes[0].clone();
+    item.notes = vec![item.notes[1].clone()];
+    item.active_take_index = 1;
+    item.name = "Take B".into();
+    item.other_takes = vec![MidiItemTakeSnapshot {
+        index: 0,
+        name: "Take A".into(),
+        source_offset_ticks: 0,
+        loop_source: false,
+        source_loop_length_ticks: item.length_ticks,
+        notes: vec![take_a_note],
+        controllers: Vec::new(),
+        pitch_bends: Vec::new(),
+        program_changes: Vec::new(),
+        poly_aftertouches: Vec::new(),
+        channel_pressures: Vec::new(),
+        opaque_events: Vec::new(),
+        event_order: Vec::new(),
+    }];
+    app.project = Project::from_snapshot(snapshot).unwrap();
+    app.timeline.rebuild(&app.project);
+    app.timeline.select_items(vec![(item_id, track_id)]);
+    app.timeline.edit_cursor_tick = 1_920;
+    let before = app.project.snapshot();
+    let revision = app.revision;
+
+    let _ = app.update(Message::SplitSelectedItemsAtCursor);
+
+    assert_eq!(app.revision, revision + 1);
+    let items = app.project.midi_items();
+    assert_eq!(items.len(), 2);
+    assert!(items.iter().all(|item| {
+        item.take_count() == 2 && item.active_take_index() == 1 && item.name() == "Take B"
+    }));
+    assert_eq!(items[0].take_snapshots()[0].notes[0].data.duration, 960);
+    assert_eq!(items[1].take_snapshots()[0].notes[0].data.tick, 0);
+    assert_eq!(items[1].take_snapshots()[1].notes[0].data.tick, 0);
+    assert_eq!(app.timeline.selected_items, HashSet::from([items[1].id()]));
+    let after = app.project.snapshot();
+
+    let _ = app.update(Message::Undo);
+    assert_eq!(app.project.snapshot(), before);
+    let _ = app.update(Message::Redo);
+    assert_eq!(app.project.snapshot(), after);
+}
+
+#[test]
 fn cursor_split_without_selection_splits_all_tracks_and_selects_right_segments_once() {
     let mut app = App::default();
     let _ = app.update(Message::AddTrack);

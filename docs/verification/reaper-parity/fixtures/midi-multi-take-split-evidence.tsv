@@ -1,0 +1,29 @@
+evidence	REAPER 7.82 / Linux x86_64 / Default_7.0.ReaperThemeZip; MIDI Item multi-Take action 40012
+native_environment	Xvfb 1280x800; isolated -cfgfile profile; audio device closed; first-run evaluation prompt dismissed before capture
+native_binary	target/reaper-7.82/reaper_linux_x86_64/REAPER/reaper; SHA-256 9976f5608068b7a58518969001b00b527fb0de6ed7459e0e5dda6f29878ee254; REAPER 7.82/linux-x86_64 rev 338578
+native_action	40012; Item: Split items at edit or play cursor (select right)
+native_probe	scripts/reaper_parity/probe-midi-multi-take-split.lua; SHA-256 b8113f63d8068a9ca01343e1b93586a2af46acaf82d2096a7cb72a818abd0687
+native_capture_script	scripts/reaper_parity/capture-midi-multi-take-split-native.sh; SHA-256 d1e2e8b561532b66199045426251127e31c4bcbc445522ab080f50ed1b1d8292
+native_fixture	2-second looped MIDI Item; two ordered Takes; active Take index 1; Take A offset 0; Take B offset 2880 ticks; loop length 3840 ticks; notes match AAADAW fixture
+native_split_point	1.001562500 seconds / tick 1923; set with ReaScript to match the tick read back after AAADAW's 1280x800 live ruler click
+native_readback	docs/verification/reaper-parity/fixtures/midi-multi-take-split-native.tsv; SHA-256 5b3931afab02dbdbf22b81301a864ede21849e812b9ed76ba8fa00bf019fd12a; before 1 selected Item -> after 2 Items / 2 Takes each / active index 1 / right Item selected; Undo restores 1 selected Item; Redo restores split pair
+native_rpp_before	docs/verification/reaper-parity/fixtures/midi-multi-take-split-before.rpp; SHA-256 ba7a214142aa2311125c38c2baa961614dae86a635744bce270fafa440c86305
+native_rpp_after	docs/verification/reaper-parity/fixtures/midi-multi-take-split-after.rpp; SHA-256 06243ab891947b58b35cba71f11578d6b10ee516e9169fd254a751280fe1876b
+native_rpp_undo	docs/verification/reaper-parity/fixtures/midi-multi-take-split-undo.rpp; SHA-256 810e56aa6e3894e03840feafb597b9b6ea692f1fbf4466904362a955c3e076e8
+native_rpp_redo	docs/verification/reaper-parity/fixtures/midi-multi-take-split-redo.rpp; SHA-256 06243ab891947b58b35cba71f11578d6b10ee516e9169fd254a751280fe1876b
+native_screenshot	docs/verification/reaper-parity/fixtures/midi-multi-take-split-native-after.png; 1280x800; SHA-256 65ac97a8e105ebb9aafe1c214aebb0e7e5490808e55760ab993f3802ada524ae
+aaadaw_fixture_generator	crates/aaadaw/examples/generate_midi_multi_take_split_fixture.rs; SHA-256 1a6b5681e6a7cbc25ce7276cce0bb740cb5a18691190a32a8a61297756d10569
+aaadaw_fixture	docs/verification/reaper-parity/fixtures/midi-multi-take-split-aaadaw.aaadaw; SHA-256 ff53e07e125e5fa8e79b5105ac79b05b411cd7f1abe9c5d7ed6d7b4160d053cf
+aaadaw_fixture_after	docs/verification/reaper-parity/fixtures/midi-multi-take-split-aaadaw-after.aaadaw; SHA-256 f9f23ebc347e4b844217e951cde5696ff276721e84b6d8cf0ca844ae98905998
+aaadaw_capture_script	scripts/reaper_parity/capture-midi-multi-take-split-aaadaw.sh; SHA-256 47c1c9796f7afd45b11499c66820bde4e6ad01670bbd5b104c7b91e8c00c6d4c; ruler click x=491/y=145 at 62.4 px/quarter reads back tick 1923
+aaadaw_binary	target/cranelift/debug/aaadaw; rustc 1.101.0-nightly (5d8fec066 2026-10-16); Build ID f19c8cd32fecc9c515ccf9813addcd849ad8a2b3; SHA-256 3849c882fd8e7fd081fe780eb2b79f8ce09ab9914c2e3f2ef36a2d2262fef92a; Cranelift backend; audio-device disabled
+aaadaw_screenshot_before	docs/verification/reaper-parity/fixtures/midi-multi-take-split-aaadaw-before.png; 1280x800; SHA-256 e874a1ece2ccccc292deaec87f6e12b0ca8d8496a5dfde6fab53346bd237f79f
+aaadaw_screenshot_after	docs/verification/reaper-parity/fixtures/midi-multi-take-split-aaadaw-after.png; 1280x800; Inspector shows tick 1923 / length 1917; SHA-256 429c5cc532bfad8ef7e24cbbe6721a93f98d06b6baa5171719e007501faa0b2a
+aaadaw_screenshot_undo	docs/verification/reaper-parity/fixtures/midi-multi-take-split-aaadaw-undo.png; 1280x800; SHA-256 86cba7cff6a306748f4563ac17a96261ee4f5ddb53d69d741fb81920917bd57c
+aaadaw_screenshot_redo	docs/verification/reaper-parity/fixtures/midi-multi-take-split-aaadaw-redo.png; 1280x800; SHA-256 d6836f271ead274dc71601e1532dc171334ab308b1f93fbc137fc2d0fdef52ae
+core_verification	cargo +stable test -p aaadaw-core; full Core suite passed; exact 1920-tick split and loop-phase wrap cases include event order and Undo/Redo
+app_verification	cargo +stable test -p aaadaw --bin aaadaw; 868/868 passed, including cursor_split_preserves_multi_take_midi_and_selects_the_right_segment
+storage_verification	cargo +stable test -p aaadaw-storage --test midi_item_takes; 1/1 passed
+static_verification	strict workspace all-target Clippy; stable fmt; bash -n on both capture scripts; git diff --check; parity matrix validation recorded in progress entry
+cranelift_build	Nightly Cranelift desktop build passed; existing recursion-depth future-incompatible warning in TimelinePipeline remains
+scope_note	Core exact-grid boundary test uses tick 1920; native/app screenshots and native readback compare the live pixel-selected tick 1923. Screenshots validate UI/project state, not audio playback or pixel identity.

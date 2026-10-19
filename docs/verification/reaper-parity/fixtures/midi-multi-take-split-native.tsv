@@ -1,0 +1,25 @@
+before	item_count=1	selected_count=1
+before	item=0	position=0.000000	length=2.000000	active_index=1	take_count=2	loop_source=1	selected=1
+before	item=0	take=0	active=0	name=Take A	start_offset=0.000000	source_length=4.000000	notes=0:0:960-2880:0:60:100;0:0:3000-3480:0:67:90
+before	item=0	take=1	active=1	name=Take B	start_offset=1.500000	source_length=4.000000	notes=0:0:480-720:0:62:84;0:0:1200-1440:0:64:92;0:0:3360-3720:0:72:88
+after	item_count=2	selected_count=1
+after	item=0	position=0.000000	length=1.001562	active_index=1	take_count=2	loop_source=1	selected=0
+after	item=0	take=0	active=0	name=Take A	start_offset=0.000000	source_length=2.003125	notes=0:0:960-1923:0:60:100
+after	item=0	take=1	active=1	name=Take B	start_offset=1.500000	source_length=4.000000	notes=0:0:480-720:0:62:84;0:0:1200-1440:0:64:92;0:0:3360-3720:0:72:88
+after	item=1	position=1.001562	length=0.998438	active_index=1	take_count=2	loop_source=1	selected=1
+after	item=1	take=0	active=0	name=Take A	start_offset=0.000000	source_length=1.996875	notes=0:0:0-957:0:60:100;0:0:1077-1557:0:67:90
+after	item=1	take=1	active=1	name=Take B	start_offset=0.000000	source_length=2.996875	notes=0:0:237-477:0:64:92;0:0:2397-2757:0:72:88
+undo	item_count=1	selected_count=1
+undo	item=0	position=0.000000	length=2.000000	active_index=1	take_count=2	loop_source=1	selected=1
+undo	item=0	take=0	active=0	name=Take A	start_offset=0.000000	source_length=4.000000	notes=0:0:960-2880:0:60:100;0:0:3000-3480:0:67:90
+undo	item=0	take=1	active=1	name=Take B	start_offset=1.500000	source_length=4.000000	notes=0:0:480-720:0:62:84;0:0:1200-1440:0:64:92;0:0:3360-3720:0:72:88
+redo	item_count=2	selected_count=1
+redo	item=0	position=0.000000	length=1.001562	active_index=1	take_count=2	loop_source=1	selected=0
+redo	item=0	take=0	active=0	name=Take A	start_offset=0.000000	source_length=2.003125	notes=0:0:960-1923:0:60:100
+redo	item=0	take=1	active=1	name=Take B	start_offset=1.500000	source_length=4.000000	notes=0:0:480-720:0:62:84;0:0:1200-1440:0:64:92;0:0:3360-3720:0:72:88
+redo	item=1	position=1.001562	length=0.998437	active_index=1	take_count=2	loop_source=1	selected=1
+redo	item=1	take=0	active=0	name=Take A	start_offset=0.000000	source_length=1.996875	notes=0:0:0-957:0:60:100;0:0:1077-1557:0:67:90
+redo	item=1	take=1	active=1	name=Take B	start_offset=0.000000	source_length=2.996875	notes=0:0:237-477:0:64:92;0:0:2397-2757:0:72:88
+action	40012	Item: Split items at edit or play cursor (select right)
+split_seconds	1.001562500
+reference	REAPER 7.82/linux-x86_64; Default_7.0.ReaperThemeZip

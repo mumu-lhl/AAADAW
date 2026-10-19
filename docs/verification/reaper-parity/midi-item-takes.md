@@ -6,18 +6,21 @@ AAADAW now represents the active take index and alternate take snapshots in `Mid
 
 Action 40642 can explode selected MIDI takes in take-list order. Mixed audio/MIDI selections run as one undoable project transaction; Undo and Redo restore all take contents. MIDI playback schedules the active take only. The active take continues to use the established event tables, so the callback and schedule representation do not allocate or inspect inactive take collections.
 
-The current model is intentionally ahead of its editing UI: users cannot yet create, switch, or edit MIDI take lists through the interface. `SplitMidiItem` rejects multi-take MIDI items until its partitioning logic can preserve every take's source range, note identities, event lists, and same-tick order. This avoids silent data loss while the splitter is still single-take-only.
+MIDI Item Properties and the Inspector can now select the active MIDI Take, and the Next/Previous actions switch selected MIDI items with Undo/Redo. MIDI Take creation and event editing are still unavailable in the interface. Splitting now partitions every Take in order, preserves the active index and per-Take event order, applies each Take's source offset, and records the replacement as one undoable project event.
+
+REAPER 7.82 / Default 7 action 40012 was measured with active Take A and active Take B, nonzero per-Take offsets, and loop-source phase wrap. Both split items retain the ordered Take list and active index; Undo restores the selected original and Redo restores the two split items. AAADAW's Core and App regressions verify each Take's notes, offsets, event-order targets, right-segment selection, and one-step Undo/Redo. See the [multi-take split evidence](midi-item-multi-take-split.md).
 
 The current Cranelift desktop binary was run under an isolated Xvfb display at 1280×800. The [four-state capture manifest](fixtures/midi-item-takes-aaadaw.tsv) records the fixture, binary, script, and before/after/Undo/Redo screenshot hashes. The overlapped takes share one Arrange range, so the image alone does not reveal the item count; Core/App assertions and native REAPER's item-count readback provide that check.
 
 Focused verification:
 
-- `crates/aaadaw-core/tests/midi_item_takes.rs` checks ordered explosion, Undo/Redo, and safe rejection of multi-take splits.
+- `crates/aaadaw-core/tests/midi_item_takes.rs` checks ordered explosion, per-Take split partitioning, loop-phase wrapping, event order, and Undo/Redo.
+- `crates/aaadaw/src/app/tests.rs::cursor_split_preserves_multi_take_midi_and_selects_the_right_segment` checks the selected-item command path, right-segment selection, and Undo/Redo.
 - `crates/aaadaw-storage/tests/midi_item_takes.rs` round-trips all modeled event kinds, opaque payloads, event order, and a nonzero active index.
 - `crates/aaadaw-engine/tests/midi_schedule.rs::midi_playback_compiles_only_the_active_take` checks that inactive notes do not enter the playback plan.
 - `crates/aaadaw/src/app/tests.rs::exploding_mixed_audio_and_midi_takes_is_one_undo_step` checks the registered action's mixed selection, one-step Undo/Redo, and deselection.
 
-MIDI take creation/switching/editing, take-aware splitting, visual take selection, and a pixel-level native/AAADAW comparison remain open under `EDIT-TAKE-001`.
+MIDI Take creation and event editing, more complete Take arrangement controls, Fixed Lanes, Comp Areas, and cross-project Take clipboard behavior remain open under `EDIT-TAKE-001`.
 
 ![AAADAW before MIDI take explosion](fixtures/midi-item-takes-aaadaw-before.png)
 

@@ -227,13 +227,13 @@ fn splitting_a_left_trimmed_clip_keeps_source_offsets_and_hidden_leading_events(
 
     let second = &project.midi_items()[1];
     assert_eq!(second.start_tick(), 2_880);
-    assert_eq!(second.source_offset_ticks(), 0);
+    assert_eq!(second.source_offset_ticks(), 1_920);
     let continued = second
         .notes()
         .iter()
         .find(|note| note.pitch() == 72)
         .unwrap();
-    assert_eq!((continued.tick(), continued.duration()), (180, 480));
+    assert_eq!((continued.tick(), continued.duration()), (2_100, 480));
     assert_eq!(
         second.project_tick_at_content_tick(continued.tick()),
         Some(3_060)
