@@ -375,6 +375,10 @@ pub enum DawAction {
     MoveAudioItemActiveTakeToTop {
         item_id: ItemId,
     },
+    /// Remove the inactive takes from an audio item while preserving its active source.
+    CropAudioItemToActiveTake {
+        item_id: ItemId,
+    },
     /// Activate an existing take using its zero-based position in the item.
     SetAudioItemActiveTake {
         item_id: ItemId,

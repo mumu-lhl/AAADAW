@@ -300,6 +300,66 @@ fn moving_active_take_to_top_preserves_source_and_undo_redo_restore_order() {
 }
 
 #[test]
+fn crop_to_active_take_preserves_the_active_source_and_undo_redo_restore_all_takes() {
+    for active_index in [0, 1] {
+        let (mut project, item_id) = project_with_audio_item();
+        let mut copied_take = project.audio_items()[0].active_take_snapshot();
+        copied_take.media_ref = "asset://take-b".to_owned();
+        copied_take.name = "Take B".to_owned();
+        copied_take.source_offset_samples = 12_345;
+        copied_take.volume = 0.73;
+        copied_take.pan = -0.4;
+        copied_take.playback_rate = 0.8;
+        project
+            .apply(DawAction::PasteAudioItemAsTake {
+                item_id,
+                take: copied_take,
+            })
+            .expect("second take should be appended");
+        if active_index == 0 {
+            project
+                .apply(DawAction::SetAudioItemActiveTake {
+                    item_id,
+                    take_index: active_index,
+                })
+                .expect("Take A should become active");
+        }
+        let before = project.snapshot();
+        let mut active = project.audio_items()[0].active_take_snapshot();
+        active.index = 0;
+        let position = project.audio_items()[0].start_sample();
+        let length = project.audio_items()[0].length_samples();
+
+        project
+            .apply(DawAction::CropAudioItemToActiveTake { item_id })
+            .expect("inactive takes should be removed");
+        let cropped = project.snapshot();
+        let item = &project.audio_items()[0];
+        assert_eq!(item.take_count(), 1);
+        assert_eq!(item.active_take_index(), 0);
+        assert_eq!(item.active_take_snapshot(), active);
+        assert_eq!(item.start_sample(), position);
+        assert_eq!(item.length_samples(), length);
+        assert_eq!(
+            Project::from_snapshot(cropped.clone()).unwrap().snapshot(),
+            cropped
+        );
+
+        assert!(project.undo().expect("crop should undo"));
+        assert_eq!(project.snapshot(), before);
+        assert!(project.redo().expect("crop should redo"));
+        assert_eq!(project.snapshot(), cropped);
+
+        let history_cursor = project.history_cursor();
+        project
+            .apply(DawAction::CropAudioItemToActiveTake { item_id })
+            .expect("cropping a single take should be a no-op");
+        assert_eq!(project.snapshot(), cropped);
+        assert_eq!(project.history_cursor(), history_cursor);
+    }
+}
+
+#[test]
 fn paste_as_take_rejects_invalid_source_data_without_changing_project_or_history() {
     let (mut project, item_id) = project_with_audio_item();
     let mut copied_take = project.audio_items()[0].active_take_snapshot();

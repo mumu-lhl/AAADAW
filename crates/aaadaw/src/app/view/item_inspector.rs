@@ -94,6 +94,10 @@ fn selected_item_view(app: &App, item_id: ItemId, touch_targets: bool) -> Elemen
                 "Move active to top",
                 Message::MoveAudioItemActiveTakeToTop(item_id),
             ));
+            take_controls = take_controls.push(buttons.danger(
+                "Crop to active take",
+                Message::CropAudioItemToActiveTake(item_id),
+            ));
             if app.can_delete_selected_audio_item_take() {
                 take_controls = take_controls.push(buttons.danger(
                     "Delete active take",

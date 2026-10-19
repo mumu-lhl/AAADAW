@@ -163,6 +163,77 @@ fn moving_active_audio_take_to_top_is_registered_and_undoable() {
 }
 
 #[test]
+fn cropping_audio_item_to_active_take_is_registered_and_undoable() {
+    let mut app = App::default();
+    let _ = app.update(Message::AddTrack);
+    let track_id = app.project.tracks()[0].id();
+    app.project
+        .apply(DawAction::InsertAudioItem {
+            track_id,
+            media_ref: "asset://take-a".to_owned(),
+            start_sample: 12_000,
+            source_offset_samples: 0,
+            length_samples: 96_000,
+        })
+        .expect("first take item should be inserted");
+    let item_id = app.project.audio_items()[0].id();
+    let mut second_take = app.project.audio_items()[0].active_take_snapshot();
+    second_take.media_ref = "asset://take-b".to_owned();
+    second_take.name = "Take B".to_owned();
+    second_take.source_offset_samples = 12_345;
+    second_take.volume = 0.73;
+    second_take.pan = -0.4;
+    second_take.playback_rate = 0.8;
+    app.project
+        .apply(DawAction::PasteAudioItemAsTake {
+            item_id,
+            take: second_take,
+        })
+        .expect("second take should be appended and active");
+    app.timeline.rebuild(&app.project);
+    app.timeline.select_items(vec![(item_id, track_id)]);
+
+    let action = commands::shortcut_entries(&app)
+        .into_iter()
+        .find(|entry| entry.id == "take.crop-active")
+        .expect("REAPER's Crop to active take action should be registered");
+    assert!(action.default_binding.is_empty());
+    let menu_entry = commands::for_menu(&app, MainMenu::Item)
+        .into_iter()
+        .find(|entry| entry.id == CommandId::CropAudioItemToActiveTake)
+        .expect("Item menu should expose Crop to active take in items");
+    assert_eq!(menu_entry.label, "Crop to active take in items");
+    assert!(menu_entry.enabled);
+
+    let before = app.project.snapshot();
+    let _ = app.update(Message::ExecuteCommand(
+        CommandId::CropAudioItemToActiveTake,
+    ));
+    let item = &app.project.audio_items()[0];
+    assert_eq!(item.take_count(), 1);
+    assert_eq!(item.active_take_index(), 0);
+    assert_eq!(item.media_ref(), "asset://take-b");
+    assert_eq!(item.name(), "Take B");
+    let active_take = item.active_take_snapshot();
+    assert_eq!(active_take.source_offset_samples, 12_345);
+    assert_eq!(active_take.volume, 0.73);
+    assert_eq!(active_take.pan, -0.4);
+    assert_eq!(active_take.playback_rate, 0.8);
+    assert_eq!(item.start_sample(), 12_000);
+    assert_eq!(item.length_samples(), 96_000);
+    assert!(!commands::is_enabled(
+        &app,
+        CommandId::CropAudioItemToActiveTake
+    ));
+
+    let _ = app.update(Message::Undo);
+    assert_eq!(app.project.snapshot(), before);
+    let _ = app.update(Message::Redo);
+    assert_eq!(app.project.audio_items()[0].take_count(), 1);
+    assert_eq!(app.project.audio_items()[0].media_ref(), "asset://take-b");
+}
+
+#[test]
 fn copied_audio_take_pastes_into_selected_item_without_removing_source_item() {
     let mut app = App::default();
     let _ = app.update(Message::AddTrack);

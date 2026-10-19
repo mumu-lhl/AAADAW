@@ -4768,6 +4768,20 @@ impl Project {
                 after.move_active_take_to_top();
                 ProjectEvent::AudioItemChanged { before, after }
             }
+            DawAction::CropAudioItemToActiveTake { item_id } => {
+                let before = state
+                    .audio_items
+                    .iter()
+                    .find(|item| item.id == item_id)
+                    .ok_or(ActionError::AudioItemNotFound { item_id })?;
+                if is_frozen_render(state, item_id) {
+                    return Err(ActionError::FrozenRenderCannotBeEdited { item_id });
+                }
+                let before = before.clone();
+                let mut after = before.clone();
+                after.crop_to_active_take();
+                ProjectEvent::AudioItemChanged { before, after }
+            }
             DawAction::SetAudioItemActiveTake {
                 item_id,
                 take_index,

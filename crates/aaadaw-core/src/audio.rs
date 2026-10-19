@@ -326,4 +326,13 @@ impl AudioItem {
         self.other_takes.sort_unstable_by_key(|take| take.index);
         true
     }
+
+    pub(crate) fn crop_to_active_take(&mut self) -> bool {
+        if self.other_takes.is_empty() {
+            return false;
+        }
+        self.other_takes.clear();
+        self.active_take_index = 0;
+        true
+    }
 }
