@@ -1,0 +1,27 @@
+kind	artifact_or_check	result_or_sha256
+native_reference	Linux REAPER	7.82/linux-x86_64; Default 7 theme; Main action 40129 Take: Delete active take from items; default shortcut is blank
+native_probe	scripts/reaper_parity/probe-audio-delete-active-take.lua	SHA-256 fa4672b7c25a1ce1863c80370a9c64d53166b178758b8312240e4859ab13e85d; measures only-take deletion, first/last take deletion, active source, and undo/redo
+native_action	docs/verification/reaper-parity/linux-7.82/actions.tsv	action 40129 name and blank default shortcut verified
+native_state	docs/verification/reaper-parity/fixtures/audio-delete-active-take-native.tsv	SHA-256 bac3b9fc77856a3ad37f72785feca12a9d72b33380bb171d5d25ec19be1ac9e8; one take removal deletes the item; first/last multi-take removal keeps the other take active
+native_capture	docs/verification/reaper-parity/fixtures/audio-delete-active-take-native-after.png	SHA-256 b91a3d6a3191a4b1e7a4a9c8a9c1add9f1e854f6224f05b998254ab054800f75; live Arrange window after deleting Take A; Take B remains
+native_project	docs/verification/reaper-parity/fixtures/audio-delete-active-take-before.rpp	SHA-256 6d34eb2555c680a4da40e7c8506428c7cabc27d164768cc6bca7b9658f574f28; two-take fixture with Take B active and single-take item
+native_project	docs/verification/reaper-parity/fixtures/audio-delete-active-take-after-single-delete.rpp	SHA-256 36835141a20b6b7fb860cc48c8eec88308111c55c57c849162385c70dda214b3; single-take item removed
+native_project	docs/verification/reaper-parity/fixtures/audio-delete-active-take-undo-single-delete.rpp	SHA-256 6d34eb2555c680a4da40e7c8506428c7cabc27d164768cc6bca7b9658f574f28; single-take item restored by Undo
+native_project	docs/verification/reaper-parity/fixtures/audio-delete-active-take-after-multi-delete.rpp	SHA-256 4d8a87a6bb27659d75676f62bdd77f54c817b1616543f14141ce0b4d6a026bd9; active last Take B removed; Take A active
+native_project	docs/verification/reaper-parity/fixtures/audio-delete-active-take-undo-multi-delete.rpp	SHA-256 6d34eb2555c680a4da40e7c8506428c7cabc27d164768cc6bca7b9658f574f28; Take B and active index restored by Undo
+native_project	docs/verification/reaper-parity/fixtures/audio-delete-active-take-redo-multi-delete.rpp	SHA-256 4d8a87a6bb27659d75676f62bdd77f54c817b1616543f14141ce0b4d6a026bd9; Take A restored active by Redo
+native_project	docs/verification/reaper-parity/fixtures/audio-delete-active-take-before-delete-first-take.rpp	SHA-256 f29b78cada30c3ee515972c1037f6ccaac1a2d30de3d43c56786ae07f9a3beb2; Take A active before first-take removal
+native_project	docs/verification/reaper-parity/fixtures/audio-delete-active-take-after-delete-first-take.rpp	SHA-256 f007a5bd56ef7b3819ad64abf57270354d99b16986371d5a3bc2e881cfd1b3c0; Take A removed; Take B active
+native_project	docs/verification/reaper-parity/fixtures/audio-delete-active-take-undo-delete-first-take.rpp	SHA-256 f29b78cada30c3ee515972c1037f6ccaac1a2d30de3d43c56786ae07f9a3beb2; Take A and active index restored by Undo
+native_project	docs/verification/reaper-parity/fixtures/audio-delete-active-take-redo-delete-first-take.rpp	SHA-256 f007a5bd56ef7b3819ad64abf57270354d99b16986371d5a3bc2e881cfd1b3c0; Take B restored active by Redo
+aaadaw_project	docs/verification/reaper-parity/fixtures/audio-multi-take-aaadaw.aaadaw	SHA-256 398cae8e89a940aaa2b6f454265030d9f1c414f3780fbe0f95509c62e7feb0b1; two-take Take A/Take B fixture used for the live capture
+aaadaw_capture	docs/verification/reaper-parity/fixtures/audio-delete-active-take-aaadaw-before.png	SHA-256 e84d605604246d4c8894f6721f4d813c6155067113a76ca2ce3fda4ed2261d90; 1280x800; 1280x800 live AAADAW window shows Take A selected and Delete active take control
+aaadaw_capture	docs/verification/reaper-parity/fixtures/audio-delete-active-take-aaadaw-after.png	SHA-256 9f5764b6750971d2b51c0073f0ace5d939b577410c03a17cd932722233e89dad; 1280x800; 1280x800 live AAADAW window shows Take B active as Take 1/1 after deletion
+aaadaw_capture_script	scripts/reaper_parity/capture-audio-delete-active-take-aaadaw.sh	SHA-256 c3329537bf3d7993db55140db68a3dc1dc66da5d3844f627460d7e72accc6ca4; isolated Xvfb and temporary Ctrl+Alt+Shift+D binding
+capture_binary	target/debug/debug/aaadaw	SHA-256 65cfeb3e1fcd995a543b77634ff78d0eeb425637a420176f1133868b8ebb9089; Stable LLVM desktop binary used for the screenshots
+capture_build	CARGO_TARGET_DIR=target/debug CARGO_PROFILE_DEV_DEBUG=0 cargo +stable build -p aaadaw --bin aaadaw --locked	passed
+capture_command	scripts/reaper_parity/capture-audio-delete-active-take-aaadaw.sh target/debug/debug/aaadaw	passed; captured selected two-take Inspector and resulting one-take state
+stable_tests	cargo +stable nextest run -p aaadaw --bin aaadaw --locked	847 passed, 0 skipped
+stable_tests	cargo +stable nextest run -p aaadaw-core -p aaadaw-storage --locked	373 passed, 0 skipped
+validation	Stable all-target Clippy, cargo +stable fmt --all --check, capture script bash -n, git diff --check, parity CSV uniqueness/column check	passed
+open_scope	EDIT-TAKE-001	Remains in_progress: multi-selection, lanes, take reordering, recording-created takes, comp areas, MIDI take handling, and cross-project clipboard behavior remain open

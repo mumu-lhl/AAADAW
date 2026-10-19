@@ -171,6 +171,88 @@ fn paste_as_take_appends_and_activates_the_copied_source_with_undo_redo() {
 }
 
 #[test]
+fn deleting_active_take_selects_the_next_available_take_and_is_undoable() {
+    let (mut project, item_id) = project_with_audio_item();
+    let mut copied_take = project.audio_items()[0].active_take_snapshot();
+    copied_take.media_ref = "asset://take-b".to_owned();
+    copied_take.name = "Take B".to_owned();
+    project
+        .apply(DawAction::PasteAudioItemAsTake {
+            item_id,
+            take: copied_take,
+        })
+        .expect("second take should be appended");
+    project
+        .apply(DawAction::SetAudioItemActiveTake {
+            item_id,
+            take_index: 0,
+        })
+        .expect("first take should be active");
+
+    project
+        .apply(DawAction::DeleteActiveAudioItemTake { item_id })
+        .expect("deleting the first take should keep its successor");
+    let item = &project.audio_items()[0];
+    assert_eq!(item.take_count(), 1);
+    assert_eq!(item.active_take_index(), 0);
+    assert_eq!(item.media_ref(), "asset://take-b");
+    assert_eq!(item.name(), "Take B");
+    assert!(item.other_takes().is_empty());
+
+    let after_first_delete = project.snapshot();
+    assert_eq!(
+        Project::from_snapshot(after_first_delete.clone())
+            .unwrap()
+            .snapshot(),
+        after_first_delete
+    );
+    assert!(project.undo().expect("first-take deletion should undo"));
+    assert_eq!(project.audio_items()[0].take_count(), 2);
+    assert_eq!(project.audio_items()[0].active_take_index(), 0);
+    assert_eq!(project.audio_items()[0].media_ref(), "asset://take-a");
+    assert!(project.redo().expect("first-take deletion should redo"));
+    assert_eq!(project.audio_items()[0].media_ref(), "asset://take-b");
+
+    let mut second_take = project.audio_items()[0].active_take_snapshot();
+    second_take.media_ref = "asset://take-c".to_owned();
+    second_take.name = "Take C".to_owned();
+    project
+        .apply(DawAction::PasteAudioItemAsTake {
+            item_id,
+            take: second_take,
+        })
+        .expect("a take should append after the first deletion");
+    assert_eq!(project.audio_items()[0].active_take_index(), 1);
+    project
+        .apply(DawAction::DeleteActiveAudioItemTake { item_id })
+        .expect("deleting the last take should keep its predecessor");
+    assert_eq!(project.audio_items()[0].take_count(), 1);
+    assert_eq!(project.audio_items()[0].active_take_index(), 0);
+    assert_eq!(project.audio_items()[0].media_ref(), "asset://take-b");
+    assert!(project.undo().expect("last-take deletion should undo"));
+    assert_eq!(project.audio_items()[0].take_count(), 2);
+    assert_eq!(project.audio_items()[0].active_take_index(), 1);
+    assert_eq!(project.audio_items()[0].media_ref(), "asset://take-c");
+    assert!(project.redo().expect("last-take deletion should redo"));
+    assert_eq!(project.audio_items()[0].media_ref(), "asset://take-b");
+}
+
+#[test]
+fn deleting_the_only_active_take_removes_the_item_and_undo_restores_it() {
+    let (mut project, item_id) = project_with_audio_item();
+    let before = project.snapshot();
+
+    project
+        .apply(DawAction::DeleteActiveAudioItemTake { item_id })
+        .expect("deleting the only take should remove its item");
+    assert!(project.audio_items().is_empty());
+    assert!(project.undo().expect("single-take removal should undo"));
+    assert_eq!(project.snapshot(), before);
+    assert!(project.redo().expect("single-take removal should redo"));
+    assert!(project.audio_items().is_empty());
+}
+
+#[test]
 fn paste_as_take_rejects_invalid_source_data_without_changing_project_or_history() {
     let (mut project, item_id) = project_with_audio_item();
     let mut copied_take = project.audio_items()[0].active_take_snapshot();

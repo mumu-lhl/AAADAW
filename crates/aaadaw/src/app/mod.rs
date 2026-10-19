@@ -1701,6 +1701,7 @@ fn action_rebuilds_playback_graph(action: &DawAction) -> bool {
         | DawAction::SetTempoCurve { .. }
         | DawAction::SetTrackFxParameterAutomation { .. }
         | DawAction::SetAudioItemActiveTake { .. }
+        | DawAction::DeleteActiveAudioItemTake { .. }
         | DawAction::PasteAudioItemAsTake { .. }
         | DawAction::SetMidiItemPosition { .. }
         | DawAction::EditMidiItemPlacement { .. }
@@ -5448,6 +5449,7 @@ impl App {
                             | Message::DuplicateSelectedItems
                             | Message::DuplicateAudioItem(_)
                             | Message::DuplicateAudioItemTake(_)
+                            | Message::DeleteActiveAudioItemTake(_)
                             | Message::SwitchAudioItemTake(..)
                             | Message::DuplicateMidiItem(_)
                             | Message::SplitSelectedItemsAtCursor
@@ -9651,6 +9653,22 @@ impl App {
                 self.apply_action(
                     DawAction::DuplicateAudioItemTake { item_id },
                     "Active take duplicated",
+                );
+            }
+            Message::DeleteActiveAudioItemTake(item_id) => {
+                if commands::project_edit_busy(self) {
+                    self.status =
+                        "Stop playback or finish the current project operation before deleting takes"
+                            .to_owned();
+                    return Task::none();
+                }
+                if !self.can_delete_selected_audio_item_take() {
+                    return Task::none();
+                }
+                self.audio_item_start_edits.remove(&item_id);
+                self.apply_action(
+                    DawAction::DeleteActiveAudioItemTake { item_id },
+                    "Active take deleted",
                 );
             }
             Message::SwitchAudioItemTake(item_id, next) => {
@@ -18977,6 +18995,17 @@ impl App {
 
     pub(super) fn can_copy_selected_audio_item(&self) -> bool {
         self.selected_audio_item_for_take_clipboard().is_some()
+    }
+
+    pub(super) fn can_delete_selected_audio_item_take(&self) -> bool {
+        self.selected_audio_item_for_take_clipboard()
+            .is_some_and(|item| {
+                !self
+                    .project
+                    .tracks()
+                    .iter()
+                    .any(|track| track.frozen_audio_item_id() == Some(item.id()))
+            })
     }
 
     fn copy_selected_audio_item(&mut self) {

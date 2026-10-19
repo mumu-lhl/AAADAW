@@ -90,6 +90,12 @@ fn selected_item_view(app: &App, item_id: ItemId, touch_targets: bool) -> Elemen
                     Message::SwitchAudioItemTake(item_id, false),
                 ))
                 .push(buttons.action("Next take", Message::SwitchAudioItemTake(item_id, true)));
+            if app.can_delete_selected_audio_item_take() {
+                take_controls = take_controls.push(buttons.danger(
+                    "Delete active take",
+                    Message::DeleteActiveAudioItemTake(item_id),
+                ));
+            }
         }
         let mut actions = row![
             text(format!("Audio · {}", item.media_ref())).width(Length::Fill),

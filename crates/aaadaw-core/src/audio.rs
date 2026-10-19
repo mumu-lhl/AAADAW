@@ -275,4 +275,40 @@ impl AudioItem {
         });
         self.switch_active_take(index)
     }
+
+    pub(crate) fn delete_active_take(&mut self) -> bool {
+        if self.take_count() <= 1 {
+            return false;
+        }
+        let removed_index = self.active_take_index;
+        let Ok(last_index) = u32::try_from(self.take_count() - 2) else {
+            return false;
+        };
+        let next_active_index = removed_index.min(last_index);
+        let next_active_old_index = if next_active_index >= removed_index {
+            let Some(index) = next_active_index.checked_add(1) else {
+                return false;
+            };
+            index
+        } else {
+            next_active_index
+        };
+        let Some(position) = self
+            .other_takes
+            .iter()
+            .position(|take| take.index == next_active_old_index)
+        else {
+            return false;
+        };
+        let mut next_active = self.other_takes.remove(position);
+        next_active.index = next_active_index;
+        for take in &mut self.other_takes {
+            if take.index > removed_index {
+                take.index -= 1;
+            }
+        }
+        self.set_active_take(&next_active);
+        self.other_takes.sort_unstable_by_key(|take| take.index);
+        true
+    }
 }

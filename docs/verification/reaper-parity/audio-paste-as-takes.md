@@ -26,4 +26,4 @@ Stable LLVM validation passed 846/846 AAADAW desktop tests and 371/371 Core/Stor
 
 ## Remaining parity work
 
-`EDIT-TAKE-001` remains `in_progress`. This slice supports one selected audio source and one selected audio target in the current project. Multi-item copying, cross-project media clipboard behavior, MIDI items, track copying, recording-created takes, lane display modes, take removal/reordering, comp areas, and multi-selection take actions remain open.
+`EDIT-TAKE-001` remains `in_progress`. This slice supports one selected audio source and one selected audio target in the current project. Multi-item copying, cross-project media clipboard behavior, MIDI items, track copying, recording-created takes, lane display modes, take reordering, comp areas, and multi-selection take actions remain open. Active-take deletion is measured separately in [Delete the active audio take](audio-delete-active-take.md).

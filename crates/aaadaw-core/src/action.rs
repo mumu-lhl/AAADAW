@@ -367,6 +367,10 @@ pub enum DawAction {
         item_id: ItemId,
         take: crate::AudioItemTakeSnapshot,
     },
+    /// Remove the active take, deleting the item when it contains no other takes.
+    DeleteActiveAudioItemTake {
+        item_id: ItemId,
+    },
     /// Activate an existing take using its zero-based position in the item.
     SetAudioItemActiveTake {
         item_id: ItemId,

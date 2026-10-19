@@ -183,6 +183,75 @@ fn copied_audio_take_pastes_into_selected_item_without_removing_source_item() {
 }
 
 #[test]
+fn delete_active_take_action_keeps_the_other_take_and_undo_redo_restore_it() {
+    let mut app = App::default();
+    let _ = app.update(Message::AddTrack);
+    let track_id = app.project.tracks()[0].id();
+    app.project
+        .apply(DawAction::InsertAudioItem {
+            track_id,
+            media_ref: "asset://take-a".to_owned(),
+            start_sample: 0,
+            source_offset_samples: 0,
+            length_samples: 48_000,
+        })
+        .expect("test audio item should be inserted");
+    let item_id = app.project.audio_items()[0].id();
+    let mut second_take = app.project.audio_items()[0].active_take_snapshot();
+    second_take.media_ref = "asset://take-b".to_owned();
+    second_take.name = "Take B".to_owned();
+    app.project
+        .apply(DawAction::PasteAudioItemAsTake {
+            item_id,
+            take: second_take,
+        })
+        .expect("second take should be appended");
+    app.project
+        .apply(DawAction::SetAudioItemActiveTake {
+            item_id,
+            take_index: 0,
+        })
+        .expect("first take should be active before deletion");
+    app.timeline.rebuild(&app.project);
+    app.timeline.select_items(vec![(item_id, track_id)]);
+
+    let shortcut = commands::shortcut_entries(&app)
+        .into_iter()
+        .find(|entry| entry.id == "take.delete-active")
+        .expect("REAPER's Delete active take action should be registered");
+    assert!(shortcut.default_binding.is_empty());
+    let menu_entry = commands::for_menu(&app, MainMenu::Item)
+        .into_iter()
+        .find(|entry| entry.id == CommandId::DeleteActiveAudioItemTake)
+        .expect("Item menu should expose Delete active take from items");
+    assert_eq!(menu_entry.label, "Delete active take from items");
+    assert!(menu_entry.enabled);
+    assert_eq!(
+        commands::find(&app, "delete active take from items"),
+        Some(CommandId::DeleteActiveAudioItemTake)
+    );
+
+    let _ = app.update(Message::ExecuteCommand(
+        CommandId::DeleteActiveAudioItemTake,
+    ));
+    let item = &app.project.audio_items()[0];
+    assert_eq!(item.take_count(), 1);
+    assert_eq!(item.active_take_index(), 0);
+    assert_eq!(item.media_ref(), "asset://take-b");
+    assert_eq!(item.name(), "Take B");
+
+    let _ = app.update(Message::Undo);
+    let item = &app.project.audio_items()[0];
+    assert_eq!(item.take_count(), 2);
+    assert_eq!(item.active_take_index(), 0);
+    assert_eq!(item.media_ref(), "asset://take-a");
+    let _ = app.update(Message::Redo);
+    let item = &app.project.audio_items()[0];
+    assert_eq!(item.take_count(), 1);
+    assert_eq!(item.media_ref(), "asset://take-b");
+}
+
+#[test]
 fn mobile_midi_editor_uses_main_window_and_back_returns_to_arrangement() {
     let window_id = iced::window::Id::unique();
     let mut app = App {
