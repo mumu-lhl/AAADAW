@@ -181,6 +181,32 @@ fn midi_take_action_list_switches_and_adds_empty_takes_with_undo() {
     assert_eq!(app.project.midi_items()[0].active_take_index(), 0);
     assert_eq!(app.project.midi_items()[0].name(), "Take A");
 
+    let duplicate = commands::shortcut_entries(&app)
+        .into_iter()
+        .find(|entry| entry.id == "take.duplicate-active")
+        .expect("REAPER's Duplicate active take action should be registered");
+    assert!(duplicate.default_binding.is_empty());
+    assert!(commands::is_enabled(&app, CommandId::DuplicateActiveTake));
+    let before_duplicate = app.project.snapshot();
+    let cursor = app.project.history_cursor();
+    let _ = app.update(Message::ExecuteCommand(CommandId::DuplicateActiveTake));
+    let item = &app.project.midi_items()[0];
+    assert_eq!(app.project.history_cursor(), cursor + 1);
+    assert_eq!(item.active_take_index(), 2);
+    assert_eq!(
+        item.take_names()
+            .into_iter()
+            .map(|(_, name)| name)
+            .collect::<Vec<_>>(),
+        ["Take A", "Take B", "Take A"]
+    );
+    let after_duplicate = app.project.snapshot();
+    let _ = app.update(Message::Undo);
+    assert_eq!(app.project.snapshot(), before_duplicate);
+    let _ = app.update(Message::Redo);
+    assert_eq!(app.project.snapshot(), after_duplicate);
+    let _ = app.update(Message::Undo);
+
     for (id, command) in [
         (
             "take.add-empty-before-active",
@@ -1281,7 +1307,7 @@ fn switching_selected_audio_takes_wraps_skips_single_takes_and_uses_one_undo_ste
 }
 
 #[test]
-fn duplicating_multiple_selected_audio_item_takes_is_one_undoable_transaction() {
+fn duplicating_multiple_selected_audio_and_midi_takes_is_one_undoable_transaction() {
     let mut app = App::default();
     let _ = app.update(Message::AddTrack);
     let track_id = app.project.tracks()[0].id();
@@ -1303,6 +1329,27 @@ fn duplicating_multiple_selected_audio_item_takes_is_one_undoable_transaction() 
     let first_id = app.project.audio_items()[0].id();
     let single_id = app.project.audio_items()[1].id();
     let last_id = app.project.audio_items()[2].id();
+    app.project
+        .apply(DawAction::InsertMidiItem {
+            track_id,
+            start_tick: 0,
+            length_ticks: 3_840,
+        })
+        .expect("MIDI item should be inserted");
+    let midi_item_id = app.project.midi_items()[0].id();
+    app.project
+        .apply(DawAction::AddMidiNotes {
+            item_id: midi_item_id,
+            notes: vec![MidiNoteData {
+                pitch: 60,
+                channel: 0,
+                tick: 120,
+                duration: 240,
+                velocity: 100,
+                off_velocity: 0,
+            }],
+        })
+        .expect("MIDI source note should be inserted");
     for item_id in [first_id, last_id] {
         let mut take = app
             .project
@@ -1328,6 +1375,7 @@ fn duplicating_multiple_selected_audio_item_takes_is_one_undoable_transaction() 
         (first_id, track_id),
         (single_id, track_id),
         (last_id, track_id),
+        (midi_item_id, track_id),
     ]);
     let before = app.project.snapshot();
     let history_cursor = app.project.history_cursor();
@@ -1378,6 +1426,12 @@ fn duplicating_multiple_selected_audio_item_takes_is_one_undoable_transaction() 
             .collect::<Vec<_>>(),
         [(0, "asset://take-b"), (1, "asset://take-a")]
     );
+    let midi = &app.project.midi_items()[0];
+    assert_eq!(midi.take_count(), 2);
+    assert_eq!(midi.active_take_index(), 1);
+    let midi_takes = midi.take_snapshots();
+    assert_eq!(midi_takes[0].notes[0].data, midi_takes[1].notes[0].data);
+    assert_ne!(midi_takes[0].notes[0].id, midi_takes[1].notes[0].id);
 
     let after = app.project.snapshot();
     let _ = app.update(Message::Undo);

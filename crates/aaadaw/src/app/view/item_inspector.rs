@@ -167,7 +167,7 @@ fn selected_item_view(app: &App, item_id: ItemId, touch_targets: bool) -> Elemen
         {
             actions = actions.push(buttons.action(
                 "Duplicate selected takes",
-                Message::DuplicateSelectedAudioItemActiveTakes,
+                Message::DuplicateSelectedItemActiveTakes,
             ));
         }
         if super::super::commands::is_enabled(

@@ -43,6 +43,51 @@ fn schema_67_migrates_midi_items_without_changing_active_take_names() {
 }
 
 #[test]
+fn duplicated_active_midi_take_round_trips_with_new_note_identity() {
+    let path = tempfile::NamedTempFile::new().unwrap();
+    let mut project = Project::new();
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Duplicate persistence".to_owned(),
+        })
+        .unwrap();
+    project
+        .apply(DawAction::InsertMidiItem {
+            track_id: project.tracks()[0].id(),
+            start_tick: 0,
+            length_ticks: 1_920,
+        })
+        .unwrap();
+    let item_id = project.midi_items()[0].id();
+    project
+        .apply(DawAction::AddMidiNotes {
+            item_id,
+            notes: vec![MidiNoteData {
+                pitch: 64,
+                channel: 1,
+                tick: 240,
+                duration: 120,
+                velocity: 90,
+                off_velocity: 11,
+            }],
+        })
+        .unwrap();
+    project
+        .apply(DawAction::DuplicateMidiItemTake { item_id })
+        .unwrap();
+    let expected = project.snapshot();
+    let takes = project.midi_items()[0].take_snapshots();
+    assert_eq!(takes.len(), 2);
+    assert_eq!(takes[0].notes[0].data, takes[1].notes[0].data);
+    assert_ne!(takes[0].notes[0].id, takes[1].notes[0].id);
+
+    let mut store = ProjectStore::open(path.path()).unwrap();
+    store.save(&project).unwrap();
+    assert_eq!(store.load().unwrap().snapshot(), expected);
+}
+
+#[test]
 fn midi_item_takes_round_trip_all_event_kinds_and_active_index() {
     let path = tempfile::NamedTempFile::new().unwrap();
     let mut project = Project::new();

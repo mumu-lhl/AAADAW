@@ -407,6 +407,10 @@ pub enum DawAction {
     AddEmptyMidiItemTakeAfter {
         item_id: ItemId,
     },
+    /// Append a copy of the active MIDI Take and activate it.
+    DuplicateMidiItemTake {
+        item_id: ItemId,
+    },
     /// Duplicate the complete audio Item at a new track and position.
     DuplicateAudioItemAt {
         item_id: ItemId,

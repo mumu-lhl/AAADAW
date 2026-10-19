@@ -3264,11 +3264,11 @@ pub(super) fn dispatch(app: &mut App, command: CommandId) -> Task<Message> {
             Message::ExplodeSelectedAudioItemTakesInPlace
         }
         CommandId::DuplicateActiveTake => {
-            if selected_audio_item_ids(app).is_empty() {
-                app.status = "Select an audio item to duplicate its active take".to_owned();
+            if selected_audio_item_ids(app).is_empty() && selected_midi_item_ids(app).is_empty() {
+                app.status = "Select an audio or MIDI item to duplicate its active take".to_owned();
                 return Task::none();
             }
-            Message::DuplicateSelectedAudioItemActiveTakes
+            Message::DuplicateSelectedItemActiveTakes
         }
         CommandId::DeleteActiveAudioItemTake => {
             if selected_audio_item_ids(app).is_empty() {
@@ -4253,13 +4253,24 @@ fn command_enabled(app: &App, kind: CommandKind, track: Option<TrackState>) -> b
         }
         CommandKind::DuplicateActiveTake => {
             let selected_audio_ids = selected_audio_item_ids(app);
+            let selected_midi_ids = selected_midi_item_ids(app);
             !project_edit_busy(app)
-                && !selected_audio_ids.is_empty()
+                && (!selected_audio_ids.is_empty() || !selected_midi_ids.is_empty())
                 && !selected_audio_ids.iter().any(|item_id| {
                     app.project
                         .tracks()
                         .iter()
                         .any(|track| track.frozen_audio_item_id() == Some(*item_id))
+                })
+                && !selected_midi_ids.iter().any(|item_id| {
+                    app.project.midi_items().iter().any(|item| {
+                        item.id() == *item_id
+                            && app
+                                .project
+                                .tracks()
+                                .iter()
+                                .any(|track| track.id() == item.track_id() && track.is_frozen())
+                    })
                 })
         }
         CommandKind::DeleteActiveAudioItemTake => {

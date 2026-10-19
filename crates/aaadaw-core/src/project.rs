@@ -2198,6 +2198,71 @@ fn empty_midi_take_changed_event(
     Ok(ProjectEvent::MidiItemChanged { before, after })
 }
 
+fn duplicate_midi_take_changed_event(
+    state: &ProjectState,
+    ids: &mut IdAllocator,
+    item_id: ItemId,
+) -> Result<ProjectEvent, ActionError> {
+    let before = state
+        .midi_items
+        .iter()
+        .find(|item| item.id == item_id)
+        .ok_or(ActionError::MidiItemNotFound { item_id })?;
+    let track_id = before.track_id;
+    let track = state
+        .tracks
+        .iter()
+        .find(|track| track.id == track_id)
+        .ok_or(ActionError::TrackNotFound { track_id })?;
+    if track.is_frozen() {
+        return Err(ActionError::CannotEditFrozenTrackSource { track_id });
+    }
+    let take_index =
+        u32::try_from(before.take_count()).map_err(|_| ActionError::MidiTakeIndexExhausted)?;
+    let active_take = before
+        .take_snapshots()
+        .into_iter()
+        .find(|take| take.index == before.active_take_index)
+        .ok_or(ActionError::HistoryInvariantViolation)?;
+    let mut next_note_id = ids.next_note_id;
+    let mut notes = Vec::with_capacity(active_take.notes.len());
+    for note in active_take.notes {
+        let following_id = next_note_id
+            .checked_add(1)
+            .ok_or(ActionError::NoteIdExhausted)?;
+        notes.push(MidiNote {
+            id: NoteId::from_raw(next_note_id),
+            data: note.data,
+        });
+        next_note_id = following_id;
+    }
+    let mut after = before.clone();
+    after.other_takes.push(MidiItemTake {
+        index: take_index,
+        name: active_take.name,
+        source_offset_ticks: active_take.source_offset_ticks,
+        loop_source: active_take.loop_source,
+        source_loop_length_ticks: active_take.source_loop_length_ticks,
+        notes: Arc::new(notes),
+        controllers: Arc::new(active_take.controllers),
+        pitch_bends: Arc::new(active_take.pitch_bends),
+        program_changes: Arc::new(active_take.program_changes),
+        poly_aftertouches: Arc::new(active_take.poly_aftertouches),
+        channel_pressures: Arc::new(active_take.channel_pressures),
+        opaque_events: Arc::new(active_take.opaque_events),
+        event_order: Arc::new(active_take.event_order),
+    });
+    if !after.switch_active_take(take_index) {
+        return Err(ActionError::HistoryInvariantViolation);
+    }
+    after.other_takes.sort_unstable_by_key(|take| take.index);
+    ids.next_note_id = next_note_id;
+    Ok(ProjectEvent::MidiItemChanged {
+        before: before.clone(),
+        after,
+    })
+}
+
 fn split_midi_take(
     original: &MidiItem,
     absolute_points: &[u64],
@@ -5567,6 +5632,9 @@ impl Project {
             DawAction::AddEmptyMidiItemTakeAfter { item_id } => {
                 empty_midi_take_changed_event(state, item_id, false)?
             }
+            DawAction::DuplicateMidiItemTake { item_id } => {
+                duplicate_midi_take_changed_event(state, ids, item_id)?
+            }
             DawAction::DuplicateAudioItemAt {
                 item_id,
                 track_id,
@@ -7962,6 +8030,7 @@ fn source_track_for_action(state: &ProjectState, action: &DawAction) -> Option<T
         | DawAction::DuplicateMidiItem { item_id }
         | DawAction::DuplicateMidiItemAt { item_id, .. }
         | DawAction::DuplicateMidiItemToTrack { item_id, .. }
+        | DawAction::DuplicateMidiItemTake { item_id }
         | DawAction::SplitMidiItem { item_id, .. }
         | DawAction::DeleteMidiItem { item_id }
         | DawAction::AddMidiNotes { item_id, .. }

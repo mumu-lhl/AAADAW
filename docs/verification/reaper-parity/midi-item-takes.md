@@ -12,12 +12,15 @@ REAPER 7.82 / Default 7 action 40012 was measured with active Take A and active 
 
 REAPER 7.82 / Default 7 actions 41351/41352 were measured with Take B active in a two-Take MIDI item. The native RPP stores each inserted slot as `TAKE NULL`; AAADAW preserves the same ordered placeholder and active index. The App capture and native readback cover before/after/Undo/Redo. See the [empty Take insertion evidence](midi-item-empty-take-insertion.md).
 
+REAPER action 40639 duplicates a selected MIDI item's active Take after all existing Takes and activates the copy. AAADAW preserves the copied source properties and event data, gives copied notes new IDs, and handles mixed Audio/MIDI selections as one undoable transaction. See the [active Take duplication evidence](midi-item-duplicate-active-take.md).
+
 The current Cranelift desktop binary was run under an isolated Xvfb display at 1280×800. The [four-state capture manifest](fixtures/midi-item-takes-aaadaw.tsv) records the fixture, binary, script, and before/after/Undo/Redo screenshot hashes. The overlapped takes share one Arrange range, so the image alone does not reveal the item count; Core/App assertions and native REAPER's item-count readback provide that check.
 
 Focused verification:
 
 - `crates/aaadaw-core/tests/midi_item_takes.rs` checks ordered explosion, per-Take split partitioning, loop-phase wrapping, event order, and Undo/Redo.
 - `crates/aaadaw-core/tests/midi_item_takes.rs::adding_empty_midi_takes_preserves_the_active_source_and_round_trips` checks empty Take insertion before and after the active Take, switching to it, snapshots, and Undo/Redo.
+- `crates/aaadaw-core/tests/midi_item_takes.rs::duplicating_active_midi_take_appends_activates_and_undoes_with_unique_note_ids` checks action 40639 ordering, active source preservation, unique note identities, and Undo/Redo.
 - `crates/aaadaw/src/app/tests.rs::cursor_split_preserves_multi_take_midi_and_selects_the_right_segment` checks the selected-item command path, right-segment selection, and Undo/Redo.
 - `crates/aaadaw/src/app/tests.rs::midi_take_action_list_switches_and_adds_empty_takes_with_undo` checks action registration and both empty Take commands.
 - `crates/aaadaw-storage/tests/midi_item_takes.rs` round-trips all modeled event kinds, opaque payloads, event order, active index, an empty Take placeholder, and active-empty Take persistence.
