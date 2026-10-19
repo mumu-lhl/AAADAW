@@ -99,6 +99,90 @@ fn audio_take_actions_switch_with_undo_and_require_multiple_takes() {
 }
 
 #[test]
+fn midi_take_inspector_and_action_list_switch_the_active_take_with_undo() {
+    let mut app = App::default();
+    let _ = app.update(Message::AddTrack);
+    let track_id = app.project.tracks()[0].id();
+    app.project
+        .apply(DawAction::InsertMidiItem {
+            track_id,
+            start_tick: 0,
+            length_ticks: 3_840,
+        })
+        .unwrap();
+    let item_id = app.project.midi_items()[0].id();
+    app.project
+        .apply(DawAction::AddMidiNotes {
+            item_id,
+            notes: vec![
+                MidiNoteData {
+                    pitch: 60,
+                    channel: 0,
+                    tick: 0,
+                    duration: 480,
+                    velocity: 100,
+                    off_velocity: 0,
+                },
+                MidiNoteData {
+                    pitch: 64,
+                    channel: 0,
+                    tick: 960,
+                    duration: 480,
+                    velocity: 100,
+                    off_velocity: 0,
+                },
+            ],
+        })
+        .unwrap();
+    let mut snapshot = app.project.snapshot();
+    let item = &mut snapshot.midi_items[0];
+    let note_a = item.notes[0].clone();
+    let note_b = item.notes[1].clone();
+    item.notes = vec![note_a];
+    item.name = "Take A".to_owned();
+    item.other_takes = vec![MidiItemTakeSnapshot {
+        index: 1,
+        name: "Take B".to_owned(),
+        source_offset_ticks: 0,
+        loop_source: false,
+        source_loop_length_ticks: item.length_ticks,
+        notes: vec![note_b],
+        controllers: Vec::new(),
+        pitch_bends: Vec::new(),
+        program_changes: Vec::new(),
+        poly_aftertouches: Vec::new(),
+        channel_pressures: Vec::new(),
+        opaque_events: Vec::new(),
+        event_order: Vec::new(),
+    }];
+    app.project = Project::from_snapshot(snapshot).unwrap();
+    app.timeline.rebuild(&app.project);
+    app.timeline.select_items(vec![(item_id, track_id)]);
+    assert!(commands::is_enabled(&app, CommandId::SwitchItemsToNextTake));
+
+    let before = app.project.snapshot();
+    let cursor = app.project.history_cursor();
+    let _ = app.update(Message::SwitchMidiItemTake(item_id, true));
+    let item = &app.project.midi_items()[0];
+    assert_eq!(item.active_take_index(), 1);
+    assert_eq!(item.name(), "Take B");
+    assert_eq!(item.notes()[0].pitch(), 64);
+    assert_eq!(app.project.history_cursor(), cursor + 1);
+    let after = app.project.snapshot();
+
+    let _ = app.update(Message::Undo);
+    assert_eq!(app.project.snapshot(), before);
+    let _ = app.update(Message::Redo);
+    assert_eq!(app.project.snapshot(), after);
+
+    let _ = app.update(Message::ExecuteCommand(
+        CommandId::SwitchItemsToPreviousTake,
+    ));
+    assert_eq!(app.project.midi_items()[0].active_take_index(), 0);
+    assert_eq!(app.project.midi_items()[0].name(), "Take A");
+}
+
+#[test]
 fn imploding_selected_audio_items_keeps_track_order_all_takes_and_one_step_history() {
     let mut app = App::default();
     for (index, name) in ["Implode", "Other"].into_iter().enumerate() {

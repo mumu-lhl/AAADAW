@@ -3406,15 +3406,15 @@ pub(super) fn dispatch(app: &mut App, command: CommandId) -> Task<Message> {
             Message::DuplicateAudioItem(item_id)
         }
         CommandId::SwitchItemsToNextTake => {
-            if switch_audio_item_take_targets(app).is_empty() {
-                app.status = "Select a multi-take audio item".to_owned();
+            if switch_media_item_take_targets(app).is_empty() {
+                app.status = "Select a multi-take item".to_owned();
                 return Task::none();
             }
             Message::SwitchSelectedAudioItemTakes(true)
         }
         CommandId::SwitchItemsToPreviousTake => {
-            if switch_audio_item_take_targets(app).is_empty() {
-                app.status = "Select a multi-take audio item".to_owned();
+            if switch_media_item_take_targets(app).is_empty() {
+                app.status = "Select a multi-take item".to_owned();
                 return Task::none();
             }
             Message::SwitchSelectedAudioItemTakes(false)
@@ -3769,44 +3769,68 @@ pub(super) fn media_items_for_explode_takes(app: &App) -> Option<Vec<ItemId>> {
     Some(selected_ids.iter().copied().collect())
 }
 
-pub(super) fn switch_audio_item_take_targets(app: &App) -> Vec<ItemId> {
-    selected_audio_item_ids(app)
-        .into_iter()
+pub(super) fn switch_media_item_take_targets(app: &App) -> Vec<ItemId> {
+    app.timeline
+        .selected_items
+        .iter()
+        .copied()
         .filter(|item_id| {
             app.project
                 .audio_items()
                 .iter()
                 .find(|item| item.id() == *item_id)
                 .is_some_and(|item| item.take_count() > 1)
+                || app
+                    .project
+                    .midi_items()
+                    .iter()
+                    .find(|item| item.id() == *item_id)
+                    .is_some_and(|item| item.take_count() > 1)
         })
         .collect()
 }
 
-pub(super) fn audio_item_take_switch_targets(app: &App, next: bool) -> Vec<(ItemId, u32)> {
-    let item_ids = switch_audio_item_take_targets(app);
-    let max_take_count = item_ids
-        .iter()
+pub(super) fn switch_media_item_take_indices(app: &App, next: bool) -> Vec<(ItemId, u32)> {
+    let item_states = switch_media_item_take_targets(app)
+        .into_iter()
         .filter_map(|item_id| {
             app.project
                 .audio_items()
                 .iter()
-                .find(|item| item.id() == *item_id)
-                .map(|item| item.take_count())
+                .find(|item| item.id() == item_id)
+                .map(|item| {
+                    (
+                        item_id,
+                        item.take_count(),
+                        item.active_take_index() as usize,
+                    )
+                })
+                .or_else(|| {
+                    app.project
+                        .midi_items()
+                        .iter()
+                        .find(|item| item.id() == item_id)
+                        .map(|item| {
+                            (
+                                item_id,
+                                item.take_count(),
+                                item.active_take_index() as usize,
+                            )
+                        })
+                })
         })
+        .collect::<Vec<_>>();
+    let max_take_count = item_states
+        .iter()
+        .map(|(_, take_count, _)| *take_count)
         .max()
         .unwrap_or(0);
     if max_take_count == 0 {
         return Vec::new();
     }
-    let max_active_index = item_ids
+    let max_active_index = item_states
         .iter()
-        .filter_map(|item_id| {
-            app.project
-                .audio_items()
-                .iter()
-                .find(|item| item.id() == *item_id)
-                .map(|item| item.active_take_index() as usize)
-        })
+        .map(|(_, _, active_index)| *active_index)
         .max()
         .unwrap_or(0);
     let target_index = if next {
@@ -3821,18 +3845,12 @@ pub(super) fn audio_item_take_switch_targets(app: &App, next: bool) -> Vec<(Item
         max_active_index - 1
     };
 
-    item_ids
+    item_states
         .into_iter()
-        .filter_map(|item_id| {
-            app.project
-                .audio_items()
-                .iter()
-                .find(|item| item.id() == item_id)
-                .and_then(|item| {
-                    u32::try_from(target_index.min(item.take_count() - 1))
-                        .ok()
-                        .map(|take_index| (item_id, take_index))
-                })
+        .filter_map(|(item_id, take_count, _)| {
+            u32::try_from(target_index.min(take_count - 1))
+                .ok()
+                .map(|take_index| (item_id, take_index))
         })
         .collect()
 }
@@ -4240,14 +4258,17 @@ fn command_enabled(app: &App, kind: CommandKind, track: Option<TrackState>) -> b
                 })
         }
         CommandKind::SwitchItemsToNextTake | CommandKind::SwitchItemsToPreviousTake => {
-            let targets = switch_audio_item_take_targets(app);
+            let targets = switch_media_item_take_targets(app);
             !project_edit_busy(app)
                 && !targets.is_empty()
                 && !targets.iter().any(|item_id| {
-                    app.project
-                        .tracks()
-                        .iter()
-                        .any(|track| track.frozen_audio_item_id() == Some(*item_id))
+                    app.project.tracks().iter().any(|track| {
+                        track.frozen_audio_item_id() == Some(*item_id)
+                            || (track.is_frozen()
+                                && app.project.midi_items().iter().any(|item| {
+                                    item.id() == *item_id && item.track_id() == track.id()
+                                }))
+                    })
                 })
         }
         CommandKind::DuplicateSelectedMidiItem => {

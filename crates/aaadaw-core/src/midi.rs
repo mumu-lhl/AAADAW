@@ -339,6 +339,47 @@ impl MidiItem {
         self.other_takes.len() + 1
     }
 
+    pub(crate) fn switch_active_take(&mut self, index: u32) -> bool {
+        if index == self.active_take_index {
+            return false;
+        }
+        let Some(position) = self.other_takes.iter().position(|take| take.index == index) else {
+            return false;
+        };
+        let previous = MidiItemTake {
+            index: self.active_take_index,
+            name: self.name.clone(),
+            source_offset_ticks: self.source_offset_ticks,
+            loop_source: self.loop_source,
+            source_loop_length_ticks: self.source_loop_length_ticks,
+            notes: Arc::clone(&self.notes),
+            controllers: Arc::clone(&self.controllers),
+            pitch_bends: Arc::clone(&self.pitch_bends),
+            program_changes: Arc::clone(&self.program_changes),
+            poly_aftertouches: Arc::clone(&self.poly_aftertouches),
+            channel_pressures: Arc::clone(&self.channel_pressures),
+            opaque_events: Arc::clone(&self.opaque_events),
+            event_order: Arc::clone(&self.event_order),
+        };
+        let next = self.other_takes.remove(position);
+        self.active_take_index = next.index;
+        self.name = next.name;
+        self.source_offset_ticks = next.source_offset_ticks;
+        self.loop_source = next.loop_source;
+        self.source_loop_length_ticks = next.source_loop_length_ticks;
+        self.notes = next.notes;
+        self.controllers = next.controllers;
+        self.pitch_bends = next.pitch_bends;
+        self.program_changes = next.program_changes;
+        self.poly_aftertouches = next.poly_aftertouches;
+        self.channel_pressures = next.channel_pressures;
+        self.opaque_events = next.opaque_events;
+        self.event_order = next.event_order;
+        self.other_takes.push(previous);
+        self.other_takes.sort_unstable_by_key(|take| take.index);
+        true
+    }
+
     /// Returns the item Takes in their original order, including the active Take.
     pub fn take_snapshots(&self) -> Vec<crate::MidiItemTakeSnapshot> {
         let mut takes = Vec::with_capacity(self.take_count());

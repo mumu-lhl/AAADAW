@@ -1404,6 +1404,7 @@ pub(crate) enum Message {
     CropSelectedAudioItemsToActiveTake,
     SwitchSelectedAudioItemTakes(bool),
     SwitchAudioItemTake(ItemId, bool),
+    SwitchMidiItemTake(ItemId, bool),
     DuplicateMidiItem(ItemId),
     SplitSelectedItemsAtCursor,
     SplitSelectedItemsAtTimeSelection,

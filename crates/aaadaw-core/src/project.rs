@@ -5058,6 +5058,35 @@ impl Project {
                 after.switch_active_take(take_index);
                 ProjectEvent::AudioItemChanged { before, after }
             }
+            DawAction::SetMidiItemActiveTake {
+                item_id,
+                take_index,
+            } => {
+                let before = state
+                    .midi_items
+                    .iter()
+                    .find(|item| item.id == item_id)
+                    .ok_or(ActionError::MidiItemNotFound { item_id })?;
+                let track_id = before.track_id;
+                let track = state
+                    .tracks
+                    .iter()
+                    .find(|track| track.id == track_id)
+                    .ok_or(ActionError::TrackNotFound { track_id })?;
+                if track.is_frozen() {
+                    return Err(ActionError::CannotEditFrozenTrackSource { track_id });
+                }
+                if take_index as usize >= before.take_count() {
+                    return Err(ActionError::MidiTakeNotFound {
+                        item_id,
+                        take_index,
+                    });
+                }
+                let before = before.clone();
+                let mut after = before.clone();
+                after.switch_active_take(take_index);
+                ProjectEvent::MidiItemChanged { before, after }
+            }
             DawAction::DuplicateAudioItemAt {
                 item_id,
                 track_id,

@@ -278,6 +278,25 @@ fn selected_item_view(app: &App, item_id: ItemId, touch_targets: bool) -> Elemen
                 style
             })
             .width(Length::Fill);
+        let mut take_controls = row![
+            text(format!(
+                "Take {}/{} · {}",
+                item.active_take_index() + 1,
+                item.take_count(),
+                item.name()
+            ))
+            .width(Length::Fill),
+        ]
+        .spacing(if touch_targets {
+            tokens::SPACING_SM
+        } else {
+            tokens::SPACING_COMPACT
+        });
+        if item.take_count() > 1 {
+            take_controls = take_controls
+                .push(buttons.action("Previous take", Message::SwitchMidiItemTake(item_id, false)))
+                .push(buttons.action("Next take", Message::SwitchMidiItemTake(item_id, true)));
+        }
         let mut item_actions = row![
             text(format!(
                 "Tick {} · length {}",
@@ -345,6 +364,7 @@ fn selected_item_view(app: &App, item_id: ItemId, touch_targets: bool) -> Elemen
             })
             .collect::<Vec<Element<'_, Message>>>();
         column![
+            take_controls,
             row![text("Name"), name_input].spacing(if touch_targets {
                 tokens::SPACING_SM
             } else {

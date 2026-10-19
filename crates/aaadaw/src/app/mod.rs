@@ -5498,6 +5498,7 @@ impl App {
                             | Message::CropSelectedAudioItemsToActiveTake
                             | Message::SwitchSelectedAudioItemTakes(..)
                             | Message::SwitchAudioItemTake(..)
+                            | Message::SwitchMidiItemTake(..)
                             | Message::DuplicateMidiItem(_)
                             | Message::SplitSelectedItemsAtCursor
                             | Message::SplitSelectedItemsAtTimeSelection
@@ -9935,25 +9936,56 @@ impl App {
                             .to_owned();
                     return Task::none();
                 }
-                let targets = commands::audio_item_take_switch_targets(self, next);
+                let targets = commands::switch_media_item_take_indices(self, next);
                 if targets.is_empty() {
-                    self.status = "Select a multi-take audio item".to_owned();
+                    self.status = "Select a multi-take item".to_owned();
                     return Task::none();
                 }
                 if targets.iter().any(|(item_id, _)| {
                     self.project
-                        .tracks()
+                        .audio_items()
                         .iter()
-                        .any(|track| track.frozen_audio_item_id() == Some(*item_id))
+                        .find(|item| item.id() == *item_id)
+                        .is_some_and(|_| {
+                            self.project
+                                .tracks()
+                                .iter()
+                                .any(|track| track.frozen_audio_item_id() == Some(*item_id))
+                        })
+                        || self
+                            .project
+                            .midi_items()
+                            .iter()
+                            .find(|item| item.id() == *item_id)
+                            .is_some_and(|item| {
+                                self.project
+                                    .tracks()
+                                    .iter()
+                                    .any(|track| track.id() == item.track_id() && track.is_frozen())
+                            })
                 }) {
-                    self.status = "Frozen render items cannot be edited".to_owned();
+                    self.status = "Frozen items cannot be edited".to_owned();
                     return Task::none();
                 }
                 let actions = targets
                     .iter()
-                    .map(|(item_id, take_index)| DawAction::SetAudioItemActiveTake {
-                        item_id: *item_id,
-                        take_index: *take_index,
+                    .map(|(item_id, take_index)| {
+                        if self
+                            .project
+                            .midi_items()
+                            .iter()
+                            .any(|item| item.id() == *item_id)
+                        {
+                            DawAction::SetMidiItemActiveTake {
+                                item_id: *item_id,
+                                take_index: *take_index,
+                            }
+                        } else {
+                            DawAction::SetAudioItemActiveTake {
+                                item_id: *item_id,
+                                take_index: *take_index,
+                            }
+                        }
                     })
                     .collect::<Vec<_>>();
                 let action = if actions.len() == 1 {
@@ -9971,6 +10003,50 @@ impl App {
                     } else {
                         "Selected active takes changed"
                     },
+                );
+            }
+            Message::SwitchMidiItemTake(item_id, next) => {
+                if commands::project_edit_busy(self) {
+                    self.status =
+                        "Stop playback or finish the current project operation before switching takes"
+                            .to_owned();
+                    return Task::none();
+                }
+                let Some(item) = self
+                    .project
+                    .midi_items()
+                    .iter()
+                    .find(|item| item.id() == item_id)
+                else {
+                    self.status = "MIDI item no longer exists".to_owned();
+                    return Task::none();
+                };
+                if self
+                    .project
+                    .tracks()
+                    .iter()
+                    .any(|track| track.id() == item.track_id() && track.is_frozen())
+                {
+                    self.status = "Frozen items cannot be edited".to_owned();
+                    return Task::none();
+                }
+                let take_count = item.take_count() as u64;
+                if take_count <= 1 {
+                    self.status = "MIDI item has only one take".to_owned();
+                    return Task::none();
+                }
+                let active = u64::from(item.active_take_index());
+                let take_index = if next {
+                    (active + 1) % take_count
+                } else {
+                    (active + take_count - 1) % take_count
+                } as u32;
+                self.apply_action(
+                    DawAction::SetMidiItemActiveTake {
+                        item_id,
+                        take_index,
+                    },
+                    "Active take changed",
                 );
             }
             Message::SwitchAudioItemTake(item_id, next) => {

@@ -394,6 +394,11 @@ pub enum DawAction {
         item_id: ItemId,
         take_index: u32,
     },
+    /// Activate an existing MIDI take using its zero-based position in the item.
+    SetMidiItemActiveTake {
+        item_id: ItemId,
+        take_index: u32,
+    },
     /// Duplicate the complete audio Item at a new track and position.
     DuplicateAudioItemAt {
         item_id: ItemId,

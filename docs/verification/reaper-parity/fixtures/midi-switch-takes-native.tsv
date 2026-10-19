@@ -1,0 +1,7 @@
+before	active_index=1	take_count=2	name=Take B	note_count=1	first_pitch=64	selected=1
+next	active_index=0	take_count=2	name=Take A	note_count=1	first_pitch=60	selected=1
+undo	active_index=1	take_count=2	name=Take B	note_count=1	first_pitch=64	selected=1
+redo	active_index=0	take_count=2	name=Take A	note_count=1	first_pitch=60	selected=1
+previous	active_index=1	take_count=2	name=Take B	note_count=1	first_pitch=64	selected=1
+action_next	40125	Take: Switch items to next take
+action_previous	40126	Take: Switch items to previous take

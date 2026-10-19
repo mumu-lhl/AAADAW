@@ -2887,6 +2887,16 @@ REAPER 7.82 / Default 7 的原厂探针确认 Main 40642 会把 MIDI multi-take 
 
 AAADAW 为 MIDI Item 加入 active index 和备用 Take snapshot，备用 Take 保留 notes、CC、bend、program、aftertouch、pressure、opaque Meta/SysEx 与 event order；SQLite schema 67 将 active index 独立存储，备用 Take 元数据/事件由 `midi_item_takes` / `midi_take_events` 保存。40642 已支持 MIDI 与混合 Audio/MIDI 选区，整体一个项目历史步骤；Engine 回归确保只播放 active Take。为避免损坏未活动 Take，`SplitMidiItem` 在 take-aware 分割实现前明确拒绝多 Take MIDI。
 
-Storage 104/104、Core 2/2、active-only Engine 1/1、App 混合选择 1/1 通过；严格 Stable all-target Clippy、format、diff 检查通过。Cranelift 二进制 SHA-256 `6ae2f92a0c3abcfa88312cd94234f2eb42d6170d7071a12c8e5f3bc3fa06002e` 在 Xvfb 1280×800 完成 before/after/Undo/Redo 捕获，见 [MIDI Take manifest](../verification/reaper-parity/fixtures/midi-item-takes-aaadaw.tsv)。首轮 workspace Nextest 1622/1626；其中两个旧迁移失败已修复，两个 X11 相关 CLAP 测试已在 Xvfb 下分别通过；全 workspace 测试构建两度因磁盘耗尽而中止。
+Storage 104/104、Core 2/2、active-only Engine 1/1、App 混合选择 1/1 通过；严格 Stable all-target Clippy、format、diff 检查通过。Cranelift 二进制 SHA-256 `e50ba21871d875b38afbdc5f68f1cca1b0ab4d80731a745b3a85e4e2f90cf19e` 在 Xvfb 1280×800 完成 before/after/Undo/Redo 捕获，见 [MIDI Take manifest](../verification/reaper-parity/fixtures/midi-item-takes-aaadaw.tsv)。首轮 workspace Nextest 1622/1626；其中两个旧迁移失败已修复，两个 X11 相关 CLAP 测试已在 Xvfb 下分别通过；全 workspace 测试构建两度因磁盘耗尽而中止。
 
-`EDIT-TAKE-001` 保持 `in_progress`：MIDI take UI 与创建/切换/编辑、take-aware split、录音生成、Show all takes、Fixed Lanes、Comp Areas 和跨工程剪贴板仍开放。
+`EDIT-TAKE-001` 保持 `in_progress`：MIDI take 创建/编辑 UI、MIDI Item Properties 的 Take selector、take-aware split、录音生成、Show all takes、Fixed Lanes、Comp Areas 和跨工程剪贴板仍开放。
+
+### 2026-10-19 P5 Take: MIDI active take switching
+
+Linux REAPER 7.82 / Default 7 原厂 probe 验证 Main action 40125/40126 对 MIDI item 的切换：Take B/index 1/pitch 64 经 Next 到 Take A/index 0/pitch 60；Undo/Redo 精确恢复活动 Take 和音符，Previous 返回 B。Native readback 与五份 RPP 状态见[证据 manifest](../verification/reaper-parity/fixtures/midi-item-switch-take-aaadaw.tsv)。
+
+AAADAW Core 新增 `SetMidiItemActiveTake`，在活动与备用 Take 间交换名称、source offset 和完整事件集合；MIDI Inspector 增加 Previous/Next take 按钮，Action List 的 Next/Previous take 也支持选中的 MIDI 与音频 Item，并沿用共享槽位及单事务撤销语义。冻结轨道拒绝切换。Core 回归验证活动/备用音符和 Undo/Redo；App 回归覆盖 Inspector 与 Action List，既有 467 项 App 测试通过。原厂 probe 覆盖单个 MIDI target；混合 Audio/MIDI 多选共享槽位仍待原厂读回。
+
+nightly Cranelift 二进制在隔离 Xvfb 1280×800 实窗完成切换前、切换后、Undo、Redo 截图，Build ID `e464ea0164567fc4b5f0d33376602026213afcda`。严格 workspace all-target Clippy、格式检查及截图/原厂状态哈希核验通过；Cranelift 保留既有 recursion-depth future-incompatible warning。截图与原厂 probe 工件见[MIDI active take switching](../verification/reaper-parity/midi-item-active-take-switching.md)。
+
+`EDIT-TAKE-001` 继续 `in_progress`：MIDI Take 创建/事件编辑 UI、Properties Take selector、混合 Audio/MIDI 多选切换的原厂语义核验、take-aware split、录音生成、Show all takes、Fixed Lanes、Comp Areas 和跨工程剪贴板仍待完成。
