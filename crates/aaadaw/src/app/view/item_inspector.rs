@@ -159,6 +159,12 @@ fn selected_item_view(app: &App, item_id: ItemId, touch_targets: bool) -> Elemen
         }
         if super::super::commands::is_enabled(
             app,
+            super::super::commands::CommandId::PasteAudioItemAsTake,
+        ) {
+            actions = actions.push(buttons.action("Paste as takes", Message::PasteAudioItemAsTake));
+        }
+        if super::super::commands::is_enabled(
+            app,
             super::super::commands::CommandId::DeleteActiveAudioItemTake,
         ) {
             let label = if app.timeline.selected_items.len() > 1 {

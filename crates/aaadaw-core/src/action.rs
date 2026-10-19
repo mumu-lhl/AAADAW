@@ -358,7 +358,7 @@ pub enum DawAction {
         item_id: ItemId,
         rate: f64,
     },
-    /// Insert a copy of the active take at the front of the ordered take list.
+    /// Append a copy of the active take to the ordered list and activate it.
     DuplicateAudioItemTake {
         item_id: ItemId,
     },

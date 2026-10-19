@@ -19218,14 +19218,14 @@ impl App {
         if clipboard.project_generation != self.project_generation {
             return false;
         }
-        let Some(item) = self.selected_audio_item_for_take_clipboard() else {
-            return false;
-        };
-        !self
-            .project
-            .tracks()
-            .iter()
-            .any(|track| track.frozen_audio_item_id() == Some(item.id()))
+        let selected_audio_ids = commands::selected_audio_item_ids(self);
+        !selected_audio_ids.is_empty()
+            && !selected_audio_ids.iter().any(|item_id| {
+                self.project
+                    .tracks()
+                    .iter()
+                    .any(|track| track.frozen_audio_item_id() == Some(*item_id))
+            })
     }
 
     fn paste_audio_item_as_take(&mut self) {
@@ -19238,12 +19238,7 @@ impl App {
         if !self.can_paste_audio_item_as_take() {
             return;
         }
-        let Some(item_id) = self
-            .selected_audio_item_for_take_clipboard()
-            .map(|item| item.id())
-        else {
-            return;
-        };
+        let selected_audio_ids = commands::selected_audio_item_ids(self);
         let Some(take) = self
             .audio_take_clipboard
             .as_ref()
@@ -19251,9 +19246,30 @@ impl App {
         else {
             return;
         };
+        let mut actions = selected_audio_ids
+            .iter()
+            .map(|item_id| DawAction::PasteAudioItemAsTake {
+                item_id: *item_id,
+                take: take.clone(),
+            })
+            .collect::<Vec<_>>();
+        let action = if actions.len() == 1 {
+            actions
+                .pop()
+                .expect("one selected audio item action is present")
+        } else {
+            DawAction::BatchTransaction {
+                tx_id: self.revision,
+                actions,
+            }
+        };
         self.apply_action(
-            DawAction::PasteAudioItemAsTake { item_id, take },
-            "Take pasted into audio item",
+            action,
+            if selected_audio_ids.len() == 1 {
+                "Take pasted into audio item"
+            } else {
+                "Take pasted into selected audio items"
+            },
         );
     }
 

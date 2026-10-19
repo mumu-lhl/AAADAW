@@ -666,6 +666,136 @@ fn copied_audio_take_pastes_into_selected_item_without_removing_source_item() {
 }
 
 #[test]
+fn copied_audio_take_pastes_into_multiple_selected_items_as_one_transaction() {
+    let mut app = App::default();
+    let _ = app.update(Message::AddTrack);
+    let track_id = app.project.tracks()[0].id();
+    for (media_ref, start_sample) in [
+        ("asset://take-a", 0),
+        ("asset://take-a-single", 96_000),
+        ("asset://take-b", 192_000),
+        ("asset://clipboard-b", 288_000),
+    ] {
+        app.project
+            .apply(DawAction::InsertAudioItem {
+                track_id,
+                media_ref: media_ref.to_owned(),
+                start_sample,
+                source_offset_samples: 0,
+                length_samples: 48_000,
+            })
+            .expect("audio item should be inserted");
+    }
+    let first_id = app.project.audio_items()[0].id();
+    let single_id = app.project.audio_items()[1].id();
+    let last_id = app.project.audio_items()[2].id();
+    let source_id = app.project.audio_items()[3].id();
+
+    let mut first_alternate = app.project.audio_items()[0].active_take_snapshot();
+    first_alternate.media_ref = "asset://take-b".to_owned();
+    first_alternate.name = "Take B".to_owned();
+    app.project
+        .apply(DawAction::PasteAudioItemAsTake {
+            item_id: first_id,
+            take: first_alternate,
+        })
+        .expect("first target should receive its alternate take");
+    app.project
+        .apply(DawAction::MoveAudioItemActiveTakeToTop { item_id: first_id })
+        .expect("Take B should become active at index zero");
+
+    let mut last_alternate = app.project.audio_items()[2].active_take_snapshot();
+    last_alternate.media_ref = "asset://take-a".to_owned();
+    last_alternate.name = "Take A".to_owned();
+    app.project
+        .apply(DawAction::PasteAudioItemAsTake {
+            item_id: last_id,
+            take: last_alternate,
+        })
+        .expect("last target should receive Take A at index one");
+
+    app.timeline.rebuild(&app.project);
+    app.timeline.select_items(vec![(source_id, track_id)]);
+    assert!(commands::is_enabled(&app, CommandId::CopyItems));
+    let _ = app.update(Message::ExecuteCommand(CommandId::CopyItems));
+    let history_cursor = app.project.history_cursor();
+    app.timeline.select_items(vec![
+        (last_id, track_id),
+        (first_id, track_id),
+        (single_id, track_id),
+    ]);
+    assert!(commands::is_enabled(&app, CommandId::PasteAudioItemAsTake));
+    let menu_entry = commands::for_menu(&app, MainMenu::Item)
+        .into_iter()
+        .find(|entry| entry.id == CommandId::PasteAudioItemAsTake)
+        .expect("Item menu should expose multi-selection Paste as takes");
+    assert!(menu_entry.enabled);
+
+    let before = app.project.snapshot();
+    let _ = app.update(Message::ExecuteCommand(CommandId::PasteAudioItemAsTake));
+    assert_eq!(app.project.history_cursor(), history_cursor + 1);
+    assert_eq!(app.status, "Take pasted into selected audio items");
+    assert_eq!(app.project.audio_items().len(), 4);
+
+    let first = app
+        .project
+        .audio_items()
+        .iter()
+        .find(|item| item.id() == first_id)
+        .unwrap();
+    assert_eq!(first.take_count(), 3);
+    assert_eq!(first.active_take_index(), 2);
+    assert_eq!(first.media_ref(), "asset://clipboard-b");
+    assert_eq!(
+        first
+            .other_takes()
+            .iter()
+            .map(|take| (take.index(), take.media_ref()))
+            .collect::<Vec<_>>(),
+        [(0, "asset://take-b"), (1, "asset://take-a")]
+    );
+    let single = app
+        .project
+        .audio_items()
+        .iter()
+        .find(|item| item.id() == single_id)
+        .unwrap();
+    assert_eq!(single.take_count(), 2);
+    assert_eq!(single.active_take_index(), 1);
+    assert_eq!(single.media_ref(), "asset://clipboard-b");
+    let last = app
+        .project
+        .audio_items()
+        .iter()
+        .find(|item| item.id() == last_id)
+        .unwrap();
+    assert_eq!(last.take_count(), 3);
+    assert_eq!(last.active_take_index(), 2);
+    assert_eq!(last.media_ref(), "asset://clipboard-b");
+    assert_eq!(
+        last.other_takes()
+            .iter()
+            .map(|take| (take.index(), take.media_ref()))
+            .collect::<Vec<_>>(),
+        [(0, "asset://take-b"), (1, "asset://take-a")]
+    );
+    let source = app
+        .project
+        .audio_items()
+        .iter()
+        .find(|item| item.id() == source_id)
+        .unwrap();
+    assert_eq!(source.take_count(), 1);
+    assert_eq!(source.media_ref(), "asset://clipboard-b");
+
+    let after = app.project.snapshot();
+    let _ = app.update(Message::Undo);
+    assert_eq!(app.project.snapshot(), before);
+    let _ = app.update(Message::Redo);
+    assert_eq!(app.project.snapshot(), after);
+}
+
+#[test]
 fn delete_active_take_action_keeps_the_other_take_and_undo_redo_restore_it() {
     let mut app = App::default();
     let _ = app.update(Message::AddTrack);
