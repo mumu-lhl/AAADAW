@@ -14568,6 +14568,10 @@ impl App {
             && !(selected_kinds == 4
                 && has_controllers
                 && has_program_changes
+                && has_channel_pressures)
+            && !(selected_kinds == 4
+                && has_controllers
+                && has_program_changes
                 && has_poly_aftertouches)
             && !(selected_kinds == 3 && has_program_changes && has_channel_pressures)
             && !(selected_kinds == 3 && has_program_changes && has_poly_aftertouches)
@@ -14610,6 +14614,10 @@ impl App {
                     );
                 } else if has_controllers && has_channel_pressures {
                     self.set_midi_editor_filter_from_mixed_controller_channel_pressure_and_opaque_selection(
+                        item_id,
+                    );
+                } else if has_controllers && has_program_changes && has_channel_pressures {
+                    self.set_midi_editor_filter_from_mixed_controller_program_channel_pressure_and_opaque_selection(
                         item_id,
                     );
                 } else if has_controllers && has_program_changes && has_poly_aftertouches {
@@ -15136,6 +15144,56 @@ impl App {
             false,
         );
         // REAPER keeps the Event List funnel off after this three-kind Set.
+        self.midi_editor_event_list_filter_active = false;
+    }
+
+    fn set_midi_editor_filter_from_mixed_controller_program_channel_pressure_and_opaque_selection(
+        &mut self,
+        item_id: ItemId,
+    ) {
+        let Some(item) = self
+            .project
+            .midi_items()
+            .iter()
+            .find(|item| item.id() == item_id)
+        else {
+            return;
+        };
+        let selected_ticks = item
+            .controllers()
+            .iter()
+            .filter(|event| self.midi_editor_selected_controllers.contains(event))
+            .map(|event| event.tick)
+            .chain(
+                item.program_changes()
+                    .iter()
+                    .filter(|event| self.midi_editor_selected_program_changes.contains(event))
+                    .map(|event| event.tick),
+            )
+            .chain(
+                item.channel_pressures()
+                    .iter()
+                    .filter(|event| self.midi_editor_selected_channel_pressures.contains(event))
+                    .map(|event| event.tick),
+            )
+            .chain(
+                item.opaque_events()
+                    .iter()
+                    .enumerate()
+                    .filter(|(index, _)| {
+                        self.midi_editor_selected_opaque_events
+                            .contains(&(*index as u32))
+                    })
+                    .map(|(_, event)| event.tick),
+            )
+            .collect();
+        self.set_midi_editor_filter_from_mixed_opaque_selection_ticks(
+            item_id,
+            selected_ticks,
+            false,
+        );
+        // REAPER keeps Show-only and the Event List funnel off after this
+        // four-kind Set selection.
         self.midi_editor_event_list_filter_active = false;
     }
 
