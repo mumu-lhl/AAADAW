@@ -1,0 +1,19 @@
+artifact	sha256
+crates/aaadaw/examples/generate_midi_filter_from_mixed_note_pitch_opaque_selection_fixture.rs	3ee23c823b3ef5ae92b520c120094a110c005bdb8f316684a9ce0793fe3fa986
+fixtures/midi-event-filter-from-mixed-note-pitch-opaque-selection-aaadaw.aaadaw	b443cbe2adafabfb90f36efd8568b4f159d24db310747c6dc15332587bf59983
+fixtures/midi-event-filter-from-mixed-note-pitch-opaque-selection-aaadaw-selected-before-set.png	6ccf494697b5510aeb9c29c83d5c4a82b68ad3d79fbdfc8aeb38df50c5b46e3b
+fixtures/midi-event-filter-from-mixed-note-pitch-opaque-selection-aaadaw-filter-before-set.png	69f3a80a84c2e3deedb29db94bd97a322aea6aa8378017e6a845d74aec274ad7
+fixtures/midi-event-filter-from-mixed-note-pitch-opaque-selection-aaadaw-after-set.png	a98c758e9d2d54c8109567e0560d43568e9a3fa2b604388d3fb945ba897eeb46
+fixtures/midi-event-filter-from-mixed-note-pitch-opaque-selection-aaadaw-list-filtered.png	c712f967285e1d564d5968b527969812cd762b2d366974fc6fed004a284af7a8
+fixtures/midi-event-filter-from-mixed-note-pitch-opaque-selection-aaadaw-list-filter-off.png	e2b2de964cc7ea984c443579c0fd8a3fa7debd21653aade81a8b77a0e9faf3ab
+binary_sha256	3af65dd98145d3d7f6039d09965dee3da735359986185be04bc178f0a19f6398
+binary_build_id	0a233ec82d343c970ad1708aef5a2d9c418314c9
+build_backend	rustc nightly with Cranelift codegen backend
+environment	Linux Xvfb :554, 1600x900; actual AAADAW MIDI Event List window; isolated XDG runtime/config/data/cache/state; audio unavailable
+starting_state	Eight Event List rows; no event selection, Show-only off, and funnel off
+action	Open fixture in AAADAW, open MIDI Editor > Event List; select C4; Ctrl-click Selected Text Meta and Pitch Bend +4096; Filter events > Set filter from selection
+assertion	The live panel shows <all events>, All channels, Position 0.12500000–0.25026042, Repeat measure, Show-only checked, and Draw events on Channel 1; all three selected endpoints remain selected
+list_result	The eight-row list filters immediately to six in-range events: selected C4, unselected CC7, unselected Text Meta, unselected G4, selected Text Meta, and selected Pitch Bend +4096. Out-of-range SysEx and the terminal row are hidden. Turning the funnel off restores all eight rows and retains the selection.
+selection_and_data	The App regression verifies matching Note/CC/Pitch Bend/opaque event identities, selection retention, the eight-row restored list, and unchanged project snapshot and Undo/Redo history. Native REAPER readbacks confirm the Note, Pitch Bend, and Text Meta selection and unchanged raw MIDI bytes.
+verification	Focused App Nextest 1/1; AAADAW package Nextest 832/832; strict AAADAW all-target Clippy (-D warnings -A future-incompatible); nightly Cranelift desktop build; final binary launched in a real Xvfb window; five screenshots capture selected rows, pre-Set controls, derived filter, filtered list, and restored unfiltered list; fixture project and binary identity are recorded above.
+limitation	REAPER uses Position combo boxes displaying 1/8–0.250 while AAADAW uses editable decimal fields. Native MIDI_GetTextSysexEvt omitted the out-of-range SysEx during the filtered readback; unchanged MIDI_GetAllEvts bytes and project states preserve its evidence. Screenshots verify behavior and controls, not pixel identity.
