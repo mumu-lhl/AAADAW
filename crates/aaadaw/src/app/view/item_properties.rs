@@ -47,6 +47,16 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
         ]
         .spacing(6),
         row![
+            text("Active take:").width(120),
+            pick_list(
+                draft.take_choices.clone(),
+                Some(draft.active_take.clone()),
+                |choice| Message::ItemPropertyTakeChanged(choice.index)
+            )
+            .width(Length::Fill)
+        ]
+        .spacing(6),
+        row![
             text("Source:").width(120),
             checkbox(draft.loop_source)
                 .label("Loop source")

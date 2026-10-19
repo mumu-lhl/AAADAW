@@ -2845,3 +2845,9 @@ Linux REAPER 7.82 / Default 7 原厂 action 40125/40126 对选中的多 Take 项
 AAADAW Action List、Item 菜单和多选 Inspector 的 Next takes / Previous takes 按钮现按同一共享槽位规则切换；较短的多 Take 项限制在其最后一个 Take，单 Take 和 MIDI 项不变，冻结目标阻止整批修改。所有选中目标由一条 `BatchTransaction` 记录，单次 Undo/Redo 恢复完整快照。nightly Cranelift 二进制在 Linux Xvfb 实窗完成按钮操作和四态截图，显示活动 Take、状态栏反馈及撤销重做。
 
 Stable LLVM workspace Nextest **1610/1610**、AAADAW 桌面单元测试 **855/855**、严格 all-target Clippy、fmt、capture shell 语法、diff 检查、parity matrix **113 条 / 15 列**及本组 manifest SHA-256 核对均通过。Cranelift 构建报告 Build ID `fe30f3cfd39b6b47203fe75bf5479ae5e359c811`，保留既有 recursion-depth future-incompatible warning。该构建禁用了 audio-device，实窗截图验证界面和 Take 状态，不代表播放声音已验收。`EDIT-TAKE-001` 仍 `in_progress`：录音生成、更多剪贴板来源、跨工程剪贴板、Lane/Comp、MIDI/Track Copy、完整 Media Item Properties 和其他 Take 操作仍开放。
+
+### 2026-10-19 P5 Take / Item Properties: Active take selector
+
+Linux REAPER 7.82 / Default 7 的 Media Item Properties 原厂截图显示 **Active take** 列表按顺序列出 `1: Take B`、`2: Take A`，并标出当前 Take A。AAADAW 的 F2 Media Item Properties 增加相同编号与名称的选择器；选择项目直接提交 `SetAudioItemActiveTake`，同步刷新名称、速率和其他当前 Take 字段。播放/工程操作忙碌或冻结 Render Item 时拒绝修改；Undo、Redo 和其他切换动作都会更新仍打开的属性窗。
+
+Stable AAADAW 桌面测试 **856/856**、新增属性选择器与开窗撤销/重做回归、严格 all-target Clippy、fmt 与 diff 检查通过。nightly Cranelift Linux X11 二进制在隔离 Xvfb 1280×800 实窗中捕获初始属性、展开的 Take 列表、切换到 Take B、Undo 回到 Take A、Redo 回到 Take B；构建 Build ID `a53df722964459cbfc1f39f22ee2160919d76d0a`，SHA-256 `d6409a78a2ece6fae18e8c8e587b56b1af276d2ea782e605efab6f4987e3ada6`。原厂与 AAADAW 截图、测试和文件哈希见[Active take 属性选择器 manifest](../verification/reaper-parity/fixtures/audio-take-properties-selector-aaadaw.tsv)。此截图构建未启用 audio-device；只核验窗口和状态，不核验声音。`ITEM-PROPERTIES-001` 与 `EDIT-TAKE-001` 保持 `in_progress`，尚有完整原厂窗口几何、其他属性字段、录音 Take、固定 Lanes 和 Comp 等未完成范围。

@@ -1034,6 +1034,7 @@ pub(crate) enum Message {
     ApplyItemNudgeSet,
     NudgeSelectedItems(i8),
     ItemPropertiesUnitChanged(super::item_properties::TimeUnit),
+    ItemPropertyTakeChanged(u32),
     ItemPropertyFieldChanged(super::item_properties::ItemPropertyField, String),
     ItemPropertyNameChanged(String),
     ItemPropertyTakeRateChanged(String),

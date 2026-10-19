@@ -5054,6 +5054,7 @@ impl App {
                     | Message::ApplyItemNudgeSet
                     | Message::NudgeSelectedItems(_)
                     | Message::TransposeSelectedMidiNotes(_)
+                    | Message::ItemPropertyTakeChanged(_)
                     | Message::ItemPropertiesUnitChanged(_)
                     | Message::ItemPropertyFieldChanged(..)
                     | Message::ItemPropertyNameChanged(_)
@@ -5208,6 +5209,7 @@ impl App {
                     | timeline::TimelineEvent::CommitItemFades
                     | timeline::TimelineEvent::SetFadeCurvePreset { .. }
             ) | Message::ApplyItemProperties(_)
+                | Message::ItemPropertyTakeChanged(_)
         ) && let Some(status) = item_drag_edit_guard_status(
             self.path_picker_busy,
             self.import_busy,
@@ -5788,6 +5790,9 @@ impl App {
                 }
             }
             Message::CloseItemProperties => task = self.close_item_properties(),
+            Message::ItemPropertyTakeChanged(take_index) => {
+                self.change_item_properties_take(take_index)
+            }
             Message::ItemPropertiesUnitChanged(unit) => self.change_item_properties_unit(unit),
             Message::ItemPropertyFieldChanged(field, text) => {
                 if let Some(draft) = &mut self.item_properties {
@@ -13092,6 +13097,7 @@ impl App {
                 self.midi_note_clipboard.last_paste = None;
                 self.revision = self.revision.wrapping_add(1);
                 self.timeline.rebuild(&self.project);
+                self.refresh_item_properties_take_selection();
                 let live_midi_item_ids = self
                     .project
                     .midi_items()
@@ -16940,6 +16946,7 @@ impl App {
                 self.midi_note_clipboard.last_paste = None;
                 self.revision = self.revision.wrapping_add(1);
                 self.timeline.rebuild(&self.project);
+                self.refresh_item_properties_take_selection();
                 if let Some(history) = inline_note_selection_history.as_ref() {
                     self.restore_inline_midi_selection_history(history, false);
                 }
@@ -17096,6 +17103,7 @@ impl App {
                     });
                 self.revision = self.revision.wrapping_add(1);
                 self.timeline.rebuild(&self.project);
+                self.refresh_item_properties_take_selection();
                 if let Some(history) = inline_note_selection_history.as_ref() {
                     self.restore_inline_midi_selection_history(history, true);
                 }

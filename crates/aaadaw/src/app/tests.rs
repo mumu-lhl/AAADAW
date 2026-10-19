@@ -98,6 +98,81 @@ fn audio_take_actions_switch_with_undo_and_require_multiple_takes() {
 }
 
 #[test]
+fn item_properties_take_selector_lists_ordered_names_and_tracks_undo_redo() {
+    use super::item_properties::{ItemProperties, TimeUnit};
+
+    let mut app = App::default();
+    app.project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Audio".into(),
+        })
+        .unwrap();
+    let track_id = app.project.tracks()[0].id();
+    app.project
+        .apply(DawAction::InsertAudioItem {
+            track_id,
+            media_ref: "asset://take-properties-selector".into(),
+            start_sample: 0,
+            source_offset_samples: 0,
+            length_samples: 48_000,
+        })
+        .unwrap();
+    let item_id = app.project.audio_items()[0].id();
+    app.project
+        .apply(DawAction::DuplicateAudioItemTake { item_id })
+        .unwrap();
+    app.project
+        .apply(DawAction::SetAudioItemName {
+            item_id,
+            name: "Take B".into(),
+        })
+        .unwrap();
+    app.project
+        .apply(DawAction::SetAudioItemActiveTake {
+            item_id,
+            take_index: 0,
+        })
+        .unwrap();
+    app.project
+        .apply(DawAction::SetAudioItemName {
+            item_id,
+            name: "Take A".into(),
+        })
+        .unwrap();
+
+    let item = &app.project.audio_items()[0];
+    let draft = ItemProperties::from_item(item, 48_000, TimeUnit::Time);
+    assert_eq!(draft.active_take.index, 0);
+    assert_eq!(
+        draft
+            .take_choices
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>(),
+        ["1: Take A", "2: Take B"]
+    );
+    app.item_properties = Some(draft);
+    app.item_properties_generation = app.project_generation;
+
+    let history_cursor = app.project.history_cursor();
+    let _ = app.update(Message::ItemPropertyTakeChanged(99));
+    assert_eq!(app.project.history_cursor(), history_cursor);
+    let _ = app.update(Message::ItemPropertyTakeChanged(1));
+    assert_eq!(app.project.audio_items()[0].active_take_index(), 1);
+    assert_eq!(app.project.audio_items()[0].name(), "Take B");
+    assert_eq!(app.project.history_cursor(), history_cursor + 1);
+    assert_eq!(app.item_properties.as_ref().unwrap().active_take.index, 1);
+
+    let _ = app.update(Message::Undo);
+    assert_eq!(app.project.audio_items()[0].active_take_index(), 0);
+    assert_eq!(app.item_properties.as_ref().unwrap().active_take.index, 0);
+    let _ = app.update(Message::Redo);
+    assert_eq!(app.project.audio_items()[0].active_take_index(), 1);
+    assert_eq!(app.item_properties.as_ref().unwrap().active_take.index, 1);
+}
+
+#[test]
 fn switching_selected_audio_takes_wraps_skips_single_takes_and_uses_one_undo_step() {
     let mut app = App::default();
     let _ = app.update(Message::AddTrack);

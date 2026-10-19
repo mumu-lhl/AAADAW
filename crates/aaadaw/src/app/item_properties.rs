@@ -85,6 +85,32 @@ impl std::fmt::Display for TimeUnit {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct AudioTakeChoice {
+    pub(crate) index: u32,
+    label: String,
+}
+
+impl AudioTakeChoice {
+    fn from_take(index: u32, name: &str) -> Self {
+        let name = if name.trim().is_empty() {
+            format!("Take {}", index + 1)
+        } else {
+            name.to_owned()
+        };
+        Self {
+            index,
+            label: format!("{}: {name}", index + 1),
+        }
+    }
+}
+
+impl std::fmt::Display for AudioTakeChoice {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(&self.label)
+    }
+}
+
 #[derive(Serialize, Deserialize)]
 struct PropertiesConfig {
     version: u32,
@@ -185,6 +211,77 @@ impl App {
         }
     }
 
+    pub(super) fn change_item_properties_take(&mut self, take_index: u32) {
+        if self.item_properties_generation != self.project_generation {
+            return;
+        }
+        if super::commands::project_edit_busy(self) {
+            self.status =
+                "Stop playback or finish the current project operation before switching takes"
+                    .to_owned();
+            return;
+        }
+        let Some(item_id) = self.item_properties.as_ref().map(|draft| draft.item_id) else {
+            return;
+        };
+        let Some(item) = self
+            .project
+            .audio_items()
+            .iter()
+            .find(|item| item.id() == item_id)
+        else {
+            return;
+        };
+        if take_index as usize >= item.take_count() || item.active_take_index() == take_index {
+            return;
+        }
+        if self
+            .project
+            .tracks()
+            .iter()
+            .any(|track| track.frozen_audio_item_id() == Some(item_id))
+        {
+            self.status = "Frozen render items cannot be edited".to_owned();
+            if let Some(draft) = &mut self.item_properties {
+                draft.error = Some(self.status.clone());
+            }
+            return;
+        }
+
+        self.apply_action(
+            aaadaw_core::DawAction::SetAudioItemActiveTake {
+                item_id,
+                take_index,
+            },
+            "Active take changed",
+        );
+    }
+
+    pub(super) fn refresh_item_properties_take_selection(&mut self) {
+        let Some(draft) = &self.item_properties else {
+            return;
+        };
+        let item_id = draft.item_id;
+        let draft_take_index = draft.active_take.index;
+        let Some(item) = self
+            .project
+            .audio_items()
+            .iter()
+            .find(|item| item.id() == item_id)
+        else {
+            return;
+        };
+        let active = item.active_take_snapshot();
+        let current_take = AudioTakeChoice::from_take(active.index, &active.name);
+        if current_take.index != draft_take_index || current_take != draft.active_take {
+            self.item_properties = Some(ItemProperties::from_project_item(
+                item,
+                &self.project,
+                self.item_properties_unit,
+            ));
+        }
+    }
+
     pub(super) fn open_item_properties(&mut self) -> Task<Message> {
         if let Some(id) = self.item_properties_window_id {
             return iced::window::gain_focus(id);
@@ -250,7 +347,7 @@ impl App {
         self.timeline.context_item = None;
         self.timeline.context_fade = None;
         let window_height = if self.item_properties.is_some() {
-            526.0
+            552.0
         } else {
             390.0
         };
@@ -922,6 +1019,8 @@ impl ItemPropertyField {
 #[derive(Debug, Clone)]
 pub(crate) struct ItemProperties {
     pub(crate) item_id: ItemId,
+    pub(crate) active_take: AudioTakeChoice,
+    pub(crate) take_choices: Vec<AudioTakeChoice>,
     pub(crate) name: String,
     name_changed: bool,
     pub(crate) take_rate: String,
@@ -1087,6 +1186,13 @@ impl ItemProperties {
             item.take_pan(),
             sample_rate,
         );
+        draft.take_choices = audio_take_choices(item);
+        draft.active_take = draft
+            .take_choices
+            .iter()
+            .find(|choice| choice.index == item.active_take_index())
+            .cloned()
+            .expect("active audio take should exist in the item take list");
         draft.unit = unit;
         draft.name = item.name().to_owned();
         draft.take_rate = format_take_rate(item.take_playback_rate());
@@ -1180,6 +1286,8 @@ impl ItemProperties {
         let output = fades.fade_out.curve().parameters();
         Self {
             item_id,
+            active_take: AudioTakeChoice::from_take(0, ""),
+            take_choices: Vec::new(),
             name: String::new(),
             name_changed: false,
             take_rate: format_take_rate(1.0),
@@ -1309,6 +1417,18 @@ impl ItemProperties {
         }
         Ok(fades)
     }
+}
+
+fn audio_take_choices(item: &AudioItem) -> Vec<AudioTakeChoice> {
+    let active = item.active_take_snapshot();
+    let mut choices = item
+        .other_takes()
+        .iter()
+        .map(|take| AudioTakeChoice::from_take(take.index(), take.name()))
+        .collect::<Vec<_>>();
+    choices.push(AudioTakeChoice::from_take(active.index, &active.name));
+    choices.sort_unstable_by_key(|choice| choice.index);
+    choices
 }
 
 fn format_time(seconds: f64) -> String {
