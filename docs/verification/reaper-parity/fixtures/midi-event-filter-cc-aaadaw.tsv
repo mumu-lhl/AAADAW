@@ -9,5 +9,6 @@ binary_build_id	bc81aca8cf81dcf9d3bdab6f18cc2b185e8233e6
 environment	Linux Xvfb :510; Cranelift AAADAW; MIDI Event List window 1000x620; audio device unavailable
 starting_state	Three Notes and CC7 values 64/100/127 plus CC10 value 64; Event List shows eight rows including synthetic end; All channels and all events
 assertion	Control Change + Control 07 Volume MSB + Value 64–100 leaves exactly two rows, CC7 values 64 and 100; with Show-only off all rows remain visible; the project source is unchanged
+list_filter_behavior	This earlier capture predates the separate Event List Filter toggle. Its row-count checks cover filter criteria, not the native behavior of Show-only alone; see midi-event-filter-toggle-native.tsv for the measured funnel/Show-only relationship.
 verification	midi_event_filter_selects_controller_parameter_and_inclusive_value_range; event_list_filters_controller_parameter_and_inclusive_value_range; Stable and Cranelift AAADAW package tests 833/833 each; strict workspace Clippy, format, and diff checks recorded in docs/reaper-parity/progress.md
 limitation	Screenshot captures confirm visible values and row filtering, not a full pixel-diff comparison; native reset, inverse, CC0/32 pairing, other CC parameters, non-Note Position/Repeat/Length, and Solo remain open

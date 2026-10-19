@@ -1,0 +1,14 @@
+artifact	sha256
+fixtures/midi-event-filter-show-only-enabled-native.png	afcdad2067ba1c1f2e5330e0b7c2475c539694426bc0fb6bd7f68738c65c07ae
+fixtures/midi-event-filter-funnel-disabled-native.png	19715ed1b8160e860a16ab2f5754c1865798b806e5b57942c385423dcb404846
+fixtures/midi-event-filter-funnel-disabled-dialog-native.png	c44ad1a34d66e7840916ed7a43504e87c7f3b1bcc30751faa0250e436eab81e7
+native_binary_sha256	9976f5608068b7a58518969001b00b527fb0de6ed7459e0e5dda6f29878ee254
+native_build_id	fb9ade2f211bc91a3ee6193630ef17bcf5f6528b
+native_theme	REAPER 7.82 Linux Default 7; SHA-256 575544606736a395520703e532209ad9635f13a41b7ea000bb9810d60025be48
+environment	Linux Xorg dummy :542, 1600x1000; isolated REAPER profile; audio device unavailable
+starting_state	Mixed CC after-state from midi-event-filter-from-mixed-cc-native-after.rpp; Event List filter active, Show-only off, four matching rows
+action	Enable Show-only in View > Filter events; then disable the Event List funnel; reopen Filter events
+assertion	Show-only checked with the funnel active shows four matching CC rows; disabling the funnel clears Show-only and restores all 7 rows, including the Note and synthetic end row
+project_state	No MIDI source data or selected-event changes; probe uses the existing mixed-CC after-state project
+verification	REAPER 7.82 real-window screenshots of the checked Show-only/funnel-on state, all rows with funnel off, and Filter Events reopened after the funnel was disabled
+limitation	One CC filter state; confirms funnel/Show-only activation relationship and reset behavior, not every event type or Solo semantics

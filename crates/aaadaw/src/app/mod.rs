@@ -6650,10 +6650,16 @@ impl App {
             }
             Message::ToggleMidiEditorEventFilter => {
                 self.midi_editor_event_filter_enabled = !self.midi_editor_event_filter_enabled;
+                if self.midi_editor_event_filter_enabled {
+                    self.midi_editor_event_list_filter_active = true;
+                }
             }
             Message::ToggleMidiEditorEventListFilter => {
                 self.midi_editor_event_list_filter_active =
                     !self.midi_editor_event_list_filter_active;
+                if !self.midi_editor_event_list_filter_active {
+                    self.midi_editor_event_filter_enabled = false;
+                }
             }
             Message::SetMidiEditorFilterNotePitchEnabled(enabled) => {
                 self.midi_editor_note_filter.pitch_enabled = enabled;

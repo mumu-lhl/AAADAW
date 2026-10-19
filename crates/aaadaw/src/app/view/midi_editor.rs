@@ -305,8 +305,7 @@ fn midi_snap_for_app(app: &App) -> MidiSnap {
 
 fn midi_event_list_snap_for_app(app: &App) -> MidiSnap {
     let mut snap = midi_snap_for_app(app);
-    snap.event_filter_enabled =
-        app.midi_editor_event_list_filter_active || app.midi_editor_event_filter_enabled;
+    snap.event_filter_enabled = app.midi_editor_event_list_filter_active;
     snap
 }
 

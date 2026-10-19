@@ -13513,7 +13513,12 @@ fn midi_editor_set_filter_from_mixed_cc_selection_keeps_all_controls_and_filters
     assert_eq!(super::view::midi_event_list_cursors(&app, &item).len(), 7);
     let _ = app.update(Message::ToggleMidiEditorEventFilter);
     assert!(app.midi_editor_event_filter_enabled);
+    assert!(app.midi_editor_event_list_filter_active);
     assert_eq!(super::view::midi_event_list_cursors(&app, &item).len(), 4);
+    let _ = app.update(Message::ToggleMidiEditorEventListFilter);
+    assert!(!app.midi_editor_event_list_filter_active);
+    assert!(!app.midi_editor_event_filter_enabled);
+    assert_eq!(super::view::midi_event_list_cursors(&app, &item).len(), 7);
     let _ = app.update(Message::ClearMidiEditorFilter);
     assert!(!app.midi_editor_event_list_filter_active);
     assert!(!app.midi_editor_event_filter_enabled);

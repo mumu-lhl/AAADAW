@@ -12,6 +12,6 @@ starting_state	One C4 note; CC7 value 64 on channel 2 @ tick 480 and CC7 value 1
 action	Event List > Filter events > Set filter from selection
 assertion	Filter derives channel mask 2–3, Multichannel, Control Change, Control 07 Volume MSB, Value 64–100, Position 0.125–0.25026042, Repeat measure, and Draw channel 1; Show-only, Invert, and Solo remain off; selected events and project data remain unchanged
 selection_capture	After applying the action, both CC rows remain selected while the three other rows remain unselected
-show_only_capture	After enabling Show-only, Event List reports 2 events: selected CC7 values 64 and 100 on channels 2 and 3
+show_only_capture	With the selection-derived Event List filter active, enabling Show-only leaves the two selected CC7 values (64 and 100) visible; this capture does not isolate Show-only from the funnel
 verification	AAADAW real-window screenshots; crates/aaadaw/src/app/tests.rs::midi_editor_set_filter_from_selected_controller_events_derives_cc_criteria_without_mutation; AAADAW test suite 814/814; Stable workspace strict all-target Clippy; fmt and git diff --check
 limitation	Homogeneous same-parameter CC selection only; mixed CC parameters, mixed event types, Pitch Bend, Program Change, Aftertouch, Channel Pressure, Meta and SysEx selections remain open. Screenshots verify behavior, not pixel-diff certification
