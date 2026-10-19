@@ -84,7 +84,7 @@ local function make_item(position, active_source, active_name, alternate_source,
   reaper.GetSetMediaItemTakeInfo_String(assert(reaper.GetActiveTake(item)), "P_NAME", active_name, true)
   if alternate_source then
     reaper.Main_OnCommand(40639, 0) -- Take: Duplicate active take.
-    local alternate = assert(reaper.GetTake(item, 0), "duplicate should be at index 0")
+    local alternate = assert(reaper.GetTake(item, 0), "original take should remain at index 0")
     local source = assert(reaper.PCM_Source_CreateFromFile(alternate_source),
       "could not load alternate source")
     assert(reaper.SetMediaItemTake_Source(alternate, source), "could not assign alternate source")

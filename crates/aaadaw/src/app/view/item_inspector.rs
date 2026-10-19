@@ -77,6 +77,7 @@ fn selected_item_view(app: &App, item_id: ItemId, touch_targets: bool) -> Elemen
                     .find(|selected_item| selected_item.id() == *selected_id)
                     .is_some_and(|selected_item| selected_item.take_count() > 1)
             });
+        let multi_audio_selection = selected_audio_ids.len() > 1;
         let mut take_controls = row![
             text(format!(
                 "Take {}/{} · {}",
@@ -85,13 +86,21 @@ fn selected_item_view(app: &App, item_id: ItemId, touch_targets: bool) -> Elemen
                 take_name
             ))
             .width(Length::Fill),
-            buttons.action("Duplicate take", Message::DuplicateAudioItemTake(item_id)),
         ]
         .spacing(if touch_targets {
             tokens::SPACING_SM
         } else {
             tokens::SPACING_COMPACT
         });
+        if !multi_audio_selection
+            && super::super::commands::is_enabled(
+                app,
+                super::super::commands::CommandId::DuplicateActiveTake,
+            )
+        {
+            take_controls = take_controls
+                .push(buttons.action("Duplicate take", Message::DuplicateAudioItemTake(item_id)));
+        }
         if take_count > 1 {
             take_controls = take_controls
                 .push(buttons.action(
@@ -136,6 +145,17 @@ fn selected_item_view(app: &App, item_id: ItemId, touch_targets: bool) -> Elemen
         }
         if status.is_some_and(can_relink_source) {
             actions = actions.push(buttons.action("Relink", Message::RelinkAudioItem(item_id)));
+        }
+        if multi_audio_selection
+            && super::super::commands::is_enabled(
+                app,
+                super::super::commands::CommandId::DuplicateActiveTake,
+            )
+        {
+            actions = actions.push(buttons.action(
+                "Duplicate selected takes",
+                Message::DuplicateSelectedAudioItemActiveTakes,
+            ));
         }
         if super::super::commands::is_enabled(
             app,

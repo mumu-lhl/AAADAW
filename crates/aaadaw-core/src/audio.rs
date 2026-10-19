@@ -239,21 +239,8 @@ impl AudioItem {
     }
 
     pub(crate) fn duplicate_active_take(&mut self) -> bool {
-        let Some(next_active_index) = self.active_take_index.checked_add(1) else {
-            return false;
-        };
-        for take in &mut self.other_takes {
-            let Some(index) = take.index.checked_add(1) else {
-                return false;
-            };
-            take.index = index;
-        }
-        let mut duplicate = self.active_take();
-        duplicate.index = 0;
-        self.other_takes.push(duplicate);
-        self.other_takes.sort_unstable_by_key(|take| take.index);
-        self.active_take_index = next_active_index;
-        true
+        let active_take = self.active_take_snapshot();
+        self.append_take_snapshot(&active_take)
     }
 
     pub(crate) fn append_take_snapshot(&mut self, take: &crate::AudioItemTakeSnapshot) -> bool {

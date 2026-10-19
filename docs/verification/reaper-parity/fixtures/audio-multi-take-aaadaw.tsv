@@ -1,6 +1,6 @@
 kind	artifact_or_check	result_or_sha256
 project	fixtures/audio-multi-take-aaadaw.aaadaw	398cae8e89a940aaa2b6f454265030d9f1c414f3780fbe0f95509c62e7feb0b1
-project_generator	fixtures/audio-multi-take-aaadaw-generator.rs	SHA-256 fb8b2fa1994aab51326739864fc354a7f0407ea44ba51538ff5ddcf584b0203a; ProjectStore fixture with embedded Hit-01.wav and Hit-02.wav; active Take A at list index 1
+project_generator	fixtures/audio-multi-take-aaadaw-generator.rs	SHA-256 4e0c2cf2f5fc6d3bfe83385902065c355a2bd90801dd04e2ee987e5bdc576ce6; ProjectStore fixture with embedded Hit-01.wav and Hit-02.wav; active Take A at list index 1
 source_fixture	fixtures/render-item-take-name-Hit-01.wav	Take A source; existing 24-bit stereo 48 kHz fixture
 source_fixture	fixtures/render-item-take-name-Hit-02.wav	Take B source; existing 24-bit stereo 48 kHz fixture
 capture	fixtures/audio-multi-take-aaadaw-selected.png	1280x800; SHA-256 58a2b36061b24193d1d32f51816e6e5fcc7c8f0a2a94ad634709a4f00c4cddbf; Inspector shows Take 2/2 · Take A and Duplicate/Previous/Next controls

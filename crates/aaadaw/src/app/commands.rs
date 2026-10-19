@@ -3120,6 +3120,13 @@ pub(super) fn dispatch(app: &mut App, command: CommandId) -> Task<Message> {
         CommandId::CopyItems => Message::CopyItems,
         CommandId::PasteItems => Message::PasteItems,
         CommandId::PasteAudioItemAsTake => Message::PasteAudioItemAsTake,
+        CommandId::DuplicateActiveTake => {
+            if selected_audio_item_ids(app).is_empty() {
+                app.status = "Select an audio item to duplicate its active take".to_owned();
+                return Task::none();
+            }
+            Message::DuplicateSelectedAudioItemActiveTakes
+        }
         CommandId::DeleteActiveAudioItemTake => {
             if selected_audio_item_ids(app).is_empty() {
                 app.status = "Select an audio item to delete its active take".to_owned();
@@ -3286,13 +3293,6 @@ pub(super) fn dispatch(app: &mut App, command: CommandId) -> Task<Message> {
                 return Task::none();
             };
             Message::DuplicateAudioItem(item_id)
-        }
-        CommandId::DuplicateActiveTake => {
-            let Some(item_id) = selected_audio_item_id(app) else {
-                app.status = "Select one audio item to duplicate its active take".to_owned();
-                return Task::none();
-            };
-            Message::DuplicateAudioItemTake(item_id)
         }
         CommandId::SwitchItemsToNextTake => {
             let Some(item_id) = selected_audio_item_id(app) else {
@@ -3860,7 +3860,15 @@ fn command_enabled(app: &App, kind: CommandKind, track: Option<TrackState>) -> b
                 })
         }
         CommandKind::DuplicateActiveTake => {
-            !project_edit_busy(app) && selected_audio_item_id(app).is_some()
+            let selected_audio_ids = selected_audio_item_ids(app);
+            !project_edit_busy(app)
+                && !selected_audio_ids.is_empty()
+                && !selected_audio_ids.iter().any(|item_id| {
+                    app.project
+                        .tracks()
+                        .iter()
+                        .any(|track| track.frozen_audio_item_id() == Some(*item_id))
+                })
         }
         CommandKind::DeleteActiveAudioItemTake => {
             let selected_audio_ids = selected_audio_item_ids(app);

@@ -82,7 +82,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .other_takes
                 .iter_mut()
                 .find(|take| take.index == 0)
-                .ok_or("duplicate action did not create take index 0")?;
+                .ok_or("original take should remain at index 0")?;
             alternate.media_ref = "asset://audio-delete-take-b".to_owned();
             alternate.name = "Take B".to_owned();
             item.name = "Take A".to_owned();

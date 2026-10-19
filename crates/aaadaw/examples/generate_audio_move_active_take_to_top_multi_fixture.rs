@@ -99,7 +99,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .other_takes
                 .iter_mut()
                 .find(|take| take.index == 0)
-                .ok_or("duplicate action did not create take index 0")?;
+                .ok_or("original take should remain at index 0")?;
             alternate_take.media_ref = alternate_media_ref.to_owned();
             alternate_take.name = alternate_name.to_owned();
             project = Project::from_snapshot(snapshot)?;

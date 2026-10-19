@@ -98,6 +98,112 @@ fn audio_take_actions_switch_with_undo_and_require_multiple_takes() {
 }
 
 #[test]
+fn duplicating_multiple_selected_audio_item_takes_is_one_undoable_transaction() {
+    let mut app = App::default();
+    let _ = app.update(Message::AddTrack);
+    let track_id = app.project.tracks()[0].id();
+    for (media_ref, start_sample) in [
+        ("asset://take-b", 0),
+        ("asset://take-a", 96_000),
+        ("asset://take-b", 192_000),
+    ] {
+        app.project
+            .apply(DawAction::InsertAudioItem {
+                track_id,
+                media_ref: media_ref.to_owned(),
+                start_sample,
+                source_offset_samples: 0,
+                length_samples: 48_000,
+            })
+            .expect("audio item should be inserted");
+    }
+    let first_id = app.project.audio_items()[0].id();
+    let single_id = app.project.audio_items()[1].id();
+    let last_id = app.project.audio_items()[2].id();
+    for item_id in [first_id, last_id] {
+        let mut take = app
+            .project
+            .audio_items()
+            .iter()
+            .find(|item| item.id() == item_id)
+            .expect("multi-take target should exist")
+            .active_take_snapshot();
+        take.media_ref = "asset://take-a".to_owned();
+        take.name = "Take A".to_owned();
+        app.project
+            .apply(DawAction::PasteAudioItemAsTake { item_id, take })
+            .expect("Take A should be appended");
+    }
+    app.project
+        .apply(DawAction::SetAudioItemActiveTake {
+            item_id: first_id,
+            take_index: 0,
+        })
+        .expect("the first item's Take B should be selected at index 0");
+    app.timeline.rebuild(&app.project);
+    app.timeline.select_items(vec![
+        (first_id, track_id),
+        (single_id, track_id),
+        (last_id, track_id),
+    ]);
+    let before = app.project.snapshot();
+    let history_cursor = app.project.history_cursor();
+    assert!(commands::is_enabled(&app, CommandId::DuplicateActiveTake));
+
+    let _ = app.update(Message::ExecuteCommand(CommandId::DuplicateActiveTake));
+    assert_eq!(app.project.history_cursor(), history_cursor + 1);
+    assert_eq!(app.status, "Selected active takes duplicated");
+    let first = app
+        .project
+        .audio_items()
+        .iter()
+        .find(|item| item.id() == first_id)
+        .unwrap();
+    assert_eq!(first.take_count(), 3);
+    assert_eq!(first.active_take_index(), 2);
+    assert_eq!(first.media_ref(), "asset://take-b");
+    assert_eq!(
+        first
+            .other_takes()
+            .iter()
+            .map(|take| (take.index(), take.media_ref()))
+            .collect::<Vec<_>>(),
+        [(0, "asset://take-b"), (1, "asset://take-a")]
+    );
+    let single = app
+        .project
+        .audio_items()
+        .iter()
+        .find(|item| item.id() == single_id)
+        .unwrap();
+    assert_eq!(single.take_count(), 2);
+    assert_eq!(single.active_take_index(), 1);
+    assert_eq!(single.media_ref(), "asset://take-a");
+    let last = app
+        .project
+        .audio_items()
+        .iter()
+        .find(|item| item.id() == last_id)
+        .unwrap();
+    assert_eq!(last.take_count(), 3);
+    assert_eq!(last.active_take_index(), 2);
+    assert_eq!(last.media_ref(), "asset://take-a");
+    assert_eq!(
+        last.other_takes()
+            .iter()
+            .map(|take| (take.index(), take.media_ref()))
+            .collect::<Vec<_>>(),
+        [(0, "asset://take-b"), (1, "asset://take-a")]
+    );
+
+    let after = app.project.snapshot();
+    let _ = app.update(Message::Undo);
+    assert_eq!(app.project.snapshot(), before);
+    let _ = app.update(Message::Redo);
+    assert_eq!(app.project.snapshot(), after);
+}
+
+#[test]
 fn moving_active_audio_take_to_top_is_registered_and_undoable() {
     let mut app = App::default();
     let _ = app.update(Message::AddTrack);

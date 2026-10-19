@@ -5449,6 +5449,7 @@ impl App {
                             | Message::DuplicateSelectedItems
                             | Message::DuplicateAudioItem(_)
                             | Message::DuplicateAudioItemTake(_)
+                            | Message::DuplicateSelectedAudioItemActiveTakes
                             | Message::DeleteSelectedAudioItemActiveTakes
                             | Message::MoveSelectedAudioItemActiveTakesToTop
                             | Message::CropSelectedAudioItemsToActiveTake
@@ -9652,9 +9653,68 @@ impl App {
                 self.apply_edit(action, "Audio item duplicated");
             }
             Message::DuplicateAudioItemTake(item_id) => {
+                if commands::project_edit_busy(self) {
+                    self.status =
+                        "Stop playback or finish the current project operation before duplicating takes"
+                            .to_owned();
+                    return Task::none();
+                }
+                if self
+                    .project
+                    .tracks()
+                    .iter()
+                    .any(|track| track.frozen_audio_item_id() == Some(item_id))
+                {
+                    self.status = "Frozen render items cannot have takes duplicated".to_owned();
+                    return Task::none();
+                }
                 self.apply_action(
                     DawAction::DuplicateAudioItemTake { item_id },
                     "Active take duplicated",
+                );
+            }
+            Message::DuplicateSelectedAudioItemActiveTakes => {
+                if commands::project_edit_busy(self) {
+                    self.status =
+                        "Stop playback or finish the current project operation before duplicating takes"
+                            .to_owned();
+                    return Task::none();
+                }
+                let selected_audio_ids = commands::selected_audio_item_ids(self);
+                if selected_audio_ids.is_empty() {
+                    self.status = "Select an audio item to duplicate its active take".to_owned();
+                    return Task::none();
+                }
+                if selected_audio_ids.iter().any(|item_id| {
+                    self.project
+                        .tracks()
+                        .iter()
+                        .any(|track| track.frozen_audio_item_id() == Some(*item_id))
+                }) {
+                    self.status = "Frozen render items cannot have takes duplicated".to_owned();
+                    return Task::none();
+                }
+                let mut actions = selected_audio_ids
+                    .iter()
+                    .map(|item_id| DawAction::DuplicateAudioItemTake { item_id: *item_id })
+                    .collect::<Vec<_>>();
+                let action = if actions.len() == 1 {
+                    actions
+                        .pop()
+                        .expect("one selected audio item action is present")
+                } else {
+                    DawAction::BatchTransaction {
+                        tx_id: self.revision,
+                        actions,
+                    }
+                };
+                self.apply_action(
+                    action,
+                    if selected_audio_ids.len() == 1 {
+                        "Active take duplicated"
+                    } else {
+                        "Selected active takes duplicated"
+                    },
                 );
             }
             Message::DeleteSelectedAudioItemActiveTakes => {

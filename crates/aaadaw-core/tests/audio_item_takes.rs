@@ -23,7 +23,7 @@ fn project_with_audio_item() -> (Project, aaadaw_core::ItemId) {
 }
 
 #[test]
-fn duplicate_inserts_take_at_front_and_keeps_the_original_active() {
+fn duplicate_appends_a_copy_and_activates_it() {
     let (mut project, item_id) = project_with_audio_item();
     project
         .apply(DawAction::SetAudioItemTakeMix {
@@ -69,6 +69,78 @@ fn duplicate_inserts_take_at_front_and_keeps_the_original_active() {
     assert!(project.redo().expect("duplicate should redo"));
     assert_eq!(project.audio_items()[0].take_count(), 2);
     assert_eq!(project.audio_items()[0].active_take_index(), 1);
+}
+
+#[test]
+fn duplicate_active_take_appends_after_existing_take_order_from_any_active_index() {
+    let (mut project, item_id) = project_with_audio_item();
+    project
+        .apply(DawAction::DuplicateAudioItemTake { item_id })
+        .expect("second take should be appended and activated");
+    let mut snapshot = project.snapshot();
+    let inactive = &mut snapshot.audio_items[0].other_takes[0];
+    inactive.media_ref = "asset://take-b".to_owned();
+    inactive.name = "Take B".to_owned();
+    let mut project = Project::from_snapshot(snapshot).expect("alternate take should restore");
+    project
+        .apply(DawAction::SetAudioItemActiveTake {
+            item_id,
+            take_index: 0,
+        })
+        .expect("the first take should become active");
+
+    let before_first_active_duplicate = project.snapshot();
+    project
+        .apply(DawAction::DuplicateAudioItemTake { item_id })
+        .expect("copy of the first active take should be appended");
+    let item = &project.audio_items()[0];
+    assert_eq!(item.take_count(), 3);
+    assert_eq!(item.active_take_index(), 2);
+    assert_eq!(item.media_ref(), "asset://take-b");
+    assert_eq!(
+        item.other_takes()
+            .iter()
+            .map(|take| (take.index(), take.media_ref()))
+            .collect::<Vec<_>>(),
+        [(0, "asset://take-b"), (1, "asset://take-a")]
+    );
+
+    project
+        .apply(DawAction::SetAudioItemActiveTake {
+            item_id,
+            take_index: 1,
+        })
+        .expect("the middle take should become active");
+    let before_middle_active_duplicate = project.snapshot();
+    project
+        .apply(DawAction::DuplicateAudioItemTake { item_id })
+        .expect("copy of the middle active take should be appended");
+    let item = &project.audio_items()[0];
+    assert_eq!(item.take_count(), 4);
+    assert_eq!(item.active_take_index(), 3);
+    assert_eq!(item.media_ref(), "asset://take-a");
+    assert_eq!(
+        item.other_takes()
+            .iter()
+            .map(|take| (take.index(), take.media_ref()))
+            .collect::<Vec<_>>(),
+        [
+            (0, "asset://take-b"),
+            (1, "asset://take-a"),
+            (2, "asset://take-b"),
+        ]
+    );
+
+    let after = project.snapshot();
+    assert!(project.undo().expect("the second duplicate should undo"));
+    assert_eq!(project.snapshot(), before_middle_active_duplicate);
+    assert!(project.undo().expect("the active-take switch should undo"));
+    assert!(project.undo().expect("the first duplicate should undo"));
+    assert_eq!(project.snapshot(), before_first_active_duplicate);
+    assert!(project.redo().expect("the first duplicate should redo"));
+    assert!(project.redo().expect("the active-take switch should redo"));
+    assert!(project.redo().expect("the second duplicate should redo"));
+    assert_eq!(project.snapshot(), after);
 }
 
 #[test]

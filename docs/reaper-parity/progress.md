@@ -2825,3 +2825,9 @@ AAADAW 的 Action List、Item 菜单和 Inspector 现对选中多 Take 音频项
 Linux REAPER 7.82 / Default 7 原厂 action 40129 会处理全部选中 Audio Item：首位与末位活动 Take 均删除后保留另一个 Take 于 index 0；单 Take 项会被删除；一次 Undo 恢复三项及原活动索引，一次 Redo 重做整组。原厂状态读回、RPP 与 Arrange 截图已归档。
 
 AAADAW 现让 Action List、Item 菜单和 Inspector 的删除动作覆盖所有选中音频项；多目标通过一个 `BatchTransaction` 提交，冻结渲染目标阻止整批操作，播放图在删除或活动源变化后按原有安全路径重建。独立 Stable 实窗四态截图覆盖删除、Undo、Redo；自动化回归验证两种活动索引、单 Take 项删除、单历史步与工程快照恢复。Stable Nextest **1606/1606**、严格 all-target Clippy、fmt、capture shell 语法、diff 检查、parity matrix **113 条 / 15 列**与 manifest **17/17 哈希**均通过。证据与哈希见[多选删除 manifest](../verification/reaper-parity/fixtures/audio-delete-active-take-multi-aaadaw.tsv)。`EDIT-TAKE-001` 继续 `in_progress`：Copy/Paste 和其他 Take 操作的多选、录音生成、Lane/Comp、MIDI Item Take 与跨工程剪贴板仍开放。
+
+### 2026-10-19 P5 Take: 多选 Duplicate active take
+
+Linux REAPER 7.82 / Default 7 原厂 action 40639 将每个选中 Audio Item 的活动 Take 副本追加到列表末尾并激活它；混合选择中的单 Take 项也变成双 Take。对首项活动索引 0、单 Take 项、末项活动索引 1 的组合，Take 数量从 2/1/2 变为 3/2/3，新增副本保留原活动源，顺序与原厂读回一致；真实 Ctrl+Z 一步恢复整组，Ctrl+Shift+Z 一步重做。原厂 Arrange 截图左侧被评估弹窗部分遮挡，因此状态 TSV 和 before/after/undo/redo RPP 为主要证据，见[多选复制 manifest](../verification/reaper-parity/fixtures/audio-duplicate-active-take-multi-aaadaw.tsv)。这次原厂测量也纠正了早先单项探针的错误推断：旧探针在 action 后手动改过 Take 源，不能单独证明副本插入位置。
+
+AAADAW Core 已按实测改为 append + activate；Action List、Item 菜单和 Inspector 对选中音频项执行一条 `BatchTransaction`，包含单 Take 项，冻结目标拒绝整组操作，忙碌状态和单项 Inspector 路径也受保护。真实 Linux Xvfb 窗口以 nightly Cranelift 桌面二进制完成四态截图，显示选中操作、Take 3/3、单步 Undo/Redo；该 capture build 没有启用 audio-device，所以截图验证可视编辑状态，声音播放不在本次验收范围。Stable LLVM Nextest **1608/1608**、严格 all-target Clippy、fmt、capture shell 语法、diff 检查和 parity matrix **113 条 / 15 列**与本组 manifest **19/19 哈希**通过；nightly Cranelift 桌面构建成功，同时输出既有 recursion-depth future-incompatible warning。`EDIT-TAKE-001` 继续 `in_progress`：多选 Paste as takes、选中 Take 切换、录音生成、Lane/Comp、MIDI Item Take、完整 Item Properties 与跨工程剪贴板仍开放。
