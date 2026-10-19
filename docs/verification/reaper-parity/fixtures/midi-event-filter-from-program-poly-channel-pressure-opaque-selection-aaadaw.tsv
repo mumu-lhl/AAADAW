@@ -1,0 +1,20 @@
+artifact	sha256
+crates/aaadaw/examples/generate_midi_filter_from_program_poly_channel_pressure_opaque_selection_fixture.rs	1d73f832ab87788c5b0433a6cf0ed15f7f0a566430c6641ef3457030948f6228
+fixtures/midi-event-filter-from-program-poly-channel-pressure-opaque-selection-aaadaw.aaadaw	f0e2fee944de314b0bda8ce6b58e0acdc23086a0c224aa3c87c6d6cdb4ba9823
+fixtures/midi-event-filter-from-program-poly-channel-pressure-opaque-selection-aaadaw-before.png	47e73c118d846635cb45795f3e8481ed0262a24e0533d61b1ebcc03f0da679c4
+fixtures/midi-event-filter-from-program-poly-channel-pressure-opaque-selection-aaadaw-selected-before-set.png	fda0e3e7c3b85b103e603cec4a6ea2f2dd44552e6a0f7a54cad56534a9f1c99e
+fixtures/midi-event-filter-from-program-poly-channel-pressure-opaque-selection-aaadaw-filter-before-set.png	3ce70f1adff18973c95872038459da2bd2109ccee91ef69b028d42a39d196821
+fixtures/midi-event-filter-from-program-poly-channel-pressure-opaque-selection-aaadaw-after-set.png	8648b817c900da1fc1f4b515a04e4096e471e477a7fa37b417193b780d89f4ec
+fixtures/midi-event-filter-from-program-poly-channel-pressure-opaque-selection-aaadaw-list-filtered.png	c7aef67f3358e500613baabee31a852195201a45a2991f987dc2291352cf1a1e
+fixtures/midi-event-filter-from-program-poly-channel-pressure-opaque-selection-aaadaw-funnel-off.png	2b1e1d96daea7f6b32c8635f829a826e87a36b3101a61efd911ffc77974ff0d0
+binary_sha256	d4c9b2bb674f513651d1aece26d26469ad45756ba66b2773b626714ff9ddc18d
+binary_build_id	dec6dcbf90f62c82f7ab1f88367e985cc18e621a
+build_backend	rustc 1.101.0-nightly with RUSTFLAGS=-Zcodegen-backend=cranelift and CARGO_PROFILE_DEV_DEBUG=0
+environment	Linux Xvfb :559, 1600x900; actual AAADAW MIDI Editor/Event List window; isolated XDG directories and portal; audio unavailable
+starting_state	Eleven Event List rows; Poly Aftertouch, Program Change, Channel Pressure, and Text Meta at ticks 480, 600, 720, and 960 selected; Show-only and funnel off
+action	Filter events > Set filter from selection; close dialog; turn Event List funnel off
+assertion	Dialog derives All events, All channels, Position 0.12500000–0.25026042, Repeat measure; Show-only stays unchecked and the funnel activates; all four selected endpoints stay selected
+list_result	Eight in-range rows remain visible with four selections; turning the funnel off restores all eleven rows and preserves selection
+selection_and_data	App regression verifies exact eight visible event identities, four retained selected identities, eleven-row restored list, unchanged project snapshot, and unchanged Undo/Redo history. Native MIDI bytes are independently identical before and after Set.
+verification	Focused App Nextest 1/1 passed; AAADAW package Nextest 861/861 passed; strict all-target Clippy (-D warnings -A future-incompatible); stable fmt and diff checks; nightly Cranelift desktop build launched in the actual Event List window; six real-window captures show baseline, selected rows, pre-Set controls, derived filter, filtered list, and funnel-off list; 21 native and AAADAW artifact hashes verified
+limitation	AAADAW Position controls display editable decimals while REAPER displays combo-box values 1/8–0.250; screenshots verify behavior and controls, not pixel identity

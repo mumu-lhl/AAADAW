@@ -1,0 +1,25 @@
+artifact	sha256
+scripts/reaper_parity/probe-midi-event-filter-from-program-poly-channel-pressure-opaque-selection.lua	85286e29ca21ca5cd6a9a33b8847f824d5e5766d86a9479cc03c1ce80b2b56af
+fixtures/midi-event-filter-from-program-poly-channel-pressure-opaque-selection-native-filter-before-set.png	326f4e47f6caed1e83166cc708dea3d38021fa3139b638e62c41daee71fb40d4
+fixtures/midi-event-filter-from-program-poly-channel-pressure-opaque-selection-native-after-set.png	fae23f3b5c999408c5f8d423fcb91ee9d714cce7b78b4c6989546eefa3c4d97c
+fixtures/midi-event-filter-from-program-poly-channel-pressure-opaque-selection-native-list-filtered.png	4b7e7914bc9a65dbd894d76b5cb3fa481f7e87ad520d359bf9f7002fc24047c8
+fixtures/midi-event-filter-from-program-poly-channel-pressure-opaque-selection-native-funnel-off.png	2c4d491ee1d4e1448b05a5f35ae370488088c3de5045d53fbe0fb3626ef9f240
+fixtures/midi-event-filter-from-program-poly-channel-pressure-opaque-selection-native-readback-before.tsv	067872cfa70ef7907e2e7ad430dc1c3eba284adde9f335982bb5ad54407cda6f
+fixtures/midi-event-filter-from-program-poly-channel-pressure-opaque-selection-native-readback-after-set.tsv	8c25464610fe5d8f463f82b3c47833977d5111355767bccb2f8f720fd15268d8
+fixtures/midi-event-filter-from-program-poly-channel-pressure-opaque-selection-native-readback-funnel-off.tsv	067872cfa70ef7907e2e7ad430dc1c3eba284adde9f335982bb5ad54407cda6f
+fixtures/midi-event-filter-from-program-poly-channel-pressure-opaque-selection-native-before.rpp	835c3082c5899061714b13e9b4634037f6297d6a7184a7bca1f508fb2ea1adfd
+fixtures/midi-event-filter-from-program-poly-channel-pressure-opaque-selection-native-after-set.rpp	4b3bc4c476a63dbc9692b47c7c990b79d9947f17609e407cf4b63bb87ec4290b
+fixtures/midi-event-filter-from-program-poly-channel-pressure-opaque-selection-native-funnel-off.rpp	70ccf18ddbb985b27c03f34b3a93a1a6da3a4ac4c60ff9985b637867fc88d4e5
+fixtures/midi-event-filter-from-program-poly-channel-pressure-opaque-selection-native-before.bin	831499a22229cf1f9a71b6966f28703b7c064bdd6e29dd972c35dd7ca170c900
+fixtures/midi-event-filter-from-program-poly-channel-pressure-opaque-selection-native-after-set.bin	831499a22229cf1f9a71b6966f28703b7c064bdd6e29dd972c35dd7ca170c900
+native_build_id	fb9ade2f211bc91a3ee6193630ef17bcf5f6528b
+native_binary_sha256	9976f5608068b7a58518969001b00b527fb0de6ed7459e0e5dda6f29878ee254
+theme	REAPER 7.82 Linux Default 7; theme SHA-256 575544606736a395520703e532209ad9635f13a41b7ea000bb9810d60025be48
+environment	Linux Xvfb :559, 1600x900; isolated copied REAPER profile; audio device closed
+starting_state	Eleven Event List rows; selected Poly Aftertouch pressure 32/channel 2/tick 480, Program Change 8/channel 2/tick 600, Channel Pressure value 48/channel 2/tick 720, and Text Meta/tick 960; Show-only unchecked and funnel off
+action	Event List > Filter Events > Set filter from selection; close filter panel; turn Event List funnel off
+assertion	Set derives All events, All channels, Position 1/8–0.250 (stored 0.125–0.25026042), and Repeat measure; Show-only remains unchecked while the Event List funnel activates
+list_result	Eight in-range rows pass; all four selected endpoints remain selected; disabling the funnel restores all eleven rows
+selection_and_data	MIDI_GetAllEvts is 189 bytes before and after Set with identical SHA-256 831499a22229cf1f9a71b6966f28703b7c064bdd6e29dd972c35dd7ca170c900; event counts and selected bits are unchanged. The after-set RPP stores Position 0.125–0.25026042 with Show-only off; the funnel-off RPP retains Position and clears the funnel.
+verification	Native ReaScript readbacks before/after/funnel-off, identical raw MIDI, three RPP states, and four REAPER Default 7 real-window screenshots
+limitation	Screenshots verify behavior and displayed controls, not pixel identity
