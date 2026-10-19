@@ -24,10 +24,11 @@ use crate::timeline::{SnapGrid, TimelineEvent};
 #[cfg(all(feature = "jack-backend", feature = "pipewire-backend"))]
 use aaadaw_app::PlaybackBackend;
 use aaadaw_core::{
-    DawAction, MidiChannelPressureData, MidiControllerData, MidiFileFormat, MidiFileProjectImport,
-    MidiImportedMarker, MidiImportedMeterPoint, MidiImportedTempoPoint, MidiImportedTrack,
-    MidiItemPosition, MidiNoteData, MidiOpaqueEventData, MidiOpaqueEventKind, MidiPitchBendData,
-    MidiPolyAftertouchData, MidiProgramChangeData, Project, RazorEditArea, TrackFxPlugin,
+    DawAction, ItemId, MidiChannelPressureData, MidiControllerData, MidiFileFormat,
+    MidiFileProjectImport, MidiImportedMarker, MidiImportedMeterPoint, MidiImportedTempoPoint,
+    MidiImportedTrack, MidiItemPosition, MidiNoteData, MidiOpaqueEventData, MidiOpaqueEventKind,
+    MidiPitchBendData, MidiPolyAftertouchData, MidiProgramChangeData, Project, RazorEditArea,
+    TrackFxPlugin, TrackId,
 };
 use aaadaw_media::{AudioStreamDecoder, AudioWaveform};
 use aaadaw_storage::{ArrangementViewState, ProjectSessionLock, ProjectStore};
@@ -589,6 +590,202 @@ fn cross_track_implode_requires_overlapping_selected_items() {
         &app,
         CommandId::ImplodeAudioItemsAcrossTracksIntoTakes
     ));
+}
+
+#[test]
+fn exploding_selected_audio_takes_in_place_preserves_order_and_is_one_undo_step() {
+    fn insert_multitake(
+        app: &mut App,
+        track_id: TrackId,
+        media_ref: &str,
+        start_sample: u64,
+        length_samples: u64,
+        names: &[&str],
+        active_take_index: u32,
+    ) -> ItemId {
+        app.project
+            .apply(DawAction::InsertAudioItem {
+                track_id,
+                media_ref: media_ref.to_owned(),
+                start_sample,
+                source_offset_samples: 0,
+                length_samples,
+            })
+            .expect("audio item should be inserted");
+        let item_id = app.project.audio_items().last().unwrap().id();
+        for _ in 1..names.len() {
+            app.project
+                .apply(DawAction::DuplicateAudioItemTake { item_id })
+                .expect("take should be duplicated");
+        }
+        for (index, name) in names.iter().enumerate() {
+            app.project
+                .apply(DawAction::SetAudioItemActiveTake {
+                    item_id,
+                    take_index: index as u32,
+                })
+                .expect("take should be selected for setup");
+            app.project
+                .apply(DawAction::SetAudioItemName {
+                    item_id,
+                    name: (*name).to_owned(),
+                })
+                .expect("take should be named");
+            app.project
+                .apply(DawAction::SetAudioItemTakePlaybackRate {
+                    item_id,
+                    rate: 0.8 + index as f64 * 0.2,
+                })
+                .expect("take rate should be set");
+        }
+        app.project
+            .apply(DawAction::SetAudioItemActiveTake {
+                item_id,
+                take_index: active_take_index,
+            })
+            .expect("requested take should become active");
+        item_id
+    }
+
+    let mut app = App::default();
+    for (index, name) in ["Top", "Bottom"].into_iter().enumerate() {
+        app.project
+            .apply(DawAction::CreateTrack {
+                index,
+                name: name.to_owned(),
+            })
+            .expect("track should be created");
+    }
+    let top_track = app.project.tracks()[0].id();
+    let bottom_track = app.project.tracks()[1].id();
+    let top_id = insert_multitake(
+        &mut app,
+        top_track,
+        "asset://explode-top",
+        48_000,
+        48_000,
+        &["Top A", "Top B", "Top C"],
+        1,
+    );
+    let bottom_id = insert_multitake(
+        &mut app,
+        bottom_track,
+        "asset://explode-bottom",
+        0,
+        72_000,
+        &["Bottom A", "Bottom B"],
+        0,
+    );
+    app.project
+        .apply(DawAction::InsertAudioItem {
+            track_id: bottom_track,
+            media_ref: "asset://explode-single".to_owned(),
+            start_sample: 96_000,
+            source_offset_samples: 0,
+            length_samples: 24_000,
+        })
+        .expect("single-take control should be inserted");
+    let single_id = app.project.audio_items().last().unwrap().id();
+    app.timeline.rebuild(&app.project);
+    app.timeline.select_items(vec![
+        (bottom_id, bottom_track),
+        (single_id, bottom_track),
+        (top_id, top_track),
+    ]);
+    let before = app.project.snapshot();
+    let history_cursor = app.project.history_cursor();
+    assert!(commands::is_enabled(
+        &app,
+        CommandId::ExplodeAudioItemTakesInPlace
+    ));
+    let action = commands::shortcut_entries(&app)
+        .into_iter()
+        .find(|entry| entry.id == "take.explode-in-place")
+        .expect("REAPER action 40642 should be registered");
+    assert!(action.default_binding.is_empty());
+
+    let _ = app.update(Message::ExecuteCommand(
+        CommandId::ExplodeAudioItemTakesInPlace,
+    ));
+
+    assert_eq!(app.project.history_cursor(), history_cursor + 1);
+    assert_eq!(app.status, "Selected audio items exploded in place");
+    assert_eq!(app.project.audio_items().len(), 6);
+    let names = app
+        .project
+        .audio_items()
+        .iter()
+        .map(|item| item.name())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        names,
+        ["Top A", "Top B", "Top C", "Bottom A", "Bottom B", "",]
+    );
+    assert_eq!(
+        app.project
+            .audio_items()
+            .iter()
+            .map(|item| item.track_id())
+            .collect::<Vec<_>>(),
+        [
+            top_track,
+            top_track,
+            top_track,
+            bottom_track,
+            bottom_track,
+            bottom_track
+        ]
+    );
+    assert_eq!(app.project.audio_items()[5].id(), single_id);
+    assert!(
+        app.project
+            .audio_items()
+            .iter()
+            .all(|item| { item.take_count() == 1 && item.active_take_index() == 0 })
+    );
+    assert!(app.timeline.selected_items.is_empty());
+    let after = app.project.snapshot();
+
+    let _ = app.update(Message::Undo);
+    assert_eq!(app.project.snapshot(), before);
+    assert!(app.timeline.selected_items.is_empty());
+    let _ = app.update(Message::Redo);
+    assert_eq!(app.project.snapshot(), after);
+    assert!(app.timeline.selected_items.is_empty());
+}
+
+#[test]
+fn exploding_only_selected_single_take_items_clears_selection_without_history() {
+    let mut app = App::default();
+    app.project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Audio".to_owned(),
+        })
+        .expect("track should be created");
+    let track_id = app.project.tracks()[0].id();
+    app.project
+        .apply(DawAction::InsertAudioItem {
+            track_id,
+            media_ref: "asset://single-take".to_owned(),
+            start_sample: 0,
+            source_offset_samples: 0,
+            length_samples: 48_000,
+        })
+        .expect("single-take item should be inserted");
+    let item_id = app.project.audio_items()[0].id();
+    app.timeline.rebuild(&app.project);
+    app.timeline.select_items(vec![(item_id, track_id)]);
+    let before = app.project.snapshot();
+    let history_cursor = app.project.history_cursor();
+
+    let _ = app.update(Message::ExecuteCommand(
+        CommandId::ExplodeAudioItemTakesInPlace,
+    ));
+
+    assert_eq!(app.project.snapshot(), before);
+    assert_eq!(app.project.history_cursor(), history_cursor);
+    assert!(app.timeline.selected_items.is_empty());
 }
 
 #[test]

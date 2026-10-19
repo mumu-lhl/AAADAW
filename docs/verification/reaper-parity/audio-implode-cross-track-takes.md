@@ -26,4 +26,4 @@ The live screenshots verify the actual window and project state. This Cranelift 
 
 ## Remaining parity work
 
-This completes the cross-track implode slice of `EDIT-TAKE-001`. Exploding takes, recording-created takes, take display modes, MIDI takes, Fixed Lanes, Comp Areas, and cross-project clipboard behavior remain open.
+This completes the cross-track implode slice of `EDIT-TAKE-001`. In-place take explosion is covered separately; recording-created takes, take display modes, MIDI takes, Fixed Lanes, Comp Areas, and cross-project clipboard behavior remain open.

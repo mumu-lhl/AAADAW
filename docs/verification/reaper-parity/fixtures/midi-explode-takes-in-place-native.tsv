@@ -1,0 +1,22 @@
+before	track_count=1	item_count=1	selected_count=1
+before	item=0	position=0.000000000	length=2.000000000	selected=1	take_count=2	active_index=1
+before	item=0	take=0	is_midi=1	name=MIDI take A	note_count=1	first_note_pitch=60
+before	item=0	take=1	is_midi=1	name=MIDI take B	note_count=2	first_note_pitch=60
+undo_before_action	MIDI take fixture setup
+after	track_count=1	item_count=2	selected_count=0
+after	item=0	position=0.000000000	length=2.000000000	selected=0	take_count=1	active_index=0
+after	item=0	take=0	is_midi=1	name=MIDI take A	note_count=1	first_note_pitch=60
+after	item=1	position=0.000000000	length=2.000000000	selected=0	take_count=1	active_index=0
+after	item=1	take=0	is_midi=1	name=MIDI take B	note_count=2	first_note_pitch=60
+undo_after_action	Explode takes
+undo	track_count=1	item_count=1	selected_count=1
+undo	item=0	position=0.000000000	length=2.000000000	selected=1	take_count=2	active_index=1
+undo	item=0	take=0	is_midi=1	name=MIDI take A	note_count=1	first_note_pitch=60
+undo	item=0	take=1	is_midi=1	name=MIDI take B	note_count=2	first_note_pitch=60
+undo_after_undo	MIDI take fixture setup
+redo	track_count=1	item_count=2	selected_count=0
+redo	item=0	position=0.000000000	length=2.000000000	selected=0	take_count=1	active_index=0
+redo	item=0	take=0	is_midi=1	name=MIDI take A	note_count=1	first_note_pitch=60
+redo	item=1	position=0.000000000	length=2.000000000	selected=0	take_count=1	active_index=0
+redo	item=1	take=0	is_midi=1	name=MIDI take B	note_count=2	first_note_pitch=60
+action	40642	Take: Explode takes of items in place

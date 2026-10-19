@@ -5494,6 +5494,7 @@ impl App {
                             | Message::MoveSelectedAudioItemActiveTakesToTop
                             | Message::ImplodeSelectedAudioItemsAsTakes
                             | Message::ImplodeSelectedAudioItemsAcrossTracksAsTakes
+                            | Message::ExplodeSelectedAudioItemTakesInPlace
                             | Message::CropSelectedAudioItemsToActiveTake
                             | Message::SwitchSelectedAudioItemTakes(..)
                             | Message::SwitchAudioItemTake(..)
@@ -9640,6 +9641,9 @@ impl App {
             }
             Message::ImplodeSelectedAudioItemsAcrossTracksAsTakes => {
                 self.implode_selected_audio_items_across_tracks_as_takes()
+            }
+            Message::ExplodeSelectedAudioItemTakesInPlace => {
+                self.explode_selected_audio_item_takes_in_place()
             }
             Message::SelectAllItems => {
                 self.with_item_selection_history("Select all items", Self::select_all_items)
@@ -19683,6 +19687,56 @@ impl App {
                     ));
             }
         }
+    }
+
+    fn explode_selected_audio_item_takes_in_place(&mut self) {
+        if commands::project_edit_busy(self) {
+            self.status =
+                "Stop playback or finish the current project operation before exploding takes"
+                    .to_owned();
+            return;
+        }
+        let Some(item_ids) = commands::audio_items_for_explode_takes(self) else {
+            self.status = "Select audio items to explode their takes".to_owned();
+            return;
+        };
+        let explodable_ids = item_ids
+            .iter()
+            .filter(|item_id| {
+                self.project
+                    .audio_items()
+                    .iter()
+                    .find(|item| item.id() == **item_id)
+                    .is_some_and(|item| item.take_count() > 1)
+            })
+            .copied()
+            .collect::<Vec<_>>();
+        if explodable_ids.is_empty() {
+            self.timeline.clear_selected_items();
+            self.status = "No multi-take audio items selected".to_owned();
+            return;
+        }
+        if explodable_ids.iter().any(|item_id| {
+            self.project
+                .tracks()
+                .iter()
+                .any(|track| track.frozen_audio_item_id() == Some(*item_id))
+        }) {
+            self.status = "Frozen render items cannot be exploded".to_owned();
+            return;
+        }
+
+        for item_id in &explodable_ids {
+            self.audio_item_start_edits.remove(item_id);
+        }
+        self.apply_action(
+            DawAction::ExplodeAudioItemTakesInPlace {
+                tx_id: self.revision,
+                item_ids,
+            },
+            "Selected audio items exploded in place",
+        );
+        self.timeline.clear_selected_items();
     }
 
     fn copy_loop_of_selected_area(&mut self) {

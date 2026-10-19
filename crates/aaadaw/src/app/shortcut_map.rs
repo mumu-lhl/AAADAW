@@ -51,6 +51,11 @@ const REAPER_ACTIONS: &[(&str, u32, &str)] = &[
         "Take: Implode items across tracks into takes",
     ),
     (
+        "take.explode-in-place",
+        40642,
+        "Take: Explode takes of items in place",
+    ),
+    (
         "take.switch-previous",
         40126,
         "Take: Switch items to previous take",
@@ -718,6 +723,7 @@ mod tests {
             "KEY 1 114 40860 0\t\t # Main : F3 : Close current project tab\n",
             "KEY 1 116 40071 0\t\t # Main : F5 : Options: Show snap/grid settings\n",
             "KEY 1 121 40639 0\t\t # Main : F10 : Take: Duplicate active take\n",
+            "KEY 1 88 40642 0\t\t # Main : X : Take: Explode takes of items in place\n",
             "KEY 1 73 40438 0\t\t # Main : I : Take: Implode items across tracks into takes\n",
             "KEY 9 84 40603 0\t\t # Main : Ctrl+T : Take: Paste as takes in items\n",
             "KEY 1 122 40125 0\t\t # Main : F11 : Take: Switch items to next take\n",
@@ -731,7 +737,7 @@ mod tests {
             "KEY 1 120 1016 0\t\t # Main : F9 : Transport: Stop\n",
         );
         let bindings = parse_reaper(contents).unwrap();
-        assert_eq!(bindings.len(), 17);
+        assert_eq!(bindings.len(), 18);
         for (action, key) in [
             ("actions.show-list", "F2"),
             ("file.close-project", "F3"),
@@ -750,6 +756,7 @@ mod tests {
             ("edit.copy-items", "Mod+C"),
             ("take.paste-as-takes", "Mod+T"),
             ("take.implode-across-tracks", "I"),
+            ("take.explode-in-place", "X"),
         ] {
             assert_eq!(bindings[action], key, "{action}");
         }
@@ -758,7 +765,7 @@ mod tests {
 
     #[test]
     fn reaper_main_mapping_table_round_trips_all_unique_native_action_ids() {
-        assert_eq!(REAPER_ACTIONS.len(), 112);
+        assert_eq!(REAPER_ACTIONS.len(), 113);
         let mut action_ids = REAPER_ACTIONS
             .iter()
             .map(|(_, action_id, _)| *action_id)

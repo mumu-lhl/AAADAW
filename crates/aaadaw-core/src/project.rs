@@ -4780,6 +4780,56 @@ impl Project {
                 after.crop_to_active_take();
                 ProjectEvent::AudioItemChanged { before, after }
             }
+            DawAction::ExplodeAudioItemTakesInPlace { tx_id, item_ids } => {
+                let mut seen = HashSet::with_capacity(item_ids.len());
+                let mut selected_items = Vec::with_capacity(item_ids.len());
+                for item_id in item_ids {
+                    if !seen.insert(item_id) {
+                        continue;
+                    }
+                    let (index, item) = state
+                        .audio_items
+                        .iter()
+                        .enumerate()
+                        .find(|(_, item)| item.id == item_id)
+                        .ok_or(ActionError::AudioItemNotFound { item_id })?;
+                    if item.take_count() > 1 {
+                        if is_frozen_render(state, item_id) {
+                            return Err(ActionError::FrozenRenderCannotBeEdited { item_id });
+                        }
+                        selected_items.push((index, item.clone()));
+                    }
+                }
+                selected_items.sort_unstable_by_key(|(index, _)| std::cmp::Reverse(*index));
+                let mut events = Vec::new();
+                for (index, original) in selected_items {
+                    events.push(ProjectEvent::AudioItemRemoved {
+                        index,
+                        item: original.clone(),
+                    });
+                    for (take_offset, take) in original.take_snapshots().iter().enumerate() {
+                        let next_item_id = ids
+                            .next_item_id
+                            .checked_add(1)
+                            .ok_or(ActionError::ItemIdExhausted)?;
+                        let mut exploded = original.clone();
+                        if exploded.active_take_index != take.index {
+                            exploded.switch_active_take(take.index);
+                        }
+                        exploded.crop_to_active_take();
+                        exploded.id = ItemId::from_raw(ids.next_item_id);
+                        ids.next_item_id = next_item_id;
+                        let insert_index = index
+                            .checked_add(take_offset)
+                            .ok_or(ActionError::HistoryInvariantViolation)?;
+                        events.push(ProjectEvent::AudioItemInserted {
+                            index: insert_index,
+                            item: exploded,
+                        });
+                    }
+                }
+                ProjectEvent::Transaction { tx_id, events }
+            }
             DawAction::SetAudioItemActiveTake {
                 item_id,
                 take_index,

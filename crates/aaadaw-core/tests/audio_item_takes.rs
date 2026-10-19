@@ -72,6 +72,140 @@ fn duplicate_appends_a_copy_and_activates_it() {
 }
 
 #[test]
+fn exploding_audio_item_takes_preserves_each_source_in_order_and_undoes_atomically() {
+    let (project, item_id) = project_with_audio_item();
+    let mut snapshot = project.snapshot();
+    let original = &mut snapshot.audio_items[0];
+    original.media_ref = "asset://take-b".to_owned();
+    original.name = "Take B".to_owned();
+    original.source_offset_samples = 200;
+    original.active_take_index = 1;
+    original.take_volume = 0.6;
+    original.take_pan = 0.25;
+    original.take_playback_rate = 1.1;
+    original.volume = 0.75;
+    original.other_takes = vec![
+        aaadaw_core::AudioItemTakeSnapshot {
+            index: 0,
+            media_ref: "asset://take-a".to_owned(),
+            name: "Take A".to_owned(),
+            source_offset_samples: 100,
+            phase_inverted: true,
+            loop_source: false,
+            source_section_start_samples: None,
+            source_section_length_samples: None,
+            volume: 0.9,
+            pan: -0.2,
+            playback_rate: 0.8,
+        },
+        aaadaw_core::AudioItemTakeSnapshot {
+            index: 2,
+            media_ref: "asset://take-c".to_owned(),
+            name: "Take C".to_owned(),
+            source_offset_samples: 300,
+            phase_inverted: false,
+            loop_source: true,
+            source_section_start_samples: None,
+            source_section_length_samples: None,
+            volume: 0.4,
+            pan: 0.35,
+            playback_rate: 1.2,
+        },
+    ];
+    let mut project = Project::from_snapshot(snapshot).expect("three-take item should restore");
+    let before = project.snapshot();
+    let cursor = project.history_cursor();
+
+    project
+        .apply(DawAction::ExplodeAudioItemTakesInPlace {
+            tx_id: 45,
+            item_ids: vec![item_id],
+        })
+        .expect("take explosion should apply");
+
+    assert_eq!(project.history_cursor(), cursor + 1);
+    assert_eq!(project.audio_items().len(), 3);
+    let exploded = project.audio_items();
+    assert_eq!(
+        exploded.iter().map(|item| item.name()).collect::<Vec<_>>(),
+        ["Take A", "Take B", "Take C"]
+    );
+    assert_eq!(
+        exploded
+            .iter()
+            .map(|item| item.media_ref())
+            .collect::<Vec<_>>(),
+        ["asset://take-a", "asset://take-b", "asset://take-c"]
+    );
+    assert_eq!(
+        exploded
+            .iter()
+            .map(|item| item.source_offset_samples())
+            .collect::<Vec<_>>(),
+        [100, 200, 300]
+    );
+    assert_eq!(
+        exploded
+            .iter()
+            .map(|item| item.take_playback_rate())
+            .collect::<Vec<_>>(),
+        [0.8, 1.1, 1.2]
+    );
+    assert_eq!(
+        exploded
+            .iter()
+            .map(|item| item.take_volume())
+            .collect::<Vec<_>>(),
+        [0.9, 0.6, 0.4]
+    );
+    assert!(exploded.iter().all(|item| {
+        item.track_id() == exploded[0].track_id()
+            && item.start_sample() == 480
+            && item.length_samples() == 4_800
+            && item.volume() == 0.75
+            && item.take_count() == 1
+            && item.active_take_index() == 0
+    }));
+    assert!(exploded[0].is_phase_inverted());
+    assert!(!exploded[0].is_loop_source());
+    assert!(exploded[2].is_loop_source());
+    let exploded_snapshot = project.snapshot();
+    let ids = exploded.iter().map(|item| item.id()).collect::<Vec<_>>();
+    assert_ne!(ids[0], ids[1]);
+    assert_ne!(ids[1], ids[2]);
+
+    assert!(
+        project
+            .undo()
+            .expect("the full explosion should undo at once")
+    );
+    assert_eq!(project.snapshot(), before);
+    assert!(
+        project
+            .redo()
+            .expect("the full explosion should redo at once")
+    );
+    assert_eq!(project.snapshot(), exploded_snapshot);
+}
+
+#[test]
+fn exploding_only_single_take_audio_items_does_not_add_project_history() {
+    let (mut project, item_id) = project_with_audio_item();
+    let before = project.snapshot();
+    let cursor = project.history_cursor();
+
+    project
+        .apply(DawAction::ExplodeAudioItemTakesInPlace {
+            tx_id: 46,
+            item_ids: vec![item_id],
+        })
+        .expect("a single-take selection should remain unchanged");
+
+    assert_eq!(project.snapshot(), before);
+    assert_eq!(project.history_cursor(), cursor);
+}
+
+#[test]
 fn duplicate_active_take_appends_after_existing_take_order_from_any_active_index() {
     let (mut project, item_id) = project_with_audio_item();
     project
