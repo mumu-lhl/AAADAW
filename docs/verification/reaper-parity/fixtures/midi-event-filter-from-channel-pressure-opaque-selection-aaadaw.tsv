@@ -1,0 +1,19 @@
+artifact	sha256
+crates/aaadaw/examples/generate_midi_filter_from_channel_pressure_opaque_selection_fixture.rs	5ec81f5db8e0531883e6c0cd43442286ecb83529ecd58e0e6abe48c441176ce9
+docs/verification/reaper-parity/fixtures/midi-event-filter-from-channel-pressure-opaque-selection-aaadaw.aaadaw	2a07d4c2d65389fe6651e99dd4b2bfb43fd945055d80b7c2f49455bd3cd77c49
+fixtures/midi-event-filter-from-channel-pressure-opaque-selection-aaadaw-selected-before-set.png	f4dbd1dd94d3c8468ea8bc2c6aa11bcae0e09c517c2fd6939082aefbd63bb98e
+fixtures/midi-event-filter-from-channel-pressure-opaque-selection-aaadaw-filter-before-set.png	2ae5b7aadb49b32f90c05404621776e614ed2469c5a15ff6af52832006588814
+fixtures/midi-event-filter-from-channel-pressure-opaque-selection-aaadaw-after-set.png	93d65c29c1be08dfb521537885cf3cfb1879e7debee2ef9c6be43420be01378b
+fixtures/midi-event-filter-from-channel-pressure-opaque-selection-aaadaw-list-filtered.png	1769ad83abf3487d5e469fb16229ae850fe70e4e88a855efb76cbab08f0502fd
+fixtures/midi-event-filter-from-channel-pressure-opaque-selection-aaadaw-funnel-off.png	c8bc3571ec99f045ae13653cb8edceb44c44a7b9c5440a6d2a6acaad5a08544f
+binary_sha256	79f55808ec61973aeefa001e13c19e0525485b5a9746f782e3211296859c6519
+binary_build_id	09657a817a15b10be835d5f8c7b604f32914b107
+build_backend	rustc nightly with Cranelift codegen backend
+environment	Linux Xvfb :558, 1600x900; actual AAADAW MIDI Editor/Event List window; isolated XDG runtime/config/data/cache/state; audio unavailable
+starting_state	Eight Event List rows; Channel Pressure value 32 on channel 2 at tick 480 and Text Meta at tick 960 selected by Ctrl-click; Show-only and funnel off
+action	Filter events > Set filter from selection; close dialog; turn Event List funnel off
+assertion	Dialog derives All events, All channels, Position 0.12500000–0.25026042, Repeat measure; Show-only stays unchecked; both selected endpoints remain selected
+list_result	Five in-range rows pass; turning the funnel off restores all eight rows and retains both selected endpoints
+selection_and_data	App regression checks matching Channel Pressure, CC, and opaque event identities; retained selection; five matching/eight restored rows; and unchanged project snapshot and Undo/Redo history. Native REAPER readbacks confirm selection and unchanged MIDI bytes.
+verification	Focused App Nextest 1/1; AAADAW package Nextest 858/858; strict all-target Clippy (-D warnings -A future-incompatible); nightly Cranelift desktop build; final binary launched in an actual Xvfb window; five screenshots capture selection, pre-Set controls, derived filter, filtered list, and restored list
+limitation	AAADAW Position fields display editable decimals while REAPER displays combo-box values 1/8–0.250; screenshots verify behavior and controls, not pixel identity

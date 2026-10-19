@@ -14559,6 +14559,7 @@ impl App {
             && !(selected_kinds == 2 && (has_controllers || has_notes || has_pitch_bends))
             && !(selected_kinds == 2 && has_program_changes)
             && !(selected_kinds == 2 && has_poly_aftertouches)
+            && !(selected_kinds == 2 && has_channel_pressures)
             && !(selected_kinds == 3 && has_notes && has_controllers)
             && !(selected_kinds == 3 && has_notes && has_pitch_bends)
             && !(selected_kinds == 3 && has_controllers && has_pitch_bends)
@@ -14599,6 +14600,10 @@ impl App {
                     self.set_midi_editor_filter_from_mixed_program_and_opaque_selection(item_id);
                 } else if has_poly_aftertouches {
                     self.set_midi_editor_filter_from_mixed_poly_aftertouch_and_opaque_selection(
+                        item_id,
+                    );
+                } else if has_channel_pressures {
+                    self.set_midi_editor_filter_from_mixed_channel_pressure_and_opaque_selection(
                         item_id,
                     );
                 } else if has_notes {
@@ -14782,6 +14787,41 @@ impl App {
             .poly_aftertouches()
             .iter()
             .filter(|event| self.midi_editor_selected_poly_aftertouches.contains(event))
+            .map(|event| event.tick)
+            .chain(
+                item.opaque_events()
+                    .iter()
+                    .enumerate()
+                    .filter(|(index, _)| {
+                        self.midi_editor_selected_opaque_events
+                            .contains(&(*index as u32))
+                    })
+                    .map(|(_, event)| event.tick),
+            )
+            .collect();
+        self.set_midi_editor_filter_from_mixed_opaque_selection_ticks(
+            item_id,
+            selected_ticks,
+            false,
+        );
+    }
+
+    fn set_midi_editor_filter_from_mixed_channel_pressure_and_opaque_selection(
+        &mut self,
+        item_id: ItemId,
+    ) {
+        let Some(item) = self
+            .project
+            .midi_items()
+            .iter()
+            .find(|item| item.id() == item_id)
+        else {
+            return;
+        };
+        let selected_ticks = item
+            .channel_pressures()
+            .iter()
+            .filter(|event| self.midi_editor_selected_channel_pressures.contains(event))
             .map(|event| event.tick)
             .chain(
                 item.opaque_events()
