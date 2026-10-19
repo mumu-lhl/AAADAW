@@ -1,0 +1,17 @@
+artifact	sha256
+crates/aaadaw/examples/generate_midi_filter_from_channel_pressure_selection_fixture.rs	4e341a611d1c0c5408440bbda6bf3b89a1c88203c804e156a456c9a048b2cac2
+fixtures/midi-event-filter-from-channel-pressure-aaadaw.aaadaw	ba5fc801fcb9c781cc41dc30c03b8b6cab0b705109919ee2370f433ca966fcec
+fixtures/midi-event-filter-from-channel-pressure-aaadaw-after-set.png	463cd5915ffbe28d8bb1ca33246c758b893cb76b60681dadcea0f9ae02221a5c
+fixtures/midi-event-filter-from-channel-pressure-aaadaw-list-unfiltered.png	9735c3fa0c48d9f2d97cb7c907e445c35e7e654ef74536897104f0f115f4ec33
+fixtures/midi-event-filter-from-channel-pressure-aaadaw-list-filtered.png	997de4261d5df6a1c5edbaaf3b1554efec86e4c4f6a41a237ebbb4b11cb3ca98
+binary_sha256	54b9dc0f0e573eb1e4b10e616b7b35a7ff22723b62c9cfbef9ba86b82839fcb1
+binary_build_id	d9dc6fd5a88797b131b2c1ca576490047f445898
+build_backend	rustc nightly with Cranelift codegen backend
+environment	Linux dummy Xorg :547, 1600x1000 root; MIDI Editor/Event List 1000x620; isolated AAADAW profile; audio unavailable
+starting_state	One C4 note; selected Channel Pressure value32 on channel 2 @ tick 480 and value100 on channel 3 @ tick 960; unselected Channel Pressure value64 on channel 2 @ tick 600; CC7 @720 and Poly Aftertouch @840
+action	Open Event List; Ctrl-click endpoint Channel Pressure rows; Filter events… > Set filter from selection; close dialog; enable Show-only
+assertion	The live Set dialog shows Channel Pressure, channels 2–3, an unchecked Pressure range with blank bounds, Position 0.125–0.25026042, Repeat measure, Multichannel, and Draw events on channel 2. Set leaves all seven rows visible and the funnel off.
+list_result	After enabling Show-only, exactly three Channel Pressure rows remain, including the unselected middle value64; the two selected endpoints remain selected and Note, CC, Poly Aftertouch, and terminal rows are hidden.
+selection_and_data	The focused App regression verifies derived criteria, preserved selection, Show-only filtering, manually enabled Pressure bounds, and unchanged project/Undo/Redo state.
+verification	Current Cranelift real-window captures; app::tests::midi_editor_set_filter_from_channel_pressure_selection_derives_native_criteria; app::messages::midi_channel_selection_tests::channel_pressure_filter_matches_pressure_position_and_inversion; workspace Nextest 1,568/1,568 across 78 binaries; AAADAW all-target strict Clippy (-D warnings -A future-incompatible); fmt and diff checks
+limitation	REAPER Set-from-selection leaves Pressure value bounds disabled. Native manually enabled Pressure-range behavior remains unprobed; mixed event-type, Meta, and SysEx derivation remain open. Screenshots verify behavior and controls, not pixel identity.

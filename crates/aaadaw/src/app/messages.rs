@@ -703,6 +703,37 @@ impl MidiEditorFilterState {
         editor_channel_matches && event_filter_matches
     }
 
+    pub(crate) fn channel_pressure_visible_at(
+        self,
+        channel: u8,
+        pressure: u8,
+        position_in_measure: u32,
+    ) -> bool {
+        let editor_channel_matches = !self.channel_filter_enabled
+            || match self.channel_selection {
+                MidiEditorChannelSelection::AllChannels => true,
+                MidiEditorChannelSelection::Channel(selected) => channel == selected,
+                MidiEditorChannelSelection::Multichannel => {
+                    self.channels & (1_u16.checked_shl(u32::from(channel)).unwrap_or(0)) != 0
+                }
+            };
+        let event_filter_matches = !self.event_filter_enabled || {
+            let channel_matches =
+                self.channels & (1_u16.checked_shl(u32::from(channel)).unwrap_or(0)) != 0;
+            let pressure_matches = !self.note.velocity_enabled
+                || !self.note.velocity_range_initialized
+                || (pressure >= self.note.velocity_low && pressure <= self.note.velocity_high);
+            let passes = channel_matches
+                && self
+                    .event_type
+                    .matches(MidiEditorEventKind::ChannelPressure)
+                && pressure_matches
+                && self.position.matches(position_in_measure);
+            if self.inverted { !passes } else { passes }
+        };
+        editor_channel_matches && event_filter_matches
+    }
+
     pub(crate) fn note_visible(self, channel: u8, event: MidiEditorNoteFilterEvent) -> bool {
         let editor_channel_matches = !self.channel_filter_enabled
             || match self.channel_selection {
@@ -1965,6 +1996,48 @@ mod midi_channel_selection_tests {
             ..filter
         };
         assert!(without_program_range.program_change_visible_at(1, 127, 125_000_000));
+    }
+
+    #[test]
+    fn channel_pressure_filter_matches_pressure_position_and_inversion() {
+        let filter = MidiEditorFilterState {
+            channel_selection: MidiEditorChannelSelection::AllChannels,
+            channel_filter_enabled: false,
+            event_filter_enabled: true,
+            channels: 0b110,
+            inverted: false,
+            event_type: MidiEditorEventTypeFilter::ChannelPressure,
+            note: MidiEditorNoteFilter {
+                velocity_enabled: true,
+                velocity_range_initialized: true,
+                velocity_low: 32,
+                velocity_high: 100,
+                ..MidiEditorNoteFilter::default()
+            },
+            controller: MidiEditorControllerFilter::default(),
+            pitch_bend: MidiEditorPitchBendFilter::default(),
+            program_change: MidiEditorProgramChangeFilter::default(),
+            position: MidiEditorPositionFilter {
+                enabled: true,
+                range_initialized: true,
+                low: 125_000_000,
+                high: 250_260_420,
+                repeat_every: MidiEditorFilterRepeat::Measure,
+            },
+        };
+
+        assert!(filter.channel_pressure_visible_at(1, 32, 125_000_000));
+        assert!(filter.channel_pressure_visible_at(2, 100, 250_000_000));
+        assert!(!filter.channel_pressure_visible_at(1, 31, 200_000_000));
+        assert!(!filter.channel_pressure_visible_at(1, 64, 250_260_421));
+        assert!(!filter.channel_pressure_visible_at(3, 64, 200_000_000));
+
+        let inverted = MidiEditorFilterState {
+            inverted: true,
+            ..filter
+        };
+        assert!(!inverted.channel_pressure_visible_at(1, 32, 125_000_000));
+        assert!(inverted.channel_pressure_visible_at(1, 31, 200_000_000));
     }
 
     #[test]

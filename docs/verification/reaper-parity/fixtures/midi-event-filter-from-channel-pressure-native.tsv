@@ -1,0 +1,19 @@
+artifact	sha256
+scripts/reaper_parity/probe-midi-event-filter-from-channel-pressure-selection.lua	6c6fc1e85136ceda874e3addeddfc29cd32f29e64b0fd217f45413bfabf841bc
+fixtures/midi-event-filter-from-channel-pressure-native-readback.tsv	1bc2f2145575dd656387fadcab8198580327869afafb8834becbace0b4b52ffd
+fixtures/midi-event-filter-from-channel-pressure-native-after-set-readback.tsv	1bc2f2145575dd656387fadcab8198580327869afafb8834becbace0b4b52ffd
+fixtures/midi-event-filter-from-channel-pressure-native-before.rpp	5990f7979fdea53ca0b3a12acb13c4fe859b27ac4fe69f8700e105d4b19eff30
+fixtures/midi-event-filter-from-channel-pressure-native-after-set.rpp	ee3cc9b108b4fd0c7104aa292b210a73756fcbc574841c9ad1e96cbfea0d3cbd
+fixtures/midi-event-filter-from-channel-pressure-reaper-native-after-set.png	b4bfa987f083fbf76170047030bd788dddfc68f87017d5b928e3f39315b0a71e
+fixtures/midi-event-filter-from-channel-pressure-reaper-native-list-filtered.png	5e9380b7fd0a96fba9b7670d7d6f9866d995664a0e60f589f5866309e1d5414f
+native_build_id	fb9ade2f211bc91a3ee6193630ef17bcf5f6528b
+native_binary_sha256	9976f5608068b7a58518969001b00b527fb0de6ed7459e0e5dda6f29878ee254
+theme	REAPER 7.82 Linux Default 7; theme SHA-256 575544606736a395520703e532209ad9635f13a41b7ea000bb9810d60025be48
+environment	Linux dummy Xorg :546, 1600x1000; isolated REAPER 7.82 Default 7 profile; audio unavailable
+starting_state	One C4 note; selected Channel Pressure value32 on channel 2 @ tick 480 and value100 on channel 3 @ tick 960; unselected Channel Pressure value64 on channel 2 @ tick 600; CC7 @720 and Poly Aftertouch @840; Event List funnel off
+action	Event List > Filter Events > Set filter from selection
+assertion	The dialog derives Channel Pressure, channels 2–3, and Position 0.125–0.25026042. The optional Pressure range remains unchecked with blank bounds; Repeat every is measure and Draw events on channel is 2. Set leaves Show-only and the Event List funnel off.
+filter_toggle	After explicitly enabling Show-only, exactly the three Channel Pressure rows remain, including the unselected middle value64; Note, CC, Poly Aftertouch, and terminal rows are hidden.
+selection_and_data	The two selected endpoint events remain selected. Before/after MIDI_GetCC readbacks are byte-identical. RPP EVTFILTER is `6 208 -1 -1 -1 1 0 0 0 -1 -1 0.125 0.25026042 1 -1 0 -1 -1`.
+verification	Native MIDI_GetCC and RPP readbacks; interactive Filter Events and filtered Event List screenshots; manual Show-only toggle
+limitation	The Pressure range remains optional in the derived filter; manually enabling its native range was not independently measured. Mixed event-type, Meta, and SysEx Set-from-selection remain open. Screenshots verify behavior, not pixel identity.

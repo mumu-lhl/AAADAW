@@ -9,7 +9,7 @@
 | 唯一开发分支 | `feat/reaper-parity` |
 | 唯一 PR | [#282](https://github.com/mumu-lhl/AAADAW/pull/282)，Draft；后续阶段只更新此 PR |
 | 当前交付 | 唯一开发分支与 Draft PR #282 持续推进；P4 已提交 Contents Nudge 的原厂边界与 EOF 静音证据，并已接入 schema 49 有符号 source offset、负偏移 pre-roll/seek、持久化、属性编辑与波形显示；looped MIDI Contents Nudge 已贯穿 source-loop 模型，Snap 开/关一致性已按原厂 probe 修正，non-loop MIDI Contents Nudge 已按原厂 source boundary 对齐并覆盖 notes/CC/pitch bend、PPQ clamp、source offset remainder 与单步 Undo/Redo；Audio、混合 Audio/looped-MIDI 与 non-loop MIDI 的绝对 Set Contents 已有原厂对照和单事务 Undo/Redo；已有 P10 纵向切片覆盖 Project Settings Notes、General BPM/拍号/采样率、有符号 Start measure、BPM basis、标尺间隔锚点、Project start time 显示偏移、受支持字段的默认工程设置保存、64-tap sinc 播放、192-tap sinc 离线渲染、Entire project/Time selection/Custom time range/All project regions/All project markers 范围、默认关闭的毫秒尾音控制、Project/常用预设输出采样率转换、Mono/Stereo WAV、PCM8/16/24/32、Float32/64、4-bit IMA ADPCM、2-bit cADPCM 与 8-bit u-Law、可选 sample-peak 归一化（−60 至 0 dBFS）、Selected tracks (stems)、pre-fader stems、Selected tracks via master 与 Master mix and stems；另有 Project Marker 稳定身份/可见编号、schema36 保存/迁移、插入/导航/删除/快捷动作/拖动/属性编辑；Loop Ruler 已补充 Shift 整段移动/Snap、底栏建点、项目级 Loop/Time Selection 保存恢复、全局 link 偏好持久化、Action List link on/off 状态与 40632/40633 范围导航；Repeat 按钮/Action R 已接入 Transport，MIDI 与受限 PCM loop playback 有回归及原厂 start-after-loop 参照；工程 MIDI Note/CC/Pitch Bend 通道已进入 schema 59，MIDI Editor 默认网格已对齐 1/32，并接入选中音符起点/起点+结尾网格量化、Quantize Events 五种 note timing 操作、Strength/Bypass/Fix overlaps、对 modeled note/CC/Pitch Bend 的 All events 与 Swing 网格支持，以及通道选择、Filter、多通道集合与绘制目标；Selected events 已实现；Fix overlaps 关闭时，已测量一个已选音符的移动 note-off 越过下一未选同音邻接音符的原厂读回，并补充 Core/App 回归；未建模事件、复杂混合选择链、Humanize 控件、可撤销编辑与 OK 后全局设置保存已实现，但随机分布仍未验证；cADPCM 编码、Repeat 持久化与完整 loop/原厂验收仍未完成 |
-| 最新里程碑 | `Set filter from selection` 现支持 Note、同/混合参数 CC、Pitch Bend、Program Change 与 Poly Aftertouch；PC 从选中事件推导通道和 Position，Program 值范围可选；REAPER 与 AAADAW 实窗确认 Set 后漏斗关闭、手动开启后分别显示三条 PC 与三条 Poly Aftertouch；无前置 CC0 时的隐式 bank MSB 121 已与原厂实窗对齐；workspace Nextest 1,566/1,566；见下方 2026-10-19 条目 |
+| 最新里程碑 | `Set filter from selection` 现支持 Note、同/混合参数 CC、Pitch Bend、Program Change、Poly Aftertouch 与 Channel Pressure；PC 从选中事件推导通道和 Position，Program 值范围可选；REAPER 与 AAADAW 实窗确认 Set 后漏斗关闭、手动开启后分别显示三条 PC、Poly Aftertouch 与 Channel Pressure；无前置 CC0 时的隐式 bank MSB 121 已与原厂实窗对齐；workspace Nextest 1,568/1,568；见下方 2026-10-19 条目 |
 | 产品覆盖率 | 尚不可计算：P0 原子清单未封闭 |
 
 ## 阶段
@@ -2672,3 +2672,14 @@ Linux REAPER 7.82 / Default 7 原厂探针选中 channel 2 的 note 60 / Pressur
 AAADAW 已实现相同的条件推导与 Event List 匹配；Poly Aftertouch 的 Note 范围、Pressure 范围、Position、通道、事件类型和 Invert 共同生效。Cranelift 实窗截图验证 Set 后的筛选对话框、保留两端选区的七行未筛选列表，以及启用 Show-only 后包含未选中中间事件的三行列表。项目生成器、`.aaadaw` fixture、截图和二进制身份见 [AAADAW fixture manifest](../verification/reaper-parity/fixtures/midi-event-filter-from-poly-aftertouch-aaadaw.tsv)。Focused App 测试和消息层筛选测试通过；workspace Nextest **1,566/1,566，78 个测试目标，0 skipped**，AAADAW all-target strict Clippy（`-D warnings -A future-incompatible`）、fmt 和 diff check 均通过。
 
 `MIDI-EVENT-LIST-001`、UI-019 与 P7 继续 `in_progress`：混合事件类型选区以及 Channel Pressure、Meta、SysEx 的 Set-from-selection 行为仍待原厂测量和实现；截图验证行为和控件，不代表像素级一致验收。
+
+
+### 2026-10-19 Channel Pressure Filter from selection
+
+Linux REAPER 7.82 / Default 7 原厂探针选中 channel 2 的 Pressure 32 @ tick 480 与 channel 3 的 Pressure 100 @ tick 960，中间放置未选中的 Pressure 64 @ tick 600。`Set filter from selection` 推导 Channel Pressure 类型、通道 2–3 和 Position 0.125–0.25026042；Repeat every 保持 measure，绘制通道为 2。可选 Pressure 数值范围维持未勾选、上下界为空，Set 后漏斗关闭。手动开启 Show-only 后，三条 Channel Pressure 均通过，中间未选中事件也显示。`MIDI_GetCC` 读回前后完全相同；脚本、RPP 和截图在 [native manifest](../verification/reaper-parity/fixtures/midi-event-filter-from-channel-pressure-native.tsv)。
+
+AAADAW 已实现一致的 Set-from-selection 默认条件，Event List 按 Pressure 条件（若启用）、Position、通道、类型和 Invert 匹配。Cranelift 实窗截图验证派生后的 Pressure 未勾选状态、七行未筛选 Event List，以及手动启用 Show-only 后三行 Channel Pressure 结果。可选 Pressure 范围由 App 回归覆盖，原厂手动启用该范围的匹配语义仍待测量；工程、截图和构建身份见 [AAADAW manifest](../verification/reaper-parity/fixtures/midi-event-filter-from-channel-pressure-aaadaw.tsv)。
+
+Channel Pressure 导出模型与筛选器回归通过；workspace Nextest **1,568/1,568，78 个测试目标，0 skipped**，AAADAW all-target strict Clippy（`-D warnings -A future-incompatible`）、fmt、diff check 与两份 fixture 哈希校验通过。Cranelift 已知 `TimelinePipeline: MaybeSync` future-incompatibility warning 仍单独允许。
+
+`MIDI-EVENT-LIST-001`、UI-019 与 P7 继续 `in_progress`：混合事件类型、原厂手动 Pressure range、Meta 与 SysEx 的 Set-from-selection 行为仍待测量或实现；截图仅验证行为和控件，不代表像素级一致验收。

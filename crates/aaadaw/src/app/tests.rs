@@ -13960,6 +13960,159 @@ fn midi_editor_set_filter_from_poly_aftertouch_selection_derives_native_criteria
 }
 
 #[test]
+fn midi_editor_set_filter_from_channel_pressure_selection_derives_native_criteria() {
+    let mut app = App::default();
+    let _ = app.update(Message::AddTrack);
+    let track_id = app.project.tracks()[0].id();
+    app.project
+        .apply(DawAction::InsertMidiItem {
+            track_id,
+            start_tick: 0,
+            length_ticks: 3_840,
+        })
+        .expect("test MIDI item should be inserted");
+    let item_id = app.project.midi_items()[0].id();
+    let pressures = [
+        MidiChannelPressureData {
+            channel: 1,
+            tick: 480,
+            value: 32,
+        },
+        MidiChannelPressureData {
+            channel: 1,
+            tick: 600,
+            value: 64,
+        },
+        MidiChannelPressureData {
+            channel: 2,
+            tick: 960,
+            value: 100,
+        },
+    ];
+    app.project
+        .apply(DawAction::AddMidiNotes {
+            item_id,
+            notes: vec![MidiNoteData {
+                channel: 0,
+                pitch: 60,
+                tick: 0,
+                duration: 240,
+                velocity: 90,
+                off_velocity: 0,
+            }],
+        })
+        .expect("test note should be inserted");
+    app.project
+        .apply(DawAction::SetMidiChannelPressures {
+            item_id,
+            channel_pressures: pressures.to_vec(),
+        })
+        .expect("test Channel Pressure events should be inserted");
+    app.project
+        .apply(DawAction::SetMidiPolyAftertouches {
+            item_id,
+            poly_aftertouches: vec![MidiPolyAftertouchData {
+                channel: 2,
+                tick: 840,
+                note: 64,
+                value: 50,
+            }],
+        })
+        .expect("test Poly Aftertouch event should be inserted");
+    app.project
+        .apply(DawAction::SetMidiControllers {
+            item_id,
+            controllers: vec![MidiControllerData {
+                channel: 1,
+                controller: 7,
+                tick: 720,
+                value: 70,
+            }],
+        })
+        .expect("test CC event should be inserted");
+    app.midi_editor_item_id = Some(item_id);
+    app.midi_editor_selected_channel_pressures = HashSet::from([pressures[0], pressures[2]]);
+    app.midi_editor_event_filter_enabled = true;
+    app.midi_editor_event_list_filter_active = true;
+    let project_snapshot = app.project.snapshot();
+    let undo_history_len = app.app_undo_history.len();
+    let redo_history_len = app.app_redo_history.len();
+
+    let _ = app.update(Message::SetMidiEditorFilterFromSelection);
+
+    assert_eq!(
+        app.midi_editor_channel_selection,
+        super::messages::MidiEditorChannelSelection::Multichannel
+    );
+    assert_eq!(app.midi_editor_filter_channels, 0b110);
+    assert_eq!(
+        app.midi_editor_event_type_filter,
+        super::messages::MidiEditorEventTypeFilter::ChannelPressure
+    );
+    assert!(!app.midi_editor_note_filter.pitch_enabled);
+    assert!(!app.midi_editor_note_filter.velocity_enabled);
+    assert_eq!(
+        app.midi_editor_position_filter,
+        super::messages::MidiEditorPositionFilter {
+            enabled: true,
+            range_initialized: true,
+            low: 125_000_000,
+            high: 250_260_417,
+            repeat_every: super::messages::MidiEditorFilterRepeat::Measure,
+        }
+    );
+    assert_eq!(app.midi_editor_filter_position_low, "0.12500000");
+    assert_eq!(app.midi_editor_filter_position_high, "0.25026042");
+    assert_eq!(app.midi_editor_draw_channel, 1);
+    assert!(!app.midi_editor_event_filter_enabled);
+    assert!(!app.midi_editor_event_list_filter_active);
+    assert_eq!(app.app_undo_history.len(), undo_history_len);
+    assert_eq!(app.app_redo_history.len(), redo_history_len);
+    assert_eq!(
+        app.midi_editor_selected_channel_pressures,
+        HashSet::from([pressures[0], pressures[2]])
+    );
+
+    let item = app.project.midi_items()[0].clone();
+    assert_eq!(super::view::midi_event_list_cursors(&app, &item).len(), 7);
+    let matching = app
+        .midi_editor_filter_event_selection(item_id)
+        .expect("MIDI item should be available for filtering");
+    assert_eq!(matching.channel_pressures, HashSet::from(pressures));
+    assert!(matching.notes.is_empty());
+    assert!(matching.controllers.is_empty());
+    assert!(matching.poly_aftertouches.is_empty());
+
+    let _ = app.update(Message::ToggleMidiEditorEventListFilter);
+    assert_eq!(
+        super::view::midi_event_list_cursors(&app, &item),
+        pressures
+            .into_iter()
+            .map(super::MidiEditorEventListCursor::ChannelPressure)
+            .collect::<Vec<_>>()
+    );
+    let _ = app.update(Message::SetMidiEditorFilterNoteVelocityEnabled(true));
+    let _ = app.update(Message::SetMidiEditorFilterNoteVelocityLow(32));
+    let _ = app.update(Message::SetMidiEditorFilterNoteVelocityHigh(64));
+    let filtered = app
+        .midi_editor_filter_event_selection(item_id)
+        .expect("MIDI item should be available for filtering");
+    assert_eq!(
+        filtered.channel_pressures,
+        HashSet::from([pressures[0], pressures[1]])
+    );
+    assert_eq!(
+        super::view::midi_event_list_cursors(&app, &item),
+        pressures[..2]
+            .iter()
+            .copied()
+            .map(super::MidiEditorEventListCursor::ChannelPressure)
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(app.project.snapshot(), project_snapshot);
+}
+
+#[test]
 fn midi_editor_set_filter_from_selection_without_item_leaves_filter_state_unchanged() {
     let mut app = App {
         midi_editor_selected_program_changes: HashSet::from([MidiProgramChangeData {
