@@ -1002,6 +1002,105 @@ fn copied_audio_take_pastes_into_multiple_selected_items_as_one_transaction() {
 }
 
 #[test]
+fn multiple_copied_audio_takes_paste_in_order_to_each_selected_item() {
+    let mut app = App::default();
+    let _ = app.update(Message::AddTrack);
+    let track_id = app.project.tracks()[0].id();
+    for (media_ref, start_sample) in [
+        ("asset://target-a", 0),
+        ("asset://target-b", 96_000),
+        ("asset://source-a", 192_000),
+        ("asset://source-b", 288_000),
+    ] {
+        app.project
+            .apply(DawAction::InsertAudioItem {
+                track_id,
+                media_ref: media_ref.to_owned(),
+                start_sample,
+                source_offset_samples: 0,
+                length_samples: 48_000,
+            })
+            .expect("audio item should be inserted");
+    }
+    let target_ids = [
+        app.project.audio_items()[0].id(),
+        app.project.audio_items()[1].id(),
+    ];
+    let source_ids = [
+        app.project.audio_items()[2].id(),
+        app.project.audio_items()[3].id(),
+    ];
+
+    app.timeline
+        .select_items(vec![(source_ids[1], track_id), (source_ids[0], track_id)]);
+    assert!(commands::is_enabled(&app, CommandId::CopyItems));
+    let _ = app.update(Message::ExecuteCommand(CommandId::CopyItems));
+    let clipboard = app
+        .audio_take_clipboard
+        .as_ref()
+        .expect("copy should populate the active-take clipboard");
+    assert_eq!(clipboard.takes.len(), 2);
+    assert_eq!(clipboard.takes[0].media_ref, "asset://source-a");
+    assert_eq!(clipboard.takes[1].media_ref, "asset://source-b");
+
+    app.timeline
+        .select_items(vec![(target_ids[1], track_id), (target_ids[0], track_id)]);
+    assert!(commands::is_enabled(&app, CommandId::PasteAudioItemAsTake));
+    let history_cursor = app.project.history_cursor();
+    let before = app.project.snapshot();
+    let _ = app.update(Message::ExecuteCommand(CommandId::PasteAudioItemAsTake));
+    assert_eq!(app.project.history_cursor(), history_cursor + 1);
+    assert_eq!(app.status, "Takes pasted into selected audio items");
+    assert_eq!(app.project.audio_items().len(), 4);
+
+    for (target_id, original_source) in [
+        (target_ids[0], "asset://target-a"),
+        (target_ids[1], "asset://target-b"),
+    ] {
+        let target = app
+            .project
+            .audio_items()
+            .iter()
+            .find(|item| item.id() == target_id)
+            .expect("target should remain in the project");
+        assert_eq!(target.take_count(), 3);
+        assert_eq!(target.active_take_index(), 2);
+        assert_eq!(target.media_ref(), "asset://source-b");
+        assert_eq!(
+            target
+                .other_takes()
+                .iter()
+                .map(|take| take.media_ref())
+                .collect::<Vec<_>>(),
+            [original_source, "asset://source-a"]
+        );
+    }
+
+    let after = app.project.snapshot();
+    let _ = app.update(Message::Undo);
+    assert_eq!(app.project.snapshot(), before);
+    let _ = app.update(Message::Redo);
+    assert_eq!(app.project.snapshot(), after);
+
+    app.timeline.select_items(vec![(target_ids[0], track_id)]);
+    let single_target_before = app.project.history_cursor();
+    let _ = app.update(Message::ExecuteCommand(CommandId::PasteAudioItemAsTake));
+    assert_eq!(app.project.history_cursor(), single_target_before + 1);
+    assert_eq!(app.status, "Takes pasted into audio item");
+    let target = app
+        .project
+        .audio_items()
+        .iter()
+        .find(|item| item.id() == target_ids[0])
+        .expect("single selected target should remain in the project");
+    assert_eq!(target.take_count(), 5);
+    assert_eq!(target.active_take_index(), 4);
+    assert_eq!(target.media_ref(), "asset://source-b");
+    let _ = app.update(Message::Undo);
+    assert_eq!(app.project.snapshot(), after);
+}
+
+#[test]
 fn delete_active_take_action_keeps_the_other_take_and_undo_redo_restore_it() {
     let mut app = App::default();
     let _ = app.update(Message::AddTrack);

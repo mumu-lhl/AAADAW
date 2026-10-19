@@ -2851,3 +2851,11 @@ Stable LLVM workspace Nextest **1610/1610**、AAADAW 桌面单元测试 **855/85
 Linux REAPER 7.82 / Default 7 的 Media Item Properties 原厂截图显示 **Active take** 列表按顺序列出 `1: Take B`、`2: Take A`，并标出当前 Take A。AAADAW 的 F2 Media Item Properties 增加相同编号与名称的选择器；选择项目直接提交 `SetAudioItemActiveTake`，同步刷新名称、速率和其他当前 Take 字段。播放/工程操作忙碌或冻结 Render Item 时拒绝修改；Undo、Redo 和其他切换动作都会更新仍打开的属性窗。
 
 Stable AAADAW 桌面测试 **856/856**、新增属性选择器与开窗撤销/重做回归、严格 all-target Clippy、fmt 与 diff 检查通过。nightly Cranelift Linux X11 二进制在隔离 Xvfb 1280×800 实窗中捕获初始属性、展开的 Take 列表、切换到 Take B、Undo 回到 Take A、Redo 回到 Take B；构建 Build ID `a53df722964459cbfc1f39f22ee2160919d76d0a`，SHA-256 `d6409a78a2ece6fae18e8c8e587b56b1af276d2ea782e605efab6f4987e3ada6`。原厂与 AAADAW 截图、测试和文件哈希见[Active take 属性选择器 manifest](../verification/reaper-parity/fixtures/audio-take-properties-selector-aaadaw.tsv)。此截图构建未启用 audio-device；只核验窗口和状态，不核验声音。`ITEM-PROPERTIES-001` 与 `EDIT-TAKE-001` 保持 `in_progress`，尚有完整原厂窗口几何、其他属性字段、录音 Take、固定 Lanes 和 Comp 等未完成范围。
+
+### 2026-10-19 P5 Take: 多来源 Paste as takes
+
+Linux REAPER 7.82 / Default 7 实测 Main action 40603：复制两个选中的音频源 Item 后，两个来源按项目顺序都追加到每个选中的目标 Item；最后追加的 Source B 激活。仅选一个目标时仍会追加两份来源。目标位置/长度与来源 Item 均不变；两目标操作一次 Undo/Redo 覆盖全部目标。读回表和五份 RPP 状态见[原厂 manifest](../verification/reaper-parity/fixtures/audio-paste-as-takes-multiple-sources-aaadaw.tsv)。
+
+AAADAW 的 Copy items 现按项目顺序保存所有选中音频项的活动 Take；Paste as takes 将完整顺序应用到每个选中音频目标，单来源广播路径维持原行为，多个来源与多个目标在一个 `BatchTransaction` 内提交。回归覆盖 2→3 Take 的双目标、多来源进入单目标、来源保留、单次历史事务与完整 Undo/Redo 快照。真实 Cranelift AAADAW 窗口四态截图显示两个目标的 3/3 活动 Source B、来源 Item、撤销和重做；原厂与 AAADAW 工程、探针脚本和 SHA-256 见[多来源 Paste as takes manifest](../verification/reaper-parity/fixtures/audio-paste-as-takes-multiple-sources-aaadaw.tsv)。
+
+Stable LLVM AAADAW 包测试 **1612/1612**（79 个 test binary，0 skipped）、严格 all-target Clippy、fmt、capture shell 语法、diff check、parity matrix **113 行 / 15 列**及 manifest 制品哈希审计通过。nightly Cranelift 桌面构建成功，保留既有 recursion-depth future-incompatible warning；Xvfb 实窗未启用 audio-device，因此截图只核验界面与 Take 状态。`EDIT-TAKE-001` 仍 `in_progress`：录音生成、跨工程剪贴板、MIDI/Track Copy、其他 Take 操作、Show all takes、Fixed Lanes 与 Comp Areas 尚未完成。

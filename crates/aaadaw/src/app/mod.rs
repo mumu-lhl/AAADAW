@@ -420,7 +420,7 @@ struct AudioItemClipboard {
 #[derive(Clone, Debug, PartialEq)]
 struct AudioTakeClipboard {
     project_generation: u64,
-    take: aaadaw_core::AudioItemTakeSnapshot,
+    takes: Vec<aaadaw_core::AudioItemTakeSnapshot>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -9590,7 +9590,7 @@ impl App {
             }
             Message::DeleteSelectedItems => self.delete_selected_items(),
             Message::TrimItemsToSelectedArea => self.trim_items_to_selected_area(),
-            Message::CopyItems => self.copy_selected_audio_item(),
+            Message::CopyItems => self.copy_selected_audio_items(),
             Message::CopyLoopOfSelectedArea => self.copy_loop_of_selected_area(),
             Message::EncloseMediaItemsInRazorEdit => self.enclose_media_items_in_razor_edit(),
             Message::PasteItems => self.paste_audio_items(),
@@ -19246,32 +19246,38 @@ impl App {
         self.apply_action(action, "Selected items trimmed to selected area");
     }
 
-    fn selected_audio_item_for_take_clipboard(&self) -> Option<&aaadaw_core::AudioItem> {
-        let item_id = self
-            .timeline
-            .selected_item
-            .filter(|_| self.timeline.selected_items.len() == 1)?;
+    fn selected_audio_items_for_take_clipboard(&self) -> Vec<&aaadaw_core::AudioItem> {
         self.project
             .audio_items()
             .iter()
-            .find(|item| item.id() == item_id)
+            .filter(|item| self.timeline.selected_items.contains(&item.id()))
+            .collect()
     }
 
-    pub(super) fn can_copy_selected_audio_item(&self) -> bool {
-        self.selected_audio_item_for_take_clipboard().is_some()
+    pub(super) fn can_copy_selected_audio_items(&self) -> bool {
+        !self.selected_audio_items_for_take_clipboard().is_empty()
     }
 
-    fn copy_selected_audio_item(&mut self) {
-        let Some(item) = self.selected_audio_item_for_take_clipboard() else {
-            self.status = "Select one audio item to copy its active take".to_owned();
+    fn copy_selected_audio_items(&mut self) {
+        let items = self.selected_audio_items_for_take_clipboard();
+        if items.is_empty() {
+            self.status = "Select an audio item to copy its active take".to_owned();
             return;
-        };
-        let take = item.active_take_snapshot();
+        }
+        let takes = items
+            .iter()
+            .map(|item| item.active_take_snapshot())
+            .collect::<Vec<_>>();
+        let take_count = takes.len();
         self.audio_take_clipboard = Some(AudioTakeClipboard {
             project_generation: self.project_generation,
-            take,
+            takes,
         });
-        self.status = "Active audio take copied".to_owned();
+        self.status = if take_count == 1 {
+            "Active audio take copied".to_owned()
+        } else {
+            format!("Copied {take_count} active audio takes")
+        };
     }
 
     pub(super) fn can_paste_audio_item_as_take(&self) -> bool {
@@ -19302,20 +19308,27 @@ impl App {
             return;
         }
         let selected_audio_ids = commands::selected_audio_item_ids(self);
-        let Some(take) = self
+        let Some(takes) = self
             .audio_take_clipboard
             .as_ref()
-            .map(|clipboard| clipboard.take.clone())
+            .map(|clipboard| clipboard.takes.clone())
         else {
             return;
         };
         let mut actions = selected_audio_ids
             .iter()
-            .map(|item_id| DawAction::PasteAudioItemAsTake {
-                item_id: *item_id,
-                take: take.clone(),
+            .flat_map(|item_id| {
+                takes
+                    .iter()
+                    .cloned()
+                    .map(move |take| DawAction::PasteAudioItemAsTake {
+                        item_id: *item_id,
+                        take,
+                    })
             })
             .collect::<Vec<_>>();
+        let pasted_take_count = takes.len();
+        let selected_item_count = selected_audio_ids.len();
         let action = if actions.len() == 1 {
             actions
                 .pop()
@@ -19328,10 +19341,14 @@ impl App {
         };
         self.apply_action(
             action,
-            if selected_audio_ids.len() == 1 {
+            if pasted_take_count == 1 && selected_item_count == 1 {
                 "Take pasted into audio item"
-            } else {
+            } else if pasted_take_count == 1 {
                 "Take pasted into selected audio items"
+            } else if selected_item_count == 1 {
+                "Takes pasted into audio item"
+            } else {
+                "Takes pasted into selected audio items"
             },
         );
     }

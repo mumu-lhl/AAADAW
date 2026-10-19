@@ -3695,7 +3695,7 @@ fn command_enabled(app: &App, kind: CommandKind, track: Option<TrackState>) -> b
                     app.item_selection_is_next_redo() || app.project.can_redo_track_mix(),
                 )
         }
-        CommandKind::CopyItems => app.can_copy_selected_audio_item(),
+        CommandKind::CopyItems => app.can_copy_selected_audio_items(),
         CommandKind::PasteItems => !project_edit_busy(app) && app.can_paste_audio_items(),
         CommandKind::PasteAudioItemAsTake => {
             !project_edit_busy(app) && app.can_paste_audio_item_as_take()
