@@ -2708,3 +2708,12 @@ Linux REAPER 7.82 / Default 7 原厂探针选中 channel 2 的 CC7 @ tick 480 �
 AAADAW 对该已测组合实现相同公共条件：All events / All channels、合并 Position、Repeat measure、Show-only 开启、Draw channel 保持 Channel 1；CC、Note 与无通道 Meta 按共同 Position 过滤。Cranelift 实窗截图记录七行原始列表、CC 与 Text Meta 两端选中、派生面板以及五行过滤结果。回归断言匹配事件、选区、工程快照与 Undo/Redo 历史；fixture、项目生成器、截图、Build ID/SHA-256 见 [AAADAW manifest](../verification/reaper-parity/fixtures/midi-event-filter-from-mixed-opaque-selection-aaadaw.tsv)。
 
 workspace Nextest **1,573/1,573，78 个测试目标，0 skipped**；定向回归 **1/1**；AAADAW all-target strict Clippy（`-D warnings -A future-incompatible`）、nightly Cranelift 桌面构建、fmt、diff check 均通过。两份 fixture manifest 的 **14/14** 个制品 SHA-256 匹配。REAPER 的 Position 组合框显示 `1/8–0.250`，AAADAW 仍使用可编辑小数文本 `0.12500000–0.25026042`；其他异构事件类型组合仍待测量和实现。`MIDI-EVENT-LIST-001`、UI-019 与 P7 保持 `in_progress`，截图验证行为和控件而非像素级一致。
+
+
+### 2026-10-19 MIDI Event List Filter 混合 Note + opaque 选区
+
+Linux REAPER 7.82 / Default 7 原厂探针选中 channel 2 的 C4 Note @ tick 480 与 Text Meta @ tick 960，并放置范围内 CC、未选 G4、Text Meta、范围外 SysEx 和终止行。Set 推导 `<all events>`、All channels、共同 Position `0.125–0.25026042`（界面显示 `1/8–0.250`）与 Repeat measure；Draw events on channel 保持 Channel 1。与 CC + opaque 组合不同，Show-only 维持未勾选，但 Event List 漏斗立即激活，因此五条范围内事件当场显示；关闭漏斗后恢复全部七行，Show-only 仍未勾选。选中 Note 和 Text Meta 保持选中，156 字节 `MIDI_GetAllEvts` 前后完全相同，RPP 保存了精确 Position 上界。ReaScript、readback、RPP、MIDI 字节及原厂实窗截图见 [native manifest](../verification/reaper-parity/fixtures/midi-event-filter-from-mixed-note-opaque-selection-native.tsv)。
+
+AAADAW 按该实测组合单独实现：通道和事件类型扩展为 All，派生共同 Position，开启 Event List funnel，但关闭 Show-only。Cranelift 实窗五张截图记录七行初始列表、两个选中端点、Set 面板、五行筛选结果及漏斗关闭后的七行恢复。App 回归覆盖所有匹配 Note/CC/opaque 事件、选区保留、漏斗切换、工程快照和 Undo/Redo 不变；项目生成器、fixture、截图和二进制身份见 [AAADAW manifest](../verification/reaper-parity/fixtures/midi-event-filter-from-mixed-note-opaque-selection-aaadaw.tsv)。
+
+workspace Nextest **1,574/1,574，78 个测试目标，0 skipped**；定向回归 **1/1**；AAADAW all-target strict Clippy（`-D warnings -A future-incompatible`）、nightly Cranelift 桌面构建、fmt 和 diff check 均通过。四份混合选择 manifest 的 **30/30** 个制品哈希匹配。CC + opaque 仍启用 Show-only，Note + opaque 则只激活漏斗；其余混合类型组合仍开放。Position 小数文本与 REAPER 组合框仍存在可见差异，因此 `MIDI-EVENT-LIST-001`、UI-019 与 P7 保持 `in_progress`；截图验证行为和控件，不代表像素级一致。

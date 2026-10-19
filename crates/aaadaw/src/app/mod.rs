@@ -14554,7 +14554,10 @@ impl App {
         if selected_kinds == 0 {
             return;
         }
-        if has_opaque_events && selected_kinds != 1 && !(selected_kinds == 2 && has_controllers) {
+        if has_opaque_events
+            && selected_kinds != 1
+            && !(selected_kinds == 2 && (has_controllers || has_notes))
+        {
             return;
         }
         let Some(item_id) = self.midi_editor_item_id else {
@@ -14570,14 +14573,18 @@ impl App {
         }
 
         // Channel-bearing-only selections derive criteria with the Event List
-        // funnel off. REAPER enables Show-only for selections containing
-        // opaque events, whether they are homogeneous or paired with a CC.
+        // funnel off. REAPER activates the funnel for Note+opaque selections
+        // without enabling Show-only; CC+opaque also enables Show-only.
         self.midi_editor_event_list_filter_active = false;
         self.midi_editor_event_filter_enabled = false;
 
         if selected_kinds > 1 {
             if has_opaque_events {
-                self.set_midi_editor_filter_from_mixed_controller_and_opaque_selection(item_id);
+                if has_notes {
+                    self.set_midi_editor_filter_from_mixed_note_and_opaque_selection(item_id);
+                } else {
+                    self.set_midi_editor_filter_from_mixed_controller_and_opaque_selection(item_id);
+                }
             } else {
                 self.set_midi_editor_filter_from_mixed_channel_event_selection(item_id);
             }
@@ -14681,7 +14688,7 @@ impl App {
         else {
             return;
         };
-        let mut selected_ticks = item
+        let selected_ticks = item
             .controllers()
             .iter()
             .filter(|event| self.midi_editor_selected_controllers.contains(event))
@@ -14695,7 +14702,62 @@ impl App {
                             .contains(&(*index as u32))
                     })
                     .map(|(_, event)| event.tick),
-            );
+            )
+            .collect();
+        self.set_midi_editor_filter_from_mixed_opaque_selection_ticks(
+            item_id,
+            selected_ticks,
+            true,
+        );
+    }
+
+    fn set_midi_editor_filter_from_mixed_note_and_opaque_selection(&mut self, item_id: ItemId) {
+        let Some(item) = self
+            .project
+            .midi_items()
+            .iter()
+            .find(|item| item.id() == item_id)
+        else {
+            return;
+        };
+        let selected_ticks = item
+            .notes()
+            .iter()
+            .filter(|event| self.midi_editor_selected_notes.contains(&event.id()))
+            .map(|event| event.tick())
+            .chain(
+                item.opaque_events()
+                    .iter()
+                    .enumerate()
+                    .filter(|(index, _)| {
+                        self.midi_editor_selected_opaque_events
+                            .contains(&(*index as u32))
+                    })
+                    .map(|(_, event)| event.tick),
+            )
+            .collect();
+        self.set_midi_editor_filter_from_mixed_opaque_selection_ticks(
+            item_id,
+            selected_ticks,
+            false,
+        );
+    }
+
+    fn set_midi_editor_filter_from_mixed_opaque_selection_ticks(
+        &mut self,
+        item_id: ItemId,
+        selected_ticks: Vec<u64>,
+        show_only: bool,
+    ) {
+        let Some(item) = self
+            .project
+            .midi_items()
+            .iter()
+            .find(|item| item.id() == item_id)
+        else {
+            return;
+        };
+        let mut selected_ticks = selected_ticks.into_iter();
         let Some(first_tick) = selected_ticks.next() else {
             return;
         };
@@ -14717,8 +14779,9 @@ impl App {
             },
         );
 
-        // REAPER expands a CC+opaque selection to all event types and channels,
-        // then uses their shared Position range with Show-only enabled.
+        // REAPER expands the measured mixed Note/CC + opaque selections to all
+        // event types and channels and uses their shared Position range. The
+        // Note path activates the funnel without Show-only; the CC path enables it.
         self.midi_editor_channel_selection = MidiEditorChannelSelection::AllChannels;
         self.midi_editor_filter_channels = u16::MAX;
         self.midi_editor_filter_channels_initialized = true;
@@ -14740,7 +14803,7 @@ impl App {
         self.midi_editor_filter_position_high = format_midi_editor_filter_position(position_high);
         self.midi_editor_filter_note_length_low.clear();
         self.midi_editor_filter_note_length_high.clear();
-        self.midi_editor_event_filter_enabled = true;
+        self.midi_editor_event_filter_enabled = show_only;
         self.midi_editor_event_list_filter_active = true;
     }
 
