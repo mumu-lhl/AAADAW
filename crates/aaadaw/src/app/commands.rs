@@ -44,6 +44,7 @@ pub(crate) enum CommandId {
     CopyItems,
     PasteItems,
     PasteAudioItemAsTake,
+    MoveActiveTakesToTop,
     ToggleMediaBrowserPanel,
     ToggleOfflineJobsPanel,
     ShowArrangement,
@@ -202,6 +203,7 @@ enum CommandKind {
     CopyItems,
     PasteItems,
     PasteAudioItemAsTake,
+    MoveActiveTakesToTop,
     ToggleMediaBrowserPanel,
     ToggleOfflineJobsPanel,
     ShowArrangement,
@@ -1500,6 +1502,16 @@ const COMMANDS: &[CommandDefinition] = &[
         aliases: &["delete active take", "take delete active"],
         shortcuts: &[],
         destructive: true,
+        separator_before: false,
+    },
+    CommandDefinition {
+        kind: CommandKind::MoveActiveTakesToTop,
+        menu: Some(MainMenu::Item),
+        category: "Take",
+        label: "Move active takes to top",
+        aliases: &["move active take to top", "take move active to top"],
+        shortcuts: &[],
+        destructive: false,
         separator_before: false,
     },
     CommandDefinition {
@@ -2851,6 +2863,7 @@ fn command_kind_id(kind: CommandKind) -> &'static str {
         CommandKind::PasteItems => "edit.paste-items",
         CommandKind::PasteAudioItemAsTake => "take.paste-as-takes",
         CommandKind::DeleteActiveAudioItemTake => "take.delete-active",
+        CommandKind::MoveActiveTakesToTop => "take.move-active-to-top",
         CommandKind::ToggleMediaBrowserPanel => "view.media-browser-panel",
         CommandKind::ToggleOfflineJobsPanel => "view.offline-jobs-panel",
         CommandKind::ShowArrangement => "view.arrangement-workspace",
@@ -3100,6 +3113,13 @@ pub(super) fn dispatch(app: &mut App, command: CommandId) -> Task<Message> {
                 return Task::none();
             };
             Message::DeleteActiveAudioItemTake(item_id)
+        }
+        CommandId::MoveActiveTakesToTop => {
+            let Some(item_id) = selected_audio_item_id(app) else {
+                app.status = "Select one audio item to move its active take to the top".to_owned();
+                return Task::none();
+            };
+            Message::MoveAudioItemActiveTakeToTop(item_id)
         }
         CommandId::ToggleMediaBrowserPanel => Message::ToggleMediaBrowserPanel,
         CommandId::ToggleOfflineJobsPanel => Message::ToggleOfflineJobsPanel,
@@ -3794,6 +3814,21 @@ fn command_enabled(app: &App, kind: CommandKind, track: Option<TrackState>) -> b
                         .any(|track| track.frozen_audio_item_id() == Some(item_id))
                 })
         }
+        CommandKind::MoveActiveTakesToTop => {
+            !project_edit_busy(app)
+                && selected_audio_item_id(app).is_some_and(|item_id| {
+                    app.project
+                        .audio_items()
+                        .iter()
+                        .find(|item| item.id() == item_id)
+                        .is_some_and(|item| item.take_count() > 1)
+                        && !app
+                            .project
+                            .tracks()
+                            .iter()
+                            .any(|track| track.frozen_audio_item_id() == Some(item_id))
+                })
+        }
         CommandKind::SwitchItemsToNextTake | CommandKind::SwitchItemsToPreviousTake => {
             !project_edit_busy(app)
                 && selected_audio_item_id(app).is_some_and(|item_id| {
@@ -4074,6 +4109,7 @@ fn command_id(kind: CommandKind) -> CommandId {
         CommandKind::DuplicateActiveTake => CommandId::DuplicateActiveTake,
         CommandKind::PasteAudioItemAsTake => CommandId::PasteAudioItemAsTake,
         CommandKind::DeleteActiveAudioItemTake => CommandId::DeleteActiveAudioItemTake,
+        CommandKind::MoveActiveTakesToTop => CommandId::MoveActiveTakesToTop,
         CommandKind::SwitchItemsToNextTake => CommandId::SwitchItemsToNextTake,
         CommandKind::SwitchItemsToPreviousTake => CommandId::SwitchItemsToPreviousTake,
         CommandKind::DuplicateSelectedMidiItem => CommandId::DuplicateSelectedMidiItem,

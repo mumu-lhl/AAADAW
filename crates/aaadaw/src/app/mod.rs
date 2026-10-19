@@ -5450,6 +5450,7 @@ impl App {
                             | Message::DuplicateAudioItem(_)
                             | Message::DuplicateAudioItemTake(_)
                             | Message::DeleteActiveAudioItemTake(_)
+                            | Message::MoveAudioItemActiveTakeToTop(_)
                             | Message::SwitchAudioItemTake(..)
                             | Message::DuplicateMidiItem(_)
                             | Message::SplitSelectedItemsAtCursor
@@ -9669,6 +9670,44 @@ impl App {
                 self.apply_action(
                     DawAction::DeleteActiveAudioItemTake { item_id },
                     "Active take deleted",
+                );
+            }
+            Message::MoveAudioItemActiveTakeToTop(item_id) => {
+                if commands::project_edit_busy(self) {
+                    self.status =
+                        "Stop playback or finish the current project operation before reordering takes"
+                            .to_owned();
+                    return Task::none();
+                }
+                let Some(item) = self
+                    .project
+                    .audio_items()
+                    .iter()
+                    .find(|item| item.id() == item_id)
+                else {
+                    self.status = "Audio item no longer exists".to_owned();
+                    return Task::none();
+                };
+                if item.take_count() <= 1 {
+                    self.status = "Audio item has only one take".to_owned();
+                    return Task::none();
+                }
+                if item.active_take_index() == 0 {
+                    self.status = "Active take is already at the top".to_owned();
+                    return Task::none();
+                }
+                if self
+                    .project
+                    .tracks()
+                    .iter()
+                    .any(|track| track.frozen_audio_item_id() == Some(item_id))
+                {
+                    self.status = "Frozen render items cannot be edited".to_owned();
+                    return Task::none();
+                }
+                self.apply_action(
+                    DawAction::MoveAudioItemActiveTakeToTop { item_id },
+                    "Active take moved to top",
                 );
             }
             Message::SwitchAudioItemTake(item_id, next) => {

@@ -253,6 +253,53 @@ fn deleting_the_only_active_take_removes_the_item_and_undo_restores_it() {
 }
 
 #[test]
+fn moving_active_take_to_top_preserves_source_and_undo_redo_restore_order() {
+    let (mut project, item_id) = project_with_audio_item();
+    let mut copied_take = project.audio_items()[0].active_take_snapshot();
+    copied_take.media_ref = "asset://take-b".to_owned();
+    copied_take.name = "Take B".to_owned();
+    project
+        .apply(DawAction::PasteAudioItemAsTake {
+            item_id,
+            take: copied_take,
+        })
+        .expect("second take should be appended");
+    assert_eq!(project.audio_items()[0].active_take_index(), 1);
+
+    project
+        .apply(DawAction::MoveAudioItemActiveTakeToTop { item_id })
+        .expect("active take should move to the top");
+    let item = &project.audio_items()[0];
+    assert_eq!(item.take_count(), 2);
+    assert_eq!(item.active_take_index(), 0);
+    assert_eq!(item.media_ref(), "asset://take-b");
+    assert_eq!(item.name(), "Take B");
+    assert_eq!(item.other_takes()[0].index(), 1);
+    assert_eq!(item.other_takes()[0].media_ref(), "asset://take-a");
+
+    let moved = project.snapshot();
+    assert_eq!(
+        Project::from_snapshot(moved.clone()).unwrap().snapshot(),
+        moved
+    );
+    assert!(project.undo().expect("take reorder should undo"));
+    assert_eq!(project.audio_items()[0].active_take_index(), 1);
+    assert_eq!(project.audio_items()[0].media_ref(), "asset://take-b");
+    assert_eq!(project.audio_items()[0].other_takes()[0].index(), 0);
+    assert!(project.redo().expect("take reorder should redo"));
+    assert_eq!(project.audio_items()[0].active_take_index(), 0);
+    assert_eq!(project.audio_items()[0].media_ref(), "asset://take-b");
+
+    let history_cursor = project.history_cursor();
+    let unchanged = project.snapshot();
+    project
+        .apply(DawAction::MoveAudioItemActiveTakeToTop { item_id })
+        .expect("moving an already top take should be a no-op");
+    assert_eq!(project.snapshot(), unchanged);
+    assert_eq!(project.history_cursor(), history_cursor);
+}
+
+#[test]
 fn paste_as_take_rejects_invalid_source_data_without_changing_project_or_history() {
     let (mut project, item_id) = project_with_audio_item();
     let mut copied_take = project.audio_items()[0].active_take_snapshot();

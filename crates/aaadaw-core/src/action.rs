@@ -371,6 +371,10 @@ pub enum DawAction {
     DeleteActiveAudioItemTake {
         item_id: ItemId,
     },
+    /// Move the active take to list index zero without changing its source.
+    MoveAudioItemActiveTakeToTop {
+        item_id: ItemId,
+    },
     /// Activate an existing take using its zero-based position in the item.
     SetAudioItemActiveTake {
         item_id: ItemId,

@@ -1,0 +1,21 @@
+kind	artifact_or_check	result_or_sha256
+native_reference	Linux REAPER	7.82/linux-x86_64; Default 7 theme; Main action 41380 Item: Move active takes to top; default shortcut is blank
+native_probe	scripts/reaper_parity/probe-audio-move-active-take-to-top.lua	SHA-256 c21ce1b0d0db67d08d7017e88e0b8ae3a0d8d7bb437cda28cdfc4deff5d7ce3b; reads take order, active source, undo, redo, and already-top no-op
+native_action	docs/verification/reaper-parity/linux-7.82/actions.tsv	action 41380 exact label and blank default shortcut verified
+native_state	docs/verification/reaper-parity/fixtures/audio-move-active-take-to-top-native.tsv	SHA-256 45a9b8b3d6dee7704ef9523c01828367b9cd10e387b01e450f5e94e29c4ea3d7; Take A moves from active index 1 to index 0; Undo restores the original order and Redo restores the moved order; already-top invocation leaves undo description unchanged
+native_capture	docs/verification/reaper-parity/fixtures/audio-move-active-take-to-top-native-after.png	SHA-256 c5bf5214b3e16a458e4943db25a022f98c2997f25ed13da16c845e1c87e91b84; 1024x768 live REAPER Arrange window shows Take A active at index 0
+native_project	docs/verification/reaper-parity/fixtures/audio-move-active-take-to-top-before.rpp	SHA-256 37a9adca9b2650b51e3867317c14d636366265e5aef3175f56712b48e2bceb3f; Take B index 0 and Take A active at index 1
+native_project	docs/verification/reaper-parity/fixtures/audio-move-active-take-to-top-after.rpp	SHA-256 b03d522ce33b18363eeb25384ab39a7ad2cf81de8f7d67f9ff1722e5756207af; Take A active at index 0 and Take B index 1
+native_project	docs/verification/reaper-parity/fixtures/audio-move-active-take-to-top-undo.rpp	SHA-256 37a9adca9b2650b51e3867317c14d636366265e5aef3175f56712b48e2bceb3f; Undo restores Take B index 0 and Take A active at index 1
+native_project	docs/verification/reaper-parity/fixtures/audio-move-active-take-to-top-redo.rpp	SHA-256 b03d522ce33b18363eeb25384ab39a7ad2cf81de8f7d67f9ff1722e5756207af; Redo restores Take A active at index 0
+aaadaw_project	docs/verification/reaper-parity/fixtures/audio-multi-take-aaadaw.aaadaw	SHA-256 398cae8e89a940aaa2b6f454265030d9f1c414f3780fbe0f95509c62e7feb0b1; unchanged two-take Take A/Take B project fixture
+aaadaw_capture	docs/verification/reaper-parity/fixtures/audio-move-active-take-to-top-aaadaw-before.png	SHA-256 e77e09e8d6b4bd9f3b6e56f55ec64244ce5687b26d46ecb5a07fbadc95ba405e; 1280x800 live AAADAW window shows Take 2/2 · Take A and Move active to top control
+aaadaw_capture	docs/verification/reaper-parity/fixtures/audio-move-active-take-to-top-aaadaw-after.png	SHA-256 8c1d791e5c5d7b985cf2c8294b7cad3f0106f8c75c2880c74b0bddff8c430ef3; 1280x800 live AAADAW window shows Take 1/2 · Take A and status Active take moved to top
+aaadaw_capture_script	scripts/reaper_parity/capture-audio-move-active-take-to-top-aaadaw.sh	SHA-256 73b2a0fb10f413c15c568ed4713f8e72c87379c04af1747af65889293939871b; isolated Xvfb, temporary project copy, and Ctrl+Alt+Shift+M capture binding
+capture_binary	target/debug/debug/aaadaw	SHA-256 99b6757d5e950ba81285389c0a169c318c52a1fcd62479ed0cca580a1fedb542; Stable LLVM Linux desktop binary used for screenshots
+capture_build	CARGO_TARGET_DIR=target/debug CARGO_PROFILE_DEV_DEBUG=0 CARGO_INCREMENTAL=0 cargo +stable build -p aaadaw --bin aaadaw --locked	passed
+capture_command	scripts/reaper_parity/capture-audio-move-active-take-to-top-aaadaw.sh target/debug/debug/aaadaw	passed; captured selected two-take Inspector before and after action 41380 behavior
+stable_tests	cargo +stable nextest run -p aaadaw --bin aaadaw --locked	848 passed, 0 skipped
+stable_tests	cargo +stable nextest run -p aaadaw-core -p aaadaw-storage --locked	374 passed, 0 skipped
+validation	Stable all-target Clippy, cargo +stable fmt --all --check, capture script bash -n, git diff --check, parity matrix CSV structure and uniqueness	passed; strict Stable all-target Clippy with -D warnings -A future-incompatible
+open_scope	EDIT-TAKE-001	Remains in_progress: other take-order actions, multi-selection, recording-created takes, lanes, comp areas, MIDI takes, and cross-project clipboard behavior remain open

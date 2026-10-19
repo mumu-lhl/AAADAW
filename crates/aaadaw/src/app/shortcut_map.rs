@@ -24,6 +24,11 @@ const REAPER_ACTIONS: &[(&str, u32, &str)] = &[
         40129,
         "Take: Delete active take from items",
     ),
+    (
+        "take.move-active-to-top",
+        41380,
+        "Item: Move active takes to top",
+    ),
     ("take.switch-next", 40125, "Take: Switch items to next take"),
     (
         "take.paste-as-takes",
@@ -736,7 +741,7 @@ mod tests {
 
     #[test]
     fn reaper_main_mapping_table_round_trips_all_unique_native_action_ids() {
-        assert_eq!(REAPER_ACTIONS.len(), 108);
+        assert_eq!(REAPER_ACTIONS.len(), 109);
         let mut action_ids = REAPER_ACTIONS
             .iter()
             .map(|(_, action_id, _)| *action_id)

@@ -98,6 +98,71 @@ fn audio_take_actions_switch_with_undo_and_require_multiple_takes() {
 }
 
 #[test]
+fn moving_active_audio_take_to_top_is_registered_and_undoable() {
+    let mut app = App::default();
+    let _ = app.update(Message::AddTrack);
+    let track_id = app.project.tracks()[0].id();
+    app.project
+        .apply(DawAction::InsertAudioItem {
+            track_id,
+            media_ref: "asset://take-a".to_owned(),
+            start_sample: 0,
+            source_offset_samples: 0,
+            length_samples: 48_000,
+        })
+        .expect("first take item should be inserted");
+    let item_id = app.project.audio_items()[0].id();
+    let mut second_take = app.project.audio_items()[0].active_take_snapshot();
+    second_take.media_ref = "asset://take-b".to_owned();
+    second_take.name = "Take B".to_owned();
+    app.project
+        .apply(DawAction::PasteAudioItemAsTake {
+            item_id,
+            take: second_take,
+        })
+        .expect("second take should be appended and active");
+    app.timeline.rebuild(&app.project);
+    app.timeline.select_items(vec![(item_id, track_id)]);
+
+    let action = commands::shortcut_entries(&app)
+        .into_iter()
+        .find(|entry| entry.id == "take.move-active-to-top")
+        .expect("REAPER's Move active takes to top action should be registered");
+    assert!(action.default_binding.is_empty());
+    let menu_entry = commands::for_menu(&app, MainMenu::Item)
+        .into_iter()
+        .find(|entry| entry.id == CommandId::MoveActiveTakesToTop)
+        .expect("Item menu should expose Move active takes to top");
+    assert_eq!(menu_entry.label, "Move active takes to top");
+    assert!(menu_entry.enabled);
+    assert_eq!(
+        commands::find(&app, "move active take to top"),
+        Some(CommandId::MoveActiveTakesToTop)
+    );
+
+    let _ = app.update(Message::ExecuteCommand(CommandId::MoveActiveTakesToTop));
+    let item = &app.project.audio_items()[0];
+    assert_eq!(item.take_count(), 2);
+    assert_eq!(item.active_take_index(), 0);
+    assert_eq!(item.media_ref(), "asset://take-b");
+    assert_eq!(item.other_takes()[0].index(), 1);
+    assert_eq!(item.other_takes()[0].media_ref(), "asset://take-a");
+
+    let _ = app.update(Message::Undo);
+    let item = &app.project.audio_items()[0];
+    assert_eq!(item.active_take_index(), 1);
+    assert_eq!(item.media_ref(), "asset://take-b");
+    assert_eq!(item.other_takes()[0].index(), 0);
+    let _ = app.update(Message::Redo);
+    assert_eq!(app.project.audio_items()[0].active_take_index(), 0);
+    assert_eq!(app.project.audio_items()[0].media_ref(), "asset://take-b");
+    let history_cursor = app.project.history_cursor();
+    let _ = app.update(Message::MoveAudioItemActiveTakeToTop(item_id));
+    assert_eq!(app.project.history_cursor(), history_cursor);
+    assert_eq!(app.status, "Active take is already at the top");
+}
+
+#[test]
 fn copied_audio_take_pastes_into_selected_item_without_removing_source_item() {
     let mut app = App::default();
     let _ = app.update(Message::AddTrack);

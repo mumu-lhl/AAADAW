@@ -311,4 +311,19 @@ impl AudioItem {
         self.other_takes.sort_unstable_by_key(|take| take.index);
         true
     }
+
+    pub(crate) fn move_active_take_to_top(&mut self) -> bool {
+        if self.active_take_index == 0 {
+            return false;
+        }
+        let active_index = self.active_take_index;
+        for take in &mut self.other_takes {
+            if take.index < active_index {
+                take.index += 1;
+            }
+        }
+        self.active_take_index = 0;
+        self.other_takes.sort_unstable_by_key(|take| take.index);
+        true
+    }
 }
