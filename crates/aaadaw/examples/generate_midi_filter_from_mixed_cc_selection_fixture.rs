@@ -22,7 +22,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     project.apply(DawAction::InsertMidiItem {
         track_id,
         start_tick: 0,
-        length_ticks: 3_840,
+        length_ticks: 7_680,
     })?;
     let item_id = project.midi_items()[0].id();
     project.apply(DawAction::AddMidiNotes {

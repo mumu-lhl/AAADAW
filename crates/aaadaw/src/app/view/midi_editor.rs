@@ -2,9 +2,10 @@ use super::super::{
     App, MIDI_EDITOR_KEY_WIDTH, Message, MidiEditorChannelSelection, MidiEditorControllerFilter,
     MidiEditorEventKind, MidiEditorEventListCursor, MidiEditorEventTypeFilter,
     MidiEditorFilterRepeat, MidiEditorFilterState, MidiEditorLane, MidiEditorMode,
-    MidiEditorNoteFilter, MidiEditorNoteFilterEvent, MidiEditorPitchFilterValue,
-    MidiEditorPositionFilter, MidiEditorTool, effective_midi_bank_value,
-    midi_editor_filter_repeat_position_value, midi_editor_measure_length_ticks,
+    MidiEditorNoteFilter, MidiEditorNoteFilterEvent, MidiEditorPitchBendFilter,
+    MidiEditorPitchFilterValue, MidiEditorPositionFilter, MidiEditorTool,
+    effective_midi_bank_value, midi_editor_filter_repeat_position_value,
+    midi_editor_measure_length_ticks,
 };
 use super::tokens::{PANEL_PADDING, ROW_GAP, SPACING_LG, SPACING_MD, SPACING_XS, TOUCH_TARGET_MIN};
 use crate::timeline::{SnapGrid, TimelineEvent, snap_tick_to_grid};
@@ -296,6 +297,7 @@ fn midi_snap_for_app(app: &App) -> MidiSnap {
         event_type_filter: app.midi_editor_event_type_filter,
         note_filter: app.midi_editor_note_filter,
         controller_filter: app.midi_editor_controller_filter,
+        pitch_bend_filter: app.midi_editor_pitch_bend_filter,
         position_filter: app.midi_editor_position_filter,
         ppq,
         measure_ticks,
@@ -333,6 +335,7 @@ struct MidiSnap {
     event_type_filter: MidiEditorEventTypeFilter,
     note_filter: MidiEditorNoteFilter,
     controller_filter: MidiEditorControllerFilter,
+    pitch_bend_filter: MidiEditorPitchBendFilter,
     position_filter: MidiEditorPositionFilter,
     ppq: u32,
     measure_ticks: u64,
@@ -356,6 +359,7 @@ impl Default for MidiSnap {
             event_type_filter: MidiEditorEventTypeFilter::AllEvents,
             note_filter: MidiEditorNoteFilter::default(),
             controller_filter: MidiEditorControllerFilter::default(),
+            pitch_bend_filter: MidiEditorPitchBendFilter::default(),
             position_filter: MidiEditorPositionFilter::default(),
             ppq: 960,
             measure_ticks: 3_840,
@@ -379,6 +383,7 @@ impl MidiSnap {
             event_type: self.event_type_filter,
             note: self.note_filter,
             controller: self.controller_filter,
+            pitch_bend: self.pitch_bend_filter,
             position: self.position_filter,
         }
     }
@@ -415,8 +420,15 @@ impl MidiSnap {
         )
     }
 
-    fn pitch_bend_visible(self, channel: u8) -> bool {
-        self.event_visible(channel, MidiEditorEventKind::Pitch)
+    fn pitch_bend_visible(self, event: MidiPitchBendData) -> bool {
+        let position = midi_editor_filter_repeat_position_value(
+            event.tick,
+            self.ppq,
+            self.measure_ticks,
+            MidiEditorFilterRepeat::Measure,
+        );
+        self.filter_state()
+            .pitch_bend_visible_at(event.channel, event.value, position)
     }
 
     fn program_change_visible(self, channel: u8) -> bool {
@@ -1208,7 +1220,7 @@ fn midi_event_list_entries(item: &MidiItem, snap: MidiSnap) -> Vec<MidiEventList
             item.pitch_bends()
                 .iter()
                 .copied()
-                .filter(|event| snap.pitch_bend_visible(event.channel))
+                .filter(|event| snap.pitch_bend_visible(*event))
                 .map(MidiEventListEntry::PitchBend),
         )
         .chain(
@@ -1510,9 +1522,9 @@ fn midi_event_list_view<'a>(
                     event.tick,
                     None,
                     Some(event.channel),
-                    "Pitch",
-                    "Pitch Bend".to_owned(),
-                    event.value.to_string(),
+                    "Pitch Bend",
+                    String::new(),
+                    format_midi_pitch_bend_value(event.value),
                     String::new(),
                     String::new(),
                     app.midi_editor_selected_pitch_bends.contains(&event),
@@ -1951,6 +1963,15 @@ fn midi_event_list_optional_length(ticks: Option<u64>, ppq: u64, meter: TimeSign
     ticks
         .map(|ticks| midi_event_list_length(ticks, ppq, meter))
         .unwrap_or_default()
+}
+
+fn format_midi_pitch_bend_value(value: u16) -> String {
+    let centered = i32::from(value) - 8_192;
+    if centered > 0 {
+        format!("+{centered}")
+    } else {
+        centered.to_string()
+    }
 }
 
 fn midi_humanize_dialog(app: &App, touch_targets: bool) -> Element<'_, Message> {
@@ -2711,7 +2732,11 @@ fn channel_filter_dialog(app: &App, touch_targets: bool) -> Element<'_, Message>
     );
     let controller_filter_visible =
         app.midi_editor_event_type_filter == MidiEditorEventTypeFilter::ControlChange;
-    let position_filter_visible = note_filter_visible || controller_filter_visible;
+    let pitch_bend_filter_visible =
+        app.midi_editor_event_type_filter == MidiEditorEventTypeFilter::Pitch;
+    let position_filter_visible =
+        note_filter_visible || controller_filter_visible || pitch_bend_filter_visible;
+    let repeat_filter_visible = note_filter_visible || controller_filter_visible;
     let pitch_options = if note_filter.pitch_enabled {
         &MidiEditorPitchFilterValue::OPTIONS[..]
     } else {
@@ -2937,14 +2962,46 @@ fn channel_filter_dialog(app: &App, touch_targets: bool) -> Element<'_, Message>
     ]
     .spacing(ROW_GAP)
     .align_y(iced::Alignment::Center);
-    let repeat_filter_row = row![
-        text("Repeat every").width(Length::Fixed(118.0)),
+    let pitch_bend_filter_row = row![
+        checkbox(app.midi_editor_pitch_bend_filter.enabled)
+            .label("Pitch")
+            .on_toggle(Message::SetMidiEditorFilterPitchBendEnabled),
+        text("Low").size(11),
+        text_input("", &app.midi_editor_filter_value_low)
+            .on_input_maybe(
+                app.midi_editor_pitch_bend_filter
+                    .enabled
+                    .then_some(Message::SetMidiEditorFilterValueLow)
+            )
+            .width(Length::Fixed(80.0)),
+        text("High").size(11),
+        text_input("", &app.midi_editor_filter_value_high)
+            .on_input_maybe(
+                app.midi_editor_pitch_bend_filter
+                    .enabled
+                    .then_some(Message::SetMidiEditorFilterValueHigh)
+            )
+            .width(Length::Fixed(80.0)),
+    ]
+    .spacing(ROW_GAP)
+    .align_y(iced::Alignment::Center);
+    let repeat_control: Element<'_, Message> = if repeat_filter_visible {
         pick_list(
             &MidiEditorFilterRepeat::OPTIONS[..],
             Some(app.midi_editor_position_filter.repeat_every),
             Message::SetMidiEditorFilterRepeatEvery,
         )
-        .width(Length::Fixed(150.0)),
+        .width(Length::Fixed(150.0))
+        .into()
+    } else {
+        text_input("", "measure")
+            .on_input_maybe(None::<fn(String) -> Message>)
+            .width(Length::Fixed(150.0))
+            .into()
+    };
+    let repeat_filter_row = row![
+        text("Repeat every").width(Length::Fixed(118.0)),
+        repeat_control,
     ]
     .spacing(ROW_GAP)
     .align_y(iced::Alignment::Center);
@@ -2954,6 +3011,9 @@ fn channel_filter_dialog(app: &App, touch_targets: bool) -> Element<'_, Message>
     }
     if controller_filter_visible {
         criteria_rows.extend([controller_filter_row.into(), value_filter_row.into()]);
+    }
+    if pitch_bend_filter_visible {
+        criteria_rows.push(pitch_bend_filter_row.into());
     }
     if position_filter_visible {
         criteria_rows.extend([position_filter.into(), repeat_filter_row.into()]);
@@ -3768,7 +3828,7 @@ impl PitchBendLane<'_> {
             .pitch_bends()
             .iter()
             .enumerate()
-            .filter(|(_, bend)| self.snap.pitch_bend_visible(bend.channel))
+            .filter(|(_, bend)| self.snap.pitch_bend_visible(**bend))
             .flat_map(|(index, bend)| {
                 source_event_occurrences(self.item, bend.tick, item_start, item_end)
                     .map(move |tick| (index, tick, bend.value))
@@ -4010,7 +4070,7 @@ impl canvas::Program<Message> for PitchBendLane<'_> {
             .item
             .pitch_bends()
             .iter()
-            .filter(|bend| self.snap.pitch_bend_visible(bend.channel))
+            .filter(|bend| self.snap.pitch_bend_visible(**bend))
             .flat_map(|bend| {
                 source_event_occurrences(
                     self.item,
@@ -4028,7 +4088,7 @@ impl canvas::Program<Message> for PitchBendLane<'_> {
             .item
             .pitch_bends()
             .iter()
-            .filter(|bend| self.snap.pitch_bend_visible(bend.channel))
+            .filter(|bend| self.snap.pitch_bend_visible(**bend))
             .flat_map(|bend| {
                 source_event_occurrences(
                     self.item,
@@ -5789,6 +5849,15 @@ fn piano_key_rect(pitch: u8, row_y: f32, row_height: f32) -> Rectangle {
 mod tests {
     use super::*;
     use crate::app::MidiTransposeScope;
+
+    #[test]
+    fn event_list_formats_pitch_bend_values_around_the_midi_center() {
+        assert_eq!(format_midi_pitch_bend_value(0), "-8192");
+        assert_eq!(format_midi_pitch_bend_value(4_096), "-4096");
+        assert_eq!(format_midi_pitch_bend_value(8_192), "0");
+        assert_eq!(format_midi_pitch_bend_value(10_000), "+1808");
+        assert_eq!(format_midi_pitch_bend_value(16_383), "+8191");
+    }
 
     #[test]
     fn event_list_columns_match_the_native_order_and_include_reaper_data() {

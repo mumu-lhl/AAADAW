@@ -1,0 +1,20 @@
+artifact	sha256
+scripts/reaper_parity/probe-midi-event-filter-from-pitch-selection.lua	921acd43ad856fbd0f35a21788495b018a18d3fc405c56cefae316eeece75c3b
+fixtures/midi-event-filter-from-pitch-native-readback.tsv	b00e82fe2a81d482596864ee3b7c907e1e40074232b8b908672fec268b09dd20
+fixtures/midi-event-filter-from-pitch-native-before.rpp	2bc6fb66923566510f119c59cd2d6bd8ffdb9696e8160d3a4efc003e6e3f90e8
+fixtures/midi-event-filter-from-pitch-native-after-set.rpp	55c8f1041ae57f1e54b118dc3b44705cf044da2b9d9f08e4137ff3bac8143425
+fixtures/midi-event-filter-from-pitch-native-list-before.png	f3c5cbe912b8aac41d6b76341dca47fc2962c33497fde3f9f02cf9cae4e959ed
+fixtures/midi-event-filter-from-pitch-native-after-set.png	1ac52a20fcdaeba6567231bdbcb80fde518bf582fbed974d23a093a1f1425a4e
+fixtures/midi-event-filter-from-pitch-native-list-unfiltered.png	2b3199e11866ce00888bc8de75f9feaa26af3f426be773c12395ddb466c07758
+fixtures/midi-event-filter-from-pitch-native-list-filtered.png	cabe9940596d24c348aae981ae7da99468c2a7dc88b3537c75e447094c7c2cba
+native_build_id	fb9ade2f211bc91a3ee6193630ef17bcf5f6528b
+native_binary_sha256	9976f5608068b7a58518969001b00b527fb0de6ed7459e0e5dda6f29878ee254
+theme	REAPER 7.82 Linux Default 7; theme SHA-256 575544606736a395520703e532209ad9635f13a41b7ea000bb9810d60025be48
+environment	Linux dummy Xorg :542, 1600x1000; isolated profile; audio unavailable
+starting_state	Selected Pitch Bend raw 4096 on channel 2 @ tick 480 and raw 12288 on channel 3 @ tick 960; unselected bend raw 10000 on channel 2 @ tick 600; one Note and one CC control row; funnel off
+action	Event List > Filter Events > Set filter from selection
+assertion	The dialog derives Pitch, channels 2–3, signed Pitch range -4096–4096, and Position 0.125–0.25026042; Repeat every is disabled for Pitch. The action leaves the Event List funnel off and keeps all six rows visible. Show-only, Invert, and Solo stay off.
+filter_toggle	After explicitly enabling the Event List funnel, exactly three Pitch Bend rows pass, including the unselected +1808 row; Note, CC, and the synthetic end row are hidden.
+selection_and_data	The two selected bends remain selected; before/after MIDI source event lines and selected bits are unchanged.
+verification	Native MIDI_GetCC/readback; interactive Filter Events and Event List screenshots; before/after RPP comparison; manual funnel on/off check
+limitation	Selected homogeneous Pitch Bend events across two channels; mixed event kinds, other selection types, and pixel-diff certification remain open.

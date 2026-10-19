@@ -9,7 +9,7 @@ native_build_id	fb9ade2f211bc91a3ee6193630ef17bcf5f6528b
 native_binary_sha256	9976f5608068b7a58518969001b00b527fb0de6ed7459e0e5dda6f29878ee254
 theme	REAPER 7.82 Linux Default 7; theme sha256 575544606736a395520703e532209ad9635f13a41b7ea000bb9810d60025be48
 environment	Linux Xvfb :327; REAPER 7.82 Default 7; MIDI Event List and Filter Events dialog; four Notes on channels 2–5
-starting_state	Channels 2–4 Notes selected, channel 5 Note unselected; Event type Note; channel 5 only; Show-only, Invert, and Solo off; draw channel 5
-assertion	Set filter from selection selects channels 2–4 and Note type; enables selected-note pitch C4–G4, velocity 91–93, position-in-measure 0–0.25026042, and length 1/16–1/16 criteria; editor channel becomes Multichannel and draw channel resets to Channel 1; Show-only, Invert, and Solo remain off; Repeat every remains unchecked
+starting_state	Channels 2–4 Notes selected, channel 5 Note unselected; Event type Note; channel 5 only; Event List funnel on; Show-only, Invert, and Solo off; draw channel 5
+assertion	Set filter from selection selects channels 2–4 and Note type; enables selected-note pitch C4–G4, velocity 91–93, position-in-measure 0–0.25026042, and length 1/16–1/16 criteria; editor channel becomes Multichannel and draw channel resets to Channel 1; Event List funnel turns off and all five rows become visible; Show-only, Invert, and Solo remain off; Repeat every remains unchecked
 readback	EVTFILTER changes from channel mask 16 / Note to channel mask 14 / Note and stores the Note, velocity, position, and length ranges; CFGEDIT changes editor channel from Channel 5 to Multichannel. The MIDI event bytes and selected flags remain identical to the source RPP.
 limitation	Only a homogeneous Note selection across channels 2–4 was probed. Mixed event types and selected CC, Pitch Bend, Program Change, Aftertouch, Channel Pressure, Meta, and SysEx filter criteria remain unmeasured.

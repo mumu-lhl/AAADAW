@@ -371,6 +371,35 @@ impl Default for MidiEditorControllerFilter {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct MidiEditorPitchBendFilter {
+    pub(crate) enabled: bool,
+    pub(crate) range_initialized: bool,
+    /// REAPER displays pitch bend values centered around 0, while MIDI stores 0..=16383.
+    pub(crate) low: i16,
+    pub(crate) high: i16,
+}
+
+impl MidiEditorPitchBendFilter {
+    pub(crate) const fn matches(self, midi_value: u16) -> bool {
+        let value = midi_value as i32 - 8_192;
+        !self.enabled
+            || !self.range_initialized
+            || (self.low <= self.high && value >= self.low as i32 && value <= self.high as i32)
+    }
+}
+
+impl Default for MidiEditorPitchBendFilter {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            range_initialized: false,
+            low: -8_192,
+            high: 8_191,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub(crate) enum MidiEditorFilterRepeat {
     EighthTriplet,
@@ -500,6 +529,7 @@ pub(crate) struct MidiEditorFilterState {
     pub(crate) event_type: MidiEditorEventTypeFilter,
     pub(crate) note: MidiEditorNoteFilter,
     pub(crate) controller: MidiEditorControllerFilter,
+    pub(crate) pitch_bend: MidiEditorPitchBendFilter,
     pub(crate) position: MidiEditorPositionFilter,
 }
 
@@ -554,6 +584,32 @@ impl MidiEditorFilterState {
                 && self.event_type.matches(MidiEditorEventKind::ControlChange)
                 && self.controller.matches(controller, value)
                 && self.position.matches(position_in_repeat);
+            if self.inverted { !passes } else { passes }
+        };
+        editor_channel_matches && event_filter_matches
+    }
+
+    pub(crate) fn pitch_bend_visible_at(
+        self,
+        channel: u8,
+        value: u16,
+        position_in_measure: u32,
+    ) -> bool {
+        let editor_channel_matches = !self.channel_filter_enabled
+            || match self.channel_selection {
+                MidiEditorChannelSelection::AllChannels => true,
+                MidiEditorChannelSelection::Channel(selected) => channel == selected,
+                MidiEditorChannelSelection::Multichannel => {
+                    self.channels & (1_u16.checked_shl(u32::from(channel)).unwrap_or(0)) != 0
+                }
+            };
+        let event_filter_matches = !self.event_filter_enabled || {
+            let channel_matches =
+                self.channels & (1_u16.checked_shl(u32::from(channel)).unwrap_or(0)) != 0;
+            let passes = channel_matches
+                && self.event_type.matches(MidiEditorEventKind::Pitch)
+                && self.pitch_bend.matches(value)
+                && self.position.matches(position_in_measure);
             if self.inverted { !passes } else { passes }
         };
         editor_channel_matches && event_filter_matches
@@ -960,6 +1016,7 @@ pub(crate) enum Message {
     SetMidiEditorFilterNotePitchEnabled(bool),
     SetMidiEditorFilterNotePitchLow(u8),
     SetMidiEditorFilterNotePitchHigh(u8),
+    SetMidiEditorFilterPitchBendEnabled(bool),
     SetMidiEditorFilterNoteVelocityEnabled(bool),
     SetMidiEditorFilterNoteVelocityLow(u8),
     SetMidiEditorFilterNoteVelocityHigh(u8),
@@ -1415,8 +1472,8 @@ mod midi_channel_selection_tests {
     use super::{
         MidiEditorChannelSelection, MidiEditorControllerFilter, MidiEditorEventKind,
         MidiEditorEventTypeFilter, MidiEditorFilterRepeat, MidiEditorFilterState,
-        MidiEditorNoteFilter, MidiEditorNoteFilterEvent, MidiEditorPitchFilterValue,
-        MidiEditorPositionFilter,
+        MidiEditorNoteFilter, MidiEditorNoteFilterEvent, MidiEditorPitchBendFilter,
+        MidiEditorPitchFilterValue, MidiEditorPositionFilter,
     };
 
     #[test]
@@ -1435,6 +1492,7 @@ mod midi_channel_selection_tests {
                 event_type: MidiEditorEventTypeFilter::AllEvents,
                 note: MidiEditorNoteFilter::default(),
                 controller: MidiEditorControllerFilter::default(),
+                pitch_bend: MidiEditorPitchBendFilter::default(),
                 position: MidiEditorPositionFilter::default(),
             }
             .event_visible(Some(channel), MidiEditorEventKind::Note)
@@ -1593,6 +1651,7 @@ mod midi_channel_selection_tests {
                 event_type: MidiEditorEventTypeFilter::Notes,
                 note: MidiEditorNoteFilter::default(),
                 controller: MidiEditorControllerFilter::default(),
+                pitch_bend: MidiEditorPitchBendFilter::default(),
                 position: MidiEditorPositionFilter::default(),
             }
             .event_visible(Some(channel), kind)
@@ -1613,6 +1672,7 @@ mod midi_channel_selection_tests {
             event_type: MidiEditorEventTypeFilter::Notes,
             note: MidiEditorNoteFilter::default(),
             controller: MidiEditorControllerFilter::default(),
+            pitch_bend: MidiEditorPitchBendFilter::default(),
             position: MidiEditorPositionFilter::default(),
         };
         assert!(!inverted_filter.event_visible(Some(0), MidiEditorEventKind::Note,));
@@ -1643,6 +1703,7 @@ mod midi_channel_selection_tests {
                 length_high_ticks: 480,
             },
             controller: MidiEditorControllerFilter::default(),
+            pitch_bend: MidiEditorPitchBendFilter::default(),
             position: MidiEditorPositionFilter {
                 enabled: true,
                 range_initialized: true,
@@ -1744,6 +1805,7 @@ mod midi_channel_selection_tests {
                 value_low: 64,
                 value_high: 100,
             },
+            pitch_bend: MidiEditorPitchBendFilter::default(),
             position: MidiEditorPositionFilter::default(),
         };
 

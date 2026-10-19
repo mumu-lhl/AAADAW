@@ -12,9 +12,9 @@ native_binary_sha256	9976f5608068b7a58518969001b00b527fb0de6ed7459e0e5dda6f29878
 native_theme	REAPER 7.82 Linux Default 7; SHA-256 575544606736a395520703e532209ad9635f13a41b7ea000bb9810d60025be48
 environment	Linux Xvfb :510, 1600x1000; isolated REAPER 7.82 Default 7 profile; audio unavailable
 starting_state	One C4 note; selected CC7 value 64 on channel 2 @480 and CC10 value 100 on channel 3 @960; unselected CC1 value 90 @600, CC10 value 80 @720, and CC7 value 127 @1440
-action	Event List > Filter Events > Set filter from selection
+action	Event List > Filter Events > Set filter from selection; manually enable the Event List funnel to inspect matching rows
 assertion	Channels 2–3 and Control Change are selected; Control is disabled (<all>); Value 64–100 and Position 0.125–0.25026042 are enabled; Repeat is measure; editor channel is Multichannel; draw channel remains Channel 1; Show-only, Invert, and Solo remain off
-list_result	With the Event List funnel active, four CC rows pass channel, type, Value, and Position criteria, including unselected CC1 and CC10 events; Note and out-of-range CC7 rows are filtered
+list_result	After manually enabling the funnel, four CC rows pass channel, type, Value, and Position criteria, including unselected CC1 and CC10 events; Note and out-of-range CC7 rows are filtered
 selection_and_data	The two selected CCs remain selected; all eight MIDI event source lines and selection bits are identical before and after
 verification	Native MIDI_GetCC readback; interactive Filter Events dialog; before/after RPP EVTFILTER and MIDI event-line comparison; Event List screenshots
 limitation	One mixed-parameter CC selection across channels 2–3; mixed event types and non-CC selections remain open; screenshots verify behavior, not pixel-diff certification
