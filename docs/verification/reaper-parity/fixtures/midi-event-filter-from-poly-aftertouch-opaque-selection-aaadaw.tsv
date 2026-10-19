@@ -1,0 +1,19 @@
+artifact	sha256
+crates/aaadaw/examples/generate_midi_filter_from_poly_aftertouch_opaque_selection_fixture.rs	e6332b5c01f0b2729b0cdae3d0c08109725741c29ec40d6a7532c3d9e33fab19
+docs/verification/reaper-parity/fixtures/midi-event-filter-from-poly-aftertouch-opaque-selection-aaadaw.aaadaw	a908c7a97d54ed0f2cd0f086956fd24ff933b264990e90586b98fb078187d1ca
+docs/verification/reaper-parity/fixtures/midi-event-filter-from-poly-aftertouch-opaque-selection-aaadaw-selected-before-set.png	73c35ea15308febc272f2a336056f6be95d2aedb1f5df33feeb29251e2c7bd1a
+docs/verification/reaper-parity/fixtures/midi-event-filter-from-poly-aftertouch-opaque-selection-aaadaw-filter-before-set.png	bcea1a465a12dcac77d4efbc89b3f9bf4c448c4ac074693201c4311ec6686a84
+docs/verification/reaper-parity/fixtures/midi-event-filter-from-poly-aftertouch-opaque-selection-aaadaw-after-set.png	905ed0847cab10843702ba3743eca10561677ed9e95b58141774d9f9a8fa4d18
+docs/verification/reaper-parity/fixtures/midi-event-filter-from-poly-aftertouch-opaque-selection-aaadaw-list-filtered.png	51fa3bd8eaeffefef2b0145f660e835768408443fe296916e6e7ff3b76aa032e
+docs/verification/reaper-parity/fixtures/midi-event-filter-from-poly-aftertouch-opaque-selection-aaadaw-funnel-off.png	fb01b767e1ed10abc1746c2833b12bd19d9a5521b43e89355bc2d523336b8ab8
+binary_sha256	1ff26d33ba29d5381811b5ad844980448e4f19a26225f9979302314c2b4616b7
+binary_build_id	a50b7681ec5a65bbca817567c0baf873d95b8fbd
+build_backend	rustc nightly with Cranelift codegen backend
+environment	Linux Xvfb :558, 1600x900; actual AAADAW MIDI Event List window; isolated XDG runtime/config/data/cache/state; audio unavailable
+starting_state	Eight Event List rows, selected Poly Aftertouch C4/32 ch2 @ tick 480 and Text Meta @ tick 960; Show-only and funnel off
+action	Open fixture in AAADAW, open MIDI Editor > Event List; select Poly Aftertouch; Ctrl-click Text Meta; Filter events > Set filter from selection; turn funnel off
+assertion	The live panel shows <all events>, All channels, Position 0.12500000–0.25026042, Repeat measure, Show-only unchecked, and Draw events on Channel 1; both selected endpoints remain selected
+list_result	The eight-row list filters immediately to five in-range events: selected Poly Aftertouch, CC7, unselected Text Meta, unselected Poly Aftertouch, and selected Text Meta. Turning the funnel off restores all eight rows and retains both selections.
+selection_and_data	The App regression verifies matching Poly Aftertouch, CC, and opaque event identities; retained selected endpoints; five matching rows and eight restored rows; and unchanged project snapshot and Undo/Redo history. Native REAPER readbacks confirm the same selection and unchanged raw MIDI bytes.
+verification	Focused App Nextest 1/1; AAADAW package Nextest 857/857; strict AAADAW all-target Clippy (-D warnings -A future-incompatible); nightly Cranelift desktop build; final binary launched in a real Xvfb window; five screenshots capture selected rows, pre-Set controls, derived filter, filtered list, and restored list; fixture project and binary identity are recorded above.
+limitation	REAPER displays Position as combo-box values 1/8–0.250 while AAADAW uses editable decimal fields. With the REAPER filter active, MIDI_GetNote and MIDI_GetTextSysexEvt omit hidden rows; unchanged MIDI_GetAllEvts bytes and RPP states preserve them. Screenshots verify behavior and controls, not pixel identity.
