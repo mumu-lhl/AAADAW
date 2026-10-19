@@ -3,8 +3,8 @@ use super::super::{
     MidiEditorEventKind, MidiEditorEventListCursor, MidiEditorEventTypeFilter,
     MidiEditorFilterRepeat, MidiEditorFilterState, MidiEditorLane, MidiEditorMode,
     MidiEditorNoteFilter, MidiEditorNoteFilterEvent, MidiEditorPitchBendFilter,
-    MidiEditorPitchFilterValue, MidiEditorPositionFilter, MidiEditorTool,
-    effective_midi_bank_value, midi_editor_filter_repeat_position_value,
+    MidiEditorPitchFilterValue, MidiEditorPositionFilter, MidiEditorProgramChangeFilter,
+    MidiEditorTool, effective_midi_bank_value, midi_editor_filter_repeat_position_value,
     midi_editor_measure_length_ticks,
 };
 use super::tokens::{PANEL_PADDING, ROW_GAP, SPACING_LG, SPACING_MD, SPACING_XS, TOUCH_TARGET_MIN};
@@ -298,6 +298,7 @@ fn midi_snap_for_app(app: &App) -> MidiSnap {
         note_filter: app.midi_editor_note_filter,
         controller_filter: app.midi_editor_controller_filter,
         pitch_bend_filter: app.midi_editor_pitch_bend_filter,
+        program_change_filter: app.midi_editor_program_change_filter,
         position_filter: app.midi_editor_position_filter,
         ppq,
         measure_ticks,
@@ -336,6 +337,7 @@ struct MidiSnap {
     note_filter: MidiEditorNoteFilter,
     controller_filter: MidiEditorControllerFilter,
     pitch_bend_filter: MidiEditorPitchBendFilter,
+    program_change_filter: MidiEditorProgramChangeFilter,
     position_filter: MidiEditorPositionFilter,
     ppq: u32,
     measure_ticks: u64,
@@ -360,6 +362,7 @@ impl Default for MidiSnap {
             note_filter: MidiEditorNoteFilter::default(),
             controller_filter: MidiEditorControllerFilter::default(),
             pitch_bend_filter: MidiEditorPitchBendFilter::default(),
+            program_change_filter: MidiEditorProgramChangeFilter::default(),
             position_filter: MidiEditorPositionFilter::default(),
             ppq: 960,
             measure_ticks: 3_840,
@@ -384,6 +387,7 @@ impl MidiSnap {
             note: self.note_filter,
             controller: self.controller_filter,
             pitch_bend: self.pitch_bend_filter,
+            program_change: self.program_change_filter,
             position: self.position_filter,
         }
     }
@@ -431,8 +435,15 @@ impl MidiSnap {
             .pitch_bend_visible_at(event.channel, event.value, position)
     }
 
-    fn program_change_visible(self, channel: u8) -> bool {
-        self.event_visible(channel, MidiEditorEventKind::ProgramChange)
+    fn program_change_visible(self, event: MidiProgramChangeData) -> bool {
+        let position = midi_editor_filter_repeat_position_value(
+            event.tick,
+            self.ppq,
+            self.measure_ticks,
+            self.position_filter.repeat_every,
+        );
+        self.filter_state()
+            .program_change_visible_at(event.channel, event.program, position)
     }
 
     fn poly_aftertouch_visible(self, channel: u8) -> bool {
@@ -1227,7 +1238,7 @@ fn midi_event_list_entries(item: &MidiItem, snap: MidiSnap) -> Vec<MidiEventList
             item.program_changes()
                 .iter()
                 .copied()
-                .filter(|event| snap.program_change_visible(event.channel))
+                .filter(|event| snap.program_change_visible(*event))
                 .map(MidiEventListEntry::ProgramChange),
         )
         .chain(
@@ -2734,9 +2745,14 @@ fn channel_filter_dialog(app: &App, touch_targets: bool) -> Element<'_, Message>
         app.midi_editor_event_type_filter == MidiEditorEventTypeFilter::ControlChange;
     let pitch_bend_filter_visible =
         app.midi_editor_event_type_filter == MidiEditorEventTypeFilter::Pitch;
-    let position_filter_visible =
-        note_filter_visible || controller_filter_visible || pitch_bend_filter_visible;
-    let repeat_filter_visible = note_filter_visible || controller_filter_visible;
+    let program_change_filter_visible =
+        app.midi_editor_event_type_filter == MidiEditorEventTypeFilter::ProgramChange;
+    let position_filter_visible = note_filter_visible
+        || controller_filter_visible
+        || pitch_bend_filter_visible
+        || program_change_filter_visible;
+    let repeat_filter_visible =
+        note_filter_visible || controller_filter_visible || program_change_filter_visible;
     let pitch_options = if note_filter.pitch_enabled {
         &MidiEditorPitchFilterValue::OPTIONS[..]
     } else {
@@ -2985,6 +3001,38 @@ fn channel_filter_dialog(app: &App, touch_targets: bool) -> Element<'_, Message>
     ]
     .spacing(ROW_GAP)
     .align_y(iced::Alignment::Center);
+    let program_options = if app.midi_editor_program_change_filter.enabled {
+        &MIDI_EDITOR_FILTER_VALUES[..]
+    } else {
+        &[]
+    };
+    let program_change_filter_row = row![
+        checkbox(app.midi_editor_program_change_filter.enabled)
+            .label("Program")
+            .on_toggle(Message::SetMidiEditorFilterProgramEnabled),
+        text("Low").size(11),
+        pick_list(
+            program_options,
+            app.midi_editor_program_change_filter
+                .range_initialized
+                .then_some(app.midi_editor_program_change_filter.low),
+            Message::SetMidiEditorFilterProgramLow,
+        )
+        .placeholder("")
+        .width(Length::Fixed(80.0)),
+        text("High").size(11),
+        pick_list(
+            program_options,
+            app.midi_editor_program_change_filter
+                .range_initialized
+                .then_some(app.midi_editor_program_change_filter.high),
+            Message::SetMidiEditorFilterProgramHigh,
+        )
+        .placeholder("")
+        .width(Length::Fixed(80.0)),
+    ]
+    .spacing(ROW_GAP)
+    .align_y(iced::Alignment::Center);
     let repeat_control: Element<'_, Message> = if repeat_filter_visible {
         pick_list(
             &MidiEditorFilterRepeat::OPTIONS[..],
@@ -3014,6 +3062,9 @@ fn channel_filter_dialog(app: &App, touch_targets: bool) -> Element<'_, Message>
     }
     if pitch_bend_filter_visible {
         criteria_rows.push(pitch_bend_filter_row.into());
+    }
+    if program_change_filter_visible {
+        criteria_rows.push(program_change_filter_row.into());
     }
     if position_filter_visible {
         criteria_rows.extend([position_filter.into(), repeat_filter_row.into()]);

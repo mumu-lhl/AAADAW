@@ -1,0 +1,16 @@
+artifact	sha256
+crates/aaadaw/examples/generate_midi_filter_from_program_selection_fixture.rs	f0f0f19e526ce1bfe976feb6ebe9b218139bdcafd72513e8fc43cf8e619cce71
+fixtures/midi-event-filter-from-program-aaadaw.aaadaw	ed82ee0f0e275c9c26da4c3fc3c65f983735a90b205ae542dd8b7c22420f64ba
+fixtures/midi-event-filter-from-program-aaadaw-after-set.png	b5ff2cdaa45253cbac16ee97a7d384c55552a17be6369a6d2c59ea951d2f7282
+fixtures/midi-event-filter-from-program-aaadaw-list-unfiltered.png	2d776e59a56b98b760682e6bf523ea76d3ab38516e0891fa1561cf1f5ecf746b
+fixtures/midi-event-filter-from-program-aaadaw-list-filtered.png	035cca757d55f083ef2fdd7348d3e5d7dfde6f0df4ecddb46be03f920cb56314
+binary_sha256	798db8635dfdd57be454b391daf52b4ac63e909eb0e8839c38fa1f29728b1f13
+binary_build_id	4e073748e4df111213fdc2731ab7ce9c71ab1faa
+build_backend	rustc nightly with Cranelift codegen backend
+environment	Linux dummy Xorg :547, 1600x1000 root; MIDI Editor/Event List 1000x620; isolated AAADAW profile; audio unavailable
+starting_state	One C4 note; selected Program Change 8 on channel 2 @ tick 480 and Program Change 64 on channel 3 @ tick 960; unselected Program Change 32 on channel 2 @ tick 600 and CC7 value64 @ tick 720
+action	Open Event List; Ctrl-click Program Change rows 8 and 64; Filter events… > Set filter from selection; close dialog; enable Event List Filter
+assertion	The real-window Set dialog shows PC, channels 2–3, unchecked blank Program range, Position 0.125–0.25026042, Repeat measure, and draw channel 2. Set leaves the funnel off and all six rows visible; only the two endpoint events remain selected.
+list_result	After enabling the funnel, the Event List shows exactly three PCs (8, 32, and 64); the unselected middle PC passes, selected endpoints remain selected, and Note, CC, and terminal rows are hidden.
+verification	Cranelift current-build real-window captures; app::tests::midi_editor_set_filter_from_program_change_selection_derives_native_criteria; app::messages::midi_channel_selection_tests::program_change_filter_matches_channel_value_position_and_inversion; app test suite 820/820; workspace Nextest 1,564/1,564; strict Clippy; fmt and diff checks
+limitation	AAADAW currently displays an unbanked PC parameter with bank MSB 0 where REAPER shows 121. Screenshots verify behavior and controls, not pixel identity.
