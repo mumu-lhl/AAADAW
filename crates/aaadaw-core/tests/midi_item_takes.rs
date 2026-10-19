@@ -67,6 +67,15 @@ fn switching_midi_item_active_take_preserves_both_take_states_and_undo_history()
         event_order: Vec::new(),
     }];
     let mut project = Project::from_snapshot(snapshot).unwrap();
+    let midi_item = &project.midi_items()[0];
+    let active_metadata = midi_item.take_properties(1).unwrap();
+    assert_eq!(active_metadata.name, "Take B");
+    assert_eq!(active_metadata.source_offset_ticks, 120);
+    assert_eq!(active_metadata.event_end_ticks, 1_440);
+    let inactive_metadata = midi_item.take_properties(0).unwrap();
+    assert_eq!(inactive_metadata.name, "Take A");
+    assert_eq!(inactive_metadata.event_end_ticks, 480);
+
     let before = project.snapshot();
     let cursor = project.history_cursor();
 

@@ -10,7 +10,7 @@ For multi-selection, REAPER 7.82 actions 40125 and 40126 move selected multi-tak
 
 The native readback, saved RPP, and screenshots of Arrange and Media Item Properties are in the [fixture set](fixtures/audio-multi-take-native.tsv). The Arrange capture shows the selected take lane and the `Take 2/2: Take A` label; Media Item Properties shows both take names and the active-take selector.
 
-The native Properties capture lists `1: Take B` and `2: Take A`, with the active take selected. AAADAW's F2 Media Item Properties now has the same numbered, named list. Choosing an entry changes the active Take immediately; one Undo/Redo restores and reapplies the selection while the Properties window remains open. The [selector evidence manifest](fixtures/audio-take-properties-selector-aaadaw.tsv) includes the native reference, AAADAW list-open screenshot, and four live state captures.
+The native Properties capture lists `1: Take B` and `2: Take A`, with the active take selected. AAADAW's F2 Media Item Properties now has the same numbered, named list. Choosing an entry stages that Take's name and properties; Apply or OK commits the active Take as one history step. One Undo/Redo restores and reapplies the selection while the Properties window remains open. The [selector evidence manifest](fixtures/audio-take-properties-selector-aaadaw.tsv) includes the native reference, AAADAW list-open and staged screenshots, and applied/Undo/Redo captures.
 
 Native action 40603 also accepts multiple copied source items: it appends the full clipboard sequence, in order, to each selected audio target and activates the last copied take. AAADAW now follows this behavior; the separate [multiple-source paste evidence](audio-paste-as-takes-multiple-sources.md) includes pairwise target readback, a one-target case, and one-step Undo/Redo.
 
@@ -54,7 +54,9 @@ The earlier live desktop capture used the Linux Stable LLVM binary at 1280×800;
 
 ![AAADAW Active take selector lists Take B and Take A](fixtures/audio-take-properties-selector-aaadaw-list.png)
 
-![AAADAW after selecting Take B in Media Item Properties](fixtures/audio-take-properties-selector-aaadaw-after.png)
+![AAADAW Take B staged in Media Item Properties](fixtures/audio-take-properties-selector-aaadaw-draft.png)
+
+![AAADAW after applying Take B in Media Item Properties](fixtures/audio-take-properties-selector-aaadaw-after.png)
 
 ![AAADAW after Undo restores Take A in Media Item Properties](fixtures/audio-take-properties-selector-aaadaw-undo.png)
 

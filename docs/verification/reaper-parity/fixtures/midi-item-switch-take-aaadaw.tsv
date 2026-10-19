@@ -1,8 +1,8 @@
 artifact	path	sha256	details
-aaadaw_binary	target/cranelift/debug/aaadaw	e50ba21871d875b38afbdc5f68f1cca1b0ab4d80731a745b3a85e4e2f90cf19e	Nightly Cranelift; Build ID e464ea0164567fc4b5f0d33376602026213afcda
+aaadaw_binary	target/cranelift/debug/aaadaw	3dd18ff3fa72cbf19d0e73e3c2cf1411e507a4b2e61c16607b216fc8a600b6b5	Nightly Cranelift; Build ID 89b2148658418f93f6e4d9aaff99d3d54f890ba2
 project_fixture	docs/verification/reaper-parity/fixtures/midi-item-takes-aaadaw.aaadaw	f80cff4d4eb87de5eb260a92d20a914f0b6bc57737ac249a270337c98d6ab68d	Two MIDI takes; Take B active before switching
 capture_script	scripts/reaper_parity/capture-midi-item-switch-take-aaadaw.sh	a4075ce5b893c95374ee4eaf541fb14097a966bd2dab9a7a1eb6a85e44a626ea	Isolated Xvfb 1280x800; invokes take.switch-next and captures Undo/Redo
-before	docs/verification/reaper-parity/fixtures/midi-item-switch-take-aaadaw-before.png	8f7e19034e875d078c3f7a61308b05a0e903a103513b63474a242e1aa704d870	Take B active; Inspector shows previous/next controls
+before	docs/verification/reaper-parity/fixtures/midi-item-switch-take-aaadaw-before.png	f6c87fbb3ecbd869eb13d97b06b6b190a721cf07d78fa1c9f2929fb5a3151433	Take B active; Inspector shows previous/next controls
 after	docs/verification/reaper-parity/fixtures/midi-item-switch-take-aaadaw-after.png	12839ea0a891089984fdce1fd3e198a7386b68a8651b2e852ab6915743d3e65a	Take A active; note pitch 60 visible
 undo	docs/verification/reaper-parity/fixtures/midi-item-switch-take-aaadaw-undo.png	e6dcdf1f37ae27f2951870116845d0811ea7f08842d49b1650a94f950569a5d3	Undo restores Take B
 redo	docs/verification/reaper-parity/fixtures/midi-item-switch-take-aaadaw-redo.png	f133df8ee80670b42f68928e7edaf4bd6dfce4d61b0eafc59531ca0b7228e0b0	Redo restores Take A

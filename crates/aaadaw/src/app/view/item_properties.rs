@@ -203,6 +203,16 @@ fn midi_item_view<'a>(draft: &'a MidiItemProperties) -> Element<'a, Message> {
         ]
         .spacing(6),
         row![
+            text("Active take:").width(120),
+            pick_list(
+                draft.take_choices.clone(),
+                Some(draft.active_take.clone()),
+                |choice| Message::ItemPropertyTakeChanged(choice.index)
+            )
+            .width(Length::Fill)
+        ]
+        .spacing(6),
+        row![
             text("Display:").width(120),
             pick_list(
                 [

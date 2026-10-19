@@ -2848,9 +2848,9 @@ Stable LLVM workspace Nextest **1610/1610**、AAADAW 桌面单元测试 **855/85
 
 ### 2026-10-19 P5 Take / Item Properties: Active take selector
 
-Linux REAPER 7.82 / Default 7 的 Media Item Properties 原厂截图显示 **Active take** 列表按顺序列出 `1: Take B`、`2: Take A`，并标出当前 Take A。AAADAW 的 F2 Media Item Properties 增加相同编号与名称的选择器；选择项目直接提交 `SetAudioItemActiveTake`，同步刷新名称、速率和其他当前 Take 字段。播放/工程操作忙碌或冻结 Render Item 时拒绝修改；Undo、Redo 和其他切换动作都会更新仍打开的属性窗。
+原厂 REAPER 7.82 / Default 7 的 F2 Media Item Properties 为音频和 MIDI 都显示按顺序编号的 **Active take** 列表；选择另一项先更新属性草稿，点 Apply 或 OK 才提交。AAADAW 的音频与 MIDI F2 selector 已改成相同的草稿交互，预览所选 Take 名称和 Take 属性，Apply/OK 后经项目动作提交为单步历史；打开的属性窗在 Undo/Redo 后刷新。播放/工程操作忙碌或冻结目标时拒绝修改。MIDI Take 摘要接口只复制名称和属性，不复制 MIDI 事件集合。
 
-Stable AAADAW 桌面测试 **856/856**、新增属性选择器与开窗撤销/重做回归、严格 all-target Clippy、fmt 与 diff 检查通过。nightly Cranelift Linux X11 二进制在隔离 Xvfb 1280×800 实窗中捕获初始属性、展开的 Take 列表、切换到 Take B、Undo 回到 Take A、Redo 回到 Take B；构建 Build ID `a53df722964459cbfc1f39f22ee2160919d76d0a`，SHA-256 `d6409a78a2ece6fae18e8c8e587b56b1af276d2ea782e605efab6f4987e3ada6`。原厂与 AAADAW 截图、测试和文件哈希见[Active take 属性选择器 manifest](../verification/reaper-parity/fixtures/audio-take-properties-selector-aaadaw.tsv)。此截图构建未启用 audio-device；只核验窗口和状态，不核验声音。`ITEM-PROPERTIES-001` 与 `EDIT-TAKE-001` 保持 `in_progress`，尚有完整原厂窗口几何、其他属性字段、录音 Take、固定 Lanes 和 Comp 等未完成范围。
+Stable LLVM App module tests **468/468** 与 Core 全套测试通过，覆盖 staged selector、Take 专属属性、单步 Apply、Undo/Redo。nightly Cranelift Linux X11 二进制在隔离 Xvfb 1280×800 实窗中捕获音频与 MIDI F2 的初始态、Take 列表、待提交草稿、Apply、Undo 和 Redo；Build ID `89b2148658418f93f6e4d9aaff99d3d54f890ba2`，SHA-256 `3dd18ff3fa72cbf19d0e73e3c2cf1411e507a4b2e61c16607b216fc8a600b6b5`。原厂截图、AAADAW 实窗、测试和文件哈希见[音频 selector manifest](../verification/reaper-parity/fixtures/audio-take-properties-selector-aaadaw.tsv)与[MIDI selector evidence](../verification/reaper-parity/midi-item-properties-take-selector.md)。Cranelift 截图构建未启用 audio-device；只核验窗口和状态，不核验声音。`ITEM-PROPERTIES-001` 与 `EDIT-TAKE-001` 保持 `in_progress`，完整属性窗口、录音 Take、固定 Lanes、Comp 等仍未完成。
 
 ### 2026-10-19 P5 Take: 多来源 Paste as takes
 
@@ -2900,3 +2900,11 @@ AAADAW Core 新增 `SetMidiItemActiveTake`，在活动与备用 Take 间交换�
 nightly Cranelift 二进制在隔离 Xvfb 1280×800 实窗完成切换前、切换后、Undo、Redo 截图，Build ID `e464ea0164567fc4b5f0d33376602026213afcda`。严格 workspace all-target Clippy、格式检查及截图/原厂状态哈希核验通过；Cranelift 保留既有 recursion-depth future-incompatible warning。截图与原厂 probe 工件见[MIDI active take switching](../verification/reaper-parity/midi-item-active-take-switching.md)。
 
 `EDIT-TAKE-001` 继续 `in_progress`：MIDI Take 创建/事件编辑 UI、Properties Take selector、混合 Audio/MIDI 多选切换的原厂语义核验、take-aware split、录音生成、Show all takes、Fixed Lanes、Comp Areas 和跨工程剪贴板仍待完成。
+
+### 2026-10-19 P5 Take / Item Properties: Audio and MIDI staged Take selector
+
+Linux REAPER 7.82 / Default 7 的 F2 Item Properties 对音频和 MIDI Item 都按 Take 顺序显示 **Active take** 列表。选中另一 Take 时先更新属性草稿；Apply 或 OK 才切换活动 Take 并应用该 Take 的属性，单步 Undo/Redo 恢复活动 Take 与窗口状态。原厂 MIDI 两 Take 工程、F2 前后/下拉截图和 Apply 后保存的 RPP 已归档；AAADAW 的实窗 Cranelift 截图记录音频与 MIDI selector 的初始态、列表、草稿、Apply、Undo 和 Redo。
+
+AAADAW 音频与 MIDI selector 已改为相同草稿语义。MIDI Item Properties 新增 Active take 控件，Take 名称、源偏移、Loop source 和 Source length 按选中 Take 更新；Core 元数据查询计算事件边界但不复制事件集合。Apply 将活动 Take 和编辑字段合并为一条项目历史，仍打开的窗口随 Undo/Redo 更新。音频 selector 同时修正为先预览 Take 的名称、源偏移、速率、mix、phase 与 loop 值，再由 Apply/OK 提交。
+
+Stable AAADAW App module tests **468/468**、完整 `aaadaw-core` suite、严格 workspace all-target Clippy、`cargo fmt --check`、两条 capture 脚本 `bash -n` 与 `git diff --check` 通过。nightly Cranelift 桌面 binary Build ID `89b2148658418f93f6e4d9aaff99d3d54f890ba2` / SHA-256 `3dd18ff3fa72cbf19d0e73e3c2cf1411e507a4b2e61c16607b216fc8a600b6b5`；音频与 MIDI capture 均在独立 Xvfb 1280×800 实窗完成，capture binary 未启用 audio-device，因此截图验证窗口和模型状态，不覆盖播放音频。Native 与 AAADAW 截图、RPP、脚本、binary identity 和哈希见[音频 selector manifest](../verification/reaper-parity/fixtures/audio-take-properties-selector-aaadaw.tsv)与[MIDI selector 证据页](../verification/reaper-parity/midi-item-properties-take-selector.md)。`ITEM-PROPERTIES-001` 和 `EDIT-TAKE-001` 保持 `in_progress`：其余属性字段与几何、MIDI Take 编辑/拆分、录音生成、Fixed Lanes、Comp Areas 和跨工程剪贴板仍未覆盖。

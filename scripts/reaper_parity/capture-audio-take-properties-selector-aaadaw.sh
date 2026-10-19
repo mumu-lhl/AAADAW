@@ -8,6 +8,7 @@ output_list=${3:-"$repo_root/docs/verification/reaper-parity/fixtures/audio-take
 output_after=${4:-"$repo_root/docs/verification/reaper-parity/fixtures/audio-take-properties-selector-aaadaw-after.png"}
 output_undo=${5:-"$repo_root/docs/verification/reaper-parity/fixtures/audio-take-properties-selector-aaadaw-undo.png"}
 output_redo=${6:-"$repo_root/docs/verification/reaper-parity/fixtures/audio-take-properties-selector-aaadaw-redo.png"}
+output_draft=${7:-"$repo_root/docs/verification/reaper-parity/fixtures/audio-take-properties-selector-aaadaw-draft.png"}
 project=${AAADAW_PROJECT_PATH:-"$repo_root/docs/verification/reaper-parity/fixtures/audio-multi-take-aaadaw.aaadaw"}
 runtime_root=${AAADAW_REAPER_RUNTIME:-"$repo_root/target/reaper782/root/usr/bin"}
 if [[ ! -x "$runtime_root/Xvfb" ]]; then
@@ -29,7 +30,7 @@ done
 
 run_dir=$(mktemp -d "$repo_root/target/aaadaw-take-properties-capture.XXXXXX")
 mkdir -p "$run_dir/config/aaadaw" "$run_dir/data" "$run_dir/state" "$run_dir/cache" "$run_dir/runtime"
-for output in "$output_before" "$output_list" "$output_after" "$output_undo" "$output_redo"; do
+for output in "$output_before" "$output_list" "$output_draft" "$output_after" "$output_undo" "$output_redo"; do
   mkdir -p "$(dirname -- "$output")"
 done
 chmod 700 "$run_dir/runtime"
@@ -104,6 +105,12 @@ identify "$output_list"
 sha256sum "$output_list"
 # Pick the first take (Take B, index 0) from the open list.
 "$xdotool" mousemove --sync 208 159 click 1
+sleep 0.8
+import -display "$display" -window root "$output_draft"
+identify "$output_draft"
+sha256sum "$output_draft"
+# The F2 window stages the selection until Apply, like REAPER.
+"$xdotool" mousemove --sync 486 532 click 1
 sleep 0.8
 import -display "$display" -window root "$output_after"
 identify "$output_after"

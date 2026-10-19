@@ -288,6 +288,17 @@ pub(crate) struct MidiItemTake {
     pub(crate) event_order: Arc<Vec<MidiEventOrderData>>,
 }
 
+/// Take metadata needed by item-level property controls without copying MIDI events.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MidiItemTakeProperties {
+    pub index: u32,
+    pub name: String,
+    pub source_offset_ticks: u64,
+    pub loop_source: bool,
+    pub source_loop_length_ticks: u64,
+    pub event_end_ticks: u64,
+}
+
 /// A MIDI clip positioned on a track.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MidiItem {
@@ -337,6 +348,52 @@ impl MidiItem {
     /// Returns the number of Takes stored in this item.
     pub fn take_count(&self) -> usize {
         self.other_takes.len() + 1
+    }
+
+    /// Returns the take indices and names without copying any take events.
+    pub fn take_names(&self) -> Vec<(u32, String)> {
+        let mut takes = self
+            .other_takes
+            .iter()
+            .map(|take| (take.index, take.name.clone()))
+            .collect::<Vec<_>>();
+        takes.push((self.active_take_index, self.name.clone()));
+        takes.sort_unstable_by_key(|(index, _)| *index);
+        takes
+    }
+
+    /// Returns one take's property metadata without copying its event collections.
+    pub fn take_properties(&self, index: u32) -> Option<MidiItemTakeProperties> {
+        if index == self.active_take_index {
+            return Some(MidiItemTakeProperties {
+                index,
+                name: self.name.clone(),
+                source_offset_ticks: self.source_offset_ticks,
+                loop_source: self.loop_source,
+                source_loop_length_ticks: self.source_loop_length_ticks,
+                event_end_ticks: midi_take_event_end(
+                    &self.notes,
+                    &self.controllers,
+                    &self.pitch_bends,
+                ),
+            });
+        }
+
+        self.other_takes
+            .iter()
+            .find(|take| take.index == index)
+            .map(|take| MidiItemTakeProperties {
+                index: take.index,
+                name: take.name.clone(),
+                source_offset_ticks: take.source_offset_ticks,
+                loop_source: take.loop_source,
+                source_loop_length_ticks: take.source_loop_length_ticks,
+                event_end_ticks: midi_take_event_end(
+                    &take.notes,
+                    &take.controllers,
+                    &take.pitch_bends,
+                ),
+            })
     }
 
     pub(crate) fn switch_active_take(&mut self, index: u32) -> bool {
@@ -601,4 +658,18 @@ impl MidiItem {
     pub fn event_order(&self) -> &[MidiEventOrderData] {
         &self.event_order
     }
+}
+
+fn midi_take_event_end(
+    notes: &[MidiNote],
+    controllers: &[MidiControllerData],
+    pitch_bends: &[MidiPitchBendData],
+) -> u64 {
+    notes
+        .iter()
+        .map(|note| note.tick().saturating_add(note.duration()))
+        .chain(controllers.iter().map(|event| event.tick.saturating_add(1)))
+        .chain(pitch_bends.iter().map(|event| event.tick.saturating_add(1)))
+        .max()
+        .unwrap_or(0)
 }

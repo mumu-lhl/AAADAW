@@ -86,12 +86,12 @@ impl std::fmt::Display for TimeUnit {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct AudioTakeChoice {
+pub(crate) struct ItemTakeChoice {
     pub(crate) index: u32,
     label: String,
 }
 
-impl AudioTakeChoice {
+impl ItemTakeChoice {
     fn from_take(index: u32, name: &str) -> Self {
         let name = if name.trim().is_empty() {
             format!("Take {}", index + 1)
@@ -105,7 +105,7 @@ impl AudioTakeChoice {
     }
 }
 
-impl std::fmt::Display for AudioTakeChoice {
+impl std::fmt::Display for ItemTakeChoice {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter.write_str(&self.label)
     }
@@ -221,6 +221,76 @@ impl App {
                     .to_owned();
             return;
         }
+        if self.item_properties.is_none() {
+            let Some(item_id) = self
+                .midi_item_properties
+                .as_ref()
+                .map(|draft| draft.item_id)
+            else {
+                return;
+            };
+            let Some(item) = self
+                .project
+                .midi_items()
+                .iter()
+                .find(|item| item.id() == item_id)
+            else {
+                return;
+            };
+            if take_index as usize >= item.take_count() {
+                return;
+            }
+            if self
+                .project
+                .tracks()
+                .iter()
+                .any(|track| track.id() == item.track_id() && track.is_frozen())
+            {
+                self.status = "Frozen items cannot be edited".to_owned();
+                if let Some(draft) = &mut self.midi_item_properties {
+                    draft.error = Some(self.status.clone());
+                }
+                return;
+            }
+            let Some(choice) = self.midi_item_properties.as_ref().and_then(|draft| {
+                draft
+                    .take_choices
+                    .iter()
+                    .find(|choice| choice.index == take_index)
+                    .cloned()
+            }) else {
+                return;
+            };
+            let Some(take) = item.take_properties(take_index) else {
+                return;
+            };
+            let source_sample = self
+                .project
+                .sample_at_tick_position(take.source_offset_ticks as f64)
+                .ok();
+            let sample_rate = self.project.settings().sample_rate();
+            if let Some(draft) = &mut self.midi_item_properties {
+                draft.active_take = choice;
+                draft.active_take_changed = take_index != item.active_take_index();
+                draft.name = take.name;
+                draft.name_changed = false;
+                if let Some(source_sample) = source_sample {
+                    draft.fields[ItemPropertyField::SourceOffset.index()] =
+                        if draft.unit == TimeUnit::Samples {
+                            format!("{source_sample:.0}")
+                        } else {
+                            format_time(source_sample / f64::from(sample_rate))
+                        };
+                }
+                draft.changed[ItemPropertyField::SourceOffset.index()] = false;
+                draft.loop_source = take.loop_source;
+                draft.loop_source_changed = false;
+                draft.source_loop_length = take.source_loop_length_ticks.to_string();
+                draft.source_loop_length_changed = false;
+                draft.error = None;
+            }
+            return;
+        }
         let Some(item_id) = self.item_properties.as_ref().map(|draft| draft.item_id) else {
             return;
         };
@@ -232,7 +302,7 @@ impl App {
         else {
             return;
         };
-        if take_index as usize >= item.take_count() || item.active_take_index() == take_index {
+        if take_index as usize >= item.take_count() {
             return;
         }
         if self
@@ -248,37 +318,85 @@ impl App {
             return;
         }
 
-        self.apply_action(
-            aaadaw_core::DawAction::SetAudioItemActiveTake {
-                item_id,
-                take_index,
-            },
-            "Active take changed",
-        );
-    }
-
-    pub(super) fn refresh_item_properties_take_selection(&mut self) {
-        let Some(draft) = &self.item_properties else {
+        let Some(choice) = self.item_properties.as_ref().and_then(|draft| {
+            draft
+                .take_choices
+                .iter()
+                .find(|choice| choice.index == take_index)
+                .cloned()
+        }) else {
             return;
         };
-        let item_id = draft.item_id;
-        let draft_take_index = draft.active_take.index;
-        let Some(item) = self
-            .project
-            .audio_items()
-            .iter()
-            .find(|item| item.id() == item_id)
+        let Some(take) = item
+            .take_snapshots()
+            .into_iter()
+            .find(|take| take.index == take_index)
         else {
             return;
         };
-        let active = item.active_take_snapshot();
-        let current_take = AudioTakeChoice::from_take(active.index, &active.name);
-        if current_take.index != draft_take_index || current_take != draft.active_take {
-            self.item_properties = Some(ItemProperties::from_project_item(
-                item,
-                &self.project,
-                self.item_properties_unit,
-            ));
+        let sample_rate = self.project.settings().sample_rate();
+        if let Some(draft) = &mut self.item_properties {
+            draft.active_take = choice;
+            draft.active_take_changed = take_index != item.active_take_index();
+            draft.name = take.name;
+            draft.name_changed = false;
+            draft.fields[8] =
+                format_signed_samples(take.source_offset_samples, sample_rate, draft.unit);
+            draft.changed[8] = false;
+            draft.take_rate = format_take_rate(take.playback_rate);
+            draft.take_rate_changed = false;
+            draft.fields[9] = format_take_volume_db(take.volume);
+            draft.changed[9] = false;
+            draft.fields[10] = format_take_pan(take.pan);
+            draft.changed[10] = false;
+            draft.loop_source = take.loop_source;
+            draft.loop_source_changed = false;
+            draft.phase_inverted = take.phase_inverted;
+            draft.phase_changed = false;
+            draft.error = None;
+        }
+    }
+
+    pub(super) fn refresh_item_properties_take_selection(&mut self) {
+        if let Some(draft) = &self.item_properties {
+            let item_id = draft.item_id;
+            let draft_take_index = draft.active_take.index;
+            let Some(item) = self
+                .project
+                .audio_items()
+                .iter()
+                .find(|item| item.id() == item_id)
+            else {
+                return;
+            };
+            let active = item.active_take_snapshot();
+            let current_take = ItemTakeChoice::from_take(active.index, &active.name);
+            if current_take.index != draft_take_index || current_take != draft.active_take {
+                self.item_properties = Some(ItemProperties::from_project_item(
+                    item,
+                    &self.project,
+                    self.item_properties_unit,
+                ));
+            }
+        } else if let Some(draft) = &self.midi_item_properties {
+            let item_id = draft.item_id;
+            let draft_take_index = draft.active_take.index;
+            let Some(item) = self
+                .project
+                .midi_items()
+                .iter()
+                .find(|item| item.id() == item_id)
+            else {
+                return;
+            };
+            let current_take = ItemTakeChoice::from_take(item.active_take_index(), item.name());
+            if current_take.index != draft_take_index || current_take != draft.active_take {
+                self.midi_item_properties = Some(MidiItemProperties::from_item(
+                    item,
+                    &self.project,
+                    self.item_properties_unit,
+                ));
+            }
         }
     }
 
@@ -401,7 +519,16 @@ impl App {
         };
         let id = item.id();
         let current = item.fades();
-        let target_name = if draft.name_changed {
+        let target_take_index = draft.active_take.index;
+        let selected_take = item
+            .take_snapshots()
+            .into_iter()
+            .find(|take| take.index == target_take_index)
+            .expect("selected audio take should exist");
+        let selected_take_name = selected_take.name.clone();
+        let changes_active_take =
+            draft.active_take_changed && target_take_index != item.active_take_index();
+        let target_take_name = if draft.name_changed {
             if draft.name.chars().count() > 128 {
                 self.item_properties.as_mut().expect("open draft").error =
                     Some("Take name must be 128 characters or fewer".to_owned());
@@ -409,11 +536,8 @@ impl App {
             }
             draft.name.clone()
         } else {
-            item.name().to_owned()
+            selected_take_name.clone()
         };
-        let current_take_volume = item.take_volume();
-        let current_take_pan = item.take_pan();
-        let current_take_rate = item.take_playback_rate();
         let target_take_rate = if draft.take_rate_changed {
             match parse_take_rate(&draft.take_rate) {
                 Ok(rate) => rate,
@@ -423,29 +547,43 @@ impl App {
                 }
             }
         } else {
-            current_take_rate
+            selected_take.playback_rate
         };
         let sample_rate = self.project.settings().sample_rate();
-        let placement = match draft.placement_in_project(item, &self.project) {
+        let mut placement = match draft.placement_in_project(item, &self.project) {
             Ok(placement) => placement,
             Err(error) => {
                 self.item_properties.as_mut().expect("open draft").error = Some(error);
                 return Task::none();
             }
         };
-        let changes_placement = placement != ItemPlacement::from_item(item);
-        let current_loop_source = item.is_loop_source();
+        if changes_active_take && !draft.changed[8] {
+            placement.source_offset = selected_take.source_offset_samples;
+        }
+        let placement_baseline = if changes_active_take {
+            ItemPlacement {
+                start: item.start_sample(),
+                length: item.length_samples(),
+                source_offset: selected_take.source_offset_samples,
+            }
+        } else {
+            ItemPlacement::from_item(item)
+        };
+        let placement_fields_changed = draft.changed[6] || draft.changed[7] || draft.changed[8];
+        let changes_placement = placement_fields_changed && placement != placement_baseline;
         let target_loop_source = draft.loop_source;
         let changes_loop_source =
-            draft.loop_source_changed && target_loop_source != current_loop_source;
+            draft.loop_source_changed && target_loop_source != selected_take.loop_source;
         let current_muted = item.is_muted();
         let target_muted = draft.muted;
         let changes_mute = draft.mute_changed && target_muted != current_muted;
-        let current_phase = item.is_phase_inverted();
         let target_phase = draft.phase_inverted;
-        let changes_phase = draft.phase_changed && target_phase != current_phase;
-        let changes_take_rate = target_take_rate != current_take_rate;
-        if (changes_placement || changes_loop_source || changes_take_rate) && playback_active {
+        let changes_phase = draft.phase_changed && target_phase != selected_take.phase_inverted;
+        let changes_take_rate =
+            draft.take_rate_changed && target_take_rate != selected_take.playback_rate;
+        if (changes_placement || changes_loop_source || changes_take_rate || changes_active_take)
+            && playback_active
+        {
             let error =
                 "Close audio output before editing item placement, source looping, or Take rate"
                     .to_owned();
@@ -453,7 +591,7 @@ impl App {
             self.item_properties.as_mut().expect("open draft").error = Some(error);
             return Task::none();
         }
-        let media_ref = item.media_ref().to_owned();
+        let media_ref = selected_take.media_ref.clone();
         let fades = match draft.fades(current, sample_rate, placement.length) {
             Ok(fades) => fades,
             Err(error) => {
@@ -470,7 +608,7 @@ impl App {
                 }
             }
         } else {
-            current_take_volume
+            selected_take.volume
         };
         let take_pan = if draft.changed[10] {
             match parse_take_pan(&draft.fields[10]) {
@@ -481,13 +619,21 @@ impl App {
                 }
             }
         } else {
-            current_take_pan
+            selected_take.pan
         };
+        let changes_take_mix = (draft.changed[9] || draft.changed[10])
+            && (take_volume != selected_take.volume || take_pan != selected_take.pan);
         let mut actions = Vec::new();
-        if target_name != item.name() {
+        if changes_active_take {
+            actions.push(aaadaw_core::DawAction::SetAudioItemActiveTake {
+                item_id: id,
+                take_index: target_take_index,
+            });
+        }
+        if target_take_name != selected_take_name {
             actions.push(aaadaw_core::DawAction::SetAudioItemName {
                 item_id: id,
-                name: target_name.clone(),
+                name: target_take_name.clone(),
             });
         }
         if changes_placement {
@@ -520,7 +666,7 @@ impl App {
         if fades != current {
             actions.push(aaadaw_core::DawAction::SetAudioItemFades { item_id: id, fades });
         }
-        if take_volume != current_take_volume || take_pan != current_take_pan {
+        if changes_take_mix {
             actions.push(aaadaw_core::DawAction::SetAudioItemTakeMix {
                 item_id: id,
                 volume: take_volume,
@@ -545,30 +691,21 @@ impl App {
             self.apply_action(action, "Item properties applied");
             if !self.project.audio_items().iter().any(|item| {
                 item.id() == id
-                    && item.name() == target_name
+                    && item.active_take_index() == target_take_index
+                    && item.name() == target_take_name
                     && item.fades() == fades
                     && item.take_volume() == take_volume
                     && item.take_pan() == take_pan
                     && item.take_playback_rate() == target_take_rate
                     && ItemPlacement::from_item(item) == placement
-                    && item.is_loop_source()
-                        == if changes_loop_source {
-                            target_loop_source
-                        } else {
-                            current_loop_source
-                        }
+                    && item.is_loop_source() == target_loop_source
                     && item.is_muted()
                         == if changes_mute {
                             target_muted
                         } else {
                             current_muted
                         }
-                    && item.is_phase_inverted()
-                        == if changes_phase {
-                            target_phase
-                        } else {
-                            current_phase
-                        }
+                    && item.is_phase_inverted() == target_phase
             }) {
                 self.item_properties.as_mut().expect("open draft").error =
                     Some(self.status.clone());
@@ -724,13 +861,18 @@ impl App {
         };
         let item_id = item.id();
         let current_muted = item.is_muted();
-        let current_loop_source = item.is_loop_source();
         let current_source_loop_length = item.source_loop_length_ticks();
         let current_start = item.start_position();
         let current_length = item.length_ticks();
         let current_source_offset = item.source_offset_ticks();
-        let current_name = item.name().to_owned();
-        let (start_position, length_ticks, source_offset_ticks) =
+        let target_take_index = draft.active_take.index;
+        let selected_take = item
+            .take_properties(target_take_index)
+            .expect("selected MIDI take should exist");
+        let selected_take_name = selected_take.name.clone();
+        let changes_active_take =
+            draft.active_take_changed && target_take_index != item.active_take_index();
+        let (start_position, length_ticks, mut source_offset_ticks) =
             match draft.placement_in_project(item, &self.project) {
                 Ok(placement) => placement,
                 Err(error) => {
@@ -741,35 +883,63 @@ impl App {
                     return Task::none();
                 }
             };
-        let changes_placement = (draft.changed[ItemPropertyField::Position.index()]
+        if changes_active_take && !draft.changed[ItemPropertyField::SourceOffset.index()] {
+            source_offset_ticks = selected_take.source_offset_ticks;
+        }
+        let placement_fields_changed = draft.changed[ItemPropertyField::Position.index()]
             || draft.changed[ItemPropertyField::Length.index()]
-            || draft.changed[ItemPropertyField::SourceOffset.index()])
+            || draft.changed[ItemPropertyField::SourceOffset.index()];
+        let placement_source_offset = if changes_active_take {
+            selected_take.source_offset_ticks
+        } else {
+            current_source_offset
+        };
+        let changes_placement = placement_fields_changed
             && (start_position != current_start
                 || length_ticks != current_length
-                || source_offset_ticks != current_source_offset);
+                || source_offset_ticks != placement_source_offset);
         let target_muted = draft.muted;
         let changes_mute = draft.mute_changed && target_muted != current_muted;
         let target_loop_source = draft.loop_source;
         let changes_loop_source =
-            draft.loop_source_changed && target_loop_source != current_loop_source;
-        let target_source_loop_length = match draft.source_loop_length_ticks_for_item(
-            item,
-            target_loop_source,
-            current_source_loop_length,
-        ) {
-            Ok(length) => length,
-            Err(error) => {
-                self.midi_item_properties
-                    .as_mut()
-                    .expect("open MIDI item draft")
-                    .error = Some(error);
-                return Task::none();
-            }
+            draft.loop_source_changed && target_loop_source != selected_take.loop_source;
+        let target_source_loop_length =
+            match if changes_active_take && !draft.source_loop_length_changed {
+                Ok(selected_take.source_loop_length_ticks)
+            } else {
+                draft.source_loop_length_ticks_for_item(
+                    target_loop_source,
+                    current_source_loop_length,
+                    selected_take.event_end_ticks,
+                )
+            } {
+                Ok(length) => length,
+                Err(error) => {
+                    self.midi_item_properties
+                        .as_mut()
+                        .expect("open MIDI item draft")
+                        .error = Some(error);
+                    return Task::none();
+                }
+            };
+        let source_loop_length_baseline = if changes_active_take {
+            selected_take.source_loop_length_ticks
+        } else {
+            current_source_loop_length
         };
-        let changes_source_loop_length = target_source_loop_length != current_source_loop_length;
-        let target_name = draft.name.clone();
-        let changes_name = draft.name_changed && target_name != current_name;
-        if (changes_placement || changes_mute || changes_loop_source || changes_source_loop_length)
+        let changes_source_loop_length = draft.source_loop_length_changed
+            && target_source_loop_length != source_loop_length_baseline;
+        let target_name = if draft.name_changed {
+            draft.name.clone()
+        } else {
+            selected_take_name.clone()
+        };
+        let changes_name = draft.name_changed && target_name != selected_take_name;
+        if (changes_placement
+            || changes_mute
+            || changes_loop_source
+            || changes_source_loop_length
+            || changes_active_take)
             && self.playback_active()
         {
             let error = "Stop playback before changing MIDI item properties".to_owned();
@@ -780,7 +950,13 @@ impl App {
                 .error = Some(error);
             return Task::none();
         }
-        let mut actions = Vec::with_capacity(4);
+        let mut actions = Vec::with_capacity(5);
+        if changes_active_take {
+            actions.push(aaadaw_core::DawAction::SetMidiItemActiveTake {
+                item_id,
+                take_index: target_take_index,
+            });
+        }
         if changes_placement {
             actions.push(aaadaw_core::DawAction::EditMidiItemPlacement {
                 item_id,
@@ -833,6 +1009,7 @@ impl App {
             self.apply_action(action, "MIDI item properties applied");
             if !self.project.midi_items().iter().any(|item| {
                 item.id() == item_id
+                    && item.active_take_index() == target_take_index
                     && item.start_position() == start_position
                     && item.length_ticks() == length_ticks
                     && item.source_offset_ticks() == source_offset_ticks
@@ -1019,8 +1196,9 @@ impl ItemPropertyField {
 #[derive(Debug, Clone)]
 pub(crate) struct ItemProperties {
     pub(crate) item_id: ItemId,
-    pub(crate) active_take: AudioTakeChoice,
-    pub(crate) take_choices: Vec<AudioTakeChoice>,
+    pub(crate) active_take: ItemTakeChoice,
+    pub(crate) take_choices: Vec<ItemTakeChoice>,
+    active_take_changed: bool,
     pub(crate) name: String,
     name_changed: bool,
     pub(crate) take_rate: String,
@@ -1219,7 +1397,8 @@ impl ItemProperties {
     }
 
     pub(crate) fn has_changes(&self) -> bool {
-        self.name_changed
+        self.active_take_changed
+            || self.name_changed
             || self.take_rate_changed
             || self.loop_source_changed
             || self.mute_changed
@@ -1286,8 +1465,9 @@ impl ItemProperties {
         let output = fades.fade_out.curve().parameters();
         Self {
             item_id,
-            active_take: AudioTakeChoice::from_take(0, ""),
+            active_take: ItemTakeChoice::from_take(0, ""),
             take_choices: Vec::new(),
+            active_take_changed: false,
             name: String::new(),
             name_changed: false,
             take_rate: format_take_rate(1.0),
@@ -1419,16 +1599,23 @@ impl ItemProperties {
     }
 }
 
-fn audio_take_choices(item: &AudioItem) -> Vec<AudioTakeChoice> {
+fn audio_take_choices(item: &AudioItem) -> Vec<ItemTakeChoice> {
     let active = item.active_take_snapshot();
     let mut choices = item
         .other_takes()
         .iter()
-        .map(|take| AudioTakeChoice::from_take(take.index(), take.name()))
+        .map(|take| ItemTakeChoice::from_take(take.index(), take.name()))
         .collect::<Vec<_>>();
-    choices.push(AudioTakeChoice::from_take(active.index, &active.name));
+    choices.push(ItemTakeChoice::from_take(active.index, &active.name));
     choices.sort_unstable_by_key(|choice| choice.index);
     choices
+}
+
+fn midi_take_choices(item: &MidiItem) -> Vec<ItemTakeChoice> {
+    item.take_names()
+        .into_iter()
+        .map(|(index, name)| ItemTakeChoice::from_take(index, &name))
+        .collect()
 }
 
 fn format_time(seconds: f64) -> String {
@@ -1632,6 +1819,9 @@ fn parse_curve(text: &str) -> Result<f64, String> {
 #[derive(Debug, Clone)]
 pub(crate) struct MidiItemProperties {
     pub(crate) item_id: ItemId,
+    pub(crate) active_take: ItemTakeChoice,
+    pub(crate) take_choices: Vec<ItemTakeChoice>,
+    active_take_changed: bool,
     pub(crate) name: String,
     pub(crate) fields: [String; 11],
     changed: [bool; 11],
@@ -1649,8 +1839,17 @@ pub(crate) struct MidiItemProperties {
 
 impl MidiItemProperties {
     fn from_item(item: &MidiItem, project: &Project, unit: TimeUnit) -> Self {
+        let take_choices = midi_take_choices(item);
+        let active_take = take_choices
+            .iter()
+            .find(|choice| choice.index == item.active_take_index())
+            .cloned()
+            .expect("active MIDI take should exist in the item take list");
         let mut draft = Self {
             item_id: item.id(),
+            active_take,
+            take_choices,
+            active_take_changed: false,
             name: item.name().to_owned(),
             fields: std::array::from_fn(|_| String::new()),
             changed: [false; 11],
@@ -1779,7 +1978,8 @@ impl MidiItemProperties {
     }
 
     pub(crate) fn has_changes(&self) -> bool {
-        self.mute_changed
+        self.active_take_changed
+            || self.mute_changed
             || self.loop_source_changed
             || self.source_loop_length_changed
             || self.name_changed
@@ -1788,9 +1988,9 @@ impl MidiItemProperties {
 
     fn source_loop_length_ticks_for_item(
         &self,
-        item: &MidiItem,
         loop_source: bool,
         current_length: u64,
+        event_end_ticks: u64,
     ) -> Result<u64, String> {
         if !self.source_loop_length_changed {
             return Ok(current_length);
@@ -1803,26 +2003,8 @@ impl MidiItemProperties {
         if length == 0 || length > (1_u64 << 53) - 1 {
             return Err("Source length must be within the supported PPQ range".to_owned());
         }
-        if loop_source {
-            let event_end = item
-                .notes()
-                .iter()
-                .map(|note| note.tick().saturating_add(note.duration()))
-                .chain(
-                    item.controllers()
-                        .iter()
-                        .map(|event| event.tick.saturating_add(1)),
-                )
-                .chain(
-                    item.pitch_bends()
-                        .iter()
-                        .map(|event| event.tick.saturating_add(1)),
-                )
-                .max()
-                .unwrap_or(0);
-            if length < event_end {
-                return Err("Source length cannot end before stored MIDI events".to_owned());
-            }
+        if loop_source && length < event_end_ticks {
+            return Err("Source length cannot end before stored MIDI events".to_owned());
         }
         Ok(length)
     }

@@ -995,6 +995,31 @@ fn item_properties_take_selector_lists_ordered_names_and_tracks_undo_redo() {
         })
         .unwrap();
     app.project
+        .apply(DawAction::SetAudioItemTakeMix {
+            item_id,
+            volume: 0.5,
+            pan: 0.25,
+        })
+        .unwrap();
+    app.project
+        .apply(DawAction::SetAudioItemTakePlaybackRate {
+            item_id,
+            rate: 1.25,
+        })
+        .unwrap();
+    app.project
+        .apply(DawAction::SetAudioItemLoopSource {
+            item_id,
+            enabled: true,
+        })
+        .unwrap();
+    app.project
+        .apply(DawAction::SetAudioItemPhase {
+            item_id,
+            inverted: true,
+        })
+        .unwrap();
+    app.project
         .apply(DawAction::SetAudioItemActiveTake {
             item_id,
             take_index: 0,
@@ -1025,8 +1050,24 @@ fn item_properties_take_selector_lists_ordered_names_and_tracks_undo_redo() {
     let _ = app.update(Message::ItemPropertyTakeChanged(99));
     assert_eq!(app.project.history_cursor(), history_cursor);
     let _ = app.update(Message::ItemPropertyTakeChanged(1));
+    assert_eq!(app.project.audio_items()[0].active_take_index(), 0);
+    assert_eq!(app.item_properties.as_ref().unwrap().active_take.index, 1);
+    assert_eq!(app.item_properties.as_ref().unwrap().name, "Take B");
+    assert_eq!(app.item_properties.as_ref().unwrap().take_rate, "1.25");
+    assert!(app.item_properties.as_ref().unwrap().loop_source);
+    assert!(app.item_properties.as_ref().unwrap().phase_inverted);
+    assert_eq!(app.item_properties.as_ref().unwrap().fields[9], "-6.02dB");
+    assert_eq!(app.item_properties.as_ref().unwrap().fields[10], "25%R");
+    assert_eq!(app.project.history_cursor(), history_cursor);
+
+    let _ = app.update(Message::ApplyItemProperties(false));
     assert_eq!(app.project.audio_items()[0].active_take_index(), 1);
     assert_eq!(app.project.audio_items()[0].name(), "Take B");
+    assert_eq!(app.project.audio_items()[0].take_volume(), 0.5);
+    assert_eq!(app.project.audio_items()[0].take_pan(), 0.25);
+    assert_eq!(app.project.audio_items()[0].take_playback_rate(), 1.25);
+    assert!(app.project.audio_items()[0].is_loop_source());
+    assert!(app.project.audio_items()[0].is_phase_inverted());
     assert_eq!(app.project.history_cursor(), history_cursor + 1);
     assert_eq!(app.item_properties.as_ref().unwrap().active_take.index, 1);
 
@@ -32242,6 +32283,142 @@ fn audio_item_properties_rename_and_restore_the_source_label_in_one_undo_step() 
     app.item_properties = Some(draft);
     let _ = app.update(Message::ApplyItemProperties(false));
     assert_eq!(app.project.audio_items()[0].name(), "");
+}
+
+#[test]
+fn midi_item_properties_take_selector_lists_takes_and_switches_with_undo_redo() {
+    use super::item_properties::TimeUnit;
+
+    let mut app = App {
+        item_properties_unit: TimeUnit::Time,
+        ..App::default()
+    };
+    app.project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "MIDI takes".into(),
+        })
+        .unwrap();
+    let track_id = app.project.tracks()[0].id();
+    app.project
+        .apply(DawAction::InsertMidiItem {
+            track_id,
+            start_tick: 0,
+            length_ticks: 3_840,
+        })
+        .unwrap();
+    let item_id = app.project.midi_items()[0].id();
+    app.project
+        .apply(DawAction::AddMidiNotes {
+            item_id,
+            notes: vec![
+                MidiNoteData {
+                    channel: 0,
+                    pitch: 60,
+                    tick: 0,
+                    duration: 480,
+                    velocity: 100,
+                    off_velocity: 0,
+                },
+                MidiNoteData {
+                    channel: 0,
+                    pitch: 64,
+                    tick: 960,
+                    duration: 480,
+                    velocity: 92,
+                    off_velocity: 0,
+                },
+            ],
+        })
+        .unwrap();
+    let mut snapshot = app.project.snapshot();
+    let item = &mut snapshot.midi_items[0];
+    let take_a = item.notes[0].clone();
+    let take_b = item.notes[1].clone();
+    item.notes = vec![take_b];
+    item.name = "MIDI take B".into();
+    item.active_take_index = 1;
+    item.other_takes = vec![MidiItemTakeSnapshot {
+        index: 0,
+        name: "MIDI take A".into(),
+        source_offset_ticks: 120,
+        loop_source: true,
+        source_loop_length_ticks: 960,
+        notes: vec![take_a],
+        controllers: Vec::new(),
+        pitch_bends: Vec::new(),
+        program_changes: Vec::new(),
+        poly_aftertouches: Vec::new(),
+        channel_pressures: Vec::new(),
+        opaque_events: Vec::new(),
+        event_order: Vec::new(),
+    }];
+    app.project = Project::from_snapshot(snapshot).unwrap();
+    app.timeline.rebuild(&app.project);
+    app.timeline.selected_item = Some(item_id);
+    app.timeline.selected_items.insert(item_id);
+    let _ = app.update(Message::OpenItemProperties);
+
+    let draft = app.midi_item_properties.as_ref().unwrap();
+    assert_eq!(draft.active_take.index, 1);
+    assert_eq!(
+        draft
+            .take_choices
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>(),
+        ["1: MIDI take A", "2: MIDI take B"]
+    );
+    let cursor = app.project.history_cursor();
+    let _ = app.update(Message::ItemPropertyTakeChanged(99));
+    assert_eq!(app.project.history_cursor(), cursor);
+    let _ = app.update(Message::ItemPropertyTakeChanged(0));
+    assert_eq!(app.project.midi_items()[0].active_take_index(), 1);
+    assert_eq!(
+        app.midi_item_properties.as_ref().unwrap().active_take.index,
+        0
+    );
+    assert_eq!(
+        app.midi_item_properties.as_ref().unwrap().name,
+        "MIDI take A"
+    );
+    assert!(app.midi_item_properties.as_ref().unwrap().loop_source);
+    assert_eq!(
+        app.midi_item_properties
+            .as_ref()
+            .unwrap()
+            .source_loop_length,
+        "960"
+    );
+    assert_eq!(app.project.history_cursor(), cursor);
+
+    let _ = app.update(Message::ApplyItemProperties(false));
+    assert_eq!(app.project.midi_items()[0].active_take_index(), 0);
+    assert_eq!(app.project.midi_items()[0].name(), "MIDI take A");
+    assert_eq!(app.project.midi_items()[0].notes()[0].pitch(), 60);
+    assert_eq!(app.project.midi_items()[0].source_offset_ticks(), 120);
+    assert!(app.project.midi_items()[0].is_loop_source());
+    assert_eq!(app.project.midi_items()[0].source_loop_length_ticks(), 960);
+    assert_eq!(app.project.history_cursor(), cursor + 1);
+    assert_eq!(
+        app.midi_item_properties.as_ref().unwrap().active_take.index,
+        0
+    );
+
+    let _ = app.update(Message::Undo);
+    assert_eq!(app.project.midi_items()[0].active_take_index(), 1);
+    assert_eq!(app.project.midi_items()[0].notes()[0].pitch(), 64);
+    assert_eq!(
+        app.midi_item_properties.as_ref().unwrap().active_take.index,
+        1
+    );
+    let _ = app.update(Message::Redo);
+    assert_eq!(app.project.midi_items()[0].active_take_index(), 0);
+    assert_eq!(app.project.midi_items()[0].notes()[0].pitch(), 60);
+    assert_eq!(
+        app.midi_item_properties.as_ref().unwrap().active_take.index,
+        0
+    );
 }
 
 #[test]
