@@ -1,0 +1,16 @@
+artifact	sha256
+scripts/reaper_parity/probe-midi-program-change-event-list.lua	83dda8560ca1ac4f35526a1caddd662d9f15dfb1b7abcf7c7924b2e2303d1215
+fixtures/midi-event-list-program-change-native.tsv	5c263a0d00ca4117ca1f6e444d0d2ff88eaefd885855d53dc085065480a881e4
+fixtures/midi-event-list-program-change-native.png	b2d06ac2ce65f82e952b13ed8f2920170cce4e3ed4e37b9d74896b874216f5bf
+crates/aaadaw/examples/generate_midi_filter_from_program_selection_fixture.rs	f0f0f19e526ce1bfe976feb6ebe9b218139bdcafd72513e8fc43cf8e619cce71
+fixtures/midi-event-filter-from-program-aaadaw.aaadaw	ed82ee0f0e275c9c26da4c3fc3c65f983735a90b205ae542dd8b7c22420f64ba
+fixtures/midi-event-list-program-change-default-bank-aaadaw.png	f461a56e376e7cc698fc095f277acb45bb3682f69aa688159748fa41266917fc
+binary_sha256	1a2fbe880d5a6d4f875d974c943aa973b342af27f58a47518abd8eba3d7fd2e3
+binary_build_id	d3289d48f2cb43a095c7e26ae09f0928a3591584
+build_backend	rustc nightly with Cranelift codegen backend
+reference	Linux REAPER 7.82; build ID fb9ade2f211bc91a3ee6193630ef17bcf5f6528b; SHA-256 9976f5608068b7a58518969001b00b527fb0de6ed7459e0e5dda6f29878ee254; Default 7 theme
+environment	AAADAW live window on dummy Xorg :547, Event List 1000x620; isolated app profile; audio unavailable
+starting_state	Native probe contains only Program Change 41 on channel 3 at tick 480 (no CC0/CC32); AAADAW fixture contains PCs 8, 32, and 64 on channels 2–3 plus note and CC7
+assertion	Native Event List shows the unbanked PC Parameter as 121-0-41. The current AAADAW build shows 121-0-8, 121-0-32, and 121-0-64 for channels with no preceding same-channel CC0. Explicit bank values remain sourced from earlier CC0/CC32 events.
+verification	Native MIDI_GetCC readback and REAPER Event List screenshot; current Cranelift desktop binary opened the saved .aaadaw project and screenshot was captured from the live MIDI Editor window; event_list_combines_same_tick_bank_select_and_labels_program_bank regression covers implicit 121, explicit MSB 0, and explicit 12-23 bank tuple
+limitation	The native LSB-only bank case and same-tick bank events ordered after Program Change remain unprobed. Screenshot verifies the displayed tuple, not pixel identity.

@@ -1281,9 +1281,20 @@ fn midi_event_bank_select_value(msb: MidiControllerData, lsb: MidiControllerData
 }
 
 fn midi_event_program_change_parameter(item: &MidiItem, event: MidiProgramChangeData) -> String {
+    let has_preceding_bank_msb = item.controllers().iter().any(|controller| {
+        controller.channel == event.channel
+            && controller.controller == 0
+            && controller.tick <= event.tick
+    });
+    // REAPER displays its implicit General MIDI bank when no CC0 is stored.
+    let bank_msb = if has_preceding_bank_msb {
+        effective_midi_bank_value(item, event.channel, event.tick, 0)
+    } else {
+        121
+    };
     format!(
         "{}-{}-{}",
-        effective_midi_bank_value(item, event.channel, event.tick, 0),
+        bank_msb,
         effective_midi_bank_value(item, event.channel, event.tick, 32),
         event.program
     )
@@ -9685,10 +9696,22 @@ mod tests {
             value: 5,
             ..bank_msb
         };
+        let explicit_zero_msb = MidiControllerData {
+            controller: 0,
+            channel: 1,
+            tick: 360,
+            value: 0,
+        };
         project
             .apply(aaadaw_core::DawAction::SetMidiControllers {
                 item_id,
-                controllers: vec![unrelated_cc, bank_msb, bank_lsb, unpaired_msb],
+                controllers: vec![
+                    unrelated_cc,
+                    bank_msb,
+                    bank_lsb,
+                    unpaired_msb,
+                    explicit_zero_msb,
+                ],
             })
             .unwrap();
         let program = MidiProgramChangeData {
@@ -9705,7 +9728,7 @@ mod tests {
 
         let item = &project.midi_items()[0];
         let events = midi_event_list_entries(item, MidiSnap::default());
-        assert_eq!(events.len(), 5);
+        assert_eq!(events.len(), 6);
         assert!(events.iter().any(|entry| matches!(
             entry,
             MidiEventListEntry::BankSelect(msb, lsb) if *msb == bank_msb && *lsb == bank_lsb
@@ -9717,6 +9740,10 @@ mod tests {
         assert!(events.iter().any(|entry| matches!(
             entry,
             MidiEventListEntry::Controller(event) if *event == unpaired_msb
+        )));
+        assert!(events.iter().any(|entry| matches!(
+            entry,
+            MidiEventListEntry::Controller(event) if *event == explicit_zero_msb
         )));
         assert_eq!(midi_event_bank_select_value(bank_msb, bank_lsb), 1_559);
         assert_eq!(
@@ -9732,6 +9759,16 @@ mod tests {
                 }
             ),
             "0-0-42"
+        );
+        assert_eq!(
+            midi_event_program_change_parameter(
+                item,
+                MidiProgramChangeData {
+                    channel: 3,
+                    ..program
+                }
+            ),
+            "121-0-42"
         );
     }
 
