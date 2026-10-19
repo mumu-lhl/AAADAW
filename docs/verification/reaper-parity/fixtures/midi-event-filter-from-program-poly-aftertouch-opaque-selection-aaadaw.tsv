@@ -1,0 +1,19 @@
+artifact	sha256
+crates/aaadaw/examples/generate_midi_filter_from_program_poly_aftertouch_opaque_selection_fixture.rs	3c7a856613c43fdf0c5cd007d2c8de143bdf49b533590292fe1a3cd6c4008a1e
+fixtures/midi-event-filter-from-program-poly-aftertouch-opaque-selection-aaadaw.aaadaw	120b963949326a9d6f9fe934c5fd1983220f9caa9a128ce932c8c76e7474337e
+fixtures/midi-event-filter-from-program-poly-aftertouch-opaque-selection-aaadaw-selected-before-set.png	13f9a412aaac5695a281f7053bd4da16a75f63cd95b3d210fa6ea6ff83d718fb
+fixtures/midi-event-filter-from-program-poly-aftertouch-opaque-selection-aaadaw-filter-before-set.png	33270180d0691267b8e0beeeb0fe31941c82f25a47f3839e344373f0522df3e8
+fixtures/midi-event-filter-from-program-poly-aftertouch-opaque-selection-aaadaw-after-set.png	cfa305b1edc88fe39d3913d242c1e636c9d11a673dd741b6e630f909f67e66c2
+fixtures/midi-event-filter-from-program-poly-aftertouch-opaque-selection-aaadaw-list-filtered.png	aef293299e380f59814918760a5170c39efe4cc817800087fe0c0748d69af38b
+fixtures/midi-event-filter-from-program-poly-aftertouch-opaque-selection-aaadaw-funnel-off.png	0c7e768bf3277d0f26dc76575cb4221dfbcbdec3329eabce504766bebe42ad4b
+binary_sha256	fdf6a6c947f56c75e1f04ff1ab446cefe3edf7608696ffa5c9c4cf695a81cc8c
+binary_build_id	82dbfb5d98d2ab19332ccb79f0580847afb2e3eb
+build_backend	rustc 1.101.0-nightly with RUSTFLAGS=-Zcodegen-backend=cranelift and CARGO_PROFILE_DEV_DEBUG=0
+environment	Linux Xvfb :559, 1600x900; actual AAADAW MIDI Editor/Event List window; isolated XDG directories and XDG portal; audio unavailable
+starting_state	Ten Event List rows; Poly Aftertouch pressure 32/channel 2/tick 480, Program Change 8/channel 2/tick 600, and Text Meta/tick 960 selected; Show-only and funnel off
+action	Filter events > Set filter from selection; close dialog; turn Event List funnel off
+assertion	Dialog derives All events, All channels, Position 0.12500000–0.25026042, Repeat measure; Show-only becomes checked and the funnel activates; all three selected endpoints stay selected
+list_result	Seven in-range rows pass; disabling the funnel restores all ten rows and clears Show-only while preserving all three selections
+selection_and_data	App regression checks the seven matching identities (both selected and unselected Poly Aftertouch, both Program Changes, in-range CC, and both in-range Text Meta events), retained selected identities, ten-row restored list, unchanged project snapshot, and unchanged Undo/Redo history.
+verification	Focused App Nextest 1/1; AAADAW package Nextest 860/860; strict all-target Clippy (-D warnings -A future-incompatible); stable fmt and diff checks; nightly Cranelift desktop build launched in the actual Event List window; five real-window captures show selected rows, pre-Set controls, derived filter, filtered list, and funnel-off list; 21 native and AAADAW artifact hashes verified
+limitation	AAADAW Position controls display editable decimals while REAPER displays combo-box values 1/8–0.250; screenshots verify behavior and controls, not pixel identity
