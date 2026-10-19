@@ -5451,7 +5451,7 @@ impl App {
                             | Message::DuplicateAudioItemTake(_)
                             | Message::DeleteActiveAudioItemTake(_)
                             | Message::MoveAudioItemActiveTakeToTop(_)
-                            | Message::CropAudioItemToActiveTake(_)
+                            | Message::CropSelectedAudioItemsToActiveTake
                             | Message::SwitchAudioItemTake(..)
                             | Message::DuplicateMidiItem(_)
                             | Message::SplitSelectedItemsAtCursor
@@ -9711,39 +9711,50 @@ impl App {
                     "Active take moved to top",
                 );
             }
-            Message::CropAudioItemToActiveTake(item_id) => {
+            Message::CropSelectedAudioItemsToActiveTake => {
                 if commands::project_edit_busy(self) {
                     self.status =
                         "Stop playback or finish the current project operation before cropping takes"
                             .to_owned();
                     return Task::none();
                 }
-                let Some(item) = self
-                    .project
-                    .audio_items()
-                    .iter()
-                    .find(|item| item.id() == item_id)
-                else {
-                    self.status = "Audio item no longer exists".to_owned();
-                    return Task::none();
-                };
-                if item.take_count() <= 1 {
-                    self.status = "Audio item already has one take".to_owned();
+                let crop_targets = commands::selected_audio_item_ids(self)
+                    .into_iter()
+                    .filter(|item_id| {
+                        self.project
+                            .audio_items()
+                            .iter()
+                            .find(|item| item.id() == *item_id)
+                            .is_some_and(|item| item.take_count() > 1)
+                    })
+                    .collect::<Vec<_>>();
+                if crop_targets.is_empty() {
+                    self.status =
+                        "Select a multi-take audio item to crop to its active take".to_owned();
                     return Task::none();
                 }
-                if self
-                    .project
-                    .tracks()
-                    .iter()
-                    .any(|track| track.frozen_audio_item_id() == Some(item_id))
-                {
+                if crop_targets.iter().any(|item_id| {
+                    self.project
+                        .tracks()
+                        .iter()
+                        .any(|track| track.frozen_audio_item_id() == Some(*item_id))
+                }) {
                     self.status = "Frozen render items cannot be edited".to_owned();
                     return Task::none();
                 }
-                self.apply_action(
-                    DawAction::CropAudioItemToActiveTake { item_id },
-                    "Inactive takes removed",
-                );
+                let actions = crop_targets
+                    .into_iter()
+                    .map(|item_id| DawAction::CropAudioItemToActiveTake { item_id })
+                    .collect::<Vec<_>>();
+                let action = if actions.len() == 1 {
+                    actions.into_iter().next().unwrap()
+                } else {
+                    DawAction::BatchTransaction {
+                        tx_id: self.revision,
+                        actions,
+                    }
+                };
+                self.apply_action(action, "Inactive takes removed");
             }
             Message::SwitchAudioItemTake(item_id, next) => {
                 let Some(item) = self

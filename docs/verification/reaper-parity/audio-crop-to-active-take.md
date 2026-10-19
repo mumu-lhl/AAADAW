@@ -10,7 +10,7 @@ The reference is Linux REAPER 7.82 with the Default 7 theme. Main action 40131 i
 
 The Core action clears inactive takes and sets the active index to zero while preserving the active source and all its playback properties. The edit is undoable and snapshot-persistent; cropping an already single-take item is a history-free no-op. Frozen render items are rejected, and the desktop route uses the standard project-edit busy guard. The playback graph stays valid because the active source does not change.
 
-The Action List and Item menu expose **Crop to active take in items**, with no default shortcut. REAPER Main KeyMap action 40131 maps to the matching command. The selected multi-take Audio Item Inspector exposes a destructive **Crop to active take** control. The paired live captures show Take A before cropping and the retained Take A as the sole active take afterward.
+The Action List and Item menu expose **Crop to active take in items**, with no default shortcut. REAPER Main KeyMap action 40131 maps to the matching command. The selected multi-take Audio Item Inspector exposes a destructive **Crop to active take** control. The paired single-item live captures show Take A before cropping and the retained Take A as the sole active take afterward.
 
 ![AAADAW before cropping the active take](fixtures/audio-crop-to-active-take-aaadaw-before.png)
 
@@ -18,6 +18,8 @@ The Action List and Item menu expose **Crop to active take in items**, with no d
 
 The [capture script](../../../scripts/reaper_parity/capture-audio-crop-to-active-take-aaadaw.sh) opens a temporary copy of the two-take fixture under an isolated XDG profile and uses a temporary shortcut to invoke the shortcut-free command. The manifest records the binary, captures, tests, and hashes. Screenshots verify the live window and take state, not audio audibility.
 
+The native multi-selection probe selects three audio items: Take A active at index 1, Take B active at index 0, and a single-take item. REAPER 40131 crops both multi-take items, leaves the single-take item unchanged, and one Undo/Redo restores or reapplies the complete selection. AAADAW now follows that behavior as one atomic transaction: every selected multi-take audio item is cropped together, selected single-take items are ignored, and one Undo/Redo covers the entire operation. If any crop target is a frozen render, the whole edit is rejected. The [native readback and RPP states](fixtures/audio-crop-multi-selection-aaadaw.tsv) and [live-window captures](fixtures/audio-crop-multi-selection-aaadaw-before.png) / [after](fixtures/audio-crop-multi-selection-aaadaw-after.png) / [Undo](fixtures/audio-crop-multi-selection-aaadaw-undo.png) / [Redo](fixtures/audio-crop-multi-selection-aaadaw-redo.png) record the multi-selection case.
+
 ## Remaining parity work
 
-`EDIT-TAKE-001` remains `in_progress`. Multi-item crop, recording-created takes, lane layouts, full Item Properties interactions, comp areas, MIDI-item take handling, and cross-project clipboard behavior remain open.
+`EDIT-TAKE-001` remains `in_progress`. Multi-selection for other take actions, recording-created takes, lane layouts, full Item Properties interactions, comp areas, MIDI-item take handling, and cross-project clipboard behavior remain open.

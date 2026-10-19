@@ -234,6 +234,127 @@ fn cropping_audio_item_to_active_take_is_registered_and_undoable() {
 }
 
 #[test]
+fn cropping_multiple_selected_audio_items_is_one_undoable_transaction() {
+    let mut app = App::default();
+    let _ = app.update(Message::AddTrack);
+    let track_id = app.project.tracks()[0].id();
+    for (media_ref, start_sample) in [
+        ("asset://take-b-first", 0),
+        ("asset://take-b-second", 96_000),
+        ("asset://single-take", 192_000),
+    ] {
+        app.project
+            .apply(DawAction::InsertAudioItem {
+                track_id,
+                media_ref: media_ref.to_owned(),
+                start_sample,
+                source_offset_samples: 0,
+                length_samples: 48_000,
+            })
+            .expect("audio item should be inserted");
+    }
+    let first_id = app.project.audio_items()[0].id();
+    let second_id = app.project.audio_items()[1].id();
+    let single_id = app.project.audio_items()[2].id();
+    for (item_id, name, make_base_take_active) in
+        [(first_id, "Take A", false), (second_id, "Take A", true)]
+    {
+        let mut take = app
+            .project
+            .audio_items()
+            .iter()
+            .find(|item| item.id() == item_id)
+            .expect("target audio item should exist")
+            .active_take_snapshot();
+        take.media_ref = format!("asset://{name}-{}", item_id.value());
+        take.name = name.to_owned();
+        app.project
+            .apply(DawAction::PasteAudioItemAsTake { item_id, take })
+            .expect("second take should be appended");
+        if make_base_take_active {
+            app.project
+                .apply(DawAction::SetAudioItemActiveTake {
+                    item_id,
+                    take_index: 0,
+                })
+                .expect("base take should become active");
+        }
+    }
+    app.timeline.rebuild(&app.project);
+    app.timeline.select_items(vec![
+        (first_id, track_id),
+        (second_id, track_id),
+        (single_id, track_id),
+    ]);
+    let before = app.project.snapshot();
+    let history_cursor = app.project.history_cursor();
+    assert!(commands::is_enabled(
+        &app,
+        CommandId::CropAudioItemToActiveTake
+    ));
+
+    let _ = app.update(Message::ExecuteCommand(
+        CommandId::CropAudioItemToActiveTake,
+    ));
+    let items = app.project.audio_items();
+    assert_eq!(
+        items
+            .iter()
+            .find(|item| item.id() == first_id)
+            .unwrap()
+            .take_count(),
+        1
+    );
+    assert_eq!(
+        items
+            .iter()
+            .find(|item| item.id() == first_id)
+            .unwrap()
+            .active_take_index(),
+        0
+    );
+    assert!(
+        items
+            .iter()
+            .find(|item| item.id() == first_id)
+            .unwrap()
+            .media_ref()
+            .starts_with("asset://Take A-")
+    );
+    assert_eq!(
+        items
+            .iter()
+            .find(|item| item.id() == second_id)
+            .unwrap()
+            .take_count(),
+        1
+    );
+    assert_eq!(
+        items
+            .iter()
+            .find(|item| item.id() == second_id)
+            .unwrap()
+            .media_ref(),
+        "asset://take-b-second"
+    );
+    assert_eq!(
+        items
+            .iter()
+            .find(|item| item.id() == single_id)
+            .unwrap()
+            .take_count(),
+        1
+    );
+    assert_eq!(app.project.history_cursor(), history_cursor + 1);
+
+    let cropped = app.project.snapshot();
+    let _ = app.update(Message::Undo);
+    assert_eq!(app.project.snapshot(), before);
+    let _ = app.update(Message::Redo);
+    assert_eq!(app.project.snapshot(), cropped);
+}
+
+#[test]
 fn copied_audio_take_pastes_into_selected_item_without_removing_source_item() {
     let mut app = App::default();
     let _ = app.update(Message::AddTrack);

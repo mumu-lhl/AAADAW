@@ -3135,11 +3135,17 @@ pub(super) fn dispatch(app: &mut App, command: CommandId) -> Task<Message> {
             Message::MoveAudioItemActiveTakeToTop(item_id)
         }
         CommandId::CropAudioItemToActiveTake => {
-            let Some(item_id) = selected_audio_item_id(app) else {
-                app.status = "Select one audio item to crop to its active take".to_owned();
+            if !selected_audio_item_ids(app).iter().any(|item_id| {
+                app.project
+                    .audio_items()
+                    .iter()
+                    .find(|item| item.id() == *item_id)
+                    .is_some_and(|item| item.take_count() > 1)
+            }) {
+                app.status = "Select a multi-take audio item to crop to its active take".to_owned();
                 return Task::none();
-            };
-            Message::CropAudioItemToActiveTake(item_id)
+            }
+            Message::CropSelectedAudioItemsToActiveTake
         }
         CommandId::ToggleMediaBrowserPanel => Message::ToggleMediaBrowserPanel,
         CommandId::ToggleOfflineJobsPanel => Message::ToggleOfflineJobsPanel,
@@ -3546,6 +3552,15 @@ fn selected_audio_item_id(app: &App) -> Option<ItemId> {
     })
 }
 
+pub(super) fn selected_audio_item_ids(app: &App) -> Vec<ItemId> {
+    app.project
+        .audio_items()
+        .iter()
+        .filter(|item| app.timeline.selected_items.contains(&item.id()))
+        .map(|item| item.id())
+        .collect()
+}
+
 fn command_enabled(app: &App, kind: CommandKind, track: Option<TrackState>) -> bool {
     match kind {
         CommandKind::NewProject
@@ -3850,18 +3865,24 @@ fn command_enabled(app: &App, kind: CommandKind, track: Option<TrackState>) -> b
                 })
         }
         CommandKind::CropAudioItemToActiveTake => {
-            !project_edit_busy(app)
-                && selected_audio_item_id(app).is_some_and(|item_id| {
+            let selected_audio_items = selected_audio_item_ids(app);
+            let crop_targets = selected_audio_items
+                .iter()
+                .filter(|item_id| {
                     app.project
                         .audio_items()
                         .iter()
-                        .find(|item| item.id() == item_id)
+                        .find(|item| item.id() == **item_id)
                         .is_some_and(|item| item.take_count() > 1)
-                        && !app
-                            .project
-                            .tracks()
-                            .iter()
-                            .any(|track| track.frozen_audio_item_id() == Some(item_id))
+                })
+                .collect::<Vec<_>>();
+            !project_edit_busy(app)
+                && !crop_targets.is_empty()
+                && !crop_targets.iter().any(|item_id| {
+                    app.project
+                        .tracks()
+                        .iter()
+                        .any(|track| track.frozen_audio_item_id() == Some(**item_id))
                 })
         }
         CommandKind::SwitchItemsToNextTake | CommandKind::SwitchItemsToPreviousTake => {
