@@ -397,6 +397,11 @@ pub enum DawAction {
         tx_id: u64,
         item_ids: Vec<ItemId>,
     },
+    /// Combine the selected same-track MIDI items into Takes on the first item.
+    ImplodeMidiItemsOnSameTrackIntoTakes {
+        tx_id: u64,
+        item_ids: Vec<ItemId>,
+    },
     /// Activate an existing take using its zero-based position in the item.
     SetAudioItemActiveTake {
         item_id: ItemId,

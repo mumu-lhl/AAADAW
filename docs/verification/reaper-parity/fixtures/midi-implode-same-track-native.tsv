@@ -1,0 +1,31 @@
+before	item_count=3	selected_count=3
+before	item=0	position=0.000000000	length=6.000000000	selected=1	take_count=1	active_index=0
+before	item=0	take=0	active=1	name=Base A	offset=0.125000000	notes=120:360:60:96;720:960:62:91
+before	item=1	position=2.000000000	length=1.500000000	selected=1	take_count=2	active_index=1
+before	item=1	take=0	active=0	name=Donor B	offset=0.250000000	notes=120:360:67:88;720:960:69:83
+before	item=1	take=1	active=1	name=Donor B active	offset=0.375000000	notes=120:360:74:80;720:960:76:75
+before	item=2	position=4.000000000	length=1.500000000	selected=1	take_count=1	active_index=0
+before	item=2	take=0	active=1	name=Final C	offset=0.500000000	notes=120:360:79:76;720:960:81:71
+after	item_count=1	selected_count=1
+after	item=0	position=0.000000000	length=6.000000000	selected=1	take_count=4	active_index=0
+after	item=0	take=0	active=1	name=Base A	offset=0.125000000	notes=120:360:60:96;720:960:62:91
+after	item=0	take=1	active=0	name=Donor B	offset=0.250000000	notes=120:360:67:88;720:960:69:83
+after	item=0	take=2	active=0	name=Donor B active	offset=0.375000000	notes=120:360:74:80;720:960:76:75
+after	item=0	take=3	active=0	name=Final C	offset=0.500000000	notes=120:360:79:76;720:960:81:71
+undo	item_count=3	selected_count=3
+undo	item=0	position=0.000000000	length=6.000000000	selected=1	take_count=1	active_index=0
+undo	item=0	take=0	active=1	name=Base A	offset=0.125000000	notes=120:360:60:96;720:960:62:91
+undo	item=1	position=2.000000000	length=1.500000000	selected=1	take_count=2	active_index=1
+undo	item=1	take=0	active=0	name=Donor B	offset=0.250000000	notes=120:360:67:88;720:960:69:83
+undo	item=1	take=1	active=1	name=Donor B active	offset=0.375000000	notes=120:360:74:80;720:960:76:75
+undo	item=2	position=4.000000000	length=1.500000000	selected=1	take_count=1	active_index=0
+undo	item=2	take=0	active=1	name=Final C	offset=0.500000000	notes=120:360:79:76;720:960:81:71
+redo	item_count=1	selected_count=1
+redo	item=0	position=0.000000000	length=6.000000000	selected=1	take_count=4	active_index=0
+redo	item=0	take=0	active=1	name=Base A	offset=0.125000000	notes=120:360:60:96;720:960:62:91
+redo	item=0	take=1	active=0	name=Donor B	offset=0.250000000	notes=120:360:67:88;720:960:69:83
+redo	item=0	take=2	active=0	name=Donor B active	offset=0.375000000	notes=120:360:74:80;720:960:76:75
+redo	item=0	take=3	active=0	name=Final C	offset=0.500000000	notes=120:360:79:76;720:960:81:71
+undo_description	Implode items to takes
+action	40543	Take: Implode items on same track into takes
+reference	REAPER 7.82/linux-x86_64; Default_7.0.ReaperThemeZip

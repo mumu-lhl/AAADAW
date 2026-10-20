@@ -5649,6 +5649,99 @@ impl Project {
                 }
                 ProjectEvent::Transaction { tx_id, events }
             }
+            DawAction::ImplodeMidiItemsOnSameTrackIntoTakes { tx_id, item_ids } => {
+                if item_ids.len() < 2 {
+                    return Err(ActionError::InvalidMidiItemImplodeSelection);
+                }
+                let mut seen = HashSet::with_capacity(item_ids.len());
+                let mut selected_items = Vec::with_capacity(item_ids.len());
+                for item_id in item_ids {
+                    if !seen.insert(item_id) {
+                        return Err(ActionError::InvalidMidiItemImplodeSelection);
+                    }
+                    let (index, item) = state
+                        .midi_items
+                        .iter()
+                        .enumerate()
+                        .find(|(_, item)| item.id == item_id)
+                        .ok_or(ActionError::MidiItemNotFound { item_id })?;
+                    selected_items.push((index, item.clone()));
+                }
+
+                let track_id = selected_items[0].1.track_id;
+                if selected_items
+                    .iter()
+                    .any(|(_, item)| item.track_id != track_id)
+                {
+                    return Err(ActionError::InvalidMidiItemImplodeSelection);
+                }
+                let track = state
+                    .tracks
+                    .iter()
+                    .find(|track| track.id == track_id)
+                    .ok_or(ActionError::TrackNotFound { track_id })?;
+                if track.is_frozen() {
+                    return Err(ActionError::CannotEditFrozenTrackSource { track_id });
+                }
+
+                let target_before = selected_items[0].1.clone();
+                let mut target_after = target_before.clone();
+                let mut next_take_index = u32::try_from(target_after.take_count())
+                    .map_err(|_| ActionError::MidiTakeIndexExhausted)?;
+                for (_, donor) in selected_items.iter().skip(1) {
+                    let mut takes = donor.take_snapshots();
+                    takes.sort_unstable_by_key(|take| take.index);
+                    for take in takes {
+                        let index_after = next_take_index
+                            .checked_add(1)
+                            .ok_or(ActionError::MidiTakeIndexExhausted)?;
+                        let mut notes = Vec::with_capacity(take.notes.len());
+                        for note in take.notes {
+                            let next_note_id = ids
+                                .next_note_id
+                                .checked_add(1)
+                                .ok_or(ActionError::NoteIdExhausted)?;
+                            notes.push(MidiNote {
+                                id: NoteId::from_raw(ids.next_note_id),
+                                data: note.data,
+                            });
+                            ids.next_note_id = next_note_id;
+                        }
+                        target_after.other_takes.push(MidiItemTake {
+                            index: next_take_index,
+                            name: take.name,
+                            source_offset_ticks: take.source_offset_ticks,
+                            loop_source: take.loop_source,
+                            source_loop_length_ticks: take.source_loop_length_ticks,
+                            notes: Arc::new(notes),
+                            controllers: Arc::new(take.controllers),
+                            pitch_bends: Arc::new(take.pitch_bends),
+                            program_changes: Arc::new(take.program_changes),
+                            poly_aftertouches: Arc::new(take.poly_aftertouches),
+                            channel_pressures: Arc::new(take.channel_pressures),
+                            opaque_events: Arc::new(take.opaque_events),
+                            event_order: Arc::new(take.event_order),
+                        });
+                        next_take_index = index_after;
+                    }
+                }
+                target_after
+                    .other_takes
+                    .sort_unstable_by_key(|take| take.index);
+
+                let mut events = vec![ProjectEvent::MidiItemChanged {
+                    before: target_before,
+                    after: target_after,
+                }];
+                let mut donors = selected_items.into_iter().skip(1).collect::<Vec<_>>();
+                donors.sort_unstable_by_key(|(index, _)| std::cmp::Reverse(*index));
+                events.extend(
+                    donors
+                        .into_iter()
+                        .map(|(index, item)| ProjectEvent::MidiItemRemoved { index, item }),
+                );
+                ProjectEvent::Transaction { tx_id, events }
+            }
             DawAction::SetAudioItemActiveTake {
                 item_id,
                 take_index,

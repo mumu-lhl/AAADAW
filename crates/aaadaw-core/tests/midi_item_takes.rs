@@ -318,6 +318,185 @@ fn duplicating_active_midi_take_appends_activates_and_undoes_with_unique_note_id
 }
 
 #[test]
+fn same_track_midi_implode_preserves_take_order_data_and_round_trips_as_one_step() {
+    let mut project = Project::new();
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "MIDI implode".to_owned(),
+        })
+        .unwrap();
+    let track_id = project.tracks()[0].id();
+    let mut item_ids = Vec::new();
+    for (start_tick, pitch) in [(0, 60), (3_840, 67), (7_680, 79)] {
+        project
+            .apply(DawAction::InsertMidiItem {
+                track_id,
+                start_tick,
+                length_ticks: 11_520,
+            })
+            .unwrap();
+        let item_id = project.midi_items().last().unwrap().id();
+        project
+            .apply(DawAction::AddMidiNotes {
+                item_id,
+                notes: vec![MidiNoteData {
+                    pitch,
+                    channel: 0,
+                    tick: 120,
+                    duration: 240,
+                    velocity: 90,
+                    off_velocity: 0,
+                }],
+            })
+            .unwrap();
+        item_ids.push(item_id);
+    }
+
+    let mut snapshot = project.snapshot();
+    snapshot.midi_items[0].name = "Base A".to_owned();
+    snapshot.midi_items[0].source_offset_ticks = 125;
+    snapshot.midi_items[1].name = "Donor B active".to_owned();
+    snapshot.midi_items[1].active_take_index = 1;
+    snapshot.midi_items[1].source_offset_ticks = 375;
+    let donor_note_data = MidiNoteData {
+        pitch: 69,
+        channel: 1,
+        tick: 480,
+        duration: 360,
+        velocity: 88,
+        off_velocity: 4,
+    };
+    let donor_controller = MidiControllerData {
+        controller: 74,
+        channel: 1,
+        tick: 600,
+        value: 91,
+    };
+    let donor_pitch_bend = MidiPitchBendData {
+        channel: 1,
+        tick: 700,
+        value: 9_000,
+    };
+    let donor_program = MidiProgramChangeData {
+        channel: 1,
+        tick: 800,
+        program: 12,
+    };
+    let donor_aftertouch = MidiPolyAftertouchData {
+        channel: 1,
+        tick: 900,
+        note: 69,
+        value: 70,
+    };
+    let donor_channel_pressure = MidiChannelPressureData {
+        channel: 1,
+        tick: 1_000,
+        value: 61,
+    };
+    snapshot.midi_items[1].other_takes = vec![MidiItemTakeSnapshot {
+        index: 0,
+        name: "Donor B".to_owned(),
+        source_offset_ticks: 250,
+        loop_source: true,
+        source_loop_length_ticks: 7_680,
+        notes: vec![MidiNoteSnapshot {
+            id: 4,
+            data: donor_note_data,
+        }],
+        controllers: vec![donor_controller],
+        pitch_bends: vec![donor_pitch_bend],
+        program_changes: vec![donor_program],
+        poly_aftertouches: vec![donor_aftertouch],
+        channel_pressures: vec![donor_channel_pressure],
+        opaque_events: vec![MidiOpaqueEventData {
+            tick: 1_100,
+            order: 0,
+            kind: MidiOpaqueEventKind::Meta {
+                kind: 0x51,
+                data: vec![1, 2, 3],
+            },
+        }],
+        event_order: vec![MidiEventOrderData {
+            target: MidiEventOrderTarget::Controller(donor_controller),
+            order: 8,
+            note_off_order: None,
+        }],
+    }];
+    snapshot.midi_items[2].name = "Final C".to_owned();
+    snapshot.midi_items[2].source_offset_ticks = 500;
+    let mut project = Project::from_snapshot(snapshot).unwrap();
+
+    let before = project.snapshot();
+    let cursor = project.history_cursor();
+    project
+        .apply(DawAction::ImplodeMidiItemsOnSameTrackIntoTakes {
+            tx_id: 402,
+            item_ids: item_ids.clone(),
+        })
+        .unwrap();
+
+    assert_eq!(project.history_cursor(), cursor + 1);
+    assert_eq!(project.midi_items().len(), 1);
+    let target = &project.midi_items()[0];
+    assert_eq!(target.id(), item_ids[0]);
+    assert_eq!(target.start_tick(), 0);
+    assert_eq!(target.length_ticks(), 11_520);
+    assert_eq!(target.active_take_index(), 0);
+    let mut takes = target.take_snapshots();
+    takes.sort_unstable_by_key(|take| take.index);
+    assert_eq!(
+        takes
+            .iter()
+            .map(|take| take.name.as_str())
+            .collect::<Vec<_>>(),
+        ["Base A", "Donor B", "Donor B active", "Final C"]
+    );
+    assert_eq!(
+        takes
+            .iter()
+            .map(|take| take.source_offset_ticks)
+            .collect::<Vec<_>>(),
+        [125, 250, 375, 500]
+    );
+    assert_eq!(takes[1].notes[0].data.pitch, 69);
+    assert_eq!(takes[1].controllers[0].value, 91);
+    assert_eq!(takes[1].pitch_bends, [donor_pitch_bend]);
+    assert_eq!(takes[1].program_changes, [donor_program]);
+    assert_eq!(takes[1].poly_aftertouches, [donor_aftertouch]);
+    assert_eq!(takes[1].channel_pressures, [donor_channel_pressure]);
+    assert_eq!(
+        takes[1].opaque_events[0].kind,
+        MidiOpaqueEventKind::Meta {
+            kind: 0x51,
+            data: vec![1, 2, 3],
+        }
+    );
+    assert_eq!(
+        takes[1].event_order,
+        [MidiEventOrderData {
+            target: MidiEventOrderTarget::Controller(donor_controller),
+            order: 8,
+            note_off_order: None,
+        }]
+    );
+    assert_eq!(takes[2].notes[0].data.pitch, 67);
+    assert_eq!(takes[3].notes[0].data.pitch, 79);
+    let take_note_ids = takes
+        .iter()
+        .flat_map(|take| take.notes.iter().map(|note| note.id))
+        .collect::<std::collections::HashSet<_>>();
+    assert_eq!(take_note_ids.len(), 4);
+    assert!(!take_note_ids.contains(&4));
+    let after = project.snapshot();
+
+    project.undo().unwrap();
+    assert_eq!(project.snapshot(), before);
+    project.redo().unwrap();
+    assert_eq!(project.snapshot(), after);
+}
+
+#[test]
 fn deleting_active_midi_take_selects_predecessor_and_removes_a_single_take_item() {
     let mut project = Project::new();
     project

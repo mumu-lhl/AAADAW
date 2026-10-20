@@ -1379,6 +1379,7 @@ pub(crate) enum Message {
     PasteItems,
     PasteAudioItemAsTake,
     ImplodeSelectedAudioItemsAsTakes,
+    ImplodeSelectedMidiItemsAsTakes,
     ImplodeSelectedAudioItemsAcrossTracksAsTakes,
     ExplodeSelectedAudioItemTakesInPlace,
     SelectAllItems,

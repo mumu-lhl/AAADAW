@@ -1747,6 +1747,8 @@ fn action_rebuilds_playback_graph(action: &DawAction) -> bool {
         | DawAction::SetMidiItemContents { .. }
         | DawAction::SetMidiItemLoopSource { .. }
         | DawAction::SetMidiItemMute { .. }
+        | DawAction::DeleteMidiItem { .. }
+        | DawAction::ImplodeMidiItemsOnSameTrackIntoTakes { .. }
         | DawAction::SetMidiControllers { .. }
         | DawAction::SetMidiProgramChanges { .. }
         | DawAction::SetAudioItemTakePlaybackRate { .. }
@@ -5494,6 +5496,7 @@ impl App {
                             | Message::DeleteSelectedItemActiveTakes
                             | Message::MoveSelectedItemActiveTakesToTop
                             | Message::ImplodeSelectedAudioItemsAsTakes
+                            | Message::ImplodeSelectedMidiItemsAsTakes
                             | Message::ImplodeSelectedAudioItemsAcrossTracksAsTakes
                             | Message::ExplodeSelectedAudioItemTakesInPlace
                             | Message::CropSelectedItemsToActiveTake
@@ -9642,6 +9645,7 @@ impl App {
             Message::ImplodeSelectedAudioItemsAsTakes => {
                 self.implode_selected_audio_items_as_takes()
             }
+            Message::ImplodeSelectedMidiItemsAsTakes => self.implode_selected_midi_items_as_takes(),
             Message::ImplodeSelectedAudioItemsAcrossTracksAsTakes => {
                 self.implode_selected_audio_items_across_tracks_as_takes()
             }
@@ -19726,6 +19730,68 @@ impl App {
                     .push(AppHistoryEntry::ProjectWithItemSelection(
                         ItemSelectionHistory {
                             before: Box::new(before),
+                            after: Box::new(after),
+                            project_history_cursor_before,
+                            project_history_cursor_after: self.project.history_cursor(),
+                        },
+                    ));
+            }
+        }
+    }
+
+    fn implode_selected_midi_items_as_takes(&mut self) {
+        if commands::project_edit_busy(self) {
+            self.status =
+                "Stop playback or finish the current project operation before imploding items"
+                    .to_owned();
+            return;
+        }
+        let Some(item_ids) = commands::midi_items_for_implode(self) else {
+            self.status = "Select at least two MIDI items on the same track".to_owned();
+            return;
+        };
+        let Some(target_id) = item_ids.first().copied() else {
+            return;
+        };
+        let Some(target) = self
+            .project
+            .midi_items()
+            .iter()
+            .find(|item| item.id() == target_id)
+        else {
+            return;
+        };
+        let target_track_id = target.track_id();
+        if self
+            .project
+            .tracks()
+            .iter()
+            .any(|track| track.id() == target_track_id && track.is_frozen())
+        {
+            self.status = "Frozen tracks cannot be imploded into takes".to_owned();
+            return;
+        }
+
+        let previous_revision = self.revision;
+        let project_history_cursor_before = self.project.history_cursor();
+        let selection_before = self.timeline.item_selection_state();
+        self.apply_action(
+            DawAction::ImplodeMidiItemsOnSameTrackIntoTakes {
+                tx_id: self.revision,
+                item_ids,
+            },
+            "Selected MIDI items imploded into takes",
+        );
+        if self.revision != previous_revision {
+            self.timeline
+                .select_items(vec![(target_id, target_track_id)]);
+            let after = self.timeline.item_selection_state();
+            if matches!(self.app_undo_history.last(), Some(AppHistoryEntry::Project)) {
+                self.app_undo_history.pop();
+                self.app_undo_history
+                    .push(AppHistoryEntry::ProjectWithItemSelection(
+                        ItemSelectionHistory {
+                            before: Box::new(selection_before),
                             after: Box::new(after),
                             project_history_cursor_before,
                             project_history_cursor_after: self.project.history_cursor(),

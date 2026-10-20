@@ -45,7 +45,7 @@ pub(crate) enum CommandId {
     CopyItems,
     PasteItems,
     PasteAudioItemAsTake,
-    ImplodeAudioItemsOnSameTrackIntoTakes,
+    ImplodeItemsOnSameTrackIntoTakes,
     ImplodeAudioItemsAcrossTracksIntoTakes,
     ExplodeAudioItemTakesInPlace,
     MoveActiveTakesToTop,
@@ -210,7 +210,7 @@ enum CommandKind {
     CopyItems,
     PasteItems,
     PasteAudioItemAsTake,
-    ImplodeAudioItemsOnSameTrackIntoTakes,
+    ImplodeItemsOnSameTrackIntoTakes,
     ImplodeAudioItemsAcrossTracksIntoTakes,
     ExplodeAudioItemTakesInPlace,
     MoveActiveTakesToTop,
@@ -1548,7 +1548,7 @@ const COMMANDS: &[CommandDefinition] = &[
         separator_before: false,
     },
     CommandDefinition {
-        kind: CommandKind::ImplodeAudioItemsOnSameTrackIntoTakes,
+        kind: CommandKind::ImplodeItemsOnSameTrackIntoTakes,
         menu: Some(MainMenu::Item),
         category: "Take",
         label: "Implode items on same track into takes",
@@ -2941,7 +2941,7 @@ fn command_kind_id(kind: CommandKind) -> &'static str {
         CommandKind::CopyItems => "edit.copy-items",
         CommandKind::PasteItems => "edit.paste-items",
         CommandKind::PasteAudioItemAsTake => "take.paste-as-takes",
-        CommandKind::ImplodeAudioItemsOnSameTrackIntoTakes => "take.implode-same-track",
+        CommandKind::ImplodeItemsOnSameTrackIntoTakes => "take.implode-same-track",
         CommandKind::ImplodeAudioItemsAcrossTracksIntoTakes => "take.implode-across-tracks",
         CommandKind::ExplodeAudioItemTakesInPlace => "take.explode-in-place",
         CommandKind::DeleteActiveTake => "take.delete-active",
@@ -3192,21 +3192,37 @@ pub(super) fn dispatch(app: &mut App, command: CommandId) -> Task<Message> {
         CommandId::CopyItems => Message::CopyItems,
         CommandId::PasteItems => Message::PasteItems,
         CommandId::PasteAudioItemAsTake => Message::PasteAudioItemAsTake,
-        CommandId::ImplodeAudioItemsOnSameTrackIntoTakes => {
-            let Some(item_ids) = audio_items_for_implode(app) else {
-                app.status = "Select at least two audio items on the same track".to_owned();
-                return Task::none();
-            };
-            if item_ids.iter().any(|item_id| {
-                app.project
-                    .tracks()
-                    .iter()
-                    .any(|track| track.frozen_audio_item_id() == Some(*item_id))
-            }) {
-                app.status = "Frozen render items cannot be imploded into takes".to_owned();
+        CommandId::ImplodeItemsOnSameTrackIntoTakes => {
+            if let Some(item_ids) = audio_items_for_implode(app) {
+                if item_ids.iter().any(|item_id| {
+                    app.project
+                        .tracks()
+                        .iter()
+                        .any(|track| track.frozen_audio_item_id() == Some(*item_id))
+                }) {
+                    app.status = "Frozen render items cannot be imploded into takes".to_owned();
+                    return Task::none();
+                }
+                Message::ImplodeSelectedAudioItemsAsTakes
+            } else if let Some(item_ids) = midi_items_for_implode(app) {
+                if item_ids.iter().any(|item_id| {
+                    app.project.midi_items().iter().any(|item| {
+                        item.id() == *item_id
+                            && app
+                                .project
+                                .tracks()
+                                .iter()
+                                .any(|track| track.id() == item.track_id() && track.is_frozen())
+                    })
+                }) {
+                    app.status = "Frozen tracks cannot be imploded into takes".to_owned();
+                    return Task::none();
+                }
+                Message::ImplodeSelectedMidiItemsAsTakes
+            } else {
+                app.status = "Select at least two audio or MIDI items on the same track".to_owned();
                 return Task::none();
             }
-            Message::ImplodeSelectedAudioItemsAsTakes
         }
         CommandId::ImplodeAudioItemsAcrossTracksIntoTakes => {
             let Some(item_ids) = audio_items_for_cross_track_implode(app) else {
@@ -3741,6 +3757,32 @@ pub(super) fn audio_items_for_implode(app: &App) -> Option<Vec<ItemId>> {
     Some(items.into_iter().map(|item| item.id()).collect())
 }
 
+pub(super) fn midi_items_for_implode(app: &App) -> Option<Vec<ItemId>> {
+    if app.timeline.selected_items.len() < 2 {
+        return None;
+    }
+    let selected_midi_ids = selected_midi_item_ids(app);
+    if selected_midi_ids.len() != app.timeline.selected_items.len() {
+        return None;
+    }
+    let mut items = selected_midi_ids
+        .into_iter()
+        .filter_map(|item_id| {
+            app.project
+                .midi_items()
+                .iter()
+                .find(|item| item.id() == item_id)
+        })
+        .collect::<Vec<_>>();
+    let track_id = items.first()?.track_id();
+    if items.len() < 2 || items.iter().any(|item| item.track_id() != track_id) {
+        return None;
+    }
+    // REAPER keeps the topmost item first when several items share a start.
+    items.sort_unstable_by_key(|item| (item.start_tick(), Reverse(item.id().value())));
+    Some(items.into_iter().map(|item| item.id()).collect())
+}
+
 pub(super) fn audio_items_for_cross_track_implode(app: &App) -> Option<Vec<ItemId>> {
     if app.timeline.selected_items.len() < 2 {
         return None;
@@ -4004,16 +4046,27 @@ fn command_enabled(app: &App, kind: CommandKind, track: Option<TrackState>) -> b
         CommandKind::PasteAudioItemAsTake => {
             !project_edit_busy(app) && app.can_paste_audio_item_as_take()
         }
-        CommandKind::ImplodeAudioItemsOnSameTrackIntoTakes => {
+        CommandKind::ImplodeItemsOnSameTrackIntoTakes => {
             !project_edit_busy(app)
-                && audio_items_for_implode(app).is_some_and(|item_ids| {
+                && (audio_items_for_implode(app).is_some_and(|item_ids| {
                     !item_ids.iter().any(|item_id| {
                         app.project
                             .tracks()
                             .iter()
                             .any(|track| track.frozen_audio_item_id() == Some(*item_id))
                     })
-                })
+                }) || midi_items_for_implode(app).is_some_and(|item_ids| {
+                    !item_ids.iter().any(|item_id| {
+                        app.project.midi_items().iter().any(|item| {
+                            item.id() == *item_id
+                                && app
+                                    .project
+                                    .tracks()
+                                    .iter()
+                                    .any(|track| track.id() == item.track_id() && track.is_frozen())
+                        })
+                    })
+                }))
         }
         CommandKind::ImplodeAudioItemsAcrossTracksIntoTakes => {
             !project_edit_busy(app)
@@ -4653,8 +4706,8 @@ fn command_id(kind: CommandKind) -> CommandId {
         CommandKind::DuplicateSelectedAudioItem => CommandId::DuplicateSelectedAudioItem,
         CommandKind::DuplicateActiveTake => CommandId::DuplicateActiveTake,
         CommandKind::PasteAudioItemAsTake => CommandId::PasteAudioItemAsTake,
-        CommandKind::ImplodeAudioItemsOnSameTrackIntoTakes => {
-            CommandId::ImplodeAudioItemsOnSameTrackIntoTakes
+        CommandKind::ImplodeItemsOnSameTrackIntoTakes => {
+            CommandId::ImplodeItemsOnSameTrackIntoTakes
         }
         CommandKind::ImplodeAudioItemsAcrossTracksIntoTakes => {
             CommandId::ImplodeAudioItemsAcrossTracksIntoTakes

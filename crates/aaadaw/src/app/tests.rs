@@ -442,7 +442,7 @@ fn imploding_selected_audio_items_keeps_track_order_all_takes_and_one_step_histo
     let history_cursor = app.project.history_cursor();
     let menu_entry = commands::for_menu(&app, MainMenu::Item)
         .into_iter()
-        .find(|entry| entry.id == CommandId::ImplodeAudioItemsOnSameTrackIntoTakes)
+        .find(|entry| entry.id == CommandId::ImplodeItemsOnSameTrackIntoTakes)
         .expect("Item menu should expose the same-track Take action");
     assert!(menu_entry.enabled);
     let action = commands::shortcut_entries(&app)
@@ -452,7 +452,7 @@ fn imploding_selected_audio_items_keeps_track_order_all_takes_and_one_step_histo
     assert!(action.default_binding.is_empty());
 
     let _ = app.update(Message::ExecuteCommand(
-        CommandId::ImplodeAudioItemsOnSameTrackIntoTakes,
+        CommandId::ImplodeItemsOnSameTrackIntoTakes,
     ));
 
     assert_eq!(app.project.history_cursor(), history_cursor + 1);
@@ -531,24 +531,154 @@ fn implode_same_track_takes_rejects_single_and_cross_track_selections() {
     app.timeline.select_items(vec![(first_item, first_track)]);
     assert!(!commands::is_enabled(
         &app,
-        CommandId::ImplodeAudioItemsOnSameTrackIntoTakes
+        CommandId::ImplodeItemsOnSameTrackIntoTakes
     ));
 
     app.timeline
         .select_items(vec![(first_item, first_track), (second_item, second_track)]);
     assert!(!commands::is_enabled(
         &app,
-        CommandId::ImplodeAudioItemsOnSameTrackIntoTakes
+        CommandId::ImplodeItemsOnSameTrackIntoTakes
     ));
     let before = app.project.snapshot();
     let _ = app.update(Message::ExecuteCommand(
-        CommandId::ImplodeAudioItemsOnSameTrackIntoTakes,
+        CommandId::ImplodeItemsOnSameTrackIntoTakes,
     ));
     assert_eq!(
         app.status,
-        "Select at least two audio items on the same track"
+        "Select at least two audio or MIDI items on the same track"
     );
     assert_eq!(app.project.snapshot(), before);
+}
+
+#[test]
+fn imploding_selected_midi_items_matches_take_order_and_native_selection_history() {
+    let mut app = App::default();
+    app.project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "MIDI implode".to_owned(),
+        })
+        .unwrap();
+    let track_id = app.project.tracks()[0].id();
+    for (start_tick, pitch) in [(0, 60), (3_840, 67), (7_680, 79)] {
+        app.project
+            .apply(DawAction::InsertMidiItem {
+                track_id,
+                start_tick,
+                length_ticks: 11_520,
+            })
+            .unwrap();
+        let item_id = app.project.midi_items().last().unwrap().id();
+        app.project
+            .apply(DawAction::AddMidiNotes {
+                item_id,
+                notes: vec![MidiNoteData {
+                    pitch,
+                    channel: 0,
+                    tick: 120,
+                    duration: 240,
+                    velocity: 90,
+                    off_velocity: 0,
+                }],
+            })
+            .unwrap();
+    }
+    let mut snapshot = app.project.snapshot();
+    snapshot.midi_items[0].name = "Base A".to_owned();
+    snapshot.midi_items[0].source_offset_ticks = 125;
+    snapshot.midi_items[1].name = "Donor B active".to_owned();
+    snapshot.midi_items[1].active_take_index = 1;
+    snapshot.midi_items[1].source_offset_ticks = 375;
+    snapshot.midi_items[1].other_takes = vec![MidiItemTakeSnapshot {
+        index: 0,
+        name: "Donor B".to_owned(),
+        source_offset_ticks: 250,
+        loop_source: false,
+        source_loop_length_ticks: 11_520,
+        notes: vec![aaadaw_core::MidiNoteSnapshot {
+            id: 4,
+            data: MidiNoteData {
+                pitch: 69,
+                channel: 1,
+                tick: 480,
+                duration: 360,
+                velocity: 88,
+                off_velocity: 4,
+            },
+        }],
+        controllers: Vec::new(),
+        pitch_bends: Vec::new(),
+        program_changes: Vec::new(),
+        poly_aftertouches: Vec::new(),
+        channel_pressures: Vec::new(),
+        opaque_events: Vec::new(),
+        event_order: Vec::new(),
+    }];
+    snapshot.midi_items[2].name = "Final C".to_owned();
+    snapshot.midi_items[2].source_offset_ticks = 500;
+    app.project = Project::from_snapshot(snapshot).unwrap();
+
+    app.timeline.rebuild(&app.project);
+    let item_ids = app
+        .project
+        .midi_items()
+        .iter()
+        .map(|item| item.id())
+        .collect::<Vec<_>>();
+    app.timeline.select_items(
+        item_ids
+            .iter()
+            .map(|item_id| (*item_id, track_id))
+            .collect(),
+    );
+    let before = app.project.snapshot();
+    let history_cursor = app.project.history_cursor();
+    let menu_entry = commands::for_menu(&app, MainMenu::Item)
+        .into_iter()
+        .find(|entry| entry.id == CommandId::ImplodeItemsOnSameTrackIntoTakes)
+        .expect("Item menu should expose same-track MIDI implode");
+    assert!(menu_entry.enabled);
+    let action = commands::shortcut_entries(&app)
+        .into_iter()
+        .find(|entry| entry.id == "take.implode-same-track")
+        .expect("REAPER's 40543 action should cover MIDI items");
+    assert!(action.default_binding.is_empty());
+
+    let _ = app.update(Message::ExecuteCommand(
+        CommandId::ImplodeItemsOnSameTrackIntoTakes,
+    ));
+
+    assert_eq!(app.project.history_cursor(), history_cursor + 1);
+    assert_eq!(app.status, "Selected MIDI items imploded into takes");
+    assert_eq!(app.project.midi_items().len(), 1);
+    let target = &app.project.midi_items()[0];
+    assert_eq!(target.id(), item_ids[0]);
+    assert_eq!(target.take_count(), 4);
+    assert_eq!(target.active_take_index(), 0);
+    let mut takes = target.take_snapshots();
+    takes.sort_unstable_by_key(|take| take.index);
+    assert_eq!(
+        takes
+            .iter()
+            .map(|take| take.name.as_str())
+            .collect::<Vec<_>>(),
+        ["Base A", "Donor B", "Donor B active", "Final C"]
+    );
+    assert_eq!(target.start_tick(), 0);
+    assert_eq!(target.length_ticks(), 11_520);
+    assert_eq!(app.timeline.selected_items, HashSet::from([item_ids[0]]));
+    let after = app.project.snapshot();
+
+    let _ = app.update(Message::Undo);
+    assert_eq!(app.project.snapshot(), before);
+    assert_eq!(
+        app.timeline.selected_items,
+        item_ids.iter().copied().collect()
+    );
+    let _ = app.update(Message::Redo);
+    assert_eq!(app.project.snapshot(), after);
+    assert_eq!(app.timeline.selected_items, HashSet::from([item_ids[0]]));
 }
 
 #[test]
@@ -22308,6 +22438,39 @@ fn midi_bank_program_batch_invalidates_the_audio_playback_graph() {
         ],
     };
     assert!(super::action_rebuilds_playback_graph(&action));
+}
+
+#[cfg(feature = "audio-device")]
+#[test]
+fn midi_item_implode_and_removal_invalidate_the_audio_playback_graph() {
+    let mut project = Project::new();
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "MIDI".to_owned(),
+        })
+        .unwrap();
+    let track_id = project.tracks()[0].id();
+    let mut item_ids = Vec::new();
+    for start_tick in [0, 960] {
+        project
+            .apply(DawAction::InsertMidiItem {
+                track_id,
+                start_tick,
+                length_ticks: 1_920,
+            })
+            .unwrap();
+        item_ids.push(project.midi_items().last().unwrap().id());
+    }
+
+    assert!(super::action_rebuilds_playback_graph(
+        &DawAction::ImplodeMidiItemsOnSameTrackIntoTakes { tx_id: 1, item_ids }
+    ));
+    assert!(super::action_rebuilds_playback_graph(
+        &DawAction::DeleteMidiItem {
+            item_id: project.midi_items()[0].id(),
+        }
+    ));
 }
 
 #[test]

@@ -142,6 +142,8 @@ pub enum ActionError {
         item_id: ItemId,
         take_index: u32,
     },
+    /// A MIDI item implode needs at least two existing items on one track.
+    InvalidMidiItemImplodeSelection,
     /// The ordered MIDI Take index range cannot represent another Take.
     MidiTakeIndexExhausted,
     /// The requested audio or MIDI item does not exist in the project.
@@ -362,6 +364,9 @@ impl fmt::Display for ActionError {
                 "MIDI take {take_index} does not exist in item {}",
                 item_id.value()
             ),
+            Self::InvalidMidiItemImplodeSelection => {
+                formatter.write_str("MIDI item implode needs at least two items on one track")
+            }
             Self::MidiTakeIndexExhausted => formatter.write_str("MIDI take index range is exhausted"),
             Self::ItemNotFound { item_id } => {
                 write!(formatter, "item {} does not exist", item_id.value())
