@@ -25577,6 +25577,46 @@ fn midi_editor_fit_uses_only_visible_notes_after_start_trim() {
 }
 
 #[test]
+fn midi_editor_fit_places_notes_at_their_local_time_after_negative_source_offset() {
+    let mut app = App::default();
+    let _ = app.update(Message::AddTrack);
+    let _ = app.update(Message::AddMidiItem);
+    let item_id = app.project.midi_items()[0].id();
+    app.project
+        .apply(DawAction::SetMidiItemLoopSource {
+            item_id,
+            enabled: false,
+        })
+        .unwrap();
+    app.project
+        .apply(DawAction::AddMidiNotes {
+            item_id,
+            notes: vec![MidiNoteData {
+                channel: 0,
+                pitch: 60,
+                tick: 120,
+                duration: 240,
+                velocity: 96,
+                off_velocity: 0,
+            }],
+        })
+        .unwrap();
+    app.project
+        .apply(DawAction::EditMidiItemPlacement {
+            item_id,
+            start_tick: 0,
+            length_ticks: 3_840,
+            source_offset_ticks: -960,
+        })
+        .unwrap();
+
+    let _ = app.update(Message::OpenMidiEditor(item_id));
+
+    assert_eq!(app.midi_editor_origin_tick, 840);
+    assert_eq!(app.midi_editor_high_pitch, 62);
+}
+
+#[test]
 fn piano_roll_copy_paste_and_velocity_edits_are_grouped_undoable_actions() {
     let mut app = App::default();
     let _ = app.update(Message::AddTrack);
@@ -25672,6 +25712,95 @@ fn piano_roll_copy_paste_and_velocity_edits_are_grouped_undoable_actions() {
             .iter()
             .all(|note| note.velocity() == 100)
     );
+}
+
+#[test]
+fn piano_roll_copy_and_paste_follow_a_negative_midi_source_offset() {
+    let mut app = App::default();
+    let _ = app.update(Message::AddTrack);
+    let _ = app.update(Message::AddMidiItem);
+    let item_id = app.project.midi_items()[0].id();
+    app.project
+        .apply(DawAction::SetMidiItemLoopSource {
+            item_id,
+            enabled: false,
+        })
+        .unwrap();
+    app.project
+        .apply(DawAction::AddMidiNotes {
+            item_id,
+            notes: vec![MidiNoteData {
+                channel: 0,
+                pitch: 60,
+                tick: 120,
+                duration: 240,
+                velocity: 96,
+                off_velocity: 0,
+            }],
+        })
+        .unwrap();
+    let note_id = app.project.midi_items()[0].notes()[0].id();
+    app.project
+        .apply(DawAction::EditMidiItemPlacement {
+            item_id,
+            start_tick: 0,
+            length_ticks: 3_840,
+            source_offset_ticks: -960,
+        })
+        .unwrap();
+    let _ = app.update(Message::OpenMidiEditor(item_id));
+
+    let _ = app.update(Message::CopyMidiNotes(item_id, vec![note_id]));
+
+    assert_eq!(app.midi_editor_edit_cursor_tick, Some(1_320));
+    let _ = app.update(Message::PasteMidiNotes(item_id));
+    let notes = app.project.midi_items()[0].notes();
+    assert_eq!(notes.len(), 2);
+    assert_eq!(notes[1].tick(), 360);
+    assert_eq!(notes[1].duration(), 240);
+
+    let _ = app.update(Message::Undo);
+    assert_eq!(app.project.midi_items()[0].notes().len(), 1);
+}
+
+#[test]
+fn piano_roll_rejects_paste_in_negative_source_offset_silence() {
+    let mut app = App::default();
+    let _ = app.update(Message::AddTrack);
+    let _ = app.update(Message::AddMidiItem);
+    let item_id = app.project.midi_items()[0].id();
+    app.project
+        .apply(DawAction::SetMidiItemLoopSource {
+            item_id,
+            enabled: false,
+        })
+        .unwrap();
+    app.project
+        .apply(DawAction::EditMidiItemPlacement {
+            item_id,
+            start_tick: 0,
+            length_ticks: 3_840,
+            source_offset_ticks: -960,
+        })
+        .unwrap();
+    let _ = app.update(Message::OpenMidiEditor(item_id));
+    app.midi_editor_edit_cursor_tick = Some(0);
+    app.midi_note_clipboard.notes = vec![MidiNoteData {
+        channel: 0,
+        pitch: 60,
+        tick: 0,
+        duration: 120,
+        velocity: 96,
+        off_velocity: 0,
+    }];
+
+    let _ = app.update(Message::PasteMidiNotes(item_id));
+
+    assert_eq!(
+        app.midi_editor_feedback.as_deref(),
+        Some("Paste rejected: cursor is before the MIDI source start")
+    );
+    assert!(app.project.midi_items()[0].notes().is_empty());
 }
 
 #[test]

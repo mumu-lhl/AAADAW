@@ -38,7 +38,9 @@ mod midi_editor;
 pub(super) use midi_editor::{
     midi_event_controller_property_label, midi_event_controller_property_options,
     midi_event_list_cursors, midi_event_list_home_target, midi_event_list_length,
-    midi_event_list_position,
+    midi_event_list_position, midi_item_local_tick, midi_source_display_end,
+    midi_source_display_start, midi_source_edit_bounds, midi_source_tick_for_local,
+    source_event_occurrences, visible_note_duration,
 };
 mod midi_export;
 mod mixer;

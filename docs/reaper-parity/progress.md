@@ -2969,3 +2969,9 @@ AAADAW Action List 与 Item 菜单将 40543 路由到 MIDI-only 实现；Core �
 Linux REAPER 7.82 / Default 7 Main action 40438 已实测：目标是最高轨的选中 item，即使更早的 donor 起点更早；保持目标起点/长度及活动 Take，donor Takes 按轨道再按 item 顺序追加。探针验证 0.25/0.375 秒偏移的早期 donor 重基为 1.25/1.375 秒，2 秒位置、0.5 秒偏移的低轨 donor 重基为 −0.5 秒；note 数据保持，donor 删除，Undo 恢复三项与原选区，Redo 恢复单个目标。原厂读回、RPP 和 1280×800 Arrange 截图见[验证页](../verification/reaper-parity/midi-item-implode-cross-track-takes.md)及[manifest](../verification/reaper-parity/fixtures/midi-implode-cross-track-aaadaw.tsv)。
 
 AAADAW 将 40438 扩展到 MIDI-only 跨轨选择，保留顶轨目标与活动 Take、按轨/项目顺序追加 donor Takes，并以有符号 source offset 保持事件项目时间；schema 69 持久化活动与非活动 Take 的负偏移。Core、Storage、App 覆盖有符号映射、持久化、目标顺序、overlap 判定及一步 Undo/Redo。Stable Nextest（Core/Storage/AAADAW）**1287/1287**、严格 all-target Clippy、fmt、两条 capture 脚本 `bash -n`、parity matrix **114 条 / 15 列**、artifact SHA-256 和 `git diff --check` 通过。Cranelift 桌面实窗四态已截图并目视核验；audio-device 关闭，所以截图不代表音频播放验收。矩阵条目 `EDIT-TAKE-IMPLODE-MIDI-XTRACK-001` 保持 `in_progress`，混合 Audio/MIDI 多选与更广的 Take/Lane/Comp/录音功能仍未完成。
+
+### 2026-10-20 P5 Take: Signed source offsets in MIDI Editor and Arrange
+
+40438 产生的负偏移 Take 会把 MIDI 源 PPQ 映射到 clip-local 坐标。AAADAW 的 Arrange note preview、loop source phase、inline MIDI hit-test/move/insert、Piano Roll note/controller/pitch-bend lane、按 item fit framing 和 MIDI clipboard copy/paste/duplicate 现使用同一 signed mapping。Non-loop source 在源起点之前显示静音，并拒绝在该区域插入或粘贴；loop source 按其循环相位映射。MIDI Item Nudge 对 signed non-loop source offset 的交互仍单独开放。
+
+Stable AAADAW desktop binary suite **880/880**、严格 Clippy (`cargo +stable clippy -p aaadaw --bin aaadaw --tests -- -D warnings`)、fmt 和 `git diff --check` 通过。新增回归覆盖 Arrange 预览、inline 编辑、Piano Roll 绘制/插入、负偏移复制粘贴/源前静音拒绝与 MIDI Editor fit。此 follow-up 未新增 MIDI Editor 对照截图，40438 既有原厂/AAADAW Arrange 四态截图继续仅验证 implode 项目状态。矩阵 `EDIT-TAKE-IMPLODE-MIDI-XTRACK-001` 仍 `in_progress`；混合 Audio/MIDI implode、更多原厂 no-op 对照、signed-offset Item Nudge 和更广 Take/Lane/Comp/录音能力仍开放。

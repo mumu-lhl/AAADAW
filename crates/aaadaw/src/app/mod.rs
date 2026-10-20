@@ -7242,8 +7242,7 @@ impl App {
                         let default_paste_tick =
                             self.midi_editor_edit_cursor_tick.unwrap_or_else(|| {
                                 snap_tick_up(
-                                    first_tick
-                                        .saturating_sub(item.source_offset_ticks())
+                                    view::midi_item_local_tick(item, first_tick)
                                         .saturating_add(self.midi_note_clipboard.span_ticks),
                                     copy_grid,
                                 )
@@ -7275,8 +7274,6 @@ impl App {
                     return task;
                 }
                 let grid = self.midi_editor_snap_interval();
-                let source_start_tick = item.source_offset_ticks();
-                let item_end_tick = source_start_tick.saturating_add(item.length_ticks());
                 let item_length = item.length_ticks();
                 let tick = self
                     .midi_note_clipboard
@@ -7291,20 +7288,33 @@ impl App {
                             )
                         },
                     );
+                let Some(source_start_tick) = view::midi_source_tick_for_local(item, tick) else {
+                    let feedback = "Paste rejected: cursor is before the MIDI source start";
+                    self.status = feedback.to_owned();
+                    self.midi_editor_feedback = Some(feedback.to_owned());
+                    return task;
+                };
+                let (item_source_start_tick, item_source_end_tick) = if item.is_loop_source() {
+                    let source_start = item.source_offset_ticks();
+                    (
+                        source_start,
+                        source_start.saturating_add(item.length_ticks()),
+                    )
+                } else {
+                    view::midi_source_edit_bounds(item)
+                };
                 let notes = self
                     .midi_note_clipboard
                     .notes
                     .iter()
                     .map(|note| aaadaw_core::MidiNoteData {
-                        tick: source_start_tick
-                            .saturating_add(tick)
-                            .saturating_add(note.tick),
+                        tick: source_start_tick.saturating_add(note.tick),
                         ..*note
                     })
                     .collect::<Vec<_>>();
                 if notes.iter().any(|note| {
-                    note.tick < source_start_tick
-                        || note.tick.saturating_add(note.duration) > item_end_tick
+                    note.tick < item_source_start_tick
+                        || note.tick.saturating_add(note.duration) > item_source_end_tick
                 }) {
                     let feedback = "Paste rejected: notes would extend beyond the MIDI item";
                     self.status = feedback.to_owned();
@@ -12141,26 +12151,38 @@ impl App {
             return;
         };
         let ppq = u64::from(self.project.settings().ppq());
-        let source_start_tick = item.source_offset_ticks();
-        let source_end_tick = source_start_tick.saturating_add(item.length_ticks());
-        let visible_notes = item
+        let source_start_tick = view::midi_source_display_start(item);
+        let source_end_tick = view::midi_source_display_end(item);
+        let visible_note_spans = item
             .notes()
             .iter()
-            .filter(|note| (source_start_tick..source_end_tick).contains(&note.tick()))
+            .flat_map(|note| {
+                view::source_event_occurrences(
+                    item,
+                    note.tick(),
+                    source_start_tick.saturating_sub(note.duration()),
+                    source_end_tick,
+                )
+                .map(move |display_tick| {
+                    let local_tick = display_tick.saturating_sub(source_start_tick);
+                    let visible_duration = view::visible_note_duration(item, note, display_tick);
+                    (note, local_tick, visible_duration)
+                })
+            })
+            .filter(|(_, _, duration)| *duration > 0)
             .collect::<Vec<_>>();
-        let first_tick = visible_notes
+        let visible_notes = visible_note_spans
             .iter()
-            .map(|note| note.tick().saturating_sub(source_start_tick))
+            .map(|(note, _, _)| *note)
+            .collect::<Vec<_>>();
+        let first_tick = visible_note_spans
+            .iter()
+            .map(|(_, local_tick, _)| *local_tick)
             .min()
             .unwrap_or(0);
-        let last_tick = visible_notes
+        let last_tick = visible_note_spans
             .iter()
-            .map(|note| {
-                note.tick()
-                    .saturating_add(note.duration())
-                    .min(source_end_tick)
-                    .saturating_sub(source_start_tick)
-            })
+            .map(|(_, local_tick, duration)| local_tick.saturating_add(*duration))
             .max()
             .unwrap_or(ppq.saturating_mul(4));
         let margin = ppq / 4;
@@ -17447,7 +17469,7 @@ impl App {
                         && note.duration() == copied.duration
                         && note.velocity() == copied.velocity
                 });
-        matches_clipboard.then_some(start_tick.saturating_sub(item.source_offset_ticks()))
+        matches_clipboard.then(|| view::midi_item_local_tick(item, start_tick))
     }
 
     fn duplicate_selected_midi_notes(&mut self, item_id: ItemId) {
@@ -17459,8 +17481,15 @@ impl App {
         else {
             return;
         };
-        let source_start_tick = item.source_offset_ticks();
-        let item_end_tick = source_start_tick.saturating_add(item.length_ticks());
+        let (source_start_tick, item_end_tick) = if item.is_loop_source() {
+            let source_start = item.source_offset_ticks();
+            (
+                source_start,
+                source_start.saturating_add(item.length_ticks()),
+            )
+        } else {
+            view::midi_source_edit_bounds(item)
+        };
         let item_length = item.length_ticks();
         let selected = item
             .notes()
@@ -17506,6 +17535,9 @@ impl App {
             self.midi_editor_feedback = Some(feedback.to_owned());
             return;
         }
+        let next_edit_cursor_tick =
+            view::midi_item_local_tick(item, snap_tick_up(target.saturating_add(span), grid))
+                .min(item_length);
 
         let old_ids = item
             .notes()
@@ -17536,11 +17568,7 @@ impl App {
                     .collect();
             }
             self.midi_note_clipboard.last_paste = None;
-            self.midi_editor_edit_cursor_tick = Some(
-                snap_tick_up(target.saturating_add(span), grid)
-                    .saturating_sub(source_start_tick)
-                    .min(item_length),
-            );
+            self.midi_editor_edit_cursor_tick = Some(next_edit_cursor_tick);
         }
     }
 

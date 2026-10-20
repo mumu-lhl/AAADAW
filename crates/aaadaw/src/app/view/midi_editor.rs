@@ -74,27 +74,48 @@ impl std::fmt::Display for MidiEditorControllerFilterValue {
 }
 
 fn source_tick_is_visible(item: &MidiItem, tick: u64) -> bool {
-    let start_tick = item.source_offset_ticks();
-    let end_tick = start_tick.saturating_add(item.length_ticks());
+    let start_tick = midi_source_display_start(item);
+    let end_tick = midi_source_display_end(item);
     source_event_occurrences(item, tick, start_tick, end_tick)
         .next()
         .is_some()
 }
 
-/// Returns unwrapped source positions of event instances visible in the item and tick window.
+pub(in crate::app) fn midi_source_display_start(item: &MidiItem) -> u64 {
+    item.signed_source_offset_ticks().max(0) as u64
+}
+
+pub(in crate::app) fn midi_source_display_end(item: &MidiItem) -> u64 {
+    midi_source_display_start(item).saturating_add(item.length_ticks())
+}
+
+fn midi_source_display_bias(item: &MidiItem) -> u64 {
+    let offset = item.signed_source_offset_ticks();
+    if offset < 0 { offset.unsigned_abs() } else { 0 }
+}
+
+pub(in crate::app) fn midi_item_local_tick(item: &MidiItem, source_tick: u64) -> u64 {
+    let local_tick = i128::from(source_tick) - i128::from(item.signed_source_offset_ticks());
+    if item.is_loop_source() && item.source_loop_length_ticks() > 0 {
+        return local_tick.rem_euclid(i128::from(item.source_loop_length_ticks())) as u64;
+    }
+    local_tick.clamp(0, i128::from(item.length_ticks())) as u64
+}
+
+/// Returns translated source positions of event instances visible in the item and tick window.
 ///
-/// MIDI Editor note rows use the source clock so that editing one displayed loop instance edits
-/// the shared source event. The unwrapped positions retain the loop iteration for layout while
-/// remaining compatible with source-relative drag deltas.
-fn source_event_occurrences(
+/// MIDI Editor rows use the item-relative source clock. Negative source offsets shift the visible
+/// source axis forward so that item time zero remains representable by the editor's unsigned tick
+/// coordinates.
+pub(in crate::app) fn source_event_occurrences(
     item: &MidiItem,
     event_tick: u64,
     visible_start: u64,
     visible_end: u64,
 ) -> impl Iterator<Item = u64> {
-    let item_start = item.source_offset_ticks();
-    let item_end = item_start.saturating_add(item.length_ticks());
-    let range_start = item_start.max(visible_start);
+    let item_start = midi_source_display_start(item);
+    let item_end = midi_source_display_end(item);
+    let range_start = visible_start;
     let range_end = item_end.min(visible_end);
     let (first_tick, interval) = if item.is_loop_source() {
         let loop_length = item.source_loop_length_ticks();
@@ -102,12 +123,8 @@ fn source_event_occurrences(
             (None, None)
         } else {
             let event_phase = event_tick % loop_length;
-            let offset_phase = item_start % loop_length;
-            let phase = if event_phase >= offset_phase {
-                event_phase - offset_phase
-            } else {
-                loop_length - (offset_phase - event_phase)
-            };
+            let phase = (i128::from(event_phase) - i128::from(item.signed_source_offset_ticks()))
+                .rem_euclid(i128::from(loop_length)) as u64;
             let first = item_start.checked_add(phase).and_then(|first| {
                 if first >= range_start {
                     Some(first)
@@ -121,8 +138,10 @@ fn source_event_occurrences(
             });
             (first, Some(loop_length))
         }
-    } else if event_tick >= range_start {
-        (Some(event_tick), None)
+    } else if let Some(display_tick) = event_tick.checked_add(midi_source_display_bias(item))
+        && display_tick >= range_start
+    {
+        (Some(display_tick), None)
     } else {
         (None, None)
     };
@@ -135,14 +154,12 @@ fn source_event_occurrences(
     .take(MAX_MIDI_EDITOR_LOOP_OCCURRENCES_PER_EVENT)
 }
 
-fn visible_note_duration(
+pub(in crate::app) fn visible_note_duration(
     item: &MidiItem,
     note: &aaadaw_core::MidiNote,
     occurrence_tick: u64,
 ) -> u64 {
-    let clip_end = item
-        .source_offset_ticks()
-        .saturating_add(item.length_ticks());
+    let clip_end = midi_source_display_end(item);
     source_note_duration(item, note.tick(), note.duration())
         .min(clip_end.saturating_sub(occurrence_tick))
 }
@@ -170,8 +187,8 @@ fn midi_note_insert_data(
     if local_tick >= item.length_ticks() {
         return None;
     }
-    let display_tick = item.source_offset_ticks().checked_add(local_tick)?;
-    let tick = source_edit_tick(item, display_tick);
+    let display_tick = midi_source_display_start(item).checked_add(local_tick)?;
+    let tick = midi_source_tick_for_display(item, display_tick)?;
     let duration = source_note_duration(
         item,
         tick,
@@ -195,12 +212,15 @@ fn midi_note_insert_data(
     })
 }
 
-fn midi_source_edit_bounds(item: &MidiItem) -> (u64, u64) {
+pub(in crate::app) fn midi_source_edit_bounds(item: &MidiItem) -> (u64, u64) {
     if item.is_loop_source() {
         (0, item.source_loop_length_ticks().max(1))
     } else {
-        let start = item.source_offset_ticks();
-        (start, start.saturating_add(item.length_ticks()))
+        let start = item.signed_source_offset_ticks().max(0) as u64;
+        let end = (i128::from(item.signed_source_offset_ticks()) + i128::from(item.length_ticks()))
+            .max(i128::from(start))
+            .min(i128::from(u64::MAX)) as u64;
+        (start, end)
     }
 }
 
@@ -212,7 +232,11 @@ fn source_loop_iteration(item: &MidiItem, event_tick: u64, occurrence_tick: u64)
     if loop_length == 0 {
         return 0;
     }
-    occurrence_tick.saturating_sub(event_tick % loop_length) / loop_length
+    let offset = i128::from(item.signed_source_offset_ticks());
+    let phase =
+        (i128::from(event_tick % loop_length) - offset).rem_euclid(i128::from(loop_length)) as u64;
+    occurrence_tick.saturating_sub(midi_source_display_start(item).saturating_add(phase))
+        / loop_length
 }
 
 fn occurrence_source_tick(item: &MidiItem, event_tick: u64, iteration: u64) -> u64 {
@@ -226,12 +250,22 @@ fn occurrence_source_tick(item: &MidiItem, event_tick: u64, iteration: u64) -> u
     (event_tick % loop_length).saturating_add(iteration.saturating_mul(loop_length))
 }
 
-fn source_edit_tick(item: &MidiItem, display_tick: u64) -> u64 {
+pub(in crate::app) fn midi_source_tick_for_local(item: &MidiItem, local_tick: u64) -> Option<u64> {
+    let source_tick = i128::from(item.signed_source_offset_ticks()) + i128::from(local_tick);
     if item.is_loop_source() && item.source_loop_length_ticks() > 0 {
-        display_tick % item.source_loop_length_ticks()
+        Some(source_tick.rem_euclid(i128::from(item.source_loop_length_ticks())) as u64)
     } else {
-        display_tick
+        u64::try_from(source_tick).ok()
     }
+}
+
+fn midi_source_tick_for_display(item: &MidiItem, display_tick: u64) -> Option<u64> {
+    let local_tick = display_tick.checked_sub(midi_source_display_start(item))?;
+    midi_source_tick_for_local(item, local_tick)
+}
+
+fn source_edit_tick(item: &MidiItem, display_tick: u64) -> u64 {
+    midi_source_tick_for_display(item, display_tick).unwrap_or_default()
 }
 
 fn visible_edit_cursor_tick(app: &App) -> u64 {
@@ -1421,11 +1455,7 @@ pub(in crate::app) fn midi_event_list_home_target(
             let content_tick = entry.tick();
             let position = item.project_position_at_content_tick(content_tick);
             let local_tick = position.map_or_else(
-                || {
-                    content_tick
-                        .saturating_sub(item.source_offset_ticks())
-                        .min(item.length_ticks())
-                },
+                || midi_item_local_tick(item, content_tick),
                 |position| position.tick().saturating_sub(item.start_tick()),
             );
             let project_tick = position.map_or_else(
@@ -3382,7 +3412,7 @@ impl ControllerLane<'_> {
         RollMapping {
             origin_tick: self
                 .origin_tick
-                .saturating_add(self.item.source_offset_ticks()),
+                .saturating_add(midi_source_display_start(self.item)),
             pixels_per_beat: self.pixels_per_beat,
             ticks_per_beat: self.ticks_per_beat,
             snap: self.snap,
@@ -3401,13 +3431,8 @@ impl ControllerLane<'_> {
         let mapping = self.mapping();
         let display_tick = mapping
             .snap_tick(mapping.tick_at_x(point.x), ignore_snap)
-            .max(self.item.source_offset_ticks())
-            .min(
-                self.item
-                    .source_offset_ticks()
-                    .saturating_add(self.item.length_ticks())
-                    .saturating_sub(1),
-            );
+            .max(midi_source_display_start(self.item))
+            .min(midi_source_display_end(self.item).saturating_sub(1));
         (
             MidiControllerData {
                 channel,
@@ -3429,8 +3454,8 @@ impl ControllerLane<'_> {
 
     fn closest_point(&self, point: Point) -> Option<(usize, u64)> {
         let mapping = self.mapping();
-        let item_start = self.item.source_offset_ticks();
-        let item_end = item_start.saturating_add(self.item.length_ticks());
+        let item_start = midi_source_display_start(self.item);
+        let item_end = midi_source_display_end(self.item);
         self.item
             .controllers()
             .iter()
@@ -3682,7 +3707,7 @@ impl canvas::Program<Message> for ControllerLane<'_> {
         frame.fill_rectangle(Point::ORIGIN, bounds.size(), Color::from_rgb8(27, 31, 34));
         let mapping = self.mapping();
         let end_tick = mapping.tick_at_x(bounds.width);
-        for tick in mapping.grid_tick_positions(self.origin_tick, end_tick) {
+        for tick in mapping.grid_tick_positions(mapping.origin_tick, end_tick) {
             let x = mapping.x_at_tick(tick);
             if (0.0..=bounds.width).contains(&x) {
                 let path = canvas::Path::line(Point::new(x, 0.0), Point::new(x, bounds.height));
@@ -3695,7 +3720,8 @@ impl canvas::Program<Message> for ControllerLane<'_> {
         draw_playhead_line(
             &mut frame,
             mapping,
-            self.playhead_tick,
+            self.playhead_tick
+                .map(|tick| midi_source_display_start(self.item).saturating_add(tick)),
             0.0,
             0.0,
             bounds.width,
@@ -3703,8 +3729,8 @@ impl canvas::Program<Message> for ControllerLane<'_> {
         );
 
         let controllers = self.item.controllers();
-        let item_start = self.item.source_offset_ticks();
-        let item_end = item_start.saturating_add(self.item.length_ticks());
+        let item_start = midi_source_display_start(self.item);
+        let item_end = midi_source_display_end(self.item);
         let prior_window_start = if self.item.is_loop_source() {
             item_start.max(
                 mapping
@@ -3851,7 +3877,8 @@ impl canvas::Program<Message> for ControllerLane<'_> {
                 shaping: Shaping::Basic,
             });
         }
-        let cursor_x = mapping.x_at_tick(self.snap.cursor_tick);
+        let cursor_x = mapping
+            .x_at_tick(midi_source_display_start(self.item).saturating_add(self.snap.cursor_tick));
         if (0.0..=bounds.width).contains(&cursor_x) {
             let cursor_line = canvas::Path::line(
                 Point::new(cursor_x, 0.0),
@@ -3910,7 +3937,7 @@ impl PitchBendLane<'_> {
         RollMapping {
             origin_tick: self
                 .origin_tick
-                .saturating_add(self.item.source_offset_ticks()),
+                .saturating_add(midi_source_display_start(self.item)),
             pixels_per_beat: self.pixels_per_beat,
             ticks_per_beat: self.ticks_per_beat,
             snap: self.snap,
@@ -3924,13 +3951,8 @@ impl PitchBendLane<'_> {
         let mapping = self.mapping();
         let display_tick = mapping
             .snap_tick(mapping.tick_at_x(point.x), ignore_snap)
-            .max(self.item.source_offset_ticks())
-            .min(
-                self.item
-                    .source_offset_ticks()
-                    .saturating_add(self.item.length_ticks())
-                    .saturating_sub(1),
-            );
+            .max(midi_source_display_start(self.item))
+            .min(midi_source_display_end(self.item).saturating_sub(1));
         (
             MidiPitchBendData {
                 channel,
@@ -3943,8 +3965,8 @@ impl PitchBendLane<'_> {
 
     fn closest_point(&self, point: Point) -> Option<(usize, u64)> {
         let mapping = self.mapping();
-        let item_start = self.item.source_offset_ticks();
-        let item_end = item_start.saturating_add(self.item.length_ticks());
+        let item_start = midi_source_display_start(self.item);
+        let item_end = midi_source_display_end(self.item);
         self.item
             .pitch_bends()
             .iter()
@@ -4145,7 +4167,7 @@ impl canvas::Program<Message> for PitchBendLane<'_> {
         frame.fill_rectangle(Point::ORIGIN, bounds.size(), Color::from_rgb8(27, 31, 34));
         let mapping = self.mapping();
         let end_tick = mapping.tick_at_x(bounds.width);
-        for tick in mapping.grid_tick_positions(self.origin_tick, end_tick) {
+        for tick in mapping.grid_tick_positions(mapping.origin_tick, end_tick) {
             let x = mapping.x_at_tick(tick);
             if (0.0..=bounds.width).contains(&x) {
                 let path = canvas::Path::line(Point::new(x, 0.0), Point::new(x, bounds.height));
@@ -4158,7 +4180,8 @@ impl canvas::Program<Message> for PitchBendLane<'_> {
         draw_playhead_line(
             &mut frame,
             mapping,
-            self.playhead_tick,
+            self.playhead_tick
+                .map(|tick| midi_source_display_start(self.item).saturating_add(tick)),
             0.0,
             0.0,
             bounds.width,
@@ -4176,8 +4199,8 @@ impl canvas::Program<Message> for PitchBendLane<'_> {
                 .with_color(Color::from_rgb8(106, 112, 118)),
         );
 
-        let item_start = self.item.source_offset_ticks();
-        let item_end = item_start.saturating_add(self.item.length_ticks());
+        let item_start = midi_source_display_start(self.item);
+        let item_end = midi_source_display_end(self.item);
         let prior_window_start = if self.item.is_loop_source() {
             item_start.max(
                 mapping
@@ -4318,7 +4341,8 @@ impl canvas::Program<Message> for PitchBendLane<'_> {
                 shaping: Shaping::Basic,
             });
         }
-        let cursor_x = mapping.x_at_tick(self.snap.cursor_tick);
+        let cursor_x = mapping
+            .x_at_tick(midi_source_display_start(self.item).saturating_add(self.snap.cursor_tick));
         if (0.0..=bounds.width).contains(&cursor_x) {
             let cursor_line = canvas::Path::line(
                 Point::new(cursor_x, 0.0),
@@ -4705,10 +4729,7 @@ impl canvas::Program<Message> for PianoRoll<'_> {
                     let Some(note_id) = velocity_note_at_x(
                         &visible_notes,
                         self.content_mapping(),
-                        self.item.source_offset_ticks(),
-                        self.item
-                            .source_offset_ticks()
-                            .saturating_add(self.item.length_ticks()),
+                        self.item,
                         point.x,
                     ) else {
                         return Some(canvas::Action::capture());
@@ -4895,10 +4916,7 @@ impl canvas::Program<Message> for PianoRoll<'_> {
                         velocity_note_at_x(
                             &visible_notes,
                             self.content_mapping(),
-                            self.item.source_offset_ticks(),
-                            self.item
-                                .source_offset_ticks()
-                                .saturating_add(self.item.length_ticks()),
+                            self.item,
                             point.x,
                         )
                     } else {
@@ -5323,12 +5341,8 @@ impl canvas::Program<Message> for PianoRoll<'_> {
                     let preview_x = grid_left + content_mapping.x_at_tick(preview_tick);
                     let preview_y = grid_top + mapping.y_at_pitch(preview.pitch);
                     let preview_duration =
-                        source_note_duration(self.item, preview.tick, preview.duration).min(
-                            self.item
-                                .source_offset_ticks()
-                                .saturating_add(self.item.length_ticks())
-                                .saturating_sub(preview_tick),
-                        );
+                        source_note_duration(self.item, preview.tick, preview.duration)
+                            .min(midi_source_display_end(self.item).saturating_sub(preview_tick));
                     let preview_width = note_width_pixels(
                         preview_duration,
                         self.ticks_per_beat,
@@ -5633,14 +5647,8 @@ impl PianoRoll<'_> {
             );
         }
         let visible_notes = self.visible_notes();
-        let velocity_positions = velocity_handle_positions(
-            &visible_notes,
-            self.content_mapping(),
-            self.item.source_offset_ticks(),
-            self.item
-                .source_offset_ticks()
-                .saturating_add(self.item.length_ticks()),
-        );
+        let velocity_positions =
+            velocity_handle_positions(&visible_notes, self.content_mapping(), self.item);
         for note in &visible_notes {
             if !source_tick_is_visible(self.item, note.tick()) {
                 continue;
@@ -5734,7 +5742,7 @@ impl PianoRoll<'_> {
         let mut mapping = self.mapping();
         mapping.origin_tick = mapping
             .origin_tick
-            .saturating_add(self.item.source_offset_ticks());
+            .saturating_add(midi_source_display_start(self.item));
         mapping
     }
 
@@ -5849,14 +5857,13 @@ fn note_drag_preview_data(
 fn velocity_note_at_x(
     notes: &[aaadaw_core::MidiNote],
     mapping: RollMapping,
-    source_start_tick: u64,
-    source_end_tick: u64,
+    item: &MidiItem,
     x: f32,
 ) -> Option<NoteId> {
-    let positions = velocity_handle_positions(notes, mapping, source_start_tick, source_end_tick);
+    let positions = velocity_handle_positions(notes, mapping, item);
     notes
         .iter()
-        .filter(|note| (source_start_tick..source_end_tick).contains(&note.tick()))
+        .filter(|note| source_tick_is_visible(item, note.tick()))
         .min_by(|left, right| {
             let left_x = positions.get(&left.id()).copied().unwrap_or_default() + 2.0;
             let right_x = positions.get(&right.id()).copied().unwrap_or_default() + 2.0;
@@ -5871,27 +5878,35 @@ fn velocity_note_at_x(
 fn velocity_handle_positions(
     notes: &[aaadaw_core::MidiNote],
     mapping: RollMapping,
-    source_start_tick: u64,
-    source_end_tick: u64,
+    item: &MidiItem,
 ) -> HashMap<NoteId, f32> {
     let mut ordered = notes
         .iter()
-        .filter(|note| (source_start_tick..source_end_tick).contains(&note.tick()))
+        .filter_map(|note| {
+            source_event_occurrences(
+                item,
+                note.tick(),
+                midi_source_display_start(item),
+                midi_source_display_end(item),
+            )
+            .next()
+            .map(|display_tick| (note, display_tick))
+        })
         .collect::<Vec<_>>();
-    ordered.sort_by_key(|note| (note.tick(), note.pitch()));
+    ordered.sort_by_key(|(note, display_tick)| (*display_tick, note.pitch()));
     let mut positions = HashMap::with_capacity(notes.len());
     let mut group_start = 0;
     while group_start < ordered.len() {
-        let tick = ordered[group_start].tick();
+        let tick = ordered[group_start].1;
         let group_end = ordered[group_start..]
             .iter()
-            .position(|note| note.tick() != tick)
+            .position(|(_, display_tick)| *display_tick != tick)
             .map_or(ordered.len(), |offset| group_start + offset);
         let group_len = group_end - group_start;
         let onset_x = mapping.x_at_tick(tick) + 1.0;
         let leftmost_offset = -((group_len.saturating_sub(1)) as f32 * 5.0 / 2.0);
         let shift_from_item_edge = (1.0 - onset_x - leftmost_offset).max(0.0);
-        for (index, note) in ordered[group_start..group_end].iter().enumerate() {
+        for (index, (note, _)) in ordered[group_start..group_end].iter().enumerate() {
             let offset = leftmost_offset + index as f32 * 5.0 + shift_from_item_edge;
             positions.insert(note.id(), onset_x + offset);
         }
@@ -6473,6 +6488,56 @@ mod tests {
             pitch_bend_lane.point_data(Point::new(264.0, pitch_bend_y(10_000, 72.0)), true, 0);
         assert_eq!(pitch_bend_display_tick, 11_760);
         assert_eq!(pitch_bend_edit.tick, 2_160);
+    }
+
+    #[test]
+    fn negative_source_offset_maps_editor_content_after_the_item_prefix() {
+        let (mut project, item_id, _) = project_with_note(
+            3_840,
+            MidiNoteData {
+                channel: 0,
+                pitch: 60,
+                tick: 120,
+                duration: 240,
+                velocity: 96,
+                off_velocity: 0,
+            },
+        );
+        project
+            .apply(aaadaw_core::DawAction::SetMidiItemLoopSource {
+                item_id,
+                enabled: false,
+            })
+            .unwrap();
+        project
+            .apply(aaadaw_core::DawAction::EditMidiItemPlacement {
+                item_id,
+                start_tick: 0,
+                length_ticks: 3_840,
+                source_offset_ticks: -960,
+            })
+            .unwrap();
+        let item = &project.midi_items()[0];
+
+        assert_eq!(midi_source_display_start(item), 0);
+        assert_eq!(midi_source_display_end(item), 3_840);
+        assert_eq!(midi_source_edit_bounds(item), (0, 2_880));
+        assert_eq!(
+            source_event_occurrences(item, 120, 0, 3_840).collect::<Vec<_>>(),
+            [1_080]
+        );
+        assert_eq!(visible_note_duration(item, &item.notes()[0], 1_080), 240);
+        assert_eq!(midi_source_tick_for_local(item, 120), None);
+        assert_eq!(midi_source_tick_for_local(item, 1_080), Some(120));
+        assert_eq!(
+            midi_note_insert_data(item, 120, 64, 240, 96, 0),
+            None,
+            "the source-free item prefix cannot create MIDI events"
+        );
+        assert_eq!(
+            midi_note_insert_data(item, 1_080, 64, 240, 96, 0).map(|note| note.tick),
+            Some(120)
+        );
     }
 
     #[test]
@@ -9113,16 +9178,16 @@ mod tests {
             })
             .unwrap();
         let notes = project.midi_items()[0].notes();
-        let positions = velocity_handle_positions(notes, mapping, 0, 3_840);
+        let positions = velocity_handle_positions(notes, mapping, &project.midi_items()[0]);
         let first = positions[&notes[0].id()];
         let second = positions[&notes[1].id()];
         assert_eq!(second - first, 5.0);
         assert_eq!(
-            velocity_note_at_x(notes, mapping, 0, 3_840, first + 4.0),
+            velocity_note_at_x(notes, mapping, &project.midi_items()[0], first + 4.0),
             Some(notes[0].id())
         );
         assert_eq!(
-            velocity_note_at_x(notes, mapping, 0, 3_840, second + 4.0),
+            velocity_note_at_x(notes, mapping, &project.midi_items()[0], second + 4.0),
             Some(notes[1].id())
         );
     }

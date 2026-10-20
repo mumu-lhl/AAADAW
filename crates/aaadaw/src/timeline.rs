@@ -371,7 +371,7 @@ struct TimelineItem {
     label: String,
     media_ref: Option<String>,
     midi_notes: Vec<MidiNotePreview>,
-    midi_source_offset_ticks: u64,
+    midi_source_offset_ticks: i64,
     midi_source_loop_length_ticks: Option<u64>,
     start_sample: u64,
     length_samples: u64,
@@ -391,7 +391,7 @@ struct MidiNotePreview {
 
 #[derive(Clone, Copy)]
 struct MidiPreviewSource {
-    offset_ticks: u64,
+    offset_ticks: i64,
     loop_length_ticks: Option<u64>,
 }
 
@@ -566,7 +566,7 @@ impl TimelineCache {
                         pitch: note.pitch(),
                     })
                     .collect(),
-                midi_source_offset_ticks: item.source_offset_ticks(),
+                midi_source_offset_ticks: item.signed_source_offset_ticks(),
                 midi_source_loop_length_ticks: item
                     .is_loop_source()
                     .then_some(item.source_loop_length_ticks())
@@ -2938,7 +2938,7 @@ struct InlineMidiTarget {
     item_id: ItemId,
     item_start_tick: u64,
     item_length_ticks: u64,
-    source_offset_ticks: u64,
+    source_offset_ticks: i64,
     source_loop_length_ticks: Option<u64>,
     item_left: f32,
     item_width: f32,
@@ -3388,12 +3388,8 @@ impl TimelineProgram<'_> {
             let mut occurrences = [None; 3];
             if let Some(loop_length) = loop_length {
                 let source_tick = note.tick % loop_length;
-                let source_offset = target.source_offset_ticks % loop_length;
-                let phase = if source_tick >= source_offset {
-                    source_tick - source_offset
-                } else {
-                    loop_length - (source_offset - source_tick)
-                };
+                let phase = (i128::from(source_tick) - i128::from(target.source_offset_ticks))
+                    .rem_euclid(i128::from(loop_length)) as u64;
                 let near_index = local_tick.saturating_sub(phase) / loop_length;
                 for (slot, index) in
                     (near_index.saturating_sub(1)..=near_index.saturating_add(1)).enumerate()
@@ -3401,10 +3397,23 @@ impl TimelineProgram<'_> {
                     occurrences[slot] = phase.checked_add(index.saturating_mul(loop_length));
                 }
             } else {
-                occurrences[0] = note.tick.checked_sub(target.source_offset_ticks);
+                let local_start = i128::from(note.tick) - i128::from(target.source_offset_ticks);
+                let local_end = local_start + i128::from(note.duration);
+                if local_end > 0 && local_start < i128::from(target.item_length_ticks) {
+                    occurrences[0] = u64::try_from(local_start.max(0)).ok();
+                }
             }
             for occurrence_tick in occurrences.into_iter().flatten() {
-                let duration = note.duration.min(target.item_length_ticks);
+                let duration = if loop_length.is_some() {
+                    note.duration.min(target.item_length_ticks)
+                } else {
+                    let source_offset = i128::from(target.source_offset_ticks);
+                    let note_end = i128::from(note.tick) + i128::from(note.duration);
+                    let local_end = note_end - source_offset;
+                    u64::try_from(local_end - i128::from(occurrence_tick))
+                        .unwrap_or_default()
+                        .min(target.item_length_ticks)
+                };
                 let note_end = occurrence_tick
                     .saturating_add(duration)
                     .min(target.item_length_ticks);
@@ -3512,18 +3521,18 @@ impl TimelineProgram<'_> {
         let local_tick = snapped_tick
             .saturating_sub(target.item_start_tick)
             .min(target.item_length_ticks.saturating_sub(1));
-        let mut tick = target.source_offset_ticks.saturating_add(local_tick);
+        let mut tick = i128::from(target.source_offset_ticks) + i128::from(local_tick);
         if let Some(loop_length) = target.source_loop_length_ticks.filter(|length| *length > 0) {
-            tick %= loop_length;
+            tick = tick.rem_euclid(i128::from(loop_length));
         } else {
-            tick = tick.clamp(
-                target.source_offset_ticks,
-                target
-                    .source_offset_ticks
-                    .saturating_add(target.item_length_ticks)
-                    .saturating_sub(drag.note.duration),
-            );
+            let source_start = i128::from(target.source_offset_ticks).max(0);
+            let source_end = (i128::from(target.source_offset_ticks)
+                + i128::from(target.item_length_ticks))
+            .max(source_start);
+            let latest_start = (source_end - i128::from(drag.note.duration)).max(source_start);
+            tick = tick.clamp(source_start, latest_start);
         }
+        let tick = u64::try_from(tick).ok()?;
         let pitch_range =
             f32::from((u16::from(target.pitch_high) - u16::from(target.pitch_low)).max(1));
         let semitone_height = (target.notes_height / pitch_range).max(1.0);
@@ -3566,8 +3575,10 @@ impl TimelineProgram<'_> {
                 .iter()
                 .map(|(_, note)| note.tick.saturating_add(note.duration))
                 .max()?;
-            let source_start = i128::from(drag.target.source_offset_ticks);
-            let source_end = source_start + i128::from(drag.target.item_length_ticks);
+            let source_start = i128::from(drag.target.source_offset_ticks).max(0);
+            let source_end = (i128::from(drag.target.source_offset_ticks)
+                + i128::from(drag.target.item_length_ticks))
+            .max(source_start);
             let min_delta = source_start - i128::from(min_tick);
             let max_delta = source_end - i128::from(max_end_tick);
             delta_tick = delta_tick.clamp(min_delta, max_delta);
@@ -3649,10 +3660,11 @@ impl TimelineProgram<'_> {
             ),
             std::cmp::Ordering::Equal => (start_local_tick, default_duration),
         };
-        let mut tick = target.source_offset_ticks.saturating_add(local_tick);
+        let mut tick = i128::from(target.source_offset_ticks) + i128::from(local_tick);
         if let Some(loop_length) = target.source_loop_length_ticks.filter(|length| *length > 0) {
-            tick %= loop_length;
+            tick = tick.rem_euclid(i128::from(loop_length));
         }
+        let tick = u64::try_from(tick).ok()?;
         let pitch_span = u16::from(target.pitch_high - target.pitch_low).max(1);
         let pitch_from_top = ((target.notes_top + target.notes_height - start_position.y)
             / target.notes_height
@@ -6382,6 +6394,7 @@ fn midi_note_preview_geometry_in_pitch_range(
         first_tick: u64,
         interval: u64,
         count: u64,
+        duration: u64,
     }
 
     let item_left = f64::from(bounds.item_left);
@@ -6409,12 +6422,8 @@ fn midi_note_preview_geometry_in_pitch_range(
 
         if let Some(loop_length) = source.loop_length_ticks.filter(|length| *length > 0) {
             let source_tick = note.tick % loop_length;
-            let source_offset = source.offset_ticks % loop_length;
-            let phase = if source_tick >= source_offset {
-                source_tick - source_offset
-            } else {
-                loop_length - (source_offset - source_tick)
-            };
+            let phase = (i128::from(source_tick) - i128::from(source.offset_ticks))
+                .rem_euclid(i128::from(loop_length)) as u64;
             let earliest_visible_start =
                 visible_start_tick.saturating_sub(duration.saturating_sub(1));
             let first_index = if earliest_visible_start <= phase {
@@ -6437,12 +6446,20 @@ fn midi_note_preview_geometry_in_pitch_range(
                 first_tick,
                 interval: loop_length,
                 count: last_index - first_index + 1,
+                duration,
             })
         } else {
-            let first_tick = note.tick.checked_sub(source.offset_ticks)?;
-            if first_tick >= visible_end_tick
-                || first_tick.saturating_add(duration) <= visible_start_tick
+            let local_start = i128::from(note.tick) - i128::from(source.offset_ticks);
+            let local_end = local_start + i128::from(duration);
+            if local_start >= i128::from(visible_end_tick)
+                || local_end <= i128::from(visible_start_tick)
+                || local_end <= 0
             {
+                return None;
+            }
+            let first_tick = u64::try_from(local_start.max(0)).ok()?;
+            let duration = u64::try_from(local_end - i128::from(first_tick)).ok()?;
+            if duration == 0 {
                 return None;
             }
             Some(Candidate {
@@ -6450,6 +6467,7 @@ fn midi_note_preview_geometry_in_pitch_range(
                 first_tick,
                 interval: 0,
                 count: 1,
+                duration,
             })
         }
     };
@@ -6505,7 +6523,7 @@ fn midi_note_preview_geometry_in_pitch_range(
             let tick = candidate
                 .first_tick
                 .saturating_add(occurrence_index.saturating_mul(candidate.interval));
-            let note_end = tick.saturating_add(note.duration).min(item_length);
+            let note_end = tick.saturating_add(candidate.duration).min(item_length);
             if tick >= item_length || note_end <= tick {
                 continue;
             }
@@ -9973,6 +9991,122 @@ mod tests {
     }
 
     #[test]
+    fn inline_midi_editor_maps_negative_source_offsets_to_item_local_positions() {
+        let mut project = Project::new();
+        project
+            .apply(DawAction::CreateTrack {
+                index: 0,
+                name: "Negative-offset inline MIDI".to_owned(),
+            })
+            .unwrap();
+        let track_id = project.tracks()[0].id();
+        project
+            .apply(DawAction::InsertMidiItem {
+                track_id,
+                start_tick: 0,
+                length_ticks: 3_840,
+            })
+            .unwrap();
+        let item_id = project.midi_items()[0].id();
+        project
+            .apply(DawAction::AddMidiNotes {
+                item_id,
+                notes: vec![MidiNoteData {
+                    channel: 0,
+                    pitch: 60,
+                    tick: 120,
+                    duration: 240,
+                    velocity: 96,
+                    off_velocity: 0,
+                }],
+            })
+            .unwrap();
+        project
+            .apply(DawAction::SetMidiItemLoopSource {
+                item_id,
+                enabled: false,
+            })
+            .unwrap();
+        project
+            .apply(DawAction::EditMidiItemPlacement {
+                item_id,
+                start_tick: 0,
+                length_ticks: 3_840,
+                source_offset_ticks: -960,
+            })
+            .unwrap();
+
+        let mut timeline = TimelineState {
+            pixels_per_tick: 0.5,
+            snap_enabled: false,
+            ..TimelineState::default()
+        };
+        timeline.rebuild(&project);
+        timeline.inline_midi_items.insert(item_id);
+        let program = timeline.program(&project, None);
+        let surface = Point::new(30.0, 50.0);
+        let target = program
+            .inline_midi_target_at(surface)
+            .expect("a negative-offset MIDI item exposes its inline editor");
+        let local_note_tick = 1_080;
+        let pitch_range = f32::from(target.pitch_high - target.pitch_low);
+        let note_height = (target.notes_height / (pitch_range + 1.0)).clamp(2.0, 6.0);
+        let note_top = target.notes_top
+            + f32::from(target.pitch_high - 60) / pitch_range
+                * (target.notes_height - note_height).max(0.0);
+        let note_position = Point::new(
+            target.item_left
+                + local_note_tick as f32 / target.item_length_ticks as f32 * target.item_width,
+            note_top + note_height / 2.0,
+        );
+        let hit = program
+            .inline_midi_note_hit(target, note_position)
+            .expect("the source note appears at its rebased item-local position");
+        assert_eq!(hit.display_tick, local_note_tick);
+        assert_eq!(hit.note.data.tick, 120);
+
+        let moved = program
+            .inline_note_data_after_drag(
+                PendingInlineNoteMove {
+                    target,
+                    note_id: hit.note.id,
+                    note: hit.note.data,
+                    display_tick: hit.display_tick,
+                    notes: vec![(hit.note.id, hit.note.data)],
+                    start_position: note_position,
+                    resize: false,
+                    copy: false,
+                    click_selection: None,
+                },
+                Point::new(
+                    note_position.x + 120.0 * timeline.pixels_per_tick,
+                    note_position.y,
+                ),
+                true,
+            )
+            .expect("dragging a visible source note remains within the source data");
+        assert_eq!(moved.tick, 240);
+
+        let before_source_start = Point::new(
+            target.item_left + 120.0 / target.item_length_ticks as f32 * target.item_width,
+            note_top,
+        );
+        assert!(
+            program
+                .inline_note_data_between(target, before_source_start, before_source_start, true)
+                .is_none()
+        );
+        let after_source_start = Point::new(
+            target.item_left + 1_200.0 / target.item_length_ticks as f32 * target.item_width,
+            note_top,
+        );
+        let inserted = program
+            .inline_note_data_between(target, after_source_start, after_source_start, true)
+            .expect("insertions after source time zero map to valid MIDI ticks");
+        assert_eq!(inserted.tick, 240);
+    }
+
+    #[test]
     fn inline_midi_drag_moves_the_selected_note_group_with_reaper_snap_values() {
         let mut project = Project::new();
         project
@@ -10409,6 +10543,53 @@ mod tests {
         assert_eq!(rects[1].x, 200.0);
         assert!(rects[0].y > rects[1].y);
         assert!(rects.iter().all(|rect| (20.0..68.0).contains(&rect.y)));
+    }
+
+    #[test]
+    fn midi_note_preview_geometry_places_notes_after_negative_source_offsets() {
+        let notes = [test_midi_note_preview(1, 120, 240, 60)];
+        let rects = midi_note_preview_geometry(
+            &notes,
+            MidiPreviewSource {
+                offset_ticks: -960,
+                loop_length_ticks: None,
+            },
+            3_840,
+            MidiPreviewBounds {
+                item_left: 100.0,
+                item_width: 200.0,
+                viewport_width: 500.0,
+                top: 20.0,
+                height: 48.0,
+            },
+        );
+
+        assert_eq!(rects.len(), 1);
+        assert!((rects[0].x - 156.25).abs() < 0.01);
+        assert!((rects[0].width - 12.5).abs() < 0.01);
+    }
+
+    #[test]
+    fn midi_loop_preview_uses_signed_source_phase() {
+        let notes = [test_midi_note_preview(1, 120, 120, 60)];
+        let rects = midi_note_preview_geometry(
+            &notes,
+            MidiPreviewSource {
+                offset_ticks: -120,
+                loop_length_ticks: Some(960),
+            },
+            960,
+            MidiPreviewBounds {
+                item_left: 100.0,
+                item_width: 200.0,
+                viewport_width: 500.0,
+                top: 20.0,
+                height: 48.0,
+            },
+        );
+
+        assert_eq!(rects.len(), 1);
+        assert!((rects[0].x - 150.0).abs() < 0.01);
     }
 
     #[test]
