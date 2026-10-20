@@ -2955,4 +2955,4 @@ Linux REAPER 7.82 / Default 7 Main action 40131 已在四个选中 MIDI Item 上
 
 AAADAW Core 保留活动 MIDI Take 的所有事件与源属性、清除其他 Take 并重置索引。Item 菜单和 Action List 入口现在适用于 Audio、MIDI 与混合选区；MIDI Inspector 提供 Crop 控件；冻结目标原子拒绝，单 Take 不入历史。稳定 Nextest Core/Storage/Desktop **1282/1282**（55 binaries），严格 all-target Clippy、fmt、capture `bash -n`、parity matrix 和 `git diff --check` 通过。Cranelift 实窗四态截图显示 `Take 2/2 · Take B → 1/1 → Undo 2/2 → Redo 1/1`，完整原厂和 AAADAW artifact 哈希见[evidence manifest](../verification/reaper-parity/fixtures/midi-crop-to-active-take-evidence.tsv)。
 
-`EDIT-TAKE-001` remains `in_progress`：录音 Take、其他 Take arrangement/显示控制、Fixed Lanes、Comp Areas 与跨工程剪贴板仍开放。本切片实现已作为独立提交完成，继续推进唯一分支的现有 Draft PR。
+`EDIT-TAKE-001` remains `in_progress`：录音 Take、其他 Take arrangement/显示控制、Fixed Lanes、Comp Areas 与跨工程剪贴板仍开放。本切片实现提交 `e544303`（`feat: crop active MIDI takes`），继续推进唯一分支的现有 Draft PR。
