@@ -243,6 +243,7 @@ mod region_properties;
 mod region_render_matrix;
 mod render_wildcard_preferences;
 mod routing;
+mod routing_matrix;
 mod shortcut;
 mod shortcut_map;
 #[cfg(test)]
@@ -640,6 +641,7 @@ struct App {
     marker_manager: Option<marker_manager::MarkerManager>,
     marker_manager_window_id: Option<iced::window::Id>,
     region_render_matrix_window_id: Option<iced::window::Id>,
+    routing_matrix_window_id: Option<iced::window::Id>,
     selected_render_markers: HashSet<MarkerId>,
     selected_render_regions: HashSet<RegionId>,
     active_menu: Option<MainMenu>,
@@ -2954,6 +2956,8 @@ impl App {
             "Region/Marker Manager".to_owned()
         } else if self.region_render_matrix_window_id == Some(window_id) {
             "Region Render Matrix".to_owned()
+        } else if self.routing_matrix_window_id == Some(window_id) {
+            "Routing Matrix".to_owned()
         } else if self.routing_window_id == Some(window_id) {
             self.routing_track_id
                 .and_then(|id| self.project.tracks().iter().find(|track| track.id() == id))
@@ -4975,6 +4979,7 @@ impl App {
                     || self.region_properties_window_id == Some(*window_id)
                     || self.marker_manager_window_id == Some(*window_id)
                     || self.region_render_matrix_window_id == Some(*window_id)
+                    || self.routing_matrix_window_id == Some(*window_id)
                     || self.routing_window_id == Some(*window_id)
                     || self.action_input_window_id == Some(*window_id)
                     || self.action_list_window_id == Some(*window_id)
@@ -5124,6 +5129,10 @@ impl App {
                     | Message::CloseRegionRenderMatrix
                     | Message::SetRegionRenderMatrixMaster(_, _)
                     | Message::SetRegionRenderMatrixTrack(_, _, _)
+                    | Message::OpenRoutingMatrix
+                    | Message::CloseRoutingMatrix
+                    | Message::SetRoutingMatrixMainSend(_, _)
+                    | Message::SetRoutingMatrixSend(_, _)
                     | Message::MarkerManagerFilterChanged(_)
                     | Message::MarkerManagerShowRegionsChanged(_)
                     | Message::MarkerManagerShowMarkersChanged(_)
@@ -5168,6 +5177,7 @@ impl App {
                     | Message::ExecuteCommand(commands::CommandId::OpenActionList)
                     | Message::ExecuteCommand(commands::CommandId::OpenMarkerManager)
                     | Message::ExecuteCommand(commands::CommandId::OpenRegionRenderMatrix)
+                    | Message::ExecuteCommand(commands::CommandId::OpenRoutingMatrix)
                     | Message::ExecuteCommand(commands::CommandId::ExportWav)
                     | Message::ToggleMediaBrowserPanel
                     | Message::ExecuteCommand(commands::CommandId::ToggleMediaBrowserPanel)
@@ -5943,6 +5953,14 @@ impl App {
             Message::OpenMarkerManager => task = self.open_marker_manager(),
             Message::OpenRegionRenderMatrix => task = self.open_region_render_matrix(),
             Message::CloseRegionRenderMatrix => task = self.close_region_render_matrix(),
+            Message::OpenRoutingMatrix => task = self.open_routing_matrix(),
+            Message::CloseRoutingMatrix => task = self.close_routing_matrix(),
+            Message::SetRoutingMatrixMainSend(track_id, enabled) => {
+                self.set_routing_matrix_main_send(track_id, enabled)
+            }
+            Message::SetRoutingMatrixSend(source, destination) => {
+                task = self.set_routing_matrix_send(source, destination)
+            }
             Message::SetRegionRenderMatrixMaster(region_id, enabled) => {
                 self.set_region_render_matrix_master(region_id, enabled)
             }
@@ -6089,6 +6107,8 @@ impl App {
                     self.marker_manager = None;
                 } else if self.region_render_matrix_window_id == Some(window_id) {
                     self.region_render_matrix_window_id = None;
+                } else if self.routing_matrix_window_id == Some(window_id) {
+                    self.routing_matrix_window_id = None;
                 } else if self.routing_window_id == Some(window_id) {
                     self.routing_window_id = None;
                     self.routing_track_id = None;
@@ -8420,6 +8440,31 @@ impl App {
                         )
                     {
                         return self.close_region_render_matrix();
+                    }
+                    return Task::none();
+                }
+                if self.routing_matrix_window_id == Some(window_id) {
+                    if status == iced::event::Status::Ignored
+                        && matches!(
+                            &event,
+                            iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
+                                key: iced::keyboard::Key::Named(iced::keyboard::key::Named::Escape),
+                                repeat: false,
+                                ..
+                            })
+                        )
+                    {
+                        return self.close_routing_matrix();
+                    }
+                    if let Some(message) = keyboard_shortcut_event(
+                        event,
+                        status,
+                        window_id,
+                        Some(window_id),
+                        None,
+                        None,
+                    ) {
+                        return self.update(message);
                     }
                     return Task::none();
                 }

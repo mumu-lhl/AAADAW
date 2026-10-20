@@ -33156,6 +33156,56 @@ fn ordinary_track_routing_is_available_as_an_undoable_action() {
 }
 
 #[test]
+fn routing_matrix_cells_add_routes_and_send_deletion_remains_individually_undoable() {
+    let mut app = App::default();
+    for _ in 0..3 {
+        let _ = app.update(Message::AddTrack);
+    }
+    let source = app.project.tracks()[0].id();
+    let destination = app.project.tracks()[1].id();
+
+    let _ = app.update(Message::SetRoutingMatrixMainSend(source, false));
+    assert!(!app.project.tracks()[0].main_send_enabled());
+    let _ = app.update(Message::Undo);
+    assert!(app.project.tracks()[0].main_send_enabled());
+    let _ = app.update(Message::Redo);
+    assert!(!app.project.tracks()[0].main_send_enabled());
+
+    let _ = app.update(Message::SetRoutingMatrixSend(source, destination));
+    assert_eq!(app.project.tracks()[0].sends().len(), 1);
+    assert!(app.routing_track_id.is_none());
+    assert!(app.routing_window_id.is_none());
+    let _ = app.update(Message::OpenTrackRouting(source));
+    assert_eq!(app.routing_track_id, Some(source));
+    assert!(app.routing_window_id.is_some());
+    let _ = app.update(Message::Undo);
+    assert!(app.project.tracks()[0].sends().is_empty());
+    let _ = app.update(Message::Redo);
+    assert_eq!(app.project.tracks()[0].sends().len(), 1);
+
+    let _ = app.update(Message::RoutingChange(DawAction::CreateAudioSend {
+        track_id: source,
+        destination,
+        parameters: Default::default(),
+    }));
+    assert_eq!(app.project.tracks()[0].sends().len(), 2);
+    let first_send = app.project.tracks()[0].sends()[0].id();
+    let _ = app.update(Message::RoutingChange(DawAction::DeleteAudioSend {
+        track_id: source,
+        send_id: first_send,
+    }));
+    assert_eq!(app.project.tracks()[0].sends().len(), 1);
+    let _ = app.update(Message::Undo);
+    assert_eq!(app.project.tracks()[0].sends().len(), 2);
+    let _ = app.update(Message::Redo);
+    assert_eq!(app.project.tracks()[0].sends().len(), 1);
+
+    let _ = app.update(Message::SetRoutingMatrixSend(destination, source));
+    assert!(app.project.tracks()[1].sends().is_empty());
+    assert!(app.status.contains("routing cycle"));
+}
+
+#[test]
 fn routing_send_drafts_commit_atomically_and_invalid_values_preserve_project() {
     let mut app = App::default();
     let _ = app.update(Message::AddTrack);

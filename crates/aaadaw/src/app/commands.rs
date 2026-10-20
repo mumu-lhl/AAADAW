@@ -55,6 +55,7 @@ pub(crate) enum CommandId {
     ShowArrangement,
     ShowMixer,
     OpenMarkerManager,
+    OpenRoutingMatrix,
     OpenRegionRenderMatrix,
     ToggleProjectMarkersOnRuler,
     ToggleProjectRegionsOnRuler,
@@ -220,6 +221,7 @@ enum CommandKind {
     ShowArrangement,
     ShowMixer,
     OpenMarkerManager,
+    OpenRoutingMatrix,
     OpenRegionRenderMatrix,
     ToggleProjectMarkersOnRuler,
     ToggleProjectRegionsOnRuler,
@@ -398,6 +400,7 @@ const MARKER_MANAGER_SHORTCUT: &[Shortcut] = &[Shortcut::character(
         .union(Modifiers::ALT)
         .union(Modifiers::SHIFT),
 )];
+const ROUTING_MATRIX_SHORTCUT: &[Shortcut] = &[Shortcut::character('r', Modifiers::ALT)];
 #[cfg(feature = "audio-device")]
 const PLAYBACK_SHORTCUT: &[Shortcut] = &[
     Shortcut::named(Named::Enter, Modifiers::NONE),
@@ -780,6 +783,16 @@ const COMMANDS: &[CommandDefinition] = &[
             "show marker manager",
         ],
         shortcuts: MARKER_MANAGER_SHORTCUT,
+        destructive: false,
+        separator_before: true,
+    },
+    CommandDefinition {
+        kind: CommandKind::OpenRoutingMatrix,
+        menu: Some(MainMenu::View),
+        category: "View",
+        label: "Routing Matrix",
+        aliases: &["routing matrix", "show routing matrix"],
+        shortcuts: ROUTING_MATRIX_SHORTCUT,
         destructive: false,
         separator_before: true,
     },
@@ -2952,6 +2965,7 @@ fn command_kind_id(kind: CommandKind) -> &'static str {
         CommandKind::ShowArrangement => "view.arrangement-workspace",
         CommandKind::ShowMixer => "view.mixer-workspace",
         CommandKind::OpenMarkerManager => "view.marker-manager",
+        CommandKind::OpenRoutingMatrix => "view.routing-matrix",
         CommandKind::OpenRegionRenderMatrix => "view.region-render-matrix",
         CommandKind::ToggleProjectMarkersOnRuler => "ruler.toggle-project-markers",
         CommandKind::ToggleProjectRegionsOnRuler => "ruler.toggle-project-regions",
@@ -3324,6 +3338,7 @@ pub(super) fn dispatch(app: &mut App, command: CommandId) -> Task<Message> {
         CommandId::ShowArrangement => Message::ShowMainWorkspace(MainWorkspace::Arrangement),
         CommandId::ShowMixer => Message::ShowMainWorkspace(MainWorkspace::Mixer),
         CommandId::OpenMarkerManager => Message::OpenMarkerManager,
+        CommandId::OpenRoutingMatrix => Message::OpenRoutingMatrix,
         CommandId::OpenRegionRenderMatrix => Message::OpenRegionRenderMatrix,
         CommandId::ToggleProjectMarkersOnRuler => Message::ToggleProjectMarkersOnRuler,
         CommandId::ToggleProjectRegionsOnRuler => Message::ToggleProjectRegionsOnRuler,
@@ -4066,6 +4081,7 @@ fn command_enabled(app: &App, kind: CommandKind, track: Option<TrackState>) -> b
         | CommandKind::ToggleSwingGrid
         | CommandKind::OpenActionList
         | CommandKind::OpenMarkerManager => true,
+        CommandKind::OpenRoutingMatrix => true,
         CommandKind::OpenRegionRenderMatrix => true,
         CommandKind::ToggleProjectMarkersOnRuler
         | CommandKind::ToggleProjectRegionsOnRuler
@@ -4703,6 +4719,7 @@ fn command_id(kind: CommandKind) -> CommandId {
         CommandKind::ShowArrangement => CommandId::ShowArrangement,
         CommandKind::ShowMixer => CommandId::ShowMixer,
         CommandKind::OpenMarkerManager => CommandId::OpenMarkerManager,
+        CommandKind::OpenRoutingMatrix => CommandId::OpenRoutingMatrix,
         CommandKind::OpenRegionRenderMatrix => CommandId::OpenRegionRenderMatrix,
         CommandKind::ToggleProjectMarkersOnRuler => CommandId::ToggleProjectMarkersOnRuler,
         CommandKind::ToggleProjectRegionsOnRuler => CommandId::ToggleProjectRegionsOnRuler,
@@ -4988,6 +5005,10 @@ mod project_marker_command_tests {
             Some(CommandId::OpenMarkerManager)
         );
         assert_eq!(
+            from_shortcut(&Key::Character("r"), Modifiers::ALT, &bindings, &macros),
+            Some(CommandId::OpenRoutingMatrix)
+        );
+        assert_eq!(
             stable_id(CommandId::OpenMarkerManager).as_deref(),
             Some("view.marker-manager")
         );
@@ -4997,6 +5018,11 @@ mod project_marker_command_tests {
             Some("view.region-render-matrix")
         );
         assert!(find(&App::default(), "region render matrix").is_some());
+        assert_eq!(
+            stable_id(CommandId::OpenRoutingMatrix).as_deref(),
+            Some("view.routing-matrix")
+        );
+        assert!(find(&App::default(), "routing matrix").is_some());
     }
 
     #[test]

@@ -1,0 +1,9 @@
+reference	7.82/linux-x86_64 / Linux / Default 7
+action_40251	View: Show routing matrix window
+action_40251_default_shortcuts	1
+action_40251_shortcut_1	Alt+R
+action_40313	View: Attach/unattach docker to/from main window
+before_matrix	2	0	2
+after_add_cell_click	3	1	2
+after_open_cell_click	3	1	2
+after_delete_cell_click	2	0	2
