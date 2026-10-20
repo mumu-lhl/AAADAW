@@ -1335,26 +1335,47 @@ fn exploding_mixed_audio_and_midi_takes_is_one_undo_step() {
         })
         .unwrap();
     let midi_id = app.project.midi_items()[0].id();
-    let mut snapshot = app.project.snapshot();
-    let midi = &mut snapshot.midi_items[0];
-    midi.active_take_index = 1;
-    midi.name = "MIDI take B".into();
-    midi.other_takes = vec![MidiItemTakeSnapshot {
-        index: 0,
-        name: "MIDI take A".into(),
-        source_offset_ticks: 0,
-        loop_source: false,
-        source_loop_length_ticks: midi.length_ticks,
-        notes: Vec::new(),
-        controllers: Vec::new(),
-        pitch_bends: Vec::new(),
-        program_changes: Vec::new(),
-        poly_aftertouches: Vec::new(),
-        channel_pressures: Vec::new(),
-        opaque_events: Vec::new(),
-        event_order: Vec::new(),
-    }];
-    app.project = Project::from_snapshot(snapshot).unwrap();
+    app.project
+        .apply(DawAction::SetMidiItemName {
+            item_id: midi_id,
+            name: "MIDI take A".into(),
+        })
+        .unwrap();
+    app.project
+        .apply(DawAction::AddMidiNotes {
+            item_id: midi_id,
+            notes: vec![MidiNoteData {
+                pitch: 60,
+                channel: 0,
+                tick: 0,
+                duration: 960,
+                velocity: 100,
+                off_velocity: 0,
+            }],
+        })
+        .unwrap();
+    app.project
+        .apply(DawAction::DuplicateMidiItemTake { item_id: midi_id })
+        .unwrap();
+    app.project
+        .apply(DawAction::SetMidiItemName {
+            item_id: midi_id,
+            name: "MIDI take B".into(),
+        })
+        .unwrap();
+    app.project
+        .apply(DawAction::AddMidiNotes {
+            item_id: midi_id,
+            notes: vec![MidiNoteData {
+                pitch: 64,
+                channel: 0,
+                tick: 960,
+                duration: 480,
+                velocity: 100,
+                off_velocity: 0,
+            }],
+        })
+        .unwrap();
     app.timeline.rebuild(&app.project);
     app.timeline
         .select_items(vec![(audio_id, track_id), (midi_id, track_id)]);
@@ -1384,6 +1405,27 @@ fn exploding_mixed_audio_and_midi_takes_is_one_undo_step() {
             .midi_items()
             .iter()
             .all(|item| item.take_count() == 1)
+    );
+    assert_eq!(
+        app.project
+            .midi_items()
+            .iter()
+            .map(|item| item.name())
+            .collect::<Vec<_>>(),
+        ["MIDI take A", "MIDI take B"]
+    );
+    assert_eq!(
+        app.project
+            .midi_items()
+            .iter()
+            .map(|item| {
+                item.notes()
+                    .iter()
+                    .map(|note| note.pitch())
+                    .collect::<Vec<_>>()
+            })
+            .collect::<Vec<_>>(),
+        [vec![60], vec![60, 64]]
     );
     assert!(app.timeline.selected_items.is_empty());
     let after = app.project.snapshot();
