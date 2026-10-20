@@ -1143,6 +1143,64 @@ fn cross_track_implode_requires_overlapping_selected_items() {
 }
 
 #[test]
+fn midi_cross_track_implode_rejects_abutting_and_disjoint_items_without_history() {
+    let mut app = App::default();
+    for (index, name) in ["Top", "Bottom"].into_iter().enumerate() {
+        app.project
+            .apply(DawAction::CreateTrack {
+                index,
+                name: name.to_owned(),
+            })
+            .expect("track should be created");
+    }
+    let top_track = app.project.tracks()[0].id();
+    let bottom_track = app.project.tracks()[1].id();
+    for (track_id, start_tick) in [(top_track, 0), (bottom_track, 1_920)] {
+        app.project
+            .apply(DawAction::InsertMidiItem {
+                track_id,
+                start_tick,
+                length_ticks: 1_920,
+            })
+            .expect("MIDI item should be inserted");
+    }
+    let top_id = app.project.midi_items()[0].id();
+    let bottom_id = app.project.midi_items()[1].id();
+
+    for bottom_start_tick in [1_920, 2_400] {
+        if app.project.midi_items()[1].start_tick() != bottom_start_tick {
+            app.project
+                .apply(DawAction::EditMidiItemPlacement {
+                    item_id: bottom_id,
+                    start_tick: bottom_start_tick,
+                    length_ticks: 1_920,
+                    source_offset_ticks: 0,
+                })
+                .expect("MIDI donor should move to the next boundary case");
+        }
+        app.timeline.rebuild(&app.project);
+        app.timeline
+            .select_items(vec![(top_id, top_track), (bottom_id, bottom_track)]);
+
+        assert!(commands::midi_items_for_cross_track_implode(&app).is_none());
+        assert!(!commands::is_enabled(
+            &app,
+            CommandId::ImplodeAudioItemsAcrossTracksIntoTakes
+        ));
+        let before = app.project.snapshot();
+        let history_cursor = app.project.history_cursor();
+        let _ = app.update(Message::ExecuteCommand(
+            CommandId::ImplodeAudioItemsAcrossTracksIntoTakes,
+        ));
+
+        assert_eq!(app.project.snapshot(), before);
+        assert_eq!(app.project.history_cursor(), history_cursor);
+        assert_eq!(app.project.midi_items().len(), 2);
+        assert_eq!(app.timeline.selected_items.len(), 2);
+    }
+}
+
+#[test]
 fn exploding_selected_audio_takes_in_place_preserves_order_and_is_one_undo_step() {
     fn insert_multitake(
         app: &mut App,

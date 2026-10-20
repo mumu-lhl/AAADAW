@@ -9,6 +9,31 @@ before	track=1	item=0	take=1	active=1	name=Earlier donor active	offset=0.3750000
 before	track=2	track_name=Lower MIDI track	track_item_count=1
 before	track=2	item=0	position=2.000000000	length=1.500000000	selected=1	take_count=1	active_index=0
 before	track=2	item=0	take=0	active=1	name=Lower donor	offset=0.500000000	notes=120:360:79:76;720:960:81:71
+no_overlap_before	track_count=3	item_count=3	selected_count=2
+no_overlap_before	track=0	track_name=Top MIDI track	track_item_count=1
+no_overlap_before	track=0	item=0	position=1.000000000	length=2.000000000	selected=1	take_count=1	active_index=0
+no_overlap_before	track=0	item=0	take=0	active=1	name=Top target	offset=0.125000000	notes=120:360:60:96;720:960:62:91
+no_overlap_before	track=1	track_name=Earlier MIDI track	track_item_count=1
+no_overlap_before	track=1	item=0	position=0.000000000	length=1.500000000	selected=0	take_count=2	active_index=1
+no_overlap_before	track=1	item=0	take=0	active=0	name=Earlier donor	offset=0.250000000	notes=120:360:67:88;720:960:69:83
+no_overlap_before	track=1	item=0	take=1	active=1	name=Earlier donor active	offset=0.375000000	notes=120:360:74:80;720:960:76:75
+no_overlap_before	track=2	track_name=Lower MIDI track	track_item_count=1
+no_overlap_before	track=2	item=0	position=3.000000000	length=1.500000000	selected=1	take_count=1	active_index=0
+no_overlap_before	track=2	item=0	take=0	active=1	name=Lower donor	offset=0.500000000	notes=120:360:79:76;720:960:81:71
+no_overlap_after	track_count=3	item_count=3	selected_count=2
+no_overlap_after	track=0	track_name=Top MIDI track	track_item_count=1
+no_overlap_after	track=0	item=0	position=1.000000000	length=2.000000000	selected=1	take_count=1	active_index=0
+no_overlap_after	track=0	item=0	take=0	active=1	name=Top target	offset=0.125000000	notes=120:360:60:96;720:960:62:91
+no_overlap_after	track=1	track_name=Earlier MIDI track	track_item_count=1
+no_overlap_after	track=1	item=0	position=0.000000000	length=1.500000000	selected=0	take_count=2	active_index=1
+no_overlap_after	track=1	item=0	take=0	active=0	name=Earlier donor	offset=0.250000000	notes=120:360:67:88;720:960:69:83
+no_overlap_after	track=1	item=0	take=1	active=1	name=Earlier donor active	offset=0.375000000	notes=120:360:74:80;720:960:76:75
+no_overlap_after	track=2	track_name=Lower MIDI track	track_item_count=1
+no_overlap_after	track=2	item=0	position=3.000000000	length=1.500000000	selected=1	take_count=1	active_index=0
+no_overlap_after	track=2	item=0	take=0	active=1	name=Lower donor	offset=0.500000000	notes=120:360:79:76;720:960:81:71
+no_overlap_result	no-op
+no_overlap_undo_before	Prepare abutting MIDI no-overlap selection
+no_overlap_undo_after	Prepare abutting MIDI no-overlap selection
 after	track_count=3	item_count=1	selected_count=1
 after	track=0	track_name=Top MIDI track	track_item_count=1
 after	track=0	item=0	position=1.000000000	length=2.000000000	selected=1	take_count=4	active_index=0

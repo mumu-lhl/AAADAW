@@ -18,8 +18,9 @@ done
 
 mkdir -p "$fixtures"
 run_dir=$(mktemp -d "$repo_root/target/reaper-midi-implode-cross-track.XXXXXX")
-mkdir -p "$run_dir/config" "$run_dir/output" "$run_dir/data" "$run_dir/state" "$run_dir/cache" "$run_dir/runtime"
-chmod 700 "$run_dir/runtime"
+profile=${AAADAW_REAPER_CAPTURE_PROFILE:-"$run_dir"}
+mkdir -p "$profile/config" "$run_dir/output" "$profile/data" "$profile/state" "$profile/cache" "$profile/runtime"
+chmod 700 "$profile/runtime"
 display=
 for number in $(seq 800 899); do
   candidate=":$number"
@@ -40,14 +41,14 @@ trap 'exit 143' TERM
 "$xvfb" "$display" -screen 0 1280x800x24 -ac -nolisten tcp >"$run_dir/xvfb.log" 2>&1 &
 xvfb_pid=$!
 export DISPLAY="$display" AAADAW_REAPER_PROBE_DIR="$run_dir/output"
-export XDG_CONFIG_HOME="$run_dir/config" XDG_DATA_HOME="$run_dir/data"
-export XDG_STATE_HOME="$run_dir/state" XDG_CACHE_HOME="$run_dir/cache" XDG_RUNTIME_DIR="$run_dir/runtime"
+export XDG_CONFIG_HOME="$profile/config" XDG_DATA_HOME="$profile/data"
+export XDG_STATE_HOME="$profile/state" XDG_CACHE_HOME="$profile/cache" XDG_RUNTIME_DIR="$profile/runtime"
 export LD_LIBRARY_PATH="$repo_root/.rtk-lib:$runtime_root/../lib/x86_64-linux-gnu:/usr/lib/x86_64-linux-gnu${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 for _ in $(seq 1 100); do
   if xwininfo -display "$display" -root >/dev/null 2>&1; then break; fi
   sleep 0.1
 done
-"$reaper" -cfgfile "$run_dir/config/reaper.ini" -newinst -nosplash \
+"$reaper" -cfgfile "$profile/config/reaper.ini" -newinst -nosplash \
   "$repo_root/scripts/reaper_parity/probe-midi-implode-cross-track.lua" >"$run_dir/reaper.log" 2>&1 &
 reaper_pid=$!
 
@@ -74,7 +75,7 @@ import -display "$display" -window root "$fixtures/midi-implode-cross-track-nati
 identify "$fixtures/midi-implode-cross-track-native-after.png"
 sha256sum "$fixtures/midi-implode-cross-track-native-after.png"
 
-for suffix in native.tsv before.rpp after.rpp undo.rpp redo.rpp; do
+for suffix in native.tsv before.rpp after.rpp undo.rpp redo.rpp no-overlap-before.rpp no-overlap-after.rpp; do
   source="$run_dir/output/midi-implode-cross-track-$suffix"
   target="$fixtures/midi-implode-cross-track-$suffix"
   [[ -s "$source" ]] || { printf 'Probe artifact is missing: %s\n' "$source" >&2; exit 1; }

@@ -1,16 +1,16 @@
 reference	Linux REAPER 7.82 / Default_7.0.ReaperThemeZip; Main action 40438
 native_binary	target/reaper-7.82/reaper_linux_x86_64/REAPER/reaper; REAPER 7.82/linux-x86_64 rev 338578; SHA-256 9976f5608068b7a58518969001b00b527fb0de6ed7459e0e5dda6f29878ee254
 native_action	40438; Take: Implode items across tracks into takes; action catalog entry docs/verification/reaper-parity/linux-7.82/actions.tsv:1501
-native_probe	scripts/reaper_parity/probe-midi-implode-cross-track.lua; SHA-256 18c534d73965079fbe5323107bcf730e67568ecf64d250a919960a37bc15f376
-native_capture_script	scripts/reaper_parity/capture-midi-implode-cross-track-native.sh; SHA-256 15f6bc98a0c2d2eaac76c95a10c489a863582259c57c2f75d9d6343e42fcda39
-native_fixture	Three selected MIDI items on separate tracks: top destination at 1 s (2 s length, offset .125 s); earlier donor at 0 s with two Takes (.25/.375 s); lower donor at 2 s (.5 s)
-native_readback	docs/verification/reaper-parity/fixtures/midi-implode-cross-track-native.tsv; SHA-256 132c7e3f919230eb642ed412d1e323166d6b640cddb7cb833986b6ff691c46d9
+native_probe	scripts/reaper_parity/probe-midi-implode-cross-track.lua; SHA-256 095c0bc145990997ec89aad918c6192ec8045a9c59209d2b16882f1ca0efbccc
+native_capture_script	scripts/reaper_parity/capture-midi-implode-cross-track-native.sh; SHA-256 59d9de4af957d283bf5e958892d4c8af9ce3e59031c05264a292d33eaa75e8f2
+native_fixture	Three selected MIDI items on separate tracks: top destination at 1 s (2 s length, offset .125 s); earlier donor at 0 s with two Takes (.25/.375 s); lower donor at 2 s (.5 s); additional abutting no-overlap pair at 3 s verifies no-op and unchanged history
+native_readback	docs/verification/reaper-parity/fixtures/midi-implode-cross-track-native.tsv; SHA-256 ccdb205745b6043d0495ce87dbd5994f5c2c6cb57898bd86ab54279b45cdf8d2
 native_result	One selected 4-Take destination on top track; target position/length and active Take retained; donor Takes ordered by track/item; offsets .125, 1.25, 1.375, -.5 seconds; note data and metadata retained
 native_undo_redo	Undo restores 3 selected items and original Takes; Redo restores one selected 4-Take destination; undo description `Implode items to takes`
-native_state_before	docs/verification/reaper-parity/fixtures/midi-implode-cross-track-before.rpp; SHA-256 bdc397314db0c5342d4745bbd3abcb152433c615012e8a3eb69c0c6cf4b1216f
-native_state_after	docs/verification/reaper-parity/fixtures/midi-implode-cross-track-after.rpp; SHA-256 d153cf87246f69aab9b5cd93f5095e5a55a57ed9336f7f9def65fa55b1ce793f
-native_state_undo	docs/verification/reaper-parity/fixtures/midi-implode-cross-track-undo.rpp; matches before state
-native_state_redo	docs/verification/reaper-parity/fixtures/midi-implode-cross-track-redo.rpp; matches after state
+native_state_before	docs/verification/reaper-parity/fixtures/midi-implode-cross-track-before.rpp; SHA-256 53b3f4cbcafef03e08765f0b477ae5dacc2d34df695fd3cbcb63fea23ccec0e4
+native_state_after	docs/verification/reaper-parity/fixtures/midi-implode-cross-track-after.rpp; SHA-256 19fd290d89a670805811080a25a5658d4249317345dcae012993dac1b0812094
+native_state_undo	docs/verification/reaper-parity/fixtures/midi-implode-cross-track-undo.rpp; SHA-256 53b3f4cbcafef03e08765f0b477ae5dacc2d34df695fd3cbcb63fea23ccec0e4
+native_state_redo	docs/verification/reaper-parity/fixtures/midi-implode-cross-track-redo.rpp; SHA-256 19fd290d89a670805811080a25a5658d4249317345dcae012993dac1b0812094
 native_screenshot	docs/verification/reaper-parity/fixtures/midi-implode-cross-track-native-after.png; 1280x800; SHA-256 93ccc952b8ab0f96c42fb65d921e46dbad95a5a41b2186cd2abec741021a8241
 aaadaw_fixture_generator	crates/aaadaw/examples/generate_midi_implode_cross_track_fixture.rs; SHA-256 48bb8488d54fbafd8b77c6571bd3ade4ddc21c76d02213e5a3918ab73482f1dc
 aaadaw_fixture	docs/verification/reaper-parity/fixtures/midi-implode-cross-track-aaadaw.aaadaw; SHA-256 cb9d8e45b60129cd8082e6c688405dc5decef9a5dc600767dbf29f71424de657
@@ -23,7 +23,10 @@ aaadaw_screenshot_redo	docs/verification/reaper-parity/fixtures/midi-implode-cro
 focused_core_regression	crates/aaadaw-core/tests/midi_item_editing.rs::signed_midi_source_offsets_place_events_after_the_item_start_and_undo_cleanly; passed
 focused_storage_regression	crates/aaadaw-storage/tests/midi_item_takes.rs::signed_midi_source_offsets_round_trip_for_active_and_inactive_takes; passed
 focused_app_regression	crates/aaadaw/src/app/tests.rs::imploding_selected_midi_items_across_tracks_rebases_signed_take_sources; passed
-edge_app_regressions	crates/aaadaw/src/app/tests.rs::cross_track_implode_rejects_single_track_selections_and_accepts_loop_sources; crates/aaadaw/src/app/tests.rs::cross_track_implode_requires_overlapping_selected_items; passed
-test_verification	Stable Nextest for aaadaw-core, aaadaw-storage, and aaadaw: 1287/1287 passed, 0 skipped
-static_verification	Strict all-target Clippy `-D warnings -A future-incompatible`; stable fmt; both capture scripts `bash -n`; parity matrix schema validation; manifest SHA-256 checks; `git diff --check` passed
-scope_note	Screenshot build disables audio-device and validates visible project state, not audible playback; mixed Audio/MIDI selection remains open
+edge_app_regressions	crates/aaadaw/src/app/tests.rs::cross_track_implode_rejects_single_track_selections_and_accepts_loop_sources; crates/aaadaw/src/app/tests.rs::cross_track_implode_requires_overlapping_selected_items; crates/aaadaw/src/app/tests.rs::midi_cross_track_implode_rejects_abutting_and_disjoint_items_without_history; passed
+test_verification	Stable aaadaw desktop suite: 883/883 passed; previous Core/Storage/AAADAW cross-track suite: 1287/1287 passed
+static_verification	Strict all-target Clippy `-D warnings -A future-incompatible`; stable fmt; native and AAADAW capture scripts `bash -n`; parity matrix schema validation; manifest SHA-256 checks; `git diff --check` passed
+scope_note	Native MIDI abutting no-overlap no-op now matches AAADAW disabled-action and no-history behavior; mixed Audio/MIDI selection remains open under EDIT-TAKE-001; screenshot build disables audio-device and validates project state, not audible playback
+native_no_overlap_state_before	docs/verification/reaper-parity/fixtures/midi-implode-cross-track-no-overlap-before.rpp; SHA-256 33edacc6128c63f12e6df8109543ed273a7289ca53623d2976abfdd63f8cdd20
+native_no_overlap_state_after	docs/verification/reaper-parity/fixtures/midi-implode-cross-track-no-overlap-after.rpp; SHA-256 33edacc6128c63f12e6df8109543ed273a7289ca53623d2976abfdd63f8cdd20
+native_no_overlap_result	At a shared 3-second boundary, action 40438 is a no-op: all 3 project items and the selected top/lower pair remain unchanged; native Undo label is identical before and after the action

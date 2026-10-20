@@ -104,6 +104,31 @@ for _, item in ipairs({ top, earlier, lower }) do reaper.SetMediaItemSelected(it
 assert(reaper.CountSelectedMediaItems(0) == 3)
 describe("before")
 save("before")
+
+reaper.Undo_BeginBlock2(0)
+reaper.SetMediaItemInfo_Value(lower, "D_POSITION", 3)
+reaper.SelectAllMediaItems(0, false)
+reaper.SetMediaItemSelected(top, true)
+reaper.SetMediaItemSelected(lower, true)
+reaper.Undo_EndBlock2(0, "Prepare abutting MIDI no-overlap selection", -1)
+describe("no_overlap_before")
+save("no-overlap-before")
+local no_overlap_undo_before = reaper.Undo_CanUndo2(0) or ""
+reaper.Main_OnCommand(40438, 0)
+describe("no_overlap_after")
+save("no-overlap-after")
+local no_overlap_undo_after = reaper.Undo_CanUndo2(0) or ""
+assert(reaper.CountMediaItems(0) == 3, "abutting MIDI items should not implode")
+assert(reaper.CountSelectedMediaItems(0) == 2, "no-op should retain the selected MIDI items")
+assert(no_overlap_undo_after == no_overlap_undo_before,
+  "native no-op should not add an undo step")
+output:write("no_overlap_result\tno-op\n")
+output:write("no_overlap_undo_before\t", no_overlap_undo_before, "\n")
+output:write("no_overlap_undo_after\t", no_overlap_undo_after, "\n")
+
+reaper.Undo_DoUndo2(0)
+reaper.SelectAllMediaItems(0, false)
+for _, item in ipairs({ top, earlier, lower }) do reaper.SetMediaItemSelected(item, true) end
 reaper.Undo_OnStateChange2(0, "Prepare MIDI cross-track implode probe")
 
 reaper.Main_OnCommand(40438, 0) -- Take: Implode items across tracks into takes.
