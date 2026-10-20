@@ -1,0 +1,21 @@
+before	track_count=2	item_count=2	selected_count=2
+before	track=0	track_name=Top Audio target	item=0	position=2.000000000	length=2.000000000	selected=1	take_count=1	active_index=0
+before	track=0	item=0	take=0	active=1	name=Audio target	midi=0	source=/workspace/AAADAW/examples/first-project/melody.wav	offset=0.000000000
+before	track=1	track_name=Lower MIDI donor	item=0	position=0.000000000	length=4.000000000	selected=1	take_count=1	active_index=0
+before	track=1	item=0	take=0	active=1	name=MIDI donor	midi=1	source_offset_seconds=0.000000000	notes=0:960:0:60:96;960:1920:1:67:88
+after	track_count=2	item_count=1	selected_count=1
+after	track=0	track_name=Top Audio target	item=0	position=2.000000000	length=2.000000000	selected=1	take_count=2	active_index=0
+after	track=0	item=0	take=0	active=1	name=Audio target	midi=0	source=/workspace/AAADAW/examples/first-project/melody.wav	offset=0.000000000
+after	track=0	item=0	take=1	active=0	name=MIDI donor	midi=1	source_offset_seconds=2.000000000	notes=0:960:0:60:96;960:1920:1:67:88
+undo	track_count=2	item_count=2	selected_count=2
+undo	track=0	track_name=Top Audio target	item=0	position=2.000000000	length=2.000000000	selected=1	take_count=1	active_index=0
+undo	track=0	item=0	take=0	active=1	name=Audio target	midi=0	source=/workspace/AAADAW/examples/first-project/melody.wav	offset=0.000000000
+undo	track=1	track_name=Lower MIDI donor	item=0	position=0.000000000	length=4.000000000	selected=1	take_count=1	active_index=0
+undo	track=1	item=0	take=0	active=1	name=MIDI donor	midi=1	source_offset_seconds=0.000000000	notes=0:960:0:60:96;960:1920:1:67:88
+redo	track_count=2	item_count=1	selected_count=1
+redo	track=0	track_name=Top Audio target	item=0	position=2.000000000	length=2.000000000	selected=1	take_count=2	active_index=0
+redo	track=0	item=0	take=0	active=1	name=Audio target	midi=0	source=/workspace/AAADAW/examples/first-project/melody.wav	offset=0.000000000
+redo	track=0	item=0	take=1	active=0	name=MIDI donor	midi=1	source_offset_seconds=2.000000000	notes=0:960:0:60:96;960:1920:1:67:88
+action	40438	Take: Implode items across tracks into takes
+target	audio
+reference	REAPER 7.82/linux-x86_64; Default_7.0.ReaperThemeZip
