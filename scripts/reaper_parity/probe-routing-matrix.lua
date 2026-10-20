@@ -71,6 +71,7 @@ local function poll_interaction_markers()
     { name = "add", project = "routing-matrix-native-after-add.rpp" },
     { name = "open", project = "routing-matrix-native-after-open.rpp" },
     { name = "delete", project = "routing-matrix-native-after-delete.rpp" },
+    { name = "duplicate", project = "routing-matrix-native-after-duplicate.rpp" },
   }
   for _, case in ipairs(cases) do
     if not observed[case.name] then

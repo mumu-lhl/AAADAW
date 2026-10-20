@@ -122,6 +122,19 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
         .into();
     };
     let source = track.id();
+    let routing_destination_filter = app.routing_destination_filter.filter(|destination| {
+        track
+            .sends()
+            .iter()
+            .any(|send| send.destination() == *destination)
+    });
+    let focused_destination_name = routing_destination_filter.and_then(|destination| {
+        app.project
+            .tracks()
+            .iter()
+            .find(|candidate| candidate.id() == destination)
+            .map(|destination| destination.name())
+    });
     let parents: Vec<_> = std::iter::once(Parent {
         id: None,
         name: "No folder (root)".into(),
@@ -152,19 +165,29 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
         })
         .collect();
     let mut sends = column![
-        text("Sends").size(16),
-        text("Add new send").size(12),
-        pick_list(targets.clone(), None::<Destination>, move |target| {
-            Message::RoutingChange(DawAction::CreateAudioSend {
-                track_id: source,
-                destination: target.id,
-                parameters: AudioSendParameters::default(),
-            })
-        })
-        .width(Length::Fill),
+        text(
+            focused_destination_name
+                .map_or_else(|| "Sends".to_owned(), |name| format!("Sends to {name}"))
+        )
+        .size(16),
     ]
     .spacing(tokens::ROW_GAP);
-    for send in track.sends() {
+    if routing_destination_filter.is_none() {
+        sends = sends.push(text("Add new send").size(12));
+        sends = sends.push(
+            pick_list(targets.clone(), None::<Destination>, move |target| {
+                Message::RoutingChange(DawAction::CreateAudioSend {
+                    track_id: source,
+                    destination: target.id,
+                    parameters: AudioSendParameters::default(),
+                })
+            })
+            .width(Length::Fill),
+        );
+    }
+    for send in track.sends().iter().filter(|send| {
+        routing_destination_filter.is_none_or(|destination| send.destination() == destination)
+    }) {
         let id = send.id();
         let destination = send.destination();
         let parameters = send.parameters();
@@ -365,6 +388,21 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
                 .padding(tokens::PANEL_PADDING)
                 .style(container::bordered_box),
         );
+    }
+    if let Some(destination_name) = focused_destination_name {
+        return column![
+            text(format!(
+                "Send settings · {} → {destination_name}",
+                track.name()
+            ))
+            .size(18),
+            scrollable(sends).width(Length::Fill).height(Length::Fill),
+            text(&app.status).size(11),
+            button("Close").on_press(Message::CloseTrackRouting),
+        ]
+        .spacing(tokens::SECTION_GAP)
+        .padding(tokens::PANEL_PADDING)
+        .into();
     }
     let mut receives = column![text("Receives").size(16)].spacing(tokens::ROW_GAP);
     let mut receive_count = 0;

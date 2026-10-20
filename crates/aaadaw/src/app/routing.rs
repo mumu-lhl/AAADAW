@@ -20,6 +20,7 @@ impl App {
             return Task::none();
         }
         self.routing_track_id = Some(track_id);
+        self.routing_destination_filter = None;
         self.routing_send_drafts.clear();
         if self.is_mobile_main_window() {
             self.show_mobile_panel(MobilePanel::Routing);
@@ -37,8 +38,36 @@ impl App {
         task.discard()
     }
 
+    pub(super) fn open_track_routing_to(
+        &mut self,
+        source: TrackId,
+        destination: TrackId,
+    ) -> Task<Message> {
+        let has_route = self
+            .project
+            .tracks()
+            .iter()
+            .find(|track| track.id() == source)
+            .is_some_and(|track| {
+                track
+                    .sends()
+                    .iter()
+                    .any(|send| send.destination() == destination)
+            });
+        if !has_route {
+            self.status = "This routing matrix connection no longer exists".into();
+            return Task::none();
+        }
+        let task = self.open_track_routing(source);
+        if self.routing_track_id == Some(source) {
+            self.routing_destination_filter = Some(destination);
+        }
+        task
+    }
+
     pub(super) fn close_track_routing(&mut self) -> Task<Message> {
         self.routing_track_id = None;
+        self.routing_destination_filter = None;
         self.routing_send_drafts.clear();
         if self.mobile_panel == MobilePanel::Routing {
             self.navigate_back_mobile_panel();

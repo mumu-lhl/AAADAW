@@ -7,3 +7,4 @@ before_matrix	2	0	2
 after_add_cell_click	3	1	2
 after_open_cell_click	3	1	2
 after_delete_cell_click	2	0	2
+after_duplicate_cell_click	2	0	2

@@ -3022,8 +3022,8 @@ native probe、事件数、AAADAW 工程/实窗截图与 SHA-256 见 [MIDI Send 
 
 ### 2026-10-20 P3：基础 Track Routing Matrix
 
-Linux REAPER 7.82 / Default 7 原厂 probe 确认 View action 40251 的默认快捷键为 `Alt+R`。在三轨临时工程中，点击空白 Source → Peer 矩阵格新建 Send；再次点击已连接格只打开 Send 设置，不会删除路由；删除需在 Send 设置中执行。每步 Send 数量和 RPP 状态均读回。
+Linux REAPER 7.82 / Default 7 原厂 probe 确认 View action 40251 的默认快捷键为 `Alt+R`。在三轨临时工程中，点击空白 Source → Peer 矩阵格新建 Send；再次点击已连接格只打开 Send 设置，不会删除路由；删除需在 Send 设置中执行。含两条并行 Send 的 Source → Destination 格会一次显示两张设置卡，0 dB 与 −6.02 dB 值保持独立。每步 Send 数量和 RPP 状态均读回。
 
-AAADAW 新增独立窗口，显示内部轨道 Send 和 Master / Parent 主输出状态，支持双向滚动、合法新路由和路由环保护，并沿用项目 Undo/Redo。夜间 Cranelift 二进制以 `Alt+R` 打开矩阵的真实 Xvfb 截图已目视检查，鼠标验证空格新建后停留矩阵、再次点击活动格打开 Routing 窗口。全 workspace Nextest 在 Xvfb 下 **1672/1672** 通过；Stable workspace all-target Clippy `-D warnings`、fmt/diff 检查和 Cranelift 构建通过。原厂与 AAADAW 截图、RPP、探针、捕获脚本及 SHA-256 清单见[路由矩阵验证页](../verification/reaper-parity/routing-matrix.md)。
+AAADAW 新增独立窗口，显示内部轨道 Send 和 Master / Parent 主输出状态，支持双向滚动、合法新路由和路由环保护，并沿用项目 Undo/Redo。夜间 Cranelift 二进制以 `Alt+R` 打开矩阵的真实 Xvfb 截图已目视检查，鼠标验证空格新建后停留矩阵、再次点击活动格打开只显示该目标全部 Sends 的设置窗口。全 workspace Nextest 在 Xvfb 下 **1672/1672** 通过；Stable workspace all-target Clippy `-D warnings`、fmt/diff 检查和 Cranelift 构建通过。原厂与 AAADAW 截图、RPP、探针、捕获脚本及 SHA-256 清单见[路由矩阵验证页](../verification/reaper-parity/routing-matrix.md)。
 
-当前矩阵只覆盖内部轨道与 Master / Parent；活动格打开来源轨道 Routing 窗口，尚不会定位到某条重复目标 Send。Hardware I/O、通道对、Wiring、矩阵过滤/分组和主题布局尚未完成。`ROUTE-SEND-001` 与 P3 继续为 `in_progress`。
+当前矩阵只覆盖内部轨道与 Master / Parent；活动格已按源/目标过滤并同时列出重复 Send，但 AAADAW 使用独立窗口而非原厂紧凑浮层。Hardware I/O、通道对、Wiring、矩阵过滤/分组和主题布局尚未完成。`ROUTE-SEND-001` 与 P3 继续为 `in_progress`。

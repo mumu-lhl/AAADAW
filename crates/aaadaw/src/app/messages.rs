@@ -1290,6 +1290,7 @@ pub(crate) enum Message {
     AddBusTrack,
     SetTrackOutput(TrackId, Option<TrackId>),
     OpenTrackRouting(TrackId),
+    OpenTrackRoutingTo(TrackId, TrackId),
     CloseTrackRouting,
     RoutingChange(DawAction),
     RoutingSendDraft(aaadaw_core::SendId, bool, String),

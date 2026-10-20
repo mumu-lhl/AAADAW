@@ -76,7 +76,7 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
                     "✓".to_owned()
                 };
                 button(text(label).size(11))
-                    .on_press(Message::OpenTrackRouting(source_id))
+                    .on_press(Message::OpenTrackRoutingTo(source_id, destination_id))
                     .into()
             } else {
                 checkbox(false)

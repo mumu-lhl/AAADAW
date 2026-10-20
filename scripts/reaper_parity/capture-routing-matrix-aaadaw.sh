@@ -10,7 +10,7 @@ if [[ ! -x "$runtime_root/Xvfb" ]]; then runtime_root=/tmp/aaadaw-xvfb-apt/root/
 xdotool=${AAADAW_XDOTOOL:-"$runtime_root/xdotool"}
 xvfb=${AAADAW_XVFB:-"$runtime_root/Xvfb"}
 
-for utility in import identify sha256sum xwininfo; do
+for utility in import identify sha256sum xwininfo awk; do
   command -v "$utility" >/dev/null || { printf 'Required screenshot utility is missing: %s\n' "$utility" >&2; exit 2; }
 done
 [[ -x "$binary" && -x "$xdotool" && -x "$xvfb" ]] || { printf 'AAADAW/X11 capture executable is missing.\n' >&2; exit 2; }

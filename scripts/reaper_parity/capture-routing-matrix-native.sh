@@ -9,7 +9,7 @@ if [[ ! -x "$runtime_root/Xvfb" ]]; then runtime_root=/tmp/aaadaw-xvfb-apt/root/
 xdotool=${AAADAW_XDOTOOL:-"$runtime_root/xdotool"}
 xvfb=${AAADAW_XVFB:-"$runtime_root/Xvfb"}
 
-for utility in import identify sha256sum xwininfo; do
+for utility in import identify sha256sum xwininfo awk; do
   command -v "$utility" >/dev/null || { printf 'Required screenshot utility is missing: %s\n' "$utility" >&2; exit 2; }
 done
 [[ -x "$reaper" && -x "$xdotool" && -x "$xvfb" ]] || { printf 'REAPER/X11 capture executable is missing.\n' >&2; exit 2; }
@@ -114,14 +114,57 @@ done
   printf 'REAPER did not observe the Send-window Delete button.\n' >&2
   exit 1
 }
+docker_window=$("$xdotool" search --onlyvisible --name '^Docker$' | head -1 || true)
+[[ -n "$docker_window" ]] || { printf 'REAPER Docker window was not found after Send removal.\n' >&2; exit 1; }
+"$xdotool" windowraise "$docker_window"
+"$xdotool" windowmove "$docker_window" 0 0
+"$xdotool" windowsize "$docker_window" 1280 800
+sleep 0.3
 import -display "$display" -window root "$fixtures/routing-matrix-native-after-delete.png"
 identify "$fixtures/routing-matrix-native-after-delete.png"
 sha256sum "$fixtures/routing-matrix-native-after-delete.png"
-for suffix in native.tsv native-before.rpp native-after-add.rpp native-after-open.rpp native-after-delete.rpp; do
+"$xdotool" mousemove 223 188 click 1
+sleep 0.4
+: >"$run_dir/output/routing-matrix-native-click-duplicate"
+for _ in $(seq 1 100); do
+  [[ -s "$run_dir/output/routing-matrix-native-observed-duplicate" ]] && break
+  sleep 0.1
+done
+[[ -s "$run_dir/output/routing-matrix-native-observed-duplicate" ]] || {
+  printf 'REAPER did not observe the duplicate-send matrix cell click.\n' >&2
+  exit 1
+}
+import -display "$display" -window root "$fixtures/routing-matrix-native-after-duplicate.png"
+identify "$fixtures/routing-matrix-native-after-duplicate.png"
+sha256sum "$fixtures/routing-matrix-native-after-duplicate.png"
+for suffix in native.tsv native-before.rpp native-after-add.rpp native-after-open.rpp native-after-delete.rpp native-after-duplicate.rpp; do
   source="$run_dir/output/routing-matrix-$suffix"
   target="$fixtures/routing-matrix-$suffix"
   [[ -s "$source" ]] || { printf 'Probe artifact is missing: %s\n' "$source" >&2; exit 1; }
   cp -- "$source" "$target"
   sha256sum "$target"
 done
+manifest="$fixtures/routing-matrix-native-evidence.tsv"
+reaper_reference=${reaper#"$repo_root"/}
+{
+  printf 'reference\tLinux REAPER 7.82 / x86_64 / Default 7 factory configuration\n'
+  printf 'reaper_binary\t%s\n' "$reaper_reference"
+  printf 'reaper_binary_sha256\t%s\n' "$(sha256sum "$reaper" | awk '{print $1}')"
+  printf 'capture\t1280x800 isolated Xvfb desktop\n'
+  for artifact in \
+    routing-matrix-native.tsv \
+    routing-matrix-native-before.rpp \
+    routing-matrix-native-after-add.rpp \
+    routing-matrix-native-after-open.rpp \
+    routing-matrix-native-after-delete.rpp \
+    routing-matrix-native-after-duplicate.rpp \
+    routing-matrix-native.png \
+    routing-matrix-native-after-add.png \
+    routing-matrix-native-after-open.png \
+    routing-matrix-native-after-delete.png \
+    routing-matrix-native-after-duplicate.png; do
+    printf '%s_sha256\t%s\n' "$artifact" "$(sha256sum "$fixtures/$artifact" | awk '{print $1}')"
+  done
+} >"$manifest"
+cat "$manifest"
 printf 'native_run_dir\t%s\nnative_display\t%s\n' "$run_dir" "$display"

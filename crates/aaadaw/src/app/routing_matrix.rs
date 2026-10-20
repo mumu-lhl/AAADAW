@@ -70,13 +70,11 @@ impl App {
             self.status = "Destination track no longer exists".to_owned();
             return Task::none();
         }
-        let send_ids: Vec<_> = track
+        let has_route = track
             .sends()
             .iter()
-            .filter(|send| send.destination() == destination)
-            .map(|send| send.id())
-            .collect();
-        if send_ids.is_empty() {
+            .any(|send| send.destination() == destination);
+        if !has_route {
             if !self.project.can_route_to(source, destination) {
                 self.status = "This route would create a track routing cycle".to_owned();
                 return Task::none();
@@ -88,6 +86,6 @@ impl App {
             });
             return Task::none();
         }
-        self.open_track_routing(source)
+        self.open_track_routing_to(source, destination)
     }
 }

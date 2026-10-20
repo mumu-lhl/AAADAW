@@ -656,6 +656,7 @@ struct App {
     snap_grid_settings_window_id: Option<iced::window::Id>,
     routing_window_id: Option<iced::window::Id>,
     routing_track_id: Option<TrackId>,
+    routing_destination_filter: Option<TrackId>,
     routing_send_drafts: HashMap<aaadaw_core::SendId, routing::SendDraft>,
     action_list_window_id: Option<iced::window::Id>,
     action_input_window_id: Option<iced::window::Id>,
@@ -5009,6 +5010,7 @@ impl App {
                         | commands::CommandId::MidiEditorPianoRoll
                         | commands::CommandId::MidiEditorEventList
                 ) | Message::OpenTrackRouting(_)
+                    | Message::OpenTrackRoutingTo(_, _)
                     | Message::CloseTrackRouting
                     | Message::RoutingSendDraft(..)
                     | Message::ToggleMixerPanel
@@ -6112,6 +6114,7 @@ impl App {
                 } else if self.routing_window_id == Some(window_id) {
                     self.routing_window_id = None;
                     self.routing_track_id = None;
+                    self.routing_destination_filter = None;
                     self.routing_send_drafts.clear();
                 } else if self.action_input_window_id == Some(window_id) {
                     self.action_input_window_id = None;
@@ -9107,6 +9110,9 @@ impl App {
                 }
             }
             Message::OpenTrackRouting(track_id) => task = self.open_track_routing(track_id),
+            Message::OpenTrackRoutingTo(source, destination) => {
+                task = self.open_track_routing_to(source, destination)
+            }
             Message::CloseTrackRouting => task = self.close_track_routing(),
             Message::RoutingChange(action) => {
                 let _ = self.apply_routing_change(action);
@@ -10719,6 +10725,7 @@ impl App {
                         };
                         self.clear_app_history();
                         self.routing_track_id = None;
+                        self.routing_destination_filter = None;
                         self.routing_send_drafts.clear();
                         self.project = project;
                         self.refresh_tempo_map_edits();
@@ -10975,6 +10982,7 @@ impl App {
                         });
                         self.clear_app_history();
                         self.routing_track_id = None;
+                        self.routing_destination_filter = None;
                         self.routing_send_drafts.clear();
                         self.project = project;
                         self.project_path = None;
@@ -11540,6 +11548,7 @@ impl App {
         }
 
         self.routing_track_id = None;
+        self.routing_destination_filter = None;
         self.routing_send_drafts.clear();
         let (new_project, defaults_error) =
             match project_defaults::load().and_then(|defaults| defaults.create_project()) {
