@@ -115,6 +115,12 @@ fn unfreezing_restores_source_and_removes_only_its_render() {
 #[test]
 fn failed_freeze_and_frozen_source_edits_leave_the_project_unchanged() {
     let (mut project, track_id) = project_with_instrument_midi();
+    let midi_item_id = project.midi_items()[0].id();
+    project
+        .apply(DawAction::AddEmptyMidiItemTakeAfter {
+            item_id: midi_item_id,
+        })
+        .unwrap();
     let before = project.snapshot();
     assert_eq!(
         project.apply(DawAction::FreezeTrack {
@@ -136,7 +142,13 @@ fn failed_freeze_and_frozen_source_edits_leave_the_project_unchanged() {
         })
         .unwrap();
     let frozen = project.snapshot();
-    let midi_item_id = project.midi_items()[0].id();
+    assert!(
+        project
+            .apply(DawAction::CropMidiItemToActiveTake {
+                item_id: midi_item_id,
+            })
+            .is_err()
+    );
     assert!(
         project
             .apply(DawAction::AddMidiNotes {

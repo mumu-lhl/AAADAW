@@ -18,11 +18,14 @@ REAPER action 40129 deletes the active MIDI Take, activates the preceding Take w
 
 REAPER action 41380 moves each selected active MIDI Take below index 0 to the top while keeping it active and preserving all other Takes in order. Single-Take and already-top items remain unchanged; one Undo/Redo covers the selection. AAADAW supports MIDI-only and mixed Audio/MIDI selections, including the Inspector control. See [Move the active MIDI Take to the top](midi-item-move-active-take-to-top.md).
 
+REAPER action 40131 removes inactive Takes from each selected multi-Take MIDI item, leaving the active Take as index 0; selected single-Take items remain unchanged. AAADAW supports MIDI-only and mixed Audio/MIDI selections as one transaction, with source events preserved and one-step Undo/Redo. See [Crop MIDI Items to the active Take](midi-item-crop-to-active-take.md).
+
 The current Cranelift desktop binary was run under an isolated Xvfb display at 1280×800. The [four-state capture manifest](fixtures/midi-item-takes-aaadaw.tsv) records the fixture, binary, script, and before/after/Undo/Redo screenshot hashes. The overlapped takes share one Arrange range, so the image alone does not reveal the item count; Core/App assertions and native REAPER's item-count readback provide that check.
 
 Focused verification:
 
 - `crates/aaadaw-core/tests/midi_item_takes.rs` checks ordered explosion, per-Take split partitioning, loop-phase wrapping, event order, and Undo/Redo.
+- `crates/aaadaw-core/tests/midi_item_takes.rs::cropping_midi_item_to_active_take_preserves_data_and_round_trips` checks active source properties/events, index reset, snapshot round-trip, Undo/Redo, and no-op history.
 - `crates/aaadaw-core/tests/midi_item_takes.rs::adding_empty_midi_takes_preserves_the_active_source_and_round_trips` checks empty Take insertion before and after the active Take, switching to it, snapshots, and Undo/Redo.
 - `crates/aaadaw-core/tests/midi_item_takes.rs::duplicating_active_midi_take_appends_activates_and_undoes_with_unique_note_ids` checks action 40639 ordering, active source preservation, unique note identities, and Undo/Redo.
 - `crates/aaadaw/src/app/tests.rs::cursor_split_preserves_multi_take_midi_and_selects_the_right_segment` checks the selected-item command path, right-segment selection, and Undo/Redo.
@@ -30,6 +33,7 @@ Focused verification:
 - `crates/aaadaw-storage/tests/midi_item_takes.rs` round-trips all modeled event kinds, opaque payloads, event order, active index, an empty Take placeholder, and active-empty Take persistence.
 - `crates/aaadaw-engine/tests/midi_schedule.rs::midi_playback_compiles_only_the_active_take` checks that inactive notes do not enter the playback plan.
 - `crates/aaadaw/src/app/tests.rs::exploding_mixed_audio_and_midi_takes_is_one_undo_step` checks the registered action's mixed selection, one-step Undo/Redo, and deselection.
+- `crates/aaadaw/src/app/tests.rs::cropping_mixed_selected_audio_and_midi_takes_is_one_undoable_transaction` checks mixed media, singleton preservation, active MIDI content, one history entry, and Undo/Redo.
 
 Other MIDI Take creation and event editing, empty audio Take support, recording-created Takes, more complete Take arrangement controls, Fixed Lanes, Comp Areas, and cross-project Take clipboard behavior remain open under `EDIT-TAKE-001`.
 

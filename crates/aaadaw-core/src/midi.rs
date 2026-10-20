@@ -479,6 +479,16 @@ impl MidiItem {
         true
     }
 
+    /// Removes inactive Takes while preserving the active Take and its source events.
+    pub(crate) fn crop_to_active_take(&mut self) -> bool {
+        if self.other_takes.is_empty() {
+            return false;
+        }
+        self.other_takes.clear();
+        self.active_take_index = 0;
+        true
+    }
+
     /// Returns the item Takes in their original order, including the active Take.
     pub fn take_snapshots(&self) -> Vec<crate::MidiItemTakeSnapshot> {
         let mut takes = Vec::with_capacity(self.take_count());

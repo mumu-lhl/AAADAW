@@ -68,15 +68,9 @@ fn selected_item_view(app: &App, item_id: ItemId, touch_targets: bool) -> Elemen
         } else {
             item.name()
         };
-        let selected_audio_ids = super::super::commands::selected_audio_item_ids(app);
         let multi_take_selection = app.timeline.selected_items.len() > 1
-            && selected_audio_ids.iter().any(|selected_id| {
-                app.project
-                    .audio_items()
-                    .iter()
-                    .find(|selected_item| selected_item.id() == *selected_id)
-                    .is_some_and(|selected_item| selected_item.take_count() > 1)
-            });
+            && !super::super::commands::selected_multi_take_item_ids(app).is_empty();
+        let selected_audio_ids = super::super::commands::selected_audio_item_ids(app);
         let multi_audio_selection = selected_audio_ids.len() > 1;
         let mut take_controls = row![
             text(format!(
@@ -126,10 +120,15 @@ fn selected_item_view(app: &App, item_id: ItemId, touch_targets: bool) -> Elemen
                     "Move active to top",
                     Message::MoveSelectedItemActiveTakesToTop,
                 ));
-                take_controls = take_controls.push(buttons.danger(
-                    "Crop to active take",
-                    Message::CropSelectedAudioItemsToActiveTake,
-                ));
+                if super::super::commands::is_enabled(
+                    app,
+                    super::super::commands::CommandId::CropAudioItemToActiveTake,
+                ) {
+                    take_controls = take_controls.push(buttons.danger(
+                        "Crop to active take",
+                        Message::CropSelectedItemsToActiveTake,
+                    ));
+                }
             }
         }
         if multi_take_selection {
@@ -137,10 +136,15 @@ fn selected_item_view(app: &App, item_id: ItemId, touch_targets: bool) -> Elemen
                 "Move selected to top",
                 Message::MoveSelectedItemActiveTakesToTop,
             ));
-            take_controls = take_controls.push(buttons.danger(
-                "Crop selected to active",
-                Message::CropSelectedAudioItemsToActiveTake,
-            ));
+            if super::super::commands::is_enabled(
+                app,
+                super::super::commands::CommandId::CropAudioItemToActiveTake,
+            ) {
+                take_controls = take_controls.push(buttons.danger(
+                    "Crop selected to active",
+                    Message::CropSelectedItemsToActiveTake,
+                ));
+            }
         }
         let mut actions = row![
             text(format!("Audio · {}", item.media_ref())).width(Length::Fill),
@@ -277,6 +281,8 @@ fn selected_item_view(app: &App, item_id: ItemId, touch_targets: bool) -> Elemen
                 style
             })
             .width(Length::Fill);
+        let multi_take_selection = app.timeline.selected_items.len() > 1
+            && !super::super::commands::selected_multi_take_item_ids(app).is_empty();
         let mut take_controls = row![
             text(format!(
                 "Take {}/{} · {}",
@@ -299,7 +305,7 @@ fn selected_item_view(app: &App, item_id: ItemId, touch_targets: bool) -> Elemen
                 app,
                 super::super::commands::CommandId::MoveActiveTakesToTop,
             ) {
-                let label = if app.timeline.selected_items.len() > 1 {
+                let label = if multi_take_selection {
                     "Move selected to top"
                 } else {
                     "Move active to top"
@@ -307,6 +313,20 @@ fn selected_item_view(app: &App, item_id: ItemId, touch_targets: bool) -> Elemen
                 take_controls = take_controls
                     .push(buttons.action(label, Message::MoveSelectedItemActiveTakesToTop));
             }
+        }
+        if (item.take_count() > 1 || multi_take_selection)
+            && super::super::commands::is_enabled(
+                app,
+                super::super::commands::CommandId::CropAudioItemToActiveTake,
+            )
+        {
+            let label = if multi_take_selection {
+                "Crop selected to active"
+            } else {
+                "Crop to active take"
+            };
+            take_controls =
+                take_controls.push(buttons.danger(label, Message::CropSelectedItemsToActiveTake));
         }
         if super::super::commands::is_enabled(
             app,

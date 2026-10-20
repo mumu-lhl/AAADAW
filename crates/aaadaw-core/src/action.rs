@@ -383,6 +383,10 @@ pub enum DawAction {
     CropAudioItemToActiveTake {
         item_id: ItemId,
     },
+    /// Remove inactive Takes from a MIDI item while preserving its active source events.
+    CropMidiItemToActiveTake {
+        item_id: ItemId,
+    },
     /// Replace each selected multi-take audio item with one item per take in place.
     ExplodeAudioItemTakesInPlace {
         tx_id: u64,

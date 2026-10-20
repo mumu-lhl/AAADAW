@@ -5521,6 +5521,26 @@ impl Project {
                 after.crop_to_active_take();
                 ProjectEvent::AudioItemChanged { before, after }
             }
+            DawAction::CropMidiItemToActiveTake { item_id } => {
+                let before = state
+                    .midi_items
+                    .iter()
+                    .find(|item| item.id == item_id)
+                    .ok_or(ActionError::MidiItemNotFound { item_id })?;
+                let track_id = before.track_id;
+                let track = state
+                    .tracks
+                    .iter()
+                    .find(|track| track.id == track_id)
+                    .ok_or(ActionError::TrackNotFound { track_id })?;
+                if track.is_frozen() {
+                    return Err(ActionError::CannotEditFrozenTrackSource { track_id });
+                }
+                let before = before.clone();
+                let mut after = before.clone();
+                after.crop_to_active_take();
+                ProjectEvent::MidiItemChanged { before, after }
+            }
             DawAction::ExplodeAudioItemTakesInPlace { tx_id, item_ids } => {
                 let mut seen = HashSet::with_capacity(item_ids.len());
                 let mut selected_items = Vec::with_capacity(item_ids.len());

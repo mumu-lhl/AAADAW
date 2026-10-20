@@ -1,0 +1,28 @@
+native_environment	REAPER 7.82/linux-x86_64 / Default_7.0.ReaperThemeZip; isolated Xvfb 1280x800; audio device closed
+native_binary	target/reaper-7.82/reaper_linux_x86_64/REAPER/reaper; SHA-256 9976f5608068b7a58518969001b00b527fb0de6ed7459e0e5dda6f29878ee254
+native_probe	scripts/reaper_parity/probe-midi-crop-to-active-take.lua; SHA-256 bdd5cf60e82d6070a8c0d7ac148eb1058396f83ac36d894d0bf830110de7fd52
+native_capture_script	scripts/reaper_parity/capture-midi-crop-to-active-take-native.sh; SHA-256 542a786809a38f3357c24c337c6f59de0e0a4f091b8edc181537b04c97245afe
+native_fixture	Four selected MIDI items: a multi-Take item already at index 0, a single-Take item, a three-Take item active at index 2, and a two-Take item active at index 1; every Take has distinct names, source offsets, and note data
+native_readback	docs/verification/reaper-parity/fixtures/midi-crop-to-active-take-native.tsv; active Takes become the sole Take at index 0, active names/offsets/notes and selection persist; single-Take item unchanged; SHA-256 cf900984fa0289bd505ca609ebcb990647712c977c81400f7b1a5e1bf77c3e35
+native_action	40131; undo description `Crop to active take`; Undo restores all Take lists and active indices; Redo reapplies; repeat on the resulting single-Take items adds no history step
+native_state_before	docs/verification/reaper-parity/fixtures/midi-crop-to-active-take-before.rpp; selected take counts 2/1/3/2 and active indices 0/0/2/1; SHA-256 890ce85de74e250a8dbd7710f695efe773701232ee7e582de99079320b929348
+native_state_after	docs/verification/reaper-parity/fixtures/midi-crop-to-active-take-after.rpp; selected items each have one Take at index 0; SHA-256 36f1f91dc671c66c353c0981f9d6d75079775749de75f414cc2c62efc7f9d1a7
+native_state_undo	docs/verification/reaper-parity/fixtures/midi-crop-to-active-take-undo.rpp; restores original counts, active indices, source offsets, notes, and selection; SHA-256 890ce85de74e250a8dbd7710f695efe773701232ee7e582de99079320b929348
+native_state_redo	docs/verification/reaper-parity/fixtures/midi-crop-to-active-take-redo.rpp; restores the cropped one-Take state; SHA-256 36f1f91dc671c66c353c0981f9d6d75079775749de75f414cc2c62efc7f9d1a7
+native_state_no-op	docs/verification/reaper-parity/fixtures/midi-crop-to-active-take-already-top.rpp; repeating crop after all items are single-Take adds no Undo history; SHA-256 36f1f91dc671c66c353c0981f9d6d75079775749de75f414cc2c62efc7f9d1a7
+native_screenshot	docs/verification/reaper-parity/fixtures/midi-crop-to-active-take-native-after.png; 1280x800; REAPER Arrange shows four selected MIDI items after crop; SHA-256 9adfecc284d5677563f80ffa07a75c465d725a4f1a571ad34a68835300136d6f
+aaadaw_fixture_generator	crates/aaadaw/examples/generate_midi_crop_to_active_take_fixture.rs; SHA-256 303d31299c413999f7f57ae780376c9ab7e2e9fbaf5066fece8b963969ef9b13
+aaadaw_fixture	docs/verification/reaper-parity/fixtures/midi-crop-to-active-take-aaadaw.aaadaw; SHA-256 68f89baaca16206eb00d85a779012b8683e5353216d041c54521a2e4214c8ee8
+aaadaw_capture_script	scripts/reaper_parity/capture-midi-crop-to-active-take-aaadaw.sh; capture-only Ctrl+Shift+C binding for take.crop-active; SHA-256 e1c7bd7be51134dfe04d777900962ae6e83987228cebe0b6b699565328f30b5c
+aaadaw_binary	target/cranelift/debug/aaadaw; rustc 1.101.0-nightly (5d8fec066 2026-10-16); Build ID 6d4f5f6e0ec17268e7907b7794231c3c66881d46; Cranelift backend; audio-device disabled; SHA-256 93eb95e933aeaed60b362d538f0d0de56fbf99357dcd54de008a91c2ca0e0bd6
+aaadaw_screenshot_before	docs/verification/reaper-parity/fixtures/midi-crop-to-active-take-aaadaw-before.png; 1280x800; Inspector shows Take 2/2 · Take B and Crop selected to active; SHA-256 cee21dbca9fab61c50a09ce71326c817becdd37ed9430e945fe0f69137887d09
+aaadaw_screenshot_after	docs/verification/reaper-parity/fixtures/midi-crop-to-active-take-aaadaw-after.png; 1280x800; Inspector shows Take 1/1 · Take B and no crop button; SHA-256 bf4fc1fb0657acf5d014e1a04f0f1d9a8fc4e2e0779017ee83407d2b971245a0
+aaadaw_screenshot_undo	docs/verification/reaper-parity/fixtures/midi-crop-to-active-take-aaadaw-undo.png; 1280x800; Undo restores Take 2/2 · Take B; SHA-256 6f87938b17c8cf0caf5157cb0846f807919a8c1fef7dc2eef2f05ea496740402
+aaadaw_screenshot_redo	docs/verification/reaper-parity/fixtures/midi-crop-to-active-take-aaadaw-redo.png; 1280x800; Redo restores Take 1/1 · Take B; SHA-256 28544d93f20e2daeacee15a1901ecb84e1b9172889f538376c6f42693e8c2439
+core_verification	Stable Nextest: aaadaw-core, aaadaw-storage, and aaadaw library/binary/integration targets; 1282/1282 passed across 55 binaries
+focused_core_regression	crates/aaadaw-core/tests/midi_item_takes.rs::cropping_midi_item_to_active_take_preserves_data_and_round_trips; passed
+frozen_track_guard	crates/aaadaw-core/tests/track_freeze.rs::failed_freeze_and_frozen_source_edits_leave_the_project_unchanged; 4/4 test binary passed after adding MIDI crop rejection
+focused_app_regression	crates/aaadaw/src/app/tests.rs::cropping_mixed_selected_audio_and_midi_takes_is_one_undoable_transaction; passed
+clippy_verification	Stable all-target Clippy for aaadaw-core, aaadaw-storage, and aaadaw; `-D warnings -A future-incompatible`; passed
+other_verification	Stable fmt --check; both capture shell scripts pass `bash -n`; parity matrix 113 unique IDs / 15 columns; `git diff --check`; SHA-256 manifest audit 18/18
+scope_note	No default shortcut was added; the AAADAW screenshot script binds Ctrl+Shift+C only in an isolated temporary config. Screenshots verify project/UI state, not audio playback audibility.

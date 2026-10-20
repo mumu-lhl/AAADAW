@@ -1143,3 +1143,154 @@ fn moving_midi_active_take_to_top_preserves_take_data_and_undoes() {
     assert_eq!(project.history_cursor(), cursor);
     assert_eq!(project.snapshot(), after);
 }
+
+#[test]
+fn cropping_midi_item_to_active_take_preserves_data_and_round_trips() {
+    let mut project = Project::new();
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "MIDI take crop".to_owned(),
+        })
+        .unwrap();
+    let track_id = project.tracks()[0].id();
+    project
+        .apply(DawAction::InsertMidiItem {
+            track_id,
+            start_tick: 240,
+            length_ticks: 3_840,
+        })
+        .unwrap();
+    let item_id = project.midi_items()[0].id();
+    project
+        .apply(DawAction::AddMidiNotes {
+            item_id,
+            notes: vec![MidiNoteData {
+                pitch: 72,
+                channel: 3,
+                tick: 720,
+                duration: 360,
+                velocity: 93,
+                off_velocity: 11,
+            }],
+        })
+        .unwrap();
+    let mut snapshot = project.snapshot();
+    let item = &mut snapshot.midi_items[0];
+    item.name = "Take C".to_owned();
+    item.active_take_index = 2;
+    item.source_offset_ticks = 375;
+    item.loop_source = true;
+    item.source_loop_length_ticks = 1_920;
+    item.controllers = vec![MidiControllerData {
+        controller: 1,
+        channel: 3,
+        tick: 840,
+        value: 64,
+    }];
+    item.pitch_bends = vec![MidiPitchBendData {
+        channel: 3,
+        tick: 960,
+        value: 9_000,
+    }];
+    item.opaque_events = vec![MidiOpaqueEventData {
+        tick: 1_080,
+        order: 2,
+        kind: MidiOpaqueEventKind::Meta {
+            kind: 0x06,
+            data: b"active crop source".to_vec(),
+        },
+    }];
+    item.other_takes = vec![
+        MidiItemTakeSnapshot {
+            index: 0,
+            name: "Take A".to_owned(),
+            source_offset_ticks: 125,
+            loop_source: false,
+            source_loop_length_ticks: 1_920,
+            notes: vec![MidiNoteSnapshot {
+                id: 2,
+                data: MidiNoteData {
+                    pitch: 60,
+                    channel: 0,
+                    tick: 120,
+                    duration: 240,
+                    velocity: 80,
+                    off_velocity: 0,
+                },
+            }],
+            controllers: Vec::new(),
+            pitch_bends: Vec::new(),
+            program_changes: Vec::new(),
+            poly_aftertouches: Vec::new(),
+            channel_pressures: Vec::new(),
+            opaque_events: Vec::new(),
+            event_order: Vec::new(),
+        },
+        MidiItemTakeSnapshot {
+            index: 1,
+            name: "Take B".to_owned(),
+            source_offset_ticks: 250,
+            loop_source: false,
+            source_loop_length_ticks: 3_840,
+            notes: vec![MidiNoteSnapshot {
+                id: 3,
+                data: MidiNoteData {
+                    pitch: 67,
+                    channel: 1,
+                    tick: 480,
+                    duration: 360,
+                    velocity: 84,
+                    off_velocity: 0,
+                },
+            }],
+            controllers: Vec::new(),
+            pitch_bends: Vec::new(),
+            program_changes: Vec::new(),
+            poly_aftertouches: Vec::new(),
+            channel_pressures: Vec::new(),
+            opaque_events: Vec::new(),
+            event_order: Vec::new(),
+        },
+    ];
+    let mut project = Project::from_snapshot(snapshot).unwrap();
+
+    let before = project.snapshot();
+    let item_before = &project.midi_items()[0];
+    let mut active_take = item_before
+        .take_snapshots()
+        .into_iter()
+        .find(|take| take.index == 2)
+        .unwrap();
+    active_take.index = 0;
+    let start_position = item_before.start_position();
+    let length_ticks = item_before.length_ticks();
+    let cursor = project.history_cursor();
+    project
+        .apply(DawAction::CropMidiItemToActiveTake { item_id })
+        .unwrap();
+
+    let after = project.snapshot();
+    let item = &project.midi_items()[0];
+    assert_eq!(project.history_cursor(), cursor + 1);
+    assert_eq!(item.take_count(), 1);
+    assert_eq!(item.active_take_index(), 0);
+    assert_eq!(item.take_snapshots(), [active_take]);
+    assert_eq!(item.start_position(), start_position);
+    assert_eq!(item.length_ticks(), length_ticks);
+    assert_eq!(
+        Project::from_snapshot(after.clone()).unwrap().snapshot(),
+        after
+    );
+
+    project.undo().unwrap();
+    assert_eq!(project.snapshot(), before);
+    project.redo().unwrap();
+    assert_eq!(project.snapshot(), after);
+    let cursor = project.history_cursor();
+    project
+        .apply(DawAction::CropMidiItemToActiveTake { item_id })
+        .unwrap();
+    assert_eq!(project.history_cursor(), cursor);
+    assert_eq!(project.snapshot(), after);
+}
