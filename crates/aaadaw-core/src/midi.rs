@@ -437,6 +437,32 @@ impl MidiItem {
         true
     }
 
+    /// Removes the active Take, selecting the preceding Take when possible and compacting indices.
+    pub(crate) fn delete_active_take(&mut self) -> bool {
+        if self.take_count() <= 1 {
+            return false;
+        }
+        let removed_index = self.active_take_index;
+        let next_index = if removed_index == 0 {
+            1
+        } else {
+            removed_index - 1
+        };
+        if !self.switch_active_take(next_index) {
+            return false;
+        }
+        self.other_takes.retain(|take| take.index != removed_index);
+        for take in &mut self.other_takes {
+            if take.index > removed_index {
+                take.index -= 1;
+            }
+        }
+        if self.active_take_index > removed_index {
+            self.active_take_index -= 1;
+        }
+        true
+    }
+
     /// Returns the item Takes in their original order, including the active Take.
     pub fn take_snapshots(&self) -> Vec<crate::MidiItemTakeSnapshot> {
         let mut takes = Vec::with_capacity(self.take_count());

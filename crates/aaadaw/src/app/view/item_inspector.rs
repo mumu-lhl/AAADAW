@@ -178,15 +178,14 @@ fn selected_item_view(app: &App, item_id: ItemId, touch_targets: bool) -> Elemen
         }
         if super::super::commands::is_enabled(
             app,
-            super::super::commands::CommandId::DeleteActiveAudioItemTake,
+            super::super::commands::CommandId::DeleteActiveTake,
         ) {
             let label = if app.timeline.selected_items.len() > 1 {
                 "Delete selected active takes"
             } else {
                 "Delete active take"
             };
-            actions =
-                actions.push(buttons.danger(label, Message::DeleteSelectedAudioItemActiveTakes));
+            actions = actions.push(buttons.danger(label, Message::DeleteSelectedItemActiveTakes));
         }
         actions = actions.push(buttons.danger("Delete", Message::DeleteAudioItem(item_id)));
         let position_controls = if let Some(query) = app.audio_item_start_edits.get(&item_id) {
@@ -296,6 +295,13 @@ fn selected_item_view(app: &App, item_id: ItemId, touch_targets: bool) -> Elemen
             take_controls = take_controls
                 .push(buttons.action("Previous take", Message::SwitchMidiItemTake(item_id, false)))
                 .push(buttons.action("Next take", Message::SwitchMidiItemTake(item_id, true)));
+        }
+        if super::super::commands::is_enabled(
+            app,
+            super::super::commands::CommandId::DeleteActiveTake,
+        ) {
+            take_controls = take_controls
+                .push(buttons.danger("Delete active take", Message::DeleteSelectedItemActiveTakes));
         }
         let mut item_actions = row![
             text(format!(

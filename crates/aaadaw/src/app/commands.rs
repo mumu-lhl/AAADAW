@@ -117,7 +117,7 @@ pub(crate) enum CommandId {
     DuplicateSelectedItem,
     DuplicateSelectedAudioItem,
     DuplicateActiveTake,
-    DeleteActiveAudioItemTake,
+    DeleteActiveTake,
     SwitchItemsToNextTake,
     SwitchItemsToPreviousTake,
     AddEmptyMidiTakeBeforeActive,
@@ -282,7 +282,7 @@ enum CommandKind {
     DuplicateSelectedItem,
     DuplicateSelectedAudioItem,
     DuplicateActiveTake,
-    DeleteActiveAudioItemTake,
+    DeleteActiveTake,
     SwitchItemsToNextTake,
     SwitchItemsToPreviousTake,
     AddEmptyMidiTakeBeforeActive,
@@ -1508,7 +1508,7 @@ const COMMANDS: &[CommandDefinition] = &[
         separator_before: true,
     },
     CommandDefinition {
-        kind: CommandKind::DeleteActiveAudioItemTake,
+        kind: CommandKind::DeleteActiveTake,
         menu: Some(MainMenu::Item),
         category: "Take",
         label: "Delete active take from items",
@@ -2944,7 +2944,7 @@ fn command_kind_id(kind: CommandKind) -> &'static str {
         CommandKind::ImplodeAudioItemsOnSameTrackIntoTakes => "take.implode-same-track",
         CommandKind::ImplodeAudioItemsAcrossTracksIntoTakes => "take.implode-across-tracks",
         CommandKind::ExplodeAudioItemTakesInPlace => "take.explode-in-place",
-        CommandKind::DeleteActiveAudioItemTake => "take.delete-active",
+        CommandKind::DeleteActiveTake => "take.delete-active",
         CommandKind::MoveActiveTakesToTop => "take.move-active-to-top",
         CommandKind::CropAudioItemToActiveTake => "take.crop-active",
         CommandKind::ToggleMediaBrowserPanel => "view.media-browser-panel",
@@ -3270,12 +3270,12 @@ pub(super) fn dispatch(app: &mut App, command: CommandId) -> Task<Message> {
             }
             Message::DuplicateSelectedItemActiveTakes
         }
-        CommandId::DeleteActiveAudioItemTake => {
-            if selected_audio_item_ids(app).is_empty() {
-                app.status = "Select an audio item to delete its active take".to_owned();
+        CommandId::DeleteActiveTake => {
+            if selected_audio_item_ids(app).is_empty() && selected_midi_item_ids(app).is_empty() {
+                app.status = "Select an audio or MIDI item to delete its active take".to_owned();
                 return Task::none();
             }
-            Message::DeleteSelectedAudioItemActiveTakes
+            Message::DeleteSelectedItemActiveTakes
         }
         CommandId::MoveActiveTakesToTop => {
             if move_active_take_to_top_targets(app).is_empty()
@@ -4273,15 +4273,26 @@ fn command_enabled(app: &App, kind: CommandKind, track: Option<TrackState>) -> b
                     })
                 })
         }
-        CommandKind::DeleteActiveAudioItemTake => {
+        CommandKind::DeleteActiveTake => {
             let selected_audio_ids = selected_audio_item_ids(app);
+            let selected_midi_ids = selected_midi_item_ids(app);
             !project_edit_busy(app)
-                && !selected_audio_ids.is_empty()
+                && (!selected_audio_ids.is_empty() || !selected_midi_ids.is_empty())
                 && !selected_audio_ids.iter().any(|item_id| {
                     app.project
                         .tracks()
                         .iter()
                         .any(|track| track.frozen_audio_item_id() == Some(*item_id))
+                })
+                && !selected_midi_ids.iter().any(|item_id| {
+                    app.project.midi_items().iter().any(|item| {
+                        item.id() == *item_id
+                            && app
+                                .project
+                                .tracks()
+                                .iter()
+                                .any(|track| track.id() == item.track_id() && track.is_frozen())
+                    })
                 })
         }
         CommandKind::MoveActiveTakesToTop => {
@@ -4628,7 +4639,7 @@ fn command_id(kind: CommandKind) -> CommandId {
             CommandId::ImplodeAudioItemsAcrossTracksIntoTakes
         }
         CommandKind::ExplodeAudioItemTakesInPlace => CommandId::ExplodeAudioItemTakesInPlace,
-        CommandKind::DeleteActiveAudioItemTake => CommandId::DeleteActiveAudioItemTake,
+        CommandKind::DeleteActiveTake => CommandId::DeleteActiveTake,
         CommandKind::MoveActiveTakesToTop => CommandId::MoveActiveTakesToTop,
         CommandKind::CropAudioItemToActiveTake => CommandId::CropAudioItemToActiveTake,
         CommandKind::SwitchItemsToNextTake => CommandId::SwitchItemsToNextTake,

@@ -1740,6 +1740,7 @@ fn action_rebuilds_playback_graph(action: &DawAction) -> bool {
         | DawAction::SetTrackFxParameterAutomation { .. }
         | DawAction::SetAudioItemActiveTake { .. }
         | DawAction::DeleteActiveAudioItemTake { .. }
+        | DawAction::DeleteActiveMidiItemTake { .. }
         | DawAction::PasteAudioItemAsTake { .. }
         | DawAction::SetMidiItemPosition { .. }
         | DawAction::EditMidiItemPlacement { .. }
@@ -5490,7 +5491,7 @@ impl App {
                             | Message::DuplicateAudioItem(_)
                             | Message::DuplicateAudioItemTake(_)
                             | Message::DuplicateSelectedItemActiveTakes
-                            | Message::DeleteSelectedAudioItemActiveTakes
+                            | Message::DeleteSelectedItemActiveTakes
                             | Message::MoveSelectedAudioItemActiveTakesToTop
                             | Message::ImplodeSelectedAudioItemsAsTakes
                             | Message::ImplodeSelectedAudioItemsAcrossTracksAsTakes
@@ -9795,7 +9796,7 @@ impl App {
                     },
                 );
             }
-            Message::DeleteSelectedAudioItemActiveTakes => {
+            Message::DeleteSelectedItemActiveTakes => {
                 if commands::project_edit_busy(self) {
                     self.status =
                         "Stop playback or finish the current project operation before deleting takes"
@@ -9803,17 +9804,30 @@ impl App {
                     return Task::none();
                 }
                 let selected_audio_ids = commands::selected_audio_item_ids(self);
-                if selected_audio_ids.is_empty() {
-                    self.status = "Select an audio item to delete its active take".to_owned();
+                let selected_midi_ids = commands::selected_midi_item_ids(self);
+                if selected_audio_ids.is_empty() && selected_midi_ids.is_empty() {
+                    self.status =
+                        "Select an audio or MIDI item to delete its active take".to_owned();
                     return Task::none();
                 }
-                if selected_audio_ids.iter().any(|item_id| {
+                let frozen_audio = selected_audio_ids.iter().any(|item_id| {
                     self.project
                         .tracks()
                         .iter()
                         .any(|track| track.frozen_audio_item_id() == Some(*item_id))
-                }) {
-                    self.status = "Frozen render items cannot have takes deleted".to_owned();
+                });
+                let frozen_midi = selected_midi_ids.iter().any(|item_id| {
+                    self.project.midi_items().iter().any(|item| {
+                        item.id() == *item_id
+                            && self
+                                .project
+                                .tracks()
+                                .iter()
+                                .any(|track| track.id() == item.track_id() && track.is_frozen())
+                    })
+                });
+                if frozen_audio || frozen_midi {
+                    self.status = "Frozen items cannot have takes deleted".to_owned();
                     return Task::none();
                 }
                 for item_id in &selected_audio_ids {
@@ -9823,10 +9837,14 @@ impl App {
                     .iter()
                     .map(|item_id| DawAction::DeleteActiveAudioItemTake { item_id: *item_id })
                     .collect::<Vec<_>>();
+                actions.extend(
+                    selected_midi_ids
+                        .iter()
+                        .map(|item_id| DawAction::DeleteActiveMidiItemTake { item_id: *item_id }),
+                );
+                let selected_count = actions.len();
                 let action = if actions.len() == 1 {
-                    actions
-                        .pop()
-                        .expect("one selected audio item action is present")
+                    actions.pop().expect("one selected item action is present")
                 } else {
                     DawAction::BatchTransaction {
                         tx_id: self.revision,
@@ -9835,7 +9853,7 @@ impl App {
                 };
                 self.apply_action(
                     action,
-                    if selected_audio_ids.len() == 1 {
+                    if selected_count == 1 {
                         "Active take deleted"
                     } else {
                         "Selected active takes deleted"

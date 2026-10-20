@@ -276,6 +276,78 @@ fn midi_take_action_list_switches_and_adds_empty_takes_with_undo() {
     assert_eq!(app.project.snapshot(), before_multi);
     let _ = app.update(Message::Redo);
     assert_eq!(app.project.snapshot(), after_multi);
+
+    app.timeline.select_items(vec![(item_id, track_id)]);
+    let before_delete = app.project.snapshot();
+    let cursor = app.project.history_cursor();
+    assert!(commands::is_enabled(&app, CommandId::DeleteActiveTake));
+    let _ = app.update(Message::ExecuteCommand(CommandId::DeleteActiveTake));
+    assert_eq!(app.project.history_cursor(), cursor + 1);
+    let item = &app.project.midi_items()[0];
+    assert_eq!(item.take_count(), 4);
+    assert_eq!(item.active_take_index(), 0);
+    assert!(item.name().is_empty());
+    let after_delete = app.project.snapshot();
+    let _ = app.update(Message::Undo);
+    assert_eq!(app.project.snapshot(), before_delete);
+    let _ = app.update(Message::Redo);
+    assert_eq!(app.project.snapshot(), after_delete);
+}
+
+#[test]
+fn deleting_mixed_selected_audio_and_midi_takes_is_one_undoable_action() {
+    let mut app = App::default();
+    app.project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Mixed take deletion".to_owned(),
+        })
+        .unwrap();
+    let track_id = app.project.tracks()[0].id();
+    app.project
+        .apply(DawAction::InsertAudioItem {
+            track_id,
+            media_ref: "asset://delete-take-a".to_owned(),
+            start_sample: 0,
+            source_offset_samples: 0,
+            length_samples: 48_000,
+        })
+        .unwrap();
+    let audio_id = app.project.audio_items()[0].id();
+    app.project
+        .apply(DawAction::DuplicateAudioItemTake { item_id: audio_id })
+        .unwrap();
+    app.project
+        .apply(DawAction::InsertMidiItem {
+            track_id,
+            start_tick: 0,
+            length_ticks: 1_920,
+        })
+        .unwrap();
+    let midi_id = app.project.midi_items()[0].id();
+    app.project
+        .apply(DawAction::DuplicateMidiItemTake { item_id: midi_id })
+        .unwrap();
+    app.timeline.rebuild(&app.project);
+    app.timeline
+        .select_items(vec![(audio_id, track_id), (midi_id, track_id)]);
+
+    let before = app.project.snapshot();
+    let cursor = app.project.history_cursor();
+    assert!(commands::is_enabled(&app, CommandId::DeleteActiveTake));
+    let _ = app.update(Message::ExecuteCommand(CommandId::DeleteActiveTake));
+    assert_eq!(app.project.history_cursor(), cursor + 1);
+    assert_eq!(app.project.audio_items().len(), 1);
+    assert_eq!(app.project.audio_items()[0].take_count(), 1);
+    assert_eq!(app.project.audio_items()[0].active_take_index(), 0);
+    assert_eq!(app.project.midi_items().len(), 1);
+    assert_eq!(app.project.midi_items()[0].take_count(), 1);
+    assert_eq!(app.project.midi_items()[0].active_take_index(), 0);
+    let after = app.project.snapshot();
+    let _ = app.update(Message::Undo);
+    assert_eq!(app.project.snapshot(), before);
+    let _ = app.update(Message::Redo);
+    assert_eq!(app.project.snapshot(), after);
 }
 
 #[test]
@@ -2171,18 +2243,16 @@ fn delete_active_take_action_keeps_the_other_take_and_undo_redo_restore_it() {
     assert!(shortcut.default_binding.is_empty());
     let menu_entry = commands::for_menu(&app, MainMenu::Item)
         .into_iter()
-        .find(|entry| entry.id == CommandId::DeleteActiveAudioItemTake)
+        .find(|entry| entry.id == CommandId::DeleteActiveTake)
         .expect("Item menu should expose Delete active take from items");
     assert_eq!(menu_entry.label, "Delete active take from items");
     assert!(menu_entry.enabled);
     assert_eq!(
         commands::find(&app, "delete active take from items"),
-        Some(CommandId::DeleteActiveAudioItemTake)
+        Some(CommandId::DeleteActiveTake)
     );
 
-    let _ = app.update(Message::ExecuteCommand(
-        CommandId::DeleteActiveAudioItemTake,
-    ));
+    let _ = app.update(Message::ExecuteCommand(CommandId::DeleteActiveTake));
     let item = &app.project.audio_items()[0];
     assert_eq!(item.take_count(), 1);
     assert_eq!(item.active_take_index(), 0);
@@ -2250,14 +2320,9 @@ fn deleting_active_takes_from_multiple_selected_audio_items_is_one_undoable_tran
     ]);
     let before = app.project.snapshot();
     let history_cursor = app.project.history_cursor();
-    assert!(commands::is_enabled(
-        &app,
-        CommandId::DeleteActiveAudioItemTake
-    ));
+    assert!(commands::is_enabled(&app, CommandId::DeleteActiveTake));
 
-    let _ = app.update(Message::ExecuteCommand(
-        CommandId::DeleteActiveAudioItemTake,
-    ));
+    let _ = app.update(Message::ExecuteCommand(CommandId::DeleteActiveTake));
     assert_eq!(app.project.history_cursor(), history_cursor + 1);
     assert_eq!(app.status, "Selected active takes deleted");
     assert_eq!(app.project.audio_items().len(), 2);

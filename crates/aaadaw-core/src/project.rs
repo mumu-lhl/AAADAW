@@ -2263,6 +2263,38 @@ fn duplicate_midi_take_changed_event(
     })
 }
 
+fn delete_active_midi_take_event(
+    state: &ProjectState,
+    item_id: ItemId,
+) -> Result<ProjectEvent, ActionError> {
+    let index = state
+        .midi_items
+        .iter()
+        .position(|item| item.id == item_id)
+        .ok_or(ActionError::MidiItemNotFound { item_id })?;
+    let before = state.midi_items[index].clone();
+    let track_id = before.track_id;
+    let track = state
+        .tracks
+        .iter()
+        .find(|track| track.id == track_id)
+        .ok_or(ActionError::TrackNotFound { track_id })?;
+    if track.is_frozen() {
+        return Err(ActionError::CannotEditFrozenTrackSource { track_id });
+    }
+    if before.take_count() == 1 {
+        return Ok(ProjectEvent::MidiItemRemoved {
+            index,
+            item: before,
+        });
+    }
+    let mut after = before.clone();
+    if !after.delete_active_take() {
+        return Err(ActionError::HistoryInvariantViolation);
+    }
+    Ok(ProjectEvent::MidiItemChanged { before, after })
+}
+
 fn split_midi_take(
     original: &MidiItem,
     absolute_points: &[u64],
@@ -5635,6 +5667,9 @@ impl Project {
             DawAction::DuplicateMidiItemTake { item_id } => {
                 duplicate_midi_take_changed_event(state, ids, item_id)?
             }
+            DawAction::DeleteActiveMidiItemTake { item_id } => {
+                delete_active_midi_take_event(state, item_id)?
+            }
             DawAction::DuplicateAudioItemAt {
                 item_id,
                 track_id,
@@ -8031,6 +8066,7 @@ fn source_track_for_action(state: &ProjectState, action: &DawAction) -> Option<T
         | DawAction::DuplicateMidiItemAt { item_id, .. }
         | DawAction::DuplicateMidiItemToTrack { item_id, .. }
         | DawAction::DuplicateMidiItemTake { item_id }
+        | DawAction::DeleteActiveMidiItemTake { item_id }
         | DawAction::SplitMidiItem { item_id, .. }
         | DawAction::DeleteMidiItem { item_id }
         | DawAction::AddMidiNotes { item_id, .. }

@@ -1,0 +1,51 @@
+before	item_count=1	selected_count=1	take_count=3	active_index=1	selected=1
+before	take=0	active=0	name=Take A	start_offset=0.125000	notes=0-0:240:480:0:60:100
+before	take=1	active=1	name=Take B	start_offset=0.375000	notes=0-0:480:720:0:62:84;0-0:1440:1680:0:64:92
+before	take=2	active=0	name=Take C	start_offset=0.625000	notes=0-0:720:960:0:55:75
+after	item_count=1	selected_count=1	take_count=2	active_index=0	selected=1
+after	take=0	active=1	name=Take A	start_offset=0.125000	notes=0-0:240:480:0:60:100
+after	take=1	active=0	name=Take C	start_offset=0.625000	notes=0-0:720:960:0:55:75
+undo	item_count=1	selected_count=1	take_count=3	active_index=1	selected=1
+undo	take=0	active=0	name=Take A	start_offset=0.125000	notes=0-0:240:480:0:60:100
+undo	take=1	active=1	name=Take B	start_offset=0.375000	notes=0-0:480:720:0:62:84;0-0:1440:1680:0:64:92
+undo	take=2	active=0	name=Take C	start_offset=0.625000	notes=0-0:720:960:0:55:75
+redo	item_count=1	selected_count=1	take_count=2	active_index=0	selected=1
+redo	take=0	active=1	name=Take A	start_offset=0.125000	notes=0-0:240:480:0:60:100
+redo	take=1	active=0	name=Take C	start_offset=0.625000	notes=0-0:720:960:0:55:75
+first-before	item_count=1	selected_count=1	take_count=3	active_index=0	selected=1
+first-before	take=0	active=1	name=Take A	start_offset=0.125000	notes=0-0:240:480:0:60:100
+first-before	take=1	active=0	name=Take B	start_offset=0.375000	notes=0-0:480:720:0:62:84;0-0:1440:1680:0:64:92
+first-before	take=2	active=0	name=Take C	start_offset=0.625000	notes=0-0:720:960:0:55:75
+first-after	item_count=1	selected_count=1	take_count=2	active_index=0	selected=1
+first-after	take=0	active=1	name=Take B	start_offset=0.375000	notes=0-0:480:720:0:62:84;0-0:1440:1680:0:64:92
+first-after	take=1	active=0	name=Take C	start_offset=0.625000	notes=0-0:720:960:0:55:75
+first-undo	item_count=1	selected_count=1	take_count=3	active_index=0	selected=1
+first-undo	take=0	active=1	name=Take A	start_offset=0.125000	notes=0-0:240:480:0:60:100
+first-undo	take=1	active=0	name=Take B	start_offset=0.375000	notes=0-0:480:720:0:62:84;0-0:1440:1680:0:64:92
+first-undo	take=2	active=0	name=Take C	start_offset=0.625000	notes=0-0:720:960:0:55:75
+first-redo	item_count=1	selected_count=1	take_count=2	active_index=0	selected=1
+first-redo	take=0	active=1	name=Take B	start_offset=0.375000	notes=0-0:480:720:0:62:84;0-0:1440:1680:0:64:92
+first-redo	take=1	active=0	name=Take C	start_offset=0.625000	notes=0-0:720:960:0:55:75
+last-before	item_count=1	selected_count=1	take_count=3	active_index=2	selected=1
+last-before	take=0	active=0	name=Take A	start_offset=0.125000	notes=0-0:240:480:0:60:100
+last-before	take=1	active=0	name=Take B	start_offset=0.375000	notes=0-0:480:720:0:62:84;0-0:1440:1680:0:64:92
+last-before	take=2	active=1	name=Take C	start_offset=0.625000	notes=0-0:720:960:0:55:75
+last-after	item_count=1	selected_count=1	take_count=2	active_index=1	selected=1
+last-after	take=0	active=0	name=Take A	start_offset=0.125000	notes=0-0:240:480:0:60:100
+last-after	take=1	active=1	name=Take B	start_offset=0.375000	notes=0-0:480:720:0:62:84;0-0:1440:1680:0:64:92
+last-undo	item_count=1	selected_count=1	take_count=3	active_index=2	selected=1
+last-undo	take=0	active=0	name=Take A	start_offset=0.125000	notes=0-0:240:480:0:60:100
+last-undo	take=1	active=0	name=Take B	start_offset=0.375000	notes=0-0:480:720:0:62:84;0-0:1440:1680:0:64:92
+last-undo	take=2	active=1	name=Take C	start_offset=0.625000	notes=0-0:720:960:0:55:75
+last-redo	item_count=1	selected_count=1	take_count=2	active_index=1	selected=1
+last-redo	take=0	active=0	name=Take A	start_offset=0.125000	notes=0-0:240:480:0:60:100
+last-redo	take=1	active=1	name=Take B	start_offset=0.375000	notes=0-0:480:720:0:62:84;0-0:1440:1680:0:64:92
+before	item_count=2	selected_count=1
+after	item_count=1	selected_count=0
+undo	item_count=2	selected_count=1
+redo	item_count=1	selected_count=0
+visual-after	item_count=1	selected_count=1	take_count=2	active_index=0	selected=1
+visual-after	take=0	active=1	name=Take A	start_offset=0.125000	notes=0-0:240:480:0:60:100
+visual-after	take=1	active=0	name=Take C	start_offset=0.625000	notes=0-0:720:960:0:55:75
+action	40129	Take: Delete active take from items
+reference	REAPER 7.82/linux-x86_64; Default_7.0.ReaperThemeZip

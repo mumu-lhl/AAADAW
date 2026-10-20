@@ -85,6 +85,13 @@ fn duplicated_active_midi_take_round_trips_with_new_note_identity() {
     let mut store = ProjectStore::open(path.path()).unwrap();
     store.save(&project).unwrap();
     assert_eq!(store.load().unwrap().snapshot(), expected);
+
+    project
+        .apply(DawAction::DeleteActiveMidiItemTake { item_id })
+        .unwrap();
+    let after_delete = project.snapshot();
+    store.save(&project).unwrap();
+    assert_eq!(store.load().unwrap().snapshot(), after_delete);
 }
 
 #[test]

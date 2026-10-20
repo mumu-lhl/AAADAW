@@ -318,6 +318,139 @@ fn duplicating_active_midi_take_appends_activates_and_undoes_with_unique_note_id
 }
 
 #[test]
+fn deleting_active_midi_take_selects_predecessor_and_removes_a_single_take_item() {
+    let mut project = Project::new();
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "MIDI take deletion".to_owned(),
+        })
+        .unwrap();
+    let track_id = project.tracks()[0].id();
+    for start_tick in [0, 3_840] {
+        project
+            .apply(DawAction::InsertMidiItem {
+                track_id,
+                start_tick,
+                length_ticks: 1_920,
+            })
+            .unwrap();
+    }
+    let item_id = project.midi_items()[0].id();
+    let single_item_id = project.midi_items()[1].id();
+    project
+        .apply(DawAction::AddMidiNotes {
+            item_id,
+            notes: vec![MidiNoteData {
+                pitch: 64,
+                channel: 2,
+                tick: 480,
+                duration: 240,
+                velocity: 92,
+                off_velocity: 17,
+            }],
+        })
+        .unwrap();
+    let mut snapshot = project.snapshot();
+    let item = &mut snapshot.midi_items[0];
+    let active_note = item.notes[0].clone();
+    item.name = "Take B".to_owned();
+    item.active_take_index = 1;
+    item.source_offset_ticks = 120;
+    item.other_takes = vec![
+        MidiItemTakeSnapshot {
+            index: 0,
+            name: "Take A".to_owned(),
+            source_offset_ticks: 0,
+            loop_source: false,
+            source_loop_length_ticks: 1_920,
+            notes: vec![MidiNoteSnapshot {
+                id: 2,
+                data: MidiNoteData {
+                    pitch: 60,
+                    channel: 0,
+                    tick: 120,
+                    duration: 120,
+                    velocity: 80,
+                    off_velocity: 0,
+                },
+            }],
+            controllers: Vec::new(),
+            pitch_bends: Vec::new(),
+            program_changes: Vec::new(),
+            poly_aftertouches: Vec::new(),
+            channel_pressures: Vec::new(),
+            opaque_events: Vec::new(),
+            event_order: Vec::new(),
+        },
+        MidiItemTakeSnapshot {
+            index: 2,
+            name: "Take C".to_owned(),
+            source_offset_ticks: 240,
+            loop_source: false,
+            source_loop_length_ticks: 1_920,
+            notes: vec![MidiNoteSnapshot {
+                id: 3,
+                data: MidiNoteData {
+                    pitch: 67,
+                    channel: 1,
+                    tick: 960,
+                    duration: 240,
+                    velocity: 88,
+                    off_velocity: 3,
+                },
+            }],
+            controllers: Vec::new(),
+            pitch_bends: Vec::new(),
+            program_changes: Vec::new(),
+            poly_aftertouches: Vec::new(),
+            channel_pressures: Vec::new(),
+            opaque_events: Vec::new(),
+            event_order: Vec::new(),
+        },
+    ];
+    item.notes = vec![active_note];
+    let mut project = Project::from_snapshot(snapshot).unwrap();
+
+    let before = project.snapshot();
+    let mut expected_takes = project.midi_items()[0].take_snapshots();
+    expected_takes.remove(1);
+    for (index, take) in expected_takes.iter_mut().enumerate() {
+        take.index = index as u32;
+    }
+    let cursor = project.history_cursor();
+    project
+        .apply(DawAction::DeleteActiveMidiItemTake { item_id })
+        .unwrap();
+    let item = &project.midi_items()[0];
+    assert_eq!(project.history_cursor(), cursor + 1);
+    assert_eq!(item.take_count(), 2);
+    assert_eq!(item.active_take_index(), 0);
+    assert_eq!(item.name(), "Take A");
+    assert_eq!(item.take_snapshots(), expected_takes);
+    let after = project.snapshot();
+    project.undo().unwrap();
+    assert_eq!(project.snapshot(), before);
+    project.redo().unwrap();
+    assert_eq!(project.snapshot(), after);
+
+    let before_single_take_delete = project.snapshot();
+    let cursor = project.history_cursor();
+    project
+        .apply(DawAction::DeleteActiveMidiItemTake {
+            item_id: single_item_id,
+        })
+        .unwrap();
+    assert_eq!(project.history_cursor(), cursor + 1);
+    assert_eq!(project.midi_items().len(), 1);
+    let after_single_take_delete = project.snapshot();
+    project.undo().unwrap();
+    assert_eq!(project.snapshot(), before_single_take_delete);
+    project.redo().unwrap();
+    assert_eq!(project.snapshot(), after_single_take_delete);
+}
+
+#[test]
 fn switching_midi_item_active_take_preserves_both_take_states_and_undo_history() {
     let mut project = Project::new();
     project

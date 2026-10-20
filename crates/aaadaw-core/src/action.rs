@@ -411,6 +411,10 @@ pub enum DawAction {
     DuplicateMidiItemTake {
         item_id: ItemId,
     },
+    /// Remove the active MIDI Take, deleting the Item when it contains no other Takes.
+    DeleteActiveMidiItemTake {
+        item_id: ItemId,
+    },
     /// Duplicate the complete audio Item at a new track and position.
     DuplicateAudioItemAt {
         item_id: ItemId,
