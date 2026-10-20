@@ -8,7 +8,8 @@ assert(reaper.CountTracks(0) == 0, "probe requires an empty project")
 
 local root = assert(os.getenv("AAADAW_REAPER_PROBE_DIR")) .. "/"
 local source_offset = tonumber(os.getenv("AAADAW_REAPER_PROBE_SOURCE_OFFSET_SECONDS") or "0.1")
-assert(source_offset and source_offset >= 0, "source offset must be nonnegative")
+assert(source_offset and source_offset == source_offset and math.abs(source_offset) <= 3600,
+  "source offset must be finite and within one hour")
 local first_note_start = tonumber(os.getenv("AAADAW_REAPER_PROBE_FIRST_NOTE_START_PPQ") or "2880")
 assert(first_note_start and first_note_start >= 0, "first note start must be nonnegative")
 local first_note_duration = tonumber(os.getenv("AAADAW_REAPER_PROBE_FIRST_NOTE_DURATION_PPQ") or "1920")

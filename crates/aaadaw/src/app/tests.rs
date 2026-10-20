@@ -4001,6 +4001,59 @@ fn item_nudge_sample_delta_preserves_fractional_midi_item_position() {
 }
 
 #[test]
+fn item_nudge_moving_a_non_loop_midi_item_preserves_its_signed_source_offset() {
+    use super::item_nudge::{Mode, Target};
+
+    let mut app = App::default();
+    let _ = app.update(Message::AddTrack);
+    let track_id = app.project.tracks()[0].id();
+    app.project
+        .apply(DawAction::InsertMidiItem {
+            track_id,
+            start_tick: 3_840,
+            length_ticks: 9_600,
+        })
+        .unwrap();
+    let item_id = app.project.midi_items()[0].id();
+    app.project
+        .apply(DawAction::SetMidiItemLoopSource {
+            item_id,
+            enabled: false,
+        })
+        .unwrap();
+    app.project
+        .apply(DawAction::EditMidiItemPlacement {
+            item_id,
+            start_tick: 3_840,
+            length_ticks: 9_600,
+            source_offset_ticks: -192,
+        })
+        .unwrap();
+    let original = app.project.midi_items()[0].clone();
+    app.timeline.rebuild(&app.project);
+    app.timeline.select_items(vec![(item_id, track_id)]);
+    let _ = app.update(Message::ItemNudgeModeChanged(Mode::Nudge));
+    let _ = app.update(Message::ItemNudgeTargetChanged(Target::EndPosition));
+    let _ = app.update(Message::ItemNudgeValueChanged("250".to_owned()));
+
+    let _ = app.update(Message::NudgeSelectedItems(1));
+
+    let moved = &app.project.midi_items()[0];
+    assert_eq!(moved.start_tick(), 4_320);
+    assert_eq!(moved.length_ticks(), original.length_ticks());
+    assert_eq!(moved.signed_source_offset_ticks(), -192);
+    assert!(app.item_nudge_dialog.error.is_none());
+    let _ = app.update(Message::Undo);
+    assert_eq!(app.project.midi_items()[0], original);
+    let _ = app.update(Message::Redo);
+    assert_eq!(app.project.midi_items()[0].start_tick(), 4_320);
+    assert_eq!(
+        app.project.midi_items()[0].signed_source_offset_ticks(),
+        -192
+    );
+}
+
+#[test]
 fn item_nudge_snap_aligns_the_first_item_and_preserves_selected_spacing() {
     let mut app = item_snap_test_app(12_013, 481);
     let first_track = app.project.tracks()[0].id();
@@ -6735,6 +6788,90 @@ fn item_nudge_non_looped_midi_contents_matches_native_source_boundary_and_undoes
     assert_eq!(app.project.midi_items()[0], moved_right);
     let _ = app.update(Message::Redo);
     assert_eq!(app.project.midi_items()[0], moved_left_again);
+}
+
+#[test]
+fn item_nudge_non_looped_midi_contents_preserves_native_negative_offset_boundaries() {
+    use super::item_nudge::Target;
+
+    let mut app = App::default();
+    let _ = app.update(Message::AddTrack);
+    let track_id = app.project.tracks()[0].id();
+    app.project
+        .apply(DawAction::InsertMidiItem {
+            track_id,
+            start_tick: 3_840,
+            length_ticks: 9_600,
+        })
+        .unwrap();
+    let item_id = app.project.midi_items()[0].id();
+    app.project
+        .apply(DawAction::SetMidiItemLoopSource {
+            item_id,
+            enabled: false,
+        })
+        .unwrap();
+    app.project
+        .apply(DawAction::EditMidiItemPlacement {
+            item_id,
+            start_tick: 3_840,
+            length_ticks: 9_600,
+            source_offset_ticks: -192,
+        })
+        .unwrap();
+    app.project
+        .apply(DawAction::AddMidiNotes {
+            item_id,
+            notes: vec![
+                MidiNoteData {
+                    channel: 0,
+                    pitch: 60,
+                    tick: 2_880,
+                    duration: 1_920,
+                    velocity: 96,
+                    off_velocity: 0,
+                },
+                MidiNoteData {
+                    channel: 0,
+                    pitch: 64,
+                    tick: 6_720,
+                    duration: 1_920,
+                    velocity: 108,
+                    off_velocity: 0,
+                },
+            ],
+        })
+        .unwrap();
+    let original = app.project.midi_items()[0].clone();
+    app.timeline.rebuild(&app.project);
+    app.timeline.select_items(vec![(item_id, track_id)]);
+    let _ = app.update(Message::ItemNudgeTargetChanged(Target::Contents));
+    let _ = app.update(Message::ItemNudgeValueChanged("250".to_owned()));
+
+    let _ = app.update(Message::NudgeSelectedItems(1));
+    let moved_right = app.project.midi_items()[0].clone();
+    assert_eq!(moved_right.signed_source_offset_ticks(), 1);
+    assert_eq!(moved_right.source_loop_length_ticks(), 10_273);
+    assert_eq!(
+        moved_right
+            .notes()
+            .iter()
+            .map(|note| (note.tick(), note.duration()))
+            .collect::<Vec<_>>(),
+        vec![(3_553, 1_920), (7_393, 1_920)]
+    );
+    assert!(app.item_nudge_dialog.error.is_none());
+
+    let _ = app.update(Message::Undo);
+    assert_eq!(app.project.midi_items()[0], original);
+    let _ = app.update(Message::NudgeSelectedItems(-1));
+    let moved_left = app.project.midi_items()[0].clone();
+    assert_eq!(moved_left.signed_source_offset_ticks(), 288);
+    assert_eq!(moved_left.source_loop_length_ticks(), 9_600);
+    assert_eq!(moved_left.notes(), original.notes());
+    assert!(app.item_nudge_dialog.error.is_none());
+    let _ = app.update(Message::Undo);
+    assert_eq!(app.project.midi_items()[0], original);
 }
 
 #[test]

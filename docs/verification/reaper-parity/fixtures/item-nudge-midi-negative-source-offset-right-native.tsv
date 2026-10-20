@@ -1,0 +1,6 @@
+version	7.82/linux-x86_64
+theme	Default_7.0.ReaperThemeZip
+dialog_action	41226	Item edit: Nudge/Set...
+columns	label	position_s	length_s	loop_source	source_offset_s	source_length	source_length_is_qn	phase_ppq	endpoint_ppq	notes	cc_events	selection	state_change	undo_label
+before	2.000000000	5.000000000	0.0	-0.100000000	10.000000000	true	-192.000	9408.000	0,0,0,2880.000,4800.000,0,60,96;1,0,0,6720.000,8640.000,0,64,108		selected	2	Fixture setup
+right	2.000000000	5.000000000	0.0	0.000520833	10.701041667	true	1.000	9601.000	0,0,0,3553.000,5473.000,0,60,96;1,0,0,7393.000,9313.000,0,64,108		selected	2	Fixture setup
