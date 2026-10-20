@@ -169,6 +169,16 @@ fn render_callback_does_not_allocate_on_the_rendering_thread() {
                 destination: project.tracks()[index].id(),
                 parameters: aaadaw_core::AudioSendParameters {
                     volume_db: -12.0,
+                    source_channels: if index == 1 {
+                        aaadaw_core::AudioSendSourceChannels::Channel2
+                    } else {
+                        aaadaw_core::AudioSendSourceChannels::Channel1
+                    },
+                    destination_channels: if index == 1 {
+                        aaadaw_core::AudioSendDestinationChannels::Channel1
+                    } else {
+                        aaadaw_core::AudioSendDestinationChannels::Stereo
+                    },
                     tap: if index == 1 {
                         aaadaw_core::AudioSendTap::PreFx
                     } else {

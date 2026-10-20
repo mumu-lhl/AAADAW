@@ -1,0 +1,8 @@
+desc:AAADAW Audio Channel Map Source Probe
+in_pin:none
+out_pin:Channel 1
+out_pin:Channel 2
+
+@sample
+spl0 = 0.25;
+spl1 = 0.75;

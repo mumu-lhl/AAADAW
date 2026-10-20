@@ -144,7 +144,10 @@ pub use transport::{
     TransportLoopRange, TransportPositionOverflow,
 };
 
-use aaadaw_core::{AudioSendTap, ItemId, PanMode, Track, TrackId, VolumeAutomationPoint};
+use aaadaw_core::{
+    AudioSendDestinationChannels, AudioSendSourceChannels, AudioSendTap, ItemId, PanMode, Track,
+    TrackId, VolumeAutomationPoint,
+};
 use std::cell::Cell;
 use std::f64::consts::FRAC_PI_4;
 use std::fmt;
@@ -176,6 +179,8 @@ struct TrackGains {
 #[derive(Clone, Debug)]
 struct CompiledSend {
     tap: AudioSendTap,
+    source_channels: AudioSendSourceChannels,
+    destination_channels: AudioSendDestinationChannels,
     destination: usize,
     left_gain: f32,
     right_gain: f32,
@@ -669,17 +674,21 @@ impl MixerPlan {
                             .position(|track| track.id() == send.destination())
                             .ok_or(MixerPlanError::InvalidRouting)?;
                         let parameters = send.parameters();
-                        let gains = gain_coefficients(
-                            parameters.volume_db,
-                            parameters.pan,
-                            PanMode::ZeroDbBalance,
-                        )
-                        .ok_or(MixerPlanError::InvalidTrackGain {
-                            track_id: track.id().value(),
-                        })?;
+                        let pan = match parameters.source_channels {
+                            AudioSendSourceChannels::Stereo => parameters.pan,
+                            AudioSendSourceChannels::Channel1
+                            | AudioSendSourceChannels::Channel2 => 0.0,
+                        };
+                        let gains =
+                            gain_coefficients(parameters.volume_db, pan, PanMode::ZeroDbBalance)
+                                .ok_or(MixerPlanError::InvalidTrackGain {
+                                    track_id: track.id().value(),
+                                })?;
                         let phase = if parameters.phase_inverted { -1.0 } else { 1.0 };
                         Ok(CompiledSend {
                             tap: parameters.tap,
+                            source_channels: parameters.source_channels,
+                            destination_channels: parameters.destination_channels,
                             destination,
                             left_gain: gains.stereo_left * phase,
                             right_gain: gains.stereo_right * phase,
@@ -1729,6 +1738,26 @@ fn add_routed_buffer(source: &[[f32; 2]], destination: &mut [[f32; 2]], left: f3
     for (frame, input) in destination.iter_mut().zip(source) {
         frame[0] += input[0] * left;
         frame[1] += input[1] * right;
+    }
+}
+
+fn add_routed_send_buffer(source: &[[f32; 2]], destination: &mut [[f32; 2]], send: &CompiledSend) {
+    for (frame, input) in destination.iter_mut().zip(source) {
+        let (source_left, source_right) = match send.source_channels {
+            AudioSendSourceChannels::Stereo => (input[0], input[1]),
+            AudioSendSourceChannels::Channel1 => (input[0], input[0]),
+            AudioSendSourceChannels::Channel2 => (input[1], input[1]),
+        };
+        let left = source_left * send.left_gain;
+        let right = source_right * send.right_gain;
+        match send.destination_channels {
+            AudioSendDestinationChannels::Stereo => {
+                frame[0] += left;
+                frame[1] += right;
+            }
+            AudioSendDestinationChannels::Channel1 => frame[0] += (left + right) * 0.5,
+            AudioSendDestinationChannels::Channel2 => frame[1] += (left + right) * 0.5,
+        }
     }
 }
 
@@ -3924,15 +3953,14 @@ impl AudioRenderGraph {
                     let destination = self.track_effect_buffers[send.destination]
                         .as_mut()
                         .expect("send destination buffer");
-                    add_routed_buffer(
+                    add_routed_send_buffer(
                         match send.tap {
                             AudioSendTap::PostFader => post_fader,
                             AudioSendTap::PreFx => &self.pre_fx_scratch[..output.len()],
                             AudioSendTap::PreFader => &self.pre_fader_scratch[..output.len()],
                         },
                         &mut destination[..output.len()],
-                        send.left_gain,
-                        send.right_gain,
+                        send,
                     );
                 }
             }

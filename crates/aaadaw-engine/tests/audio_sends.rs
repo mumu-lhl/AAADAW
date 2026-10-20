@@ -1,5 +1,7 @@
-use aaadaw_core::{AudioSendParameters, DawAction, Project};
-use aaadaw_engine::{AudioRenderGraph, pcm_stream};
+use aaadaw_core::{
+    AudioSendDestinationChannels, AudioSendParameters, AudioSendSourceChannels, DawAction, Project,
+};
+use aaadaw_engine::{AudioItemStream, AudioRenderGraph, pcm_stream, stereo_pcm_stream};
 
 fn project() -> Project {
     let mut project = Project::new();
@@ -152,7 +154,6 @@ fn source_fader_ramp_and_meter_advance_once_regardless_of_send_count() {
 
 #[test]
 fn stereo_send_channels_and_receiver_owned_stereo_are_summed_without_collapse() {
-    use aaadaw_engine::{AudioItemStream, stereo_pcm_stream};
     let mut project = project();
     let source = project.tracks()[1].id();
     project
@@ -188,6 +189,163 @@ fn stereo_send_channels_and_receiver_owned_stereo_are_summed_without_collapse() 
     graph.render_into(&mut output).unwrap();
     assert!((output[0][0] - 0.25).abs() < 1.0e-6);
     assert!((output[0][1] + 0.34).abs() < 1.0e-6);
+}
+
+#[test]
+fn audio_send_channel_pairs_match_reaper_stereo_and_mono_conversion() {
+    let cases = [
+        (
+            AudioSendSourceChannels::Stereo,
+            AudioSendDestinationChannels::Stereo,
+            [0.25, 0.75],
+        ),
+        (
+            AudioSendSourceChannels::Stereo,
+            AudioSendDestinationChannels::Channel1,
+            [0.5, 0.0],
+        ),
+        (
+            AudioSendSourceChannels::Stereo,
+            AudioSendDestinationChannels::Channel2,
+            [0.0, 0.5],
+        ),
+        (
+            AudioSendSourceChannels::Channel1,
+            AudioSendDestinationChannels::Stereo,
+            [0.25, 0.25],
+        ),
+        (
+            AudioSendSourceChannels::Channel1,
+            AudioSendDestinationChannels::Channel1,
+            [0.25, 0.0],
+        ),
+        (
+            AudioSendSourceChannels::Channel1,
+            AudioSendDestinationChannels::Channel2,
+            [0.0, 0.25],
+        ),
+        (
+            AudioSendSourceChannels::Channel2,
+            AudioSendDestinationChannels::Stereo,
+            [0.75, 0.75],
+        ),
+        (
+            AudioSendSourceChannels::Channel2,
+            AudioSendDestinationChannels::Channel1,
+            [0.75, 0.0],
+        ),
+        (
+            AudioSendSourceChannels::Channel2,
+            AudioSendDestinationChannels::Channel2,
+            [0.0, 0.75],
+        ),
+    ];
+    for (source_channels, destination_channels, expected) in cases {
+        let mut project = project();
+        let source = project.tracks()[1].id();
+        project
+            .apply(DawAction::SetTrackMainSend {
+                track_id: source,
+                enabled: false,
+            })
+            .unwrap();
+        send(
+            &mut project,
+            0,
+            AudioSendParameters {
+                source_channels,
+                destination_channels,
+                ..Default::default()
+            },
+        );
+        project
+            .apply(DawAction::InsertAudioItem {
+                track_id: source,
+                media_ref: "asset://audio-send-channel-map".into(),
+                start_sample: 0,
+                source_offset_samples: 0,
+                length_samples: 1,
+            })
+            .unwrap();
+        let (mut producer, consumer) = stereo_pcm_stream(1).unwrap();
+        producer.set_stereo_content(true);
+        assert_eq!(producer.push_frames(&[[0.25, 0.75]]), 1);
+        let stream = AudioItemStream::new_stereo(project.audio_items()[0].id(), consumer);
+        let mut graph = AudioRenderGraph::new_for_audio_items(&project, vec![stream], 1).unwrap();
+        graph.transport_mut().start();
+        let mut output = [[0.0; 2]; 1];
+        graph.render_into(&mut output).unwrap();
+        assert_eq!(
+            output[0], expected,
+            "{source_channels:?} → {destination_channels:?}"
+        );
+    }
+}
+
+#[test]
+fn audio_send_pan_interacts_with_channel_mapping_like_reaper() {
+    for (source_channels, destination_channels, expected) in [
+        (
+            AudioSendSourceChannels::Channel1,
+            AudioSendDestinationChannels::Stereo,
+            [0.25, 0.25],
+        ),
+        (
+            AudioSendSourceChannels::Channel1,
+            AudioSendDestinationChannels::Channel1,
+            [0.25, 0.0],
+        ),
+        (
+            AudioSendSourceChannels::Channel1,
+            AudioSendDestinationChannels::Channel2,
+            [0.0, 0.25],
+        ),
+        (
+            AudioSendSourceChannels::Stereo,
+            AudioSendDestinationChannels::Channel1,
+            [0.4375, 0.0],
+        ),
+    ] {
+        let mut project = project();
+        let source = project.tracks()[1].id();
+        project
+            .apply(DawAction::SetTrackMainSend {
+                track_id: source,
+                enabled: false,
+            })
+            .unwrap();
+        send(
+            &mut project,
+            0,
+            AudioSendParameters {
+                pan: 0.5,
+                source_channels,
+                destination_channels,
+                ..Default::default()
+            },
+        );
+        project
+            .apply(DawAction::InsertAudioItem {
+                track_id: source,
+                media_ref: "asset://audio-send-channel-map-mono-pan".into(),
+                start_sample: 0,
+                source_offset_samples: 0,
+                length_samples: 1,
+            })
+            .unwrap();
+        let (mut producer, consumer) = stereo_pcm_stream(1).unwrap();
+        producer.set_stereo_content(true);
+        assert_eq!(producer.push_frames(&[[0.25, 0.75]]), 1);
+        let stream = AudioItemStream::new_stereo(project.audio_items()[0].id(), consumer);
+        let mut graph = AudioRenderGraph::new_for_audio_items(&project, vec![stream], 1).unwrap();
+        graph.transport_mut().start();
+        let mut output = [[0.0; 2]; 1];
+        graph.render_into(&mut output).unwrap();
+        assert_eq!(
+            output[0], expected,
+            "mono source → {destination_channels:?}"
+        );
+    }
 }
 
 #[test]

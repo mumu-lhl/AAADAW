@@ -23,10 +23,36 @@ pub enum AudioSendTap {
     PreFader,
 }
 
+/// Source channel selection for an audio send.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum AudioSendSourceChannels {
+    /// Send source channels 1/2 as a stereo pair.
+    #[default]
+    Stereo,
+    /// Send source channel 1 as mono.
+    Channel1,
+    /// Send source channel 2 as mono.
+    Channel2,
+}
+
+/// Destination channel selection for an audio send.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum AudioSendDestinationChannels {
+    /// Send to destination channels 1/2 as a stereo pair.
+    #[default]
+    Stereo,
+    /// Send the mono sum to destination channel 1.
+    Channel1,
+    /// Send the mono sum to destination channel 2.
+    Channel2,
+}
+
 /// Independent audio send controls.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct AudioSendParameters {
     pub tap: AudioSendTap,
+    pub source_channels: AudioSendSourceChannels,
+    pub destination_channels: AudioSendDestinationChannels,
     pub volume_db: f32,
     pub pan: f32,
     pub muted: bool,
@@ -46,6 +72,8 @@ impl Default for AudioSendParameters {
     fn default() -> Self {
         Self {
             tap: AudioSendTap::default(),
+            source_channels: AudioSendSourceChannels::default(),
+            destination_channels: AudioSendDestinationChannels::default(),
             volume_db: 0.0,
             pan: 0.0,
             muted: false,

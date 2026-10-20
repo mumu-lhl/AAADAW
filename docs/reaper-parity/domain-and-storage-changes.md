@@ -148,13 +148,13 @@ Schema 50 及更早工程默认迁移为 loop source 开启；源长推断为可
 
 `track_sends.midi_enabled` 是每条 Audio Send 独立的 MIDI 转发开关，严格限制为 0/1；新建 Send 默认开启，以匹配 Linux REAPER 7.82 / Default 7 的 `I_MIDIFLAGS=0`（MIDI All→All）。schema 57 及更早的 Send 迁移时默认开启，避免旧工程打开后丢失原厂默认 MIDI 路径。Snapshot、Undo/Redo 与保存事务共同保留此字段。
 
-工程 MIDI note、CC 与 pitch-bend 事件已各自保存 0..15 通道；All→All Send 按原通道转发。事件计划在控制线程按未静音的 Send 路径生成目标轨道事件与 seek/chase 状态；回调读取预编译列表，不枚举路由、不分配、不锁、不做 I/O。Send 通道过滤/映射、MIDI Bus 与硬件端口仍是 P3 后续工作。
+工程 MIDI note、CC 与 pitch-bend 事件已各自保存 0..15 通道；All→All Send 按原通道转发。事件计划在控制线程按未静音的 Send 路径生成目标轨道事件与 seek/chase 状态；回调读取预编译列表，不枚举路由、不分配、不锁、不做 I/O。普通 Send MIDI 通道过滤/映射、Bus 过滤/映射及双声道 1/2 / Mono 1/2 音频映射已分别在 schema 71、72、73 加入；硬件端口与更高轨道声道数仍是 P3 后续工作。
 
 ## schema 59 — MIDI channel identity
 
 `midi_notes` 增加受 `0..15` 检查约束的 `channel` 列；`midi_controllers` 和 `midi_pitch_bends` 增加同类列，并分别将唯一键扩展为 `(item_id, channel, controller, tick)` 与 `(item_id, channel, tick)`。schema 58 及更早工程迁移到通道 0；迁移逐表识别已有列或缺失表，兼容测试构造的部分旧 schema。Snapshot、复制/分割、MIDI 计划/chase、MCP 编辑与标准 MIDI 导出沿用通道身份。
 
-MIDI Editor 已提供 All/单通道/多通道筛选、Filter 开关及绘制目标通道；音符、CC 与 Pitch Bend 的显示和命中按当前筛选集合处理，新事件使用选择的绘制通道。多通道面板目前只覆盖通道集合与绘制目标，REAPER 的反转/独奏/参数值位置长度事件类型筛选和独立原生窗口仍未实现。普通 Send 仍 All→All 原样转发，源/目标通道过滤与重映射、MIDI Bus 和其他消息类型仍未实现。
+MIDI Editor 已提供 All/单通道/多通道筛选、Filter 开关及绘制目标通道；音符、CC 与 Pitch Bend 的显示和命中按当前筛选集合处理，新事件使用选择的绘制通道。多通道面板目前只覆盖通道集合与绘制目标，REAPER 的反转/独奏/参数值位置长度事件类型筛选和独立原生窗口仍未实现。普通 Send 的 MIDI 通道与 Bus 过滤/映射已接入；物理硬件 MIDI I/O 以及其他消息类型的更多原厂细节仍开放。
 
 ## 已实现 schema 71 切片
 
@@ -163,3 +163,7 @@ MIDI Editor 已提供 All/单通道/多通道筛选、Filter 开关及绘制目�
 ## 已实现 schema 72 切片
 
 `track_sends.midi_source_bus` 与 `midi_destination_bus` 保存普通 Send 的零基 0..15 Bus 过滤/重映射；NULL 源 Bus 表示 All，NULL 目标 Bus 保留进入该 Send 的当前 Bus。schema 71→72 为既有发送新增两个可空且带 0..15 CHECK 的字段，不改变原有 All→All 与通道映射。`AudioSendParameters`、Snapshot/Undo/Redo、Routing/Receive 视图均保留 Bus 设置。Engine 在线程外编译 Bus 路由；事件与 seek chase 携带 Bus。CLAP IPC 以既有字节承载 Bus 并升至协议 7，in-process CLAP 根据可用 note-port 将 Bus 事件投递到相应 port。REAPER 7.82 原厂 probe 验证 bus 过滤/映射，Engine/Core/Storage 回归见 [MIDI Send 验证](../verification/reaper-parity/midi-sends.md)。CLAP note-port 对应 REAPER Bus 的端到端原厂行为仍需进一步验证。
+
+## 已实现 schema 73 切片
+
+`track_sends.source_channels` 与 `destination_channels` 保存 Audio Send 的 source/destination 声道模式：Stereo 1/2、Mono 1、Mono 2。schema 72→73 为旧 Send 新增两个默认 Stereo 且受 `0..2` 检查约束的字段。REAPER 7.82 原厂离线 probe 对全部 9 种组合逐通道测量；Stereo 源折叠至 Mono 目标时取均值，Mono 源复制到 Stereo 目标，Mono 源 Send Pan 保持源电平。Engine 在控制线程预编译声道参数，并在实时回调内完成选择、复制与折叠，不分配、不加锁或做 I/O。UI、原厂读回、实窗截图和回归见 [Audio Send 声道映射验证](../verification/reaper-parity/audio-send-channel-map.md)。当前轨道模型限制为两声道，3 声道以上与任意声道偏移仍未实现。

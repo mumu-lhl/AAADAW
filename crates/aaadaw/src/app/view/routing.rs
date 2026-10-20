@@ -1,6 +1,9 @@
 use super::super::{App, Message};
 use super::tokens;
-use aaadaw_core::{AudioSendParameters, AudioSendTap, DawAction, TrackId};
+use aaadaw_core::{
+    AudioSendDestinationChannels, AudioSendParameters, AudioSendSourceChannels, AudioSendTap,
+    DawAction, TrackId,
+};
 use iced::widget::{
     button, checkbox, column, container, pick_list, row, rule, scrollable, text, text_input,
 };
@@ -15,6 +18,30 @@ impl fmt::Display for Tap {
             AudioSendTap::PostFader => "Post-fader (Post-pan)",
             AudioSendTap::PreFx => "Pre-FX",
             AudioSendTap::PreFader => "Pre-fader (Post-FX)",
+        })
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct SourceChannels(AudioSendSourceChannels);
+impl fmt::Display for SourceChannels {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self.0 {
+            AudioSendSourceChannels::Stereo => "1/2 (stereo)",
+            AudioSendSourceChannels::Channel1 => "1 (mono)",
+            AudioSendSourceChannels::Channel2 => "2 (mono)",
+        })
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct DestinationChannels(AudioSendDestinationChannels);
+impl fmt::Display for DestinationChannels {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self.0 {
+            AudioSendDestinationChannels::Stereo => "1/2 (stereo)",
+            AudioSendDestinationChannels::Channel1 => "1 (mono)",
+            AudioSendDestinationChannels::Channel2 => "2 (mono)",
         })
     }
 }
@@ -240,6 +267,52 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
             .width(Length::Fill),
             row![
                 column![
+                    text("Audio source").size(11),
+                    pick_list(
+                        [
+                            SourceChannels(AudioSendSourceChannels::Stereo),
+                            SourceChannels(AudioSendSourceChannels::Channel1),
+                            SourceChannels(AudioSendSourceChannels::Channel2),
+                        ],
+                        Some(SourceChannels(parameters.source_channels)),
+                        move |channels| Message::RoutingChange(DawAction::UpdateAudioSend {
+                            track_id: source,
+                            send_id: id,
+                            destination,
+                            parameters: AudioSendParameters {
+                                source_channels: channels.0,
+                                ..parameters
+                            },
+                        })
+                    )
+                ]
+                .width(Length::Fill),
+                text("→"),
+                column![
+                    text("Audio destination").size(11),
+                    pick_list(
+                        [
+                            DestinationChannels(AudioSendDestinationChannels::Stereo),
+                            DestinationChannels(AudioSendDestinationChannels::Channel1),
+                            DestinationChannels(AudioSendDestinationChannels::Channel2),
+                        ],
+                        Some(DestinationChannels(parameters.destination_channels)),
+                        move |channels| Message::RoutingChange(DawAction::UpdateAudioSend {
+                            track_id: source,
+                            send_id: id,
+                            destination,
+                            parameters: AudioSendParameters {
+                                destination_channels: channels.0,
+                                ..parameters
+                            },
+                        })
+                    )
+                ]
+                .width(Length::Fill),
+            ]
+            .spacing(tokens::ROW_GAP),
+            row![
+                column![
                     text("Volume · dB").size(11),
                     text_input("0", &volume)
                         .on_input(move |value| Message::RoutingSendDraft(id, false, value))
@@ -432,7 +505,9 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
                         ]
                         .spacing(tokens::ROW_GAP),
                         text(format!(
-                            "{} · {} dB · Pan {} · MIDI {}",
+                            "{} → {} · {} · {} dB · Pan {} · MIDI {}",
+                            SourceChannels(parameters.source_channels),
+                            DestinationChannels(parameters.destination_channels),
                             Tap(parameters.tap),
                             parameters.volume_db,
                             parameters.pan,

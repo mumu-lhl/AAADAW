@@ -45,6 +45,8 @@ fn parallel_sends_keep_ids_parameters_order_and_main_output_through_history_and_
         midi_destination_channel: Some(5),
         midi_source_bus: Some(1),
         midi_destination_bus: Some(5),
+        source_channels: aaadaw_core::AudioSendSourceChannels::Channel2,
+        destination_channels: aaadaw_core::AudioSendDestinationChannels::Channel1,
     };
     project
         .apply(DawAction::UpdateAudioSend {
@@ -86,6 +88,16 @@ fn parallel_sends_keep_ids_parameters_order_and_main_output_through_history_and_
             .parameters()
             .midi_destination_bus,
         Some(5)
+    );
+    assert_eq!(
+        restored.tracks()[0].sends()[0].parameters().source_channels,
+        aaadaw_core::AudioSendSourceChannels::Channel2
+    );
+    assert_eq!(
+        restored.tracks()[0].sends()[0]
+            .parameters()
+            .destination_channels,
+        aaadaw_core::AudioSendDestinationChannels::Channel1
     );
     project
         .apply(DawAction::DeleteAudioSend {

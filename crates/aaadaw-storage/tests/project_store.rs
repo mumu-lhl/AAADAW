@@ -1450,6 +1450,58 @@ fn schema_71_audio_sends_migrate_to_all_midi_buses_and_preserve_channels() {
 }
 
 #[test]
+fn schema_72_audio_sends_migrate_with_default_stereo_channel_pairs() {
+    let path = project_path();
+    let mut project = Project::new();
+    for (index, name) in ["Source", "Destination"].into_iter().enumerate() {
+        project
+            .apply(DawAction::CreateTrack {
+                index,
+                name: name.into(),
+            })
+            .unwrap();
+    }
+    project
+        .apply(DawAction::CreateAudioSend {
+            track_id: project.tracks()[0].id(),
+            destination: project.tracks()[1].id(),
+            parameters: aaadaw_core::AudioSendParameters {
+                source_channels: aaadaw_core::AudioSendSourceChannels::Channel2,
+                destination_channels: aaadaw_core::AudioSendDestinationChannels::Channel1,
+                ..Default::default()
+            },
+        })
+        .unwrap();
+    let mut store = ProjectStore::open(&path).unwrap();
+    store.save(&project).unwrap();
+    store.close().unwrap();
+
+    let connection = Connection::open(&path).unwrap();
+    connection
+        .execute_batch(
+            "ALTER TABLE track_sends DROP COLUMN source_channels; \
+             ALTER TABLE track_sends DROP COLUMN destination_channels; \
+             PRAGMA user_version = 72;",
+        )
+        .unwrap();
+    drop(connection);
+
+    let store = ProjectStore::open(&path).unwrap();
+    assert_eq!(store.schema_version().unwrap(), CURRENT_SCHEMA_VERSION);
+    let parameters = store.load().unwrap().tracks()[0].sends()[0].parameters();
+    assert_eq!(
+        parameters.source_channels,
+        aaadaw_core::AudioSendSourceChannels::Stereo
+    );
+    assert_eq!(
+        parameters.destination_channels,
+        aaadaw_core::AudioSendDestinationChannels::Stereo
+    );
+    store.close().unwrap();
+    remove_database(&path);
+}
+
+#[test]
 fn schema_58_migrates_stored_midi_events_to_channel_zero() {
     let path = project_path();
     let mut project = Project::new();
@@ -3169,6 +3221,8 @@ fn audio_sends_round_trip_with_duplicate_targets_order_ids_and_foreign_keys() {
         midi_destination_channel,
         midi_source_bus,
         midi_destination_bus,
+        source_channels,
+        destination_channels,
     ) in [
         (
             -6.0,
@@ -3178,6 +3232,8 @@ fn audio_sends_round_trip_with_duplicate_targets_order_ids_and_foreign_keys() {
             Some(5),
             Some(2),
             Some(7),
+            aaadaw_core::AudioSendSourceChannels::Channel2,
+            aaadaw_core::AudioSendDestinationChannels::Channel1,
         ),
         (
             -12.0,
@@ -3187,6 +3243,8 @@ fn audio_sends_round_trip_with_duplicate_targets_order_ids_and_foreign_keys() {
             None,
             None,
             None,
+            aaadaw_core::AudioSendSourceChannels::Stereo,
+            aaadaw_core::AudioSendDestinationChannels::Stereo,
         ),
     ] {
         project
@@ -3203,6 +3261,8 @@ fn audio_sends_round_trip_with_duplicate_targets_order_ids_and_foreign_keys() {
                     midi_destination_channel,
                     midi_source_bus,
                     midi_destination_bus,
+                    source_channels,
+                    destination_channels,
                     ..Default::default()
                 },
             })

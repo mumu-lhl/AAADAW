@@ -62,4 +62,7 @@ pub use track::{
     RazorEditArea, Track, TrackFxPlugin, TrackId, TrackInstrument, VolumeAutomationPoint,
 };
 
-pub use routing::{AudioSend, AudioSendParameters, AudioSendSnapshot, AudioSendTap, SendId};
+pub use routing::{
+    AudioSend, AudioSendDestinationChannels, AudioSendParameters, AudioSendSnapshot,
+    AudioSendSourceChannels, AudioSendTap, SendId,
+};

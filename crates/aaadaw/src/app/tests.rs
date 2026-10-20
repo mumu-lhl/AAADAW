@@ -24,11 +24,12 @@ use crate::timeline::{SnapGrid, TimelineEvent};
 #[cfg(all(feature = "jack-backend", feature = "pipewire-backend"))]
 use aaadaw_app::PlaybackBackend;
 use aaadaw_core::{
-    DawAction, ItemId, MidiChannelPressureData, MidiControllerData, MidiFileFormat,
-    MidiFileProjectImport, MidiImportedMarker, MidiImportedMeterPoint, MidiImportedTempoPoint,
-    MidiImportedTrack, MidiItemPosition, MidiItemTakeSnapshot, MidiNoteData, MidiOpaqueEventData,
-    MidiOpaqueEventKind, MidiPitchBendData, MidiPolyAftertouchData, MidiProgramChangeData, Project,
-    RazorEditArea, TrackFxPlugin, TrackId,
+    AudioSendDestinationChannels, AudioSendParameters, AudioSendSourceChannels, DawAction, ItemId,
+    MidiChannelPressureData, MidiControllerData, MidiFileFormat, MidiFileProjectImport,
+    MidiImportedMarker, MidiImportedMeterPoint, MidiImportedTempoPoint, MidiImportedTrack,
+    MidiItemPosition, MidiItemTakeSnapshot, MidiNoteData, MidiOpaqueEventData, MidiOpaqueEventKind,
+    MidiPitchBendData, MidiPolyAftertouchData, MidiProgramChangeData, Project, RazorEditArea,
+    TrackFxPlugin, TrackId,
 };
 use aaadaw_media::{AudioStreamDecoder, AudioWaveform};
 use aaadaw_storage::{ArrangementViewState, ProjectSessionLock, ProjectStore};
@@ -33249,6 +33250,42 @@ fn routing_send_drafts_commit_atomically_and_invalid_values_preserve_project() {
         track_id: destination,
     }));
     assert_eq!(app.project.snapshot(), before);
+}
+
+#[test]
+fn routing_send_channel_maps_are_undoable_and_redoable() {
+    let mut app = App::default();
+    let _ = app.update(Message::AddTrack);
+    let _ = app.update(Message::AddTrack);
+    let source = app.project.tracks()[0].id();
+    let destination = app.project.tracks()[1].id();
+    let _ = app.update(Message::RoutingChange(DawAction::CreateAudioSend {
+        track_id: source,
+        destination,
+        parameters: AudioSendParameters::default(),
+    }));
+    let send_id = app.project.tracks()[0].sends()[0].id();
+    let mapped = AudioSendParameters {
+        source_channels: AudioSendSourceChannels::Channel1,
+        destination_channels: AudioSendDestinationChannels::Channel2,
+        ..AudioSendParameters::default()
+    };
+
+    let _ = app.update(Message::RoutingChange(DawAction::UpdateAudioSend {
+        track_id: source,
+        send_id,
+        destination,
+        parameters: mapped,
+    }));
+    assert_eq!(app.project.tracks()[0].sends()[0].parameters(), mapped);
+
+    let _ = app.update(Message::Undo);
+    assert_eq!(
+        app.project.tracks()[0].sends()[0].parameters(),
+        AudioSendParameters::default()
+    );
+    let _ = app.update(Message::Redo);
+    assert_eq!(app.project.tracks()[0].sends()[0].parameters(), mapped);
 }
 
 #[test]

@@ -1,0 +1,15 @@
+reference	7.82/linux-x86_64; Linux; Default 7; I_SRCCHAN/I_DSTCHAN standard REAPER channel encodings
+stereo_1_2_to_stereo_1_2	I_SRCCHAN=0	I_DSTCHAN=0	mean_channel_1=0.250000000	mean_channel_2=0.750000000	mean_abs_channel_1=0.250000000	mean_abs_channel_2=0.750000000
+stereo_1_2_to_mono_1	I_SRCCHAN=0	I_DSTCHAN=1024	mean_channel_1=0.500000000	mean_channel_2=0.000000000	mean_abs_channel_1=0.500000000	mean_abs_channel_2=0.000000000
+stereo_1_2_to_mono_2	I_SRCCHAN=0	I_DSTCHAN=1025	mean_channel_1=0.000000000	mean_channel_2=0.500000000	mean_abs_channel_1=0.000000000	mean_abs_channel_2=0.500000000
+mono_1_to_stereo_1_2	I_SRCCHAN=1024	I_DSTCHAN=0	mean_channel_1=0.250000000	mean_channel_2=0.250000000	mean_abs_channel_1=0.250000000	mean_abs_channel_2=0.250000000
+mono_1_to_mono_1	I_SRCCHAN=1024	I_DSTCHAN=1024	mean_channel_1=0.250000000	mean_channel_2=0.000000000	mean_abs_channel_1=0.250000000	mean_abs_channel_2=0.000000000
+mono_1_to_mono_2	I_SRCCHAN=1024	I_DSTCHAN=1025	mean_channel_1=0.000000000	mean_channel_2=0.250000000	mean_abs_channel_1=0.000000000	mean_abs_channel_2=0.250000000
+mono_2_to_stereo_1_2	I_SRCCHAN=1025	I_DSTCHAN=0	mean_channel_1=0.750000000	mean_channel_2=0.750000000	mean_abs_channel_1=0.750000000	mean_abs_channel_2=0.750000000
+mono_2_to_mono_1	I_SRCCHAN=1025	I_DSTCHAN=1024	mean_channel_1=0.750000000	mean_channel_2=0.000000000	mean_abs_channel_1=0.750000000	mean_abs_channel_2=0.000000000
+mono_2_to_mono_2	I_SRCCHAN=1025	I_DSTCHAN=1025	mean_channel_1=0.000000000	mean_channel_2=0.750000000	mean_abs_channel_1=0.000000000	mean_abs_channel_2=0.750000000
+stereo_1_2_to_stereo_1_2_pan_right	I_SRCCHAN=0	I_DSTCHAN=0	D_PAN=0.5	mean_channel_1=0.127236503	mean_channel_2=0.750000000
+stereo_1_2_to_mono_1_pan_right	I_SRCCHAN=0	I_DSTCHAN=1024	D_PAN=0.5	mean_channel_1=0.437500000	mean_channel_2=0.000000000
+mono_1_to_stereo_1_2_pan_right	I_SRCCHAN=1024	I_DSTCHAN=0	D_PAN=0.5	mean_channel_1=0.250000000	mean_channel_2=0.250000000
+mono_1_to_mono_2_pan_right	I_SRCCHAN=1024	I_DSTCHAN=1025	D_PAN=0.5	mean_channel_1=0.000000000	mean_channel_2=0.250000000
+interpretation	Source probe emits 0.25 on channel 1 and 0.75 on channel 2; destination probe accumulates each channel before its track fader

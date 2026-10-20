@@ -1,0 +1,13 @@
+desc:AAADAW Audio Channel Map Destination Probe
+options:gmem=aaadaw_audio_channel_map_probe
+in_pin:Channel 1
+in_pin:Channel 2
+out_pin:Channel 1
+out_pin:Channel 2
+
+@sample
+gmem[0] += spl0;
+gmem[1] += spl1;
+gmem[2] += abs(spl0);
+gmem[3] += abs(spl1);
+gmem[4] += 1;
