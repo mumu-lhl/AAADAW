@@ -229,10 +229,59 @@ fn midi_item_placement_edits_source_offset_with_timing_in_one_undo_step() {
             item_id,
             start_tick: 0,
             length_ticks: 1,
-            source_offset_ticks: u64::MAX,
+            source_offset_ticks: i64::MAX,
         }),
         Err(ActionError::InvalidMidiItemPosition)
     );
+}
+
+#[test]
+fn signed_midi_source_offsets_place_events_after_the_item_start_and_undo_cleanly() {
+    let mut project = Project::new();
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Signed MIDI source".to_owned(),
+        })
+        .unwrap();
+    project
+        .apply(DawAction::InsertMidiItem {
+            track_id: project.tracks()[0].id(),
+            start_tick: 1_920,
+            length_ticks: 3_840,
+        })
+        .unwrap();
+    let item_id = project.midi_items()[0].id();
+    project
+        .apply(DawAction::AddMidiNotes {
+            item_id,
+            notes: vec![MidiNoteData {
+                channel: 0,
+                pitch: 60,
+                tick: 1_000,
+                duration: 120,
+                velocity: 96,
+                off_velocity: 0,
+            }],
+        })
+        .unwrap();
+    let before = project.snapshot();
+    project
+        .apply(DawAction::EditMidiItemPlacement {
+            item_id,
+            start_tick: 1_920,
+            length_ticks: 3_840,
+            source_offset_ticks: -960,
+        })
+        .unwrap();
+
+    let item = &project.midi_items()[0];
+    assert_eq!(item.signed_source_offset_ticks(), -960);
+    assert_eq!(item.source_tick_at_project_tick(1_920), Some(2_880));
+    assert_eq!(item.source_tick_at_project_tick(2_880), Some(0));
+    assert_eq!(item.project_tick_at_content_tick(1_000), Some(3_880));
+    assert!(project.undo().unwrap());
+    assert_eq!(project.snapshot(), before);
 }
 
 #[test]

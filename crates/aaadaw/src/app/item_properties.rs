@@ -864,7 +864,7 @@ impl App {
         let current_source_loop_length = item.source_loop_length_ticks();
         let current_start = item.start_position();
         let current_length = item.length_ticks();
-        let current_source_offset = item.source_offset_ticks();
+        let current_source_offset = item.signed_source_offset_ticks();
         let target_take_index = draft.active_take.index;
         let selected_take = item
             .take_properties(target_take_index)
@@ -1012,7 +1012,7 @@ impl App {
                     && item.active_take_index() == target_take_index
                     && item.start_position() == start_position
                     && item.length_ticks() == length_ticks
-                    && item.source_offset_ticks() == source_offset_ticks
+                    && item.signed_source_offset_ticks() == source_offset_ticks
                     && item.source_loop_length_ticks() == target_source_loop_length
                     && item.is_muted() == target_muted
                     && item.is_loop_source() == target_loop_source
@@ -2013,7 +2013,7 @@ impl MidiItemProperties {
         &self,
         item: &MidiItem,
         project: &Project,
-    ) -> Result<(MidiItemPosition, u64, u64), String> {
+    ) -> Result<(MidiItemPosition, u64, i64), String> {
         let position_changed = self.changed[ItemPropertyField::Position.index()];
         let length_changed = self.changed[ItemPropertyField::Length.index()];
         let source_offset_changed = self.changed[ItemPropertyField::SourceOffset.index()];
@@ -2021,7 +2021,7 @@ impl MidiItemProperties {
             return Ok((
                 item.start_position(),
                 item.length_ticks(),
-                item.source_offset_ticks(),
+                item.signed_source_offset_ticks(),
             ));
         }
 
@@ -2038,7 +2038,7 @@ impl MidiItemProperties {
             )
             .map_err(|error| error.to_string())?
             - current_start_sample;
-        let mut source_offset_ticks = item.source_offset_ticks();
+        let mut source_offset_ticks = item.signed_source_offset_ticks();
         let frame_rate = project.settings().frame_rate();
 
         if position_changed {
@@ -2105,7 +2105,8 @@ impl MidiItemProperties {
                 parse_time(&self.fields[ItemPropertyField::SourceOffset.index()])?
                     * f64::from(project.settings().sample_rate())
             };
-            source_offset_ticks = sample_to_tick(project, source_sample)?;
+            source_offset_ticks = i64::try_from(sample_to_tick(project, source_sample)?)
+                .map_err(|_| "MIDI source offset is outside the supported range".to_owned())?;
         }
         if !start_sample.is_finite()
             || start_sample < 0.0
@@ -2132,7 +2133,9 @@ impl MidiItemProperties {
         };
         if length_ticks == 0
             || start_position.checked_add_ticks(length_ticks).is_none()
-            || source_offset_ticks.checked_add(length_ticks).is_none()
+            || !i64::try_from(length_ticks)
+                .ok()
+                .is_some_and(|length| source_offset_ticks.checked_add(length).is_some())
         {
             return Err("Invalid MIDI item position or length".to_owned());
         }
@@ -2328,7 +2331,7 @@ mod tests {
                 (
                     item.start_position(),
                     item.length_ticks(),
-                    item.source_offset_ticks()
+                    item.signed_source_offset_ticks()
                 ),
                 "round trip failed for {unit}"
             );
@@ -2371,7 +2374,11 @@ mod tests {
 
         assert_eq!(
             draft.placement_in_project(item, &project).unwrap(),
-            (position, item.length_ticks(), item.source_offset_ticks())
+            (
+                position,
+                item.length_ticks(),
+                item.signed_source_offset_ticks(),
+            )
         );
     }
 

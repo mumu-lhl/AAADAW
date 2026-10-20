@@ -1148,24 +1148,27 @@ pub fn encode_standard_midi_with_selection(
                     ensure_midi_event_capacity(&mut midi_event_count, added)?;
                 }
             } else {
-                let visible_content_end = item
-                    .source_offset_ticks()
-                    .checked_add(item.length_ticks())
+                let (item_visible_start, item_visible_end) = midi_item_visible_source_range(item)
                     .ok_or_else(|| {
-                        "trimmed MIDI item extends beyond the supported timeline".to_owned()
-                    })?;
-                let visible_start = note.tick().max(item.source_offset_ticks());
-                let visible_end = note_end_tick.min(visible_content_end);
+                    "trimmed MIDI item extends beyond the supported timeline".to_owned()
+                })?;
+                let visible_start = note.tick().max(item_visible_start);
+                let visible_end = note_end_tick.min(item_visible_end);
                 if visible_end <= visible_start {
                     continue;
                 }
+                let source_offset = i128::from(item.source_offset_ticks());
+                let project_start_delta = u64::try_from(i128::from(visible_start) - source_offset)
+                    .map_err(|_| "MIDI note starts beyond the supported timeline".to_owned())?;
+                let project_end_delta = u64::try_from(i128::from(visible_end) - source_offset)
+                    .map_err(|_| "MIDI note ends beyond the supported timeline".to_owned())?;
                 let project_start_position = item
                     .start_position()
-                    .checked_add_ticks(visible_start - item.source_offset_ticks())
+                    .checked_add_ticks(project_start_delta)
                     .ok_or_else(|| "MIDI note starts beyond the supported timeline".to_owned())?;
                 let project_end_position = item
                     .start_position()
-                    .checked_add_ticks(visible_end - item.source_offset_ticks())
+                    .checked_add_ticks(project_end_delta)
                     .ok_or_else(|| "MIDI note ends beyond the supported timeline".to_owned())?;
                 let added = push_midi_note_events_in_time_selection(
                     &mut events_by_track[track_index],
@@ -1221,15 +1224,11 @@ pub fn encode_standard_midi_with_selection(
                     });
                 }
             } else {
-                let visible_content_end = item
-                    .source_offset_ticks()
-                    .checked_add(item.length_ticks())
+                let (visible_start, visible_end) = midi_item_visible_source_range(item)
                     .ok_or_else(|| {
                         "trimmed MIDI item extends beyond the supported timeline".to_owned()
                     })?;
-                if controller.tick >= item.source_offset_ticks()
-                    && controller.tick < visible_content_end
-                {
+                if controller.tick >= visible_start && controller.tick < visible_end {
                     let project_position = item
                         .project_position_at_content_tick(controller.tick)
                         .ok_or_else(|| {
@@ -1304,13 +1303,11 @@ pub fn encode_standard_midi_with_selection(
                     });
                 }
             } else {
-                let visible_content_end = item
-                    .source_offset_ticks()
-                    .checked_add(item.length_ticks())
+                let (visible_start, visible_end) = midi_item_visible_source_range(item)
                     .ok_or_else(|| {
                         "trimmed MIDI item extends beyond the supported timeline".to_owned()
                     })?;
-                if bend.tick >= item.source_offset_ticks() && bend.tick < visible_content_end {
+                if bend.tick >= visible_start && bend.tick < visible_end {
                     let project_position = item
                         .project_position_at_content_tick(bend.tick)
                         .ok_or_else(|| {
@@ -1351,13 +1348,11 @@ pub fn encode_standard_midi_with_selection(
                 item.project_positions_at_content_tick(change.tick)
                     .collect::<Vec<_>>()
             } else {
-                let visible_end = item
-                    .source_offset_ticks()
-                    .checked_add(item.length_ticks())
+                let (visible_start, visible_end) = midi_item_visible_source_range(item)
                     .ok_or_else(|| {
                         "trimmed MIDI item extends beyond the supported timeline".to_owned()
                     })?;
-                if change.tick < item.source_offset_ticks() || change.tick >= visible_end {
+                if change.tick < visible_start || change.tick >= visible_end {
                     continue;
                 }
                 let Some(position) = item.project_position_at_content_tick(change.tick) else {
@@ -1724,17 +1719,22 @@ fn midi_item_event_positions(
             .project_positions_at_content_tick(content_tick)
             .collect());
     }
-    let visible_end = item
-        .source_offset_ticks()
-        .checked_add(item.length_ticks())
+    let (visible_start, visible_end) = midi_item_visible_source_range(item)
         .ok_or_else(|| "trimmed MIDI item extends beyond the supported timeline".to_owned())?;
-    if content_tick < item.source_offset_ticks() || content_tick >= visible_end {
+    if content_tick < visible_start || content_tick >= visible_end {
         return Ok(Vec::new());
     }
     Ok(item
         .project_position_at_content_tick(content_tick)
         .into_iter()
         .collect())
+}
+
+fn midi_item_visible_source_range(item: &MidiItem) -> Option<(u64, u64)> {
+    let length = i64::try_from(item.length_ticks()).ok()?;
+    let end = item.signed_source_offset_ticks().checked_add(length)?;
+    let start = item.signed_source_offset_ticks().max(0);
+    Some((u64::try_from(start).ok()?, u64::try_from(end.max(0)).ok()?))
 }
 
 fn project_midi_item_event_tick(

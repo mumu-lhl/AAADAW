@@ -14111,7 +14111,7 @@ impl App {
                 self.midi_item_trim_bounds(item, preview)?;
             if item.start_tick() == start_tick
                 && item.length_ticks() == length_ticks
-                && item.source_offset_ticks() == source_offset_ticks
+                && item.signed_source_offset_ticks() == source_offset_ticks
             {
                 return Ok(None);
             }
@@ -14200,7 +14200,7 @@ impl App {
         &self,
         item: &aaadaw_core::MidiItem,
         preview: timeline::ItemTrimPreview,
-    ) -> Result<(u64, u64, u64), String> {
+    ) -> Result<(u64, u64, i64), String> {
         let length_ticks = preview
             .end_tick
             .checked_sub(preview.start_tick)
@@ -14208,13 +14208,18 @@ impl App {
             .ok_or_else(|| "MIDI Items must remain at least one tick long".to_owned())?;
         let source_offset_ticks = if preview.edge == timeline::ItemTrimEdge::Start {
             let delta = i128::from(preview.start_tick) - i128::from(item.start_tick());
-            u64::try_from(i128::from(item.source_offset_ticks()) + delta)
-                .map_err(|_| "MIDI trim cannot extend before the source content".to_owned())?
+            let offset = i64::try_from(i128::from(item.signed_source_offset_ticks()) + delta)
+                .map_err(|_| "MIDI trim exceeds the supported source range".to_owned())?;
+            if offset < 0 {
+                return Err("MIDI trim cannot extend before the source content".to_owned());
+            }
+            offset
         } else {
-            item.source_offset_ticks()
+            item.signed_source_offset_ticks()
         };
-        source_offset_ticks
-            .checked_add(length_ticks)
+        i64::try_from(length_ticks)
+            .ok()
+            .and_then(|length| source_offset_ticks.checked_add(length))
             .ok_or_else(|| "MIDI trim exceeds the source content range".to_owned())?;
         Ok((preview.start_tick, length_ticks, source_offset_ticks))
     }
@@ -19493,10 +19498,11 @@ impl App {
                 }
                 let new_length = new_end - new_start;
                 if new_start > item_start {
-                    let Some(source_offset_ticks) = item
-                        .source_offset_ticks()
-                        .checked_add(new_start - item_start)
-                    else {
+                    let Some(source_offset_ticks) = i64::try_from(
+                        i128::from(item.signed_source_offset_ticks()) + i128::from(new_start)
+                            - i128::from(item_start),
+                    )
+                    .ok() else {
                         self.status =
                             "Could not trim a MIDI item past its source position".to_owned();
                         return;
@@ -19801,11 +19807,148 @@ impl App {
         }
     }
 
+    fn implode_selected_midi_items_across_tracks_as_takes(&mut self) {
+        let Some(item_ids) = commands::midi_items_for_cross_track_implode(self) else {
+            self.status = "Select overlapping MIDI items on at least two tracks".to_owned();
+            return;
+        };
+        if item_ids.iter().any(|item_id| {
+            self.project.midi_items().iter().any(|item| {
+                item.id() == *item_id
+                    && self
+                        .project
+                        .tracks()
+                        .iter()
+                        .any(|track| track.id() == item.track_id() && track.is_frozen())
+            })
+        }) {
+            self.status = "Frozen tracks cannot be imploded into takes".to_owned();
+            return;
+        }
+        let Some(target_id) = item_ids.first().copied() else {
+            return;
+        };
+        let Some(target) = self
+            .project
+            .midi_items()
+            .iter()
+            .find(|item| item.id() == target_id)
+        else {
+            return;
+        };
+        let target_track_id = target.track_id();
+        let target_position = target.start_position();
+        let target_start_sample = match self
+            .project
+            .sample_at_tick_position(target_position.as_ticks_f64())
+        {
+            Ok(sample) => sample,
+            Err(error) => {
+                self.status =
+                    format!("Could not align MIDI takes for cross-track implode: {error}");
+                return;
+            }
+        };
+        let mut actions = Vec::new();
+        for donor_id in item_ids.iter().skip(1) {
+            let Some(donor) = self
+                .project
+                .midi_items()
+                .iter()
+                .find(|item| item.id() == *donor_id)
+            else {
+                return;
+            };
+            let donor_position = donor.start_position();
+            let donor_start_sample = match self
+                .project
+                .sample_at_tick_position(donor_position.as_ticks_f64())
+            {
+                Ok(sample) => sample,
+                Err(error) => {
+                    self.status =
+                        format!("Could not align MIDI takes for cross-track implode: {error}");
+                    return;
+                }
+            };
+            for mut take in donor.take_snapshots() {
+                let donor_source_offset_samples = match self
+                    .project
+                    .midi_signed_source_offset_samples_at_position(
+                        donor_position,
+                        take.source_offset_ticks,
+                    ) {
+                    Ok(offset) => offset,
+                    Err(error) => {
+                        self.status = format!("Could not align MIDI take {}: {error}", take.name);
+                        return;
+                    }
+                };
+                let target_source_offset_samples =
+                    target_start_sample - donor_start_sample + donor_source_offset_samples;
+                take.source_offset_ticks = match self
+                    .project
+                    .midi_signed_source_offset_ticks_at_position_samples(
+                        target_position,
+                        target_source_offset_samples,
+                    ) {
+                    Ok(offset) => offset,
+                    Err(error) => {
+                        self.status = format!("Could not align MIDI take {}: {error}", take.name);
+                        return;
+                    }
+                };
+                actions.push(DawAction::PasteMidiItemAsTake {
+                    item_id: target_id,
+                    take,
+                });
+            }
+        }
+        actions.extend(
+            item_ids
+                .iter()
+                .skip(1)
+                .map(|item_id| DawAction::DeleteMidiItem { item_id: *item_id }),
+        );
+
+        let previous_revision = self.revision;
+        let project_history_cursor_before = self.project.history_cursor();
+        let selection_before = self.timeline.item_selection_state();
+        self.apply_action(
+            DawAction::BatchTransaction {
+                tx_id: self.revision,
+                actions,
+            },
+            "Selected MIDI items imploded into takes",
+        );
+        if self.revision != previous_revision {
+            self.timeline
+                .select_items(vec![(target_id, target_track_id)]);
+            let after = self.timeline.item_selection_state();
+            if matches!(self.app_undo_history.last(), Some(AppHistoryEntry::Project)) {
+                self.app_undo_history.pop();
+                self.app_undo_history
+                    .push(AppHistoryEntry::ProjectWithItemSelection(
+                        ItemSelectionHistory {
+                            before: Box::new(selection_before),
+                            after: Box::new(after),
+                            project_history_cursor_before,
+                            project_history_cursor_after: self.project.history_cursor(),
+                        },
+                    ));
+            }
+        }
+    }
+
     fn implode_selected_audio_items_across_tracks_as_takes(&mut self) {
         if commands::project_edit_busy(self) {
             self.status =
                 "Stop playback or finish the current project operation before imploding items"
                     .to_owned();
+            return;
+        }
+        if commands::midi_items_for_cross_track_implode(self).is_some() {
+            self.implode_selected_midi_items_across_tracks_as_takes();
             return;
         }
         let Some(item_ids) = commands::audio_items_for_cross_track_implode(self) else {

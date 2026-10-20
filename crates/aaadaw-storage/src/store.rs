@@ -27,7 +27,7 @@ use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 /// Latest database schema version understood by this release.
-pub const CURRENT_SCHEMA_VERSION: u32 = 68;
+pub const CURRENT_SCHEMA_VERSION: u32 = 69;
 
 const EMPTY_ACTIVE_MIDI_TAKE_NAME: &str = "__AAADAW_EMPTY_ACTIVE_MIDI_TAKE__";
 
@@ -3734,6 +3734,20 @@ fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
                     transaction.execute_batch(MIGRATION_68_MIDI_ACTIVE_EMPTY_TAKE)?;
                 }
             }
+            69 => {
+                if !table_has_column(&transaction, "items", "source_offset_negative")? {
+                    transaction.execute_batch(
+                        "ALTER TABLE items ADD COLUMN source_offset_negative INTEGER NOT NULL DEFAULT 0 CHECK(source_offset_negative IN (0, 1));",
+                    )?;
+                }
+                if table_exists(&transaction, "midi_item_takes")?
+                    && !table_has_column(&transaction, "midi_item_takes", "source_offset_negative")?
+                {
+                    transaction.execute_batch(
+                        "ALTER TABLE midi_item_takes ADD COLUMN source_offset_negative INTEGER NOT NULL DEFAULT 0 CHECK(source_offset_negative IN (0, 1));",
+                    )?;
+                }
+            }
             missing => return Err(StorageError::MissingMigration(missing - 1)),
         }
         transaction.pragma_update(None, "user_version", next_version)?;
@@ -3999,9 +4013,11 @@ fn write_snapshot(
     }
 
     for (position, item) in snapshot.midi_items.iter().enumerate() {
+        let (source_offset_ticks, source_offset_negative) =
+            signed_midi_offset_to_sql(item.source_offset_ticks)?;
         transaction.execute(
-            "INSERT INTO items(id, track_id, position, start_tick, start_tick_subtick, length_ticks, name, source_offset_ticks, loop_source, source_loop_length_ticks, muted, active_take_name_is_empty) \
-             VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+            "INSERT INTO items(id, track_id, position, start_tick, start_tick_subtick, length_ticks, name, source_offset_ticks, loop_source, source_loop_length_ticks, muted, active_take_name_is_empty, source_offset_negative) \
+             VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
             params![
                 to_sql_integer(item.id)?,
                 to_sql_integer(item.track_id)?,
@@ -4014,11 +4030,12 @@ fn write_snapshot(
                 } else {
                     item.name.as_str()
                 },
-                to_sql_integer(item.source_offset_ticks)?,
+                source_offset_ticks,
                 item.loop_source,
                 to_sql_integer(item.source_loop_length_ticks)?,
                 item.muted,
                 item.name.is_empty(),
+                source_offset_negative,
             ],
         )?;
         for (position, note) in item.notes.iter().enumerate() {
@@ -4273,16 +4290,19 @@ fn write_midi_take(
     item_id: u64,
     take: &MidiItemTakeSnapshot,
 ) -> Result<(), StorageError> {
+    let (source_offset_ticks, source_offset_negative) =
+        signed_midi_offset_to_sql(take.source_offset_ticks)?;
     transaction.execute(
-        "INSERT INTO midi_item_takes(item_id, take_index, name, source_offset_ticks, loop_source, source_loop_length_ticks) \
-         VALUES(?1, ?2, ?3, ?4, ?5, ?6)",
+        "INSERT INTO midi_item_takes(item_id, take_index, name, source_offset_ticks, loop_source, source_loop_length_ticks, source_offset_negative) \
+         VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7)",
         params![
             to_sql_integer(item_id)?,
             i64::from(take.index),
             take.name,
-            to_sql_integer(take.source_offset_ticks)?,
+            source_offset_ticks,
             take.loop_source,
             to_sql_integer(take.source_loop_length_ticks)?,
+            source_offset_negative,
         ],
     )?;
     let insert = |kind: i64,
@@ -5286,7 +5306,7 @@ fn read_midi_takes(
     connection: &Connection,
 ) -> Result<HashMap<u64, (u32, Vec<MidiItemTakeSnapshot>)>, StorageError> {
     let mut statement = connection.prepare(
-        "SELECT item_id, take_index, name, source_offset_ticks, loop_source, source_loop_length_ticks \
+        "SELECT item_id, take_index, name, source_offset_ticks, loop_source, source_loop_length_ticks, source_offset_negative \
          FROM midi_item_takes ORDER BY item_id, take_index",
     )?;
     let rows = statement
@@ -5298,11 +5318,14 @@ fn read_midi_takes(
                 row.get::<_, i64>(3)?,
                 row.get::<_, i64>(4)?,
                 row.get::<_, i64>(5)?,
+                row.get::<_, i64>(6)?,
             ))
         })?
         .collect::<Result<Vec<_>, _>>()?;
     let mut takes_by_item: HashMap<u64, Vec<StoredMidiTake>> = HashMap::new();
-    for (item_id, index, name, source_offset, loop_source, loop_length) in rows {
+    for (item_id, index, name, source_offset, loop_source, loop_length, source_offset_negative) in
+        rows
+    {
         let loop_source = match loop_source {
             0 => false,
             1 => true,
@@ -5319,7 +5342,10 @@ fn read_midi_takes(
                 snapshot: MidiItemTakeSnapshot {
                     index: from_sql_u32(index)?,
                     name,
-                    source_offset_ticks: from_sql_u64(source_offset)?,
+                    source_offset_ticks: from_sql_signed_midi_offset(
+                        source_offset,
+                        source_offset_negative,
+                    )?,
                     loop_source,
                     source_loop_length_ticks: from_sql_u64(loop_length)?,
                     notes: Vec::new(),
@@ -5912,7 +5938,7 @@ fn read_midi_items(connection: &Connection) -> Result<(Vec<MidiItemSnapshot>, bo
     }
 
     let mut item_statement = connection.prepare(
-        "SELECT id, track_id, position, start_tick, start_tick_subtick, length_ticks, name, source_offset_ticks, loop_source, source_loop_length_ticks, muted, active_take_name_is_empty \
+        "SELECT id, track_id, position, start_tick, start_tick_subtick, length_ticks, name, source_offset_ticks, loop_source, source_loop_length_ticks, muted, active_take_name_is_empty, source_offset_negative \
          FROM items ORDER BY position",
     )?;
     let item_rows = item_statement
@@ -5930,6 +5956,7 @@ fn read_midi_items(connection: &Connection) -> Result<(Vec<MidiItemSnapshot>, bo
                 row.get::<_, i64>(9)?,
                 row.get::<_, i64>(10)?,
                 row.get::<_, i64>(11)?,
+                row.get::<_, i64>(12)?,
             ))
         })?
         .collect::<Result<Vec<_>, _>>()?;
@@ -5947,6 +5974,7 @@ fn read_midi_items(connection: &Connection) -> Result<(Vec<MidiItemSnapshot>, bo
         source_loop_length_ticks,
         muted,
         active_take_name_is_empty,
+        source_offset_negative,
     ) in item_rows
     {
         let muted = match muted {
@@ -6006,7 +6034,10 @@ fn read_midi_items(connection: &Connection) -> Result<(Vec<MidiItemSnapshot>, bo
             other_takes,
             start_tick: from_sql_u64(start_tick)?,
             start_tick_subtick: from_sql_u8(start_tick_subtick)?,
-            source_offset_ticks: from_sql_u64(source_offset_ticks)?,
+            source_offset_ticks: from_sql_signed_midi_offset(
+                source_offset_ticks,
+                source_offset_negative,
+            )?,
             loop_source,
             source_loop_length_ticks: from_sql_u64(source_loop_length_ticks)?,
             length_ticks: from_sql_u64(length_ticks)?,
@@ -6222,6 +6253,31 @@ fn tempo_curve_from_sql(value: i64) -> Result<TempoCurve, StorageError> {
 
 fn to_sql_integer(value: u64) -> Result<i64, StorageError> {
     i64::try_from(value).map_err(|_| StorageError::IntegerOutOfRange(value))
+}
+
+fn signed_midi_offset_to_sql(value: i64) -> Result<(i64, i64), StorageError> {
+    let magnitude = value.checked_abs().ok_or(StorageError::InvalidStoredData(
+        "MIDI source offset is out of range",
+    ))?;
+    Ok((magnitude, i64::from(value < 0)))
+}
+
+fn from_sql_signed_midi_offset(magnitude: i64, negative: i64) -> Result<i64, StorageError> {
+    if magnitude < 0 {
+        return Err(StorageError::InvalidStoredData(
+            "invalid MIDI source offset magnitude",
+        ));
+    }
+    match negative {
+        0 => Ok(magnitude),
+        1 if magnitude > 0 => Ok(-magnitude),
+        1 => Err(StorageError::InvalidStoredData(
+            "invalid negative zero MIDI source offset",
+        )),
+        _ => Err(StorageError::InvalidStoredData(
+            "invalid MIDI source offset sign",
+        )),
+    }
 }
 
 fn usize_to_sql(value: usize) -> Result<i64, StorageError> {

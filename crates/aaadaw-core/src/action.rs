@@ -367,6 +367,11 @@ pub enum DawAction {
         item_id: ItemId,
         take: crate::AudioItemTakeSnapshot,
     },
+    /// Append a copy of a MIDI source as a Take without changing the active Take.
+    PasteMidiItemAsTake {
+        item_id: ItemId,
+        take: crate::MidiItemTakeSnapshot,
+    },
     /// Remove the active take, deleting the item when it contains no other takes.
     DeleteActiveAudioItemTake {
         item_id: ItemId,
@@ -488,7 +493,7 @@ pub enum DawAction {
         item_id: ItemId,
         start_tick: u64,
         length_ticks: u64,
-        source_offset_ticks: u64,
+        source_offset_ticks: i64,
     },
     /// Align a non-loop MIDI source to an absolute time while preserving its events.
     /// When the requested source start falls before the item, store it as a source offset;
@@ -496,7 +501,7 @@ pub enum DawAction {
     /// The event shift is signed so source-boundary nudge operations can rebase either way.
     SetMidiItemContents {
         item_id: ItemId,
-        source_offset_ticks: u64,
+        source_offset_ticks: i64,
         source_loop_length_ticks: u64,
         content_shift_ticks: i64,
     },
@@ -515,7 +520,7 @@ pub enum DawAction {
         item_id: ItemId,
         start_tick: u64,
         length_ticks: u64,
-        source_offset_ticks: u64,
+        source_offset_ticks: i64,
     },
     /// Duplicate a MIDI item immediately after its source, assigning fresh item and note IDs.
     DuplicateMidiItem {

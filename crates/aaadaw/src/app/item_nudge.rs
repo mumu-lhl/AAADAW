@@ -1252,7 +1252,9 @@ impl App {
                     item_id: item.id(),
                     start_tick: next_start_tick,
                     length_ticks: next_length_ticks,
-                    source_offset_ticks: next_source_offset_ticks,
+                    source_offset_ticks: i64::try_from(next_source_offset_ticks).map_err(|_| {
+                        "MIDI item nudge is outside the supported source range".to_owned()
+                    })?,
                 });
             }
             if let Some((source_offset_ticks, source_loop_length_ticks, content_shift_ticks)) =
@@ -1260,7 +1262,9 @@ impl App {
             {
                 actions.push(DawAction::SetMidiItemContents {
                     item_id: item.id(),
-                    source_offset_ticks,
+                    source_offset_ticks: i64::try_from(source_offset_ticks).map_err(|_| {
+                        "MIDI left trim is outside the supported source range".to_owned()
+                    })?,
                     source_loop_length_ticks,
                     content_shift_ticks,
                 });
@@ -1484,7 +1488,9 @@ impl App {
                     })?;
                     actions.push(DawAction::SetMidiItemContents {
                         item_id: item.id(),
-                        source_offset_ticks,
+                        source_offset_ticks: i64::try_from(source_offset_ticks).map_err(|_| {
+                            "Contents target is outside the supported MIDI source range".to_owned()
+                        })?,
                         source_loop_length_ticks: new_source_length,
                         content_shift_ticks,
                     });
@@ -1523,7 +1529,9 @@ impl App {
                     item_id: item.id(),
                     start_tick: item.start_tick(),
                     length_ticks: item.length_ticks(),
-                    source_offset_ticks,
+                    source_offset_ticks: i64::try_from(source_offset_ticks).map_err(|_| {
+                        "Contents nudge is outside the supported source range".to_owned()
+                    })?,
                 });
             }
         }
@@ -2110,7 +2118,9 @@ impl App {
                 {
                     actions.push(DawAction::SetMidiItemContents {
                         item_id: item.id(),
-                        source_offset_ticks,
+                        source_offset_ticks: i64::try_from(source_offset_ticks).map_err(|_| {
+                            "Contents nudge is outside the supported source range".to_owned()
+                        })?,
                         source_loop_length_ticks,
                         content_shift_ticks,
                     });
@@ -2154,7 +2164,9 @@ impl App {
                     item_id: item.id(),
                     start_tick: item.start_tick(),
                     length_ticks: item.length_ticks(),
-                    source_offset_ticks,
+                    source_offset_ticks: i64::try_from(source_offset_ticks).map_err(|_| {
+                        "Contents nudge is outside the supported source range".to_owned()
+                    })?,
                 });
             }
         }

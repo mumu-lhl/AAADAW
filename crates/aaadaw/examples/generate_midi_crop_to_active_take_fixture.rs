@@ -65,7 +65,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .map(|(index, name)| MidiItemTakeSnapshot {
                 index: index as u32,
                 name: (*name).to_owned(),
-                source_offset_ticks: 125 * (index as u64 + 1),
+                source_offset_ticks: 125 * (index as i64 + 1),
                 loop_source: index == 0,
                 source_loop_length_ticks: 1_920,
                 notes: vec![MidiNoteSnapshot {

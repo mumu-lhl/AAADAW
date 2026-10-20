@@ -4,7 +4,7 @@ use aaadaw_core::{
     MidiOpaqueEventData, MidiOpaqueEventKind, MidiPitchBendData, MidiPolyAftertouchData,
     MidiProgramChangeData, Project,
 };
-use aaadaw_storage::ProjectStore;
+use aaadaw_storage::{CURRENT_SCHEMA_VERSION, ProjectStore};
 use rusqlite::Connection;
 
 #[test]
@@ -36,10 +36,62 @@ fn schema_67_migrates_midi_items_without_changing_active_take_names() {
         .unwrap();
 
     let mut migrated = ProjectStore::open(path.path()).unwrap();
-    assert_eq!(migrated.schema_version().unwrap(), 68);
+    assert_eq!(migrated.schema_version().unwrap(), CURRENT_SCHEMA_VERSION);
     assert_eq!(migrated.load().unwrap().snapshot(), project.snapshot());
     migrated.save(&project).unwrap();
     assert_eq!(migrated.load().unwrap().snapshot(), project.snapshot());
+}
+
+#[test]
+fn signed_midi_source_offsets_round_trip_for_active_and_inactive_takes() {
+    let path = tempfile::NamedTempFile::new().unwrap();
+    let mut project = Project::new();
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Signed source persistence".to_owned(),
+        })
+        .unwrap();
+    project
+        .apply(DawAction::InsertMidiItem {
+            track_id: project.tracks()[0].id(),
+            start_tick: 1_920,
+            length_ticks: 3_840,
+        })
+        .unwrap();
+    let item_id = project.midi_items()[0].id();
+    project
+        .apply(DawAction::EditMidiItemPlacement {
+            item_id,
+            start_tick: 1_920,
+            length_ticks: 3_840,
+            source_offset_ticks: -960,
+        })
+        .unwrap();
+    let mut inactive_take = project.midi_items()[0].take_snapshots()[0].clone();
+    inactive_take.index = 1;
+    inactive_take.name = "Earlier source origin".to_owned();
+    inactive_take.source_offset_ticks = -360;
+    project
+        .apply(DawAction::PasteMidiItemAsTake {
+            item_id,
+            take: inactive_take,
+        })
+        .unwrap();
+    let expected = project.snapshot();
+
+    let mut store = ProjectStore::open(path.path()).unwrap();
+    store.save(&project).unwrap();
+    let loaded = store.load().unwrap();
+    assert_eq!(loaded.snapshot(), expected);
+    assert_eq!(loaded.midi_items()[0].signed_source_offset_ticks(), -960);
+    assert_eq!(
+        loaded.midi_items()[0]
+            .take_properties(1)
+            .unwrap()
+            .source_offset_ticks,
+        -360
+    );
 }
 
 #[test]

@@ -217,7 +217,7 @@ pub struct MidiItemSnapshot {
     pub other_takes: Vec<MidiItemTakeSnapshot>,
     pub start_tick: u64,
     pub start_tick_subtick: u8,
-    pub source_offset_ticks: u64,
+    pub source_offset_ticks: i64,
     pub loop_source: bool,
     pub source_loop_length_ticks: u64,
     pub length_ticks: u64,
@@ -236,7 +236,7 @@ pub struct MidiItemSnapshot {
 pub struct MidiItemTakeSnapshot {
     pub index: u32,
     pub name: String,
-    pub source_offset_ticks: u64,
+    pub source_offset_ticks: i64,
     pub loop_source: bool,
     pub source_loop_length_ticks: u64,
     pub notes: Vec<MidiNoteSnapshot>,

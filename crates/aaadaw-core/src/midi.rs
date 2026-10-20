@@ -275,7 +275,7 @@ impl MidiNote {
 pub(crate) struct MidiItemTake {
     pub(crate) index: u32,
     pub(crate) name: String,
-    pub(crate) source_offset_ticks: u64,
+    pub(crate) source_offset_ticks: i64,
     pub(crate) loop_source: bool,
     pub(crate) source_loop_length_ticks: u64,
     pub(crate) notes: Arc<Vec<MidiNote>>,
@@ -293,7 +293,7 @@ pub(crate) struct MidiItemTake {
 pub struct MidiItemTakeProperties {
     pub index: u32,
     pub name: String,
-    pub source_offset_ticks: u64,
+    pub source_offset_ticks: i64,
     pub loop_source: bool,
     pub source_loop_length_ticks: u64,
     pub event_end_ticks: u64,
@@ -309,7 +309,7 @@ pub struct MidiItem {
     pub(crate) other_takes: Vec<MidiItemTake>,
     pub(crate) start_tick: u64,
     pub(crate) start_tick_subtick: u8,
-    pub(crate) source_offset_ticks: u64,
+    pub(crate) source_offset_ticks: i64,
     pub(crate) loop_source: bool,
     pub(crate) source_loop_length_ticks: u64,
     pub(crate) length_ticks: u64,
@@ -558,6 +558,12 @@ impl MidiItem {
 
     /// Returns how far the visible clip start is trimmed into its stored MIDI content.
     pub fn source_offset_ticks(&self) -> u64 {
+        u64::try_from(self.source_offset_ticks).unwrap_or(0)
+    }
+
+    /// Returns the signed source-time offset of the visible item start.
+    /// Negative values place the item start before the source's first event.
+    pub fn signed_source_offset_ticks(&self) -> i64 {
         self.source_offset_ticks
     }
 
@@ -581,15 +587,22 @@ impl MidiItem {
         if project_offset_subticks >= item_length_subticks {
             return None;
         }
-        let source_subticks = u128::from(self.source_offset_ticks)
-            .checked_mul(u128::from(MIDI_ITEM_SUBTICKS_PER_TICK))?
-            .checked_add(project_offset_subticks)?;
-        let source_tick =
-            u64::try_from(source_subticks / u128::from(MIDI_ITEM_SUBTICKS_PER_TICK)).ok()?;
+        let source_subticks = i128::from(self.source_offset_ticks)
+            .checked_mul(i128::from(MIDI_ITEM_SUBTICKS_PER_TICK))?
+            .checked_add(i128::try_from(project_offset_subticks).ok()?)?;
+        if source_subticks < 0 && !self.loop_source {
+            return None;
+        }
         if self.loop_source {
-            (self.source_loop_length_ticks > 0).then(|| source_tick % self.source_loop_length_ticks)
+            (self.source_loop_length_ticks > 0).then(|| {
+                let loop_subticks = i128::from(self.source_loop_length_ticks)
+                    * i128::from(MIDI_ITEM_SUBTICKS_PER_TICK);
+                source_subticks
+                    .rem_euclid(loop_subticks)
+                    .div_euclid(i128::from(MIDI_ITEM_SUBTICKS_PER_TICK)) as u64
+            })
         } else {
-            Some(source_tick)
+            u64::try_from(source_subticks.div_euclid(i128::from(MIDI_ITEM_SUBTICKS_PER_TICK))).ok()
         }
     }
 
@@ -618,7 +631,8 @@ impl MidiItem {
             } else {
                 let loop_length = self.source_loop_length_ticks;
                 let source_tick = content_tick % loop_length;
-                let source_offset = self.source_offset_ticks % loop_length;
+                let source_offset =
+                    i128::from(self.source_offset_ticks).rem_euclid(i128::from(loop_length)) as u64;
                 let phase = if source_tick >= source_offset {
                     source_tick - source_offset
                 } else {

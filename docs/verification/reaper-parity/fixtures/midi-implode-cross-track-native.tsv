@@ -1,0 +1,43 @@
+before	track_count=3	item_count=3	selected_count=3
+before	track=0	track_name=Top MIDI track	track_item_count=1
+before	track=0	item=0	position=1.000000000	length=2.000000000	selected=1	take_count=1	active_index=0
+before	track=0	item=0	take=0	active=1	name=Top target	offset=0.125000000	notes=120:360:60:96;720:960:62:91
+before	track=1	track_name=Earlier MIDI track	track_item_count=1
+before	track=1	item=0	position=0.000000000	length=1.500000000	selected=1	take_count=2	active_index=1
+before	track=1	item=0	take=0	active=0	name=Earlier donor	offset=0.250000000	notes=120:360:67:88;720:960:69:83
+before	track=1	item=0	take=1	active=1	name=Earlier donor active	offset=0.375000000	notes=120:360:74:80;720:960:76:75
+before	track=2	track_name=Lower MIDI track	track_item_count=1
+before	track=2	item=0	position=2.000000000	length=1.500000000	selected=1	take_count=1	active_index=0
+before	track=2	item=0	take=0	active=1	name=Lower donor	offset=0.500000000	notes=120:360:79:76;720:960:81:71
+after	track_count=3	item_count=1	selected_count=1
+after	track=0	track_name=Top MIDI track	track_item_count=1
+after	track=0	item=0	position=1.000000000	length=2.000000000	selected=1	take_count=4	active_index=0
+after	track=0	item=0	take=0	active=1	name=Top target	offset=0.125000000	notes=120:360:60:96;720:960:62:91
+after	track=0	item=0	take=1	active=0	name=Earlier donor	offset=1.250000000	notes=120:360:67:88;720:960:69:83
+after	track=0	item=0	take=2	active=0	name=Earlier donor active	offset=1.375000000	notes=120:360:74:80;720:960:76:75
+after	track=0	item=0	take=3	active=0	name=Lower donor	offset=-0.500000000	notes=120:360:79:76;720:960:81:71
+after	track=1	track_name=Earlier MIDI track	track_item_count=0
+after	track=2	track_name=Lower MIDI track	track_item_count=0
+undo	track_count=3	item_count=3	selected_count=3
+undo	track=0	track_name=Top MIDI track	track_item_count=1
+undo	track=0	item=0	position=1.000000000	length=2.000000000	selected=1	take_count=1	active_index=0
+undo	track=0	item=0	take=0	active=1	name=Top target	offset=0.125000000	notes=120:360:60:96;720:960:62:91
+undo	track=1	track_name=Earlier MIDI track	track_item_count=1
+undo	track=1	item=0	position=0.000000000	length=1.500000000	selected=1	take_count=2	active_index=1
+undo	track=1	item=0	take=0	active=0	name=Earlier donor	offset=0.250000000	notes=120:360:67:88;720:960:69:83
+undo	track=1	item=0	take=1	active=1	name=Earlier donor active	offset=0.375000000	notes=120:360:74:80;720:960:76:75
+undo	track=2	track_name=Lower MIDI track	track_item_count=1
+undo	track=2	item=0	position=2.000000000	length=1.500000000	selected=1	take_count=1	active_index=0
+undo	track=2	item=0	take=0	active=1	name=Lower donor	offset=0.500000000	notes=120:360:79:76;720:960:81:71
+redo	track_count=3	item_count=1	selected_count=1
+redo	track=0	track_name=Top MIDI track	track_item_count=1
+redo	track=0	item=0	position=1.000000000	length=2.000000000	selected=1	take_count=4	active_index=0
+redo	track=0	item=0	take=0	active=1	name=Top target	offset=0.125000000	notes=120:360:60:96;720:960:62:91
+redo	track=0	item=0	take=1	active=0	name=Earlier donor	offset=1.250000000	notes=120:360:67:88;720:960:69:83
+redo	track=0	item=0	take=2	active=0	name=Earlier donor active	offset=1.375000000	notes=120:360:74:80;720:960:76:75
+redo	track=0	item=0	take=3	active=0	name=Lower donor	offset=-0.500000000	notes=120:360:79:76;720:960:81:71
+redo	track=1	track_name=Earlier MIDI track	track_item_count=0
+redo	track=2	track_name=Lower MIDI track	track_item_count=0
+undo_description	Implode items to takes
+action	40438	Take: Implode items across tracks into takes
+reference	REAPER 7.82/linux-x86_64; Default_7.0.ReaperThemeZip

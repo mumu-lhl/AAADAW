@@ -881,6 +881,174 @@ fn imploding_selected_audio_items_across_tracks_rebases_each_take_and_keeps_top_
 }
 
 #[test]
+fn imploding_selected_midi_items_across_tracks_rebases_signed_take_sources() {
+    let mut app = App::default();
+    for (index, name) in ["Top", "Middle", "Bottom"].into_iter().enumerate() {
+        app.project
+            .apply(DawAction::CreateTrack {
+                index,
+                name: name.to_owned(),
+            })
+            .unwrap();
+    }
+    let tracks = app
+        .project
+        .tracks()
+        .iter()
+        .map(|track| track.id())
+        .collect::<Vec<_>>();
+    let (top_track, middle_track, bottom_track) = (tracks[0], tracks[1], tracks[2]);
+    for (track_id, start_tick, length_ticks) in [
+        (top_track, 1_920, 3_840),
+        (middle_track, 0, 2_880),
+        (bottom_track, 3_840, 2_880),
+    ] {
+        app.project
+            .apply(DawAction::InsertMidiItem {
+                track_id,
+                start_tick,
+                length_ticks,
+            })
+            .unwrap();
+    }
+    let target_id = app.project.midi_items()[0].id();
+    let middle_id = app.project.midi_items()[1].id();
+    let bottom_id = app.project.midi_items()[2].id();
+    app.project
+        .apply(DawAction::AddMidiNotes {
+            item_id: target_id,
+            notes: vec![MidiNoteData {
+                pitch: 60,
+                channel: 0,
+                tick: 120,
+                duration: 240,
+                velocity: 100,
+                off_velocity: 0,
+            }],
+        })
+        .unwrap();
+    app.project
+        .apply(DawAction::AddMidiNotes {
+            item_id: middle_id,
+            notes: vec![MidiNoteData {
+                pitch: 64,
+                channel: 1,
+                tick: 1_500,
+                duration: 240,
+                velocity: 90,
+                off_velocity: 12,
+            }],
+        })
+        .unwrap();
+    app.project
+        .apply(DawAction::EditMidiItemPlacement {
+            item_id: middle_id,
+            start_tick: 0,
+            length_ticks: 2_880,
+            source_offset_ticks: 480,
+        })
+        .unwrap();
+    app.project
+        .apply(DawAction::SetMidiItemName {
+            item_id: middle_id,
+            name: "Middle active".to_owned(),
+        })
+        .unwrap();
+    app.project
+        .apply(DawAction::DuplicateMidiItemTake { item_id: middle_id })
+        .unwrap();
+    app.project
+        .apply(DawAction::SetMidiItemActiveTake {
+            item_id: middle_id,
+            take_index: 1,
+        })
+        .unwrap();
+    app.project
+        .apply(DawAction::SetMidiItemName {
+            item_id: middle_id,
+            name: "Middle alternate".to_owned(),
+        })
+        .unwrap();
+    app.project
+        .apply(DawAction::AddMidiNotes {
+            item_id: bottom_id,
+            notes: vec![MidiNoteData {
+                pitch: 67,
+                channel: 2,
+                tick: 1_000,
+                duration: 120,
+                velocity: 82,
+                off_velocity: 0,
+            }],
+        })
+        .unwrap();
+    app.project
+        .apply(DawAction::EditMidiItemPlacement {
+            item_id: bottom_id,
+            start_tick: 3_840,
+            length_ticks: 2_880,
+            source_offset_ticks: 960,
+        })
+        .unwrap();
+
+    app.timeline.rebuild(&app.project);
+    app.timeline.select_items(vec![
+        (bottom_id, bottom_track),
+        (middle_id, middle_track),
+        (target_id, top_track),
+    ]);
+    assert_eq!(
+        commands::midi_items_for_cross_track_implode(&app),
+        Some(vec![target_id, middle_id, bottom_id])
+    );
+    assert!(commands::is_enabled(
+        &app,
+        CommandId::ImplodeAudioItemsAcrossTracksIntoTakes
+    ));
+    let before = app.project.snapshot();
+    let history_cursor = app.project.history_cursor();
+    let _ = app.update(Message::ExecuteCommand(
+        CommandId::ImplodeAudioItemsAcrossTracksIntoTakes,
+    ));
+
+    assert_eq!(app.project.history_cursor(), history_cursor + 1);
+    assert_eq!(app.status, "Selected MIDI items imploded into takes");
+    assert_eq!(app.project.midi_items().len(), 1);
+    let target = &app.project.midi_items()[0];
+    assert_eq!(target.id(), target_id);
+    assert_eq!(target.track_id(), top_track);
+    assert_eq!(target.start_tick(), 1_920);
+    assert_eq!(target.active_take_index(), 0);
+    assert_eq!(target.take_count(), 4);
+    let takes = target.take_snapshots();
+    assert_eq!(
+        takes
+            .iter()
+            .map(|take| take.name.as_str())
+            .collect::<Vec<_>>(),
+        ["MIDI", "Middle active", "Middle alternate", "MIDI",]
+    );
+    assert_eq!(takes[0].source_offset_ticks, 0);
+    assert_eq!(takes[1].source_offset_ticks, 2_400);
+    assert_eq!(takes[2].source_offset_ticks, 2_400);
+    assert_eq!(takes[2].notes[0].data.tick, 1_500);
+    assert_eq!(takes[2].notes[0].data.off_velocity, 12);
+    assert_eq!(takes[3].source_offset_ticks, -960);
+    assert_eq!(app.timeline.selected_items, HashSet::from([target_id]));
+
+    let after = app.project.snapshot();
+    let _ = app.update(Message::Undo);
+    assert_eq!(app.project.snapshot(), before);
+    assert_eq!(
+        app.timeline.selected_items,
+        HashSet::from([target_id, middle_id, bottom_id])
+    );
+    let _ = app.update(Message::Redo);
+    assert_eq!(app.project.snapshot(), after);
+    assert_eq!(app.timeline.selected_items, HashSet::from([target_id]));
+}
+
+#[test]
 fn cross_track_implode_rejects_single_track_selections_and_accepts_loop_sources() {
     let mut app = App::default();
     for (index, name) in ["First", "Second"].into_iter().enumerate() {

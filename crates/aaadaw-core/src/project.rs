@@ -1,4 +1,4 @@
-use crate::midi::MidiItemTake;
+use crate::midi::{MidiItemPosition, MidiItemTake};
 use crate::snapshot::{
     AudioItemSnapshot, MeterPointSnapshot, MidiItemSnapshot, MidiItemTakeSnapshot,
     MidiNoteSnapshot, ProjectSnapshot, SnapshotError, TempoPointSnapshot,
@@ -2312,6 +2312,10 @@ fn split_midi_take(
     for segment_index in 0..segment_count {
         let relative_start = relative_points[segment_index];
         let relative_end = relative_points[segment_index + 1];
+        let relative_start =
+            i64::try_from(relative_start).map_err(|_| ActionError::InvalidMidiItemPosition)?;
+        let relative_end =
+            i64::try_from(relative_end).map_err(|_| ActionError::InvalidMidiItemPosition)?;
         let segment_length = relative_end - relative_start;
         let unwrapped_start = original
             .source_offset_ticks
@@ -2321,10 +2325,12 @@ fn split_midi_take(
             .source_offset_ticks
             .checked_add(relative_end)
             .ok_or(ActionError::InvalidMidiItemPosition)?;
+        let loop_length = i64::try_from(original.source_loop_length_ticks)
+            .map_err(|_| ActionError::InvalidMidiItemPosition)?;
         let keep_original_source = segment_index > 0
             && original.loop_source
             && original.source_offset_ticks > 0
-            && unwrapped_start < original.source_loop_length_ticks;
+            && unwrapped_start < loop_length;
         preserve_source.push(keep_original_source);
         segment_source_offsets.push(if segment_index == 0 {
             original.source_offset_ticks
@@ -2337,15 +2343,18 @@ fn split_midi_take(
         let source_start = if segment_index == 0 {
             0
         } else if original.loop_source {
-            unwrapped_start % original.source_loop_length_ticks
+            unwrapped_start.rem_euclid(loop_length) as u64
         } else {
-            unwrapped_start
+            unwrapped_start.max(0) as u64
         };
         let source_end = if segment_index == 0 {
-            unwrapped_end
+            unwrapped_end.max(0) as u64
         } else {
             source_start
-                .checked_add(segment_length)
+                .checked_add(
+                    u64::try_from(segment_length)
+                        .map_err(|_| ActionError::InvalidMidiItemPosition)?,
+                )
                 .ok_or(ActionError::InvalidMidiItemPosition)?
         };
         segment_source_ranges.push((source_start, source_end));
@@ -2884,16 +2893,39 @@ impl Project {
         item_start_tick: u64,
         source_phase_ticks: u64,
     ) -> Result<f64, TimebaseError> {
+        let source_phase_ticks =
+            i64::try_from(source_phase_ticks).map_err(|_| TimebaseError::PositionOutOfRange)?;
+        self.midi_signed_source_offset_samples(item_start_tick, source_phase_ticks)
+    }
+
+    /// Converts a signed MIDI source PPQ offset into its project-sample offset.
+    pub fn midi_signed_source_offset_samples(
+        &self,
+        item_start_tick: u64,
+        source_offset_ticks: i64,
+    ) -> Result<f64, TimebaseError> {
+        self.midi_signed_source_offset_samples_at_position(
+            MidiItemPosition::new(item_start_tick, 0).ok_or(TimebaseError::PositionOutOfRange)?,
+            source_offset_ticks,
+        )
+    }
+
+    /// Converts a signed MIDI source PPQ offset using an exact item start position.
+    pub fn midi_signed_source_offset_samples_at_position(
+        &self,
+        item_start_position: MidiItemPosition,
+        source_offset_ticks: i64,
+    ) -> Result<f64, TimebaseError> {
         const MAX_EXACT: f64 = (1_u64 << 53) as f64;
-        if item_start_tick > (1_u64 << 53) || source_phase_ticks > (1_u64 << 53) {
+        let item_start_tick = item_start_position.as_ticks_f64();
+        if item_start_tick > MAX_EXACT || source_offset_ticks.unsigned_abs() > (1_u64 << 53) {
             return Err(TimebaseError::PositionOutOfRange);
         }
-        let item_start_tick = item_start_tick as f64;
         let item_start_sample = self.sample_at_tick_position(item_start_tick)?;
-        let source_tick = item_start_tick - source_phase_ticks as f64;
+        let source_tick = item_start_tick - source_offset_ticks as f64;
         let source_sample = self.sample_at_signed_tick_position(source_tick)?;
         let offset_samples = item_start_sample - source_sample;
-        if !offset_samples.is_finite() || !(0.0..=MAX_EXACT).contains(&offset_samples) {
+        if !offset_samples.is_finite() || offset_samples.abs() > MAX_EXACT {
             return Err(TimebaseError::PositionOutOfRange);
         }
         Ok(offset_samples)
@@ -2909,10 +2941,9 @@ impl Project {
         if source_loop_length_ticks == 0 || source_loop_length_ticks > (1_u64 << 53) {
             return Err(TimebaseError::PositionOutOfRange);
         }
-        Ok(
-            self.midi_source_offset_ticks_at_samples(item_start_tick, source_offset_samples)?
-                % source_loop_length_ticks,
-        )
+        let offset = self
+            .midi_signed_source_offset_ticks_at_samples(item_start_tick, source_offset_samples)?;
+        Ok(i128::from(offset).rem_euclid(i128::from(source_loop_length_ticks)) as u64)
     }
 
     /// Converts a take's source-time offset to its unwrapped MIDI source PPQ offset.
@@ -2923,22 +2954,49 @@ impl Project {
         item_start_tick: u64,
         source_offset_samples: f64,
     ) -> Result<u64, TimebaseError> {
+        u64::try_from(
+            self.midi_signed_source_offset_ticks_at_samples(
+                item_start_tick,
+                source_offset_samples,
+            )?,
+        )
+        .map_err(|_| TimebaseError::PositionOutOfRange)
+    }
+
+    /// Converts signed project-sample displacement to signed MIDI source PPQ ticks.
+    pub fn midi_signed_source_offset_ticks_at_samples(
+        &self,
+        item_start_tick: u64,
+        source_offset_samples: f64,
+    ) -> Result<i64, TimebaseError> {
+        self.midi_signed_source_offset_ticks_at_position_samples(
+            MidiItemPosition::new(item_start_tick, 0).ok_or(TimebaseError::PositionOutOfRange)?,
+            source_offset_samples,
+        )
+    }
+
+    /// Converts sample displacement to signed source ticks at an exact item start position.
+    pub fn midi_signed_source_offset_ticks_at_position_samples(
+        &self,
+        item_start_position: MidiItemPosition,
+        source_offset_samples: f64,
+    ) -> Result<i64, TimebaseError> {
         const MAX_EXACT: f64 = (1_u64 << 53) as f64;
-        if item_start_tick > (1_u64 << 53)
+        let item_start_tick = item_start_position.as_ticks_f64();
+        if item_start_tick > MAX_EXACT
             || !source_offset_samples.is_finite()
-            || !(0.0..=MAX_EXACT).contains(&source_offset_samples)
+            || source_offset_samples.abs() > MAX_EXACT
         {
             return Err(TimebaseError::PositionOutOfRange);
         }
-        let item_start_tick = item_start_tick as f64;
         let item_start_sample = self.sample_at_tick_position(item_start_tick)?;
         let source_sample = item_start_sample - source_offset_samples;
         let source_tick = self.tick_at_signed_sample_position(source_sample)?;
         let offset_ticks = (item_start_tick - source_tick).round();
-        if !offset_ticks.is_finite() || !(0.0..=MAX_EXACT).contains(&offset_ticks) {
+        if !offset_ticks.is_finite() || offset_ticks.abs() > MAX_EXACT {
             return Err(TimebaseError::PositionOutOfRange);
         }
-        Ok(offset_ticks as u64)
+        Ok(offset_ticks as i64)
     }
 
     fn sample_at_signed_tick_position(&self, tick: f64) -> Result<f64, TimebaseError> {
@@ -3746,10 +3804,7 @@ impl Project {
                         && (!take.name.trim().is_empty() || midi_item_take_snapshot_is_empty(take))
                         && take.name.chars().count() <= 128
                         && take.source_loop_length_ticks > 0
-                        && take
-                            .source_offset_ticks
-                            .checked_add(item.length_ticks)
-                            .is_some()
+                        && midi_source_range_is_valid(take.source_offset_ticks, item.length_ticks)
                 })
                 && take_indices.len() == item.other_takes.len();
             if !item_ids.insert(item.id)
@@ -3760,10 +3815,7 @@ impl Project {
                 || item.source_loop_length_ticks == 0
                 || u16::from(item.start_tick_subtick) >= crate::MIDI_ITEM_SUBTICKS_PER_TICK
                 || item.start_tick.checked_add(item.length_ticks).is_none()
-                || item
-                    .source_offset_ticks
-                    .checked_add(item.length_ticks)
-                    .is_none()
+                || !midi_source_range_is_valid(item.source_offset_ticks, item.length_ticks)
                 || !valid_other_takes
             {
                 return Err(SnapshotError::InvalidProjectData);
@@ -5450,6 +5502,81 @@ impl Project {
                 }
                 ProjectEvent::AudioItemChanged { before, after }
             }
+            DawAction::PasteMidiItemAsTake { item_id, take } => {
+                if take.name.chars().count() > 128
+                    || take.source_loop_length_ticks == 0
+                    || !midi_source_range_is_valid(take.source_offset_ticks, 1)
+                    || !valid_midi_controllers(&take.controllers)
+                    || !valid_midi_pitch_bends(&take.pitch_bends)
+                    || !valid_midi_program_changes(&take.program_changes)
+                    || !valid_midi_poly_aftertouches(&take.poly_aftertouches)
+                    || !valid_midi_channel_pressures(&take.channel_pressures)
+                    || !valid_midi_opaque_events(&take.opaque_events)
+                {
+                    return Err(ActionError::InvalidMidiItemPosition);
+                }
+                if take.notes.iter().any(|note| {
+                    note.data.pitch > 127
+                        || note.data.channel >= crate::MIDI_CHANNEL_COUNT
+                        || note.data.velocity > 127
+                        || note.data.off_velocity > 127
+                        || note.data.duration == 0
+                        || note.data.tick.checked_add(note.data.duration).is_none()
+                }) {
+                    return Err(ActionError::InvalidMidiNote);
+                }
+                let before = state
+                    .midi_items
+                    .iter()
+                    .find(|item| item.id == item_id)
+                    .ok_or(ActionError::MidiItemNotFound { item_id })?;
+                let track = state
+                    .tracks
+                    .iter()
+                    .find(|track| track.id == before.track_id)
+                    .ok_or(ActionError::TrackNotFound {
+                        track_id: before.track_id,
+                    })?;
+                if track.is_frozen() {
+                    return Err(ActionError::CannotEditFrozenTrackSource {
+                        track_id: before.track_id,
+                    });
+                }
+                let before = before.clone();
+                let take_index = u32::try_from(before.take_count())
+                    .map_err(|_| ActionError::MidiTakeIndexExhausted)?;
+                let mut notes = Vec::with_capacity(take.notes.len());
+                for note in &take.notes {
+                    let next_note_id = ids
+                        .next_note_id
+                        .checked_add(1)
+                        .ok_or(ActionError::NoteIdExhausted)?;
+                    notes.push(MidiNote {
+                        id: NoteId::from_raw(ids.next_note_id),
+                        data: note.data,
+                    });
+                    ids.next_note_id = next_note_id;
+                }
+                let appended_take = MidiItemTake {
+                    index: take_index,
+                    name: take.name,
+                    source_offset_ticks: take.source_offset_ticks,
+                    loop_source: take.loop_source,
+                    source_loop_length_ticks: take.source_loop_length_ticks,
+                    notes: Arc::new(notes),
+                    controllers: Arc::new(take.controllers),
+                    pitch_bends: Arc::new(take.pitch_bends),
+                    program_changes: Arc::new(take.program_changes),
+                    poly_aftertouches: Arc::new(take.poly_aftertouches),
+                    channel_pressures: Arc::new(take.channel_pressures),
+                    opaque_events: Arc::new(take.opaque_events),
+                    event_order: Arc::new(take.event_order),
+                };
+                let mut after = before.clone();
+                after.other_takes.push(appended_take);
+                after.other_takes.sort_unstable_by_key(|take| take.index);
+                ProjectEvent::MidiItemChanged { before, after }
+            }
             DawAction::DeleteActiveAudioItemTake { item_id } => {
                 let index = state
                     .audio_items
@@ -6076,7 +6203,7 @@ impl Project {
                     return Err(ActionError::InvalidMidiItemLength);
                 }
                 if start_tick.checked_add(length_ticks).is_none()
-                    || source_offset_ticks.checked_add(length_ticks).is_none()
+                    || !midi_source_range_is_valid(source_offset_ticks, length_ticks)
                 {
                     return Err(ActionError::InvalidMidiItemPosition);
                 }
@@ -6124,7 +6251,7 @@ impl Project {
                 if !valid_midi_pitch_bends(&item.pitch_bends) {
                     return Err(ActionError::InvalidMidiPitchBend);
                 }
-                if source_offset_ticks.checked_add(item.length_ticks).is_none() {
+                if !midi_source_range_is_valid(source_offset_ticks, item.length_ticks) {
                     return Err(ActionError::InvalidMidiItemPosition);
                 }
 
@@ -6275,7 +6402,7 @@ impl Project {
                     return Err(ActionError::InvalidMidiItemLength);
                 }
                 if start_tick.checked_add(length_ticks).is_none()
-                    || source_offset_ticks.checked_add(length_ticks).is_none()
+                    || !midi_source_range_is_valid(source_offset_ticks, length_ticks)
                 {
                     return Err(ActionError::InvalidMidiItemPosition);
                 }
@@ -6287,7 +6414,7 @@ impl Project {
                 let expected_source_offset = i128::from(item.source_offset_ticks)
                     + i128::from(start_tick)
                     - i128::from(item.start_tick);
-                if u64::try_from(expected_source_offset).ok() != Some(source_offset_ticks) {
+                if expected_source_offset != i128::from(source_offset_ticks) {
                     return Err(ActionError::InvalidMidiItemPosition);
                 }
                 let before = item.clone();
@@ -7778,10 +7905,7 @@ impl Project {
                     || !state.tracks.iter().any(|track| track.id == after.track_id)
                     || after.length_ticks == 0
                     || after.start_tick.checked_add(after.length_ticks).is_none()
-                    || after
-                        .source_offset_ticks
-                        .checked_add(after.length_ticks)
-                        .is_none()
+                    || !midi_source_range_is_valid(after.source_offset_ticks, after.length_ticks)
                     || !valid_midi_controllers(&after.controllers)
                     || !valid_midi_pitch_bends(&after.pitch_bends)
                 {
@@ -7826,10 +7950,10 @@ impl Project {
                         !state.tracks.iter().any(|track| track.id == item.track_id)
                             || item.length_ticks == 0
                             || item.start_tick.checked_add(item.length_ticks).is_none()
-                            || item
-                                .source_offset_ticks
-                                .checked_add(item.length_ticks)
-                                .is_none()
+                            || !midi_source_range_is_valid(
+                                item.source_offset_ticks,
+                                item.length_ticks,
+                            )
                             || !valid_midi_controllers(&item.controllers)
                             || !valid_midi_pitch_bends(&item.pitch_bends)
                             || !existing_item_ids.insert(item.id)
@@ -8310,14 +8434,23 @@ fn coalesce_selected_midi_controllers_at_same_tick(
     });
 }
 
+fn midi_source_range_is_valid(source_offset_ticks: i64, length_ticks: u64) -> bool {
+    i64::try_from(length_ticks)
+        .ok()
+        .and_then(|length| source_offset_ticks.checked_add(length))
+        .is_some()
+}
+
 fn midi_item_source_tick_bounds(item: &MidiItem) -> (u64, u64) {
     if item.is_loop_source() {
         (0, item.source_loop_length_ticks())
     } else {
+        let source_start = item.signed_source_offset_ticks().max(0) as u64;
+        let source_end =
+            i128::from(item.signed_source_offset_ticks()) + i128::from(item.length_ticks());
         (
-            item.source_offset_ticks(),
-            item.source_offset_ticks()
-                .saturating_add(item.length_ticks()),
+            source_start,
+            source_end.max(0).min(i128::from(u64::MAX)) as u64,
         )
     }
 }
