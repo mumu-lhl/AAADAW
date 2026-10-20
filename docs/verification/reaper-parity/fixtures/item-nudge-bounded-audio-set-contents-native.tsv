@@ -1,0 +1,10 @@
+version	7.82/linux-x86_64
+theme	Default_7.0.ReaperThemeZip
+dialog_action	41226	Item edit: Nudge/Set...
+source_path	/workspace/AAADAW/examples/first-project/melody.wav
+target_seconds	3.000000000
+columns	label	position_s	length_s	loop_source	source_offset_s	section	section_start_s	section_length_s	section_reversed	source_length_s	source_length_is_qn	selection	state_change	undo_label
+before	2.000000000	5.000000000	1.0	0.100000000	true	1.000000000	3.000000000	false	3.000000000	false	selected	4	Fixture setup
+snapshot	2.000000000	5.000000000	1.0	2.000000000	true	1.000000000	3.000000000	false	3.000000000	false	selected	5	Nudge items
+undo	2.000000000	5.000000000	1.0	0.100000000	true	1.000000000	3.000000000	false	3.000000000	false	selected	6	Fixture setup
+redo	2.000000000	5.000000000	1.0	2.000000000	true	1.000000000	3.000000000	false	3.000000000	false	selected	7	Nudge items

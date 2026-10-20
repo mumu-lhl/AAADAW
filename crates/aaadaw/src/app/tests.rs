@@ -6608,6 +6608,68 @@ fn item_nudge_set_contents_aligns_audio_loop_and_signed_source_offsets() {
     );
     assert!(app.item_nudge_dialog.error.is_none());
 
+    app.project
+        .apply(DawAction::InsertLoopedAudioItem {
+            track_id,
+            media_ref: media_ref.to_owned(),
+            start_sample: project_rate * 2,
+            source_offset_samples: 9_600,
+            length_samples: project_rate * 5,
+            muted: false,
+            phase_inverted: false,
+            source_section_start_samples: 96_000,
+            source_section_length_samples: 288_000,
+        })
+        .unwrap();
+    let bounded_item_id = app
+        .project
+        .audio_items()
+        .last()
+        .expect("bounded section item should exist")
+        .id();
+    app.timeline.rebuild(&app.project);
+    app.timeline.select_items(vec![(bounded_item_id, track_id)]);
+    let _ = app.update(Message::ItemNudgeModeChanged(super::item_nudge::Mode::Set));
+    let _ = app.update(Message::ItemNudgeSnapToUnitChanged(false));
+    let _ = app.update(Message::ItemNudgeTargetChanged(Target::Contents));
+    let _ = app.update(Message::ItemNudgeValueChanged("0:03.000".to_owned()));
+
+    let _ = app.update(Message::ApplyItemNudgeSet);
+
+    let bounded_item = app
+        .project
+        .audio_items()
+        .iter()
+        .find(|item| item.id() == bounded_item_id)
+        .expect("bounded section item should remain in the project");
+    assert_eq!(bounded_item.source_offset_samples(), 192_000);
+    assert_eq!(bounded_item.source_section_start_samples(), Some(96_000));
+    assert_eq!(bounded_item.source_section_length_samples(), Some(288_000));
+    assert!(bounded_item.is_loop_source());
+    assert_eq!(bounded_item.start_sample(), project_rate * 2);
+    assert_eq!(bounded_item.length_samples(), project_rate * 5);
+    assert!(app.item_nudge_dialog.error.is_none());
+    let _ = app.update(Message::Undo);
+    assert_eq!(
+        app.project
+            .audio_items()
+            .iter()
+            .find(|item| item.id() == bounded_item_id)
+            .unwrap()
+            .source_offset_samples(),
+        9_600
+    );
+    let _ = app.update(Message::Redo);
+    let bounded_item = app
+        .project
+        .audio_items()
+        .iter()
+        .find(|item| item.id() == bounded_item_id)
+        .unwrap();
+    assert_eq!(bounded_item.source_offset_samples(), 192_000);
+    assert_eq!(bounded_item.source_section_start_samples(), Some(96_000));
+    assert_eq!(bounded_item.source_section_length_samples(), Some(288_000));
+
     drop(app);
     let _ = std::fs::remove_file(project_path);
 }
