@@ -155,3 +155,7 @@ Schema 50 及更早工程默认迁移为 loop source 开启；源长推断为可
 `midi_notes` 增加受 `0..15` 检查约束的 `channel` 列；`midi_controllers` 和 `midi_pitch_bends` 增加同类列，并分别将唯一键扩展为 `(item_id, channel, controller, tick)` 与 `(item_id, channel, tick)`。schema 58 及更早工程迁移到通道 0；迁移逐表识别已有列或缺失表，兼容测试构造的部分旧 schema。Snapshot、复制/分割、MIDI 计划/chase、MCP 编辑与标准 MIDI 导出沿用通道身份。
 
 MIDI Editor 已提供 All/单通道/多通道筛选、Filter 开关及绘制目标通道；音符、CC 与 Pitch Bend 的显示和命中按当前筛选集合处理，新事件使用选择的绘制通道。多通道面板目前只覆盖通道集合与绘制目标，REAPER 的反转/独奏/参数值位置长度事件类型筛选和独立原生窗口仍未实现。普通 Send 仍 All→All 原样转发，源/目标通道过滤与重映射、MIDI Bus 和其他消息类型仍未实现。
+
+## 已实现 schema 71 切片
+
+`track_sends.midi_source_channel` 和 `midi_destination_channel` 分别保存普通 Send 的 0..15 源筛选与目标重映射；NULL 表示 All 与 Original。两列均带 SQLite 0..15 CHECK，schema 70→71 迁移不改既有 Send 的 MIDI 默认语义。`AudioSendParameters` 校验通道边界，Snapshot/Undo/Redo 与存储往返保留参数。Engine 在控制线程编译逐跳 MIDI 路由过滤/映射，块内事件调度与 seek chase 读取预编译结果；不增加实时回调分配或 I/O。验证和原厂截图见 [MIDI Send 验证](../verification/reaper-parity/midi-sends.md)。

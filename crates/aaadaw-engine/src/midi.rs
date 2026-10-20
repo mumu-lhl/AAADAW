@@ -353,6 +353,51 @@ struct ActiveNoteQuery {
     sample: u64,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct MidiTrackRoute {
+    track_id: TrackId,
+    source_channel: Option<u8>,
+    destination_channel: Option<u8>,
+}
+
+impl MidiTrackRoute {
+    fn source(track_id: TrackId) -> Self {
+        Self {
+            track_id,
+            source_channel: None,
+            destination_channel: None,
+        }
+    }
+
+    fn map_channel(self, channel: u8) -> Option<u8> {
+        if self.source_channel.is_some_and(|source| source != channel) {
+            return None;
+        }
+        Some(self.destination_channel.unwrap_or(channel))
+    }
+
+    fn through_send(
+        mut self,
+        destination: TrackId,
+        parameters: aaadaw_core::AudioSendParameters,
+    ) -> Option<Self> {
+        if let Some(required_channel) = parameters.midi_source_channel {
+            let channel_at_send = self.destination_channel.or(self.source_channel);
+            if channel_at_send.is_some_and(|channel| channel != required_channel) {
+                return None;
+            }
+            if self.destination_channel.is_none() {
+                self.source_channel = Some(required_channel);
+            }
+        }
+        if parameters.midi_destination_channel.is_some() {
+            self.destination_channel = parameters.midi_destination_channel;
+        }
+        self.track_id = destination;
+        Some(self)
+    }
+}
+
 /// A sorted MIDI note-event schedule compiled from an immutable project state.
 #[derive(Clone, Debug, Default)]
 pub struct MidiEventPlan {
@@ -370,11 +415,16 @@ pub struct MidiEventPlan {
 fn midi_route_destinations(
     project: &Project,
     source: TrackId,
-) -> Result<Vec<TrackId>, MidiScheduleError> {
-    let mut destinations = vec![source];
-    let mut pending = vec![source];
+) -> Result<Vec<MidiTrackRoute>, MidiScheduleError> {
+    let source_route = MidiTrackRoute::source(source);
+    let mut destinations = vec![source_route];
+    let mut pending = vec![source_route];
     while let Some(track_id) = pending.pop() {
-        let Some(track) = project.tracks().iter().find(|track| track.id() == track_id) else {
+        let Some(track) = project
+            .tracks()
+            .iter()
+            .find(|track| track.id() == track_id.track_id)
+        else {
             continue;
         };
         if let Some(destination) = track
@@ -384,19 +434,23 @@ fn midi_route_destinations(
             if destinations.len() == MAX_COMPILED_MIDI_EVENTS {
                 return Err(MidiScheduleError::EventLimitExceeded);
             }
-            destinations.push(destination);
-            pending.push(destination);
+            let mut route = track_id;
+            route.track_id = destination;
+            destinations.push(route);
+            pending.push(route);
         }
         for send in track.sends().iter().rev().filter(|send| {
             let parameters = send.parameters();
             parameters.midi_enabled && !parameters.muted
         }) {
+            let Some(route) = track_id.through_send(send.destination(), send.parameters()) else {
+                continue;
+            };
             if destinations.len() == MAX_COMPILED_MIDI_EVENTS {
                 return Err(MidiScheduleError::EventLimitExceeded);
             }
-            let destination = send.destination();
-            destinations.push(destination);
-            pending.push(destination);
+            destinations.push(route);
+            pending.push(route);
         }
     }
     Ok(destinations)
@@ -500,7 +554,7 @@ impl MidiEventPlan {
         let mut pitch_bend_timelines = Vec::<PitchBendTimeline>::new();
         let mut program_timelines = Vec::<ProgramTimeline>::new();
         let mut pressure_timelines = Vec::<PressureTimeline>::new();
-        let mut midi_routes = HashMap::<TrackId, Vec<TrackId>>::new();
+        let mut midi_routes = HashMap::<TrackId, Vec<MidiTrackRoute>>::new();
         let mut routed_note_ids = HashMap::<(TrackId, NoteId, usize), NoteId>::new();
         let mut used_note_ids: std::collections::HashSet<_> = project
             .midi_items()
@@ -513,52 +567,13 @@ impl MidiEventPlan {
         let mut reachable_solo = std::collections::HashMap::new();
         if filter_audibility && has_solo {
             for track in tracks {
-                let mut pending: Vec<_> = track
-                    .effective_output_track()
-                    .filter(|_| track.main_send_enabled())
-                    .into_iter()
-                    .chain(
-                        track
-                            .sends()
+                let routes = midi_route_destinations(project, track.id())?;
+                let routed_to_solo = routes.iter().any(|route| {
+                    route.track_id != track.id()
+                        && tracks
                             .iter()
-                            .filter(|send| {
-                                let parameters = send.parameters();
-                                parameters.midi_enabled && !parameters.muted
-                            })
-                            .map(|send| send.destination()),
-                    )
-                    .collect();
-                let mut visited = std::collections::HashSet::new();
-                let mut routed_to_solo = false;
-                while let Some(target_id) = pending.pop() {
-                    if !visited.insert(target_id) {
-                        continue;
-                    }
-                    let Some(target) = tracks.iter().find(|candidate| candidate.id() == target_id)
-                    else {
-                        continue;
-                    };
-                    if target.is_solo() {
-                        routed_to_solo = true;
-                        break;
-                    }
-                    pending.extend(
-                        target
-                            .effective_output_track()
-                            .filter(|_| target.main_send_enabled())
-                            .into_iter()
-                            .chain(
-                                target
-                                    .sends()
-                                    .iter()
-                                    .filter(|send| {
-                                        let parameters = send.parameters();
-                                        parameters.midi_enabled && !parameters.muted
-                                    })
-                                    .map(|send| send.destination()),
-                            ),
-                    );
-                }
+                            .any(|target| target.id() == route.track_id && target.is_solo())
+                });
                 reachable_solo.insert(track.id(), routed_to_solo);
             }
         }
@@ -597,7 +612,10 @@ impl MidiEventPlan {
                         .min(clip_end_position);
                     let start_sample = sample_at_midi_position(project, start_position)?;
                     let end_sample = sample_at_midi_position(project, end_position)?;
-                    for (route_index, routed_track) in routed_tracks.iter().enumerate() {
+                    for (route_index, route) in routed_tracks.iter().enumerate() {
+                        let Some(channel) = route.map_channel(note.channel()) else {
+                            continue;
+                        };
                         if events.len() > MAX_COMPILED_MIDI_EVENTS - 2 {
                             return Err(MidiScheduleError::EventLimitExceeded);
                         }
@@ -626,16 +644,16 @@ impl MidiEventPlan {
                         notes.push(CompiledMidiNote {
                             start_sample,
                             end_sample,
-                            track_id: *routed_track,
-                            channel: note.channel(),
+                            track_id: route.track_id,
+                            channel,
                             note_id: routed_note_id,
                             pitch: note.pitch(),
                             velocity: note.velocity(),
                         });
                         events.push(CompiledMidiEvent {
                             absolute_sample: start_sample,
-                            track_id: *routed_track,
-                            channel: note.channel(),
+                            track_id: route.track_id,
+                            channel,
                             note_id: Some(routed_note_id),
                             pitch: note.pitch(),
                             velocity: note.velocity(),
@@ -648,8 +666,8 @@ impl MidiEventPlan {
                         });
                         events.push(CompiledMidiEvent {
                             absolute_sample: end_sample,
-                            track_id: *routed_track,
-                            channel: note.channel(),
+                            track_id: route.track_id,
+                            channel,
                             note_id: Some(routed_note_id),
                             pitch: note.pitch(),
                             velocity: note.off_velocity(),
@@ -666,21 +684,25 @@ impl MidiEventPlan {
             for controller in item.controllers() {
                 for position in item.project_positions_at_content_tick(controller.tick) {
                     let absolute_sample = sample_at_midi_position(project, position)?;
-                    for routed_track in routed_tracks {
+                    for route in routed_tracks {
+                        let Some(channel) = route.map_channel(controller.channel) else {
+                            continue;
+                        };
+                        let routed_track = route.track_id;
                         if events.len() == MAX_COMPILED_MIDI_EVENTS {
                             return Err(MidiScheduleError::EventLimitExceeded);
                         }
                         let timeline = controller_timelines.iter_mut().find(|timeline| {
-                            timeline.track_id == *routed_track
-                                && timeline.channel == controller.channel
+                            timeline.track_id == routed_track
+                                && timeline.channel == channel
                                 && timeline.controller == controller.controller
                         });
                         let timeline = if let Some(timeline) = timeline {
                             timeline
                         } else {
                             controller_timelines.push(ControllerTimeline {
-                                track_id: *routed_track,
-                                channel: controller.channel,
+                                track_id: routed_track,
+                                channel,
                                 controller: controller.controller,
                                 values: Vec::new(),
                             });
@@ -694,8 +716,8 @@ impl MidiEventPlan {
                         });
                         events.push(CompiledMidiEvent {
                             absolute_sample,
-                            track_id: *routed_track,
-                            channel: controller.channel,
+                            track_id: routed_track,
+                            channel,
                             note_id: None,
                             pitch: controller.controller,
                             velocity: controller.value,
@@ -712,19 +734,23 @@ impl MidiEventPlan {
             for bend in item.pitch_bends() {
                 for position in item.project_positions_at_content_tick(bend.tick) {
                     let absolute_sample = sample_at_midi_position(project, position)?;
-                    for routed_track in routed_tracks {
+                    for route in routed_tracks {
+                        let Some(channel) = route.map_channel(bend.channel) else {
+                            continue;
+                        };
+                        let routed_track = route.track_id;
                         if events.len() == MAX_COMPILED_MIDI_EVENTS {
                             return Err(MidiScheduleError::EventLimitExceeded);
                         }
                         let timeline = pitch_bend_timelines.iter_mut().find(|timeline| {
-                            timeline.track_id == *routed_track && timeline.channel == bend.channel
+                            timeline.track_id == routed_track && timeline.channel == channel
                         });
                         let timeline = if let Some(timeline) = timeline {
                             timeline
                         } else {
                             pitch_bend_timelines.push(PitchBendTimeline {
-                                track_id: *routed_track,
-                                channel: bend.channel,
+                                track_id: routed_track,
+                                channel,
                                 values: Vec::new(),
                             });
                             pitch_bend_timelines
@@ -737,8 +763,8 @@ impl MidiEventPlan {
                         });
                         events.push(CompiledMidiEvent {
                             absolute_sample,
-                            track_id: *routed_track,
-                            channel: bend.channel,
+                            track_id: routed_track,
+                            channel,
                             note_id: None,
                             pitch: 0,
                             velocity: 0,
@@ -755,19 +781,23 @@ impl MidiEventPlan {
             for change in item.program_changes() {
                 for position in item.project_positions_at_content_tick(change.tick) {
                     let absolute_sample = sample_at_midi_position(project, position)?;
-                    for routed_track in routed_tracks {
+                    for route in routed_tracks {
+                        let Some(channel) = route.map_channel(change.channel) else {
+                            continue;
+                        };
+                        let routed_track = route.track_id;
                         if events.len() == MAX_COMPILED_MIDI_EVENTS {
                             return Err(MidiScheduleError::EventLimitExceeded);
                         }
                         let timeline = program_timelines.iter_mut().find(|timeline| {
-                            timeline.track_id == *routed_track && timeline.channel == change.channel
+                            timeline.track_id == routed_track && timeline.channel == channel
                         });
                         let timeline = if let Some(timeline) = timeline {
                             timeline
                         } else {
                             program_timelines.push(ProgramTimeline {
-                                track_id: *routed_track,
-                                channel: change.channel,
+                                track_id: routed_track,
+                                channel,
                                 values: Vec::new(),
                             });
                             program_timelines
@@ -780,8 +810,8 @@ impl MidiEventPlan {
                         });
                         events.push(CompiledMidiEvent {
                             absolute_sample,
-                            track_id: *routed_track,
-                            channel: change.channel,
+                            track_id: routed_track,
+                            channel,
                             note_id: None,
                             pitch: 0,
                             velocity: 0,
@@ -798,21 +828,25 @@ impl MidiEventPlan {
             for pressure in item.poly_aftertouches() {
                 for position in item.project_positions_at_content_tick(pressure.tick) {
                     let absolute_sample = sample_at_midi_position(project, position)?;
-                    for routed_track in routed_tracks {
+                    for route in routed_tracks {
+                        let Some(channel) = route.map_channel(pressure.channel) else {
+                            continue;
+                        };
+                        let routed_track = route.track_id;
                         if events.len() == MAX_COMPILED_MIDI_EVENTS {
                             return Err(MidiScheduleError::EventLimitExceeded);
                         }
                         let timeline = pressure_timelines.iter_mut().find(|timeline| {
-                            timeline.track_id == *routed_track
-                                && timeline.channel == pressure.channel
+                            timeline.track_id == routed_track
+                                && timeline.channel == channel
                                 && timeline.note == Some(pressure.note)
                         });
                         let timeline = if let Some(timeline) = timeline {
                             timeline
                         } else {
                             pressure_timelines.push(PressureTimeline {
-                                track_id: *routed_track,
-                                channel: pressure.channel,
+                                track_id: routed_track,
+                                channel,
                                 note: Some(pressure.note),
                                 kind: MidiEventKind::PolyAftertouch,
                                 values: Vec::new(),
@@ -827,8 +861,8 @@ impl MidiEventPlan {
                         });
                         events.push(CompiledMidiEvent {
                             absolute_sample,
-                            track_id: *routed_track,
-                            channel: pressure.channel,
+                            track_id: routed_track,
+                            channel,
                             note_id: None,
                             pitch: pressure.note,
                             velocity: pressure.value,
@@ -845,21 +879,25 @@ impl MidiEventPlan {
             for pressure in item.channel_pressures() {
                 for position in item.project_positions_at_content_tick(pressure.tick) {
                     let absolute_sample = sample_at_midi_position(project, position)?;
-                    for routed_track in routed_tracks {
+                    for route in routed_tracks {
+                        let Some(channel) = route.map_channel(pressure.channel) else {
+                            continue;
+                        };
+                        let routed_track = route.track_id;
                         if events.len() == MAX_COMPILED_MIDI_EVENTS {
                             return Err(MidiScheduleError::EventLimitExceeded);
                         }
                         let timeline = pressure_timelines.iter_mut().find(|timeline| {
-                            timeline.track_id == *routed_track
-                                && timeline.channel == pressure.channel
+                            timeline.track_id == routed_track
+                                && timeline.channel == channel
                                 && timeline.note.is_none()
                         });
                         let timeline = if let Some(timeline) = timeline {
                             timeline
                         } else {
                             pressure_timelines.push(PressureTimeline {
-                                track_id: *routed_track,
-                                channel: pressure.channel,
+                                track_id: routed_track,
+                                channel,
                                 note: None,
                                 kind: MidiEventKind::ChannelPressure,
                                 values: Vec::new(),
@@ -874,8 +912,8 @@ impl MidiEventPlan {
                         });
                         events.push(CompiledMidiEvent {
                             absolute_sample,
-                            track_id: *routed_track,
-                            channel: pressure.channel,
+                            track_id: routed_track,
+                            channel,
                             note_id: None,
                             pitch: 0,
                             velocity: pressure.value,
@@ -910,13 +948,13 @@ impl MidiEventPlan {
                 sysex_payload.extend_from_slice(data);
                 for position in item.project_positions_at_content_tick(opaque_event.tick) {
                     let absolute_sample = sample_at_midi_position(project, position)?;
-                    for routed_track in routed_tracks {
+                    for route in routed_tracks {
                         if events.len() == MAX_COMPILED_MIDI_EVENTS {
                             return Err(MidiScheduleError::EventLimitExceeded);
                         }
                         events.push(CompiledMidiEvent {
                             absolute_sample,
-                            track_id: *routed_track,
+                            track_id: route.track_id,
                             channel: 0,
                             note_id: None,
                             pitch: 0,

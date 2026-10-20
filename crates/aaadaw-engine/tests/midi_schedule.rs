@@ -2067,6 +2067,171 @@ fn midi_send_routes_notes_controls_and_bends_over_nested_paths() {
 }
 
 #[test]
+fn midi_send_composes_channel_filters_and_mappings_for_channel_voice_events() {
+    let (mut project, source) = project_with_note(60, 0, 240);
+    for (index, name) in [(1, "Intermediate"), (2, "Receiver")] {
+        project
+            .apply(DawAction::CreateTrack {
+                index,
+                name: name.into(),
+            })
+            .unwrap();
+    }
+    let intermediate = project.tracks()[1].id();
+    let receiver = project.tracks()[2].id();
+    let item_id = project.midi_items()[0].id();
+    project
+        .apply(DawAction::AddMidiNotes {
+            item_id,
+            notes: [1, 2]
+                .into_iter()
+                .enumerate()
+                .map(|(index, channel)| MidiNoteData {
+                    channel,
+                    pitch: 61 + index as u8,
+                    tick: 0,
+                    duration: 240,
+                    velocity: 100,
+                    off_velocity: 0,
+                })
+                .collect(),
+        })
+        .unwrap();
+    project
+        .apply(DawAction::SetMidiControllers {
+            item_id,
+            controllers: (0..3)
+                .map(|channel| MidiControllerData {
+                    channel,
+                    controller: 64,
+                    tick: 60,
+                    value: 127,
+                })
+                .collect(),
+        })
+        .unwrap();
+    project
+        .apply(DawAction::SetMidiPitchBends {
+            item_id,
+            pitch_bends: (0..3)
+                .map(|channel| MidiPitchBendData {
+                    channel,
+                    tick: 72,
+                    value: 9_000,
+                })
+                .collect(),
+        })
+        .unwrap();
+    project
+        .apply(DawAction::SetMidiProgramChanges {
+            item_id,
+            program_changes: (0..3)
+                .map(|channel| MidiProgramChangeData {
+                    channel,
+                    tick: 84,
+                    program: 8,
+                })
+                .collect(),
+        })
+        .unwrap();
+    project
+        .apply(DawAction::SetMidiPolyAftertouches {
+            item_id,
+            poly_aftertouches: (0..3)
+                .map(|channel| MidiPolyAftertouchData {
+                    channel,
+                    tick: 96,
+                    note: 60,
+                    value: 70,
+                })
+                .collect(),
+        })
+        .unwrap();
+    project
+        .apply(DawAction::SetMidiChannelPressures {
+            item_id,
+            channel_pressures: (0..3)
+                .map(|channel| MidiChannelPressureData {
+                    channel,
+                    tick: 108,
+                    value: 80,
+                })
+                .collect(),
+        })
+        .unwrap();
+    project
+        .apply(DawAction::CreateAudioSend {
+            track_id: source,
+            destination: intermediate,
+            parameters: aaadaw_core::AudioSendParameters {
+                midi_source_channel: Some(1),
+                midi_destination_channel: Some(5),
+                ..Default::default()
+            },
+        })
+        .unwrap();
+    project
+        .apply(DawAction::CreateAudioSend {
+            track_id: intermediate,
+            destination: receiver,
+            parameters: aaadaw_core::AudioSendParameters {
+                midi_source_channel: Some(5),
+                midi_destination_channel: Some(7),
+                ..Default::default()
+            },
+        })
+        .unwrap();
+
+    let plan = MidiEventPlan::compile(&project).unwrap();
+    let mut events = [None; 64];
+    let count = plan.events_for_block(0, 48_000, &mut events).unwrap();
+    let received = events[..count]
+        .iter()
+        .filter_map(|event| event.filter(|event| event.track_id == receiver))
+        .collect::<Vec<_>>();
+    assert_eq!(received.len(), 7);
+    assert!(received.iter().all(|event| event.channel == 7));
+    for kind in [
+        MidiEventKind::NoteOn,
+        MidiEventKind::NoteOff,
+        MidiEventKind::ControllerChange,
+        MidiEventKind::PitchBend,
+        MidiEventKind::ProgramChange,
+        MidiEventKind::PolyAftertouch,
+        MidiEventKind::ChannelPressure,
+    ] {
+        assert_eq!(
+            received.iter().filter(|event| event.kind == kind).count(),
+            1
+        );
+    }
+
+    let mut active_notes = [None; 8];
+    let chased_notes = plan.active_notes_at(1, &mut active_notes).unwrap();
+    assert!(active_notes[..chased_notes].iter().any(|event| {
+        event.is_some_and(|event| event.track_id == receiver && event.channel == 7)
+    }));
+    let mut active_controllers = [None; 8];
+    let chased_controllers = plan
+        .active_controllers_at(2_000, &mut active_controllers)
+        .unwrap();
+    assert!(
+        active_controllers[..chased_controllers]
+            .iter()
+            .any(|event| {
+                event.is_some_and(|event| event.track_id == receiver && event.channel == 7)
+            })
+    );
+    let mut active_bends = [None; 8];
+    let chased_bends = plan
+        .active_pitch_bends_at(2_000, &mut active_bends)
+        .unwrap();
+    assert!(active_bends[..chased_bends].iter().any(|event| {
+        event.is_some_and(|event| event.track_id == receiver && event.channel == 7)
+    }));
+}
+
+#[test]
 fn soloed_folder_keeps_events_on_child_instruments_through_parent_send() {
     let mut project = Project::with_settings(
         aaadaw_core::ProjectSettings::default()

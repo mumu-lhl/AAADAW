@@ -1,6 +1,6 @@
 # MIDI Send 基础（AAADAW-ROUTING-003）
 
-2026-10-17；Linux REAPER 7.82 / Default 7 / factory configuration；`ROUTE-SEND-001` 仍为 `in_progress`。本切片实现 REAPER 普通 Send 的 MIDI `All → All` 默认行为和逐条关闭开关，不表示通道映射或 P3 已完成。
+2026-10-20；Linux REAPER 7.82 / Default 7 / factory configuration；`ROUTE-SEND-001` 仍为 `in_progress`。本文记录普通 Send 的 All→All 默认、MIDI 开关、源通道筛选及目标通道重映射；不表示 MIDI Bus、完整路由界面或 P3 已完成。
 
 ## 原厂参照
 
@@ -20,4 +20,10 @@ SQLite schema 58 增加 `track_sends.midi_enabled`，旧 Send 默认迁移为 tr
 
 ## 剩余差异
 
-普通 Send 的通道筛选/重映射和 MIDI Bus 仍未建模；事件本身的通道字段现已持久化，详见[实时与工程 MIDI 通道验证](live-midi-channels.md)。MIDI 事件现会跟随启用的 Folder Parent 主输出并逐层传播，关闭任一层的主发送会截断后续路由；AAADAW 引擎回归见[文件夹验证](folder-parent-routing.md)，REAPER 原厂事件计数见[Folder Parent MIDI fixture](folder-parent-midi.md)。硬件 MIDI I/O、Feedback、PDC、Routing Matrix/Wiring 和完整 Send/Receive 操作布局也未完成。原厂 Undo 历史与主题像素差异没有在本切片验证。`ROUTE-SEND-001`、P3 和全量 REAPER 对齐继续保持未完成。
+## 源通道筛选与目标通道映射
+
+REAPER 的 `I_MIDIFLAGS` 低 5 位表示源通道（0=All、1–16=指定通道），接着 5 位表示目标通道（0=原通道、1–16=映射通道）。原厂探针在一个 Note、CC、Pitch Bend、Program Change、Poly Aftertouch 与 Channel Pressure 多通道序列上分别测了 All→All、Channel 2→Original、All→Channel 6 和 Channel 2→Channel 6；全部事件类型均只从所选源通道通过，并按目标规则保留或重映射。逐通道计数与解释见[原厂结果](fixtures/midi-send-channel-map-native.tsv)，原厂 Routing 窗截图显示 Channel 2 → Channel 6：[REAPER 7.82](fixtures/midi-send-channel-map-native-after.png)。Lua/JSFX 探针及复现脚本见[probe](../../../scripts/reaper_parity/probe-midi-send-channel-map.lua)、[JSFX](../../../scripts/reaper_parity/jsfx/aaadaw-midi-send-channel-map-probe.jsfx)和[capture 脚本](../../../scripts/reaper_parity/capture-midi-send-channel-map-native.sh)。
+
+AAADAW 的 Send 参数保存零基源/目标通道（`None` 分别代表 All 和 Original）；schema 71 给旧 Send 增加两个可空、0..15 约束列，旧工程保持 All→Original。Routing 面板提供 All/Channel 1–16 和 Original/Channel 1–16 选择项，Receive 显示该 Send 的实际设置。预编译 MIDI 路由会逐跳组合过滤与映射，覆盖 Note On/Off、CC、Pitch Bend、Program Change、Poly Aftertouch 和 Channel Pressure；目标通道同时用于 seek chase 状态。SysEx 不带 MIDI 通道，不受通道筛选或重映射影响。引擎测试覆盖 Channel 2→6→8 的两段路径、其余来源通道丢弃和七种带通道事件/状态追赶；存储测试覆盖映射往返及 schema 70→71 的旧工程默认。nightly Cranelift 桌面二进制在 Xvfb 1280×800 下现场启动，操作 Track 的 IO 按钮打开 Routing 面板；[AAADAW 通道控件截图](fixtures/midi-send-channel-map-aaadaw-channels.png)展示 Channel 2 → Channel 6，原始和面板操作截图、Linux 7.82 原厂结果与哈希记录见[证据清单](fixtures/midi-send-channel-map-evidence.tsv)。
+
+MIDI Bus 仍未建模；实时与工程 MIDI 通道字段边界见[通道验证](live-midi-channels.md)。Folder Parent 主输出的逐层转发见[文件夹验证](folder-parent-routing.md)和[原厂事件计数](folder-parent-midi.md)。硬件 MIDI I/O、Feedback、PDC、Routing Matrix/Wiring 和完整 Send/Receive 操作布局也未完成。原厂 Undo 历史与主题像素差异没有在本切片验证。`ROUTE-SEND-001`、P3 和全量 REAPER 对齐继续保持未完成。

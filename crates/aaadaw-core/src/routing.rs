@@ -33,6 +33,10 @@ pub struct AudioSendParameters {
     pub phase_inverted: bool,
     /// Forward the source track's MIDI events through this send.
     pub midi_enabled: bool,
+    /// Zero-based source MIDI channel, or `None` to pass every channel.
+    pub midi_source_channel: Option<u8>,
+    /// Zero-based destination MIDI channel, or `None` to preserve each event's channel.
+    pub midi_destination_channel: Option<u8>,
 }
 impl Default for AudioSendParameters {
     fn default() -> Self {
@@ -44,6 +48,8 @@ impl Default for AudioSendParameters {
             phase_inverted: false,
             // REAPER creates ordinary sends with MIDI set to All -> All.
             midi_enabled: true,
+            midi_source_channel: None,
+            midi_destination_channel: None,
         }
     }
 }
@@ -53,6 +59,10 @@ impl AudioSendParameters {
             && 10.0_f32.powf(self.volume_db / 20.0).is_finite()
             && self.pan.is_finite()
             && (-1.0..=1.0).contains(&self.pan)
+            && self.midi_source_channel.is_none_or(|channel| channel < 16)
+            && self
+                .midi_destination_channel
+                .is_none_or(|channel| channel < 16)
     }
 }
 

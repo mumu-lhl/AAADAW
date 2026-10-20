@@ -19,6 +19,40 @@ impl fmt::Display for Tap {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct MidiSourceChannel(Option<u8>);
+impl fmt::Display for MidiSourceChannel {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.0 {
+            Some(channel) => write!(f, "Channel {}", channel + 1),
+            None => f.write_str("All"),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct MidiDestinationChannel(Option<u8>);
+impl fmt::Display for MidiDestinationChannel {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.0 {
+            Some(channel) => write!(f, "Channel {}", channel + 1),
+            None => f.write_str("Original"),
+        }
+    }
+}
+
+fn midi_source_channel_choices() -> Vec<MidiSourceChannel> {
+    std::iter::once(MidiSourceChannel(None))
+        .chain((0..16).map(|channel| MidiSourceChannel(Some(channel))))
+        .collect()
+}
+
+fn midi_destination_channel_choices() -> Vec<MidiDestinationChannel> {
+    std::iter::once(MidiDestinationChannel(None))
+        .chain((0..16).map(|channel| MidiDestinationChannel(Some(channel))))
+        .collect()
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct Destination {
     id: TrackId,
@@ -165,7 +199,11 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
             .spacing(tokens::ROW_GAP),
             row![
                 checkbox(parameters.midi_enabled)
-                    .label("Send MIDI · All → All")
+                    .label(format!(
+                        "Send MIDI · {} → {}",
+                        MidiSourceChannel(parameters.midi_source_channel),
+                        MidiDestinationChannel(parameters.midi_destination_channel)
+                    ))
                     .on_toggle(move |midi_enabled| Message::RoutingChange(
                         DawAction::UpdateAudioSend {
                             track_id: source,
@@ -177,6 +215,47 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
                             },
                         }
                     )),
+            ]
+            .spacing(tokens::SECTION_GAP),
+            row![
+                column![
+                    text("MIDI source").size(11),
+                    pick_list(
+                        midi_source_channel_choices(),
+                        Some(MidiSourceChannel(parameters.midi_source_channel)),
+                        move |channel| Message::RoutingChange(DawAction::UpdateAudioSend {
+                            track_id: source,
+                            send_id: id,
+                            destination,
+                            parameters: AudioSendParameters {
+                                midi_source_channel: channel.0,
+                                ..parameters
+                            },
+                        })
+                    )
+                ]
+                .width(Length::Fill),
+                text("→"),
+                column![
+                    text("MIDI destination").size(11),
+                    pick_list(
+                        midi_destination_channel_choices(),
+                        Some(MidiDestinationChannel(parameters.midi_destination_channel)),
+                        move |channel| Message::RoutingChange(DawAction::UpdateAudioSend {
+                            track_id: source,
+                            send_id: id,
+                            destination,
+                            parameters: AudioSendParameters {
+                                midi_destination_channel: channel.0,
+                                ..parameters
+                            },
+                        })
+                    )
+                ]
+                .width(Length::Fill),
+            ]
+            .spacing(tokens::ROW_GAP),
+            row![
                 checkbox(parameters.muted)
                     .label("Mute")
                     .on_toggle(
@@ -246,9 +325,13 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
                             parameters.volume_db,
                             parameters.pan,
                             if parameters.midi_enabled {
-                                "All → All"
+                                format!(
+                                    "{} → {}",
+                                    MidiSourceChannel(parameters.midi_source_channel),
+                                    MidiDestinationChannel(parameters.midi_destination_channel)
+                                )
                             } else {
-                                "Off"
+                                "Off".to_owned()
                             }
                         ))
                         .size(11),
