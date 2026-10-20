@@ -82,7 +82,7 @@ fn midi_event(
         velocity,
         controller,
         channel: 0,
-        reserved: 0,
+        bus: 0,
         sysex_offset: u32::MAX,
         sysex_length: 0,
     }

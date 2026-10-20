@@ -1,0 +1,23 @@
+key	value
+reference	Linux REAPER 7.82 / x86_64 / Default 7 factory configuration
+native_probe	scripts/reaper_parity/probe-midi-send-buses.lua SHA-256 71511eb1149787db16c6fc8083e4dfb70f830e8befad8a305cab0167e26f7f8c
+native_source_jsfx	scripts/reaper_parity/jsfx/aaadaw-midi-send-bus-source-probe.jsfx SHA-256 79f48fe3f0785334caca6fddf9e7db1a9f74e9d33dad6d61118b7cc80118108d
+native_receiver_jsfx	scripts/reaper_parity/jsfx/aaadaw-midi-send-bus-probe.jsfx SHA-256 61c38e53c43aed46741931dc43c076fe56a3c26700ece8333c642302122229e8
+native_capture_script	scripts/reaper_parity/capture-midi-send-buses-native.sh SHA-256 5b15ac81aff8c2096ab06292e19de85ed2b8624d790d726f53b8602a1ae73cf7
+native_routing_screenshot	midi-send-buses-native.png SHA-256 3195d30185fc07d3b2c27f21ce4521ea756860e9a148a7305214fc98c4d4cb85; shows MIDI All -> B2
+native_event_counts	midi-send-buses-native.tsv SHA-256 6172679446f4d5bbc67345d67736f1052f1a0257c2779e6900c4b6ea4f448f6f; All preserves Bus 2, Bus 1 filter drops, Bus 2 passes; destinations Bus 1/2 map; wrong source Bus is rejected
+native_selected_project	midi-send-buses-after.rpp SHA-256 ba5028a88289c536856cb7784acd2a479a29388148b9059c2c09229eb9694f74
+native_actions	midi-send-buses-actions.tsv SHA-256 16b37acfe5d242e2ff2405be552c7d341e8ed34b27dd8268569839cc56a1bb38
+aaadaw_fixture	midi-send-buses-aaadaw.aaadaw SHA-256 4d82f321871994849982f35687c5c780b47c031664dd16f72f4e643e6bbc0b6b; channel 2 -> 6 and All Bus -> Bus 2
+aaadaw_capture_script	scripts/reaper_parity/capture-midi-send-buses-aaadaw.sh SHA-256 169411252eaee4a692071668fa66d87f04cb6cc94818287bcb34b275e6a6fcd0
+aaadaw_build	Nightly Cranelift; cargo +nightly -Zcodegen-backend build -p aaadaw --bin aaadaw; Build ID c1bce9ca46e1056ffd31ac48c5a30dcd4ce7bdeb; SHA-256 c9f4d46a3017b5df63f8fa64a1348b20e2e50ab1a939126ef5f001300c4321a4
+aaadaw_arrange_capture	1280x800 live Xvfb desktop; midi-send-buses-aaadaw-arrange.png SHA-256 d6b635eb08e0be94fdac508aa9cbb5ed59003518158483064bb5e8fad9b8a10b
+aaadaw_routing_capture	1280x800 live Xvfb Routing window; midi-send-buses-aaadaw-routing.png SHA-256 f8da72efb709c8946ba262a0f0f4018a9331cbda7aa0fa4063078b1e121002fe
+aaadaw_controls_capture	1280x800 live Xvfb scrolled Routing controls; midi-send-buses-aaadaw-controls.png SHA-256 3031325a34bdca0e429325784d54497e8e03f19b34df4e321091d51d242e693a
+aaadaw_receives_capture	1280x800 live Xvfb receiver Routing window shows Channel 2 -> Channel 6 and Bus All -> Bus 2; midi-send-buses-aaadaw-receives.png SHA-256 6b8a700fa43acb48f99ee2039751fe7357d83d41a19c701b1700e24dcc889163
+engine_tests	Nightly Cranelift aaadaw-engine --lib and --test midi_schedule: 129/129 passed; includes multi-hop Bus 1 -> Bus 2 -> Bus 3, source-bus rejection, CLAP note-port selection across the isolated helper IPC boundary, nonzero bus serialization and protocol checks
+helper_process_tests	Stable aaadaw-engine --test clap_helper_process under Xvfb: 11/11 passed; nested CLAP build succeeds and live GUI helper lifecycle remains functional
+core_tests	Nightly Cranelift aaadaw-core --test audio_sends: 4/4 passed; snapshot/Undo and invalid bus boundaries
+storage_tests	Nightly Cranelift aaadaw-storage --test project_store: 72/72 passed; includes schema 71 -> 72 defaults and Bus round-trip
+static_checks	Stable cargo check for core/engine/storage/aaadaw; strict all-target Clippy for all touched crates; bash -n on both capture scripts; cargo fmt and git diff checks completed
+open_scope	ROUTE-SEND-001 remains in_progress; CLAP note-port mapping still needs an independent REAPER end-to-end comparison; hardware MIDI I/O, Feedback/PDC, Routing Matrix/Wiring and full Routing window interaction remain open

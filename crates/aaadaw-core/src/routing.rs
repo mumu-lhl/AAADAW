@@ -37,6 +37,10 @@ pub struct AudioSendParameters {
     pub midi_source_channel: Option<u8>,
     /// Zero-based destination MIDI channel, or `None` to preserve each event's channel.
     pub midi_destination_channel: Option<u8>,
+    /// Zero-based source MIDI bus, or `None` to accept every bus.
+    pub midi_source_bus: Option<u8>,
+    /// Zero-based destination MIDI bus, or `None` to preserve each event's bus.
+    pub midi_destination_bus: Option<u8>,
 }
 impl Default for AudioSendParameters {
     fn default() -> Self {
@@ -50,6 +54,8 @@ impl Default for AudioSendParameters {
             midi_enabled: true,
             midi_source_channel: None,
             midi_destination_channel: None,
+            midi_source_bus: None,
+            midi_destination_bus: None,
         }
     }
 }
@@ -63,6 +69,8 @@ impl AudioSendParameters {
             && self
                 .midi_destination_channel
                 .is_none_or(|channel| channel < 16)
+            && self.midi_source_bus.is_none_or(|bus| bus < 16)
+            && self.midi_destination_bus.is_none_or(|bus| bus < 16)
     }
 }
 

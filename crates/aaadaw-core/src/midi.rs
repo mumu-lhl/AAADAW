@@ -9,6 +9,7 @@ use std::sync::Arc;
 pub const MIDI_ITEM_SUBTICKS_PER_TICK: u16 = 200;
 /// Number of addressable MIDI 1.0 channels in one event.
 pub const MIDI_CHANNEL_COUNT: u8 = 16;
+pub const MIDI_BUS_COUNT: u8 = 16;
 
 /// An exact MIDI item position measured in project ticks and 1/200-tick units.
 #[derive(Clone, Copy, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]

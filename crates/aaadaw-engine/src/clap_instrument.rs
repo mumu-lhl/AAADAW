@@ -480,10 +480,17 @@ pub struct ClapInstrumentProcessor {
     input_events: EventBuffer,
     active_notes: Vec<ActiveNote>,
     active_note_scratch: Vec<ActiveNote>,
-    input_note_port: u16,
-    input_midi_port: Option<u16>,
+    input_note_ports: [Option<u16>; crate::MIDI_BUS_COUNT as usize],
+    input_midi_ports: [Option<u16>; crate::MIDI_BUS_COUNT as usize],
     max_block_frames: usize,
     max_events: usize,
+}
+
+type ClapBusPortMap = [Option<u16>; crate::MIDI_BUS_COUNT as usize];
+
+struct ClapMidiInputPorts {
+    clap: ClapBusPortMap,
+    midi: ClapBusPortMap,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -491,6 +498,7 @@ struct ActiveNote {
     note_id: u32,
     pitch: u8,
     channel: u8,
+    bus: u8,
 }
 
 /// A processor stopped on the audio thread and ready to return to its control-thread owner.
@@ -837,7 +845,7 @@ impl ClapInstrumentOwner {
             ClapInstrumentError::new(format!("Could not create CLAP instrument: {error}"))
         })?;
         restore_plugin_state(&mut instance, state)?;
-        let (input_note_port, input_midi_port) = validate_stereo_synth_ports(&mut instance)?;
+        let input_ports = validate_stereo_synth_ports(&mut instance)?;
 
         let processor = instance
             .activate(
@@ -869,11 +877,14 @@ impl ClapInstrumentOwner {
                 event_scratch: Vec::with_capacity(max_events),
                 // A reset block sends three all-channel CCs and a centered pitch bend,
                 // in addition to every preallocated active-note release.
-                input_events: EventBuffer::with_capacity(max_events.saturating_add(64)),
+                input_events: EventBuffer::with_capacity(
+                    max_events
+                        .saturating_add(usize::from(crate::MIDI_BUS_COUNT).saturating_mul(64)),
+                ),
                 active_notes: Vec::with_capacity(max_events),
                 active_note_scratch: Vec::with_capacity(max_events),
-                input_note_port,
-                input_midi_port,
+                input_note_ports: input_ports.clap,
+                input_midi_ports: input_ports.midi,
                 max_block_frames,
                 max_events,
             },
@@ -1544,6 +1555,15 @@ impl ClapInstrumentProcessor {
                 event.channel
             )));
         }
+        if let Some(event) = events
+            .iter()
+            .find(|event| event.bus >= crate::MIDI_BUS_COUNT)
+        {
+            return Err(ClapInstrumentError::new(format!(
+                "MIDI bus {} is outside the 0..16 range",
+                event.bus
+            )));
+        }
         if events.iter().any(|event| {
             if event.kind == MidiEventKind::SystemExclusive {
                 event.sysex_offset == NO_SYSEX_OFFSET
@@ -1574,6 +1594,7 @@ impl ClapInstrumentProcessor {
                 event.pitch,
                 event.note_id.map_or(0, aaadaw_core::NoteId::value),
                 event.channel,
+                event.bus,
                 event.controller.unwrap_or(0),
                 event.sysex_offset,
             )
@@ -1594,6 +1615,9 @@ impl ClapInstrumentProcessor {
             ) {
                 continue;
             }
+            if self.input_note_ports[usize::from(event.bus)].is_none() {
+                continue;
+            }
             let note_id = u32::try_from(
                 event
                     .note_id
@@ -1609,6 +1633,7 @@ impl ClapInstrumentProcessor {
                 note_id,
                 pitch: event.pitch,
                 channel: event.channel,
+                bus: event.bus,
             };
             match event.kind {
                 MidiEventKind::NoteOn => {
@@ -1654,11 +1679,14 @@ impl ClapInstrumentProcessor {
                 ClapInstrumentError::new("MIDI event offset exceeds the CLAP range")
             })?;
             if event.kind == MidiEventKind::SystemExclusive {
-                let port = self.input_midi_port.ok_or_else(|| {
-                    ClapInstrumentError::new(
-                        "CLAP instrument does not support MIDI 1.0 SysEx events",
-                    )
-                })?;
+                let Some(port) = self.input_midi_ports[usize::from(event.bus)] else {
+                    if event.bus == 0 {
+                        return Err(ClapInstrumentError::new(
+                            "CLAP instrument does not support MIDI 1.0 SysEx events",
+                        ));
+                    }
+                    continue;
+                };
                 let start = event.sysex_offset as usize;
                 let end = start + event.sysex_length as usize;
                 // SAFETY: `sysex_data` belongs to the active immutable render graph or IPC
@@ -1676,11 +1704,14 @@ impl ClapInstrumentProcessor {
                     | MidiEventKind::PolyAftertouch
                     | MidiEventKind::ChannelPressure
             ) {
-                let port = self.input_midi_port.ok_or_else(|| {
-                    ClapInstrumentError::new(
-                        "CLAP instrument does not support MIDI 1.0 control events",
-                    )
-                })?;
+                let Some(port) = self.input_midi_ports[usize::from(event.bus)] else {
+                    if event.bus == 0 {
+                        return Err(ClapInstrumentError::new(
+                            "CLAP instrument does not support MIDI 1.0 control events",
+                        ));
+                    }
+                    continue;
+                };
                 let midi_bytes = match event.kind {
                     MidiEventKind::ControllerChange => [
                         0xb0 | event.channel,
@@ -1722,8 +1753,11 @@ impl ClapInstrumentProcessor {
             .ok_or_else(|| {
                 ClapInstrumentError::new("MIDI note ID exceeds the CLAP note-ID range")
             })?;
+            let Some(input_note_port) = self.input_note_ports[usize::from(event.bus)] else {
+                continue;
+            };
             let pckn = Pckn::new(
-                self.input_note_port,
+                input_note_port,
                 u16::from(event.channel),
                 u16::from(event.pitch),
                 note_id,
@@ -1770,14 +1804,10 @@ impl ClapInstrumentProcessor {
     pub(crate) fn all_notes_off(&mut self) -> Result<(), ClapInstrumentError> {
         if self.active_notes.is_empty() {
             self.input_events.clear();
-            if let Some(port) = self.input_midi_port {
-                self.push_midi_controller_all_channels(port, 64);
-                self.push_midi_controller_all_channels(port, 123);
-                self.push_midi_controller_all_channels(port, 120);
-                self.push_midi_pitch_bend_center_all_channels(port);
-            } else {
+            if !self.input_midi_ports.iter().any(Option::is_some) {
                 return Ok(());
             }
+            self.push_midi_reset_events();
             let mut discarded_audio = [[0.0, 0.0]];
             self.process_prepared_events(&mut discarded_audio)?;
             return Ok(());
@@ -1787,7 +1817,8 @@ impl ClapInstrumentProcessor {
             self.input_events.push(&NoteOffEvent::new(
                 0,
                 Pckn::new(
-                    self.input_note_port,
+                    self.input_note_ports[usize::from(note.bus)]
+                        .expect("active notes retain their supported CLAP input port"),
                     u16::from(note.channel),
                     u16::from(note.pitch),
                     note.note_id,
@@ -1795,16 +1826,20 @@ impl ClapInstrumentProcessor {
                 0.0,
             ));
         }
-        if let Some(port) = self.input_midi_port {
+        self.push_midi_reset_events();
+        let mut discarded_audio = [[0.0, 0.0]];
+        self.process_prepared_events(&mut discarded_audio)?;
+        self.active_notes.clear();
+        Ok(())
+    }
+
+    fn push_midi_reset_events(&mut self) {
+        for port in self.input_midi_ports.into_iter().flatten() {
             self.push_midi_controller_all_channels(port, 64);
             self.push_midi_controller_all_channels(port, 123);
             self.push_midi_controller_all_channels(port, 120);
             self.push_midi_pitch_bend_center_all_channels(port);
         }
-        let mut discarded_audio = [[0.0, 0.0]];
-        self.process_prepared_events(&mut discarded_audio)?;
-        self.active_notes.clear();
-        Ok(())
     }
 
     fn push_midi_controller_all_channels(&mut self, port: u16, controller: u8) {
@@ -1894,7 +1929,7 @@ impl ClapInstrumentProcessor {
     }
 
     pub(crate) fn supports_midi_controllers(&self) -> bool {
-        self.input_midi_port.is_some()
+        self.input_midi_ports.iter().any(Option::is_some)
     }
 }
 
@@ -2062,7 +2097,7 @@ fn save_plugin_state<H: HostHandlers>(
 
 fn validate_stereo_synth_ports<H: HostHandlers>(
     instance: &mut PluginInstance<H>,
-) -> Result<(u16, Option<u16>), ClapInstrumentError> {
+) -> Result<ClapMidiInputPorts, ClapInstrumentError> {
     let plugin = instance.plugin_handle();
     let ports = plugin
         .get_extension::<PluginAudioPorts>()
@@ -2096,27 +2131,40 @@ fn validate_stereo_synth_ports<H: HostHandlers>(
         .get_extension::<PluginNotePorts>()
         .ok_or_else(|| ClapInstrumentError::new("CLAP instrument does not expose note ports"))?;
     let mut note_buffer = NotePortInfoBuffer::new();
-    let mut input_note_port = None;
-    let mut input_midi_port = None;
+    let mut input_note_ports = [None; crate::MIDI_BUS_COUNT as usize];
+    let mut input_midi_ports = [None; crate::MIDI_BUS_COUNT as usize];
+    let mut clap_bus = 0;
+    let mut midi_bus = 0;
     for index in 0..note_ports.count(&plugin, true) {
         let Some(note_port) = note_ports.get(&plugin, index, true, &mut note_buffer) else {
             continue;
         };
-        if note_port.supported_dialects.supports(NoteDialect::Clap) {
-            input_note_port = Some(u16::try_from(index).map_err(|_| {
+        if note_port.supported_dialects.supports(NoteDialect::Clap)
+            && clap_bus < input_note_ports.len()
+        {
+            input_note_ports[clap_bus] = Some(u16::try_from(index).map_err(|_| {
                 ClapInstrumentError::new("CLAP instrument has too many note input ports")
             })?);
+            clap_bus += 1;
         }
-        if note_port.supported_dialects.supports(NoteDialect::Midi) && input_midi_port.is_none() {
-            input_midi_port = Some(u16::try_from(index).map_err(|_| {
+        if note_port.supported_dialects.supports(NoteDialect::Midi)
+            && midi_bus < input_midi_ports.len()
+        {
+            input_midi_ports[midi_bus] = Some(u16::try_from(index).map_err(|_| {
                 ClapInstrumentError::new("CLAP instrument has too many note input ports")
             })?);
+            midi_bus += 1;
         }
     }
-    let input_note_port = input_note_port.ok_or_else(|| {
-        ClapInstrumentError::new("CLAP instrument has no note input port supporting CLAP events")
-    })?;
-    Ok((input_note_port, input_midi_port))
+    if input_note_ports[0].is_none() {
+        return Err(ClapInstrumentError::new(
+            "CLAP instrument has no note input port supporting CLAP events",
+        ));
+    }
+    Ok(ClapMidiInputPorts {
+        clap: input_note_ports,
+        midi: input_midi_ports,
+    })
 }
 
 fn validate_stereo_effect_ports(
@@ -2350,13 +2398,13 @@ mod tests {
 
     impl<const CHANNEL_COUNT: u32> PluginNotePortsImpl for TestInstrumentMainThread<CHANNEL_COUNT> {
         fn count(&self, is_input: bool) -> u32 {
-            u32::from(is_input)
+            if is_input { 2 } else { 0 }
         }
 
         fn get(&self, index: u32, is_input: bool, writer: &mut NotePortInfoWriter<'_>) {
-            if index == 0 && is_input {
+            if index < 2 && is_input {
                 writer.set(&NotePortInfo {
-                    id: ClapId::new(1),
+                    id: ClapId::new(index + 1),
                     name: b"MIDI In",
                     supported_dialects: NoteDialects::CLAP | NoteDialects::MIDI,
                     preferred_dialect: Some(NoteDialect::Clap),
@@ -2409,8 +2457,10 @@ mod tests {
                 {
                     match input_events.next().expect("peeked event").as_core_event() {
                         Some(CoreEventSpace::NoteOn(note)) => {
-                            self.active_pitch =
-                                Some(note.key().as_specific().copied().unwrap_or(0) as u8)
+                            let pitch = note.key().as_specific().copied().unwrap_or(0) as u8;
+                            let second_port =
+                                u8::from(note.port_index().as_specific().copied() == Some(1));
+                            self.active_pitch = Some(pitch + second_port * 10);
                         }
                         Some(CoreEventSpace::NoteOff(_)) => {
                             if self.sustain {
@@ -3247,6 +3297,7 @@ mod tests {
         let events = [
             ScheduledMidiEvent {
                 channel: 0,
+                bus: 0,
                 sample_offset: 7,
                 track_id,
                 note_id: Some(note_id),
@@ -3261,6 +3312,7 @@ mod tests {
             },
             ScheduledMidiEvent {
                 channel: 0,
+                bus: 0,
                 sample_offset: 3,
                 track_id,
                 note_id: Some(note_id),
@@ -3275,6 +3327,7 @@ mod tests {
             },
             ScheduledMidiEvent {
                 channel: 0,
+                bus: 0,
                 sample_offset: 3,
                 track_id,
                 note_id: Some(note_id),
@@ -3310,6 +3363,37 @@ mod tests {
     }
 
     #[test]
+    fn processor_routes_midi_bus_to_the_corresponding_clap_note_port() {
+        let entry = test_plugin_entry::<true, 2>();
+        let (owner, mut processor) =
+            ClapInstrumentOwner::load_from_entry(entry, PLUGIN_ID, 48_000, 16, 4)
+                .expect("test synth should load");
+        let (track_id, note_id) = test_ids();
+        let event = ScheduledMidiEvent {
+            sample_offset: 0,
+            track_id,
+            note_id: Some(note_id),
+            channel: 0,
+            bus: 1,
+            pitch: 64,
+            velocity: 127,
+            controller: None,
+            pitch_bend: None,
+            program: None,
+            sysex_offset: u32::MAX,
+            sysex_length: 0,
+            kind: MidiEventKind::NoteOn,
+        };
+        let mut output = [[0.0; 2]; 2];
+        processor.process(&[event], &mut output).unwrap();
+
+        let level = 74.0 / 127.0;
+        assert!((output[0][0] - level).abs() < 0.0001);
+        assert!((output[0][1] - level * 0.5).abs() < 0.0001);
+        owner.deactivate(processor.stop());
+    }
+
+    #[test]
     fn processor_delivers_framed_sysex_to_clap_without_copying_on_the_audio_thread() {
         let entry = test_plugin_entry::<true, 2>();
         let (owner, mut processor) =
@@ -3321,6 +3405,7 @@ mod tests {
             sample_offset: 1,
             track_id,
             channel: 0,
+            bus: 0,
             note_id: None,
             pitch: 0,
             velocity: 0,
@@ -3353,6 +3438,7 @@ mod tests {
         let events = [
             ScheduledMidiEvent {
                 channel: 0,
+                bus: 0,
                 sample_offset: 0,
                 track_id,
                 note_id: Some(note_id),
@@ -3367,6 +3453,7 @@ mod tests {
             },
             ScheduledMidiEvent {
                 channel: 0,
+                bus: 0,
                 sample_offset: 3,
                 track_id,
                 note_id: None,
@@ -3381,6 +3468,7 @@ mod tests {
             },
             ScheduledMidiEvent {
                 channel: 0,
+                bus: 0,
                 sample_offset: 8,
                 track_id,
                 note_id: None,
@@ -3395,6 +3483,7 @@ mod tests {
             },
             ScheduledMidiEvent {
                 channel: 0,
+                bus: 0,
                 sample_offset: 4,
                 track_id,
                 note_id: None,
@@ -3409,6 +3498,7 @@ mod tests {
             },
             ScheduledMidiEvent {
                 channel: 0,
+                bus: 0,
                 sample_offset: 5,
                 track_id,
                 note_id: Some(note_id),
@@ -3423,6 +3513,7 @@ mod tests {
             },
             ScheduledMidiEvent {
                 channel: 0,
+                bus: 0,
                 sample_offset: 6,
                 track_id,
                 note_id: None,
@@ -3437,6 +3528,7 @@ mod tests {
             },
             ScheduledMidiEvent {
                 channel: 0,
+                bus: 0,
                 sample_offset: 7,
                 track_id,
                 note_id: None,
@@ -3451,6 +3543,7 @@ mod tests {
             },
             ScheduledMidiEvent {
                 channel: 0,
+                bus: 0,
                 sample_offset: 10,
                 track_id,
                 note_id: None,
@@ -3465,6 +3558,7 @@ mod tests {
             },
             ScheduledMidiEvent {
                 channel: 0,
+                bus: 0,
                 sample_offset: 9,
                 track_id,
                 note_id: None,
@@ -3516,6 +3610,7 @@ mod tests {
 
         let event = ScheduledMidiEvent {
             channel: 0,
+            bus: 0,
             sample_offset: 0,
             track_id,
             note_id: Some(note_id),
@@ -3547,10 +3642,11 @@ mod tests {
             1,
         )
         .expect("test synth should load");
-        processor.input_midi_port = None;
+        processor.input_midi_ports = [None; crate::MIDI_BUS_COUNT as usize];
         let (track_id, note_id) = test_ids();
         let event = ScheduledMidiEvent {
             channel: 0,
+            bus: 0,
             sample_offset: 0,
             track_id,
             note_id: Some(note_id),
@@ -3604,6 +3700,7 @@ mod tests {
                 .expect("test synth should load");
         let event = ScheduledMidiEvent {
             channel: 0,
+            bus: 0,
             sample_offset: 4,
             track_id: test_ids().0,
             note_id: Some(test_ids().1),
@@ -3904,6 +4001,80 @@ mod tests {
             let stopped = worker.join().expect("helper audio worker should stop");
             owner.deactivate(stopped);
         });
+    }
+
+    #[test]
+    fn isolated_helper_routes_nonzero_midi_bus_to_the_matching_note_port() {
+        let config = crate::ClapIpcConfig::new(48_000, 4, 4).unwrap();
+        let mapping = crate::ClapIpcMapping::create(config).unwrap();
+        assert!(mapping.region().accept_handshake(config));
+        let (owner, processor) = ClapInstrumentOwner::load_from_entry(
+            test_plugin_entry::<true, 2>(),
+            PLUGIN_ID,
+            48_000,
+            4,
+            4,
+        )
+        .expect("test instrument should load");
+        let (track_id, note_id) = test_ids();
+        let scheduled = ScheduledMidiEvent {
+            sample_offset: 0,
+            track_id,
+            note_id: Some(note_id),
+            channel: 0,
+            bus: 1,
+            pitch: 64,
+            velocity: 127,
+            controller: None,
+            pitch_bend: None,
+            program: None,
+            sysex_offset: u32::MAX,
+            sysex_length: 0,
+            kind: MidiEventKind::NoteOn,
+        };
+        let packet = crate::ClapIpcMidiEvent::from_scheduled(scheduled, 4).unwrap();
+        mapping
+            .region()
+            .try_submit(1, 0, 0, &[packet], 4)
+            .expect("bus-tagged request should enter the shared slot");
+
+        let region = mapping.region();
+        let (stopped, output) = std::thread::scope(|scope| {
+            let worker = scope.spawn(move || {
+                let mut processor = processor;
+                crate::clap_ipc::process_helper_requests(region, &mut processor, config);
+                processor.stop()
+            });
+            let mut output = [[0.0; 2]; 4];
+            let mut received = false;
+            for _ in 0..100_000 {
+                if region.try_read_response(1, 0, 0, &mut output) {
+                    received = true;
+                    break;
+                }
+                if region.is_faulted() {
+                    break;
+                }
+                std::thread::yield_now();
+            }
+            assert!(
+                received,
+                "the helper should return audio for the bus-tagged note"
+            );
+            region.mark_shutdown();
+            (
+                worker.join().expect("CLAP helper thread should stop"),
+                output,
+            )
+        });
+
+        let level = 74.0 / 127.0;
+        assert_eq!(mapping.region().fault_code(), 0);
+        // The plugin adds ten to the note key when input port 1 receives the event.
+        // That output makes the bus-to-port mapping observable across the IPC boundary.
+        assert!((output[0][0] - level).abs() < 0.0001);
+        assert!((output[0][1] - level * 0.5).abs() < 0.0001);
+        owner.deactivate(stopped);
     }
 
     #[test]

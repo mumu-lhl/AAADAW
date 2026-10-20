@@ -159,3 +159,7 @@ MIDI Editor 已提供 All/单通道/多通道筛选、Filter 开关及绘制目�
 ## 已实现 schema 71 切片
 
 `track_sends.midi_source_channel` 和 `midi_destination_channel` 分别保存普通 Send 的 0..15 源筛选与目标重映射；NULL 表示 All 与 Original。两列均带 SQLite 0..15 CHECK，schema 70→71 迁移不改既有 Send 的 MIDI 默认语义。`AudioSendParameters` 校验通道边界，Snapshot/Undo/Redo 与存储往返保留参数。Engine 在控制线程编译逐跳 MIDI 路由过滤/映射，块内事件调度与 seek chase 读取预编译结果；不增加实时回调分配或 I/O。验证和原厂截图见 [MIDI Send 验证](../verification/reaper-parity/midi-sends.md)。
+
+## 已实现 schema 72 切片
+
+`track_sends.midi_source_bus` 与 `midi_destination_bus` 保存普通 Send 的零基 0..15 Bus 过滤/重映射；NULL 源 Bus 表示 All，NULL 目标 Bus 保留进入该 Send 的当前 Bus。schema 71→72 为既有发送新增两个可空且带 0..15 CHECK 的字段，不改变原有 All→All 与通道映射。`AudioSendParameters`、Snapshot/Undo/Redo、Routing/Receive 视图均保留 Bus 设置。Engine 在线程外编译 Bus 路由；事件与 seek chase 携带 Bus。CLAP IPC 以既有字节承载 Bus 并升至协议 7，in-process CLAP 根据可用 note-port 将 Bus 事件投递到相应 port。REAPER 7.82 原厂 probe 验证 bus 过滤/映射，Engine/Core/Storage 回归见 [MIDI Send 验证](../verification/reaper-parity/midi-sends.md)。CLAP note-port 对应 REAPER Bus 的端到端原厂行为仍需进一步验证。

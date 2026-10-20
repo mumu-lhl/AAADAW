@@ -5,7 +5,7 @@ use aaadaw_core::{
 use std::collections::HashMap;
 use std::fmt;
 
-pub use aaadaw_core::MIDI_CHANNEL_COUNT;
+pub use aaadaw_core::{MIDI_BUS_COUNT, MIDI_CHANNEL_COUNT};
 
 const MAX_COMPILED_MIDI_EVENTS: usize = 1_000_000;
 const FIRST_LIVE_MIDI_NOTE_ID: u64 = 1 << 30;
@@ -44,6 +44,8 @@ pub struct ScheduledMidiEvent {
     pub track_id: TrackId,
     /// Zero-based channel in the inclusive range `0..16`.
     pub channel: u8,
+    /// Zero-based bus in the inclusive range `0..16`.
+    pub bus: u8,
     pub note_id: Option<NoteId>,
     pub pitch: u8,
     pub velocity: u8,
@@ -145,6 +147,7 @@ impl MidiInputMessage {
             sample_offset: 0,
             track_id,
             channel: self.status & 0x0f,
+            bus: 0,
             pitch,
             velocity,
             controller,
@@ -262,6 +265,7 @@ struct CompiledMidiEvent {
     absolute_sample: u64,
     track_id: TrackId,
     channel: u8,
+    bus: u8,
     note_id: Option<NoteId>,
     pitch: u8,
     velocity: u8,
@@ -283,6 +287,7 @@ struct CompiledControllerValue {
 struct ControllerTimeline {
     track_id: TrackId,
     channel: u8,
+    bus: u8,
     controller: u8,
     values: Vec<CompiledControllerValue>,
 }
@@ -297,6 +302,7 @@ struct CompiledPitchBendValue {
 struct PitchBendTimeline {
     track_id: TrackId,
     channel: u8,
+    bus: u8,
     values: Vec<CompiledPitchBendValue>,
 }
 
@@ -310,6 +316,7 @@ struct CompiledProgramValue {
 struct ProgramTimeline {
     track_id: TrackId,
     channel: u8,
+    bus: u8,
     values: Vec<CompiledProgramValue>,
 }
 
@@ -323,6 +330,7 @@ struct CompiledPressureValue {
 struct PressureTimeline {
     track_id: TrackId,
     channel: u8,
+    bus: u8,
     note: Option<u8>,
     kind: MidiEventKind,
     values: Vec<CompiledPressureValue>,
@@ -334,6 +342,7 @@ struct CompiledMidiNote {
     end_sample: u64,
     track_id: TrackId,
     channel: u8,
+    bus: u8,
     note_id: NoteId,
     pitch: u8,
     velocity: u8,
@@ -358,6 +367,8 @@ struct MidiTrackRoute {
     track_id: TrackId,
     source_channel: Option<u8>,
     destination_channel: Option<u8>,
+    source_bus: Option<u8>,
+    destination_bus: Option<u8>,
 }
 
 impl MidiTrackRoute {
@@ -366,6 +377,8 @@ impl MidiTrackRoute {
             track_id,
             source_channel: None,
             destination_channel: None,
+            source_bus: None,
+            destination_bus: None,
         }
     }
 
@@ -374,6 +387,17 @@ impl MidiTrackRoute {
             return None;
         }
         Some(self.destination_channel.unwrap_or(channel))
+    }
+
+    fn map_bus(self, bus: u8) -> Option<u8> {
+        if self.source_bus.is_some_and(|source| source != bus) {
+            return None;
+        }
+        Some(self.destination_bus.unwrap_or(bus))
+    }
+
+    fn map_channel_and_bus(self, channel: u8, bus: u8) -> Option<(u8, u8)> {
+        Some((self.map_channel(channel)?, self.map_bus(bus)?))
     }
 
     fn through_send(
@@ -392,6 +416,18 @@ impl MidiTrackRoute {
         }
         if parameters.midi_destination_channel.is_some() {
             self.destination_channel = parameters.midi_destination_channel;
+        }
+        if let Some(required_bus) = parameters.midi_source_bus {
+            let bus_at_send = self.destination_bus.or(self.source_bus);
+            if bus_at_send.is_some_and(|bus| bus != required_bus) {
+                return None;
+            }
+            if self.destination_bus.is_none() {
+                self.source_bus = Some(required_bus);
+            }
+        }
+        if parameters.midi_destination_bus.is_some() {
+            self.destination_bus = parameters.midi_destination_bus;
         }
         self.track_id = destination;
         Some(self)
@@ -613,7 +649,8 @@ impl MidiEventPlan {
                     let start_sample = sample_at_midi_position(project, start_position)?;
                     let end_sample = sample_at_midi_position(project, end_position)?;
                     for (route_index, route) in routed_tracks.iter().enumerate() {
-                        let Some(channel) = route.map_channel(note.channel()) else {
+                        let Some((channel, bus)) = route.map_channel_and_bus(note.channel(), 0)
+                        else {
                             continue;
                         };
                         if events.len() > MAX_COMPILED_MIDI_EVENTS - 2 {
@@ -646,6 +683,7 @@ impl MidiEventPlan {
                             end_sample,
                             track_id: route.track_id,
                             channel,
+                            bus,
                             note_id: routed_note_id,
                             pitch: note.pitch(),
                             velocity: note.velocity(),
@@ -654,6 +692,7 @@ impl MidiEventPlan {
                             absolute_sample: start_sample,
                             track_id: route.track_id,
                             channel,
+                            bus,
                             note_id: Some(routed_note_id),
                             pitch: note.pitch(),
                             velocity: note.velocity(),
@@ -668,6 +707,7 @@ impl MidiEventPlan {
                             absolute_sample: end_sample,
                             track_id: route.track_id,
                             channel,
+                            bus,
                             note_id: Some(routed_note_id),
                             pitch: note.pitch(),
                             velocity: note.off_velocity(),
@@ -685,7 +725,8 @@ impl MidiEventPlan {
                 for position in item.project_positions_at_content_tick(controller.tick) {
                     let absolute_sample = sample_at_midi_position(project, position)?;
                     for route in routed_tracks {
-                        let Some(channel) = route.map_channel(controller.channel) else {
+                        let Some((channel, bus)) = route.map_channel_and_bus(controller.channel, 0)
+                        else {
                             continue;
                         };
                         let routed_track = route.track_id;
@@ -695,6 +736,7 @@ impl MidiEventPlan {
                         let timeline = controller_timelines.iter_mut().find(|timeline| {
                             timeline.track_id == routed_track
                                 && timeline.channel == channel
+                                && timeline.bus == bus
                                 && timeline.controller == controller.controller
                         });
                         let timeline = if let Some(timeline) = timeline {
@@ -703,6 +745,7 @@ impl MidiEventPlan {
                             controller_timelines.push(ControllerTimeline {
                                 track_id: routed_track,
                                 channel,
+                                bus,
                                 controller: controller.controller,
                                 values: Vec::new(),
                             });
@@ -718,6 +761,7 @@ impl MidiEventPlan {
                             absolute_sample,
                             track_id: routed_track,
                             channel,
+                            bus,
                             note_id: None,
                             pitch: controller.controller,
                             velocity: controller.value,
@@ -735,7 +779,8 @@ impl MidiEventPlan {
                 for position in item.project_positions_at_content_tick(bend.tick) {
                     let absolute_sample = sample_at_midi_position(project, position)?;
                     for route in routed_tracks {
-                        let Some(channel) = route.map_channel(bend.channel) else {
+                        let Some((channel, bus)) = route.map_channel_and_bus(bend.channel, 0)
+                        else {
                             continue;
                         };
                         let routed_track = route.track_id;
@@ -743,7 +788,9 @@ impl MidiEventPlan {
                             return Err(MidiScheduleError::EventLimitExceeded);
                         }
                         let timeline = pitch_bend_timelines.iter_mut().find(|timeline| {
-                            timeline.track_id == routed_track && timeline.channel == channel
+                            timeline.track_id == routed_track
+                                && timeline.channel == channel
+                                && timeline.bus == bus
                         });
                         let timeline = if let Some(timeline) = timeline {
                             timeline
@@ -751,6 +798,7 @@ impl MidiEventPlan {
                             pitch_bend_timelines.push(PitchBendTimeline {
                                 track_id: routed_track,
                                 channel,
+                                bus,
                                 values: Vec::new(),
                             });
                             pitch_bend_timelines
@@ -765,6 +813,7 @@ impl MidiEventPlan {
                             absolute_sample,
                             track_id: routed_track,
                             channel,
+                            bus,
                             note_id: None,
                             pitch: 0,
                             velocity: 0,
@@ -782,7 +831,8 @@ impl MidiEventPlan {
                 for position in item.project_positions_at_content_tick(change.tick) {
                     let absolute_sample = sample_at_midi_position(project, position)?;
                     for route in routed_tracks {
-                        let Some(channel) = route.map_channel(change.channel) else {
+                        let Some((channel, bus)) = route.map_channel_and_bus(change.channel, 0)
+                        else {
                             continue;
                         };
                         let routed_track = route.track_id;
@@ -790,7 +840,9 @@ impl MidiEventPlan {
                             return Err(MidiScheduleError::EventLimitExceeded);
                         }
                         let timeline = program_timelines.iter_mut().find(|timeline| {
-                            timeline.track_id == routed_track && timeline.channel == channel
+                            timeline.track_id == routed_track
+                                && timeline.channel == channel
+                                && timeline.bus == bus
                         });
                         let timeline = if let Some(timeline) = timeline {
                             timeline
@@ -798,6 +850,7 @@ impl MidiEventPlan {
                             program_timelines.push(ProgramTimeline {
                                 track_id: routed_track,
                                 channel,
+                                bus,
                                 values: Vec::new(),
                             });
                             program_timelines
@@ -812,6 +865,7 @@ impl MidiEventPlan {
                             absolute_sample,
                             track_id: routed_track,
                             channel,
+                            bus,
                             note_id: None,
                             pitch: 0,
                             velocity: 0,
@@ -829,7 +883,8 @@ impl MidiEventPlan {
                 for position in item.project_positions_at_content_tick(pressure.tick) {
                     let absolute_sample = sample_at_midi_position(project, position)?;
                     for route in routed_tracks {
-                        let Some(channel) = route.map_channel(pressure.channel) else {
+                        let Some((channel, bus)) = route.map_channel_and_bus(pressure.channel, 0)
+                        else {
                             continue;
                         };
                         let routed_track = route.track_id;
@@ -839,6 +894,7 @@ impl MidiEventPlan {
                         let timeline = pressure_timelines.iter_mut().find(|timeline| {
                             timeline.track_id == routed_track
                                 && timeline.channel == channel
+                                && timeline.bus == bus
                                 && timeline.note == Some(pressure.note)
                         });
                         let timeline = if let Some(timeline) = timeline {
@@ -847,6 +903,7 @@ impl MidiEventPlan {
                             pressure_timelines.push(PressureTimeline {
                                 track_id: routed_track,
                                 channel,
+                                bus,
                                 note: Some(pressure.note),
                                 kind: MidiEventKind::PolyAftertouch,
                                 values: Vec::new(),
@@ -863,6 +920,7 @@ impl MidiEventPlan {
                             absolute_sample,
                             track_id: routed_track,
                             channel,
+                            bus,
                             note_id: None,
                             pitch: pressure.note,
                             velocity: pressure.value,
@@ -880,7 +938,8 @@ impl MidiEventPlan {
                 for position in item.project_positions_at_content_tick(pressure.tick) {
                     let absolute_sample = sample_at_midi_position(project, position)?;
                     for route in routed_tracks {
-                        let Some(channel) = route.map_channel(pressure.channel) else {
+                        let Some((channel, bus)) = route.map_channel_and_bus(pressure.channel, 0)
+                        else {
                             continue;
                         };
                         let routed_track = route.track_id;
@@ -890,6 +949,7 @@ impl MidiEventPlan {
                         let timeline = pressure_timelines.iter_mut().find(|timeline| {
                             timeline.track_id == routed_track
                                 && timeline.channel == channel
+                                && timeline.bus == bus
                                 && timeline.note.is_none()
                         });
                         let timeline = if let Some(timeline) = timeline {
@@ -898,6 +958,7 @@ impl MidiEventPlan {
                             pressure_timelines.push(PressureTimeline {
                                 track_id: routed_track,
                                 channel,
+                                bus,
                                 note: None,
                                 kind: MidiEventKind::ChannelPressure,
                                 values: Vec::new(),
@@ -914,6 +975,7 @@ impl MidiEventPlan {
                             absolute_sample,
                             track_id: routed_track,
                             channel,
+                            bus,
                             note_id: None,
                             pitch: 0,
                             velocity: pressure.value,
@@ -949,6 +1011,9 @@ impl MidiEventPlan {
                 for position in item.project_positions_at_content_tick(opaque_event.tick) {
                     let absolute_sample = sample_at_midi_position(project, position)?;
                     for route in routed_tracks {
+                        let Some(bus) = route.map_bus(0) else {
+                            continue;
+                        };
                         if events.len() == MAX_COMPILED_MIDI_EVENTS {
                             return Err(MidiScheduleError::EventLimitExceeded);
                         }
@@ -956,6 +1021,7 @@ impl MidiEventPlan {
                             absolute_sample,
                             track_id: route.track_id,
                             channel: 0,
+                            bus,
                             note_id: None,
                             pitch: 0,
                             velocity: 0,
@@ -977,6 +1043,7 @@ impl MidiEventPlan {
                 midi_event_priority(event.kind, event.controller, event.velocity),
                 event.track_id.value(),
                 event.channel,
+                event.bus,
                 event.pitch,
                 event.note_id.map_or(0, NoteId::value),
                 event.pitch_bend.unwrap_or(0),
@@ -1001,6 +1068,7 @@ impl MidiEventPlan {
                 note.start_sample,
                 note.track_id.value(),
                 note.channel,
+                note.bus,
                 note.note_id.value(),
             )
         });
@@ -1105,6 +1173,7 @@ impl MidiEventPlan {
                     sample_offset: 0,
                     track_id: timeline.track_id,
                     channel: timeline.channel,
+                    bus: timeline.bus,
                     note_id: None,
                     pitch: timeline.controller,
                     velocity: value.value,
@@ -1165,6 +1234,7 @@ impl MidiEventPlan {
                 sample_offset: 0,
                 track_id: timeline.track_id,
                 channel: timeline.channel,
+                bus: timeline.bus,
                 note_id: None,
                 pitch: 0,
                 velocity: 0,
@@ -1213,6 +1283,7 @@ impl MidiEventPlan {
                     sample_offset: 0,
                     track_id: timeline.track_id,
                     channel: timeline.channel,
+                    bus: timeline.bus,
                     note_id: None,
                     pitch: 0,
                     velocity: 0,
@@ -1261,6 +1332,7 @@ impl MidiEventPlan {
                     sample_offset: 0,
                     track_id: timeline.track_id,
                     channel: timeline.channel,
+                    bus: timeline.bus,
                     note_id: None,
                     pitch: timeline.note.unwrap_or(0),
                     velocity: value.value,
@@ -1343,6 +1415,7 @@ impl MidiEventPlan {
                 sample_offset: 0,
                 track_id: note.track_id,
                 channel: note.channel,
+                bus: note.bus,
                 note_id: Some(note.note_id),
                 pitch: note.pitch,
                 velocity: note.velocity,
@@ -1415,6 +1488,7 @@ impl MidiEventPlan {
                 sample_offset: (event.absolute_sample - start_sample) as usize,
                 track_id: event.track_id,
                 channel: event.channel,
+                bus: event.bus,
                 note_id: event.note_id,
                 pitch: event.pitch,
                 velocity: event.velocity,

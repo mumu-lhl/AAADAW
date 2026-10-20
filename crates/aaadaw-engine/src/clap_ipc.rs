@@ -18,7 +18,7 @@ use tempfile::{NamedTempFile, TempPath};
 
 use memmap2::{MmapMut, MmapOptions};
 
-pub const CLAP_IPC_PROTOCOL_VERSION: u32 = 6;
+pub const CLAP_IPC_PROTOCOL_VERSION: u32 = 7;
 pub const CLAP_IPC_CHANNELS: usize = 2;
 pub const CLAP_IPC_MAX_BLOCK_FRAMES: usize = 1024;
 pub const CLAP_IPC_MAX_EVENTS: usize = 1024;
@@ -605,6 +605,7 @@ pub(crate) fn process_helper_requests(
                         pitch: event.pitch,
                         velocity: event.velocity,
                         channel: event.channel,
+                        bus: event.bus,
                         controller: (event.kind == ClapIpcMidiKind::ControllerChange as u8)
                             .then_some(event.controller),
                         pitch_bend: (event.kind == ClapIpcMidiKind::PitchBend as u8)
@@ -743,9 +744,10 @@ pub struct ClapIpcMidiEvent {
     pub pitch: u8,
     pub velocity: u8,
     pub controller: u8,
-    /// Zero-based MIDI channel in the inclusive range `0..16`.
+    /// Zero-based MIDI channel in the range `0..16`.
     pub channel: u8,
-    pub reserved: u8,
+    /// Zero-based MIDI bus in the range `0..16`.
+    pub bus: u8,
     /// Offset into the request's packed SysEx byte area, or `u32::MAX` for channel events.
     pub sysex_offset: u32,
     /// Number of framed MIDI bytes at `sysex_offset`.
@@ -781,6 +783,9 @@ impl ClapIpcMidiEvent {
         if event.channel >= crate::MIDI_CHANNEL_COUNT {
             return None;
         }
+        if event.bus >= crate::MIDI_BUS_COUNT {
+            return None;
+        }
         let encoded = Self {
             frame_offset: u32::try_from(event.sample_offset).ok()?,
             note_id,
@@ -791,7 +796,7 @@ impl ClapIpcMidiEvent {
             velocity: event.velocity,
             controller,
             channel: event.channel,
-            reserved: 0,
+            bus: event.bus,
             sysex_offset: if event.kind == crate::MidiEventKind::SystemExclusive {
                 0
             } else {
@@ -807,7 +812,7 @@ impl ClapIpcMidiEvent {
             || self.pitch > 127
             || self.velocity > 127
             || self.channel >= crate::MIDI_CHANNEL_COUNT
-            || self.reserved != 0
+            || self.bus >= crate::MIDI_BUS_COUNT
         {
             return false;
         }
@@ -1899,6 +1904,7 @@ mod tests {
             kind: ClapIpcMidiKind::NoteOn as u8,
             pitch: 60,
             velocity: 100,
+            bus: 9,
             controller: ClapIpcMidiEvent::NO_CONTROLLER,
             sysex_offset: crate::midi::NO_SYSEX_OFFSET,
             ..ClapIpcMidiEvent::default()
@@ -1910,6 +1916,7 @@ mod tests {
             assert_eq!(request.sequence, 9);
             assert_eq!(request.start_sample, 256);
             assert_eq!(request.events, &[event]);
+            assert_eq!(request.events[0].bus, 9);
             for (frame, audio) in request.audio.iter_mut().enumerate() {
                 *audio = [frame as f32, -(frame as f32)];
             }
@@ -2063,7 +2070,7 @@ mod tests {
             velocity: 110,
             controller: ClapIpcMidiEvent::NO_CONTROLLER,
             channel: 0,
-            reserved: 0,
+            bus: 0,
             sysex_offset: crate::midi::NO_SYSEX_OFFSET,
             sysex_length: 0,
         };
@@ -2072,6 +2079,9 @@ mod tests {
         assert!(!event.is_valid(4));
         event.frame_offset = 3;
         event.channel = crate::MIDI_CHANNEL_COUNT;
+        assert!(!event.is_valid(4));
+        event.channel = 0;
+        event.bus = crate::MIDI_BUS_COUNT;
         assert!(!event.is_valid(4));
     }
 
@@ -2083,6 +2093,7 @@ mod tests {
             track_id,
             note_id: Some(aaadaw_core::NoteId::from_value(11).unwrap()),
             channel: 3,
+            bus: 5,
             pitch: 64,
             velocity: 100,
             controller: None,
@@ -2096,6 +2107,7 @@ mod tests {
         assert_eq!(encoded.frame_offset, 3);
         assert_eq!(encoded.note_id, 12);
         assert_eq!(encoded.channel, 3);
+        assert_eq!(encoded.bus, 5);
         assert_eq!(encoded.kind, ClapIpcMidiKind::NoteOn as u8);
         assert!(encoded.is_valid(8));
 
@@ -2104,6 +2116,7 @@ mod tests {
             track_id,
             note_id: None,
             channel: 0,
+            bus: 0,
             pitch: 0,
             velocity: 0,
             controller: Some(64),
@@ -2122,6 +2135,7 @@ mod tests {
             track_id,
             note_id: None,
             channel: 5,
+            bus: 0,
             pitch: 0,
             velocity: 0,
             controller: None,
@@ -2161,6 +2175,7 @@ mod tests {
                 track_id,
                 note_id: None,
                 channel: 3,
+                bus: 0,
                 pitch,
                 velocity,
                 controller: None,
@@ -2243,6 +2258,7 @@ mod sysex_tests {
             track_id,
             note_id: None,
             channel: 0,
+            bus: 0,
             pitch: 0,
             velocity: 0,
             controller: None,

@@ -41,6 +41,28 @@ impl fmt::Display for MidiDestinationChannel {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct MidiSourceBus(Option<u8>);
+impl fmt::Display for MidiSourceBus {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.0 {
+            Some(bus) => write!(f, "Bus {}", bus + 1),
+            None => f.write_str("All"),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct MidiDestinationBus(Option<u8>);
+impl fmt::Display for MidiDestinationBus {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.0 {
+            Some(bus) => write!(f, "Bus {}", bus + 1),
+            None => f.write_str("All"),
+        }
+    }
+}
+
 fn midi_source_channel_choices() -> Vec<MidiSourceChannel> {
     std::iter::once(MidiSourceChannel(None))
         .chain((0..16).map(|channel| MidiSourceChannel(Some(channel))))
@@ -50,6 +72,18 @@ fn midi_source_channel_choices() -> Vec<MidiSourceChannel> {
 fn midi_destination_channel_choices() -> Vec<MidiDestinationChannel> {
     std::iter::once(MidiDestinationChannel(None))
         .chain((0..16).map(|channel| MidiDestinationChannel(Some(channel))))
+        .collect()
+}
+
+fn midi_source_bus_choices() -> Vec<MidiSourceBus> {
+    std::iter::once(MidiSourceBus(None))
+        .chain((0..16).map(|bus| MidiSourceBus(Some(bus))))
+        .collect()
+}
+
+fn midi_destination_bus_choices() -> Vec<MidiDestinationBus> {
+    std::iter::once(MidiDestinationBus(None))
+        .chain((0..16).map(|bus| MidiDestinationBus(Some(bus))))
         .collect()
 }
 
@@ -200,9 +234,11 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
             row![
                 checkbox(parameters.midi_enabled)
                     .label(format!(
-                        "Send MIDI · {} → {}",
+                        "Send MIDI · Ch {} → {} · Bus {} → {}",
                         MidiSourceChannel(parameters.midi_source_channel),
-                        MidiDestinationChannel(parameters.midi_destination_channel)
+                        MidiDestinationChannel(parameters.midi_destination_channel),
+                        MidiSourceBus(parameters.midi_source_bus),
+                        MidiDestinationBus(parameters.midi_destination_bus)
                     ))
                     .on_toggle(move |midi_enabled| Message::RoutingChange(
                         DawAction::UpdateAudioSend {
@@ -247,6 +283,44 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
                             destination,
                             parameters: AudioSendParameters {
                                 midi_destination_channel: channel.0,
+                                ..parameters
+                            },
+                        })
+                    )
+                ]
+                .width(Length::Fill),
+            ]
+            .spacing(tokens::ROW_GAP),
+            row![
+                column![
+                    text("MIDI source bus").size(11),
+                    pick_list(
+                        midi_source_bus_choices(),
+                        Some(MidiSourceBus(parameters.midi_source_bus)),
+                        move |bus| Message::RoutingChange(DawAction::UpdateAudioSend {
+                            track_id: source,
+                            send_id: id,
+                            destination,
+                            parameters: AudioSendParameters {
+                                midi_source_bus: bus.0,
+                                ..parameters
+                            },
+                        })
+                    )
+                ]
+                .width(Length::Fill),
+                text("→"),
+                column![
+                    text("MIDI destination bus").size(11),
+                    pick_list(
+                        midi_destination_bus_choices(),
+                        Some(MidiDestinationBus(parameters.midi_destination_bus)),
+                        move |bus| Message::RoutingChange(DawAction::UpdateAudioSend {
+                            track_id: source,
+                            send_id: id,
+                            destination,
+                            parameters: AudioSendParameters {
+                                midi_destination_bus: bus.0,
                                 ..parameters
                             },
                         })
@@ -329,6 +403,10 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
                                     "{} → {}",
                                     MidiSourceChannel(parameters.midi_source_channel),
                                     MidiDestinationChannel(parameters.midi_destination_channel)
+                                ) + &format!(
+                                    " · {} → {}",
+                                    MidiSourceBus(parameters.midi_source_bus),
+                                    MidiDestinationBus(parameters.midi_destination_bus)
                                 )
                             } else {
                                 "Off".to_owned()

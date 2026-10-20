@@ -94,8 +94,9 @@ pub use master_output::{
     MasterOutputSafetyError,
 };
 pub use midi::{
-    MIDI_CHANNEL_COUNT, MidiEventKind, MidiEventPlan, MidiInputDecoder, MidiInputMessage,
-    MidiScheduleError, MidiSegmentCursor, MidiSegmentSchedule, ScheduledMidiEvent,
+    MIDI_BUS_COUNT, MIDI_CHANNEL_COUNT, MidiEventKind, MidiEventPlan, MidiInputDecoder,
+    MidiInputMessage, MidiScheduleError, MidiSegmentCursor, MidiSegmentSchedule,
+    ScheduledMidiEvent,
 };
 
 /// Lock-free control for auditioning one note through a prepared track instrument.
@@ -3384,6 +3385,7 @@ impl AudioRenderGraph {
                 {
                     self.midi_scratch[midi_event_count] = Some(ScheduledMidiEvent {
                         channel: 0,
+                        bus: 0,
                         sample_offset: 0,
                         track_id: route.track_id,
                         note_id: Some(
@@ -3411,6 +3413,7 @@ impl AudioRenderGraph {
                 {
                     self.midi_scratch[midi_event_count] = Some(ScheduledMidiEvent {
                         channel: 0,
+                        bus: 0,
                         sample_offset: 0,
                         track_id: route.track_id,
                         note_id: Some(

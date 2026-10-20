@@ -28,10 +28,11 @@ pub use fades::{AudioFade, AudioItemFades, FadeCurve, FadeCurveParameters, FadeS
 pub use markers::{MAX_PROJECT_MARKER_NUMBER, MarkerId, ProjectMarker};
 pub use master::MasterMix;
 pub use midi::{
-    ItemId, MIDI_CHANNEL_COUNT, MIDI_ITEM_SUBTICKS_PER_TICK, MidiChannelPressureData,
-    MidiControllerData, MidiEventOrderData, MidiEventOrderTarget, MidiItem, MidiItemPosition,
-    MidiItemTakeProperties, MidiNote, MidiNoteData, MidiOpaqueEventData, MidiOpaqueEventKind,
-    MidiPitchBendData, MidiPolyAftertouchData, MidiProgramChangeData, NoteId,
+    ItemId, MIDI_BUS_COUNT, MIDI_CHANNEL_COUNT, MIDI_ITEM_SUBTICKS_PER_TICK,
+    MidiChannelPressureData, MidiControllerData, MidiEventOrderData, MidiEventOrderTarget,
+    MidiItem, MidiItemPosition, MidiItemTakeProperties, MidiNote, MidiNoteData,
+    MidiOpaqueEventData, MidiOpaqueEventKind, MidiPitchBendData, MidiPolyAftertouchData,
+    MidiProgramChangeData, NoteId,
 };
 pub use midi_file::{
     MAX_MIDI_FILE_IMPORT_BYTES, MidiExportItemScope, MidiExportOptions, MidiExportSelection,

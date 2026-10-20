@@ -43,6 +43,8 @@ fn parallel_sends_keep_ids_parameters_order_and_main_output_through_history_and_
         midi_enabled: false,
         midi_source_channel: Some(1),
         midi_destination_channel: Some(5),
+        midi_source_bus: Some(1),
+        midi_destination_bus: Some(5),
     };
     project
         .apply(DawAction::UpdateAudioSend {
@@ -75,6 +77,16 @@ fn parallel_sends_keep_ids_parameters_order_and_main_output_through_history_and_
             .midi_destination_channel,
         Some(5)
     );
+    assert_eq!(
+        restored.tracks()[0].sends()[0].parameters().midi_source_bus,
+        Some(1)
+    );
+    assert_eq!(
+        restored.tracks()[0].sends()[0]
+            .parameters()
+            .midi_destination_bus,
+        Some(5)
+    );
     project
         .apply(DawAction::DeleteAudioSend {
             track_id: source,
@@ -101,6 +113,28 @@ fn invalid_midi_send_channel_mapping_is_rejected_atomically() {
             destination,
             parameters: AudioSendParameters {
                 midi_source_channel: Some(16),
+                ..Default::default()
+            },
+        }),
+        Err(ActionError::InvalidAudioSend)
+    );
+    assert_eq!(project.snapshot(), before);
+    assert_eq!(project.history_cursor(), cursor);
+}
+
+#[test]
+fn invalid_midi_send_bus_mapping_is_rejected_atomically() {
+    let mut project = project();
+    let source = project.tracks()[0].id();
+    let destination = project.tracks()[1].id();
+    let before = project.snapshot();
+    let cursor = project.history_cursor();
+    assert_eq!(
+        project.apply(DawAction::CreateAudioSend {
+            track_id: source,
+            destination,
+            parameters: AudioSendParameters {
+                midi_destination_bus: Some(16),
                 ..Default::default()
             },
         }),

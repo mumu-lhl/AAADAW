@@ -597,6 +597,7 @@ fn segmented_event_plan_keeps_output_unchanged_when_callback_buffer_is_too_small
         sample_offset: 99,
         track_id: project.tracks()[0].id(),
         channel: 0,
+        bus: 0,
         note_id: None,
         pitch: 1,
         velocity: 2,
@@ -2067,7 +2068,7 @@ fn midi_send_routes_notes_controls_and_bends_over_nested_paths() {
 }
 
 #[test]
-fn midi_send_composes_channel_filters_and_mappings_for_channel_voice_events() {
+fn midi_send_composes_channel_and_bus_filters_and_mappings_for_channel_voice_events() {
     let (mut project, source) = project_with_note(60, 0, 240);
     for (index, name) in [(1, "Intermediate"), (2, "Receiver")] {
         project
@@ -2078,7 +2079,14 @@ fn midi_send_composes_channel_filters_and_mappings_for_channel_voice_events() {
             .unwrap();
     }
     let intermediate = project.tracks()[1].id();
+    project
+        .apply(DawAction::CreateTrack {
+            index: 3,
+            name: "Wrong Bus Receiver".into(),
+        })
+        .unwrap();
     let receiver = project.tracks()[2].id();
+    let wrong_bus_receiver = project.tracks()[3].id();
     let item_id = project.midi_items()[0].id();
     project
         .apply(DawAction::AddMidiNotes {
@@ -2166,6 +2174,8 @@ fn midi_send_composes_channel_filters_and_mappings_for_channel_voice_events() {
             parameters: aaadaw_core::AudioSendParameters {
                 midi_source_channel: Some(1),
                 midi_destination_channel: Some(5),
+                midi_source_bus: Some(0),
+                midi_destination_bus: Some(1),
                 ..Default::default()
             },
         })
@@ -2177,6 +2187,18 @@ fn midi_send_composes_channel_filters_and_mappings_for_channel_voice_events() {
             parameters: aaadaw_core::AudioSendParameters {
                 midi_source_channel: Some(5),
                 midi_destination_channel: Some(7),
+                midi_source_bus: Some(1),
+                midi_destination_bus: Some(2),
+                ..Default::default()
+            },
+        })
+        .unwrap();
+    project
+        .apply(DawAction::CreateAudioSend {
+            track_id: intermediate,
+            destination: wrong_bus_receiver,
+            parameters: aaadaw_core::AudioSendParameters {
+                midi_source_bus: Some(2),
                 ..Default::default()
             },
         })
@@ -2190,7 +2212,17 @@ fn midi_send_composes_channel_filters_and_mappings_for_channel_voice_events() {
         .filter_map(|event| event.filter(|event| event.track_id == receiver))
         .collect::<Vec<_>>();
     assert_eq!(received.len(), 7);
-    assert!(received.iter().all(|event| event.channel == 7));
+    assert!(
+        received
+            .iter()
+            .all(|event| event.channel == 7 && event.bus == 2)
+    );
+    assert!(
+        !events[..count]
+            .iter()
+            .flatten()
+            .any(|event| event.track_id == wrong_bus_receiver)
+    );
     for kind in [
         MidiEventKind::NoteOn,
         MidiEventKind::NoteOff,
@@ -2209,7 +2241,8 @@ fn midi_send_composes_channel_filters_and_mappings_for_channel_voice_events() {
     let mut active_notes = [None; 8];
     let chased_notes = plan.active_notes_at(1, &mut active_notes).unwrap();
     assert!(active_notes[..chased_notes].iter().any(|event| {
-        event.is_some_and(|event| event.track_id == receiver && event.channel == 7)
+        event
+            .is_some_and(|event| event.track_id == receiver && event.channel == 7 && event.bus == 2)
     }));
     let mut active_controllers = [None; 8];
     let chased_controllers = plan
@@ -2219,7 +2252,9 @@ fn midi_send_composes_channel_filters_and_mappings_for_channel_voice_events() {
         active_controllers[..chased_controllers]
             .iter()
             .any(|event| {
-                event.is_some_and(|event| event.track_id == receiver && event.channel == 7)
+                event.is_some_and(|event| {
+                    event.track_id == receiver && event.channel == 7 && event.bus == 2
+                })
             })
     );
     let mut active_bends = [None; 8];
@@ -2227,7 +2262,8 @@ fn midi_send_composes_channel_filters_and_mappings_for_channel_voice_events() {
         .active_pitch_bends_at(2_000, &mut active_bends)
         .unwrap();
     assert!(active_bends[..chased_bends].iter().any(|event| {
-        event.is_some_and(|event| event.track_id == receiver && event.channel == 7)
+        event
+            .is_some_and(|event| event.track_id == receiver && event.channel == 7 && event.bus == 2)
     }));
 }
 
