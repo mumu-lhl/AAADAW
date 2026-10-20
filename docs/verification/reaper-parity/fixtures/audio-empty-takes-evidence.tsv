@@ -1,0 +1,36 @@
+evidence	REAPER 7.82 / Linux x86_64 / Default_7.0.ReaperThemeZip; Main actions 41351 and 41352
+native_binary	target/reaper-7.82/reaper_linux_x86_64/REAPER/reaper; REAPER 7.82/linux-x86_64; isolated profile and audio device closed
+native_action_before	41351; Item: Add an empty take before the active take
+native_action_after	41352; Item: Add an empty take after the active take
+native_probe	scripts/reaper_parity/probe-audio-empty-takes.lua; SHA-256 958c57be322f6eb18c660cd7b2712e425e8265f7f54e2c6da4a2872fa043fcbb
+native_capture_script	scripts/reaper_parity/capture-audio-empty-takes-native.sh; SHA-256 06accd2ec6f92516a56e83e0c9877840615860361782250dc452153d41c5d8c9
+native_fixture	One Audio Item with Take A and Take B; Take B active at index 1; both Takes reference melody.wav and use distinct offsets
+native_before	2 Takes / active index 1 / selected
+native_action_41351	TAKE NULL inserted at index 1; Take B remains active at index 2; selection retained
+native_action_41352	TAKE NULL inserted at index 2; Take B remains active at index 1; selection retained
+native_take_api	CountTakes includes the empty slot; GetMediaItemTake returns nil for it; it has no media source
+native_history	One Undo removes and one Redo restores the matching empty slot for each action
+native_readback	docs/verification/reaper-parity/fixtures/audio-empty-takes-native.tsv; SHA-256 2d8c546d6aef9ebc144baa4aa653133182f9f3b2e085ba6d82600425918e94ae
+native_rpp_before	docs/verification/reaper-parity/fixtures/audio-empty-takes-before.rpp; SHA-256 e8d4fd0b2e0c8dd4a1375027f9c48aebc172e1b8fa94f0404b7a813ec369eea7
+native_rpp_before_action	docs/verification/reaper-parity/fixtures/audio-empty-takes-before-active.rpp; SHA-256 a691ce0c94158abc4b48f5448aed75876b0deef929d0348c8441a438c7e1de60
+native_rpp_undo_before	docs/verification/reaper-parity/fixtures/audio-empty-takes-undo-before-active.rpp; SHA-256 e8d4fd0b2e0c8dd4a1375027f9c48aebc172e1b8fa94f0404b7a813ec369eea7
+native_rpp_redo_before	docs/verification/reaper-parity/fixtures/audio-empty-takes-redo-before-active.rpp; SHA-256 a691ce0c94158abc4b48f5448aed75876b0deef929d0348c8441a438c7e1de60
+native_rpp_after_action	docs/verification/reaper-parity/fixtures/audio-empty-takes-after-active.rpp; SHA-256 65d3a434a65feb0d411f091573693de9ff9eef783a228f365efd275cf1534949
+native_rpp_undo_after	docs/verification/reaper-parity/fixtures/audio-empty-takes-undo-after-active.rpp; SHA-256 e8d4fd0b2e0c8dd4a1375027f9c48aebc172e1b8fa94f0404b7a813ec369eea7
+native_rpp_redo_after	docs/verification/reaper-parity/fixtures/audio-empty-takes-redo-after-active.rpp; SHA-256 65d3a434a65feb0d411f091573693de9ff9eef783a228f365efd275cf1534949
+native_screenshot	docs/verification/reaper-parity/fixtures/audio-empty-takes-native-after.png; 1280x800; SHA-256 08a4a7931b36ecde8535c03565d68a5c543965ae3b2bc11c1cc357c39a156ea6
+aaadaw_capture_script	scripts/reaper_parity/capture-audio-empty-takes-aaadaw.sh; SHA-256 55332021e7cd553a9168aa70cd8f0165dd5c1012ee35a552bab26110e6560be1
+aaadaw_fixture	docs/verification/reaper-parity/fixtures/audio-multi-take-aaadaw.aaadaw; existing two-Take audio project used for live UI capture
+aaadaw_binary	target/cranelift/debug/aaadaw; Nightly Cranelift; audio-device feature disabled; Build ID ae23945f2e61be469724af2c81e754a9e9dee7af; SHA-256 bfe3cdecf970c02ed737c26b6d4259b489928d67c4887c795e227c3635a4c1c2
+aaadaw_screenshot_before	docs/verification/reaper-parity/fixtures/audio-empty-takes-aaadaw-before.png; 1280x800; Inspector Take 2/2; SHA-256 25851529af138e6034f607c67226907d0057c1244d85ea7f6c19bd3b50134663
+aaadaw_screenshot_after	docs/verification/reaper-parity/fixtures/audio-empty-takes-aaadaw-after.png; 1280x800; Inspector Take 2/3; SHA-256 8764afb2933dfbe53a42900348dd672422a52b2437a127bdf8fe28e19da88c2e
+aaadaw_screenshot_undo	docs/verification/reaper-parity/fixtures/audio-empty-takes-aaadaw-undo.png; 1280x800; Inspector Take 2/2; SHA-256 ed2524b0900e4e607785e13bb0a7f8f34582aa44c26f8d39e862c230f81cb5d3
+aaadaw_screenshot_redo	docs/verification/reaper-parity/fixtures/audio-empty-takes-aaadaw-redo.png; 1280x800; Inspector Take 2/3; SHA-256 da9be33d517d5b499d3b68c89271e0c1043b1045098b237be8795bfa7dd4cc9b
+aaadaw_screenshot_active_empty	docs/verification/reaper-parity/fixtures/audio-empty-takes-aaadaw-active-empty.png; 1280x800; Inspector and item label display Empty Take at 3/3; SHA-256 560d06b388fc84c950ac61dba3bfd3e601c80250bbbb53f58d45344296940e85
+verification_core	cargo +stable --config 'profile.test.package.aaadaw-core.debug=0' test -p aaadaw-core; full Core suite passed
+verification_app	cargo +stable --config 'profile.test.package.aaadaw.debug=0' test -p aaadaw --bin aaadaw; 884/884 passed
+verification_storage	cargo +stable --config 'profile.test.package.aaadaw-storage.debug=0' test -p aaadaw-storage --lib --test project_store --test midi_item_takes; 108/108 passed
+verification_audio_playback	cargo +stable --config 'profile.test.package.aaadaw-app.debug=0' test -p aaadaw-app --test audio_playback; 27/27 passed
+verification_native_capture	scripts/reaper_parity/capture-audio-empty-takes-native.sh; bash -n passed; REAPER 7.82 native readback and RPP Undo/Redo states match actions 41351/41352
+verification_desktop_capture	scripts/reaper_parity/capture-audio-empty-takes-aaadaw.sh; bash -n passed; live 1280x800 before/after/Undo/Redo/active-empty screenshots inspected
+verification_scope	EDIT-TAKE-001 remains in_progress; other Take, recording, Fixed Lanes, Comp Areas, and full REAPER parity gaps are open

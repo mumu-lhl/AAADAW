@@ -61,9 +61,13 @@ fn selected_item_view(app: &App, item_id: ItemId, touch_targets: bool) -> Elemen
         .iter()
         .find(|item| item.id() == item_id)
     {
-        let status = app.audio_asset_source_statuses.get(item.media_ref());
+        let status = (!item.active_take_is_empty())
+            .then(|| app.audio_asset_source_statuses.get(item.media_ref()))
+            .flatten();
         let take_count = item.take_count();
-        let take_name = if item.name().is_empty() {
+        let take_name = if item.active_take_is_empty() {
+            "Empty Take"
+        } else if item.name().is_empty() {
             item.media_ref()
         } else {
             item.name()
@@ -147,7 +151,12 @@ fn selected_item_view(app: &App, item_id: ItemId, touch_targets: bool) -> Elemen
             }
         }
         let mut actions = row![
-            text(format!("Audio · {}", item.media_ref())).width(Length::Fill),
+            text(if item.active_take_is_empty() {
+                "Audio · Empty Take".to_owned()
+            } else {
+                format!("Audio · {}", item.media_ref())
+            })
+            .width(Length::Fill),
             buttons.action("Duplicate", Message::DuplicateAudioItem(item_id)),
         ]
         .spacing(if touch_targets {

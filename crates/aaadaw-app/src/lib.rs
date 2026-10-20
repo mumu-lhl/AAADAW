@@ -1905,25 +1905,27 @@ pub fn prepare_audio_playback_at_with_loop_range(
         .audio_items()
         .iter()
         .filter(|item| {
-            timeline_sample < item.end_sample()
-                || (transport_loop_range.is_some_and(|range| {
-                    timeline_sample >= range.start_sample()
-                        && timeline_sample <= range.end_sample()
-                        && item.start_sample() < range.end_sample()
-                        && item.end_sample() > range.start_sample()
-                }))
+            !item.active_take_is_empty()
+                && (timeline_sample < item.end_sample()
+                    || (transport_loop_range.is_some_and(|range| {
+                        timeline_sample >= range.start_sample()
+                            && timeline_sample <= range.end_sample()
+                            && item.start_sample() < range.end_sample()
+                            && item.end_sample() > range.start_sample()
+                    })))
         })
         .count();
     let mut source_hashes_by_media_ref = HashMap::new();
     let mut source_use_counts = HashMap::new();
     for item in project.audio_items().iter().filter(|item| {
-        timeline_sample < item.end_sample()
-            || (transport_loop_range.is_some_and(|range| {
-                timeline_sample >= range.start_sample()
-                    && timeline_sample <= range.end_sample()
-                    && item.start_sample() < range.end_sample()
-                    && item.end_sample() > range.start_sample()
-            }))
+        !item.active_take_is_empty()
+            && (timeline_sample < item.end_sample()
+                || (transport_loop_range.is_some_and(|range| {
+                    timeline_sample >= range.start_sample()
+                        && timeline_sample <= range.end_sample()
+                        && item.start_sample() < range.end_sample()
+                        && item.end_sample() > range.start_sample()
+                })))
     }) {
         if !source_hashes_by_media_ref.contains_key(item.media_ref()) {
             let source_hash = store
@@ -1939,7 +1941,19 @@ pub fn prepare_audio_playback_at_with_loop_range(
             *source_use_counts.entry(source_hash).or_insert(0_usize) += 1;
         }
     }
-    let past_items = project.audio_items().len().saturating_sub(active_items);
+    let past_items = project
+        .audio_items()
+        .iter()
+        .filter(|item| {
+            !item.active_take_is_empty()
+                && timeline_sample >= item.end_sample()
+                && !transport_loop_range.is_some_and(|range| {
+                    timeline_sample <= range.end_sample()
+                        && item.start_sample() < range.end_sample()
+                        && item.end_sample() > range.start_sample()
+                })
+        })
+        .count();
     let queue_plan = plan_pcm_queue_capacities(
         active_items,
         past_items,
@@ -1959,6 +1973,10 @@ pub fn prepare_audio_playback_at_with_loop_range(
                 && item.start_sample() < range.end_sample()
                 && item.end_sample() > range.start_sample()
         });
+        if item.active_take_is_empty() {
+            item_streams.push(AudioItemStream::new_silence(item.id()));
+            continue;
+        }
         let item_queue_capacity = if timeline_sample >= item.end_sample() {
             if overlaps_transport_loop {
                 queue_plan.active_item_capacity_frames

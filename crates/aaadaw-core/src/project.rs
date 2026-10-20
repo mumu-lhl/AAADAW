@@ -2173,6 +2173,65 @@ fn insert_empty_midi_take(item: &mut MidiItem, before_active: bool) -> Result<()
     Ok(())
 }
 
+fn insert_empty_audio_take(item: &mut AudioItem, before_active: bool) -> Result<(), ActionError> {
+    let insert_index = if before_active {
+        item.active_take_index
+    } else {
+        item.active_take_index
+            .checked_add(1)
+            .ok_or(ActionError::AudioTakeIndexExhausted)?
+    };
+    for take in &mut item.other_takes {
+        if take.index >= insert_index {
+            take.index = take
+                .index
+                .checked_add(1)
+                .ok_or(ActionError::AudioTakeIndexExhausted)?;
+        }
+    }
+    if item.active_take_index >= insert_index {
+        item.active_take_index = item
+            .active_take_index
+            .checked_add(1)
+            .ok_or(ActionError::AudioTakeIndexExhausted)?;
+    }
+    item.other_takes.push(crate::AudioItemTake {
+        index: insert_index,
+        media_ref: String::new(),
+        is_empty: true,
+        name: String::new(),
+        source_offset_samples: 0,
+        phase_inverted: false,
+        loop_source: false,
+        source_section_start_samples: None,
+        source_section_length_samples: None,
+        volume: 1.0,
+        pan: 0.0,
+        playback_rate: 1.0,
+    });
+    item.other_takes.sort_unstable_by_key(|take| take.index);
+    Ok(())
+}
+
+fn empty_audio_take_changed_event(
+    state: &ProjectState,
+    item_id: ItemId,
+    before_active: bool,
+) -> Result<ProjectEvent, ActionError> {
+    let before = state
+        .audio_items
+        .iter()
+        .find(|item| item.id == item_id)
+        .ok_or(ActionError::AudioItemNotFound { item_id })?;
+    if is_frozen_render(state, item_id) {
+        return Err(ActionError::FrozenRenderCannotBeEdited { item_id });
+    }
+    let before = before.clone();
+    let mut after = before.clone();
+    insert_empty_audio_take(&mut after, before_active)?;
+    Ok(ProjectEvent::AudioItemChanged { before, after })
+}
+
 fn empty_midi_take_changed_event(
     state: &ProjectState,
     item_id: ItemId,
@@ -3384,12 +3443,14 @@ impl Project {
                     source_section_start_samples: item.source_section_start_samples,
                     source_section_length_samples: item.source_section_length_samples,
                     active_take_index: item.active_take_index,
+                    active_take_is_empty: item.active_take_is_empty,
                     other_takes: item
                         .other_takes
                         .iter()
                         .map(|take| crate::AudioItemTakeSnapshot {
                             index: take.index,
                             media_ref: take.media_ref.clone(),
+                            is_empty: take.is_empty,
                             name: take.name.clone(),
                             source_offset_samples: take.source_offset_samples,
                             phase_inverted: take.phase_inverted,
@@ -3712,7 +3773,7 @@ impl Project {
                     (take.index as usize) < take_count
                         && take.index != item.active_take_index
                         && take_indices.insert(take.index)
-                        && !take.media_ref.trim().is_empty()
+                        && (take.is_empty == take.media_ref.trim().is_empty())
                         && take.name.chars().count() <= 128
                         && take.volume.is_finite()
                         && (0.0..=crate::MAX_AUDIO_ITEM_TAKE_VOLUME).contains(&take.volume)
@@ -3730,7 +3791,7 @@ impl Project {
                 && take_indices.len() == item.other_takes.len();
             if !item_ids.insert(item.id)
                 || !track_ids.contains(&item.track_id)
-                || item.media_ref.trim().is_empty()
+                || (item.active_take_is_empty != item.media_ref.trim().is_empty())
                 || item.name.chars().count() > 128
                 || !item.volume.is_finite()
                 || !(0.0..=crate::MAX_AUDIO_ITEM_VOLUME).contains(&item.volume)
@@ -3772,12 +3833,14 @@ impl Project {
                 source_section_start_samples: item.source_section_start_samples,
                 source_section_length_samples: item.source_section_length_samples,
                 active_take_index: item.active_take_index,
+                active_take_is_empty: item.active_take_is_empty,
                 other_takes: item
                     .other_takes
                     .into_iter()
                     .map(|take| crate::AudioItemTake {
                         index: take.index,
                         media_ref: take.media_ref,
+                        is_empty: take.is_empty,
                         name: take.name,
                         source_offset_samples: take.source_offset_samples,
                         phase_inverted: take.phase_inverted,
@@ -4992,6 +5055,7 @@ impl Project {
                     take_playback_rate: 1.0,
                     other_takes: Vec::new(),
                     active_take_index: 0,
+                    active_take_is_empty: false,
                     id: ItemId::from_raw(ids.next_item_id),
                     track_id,
                     media_ref,
@@ -5217,6 +5281,7 @@ impl Project {
                     take_playback_rate: 1.0,
                     other_takes: Vec::new(),
                     active_take_index: 0,
+                    active_take_is_empty: false,
                     id: ItemId::from_raw(ids.next_item_id),
                     track_id,
                     media_ref,
@@ -5290,6 +5355,7 @@ impl Project {
                     take_playback_rate: 1.0,
                     other_takes: Vec::new(),
                     active_take_index: 0,
+                    active_take_is_empty: false,
                     id: ItemId::from_raw(ids.next_item_id),
                     track_id,
                     media_ref,
@@ -5462,7 +5528,7 @@ impl Project {
                 ProjectEvent::AudioItemChanged { before, after }
             }
             DawAction::PasteAudioItemAsTake { item_id, take } => {
-                if take.media_ref.trim().is_empty() {
+                if take.is_empty != take.media_ref.trim().is_empty() {
                     return Err(ActionError::InvalidAudioMediaRef);
                 }
                 if take.name.chars().count() > 128 {
@@ -5927,6 +5993,12 @@ impl Project {
             DawAction::AddEmptyMidiItemTakeAfter { item_id } => {
                 empty_midi_take_changed_event(state, item_id, false)?
             }
+            DawAction::AddEmptyAudioItemTakeBefore { item_id } => {
+                empty_audio_take_changed_event(state, item_id, true)?
+            }
+            DawAction::AddEmptyAudioItemTakeAfter { item_id } => {
+                empty_audio_take_changed_event(state, item_id, false)?
+            }
             DawAction::DuplicateMidiItemTake { item_id } => {
                 duplicate_midi_take_changed_event(state, ids, item_id)?
             }
@@ -5980,9 +6052,6 @@ impl Project {
                 source_offset_samples,
                 length_samples,
             } => {
-                if media_ref.trim().is_empty() {
-                    return Err(ActionError::InvalidAudioMediaRef);
-                }
                 if length_samples == 0 {
                     return Err(ActionError::InvalidAudioItemLength);
                 }
@@ -5994,6 +6063,9 @@ impl Project {
                     .iter()
                     .find(|item| item.id == item_id)
                     .ok_or(ActionError::AudioItemNotFound { item_id })?;
+                if item.active_take_is_empty != media_ref.trim().is_empty() {
+                    return Err(ActionError::InvalidAudioMediaRef);
+                }
                 if is_frozen_render(state, item_id) {
                     return Err(ActionError::FrozenRenderCannotBeEdited { item_id });
                 }
@@ -8283,7 +8355,7 @@ impl Project {
 }
 
 fn valid_audio_item(item: &AudioItem) -> bool {
-    !item.media_ref.trim().is_empty()
+    (item.active_take_is_empty == item.media_ref.trim().is_empty())
         && item.name.chars().count() <= 128
         && item.volume.is_finite()
         && (0.0..=crate::MAX_AUDIO_ITEM_VOLUME).contains(&item.volume)

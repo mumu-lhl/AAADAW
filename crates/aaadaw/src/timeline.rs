@@ -515,12 +515,14 @@ impl TimelineCache {
                 end_tick_subtick: 0,
                 kind: ItemKind::Audio,
                 muted: item.is_muted(),
-                label: if item.name().is_empty() {
+                label: if item.active_take_is_empty() {
+                    "Empty Take".to_owned()
+                } else if item.name().is_empty() {
                     media_label(item.media_ref())
                 } else {
                     item.name().to_owned()
                 },
-                media_ref: Some(item.media_ref().to_owned()),
+                media_ref: (!item.active_take_is_empty()).then(|| item.media_ref().to_owned()),
                 midi_notes: Vec::new(),
                 midi_source_offset_ticks: 0,
                 midi_source_loop_length_ticks: None,

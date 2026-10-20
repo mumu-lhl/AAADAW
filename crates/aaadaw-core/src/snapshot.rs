@@ -190,6 +190,7 @@ pub struct AudioItemSnapshot {
     pub source_section_start_samples: Option<u64>,
     pub source_section_length_samples: Option<u64>,
     pub active_take_index: u32,
+    pub active_take_is_empty: bool,
     pub other_takes: Vec<AudioItemTakeSnapshot>,
 }
 
@@ -197,6 +198,7 @@ pub struct AudioItemSnapshot {
 pub struct AudioItemTakeSnapshot {
     pub index: u32,
     pub media_ref: String,
+    pub is_empty: bool,
     pub name: String,
     pub source_offset_samples: i64,
     pub phase_inverted: bool,

@@ -1305,6 +1305,7 @@ pub struct AudioItemStream {
 enum AudioItemPcmConsumer {
     Mono(PcmStreamConsumer),
     Stereo(StereoPcmStreamConsumer),
+    Silence,
 }
 
 impl AudioItemPcmConsumer {
@@ -1312,6 +1313,7 @@ impl AudioItemPcmConsumer {
         match self {
             Self::Mono(_) => false,
             Self::Stereo(consumer) => consumer.is_stereo_content(),
+            Self::Silence => true,
         }
     }
 
@@ -1319,6 +1321,7 @@ impl AudioItemPcmConsumer {
         match self {
             Self::Mono(consumer) => consumer.available_samples(),
             Self::Stereo(consumer) => consumer.available_frames(),
+            Self::Silence => usize::MAX,
         }
     }
 
@@ -1328,6 +1331,10 @@ impl AudioItemPcmConsumer {
             Self::Stereo(consumer) => consumer
                 .read_into(output)
                 .saturating_mul(if consumer.is_stereo_content() { 2 } else { 1 }),
+            Self::Silence => {
+                output.fill([0.0, 0.0]);
+                0
+            }
         }
     }
 
@@ -1335,6 +1342,10 @@ impl AudioItemPcmConsumer {
         match self {
             Self::Mono(consumer) => consumer.read_timeline_stereo_into(output, start_sample),
             Self::Stereo(consumer) => consumer.read_timeline_into(output, start_sample),
+            Self::Silence => {
+                output.fill([0.0, 0.0]);
+                0
+            }
         }
     }
 }
@@ -1834,6 +1845,17 @@ fn compile_fx_routes(
 }
 
 impl AudioItemStream {
+    /// Associates a source-less Audio Take with an allocation-free silent stream.
+    pub fn new_silence(item_id: ItemId) -> Self {
+        Self {
+            item_id,
+            consumer: AudioItemPcmConsumer::Silence,
+            source_start_sample: None,
+            position: None,
+            timeline_loop_range: None,
+        }
+    }
+
     /// Associates a worker-fed PCM consumer with its timeline item.
     pub fn new(item_id: ItemId, consumer: PcmStreamConsumer) -> Self {
         Self {

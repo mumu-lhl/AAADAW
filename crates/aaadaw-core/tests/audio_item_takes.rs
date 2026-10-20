@@ -72,6 +72,147 @@ fn duplicate_appends_a_copy_and_activates_it() {
 }
 
 #[test]
+fn empty_take_insertion_switching_and_history_preserve_silent_source_state() {
+    let (mut project, item_id) = project_with_audio_item();
+    let original = project.snapshot();
+
+    project
+        .apply(DawAction::AddEmptyAudioItemTakeBefore { item_id })
+        .expect("empty take should be inserted before the active take");
+    let item = &project.audio_items()[0];
+    assert_eq!(item.take_count(), 2);
+    assert_eq!(item.active_take_index(), 1);
+    assert!(item.other_takes()[0].is_empty());
+    assert_eq!(item.other_takes()[0].media_ref(), "");
+    assert!(!item.active_take_is_empty());
+
+    project
+        .apply(DawAction::AddEmptyAudioItemTakeAfter { item_id })
+        .expect("empty take should be inserted after the active take");
+    let item = &project.audio_items()[0];
+    assert_eq!(item.take_count(), 3);
+    assert_eq!(item.active_take_index(), 1);
+    assert!(item.other_takes().iter().all(|take| take.is_empty()));
+
+    project
+        .apply(DawAction::SetAudioItemActiveTake {
+            item_id,
+            take_index: 0,
+        })
+        .expect("silent take should be activatable");
+    assert!(project.audio_items()[0].active_take_is_empty());
+    assert_eq!(project.audio_items()[0].media_ref(), "");
+    assert!(Project::from_snapshot(project.snapshot().clone()).is_ok());
+
+    assert!(project.undo().expect("switch should undo"));
+    assert!(!project.audio_items()[0].active_take_is_empty());
+    assert!(project.undo().expect("second insertion should undo"));
+    assert_eq!(project.audio_items()[0].take_count(), 2);
+    assert!(project.undo().expect("first insertion should undo"));
+    assert_eq!(project.snapshot(), original);
+    assert!(project.redo().expect("insertion should redo"));
+    assert_eq!(project.audio_items()[0].take_count(), 2);
+    assert!(project.redo().expect("second insertion should redo"));
+    assert_eq!(project.audio_items()[0].take_count(), 3);
+    assert!(project.redo().expect("switch should redo"));
+    assert!(project.audio_items()[0].active_take_is_empty());
+}
+
+#[test]
+fn active_empty_audio_take_keeps_timeline_placement_editable_without_a_source() {
+    let (mut project, item_id) = project_with_audio_item();
+    project
+        .apply(DawAction::AddEmptyAudioItemTakeBefore { item_id })
+        .expect("empty take should be inserted");
+    project
+        .apply(DawAction::SetAudioItemActiveTake {
+            item_id,
+            take_index: 0,
+        })
+        .expect("empty take should be activated");
+    let before_edit = project.snapshot();
+
+    project
+        .apply(DawAction::EditAudioItem {
+            item_id,
+            media_ref: String::new(),
+            start_sample: 240,
+            source_offset_samples: 0,
+            length_samples: 2_400,
+        })
+        .expect("source-less item placement should be editable");
+    let item = &project.audio_items()[0];
+    assert!(item.active_take_is_empty());
+    assert_eq!(item.media_ref(), "");
+    assert_eq!(item.start_sample(), 240);
+    assert_eq!(item.length_samples(), 2_400);
+    assert_eq!(
+        Project::from_snapshot(project.snapshot().clone())
+            .unwrap()
+            .snapshot(),
+        project.snapshot()
+    );
+
+    assert!(project.undo().expect("placement edit should undo"));
+    assert_eq!(project.snapshot(), before_edit);
+    let cursor = project.history_cursor();
+    assert_eq!(
+        project.apply(DawAction::EditAudioItem {
+            item_id,
+            media_ref: "asset://wrong-source.wav".to_owned(),
+            start_sample: 240,
+            source_offset_samples: 0,
+            length_samples: 2_400,
+        }),
+        Err(ActionError::InvalidAudioMediaRef)
+    );
+    assert_eq!(project.snapshot(), before_edit);
+    assert_eq!(project.history_cursor(), cursor);
+}
+
+#[test]
+fn paste_as_take_preserves_an_empty_audio_take_and_history() {
+    let (mut project, item_id) = project_with_audio_item();
+    project
+        .apply(DawAction::AddEmptyAudioItemTakeBefore { item_id })
+        .expect("empty take should be inserted");
+    project
+        .apply(DawAction::SetAudioItemActiveTake {
+            item_id,
+            take_index: 0,
+        })
+        .expect("empty take should be activated");
+    let empty_take = project.audio_items()[0].active_take_snapshot();
+    assert!(empty_take.is_empty);
+    assert_eq!(empty_take.media_ref, "");
+
+    project
+        .apply(DawAction::PasteAudioItemAsTake {
+            item_id,
+            take: empty_take,
+        })
+        .expect("empty take should paste as a new take");
+    let item = &project.audio_items()[0];
+    assert_eq!(item.take_count(), 3);
+    assert_eq!(item.active_take_index(), 2);
+    assert!(item.active_take_is_empty());
+    assert!(item.other_takes()[0].is_empty());
+    assert!(!item.other_takes()[1].is_empty());
+    let pasted = project.snapshot();
+    assert_eq!(
+        Project::from_snapshot(pasted.clone()).unwrap().snapshot(),
+        pasted
+    );
+
+    assert!(project.undo().expect("pasting an empty take should undo"));
+    assert_eq!(project.audio_items()[0].active_take_index(), 0);
+    assert!(project.audio_items()[0].active_take_is_empty());
+    assert!(project.redo().expect("pasting an empty take should redo"));
+    assert_eq!(project.audio_items()[0].active_take_index(), 2);
+    assert!(project.audio_items()[0].active_take_is_empty());
+}
+
+#[test]
 fn exploding_audio_item_takes_preserves_each_source_in_order_and_undoes_atomically() {
     let (project, item_id) = project_with_audio_item();
     let mut snapshot = project.snapshot();
@@ -88,6 +229,7 @@ fn exploding_audio_item_takes_preserves_each_source_in_order_and_undoes_atomical
         aaadaw_core::AudioItemTakeSnapshot {
             index: 0,
             media_ref: "asset://take-a".to_owned(),
+            is_empty: false,
             name: "Take A".to_owned(),
             source_offset_samples: 100,
             phase_inverted: true,
@@ -101,6 +243,7 @@ fn exploding_audio_item_takes_preserves_each_source_in_order_and_undoes_atomical
         aaadaw_core::AudioItemTakeSnapshot {
             index: 2,
             media_ref: "asset://take-c".to_owned(),
+            is_empty: false,
             name: "Take C".to_owned(),
             source_offset_samples: 300,
             phase_inverted: false,

@@ -98,6 +98,18 @@ impl ItemTakeChoice {
         } else {
             name.to_owned()
         };
+        Self::with_label(index, name)
+    }
+
+    fn from_audio_take(index: u32, name: &str, is_empty: bool) -> Self {
+        if is_empty {
+            Self::with_label(index, "Empty Take".to_owned())
+        } else {
+            Self::from_take(index, name)
+        }
+    }
+
+    fn with_label(index: u32, name: String) -> Self {
         Self {
             index,
             label: format!("{}: {name}", index + 1),
@@ -370,7 +382,8 @@ impl App {
                 return;
             };
             let active = item.active_take_snapshot();
-            let current_take = ItemTakeChoice::from_take(active.index, &active.name);
+            let current_take =
+                ItemTakeChoice::from_audio_take(active.index, &active.name, active.is_empty);
             if current_take.index != draft_take_index || current_take != draft.active_take {
                 self.item_properties = Some(ItemProperties::from_project_item(
                     item,
@@ -1604,9 +1617,13 @@ fn audio_take_choices(item: &AudioItem) -> Vec<ItemTakeChoice> {
     let mut choices = item
         .other_takes()
         .iter()
-        .map(|take| ItemTakeChoice::from_take(take.index(), take.name()))
+        .map(|take| ItemTakeChoice::from_audio_take(take.index(), take.name(), take.is_empty()))
         .collect::<Vec<_>>();
-    choices.push(ItemTakeChoice::from_take(active.index, &active.name));
+    choices.push(ItemTakeChoice::from_audio_take(
+        active.index,
+        &active.name,
+        active.is_empty,
+    ));
     choices.sort_unstable_by_key(|choice| choice.index);
     choices
 }

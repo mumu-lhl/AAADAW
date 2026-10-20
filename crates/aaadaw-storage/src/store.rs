@@ -27,7 +27,8 @@ use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 /// Latest database schema version understood by this release.
-pub const CURRENT_SCHEMA_VERSION: u32 = 69;
+pub const CURRENT_SCHEMA_VERSION: u32 = 70;
+const EMPTY_AUDIO_TAKE_MEDIA_REF: &str = "aaadaw:empty-audio-take";
 
 const EMPTY_ACTIVE_MIDI_TAKE_NAME: &str = "__AAADAW_EMPTY_ACTIVE_MIDI_TAKE__";
 
@@ -438,6 +439,7 @@ CREATE TABLE IF NOT EXISTS audio_items (
     muted INTEGER NOT NULL DEFAULT 0 CHECK (muted IN (0, 1)),
     phase_inverted INTEGER NOT NULL DEFAULT 0 CHECK (phase_inverted IN (0, 1)),
     active_take_index INTEGER NOT NULL DEFAULT 0 CHECK (active_take_index >= 0),
+    active_take_is_empty INTEGER NOT NULL DEFAULT 0 CHECK (active_take_is_empty IN (0, 1)),
     UNIQUE (track_id, position)
 );
 CREATE INDEX IF NOT EXISTS audio_items_by_project_position ON audio_items(position, id);
@@ -3748,6 +3750,22 @@ fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
                     )?;
                 }
             }
+            70 => {
+                if table_exists(&transaction, "audio_items")?
+                    && !table_has_column(&transaction, "audio_items", "active_take_is_empty")?
+                {
+                    transaction.execute_batch(
+                        "ALTER TABLE audio_items ADD COLUMN active_take_is_empty INTEGER NOT NULL DEFAULT 0 CHECK(active_take_is_empty IN (0, 1));",
+                    )?;
+                }
+                if table_exists(&transaction, "audio_item_takes")?
+                    && !table_has_column(&transaction, "audio_item_takes", "is_empty")?
+                {
+                    transaction.execute_batch(
+                        "ALTER TABLE audio_item_takes ADD COLUMN is_empty INTEGER NOT NULL DEFAULT 0 CHECK(is_empty IN (0, 1));",
+                    )?;
+                }
+            }
             missing => return Err(StorageError::MissingMigration(missing - 1)),
         }
         transaction.pragma_update(None, "user_version", next_version)?;
@@ -3950,13 +3968,13 @@ fn write_snapshot(
         transaction.execute(
             "INSERT INTO audio_items(id, track_id, position, media_ref, name, start_sample, \
              source_offset_samples, signed_source_offset_samples, length_samples, volume, take_volume, take_pan, take_playback_rate, muted, phase_inverted, loop_source, \
-             source_section_start_samples, source_section_length_samples, active_take_index) \
-             VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)",
+             source_section_start_samples, source_section_length_samples, active_take_index, active_take_is_empty) \
+             VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20)",
             params![
                 to_sql_integer(item.id)?,
                 to_sql_integer(item.track_id)?,
                 usize_to_sql(position)?,
-                item.media_ref,
+                if item.active_take_is_empty { EMPTY_AUDIO_TAKE_MEDIA_REF } else { &item.media_ref },
                 item.name,
                 to_sql_integer(item.start_sample)?,
                 item.source_offset_samples.max(0),
@@ -3976,18 +3994,19 @@ fn write_snapshot(
                     .map(to_sql_integer)
                     .transpose()?,
                 i64::from(item.active_take_index),
+                item.active_take_is_empty,
             ],
         )?;
         for take in &item.other_takes {
             transaction.execute(
                 "INSERT INTO audio_item_takes(item_id, take_index, media_ref, name, source_offset_samples, \
                  phase_inverted, loop_source, source_section_start_samples, source_section_length_samples, \
-                 take_volume, take_pan, take_playback_rate) \
-                 VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+                 take_volume, take_pan, take_playback_rate, is_empty) \
+                 VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
                 params![
                     to_sql_integer(item.id)?,
                     i64::from(take.index),
-                    take.media_ref,
+                    if take.is_empty { EMPTY_AUDIO_TAKE_MEDIA_REF } else { &take.media_ref },
                     take.name,
                     take.source_offset_samples,
                     take.phase_inverted,
@@ -3997,6 +4016,7 @@ fn write_snapshot(
                     f64::from(take.volume),
                     f64::from(take.pan),
                     take.playback_rate,
+                    take.is_empty,
                 ],
             )?;
         }
@@ -5096,7 +5116,7 @@ fn read_audio_items(connection: &Connection) -> Result<Vec<AudioItemSnapshot>, S
     let mut take_statement = connection.prepare(
         "SELECT item_id, take_index, media_ref, name, source_offset_samples, phase_inverted, \
          loop_source, source_section_start_samples, source_section_length_samples, take_volume, \
-         take_pan, take_playback_rate FROM audio_item_takes ORDER BY item_id, take_index",
+         take_pan, take_playback_rate, is_empty FROM audio_item_takes ORDER BY item_id, take_index",
     )?;
     let take_rows = take_statement
         .query_map([], |row| {
@@ -5113,6 +5133,7 @@ fn read_audio_items(connection: &Connection) -> Result<Vec<AudioItemSnapshot>, S
                 row.get::<_, f64>(9)?,
                 row.get::<_, f64>(10)?,
                 row.get::<_, f64>(11)?,
+                row.get::<_, i64>(12)?,
             ))
         })?
         .collect::<Result<Vec<_>, _>>()?;
@@ -5129,6 +5150,7 @@ fn read_audio_items(connection: &Connection) -> Result<Vec<AudioItemSnapshot>, S
         volume,
         pan,
         playback_rate,
+        is_empty_value,
     ) in take_rows
     {
         let invalid = || StorageError::Snapshot(SnapshotError::InvalidProjectData);
@@ -5142,6 +5164,14 @@ fn read_audio_items(connection: &Connection) -> Result<Vec<AudioItemSnapshot>, S
             1 => true,
             _ => return Err(invalid()),
         };
+        let is_empty = match is_empty_value {
+            0 => false,
+            1 => true,
+            _ => return Err(invalid()),
+        };
+        if is_empty && media_ref != EMPTY_AUDIO_TAKE_MEDIA_REF {
+            return Err(invalid());
+        }
         if !volume.is_finite()
             || !(0.0..=16.0).contains(&volume)
             || !pan.is_finite()
@@ -5162,7 +5192,8 @@ fn read_audio_items(connection: &Connection) -> Result<Vec<AudioItemSnapshot>, S
         other_takes.entry(from_sql_u64(item_id)?).or_default().push(
             aaadaw_core::AudioItemTakeSnapshot {
                 index: u32::try_from(from_sql_u64(take_index)?).map_err(|_| invalid())?,
-                media_ref,
+                media_ref: if is_empty { String::new() } else { media_ref },
+                is_empty,
                 name,
                 source_offset_samples,
                 phase_inverted,
@@ -5178,7 +5209,7 @@ fn read_audio_items(connection: &Connection) -> Result<Vec<AudioItemSnapshot>, S
     let mut statement = connection.prepare(
         "SELECT id, track_id, position, media_ref, name, start_sample, signed_source_offset_samples, \
          length_samples, volume, take_volume, take_pan, take_playback_rate, muted, phase_inverted, loop_source, \
-         source_section_start_samples, source_section_length_samples, active_take_index \
+         source_section_start_samples, source_section_length_samples, active_take_index, active_take_is_empty \
          FROM audio_items ORDER BY position",
     )?;
     let rows = statement
@@ -5202,6 +5233,7 @@ fn read_audio_items(connection: &Connection) -> Result<Vec<AudioItemSnapshot>, S
                 row.get::<_, Option<i64>>(15)?,
                 row.get::<_, Option<i64>>(16)?,
                 row.get::<_, i64>(17)?,
+                row.get::<_, i64>(18)?,
             ))
         })?
         .collect::<Result<Vec<_>, _>>()?;
@@ -5227,6 +5259,7 @@ fn read_audio_items(connection: &Connection) -> Result<Vec<AudioItemSnapshot>, S
                 source_section_start,
                 source_section_length,
                 active_take_index,
+                active_take_is_empty_value,
             )| {
                 let _ = from_sql_u64(position)?;
                 if !volume.is_finite() || !(0.0..=16.0).contains(&volume) {
@@ -5256,6 +5289,14 @@ fn read_audio_items(connection: &Connection) -> Result<Vec<AudioItemSnapshot>, S
                     1 => true,
                     _ => return Err(StorageError::Snapshot(SnapshotError::InvalidProjectData)),
                 };
+                let active_take_is_empty = match active_take_is_empty_value {
+                    0 => false,
+                    1 => true,
+                    _ => return Err(StorageError::Snapshot(SnapshotError::InvalidProjectData)),
+                };
+                if active_take_is_empty && media_ref != EMPTY_AUDIO_TAKE_MEDIA_REF {
+                    return Err(StorageError::Snapshot(SnapshotError::InvalidProjectData));
+                }
                 let source_section_start_samples =
                     source_section_start.map(from_sql_u64).transpose()?;
                 let source_section_length_samples =
@@ -5272,7 +5313,11 @@ fn read_audio_items(connection: &Connection) -> Result<Vec<AudioItemSnapshot>, S
                     take_playback_rate,
                     id: from_sql_u64(id)?,
                     track_id: from_sql_u64(track_id)?,
-                    media_ref,
+                    media_ref: if active_take_is_empty {
+                        String::new()
+                    } else {
+                        media_ref
+                    },
                     name,
                     start_sample: from_sql_u64(start_sample)?,
                     source_offset_samples: source_offset,
@@ -5284,6 +5329,7 @@ fn read_audio_items(connection: &Connection) -> Result<Vec<AudioItemSnapshot>, S
                     source_section_length_samples,
                     active_take_index: u32::try_from(from_sql_u64(active_take_index)?)
                         .map_err(|_| StorageError::Snapshot(SnapshotError::InvalidProjectData))?,
+                    active_take_is_empty,
                     other_takes: other_takes.remove(&from_sql_u64(id)?).unwrap_or_default(),
                 })
             },
@@ -6474,6 +6520,70 @@ mod loop_source_storage_tests {
         assert_eq!(
             store.load().unwrap().audio_items()[0].take_playback_rate(),
             1.0
+        );
+    }
+
+    #[test]
+    fn empty_audio_takes_round_trip_and_schema_69_adds_explicit_empty_markers() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("audio-empty-take.aaadaw");
+        let mut project = Project::new();
+        project
+            .apply(DawAction::CreateTrack {
+                index: 0,
+                name: "Audio".to_owned(),
+            })
+            .unwrap();
+        project
+            .apply(DawAction::InsertAudioItem {
+                track_id: project.tracks()[0].id(),
+                media_ref: "asset://source.wav".to_owned(),
+                start_sample: 0,
+                source_offset_samples: 0,
+                length_samples: 4_800,
+            })
+            .unwrap();
+        let item_id = project.audio_items()[0].id();
+        project
+            .apply(DawAction::AddEmptyAudioItemTakeBefore { item_id })
+            .unwrap();
+        project
+            .apply(DawAction::SetAudioItemActiveTake {
+                item_id,
+                take_index: 0,
+            })
+            .unwrap();
+        project
+            .apply(DawAction::AddEmptyAudioItemTakeAfter { item_id })
+            .unwrap();
+
+        let mut store = ProjectStore::open(&path).unwrap();
+        store.save(&project).unwrap();
+        let loaded = store.load().unwrap();
+        assert_eq!(loaded.snapshot(), project.snapshot());
+        assert!(loaded.audio_items()[0].active_take_is_empty());
+        assert!(
+            loaded.audio_items()[0]
+                .other_takes()
+                .iter()
+                .any(|take| take.is_empty())
+        );
+        assert_eq!(loaded.audio_items()[0].media_ref(), "");
+        store.close().unwrap();
+
+        let connection = rusqlite::Connection::open(&path).unwrap();
+        connection
+            .execute_batch(
+                "ALTER TABLE audio_items DROP COLUMN active_take_is_empty; \
+                 ALTER TABLE audio_item_takes DROP COLUMN is_empty; \
+                 PRAGMA user_version = 69;",
+            )
+            .unwrap();
+        drop(connection);
+        let store = ProjectStore::open(&path).unwrap();
+        assert_eq!(
+            store.schema_version().unwrap(),
+            super::CURRENT_SCHEMA_VERSION
         );
     }
 

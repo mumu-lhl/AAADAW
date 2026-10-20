@@ -17,6 +17,7 @@ pub const MAX_AUDIO_ITEM_TAKE_VOLUME: f32 = 16.0;
 pub struct AudioItemTake {
     pub(crate) index: u32,
     pub(crate) media_ref: String,
+    pub(crate) is_empty: bool,
     pub(crate) name: String,
     pub(crate) source_offset_samples: i64,
     pub(crate) phase_inverted: bool,
@@ -37,6 +38,11 @@ impl AudioItemTake {
     /// Opaque reference to the take's media source.
     pub fn media_ref(&self) -> &str {
         &self.media_ref
+    }
+
+    /// Whether this Take has no media source and plays silence.
+    pub fn is_empty(&self) -> bool {
+        self.is_empty
     }
 
     /// User-assigned take name.
@@ -66,6 +72,7 @@ pub struct AudioItem {
     pub(crate) take_playback_rate: f64,
     pub(crate) other_takes: Vec<AudioItemTake>,
     pub(crate) active_take_index: u32,
+    pub(crate) active_take_is_empty: bool,
 }
 
 impl AudioItem {
@@ -82,6 +89,11 @@ impl AudioItem {
     /// Returns the opaque media reference resolved outside the core.
     pub fn media_ref(&self) -> &str {
         &self.media_ref
+    }
+
+    /// Whether the active Take has no media source and plays silence.
+    pub fn active_take_is_empty(&self) -> bool {
+        self.active_take_is_empty
     }
 
     /// Returns the active take name, or an empty string when the source label is shown.
@@ -170,6 +182,7 @@ impl AudioItem {
         crate::AudioItemTakeSnapshot {
             index: self.active_take_index,
             media_ref: self.media_ref.clone(),
+            is_empty: self.active_take_is_empty,
             name: self.name.clone(),
             source_offset_samples: self.source_offset_samples,
             phase_inverted: self.phase_inverted,
@@ -190,6 +203,7 @@ impl AudioItem {
             .map(|take| crate::AudioItemTakeSnapshot {
                 index: take.index,
                 media_ref: take.media_ref.clone(),
+                is_empty: take.is_empty,
                 name: take.name.clone(),
                 source_offset_samples: take.source_offset_samples,
                 phase_inverted: take.phase_inverted,
@@ -220,6 +234,7 @@ impl AudioItem {
         AudioItemTake {
             index: self.active_take_index,
             media_ref: self.media_ref.clone(),
+            is_empty: self.active_take_is_empty,
             name: self.name.clone(),
             source_offset_samples: self.source_offset_samples,
             phase_inverted: self.phase_inverted,
@@ -234,6 +249,7 @@ impl AudioItem {
 
     pub(crate) fn set_active_take(&mut self, take: &AudioItemTake) {
         self.media_ref.clone_from(&take.media_ref);
+        self.active_take_is_empty = take.is_empty;
         self.name.clone_from(&take.name);
         self.source_offset_samples = take.source_offset_samples;
         self.phase_inverted = take.phase_inverted;
@@ -274,6 +290,7 @@ impl AudioItem {
         self.other_takes.push(AudioItemTake {
             index,
             media_ref: take.media_ref.clone(),
+            is_empty: take.is_empty,
             name: take.name.clone(),
             source_offset_samples: take.source_offset_samples,
             phase_inverted: take.phase_inverted,

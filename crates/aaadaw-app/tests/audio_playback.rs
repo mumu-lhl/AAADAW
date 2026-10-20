@@ -139,6 +139,40 @@ fn prepares_and_renders_an_embedded_audio_item() {
 }
 
 #[test]
+fn empty_audio_take_prepares_without_a_media_asset_and_renders_silence_without_underruns() {
+    let database_path = unique_path("aaadaw");
+    let store = ProjectStore::open(&database_path).expect("project should open");
+    let mut project = project_with_audio_item("asset://missing-because-empty.wav".to_owned(), 8);
+    let item_id = project.audio_items()[0].id();
+    project
+        .apply(DawAction::AddEmptyAudioItemTakeBefore { item_id })
+        .expect("silent take should be inserted");
+    project
+        .apply(DawAction::SetAudioItemActiveTake {
+            item_id,
+            take_index: 0,
+        })
+        .expect("silent take should be activated");
+
+    let prepared = prepare_audio_playback_at(&project, &store, 0, 16, 4)
+        .expect("silent takes must not resolve a media source");
+    assert_eq!(prepared.feeder_count(), 0);
+    let (mut graph, feeders) = prepared.into_parts();
+    assert!(feeders.is_empty());
+    graph.transport_mut().start();
+    let mut output = [[1.0, -1.0]; 4];
+    let stats = graph
+        .render_into(&mut output)
+        .expect("silent source should render");
+    assert_eq!(stats.underrun_samples, 0);
+    assert_eq!(output, [[0.0, 0.0]; 4]);
+
+    drop(graph);
+    drop(store);
+    remove_database(&database_path);
+}
+
+#[test]
 fn inverted_audio_items_export_with_reversed_polarity() {
     let database_path = unique_path("aaadaw");
     let render_path = unique_path("wav");

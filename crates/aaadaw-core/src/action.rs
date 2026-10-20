@@ -425,6 +425,14 @@ pub enum DawAction {
     AddEmptyMidiItemTakeAfter {
         item_id: ItemId,
     },
+    /// Insert a silent Audio Take immediately before the active Take.
+    AddEmptyAudioItemTakeBefore {
+        item_id: ItemId,
+    },
+    /// Insert a silent Audio Take immediately after the active Take.
+    AddEmptyAudioItemTakeAfter {
+        item_id: ItemId,
+    },
     /// Append a copy of the active MIDI Take and activate it.
     DuplicateMidiItemTake {
         item_id: ItemId,

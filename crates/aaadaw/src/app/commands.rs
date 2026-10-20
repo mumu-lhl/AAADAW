@@ -1601,7 +1601,7 @@ const COMMANDS: &[CommandDefinition] = &[
         kind: CommandKind::AddEmptyMidiTakeBeforeActive,
         menu: Some(MainMenu::Item),
         category: "Take",
-        label: "Add an empty take before the active take",
+        label: "Insert empty take before active take",
         aliases: &[
             "add empty take before active",
             "insert empty midi take before",
@@ -1614,7 +1614,7 @@ const COMMANDS: &[CommandDefinition] = &[
         kind: CommandKind::AddEmptyMidiTakeAfterActive,
         menu: Some(MainMenu::Item),
         category: "Take",
-        label: "Add an empty take after the active take",
+        label: "Insert empty take after active take",
         aliases: &[
             "add empty take after active",
             "insert empty midi take after",
@@ -3465,18 +3465,18 @@ pub(super) fn dispatch(app: &mut App, command: CommandId) -> Task<Message> {
             Message::SwitchSelectedAudioItemTakes(false)
         }
         CommandId::AddEmptyMidiTakeBeforeActive => {
-            if selected_midi_item_ids(app).is_empty() {
-                app.status = "Select a MIDI item to add an empty take".to_owned();
+            if selected_audio_item_ids(app).is_empty() && selected_midi_item_ids(app).is_empty() {
+                app.status = "Select an audio or MIDI item to add an empty take".to_owned();
                 return Task::none();
             }
-            Message::AddEmptyMidiTakes(true)
+            Message::AddEmptyTakes(true)
         }
         CommandId::AddEmptyMidiTakeAfterActive => {
-            if selected_midi_item_ids(app).is_empty() {
-                app.status = "Select a MIDI item to add an empty take".to_owned();
+            if selected_audio_item_ids(app).is_empty() && selected_midi_item_ids(app).is_empty() {
+                app.status = "Select an audio or MIDI item to add an empty take".to_owned();
                 return Task::none();
             }
-            Message::AddEmptyMidiTakes(false)
+            Message::AddEmptyTakes(false)
         }
         CommandId::DuplicateSelectedMidiItem => {
             let selected_midi = app.timeline.selected_item.filter(|item_id| {
@@ -4490,11 +4490,20 @@ fn command_enabled(app: &App, kind: CommandKind, track: Option<TrackState>) -> b
                 })
         }
         CommandKind::AddEmptyMidiTakeBeforeActive | CommandKind::AddEmptyMidiTakeAfterActive => {
-            let item_ids = selected_midi_item_ids(app);
+            let item_ids = selected_audio_item_ids(app)
+                .into_iter()
+                .chain(selected_midi_item_ids(app))
+                .collect::<Vec<_>>();
             !project_edit_busy(app)
                 && !item_ids.is_empty()
                 && !item_ids.iter().any(|item_id| {
-                    app.project.midi_items().iter().any(|item| {
+                    app.project.audio_items().iter().any(|item| {
+                        item.id() == *item_id
+                            && app.project.tracks().iter().any(|track| {
+                                track.id() == item.track_id()
+                                    && track.frozen_audio_item_id().is_some()
+                            })
+                    }) || app.project.midi_items().iter().any(|item| {
                         item.id() == *item_id
                             && app
                                 .project

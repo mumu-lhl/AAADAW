@@ -5503,7 +5503,7 @@ impl App {
                             | Message::SwitchSelectedAudioItemTakes(..)
                             | Message::SwitchAudioItemTake(..)
                             | Message::SwitchMidiItemTake(..)
-                            | Message::AddEmptyMidiTakes(..)
+                            | Message::AddEmptyTakes(..)
                             | Message::DuplicateMidiItem(_)
                             | Message::SplitSelectedItemsAtCursor
                             | Message::SplitSelectedItemsAtTimeSelection
@@ -10122,19 +10122,28 @@ impl App {
                     "Active take changed",
                 );
             }
-            Message::AddEmptyMidiTakes(before_active) => {
+            Message::AddEmptyTakes(before_active) => {
                 if commands::project_edit_busy(self) {
                     self.status =
                         "Stop playback or finish the current project operation before adding takes"
                             .to_owned();
                     return Task::none();
                 }
-                let item_ids = commands::selected_midi_item_ids(self);
-                if item_ids.is_empty() {
-                    self.status = "Select a MIDI item to add an empty take".to_owned();
+                let audio_item_ids = commands::selected_audio_item_ids(self);
+                let midi_item_ids = commands::selected_midi_item_ids(self);
+                if audio_item_ids.is_empty() && midi_item_ids.is_empty() {
+                    self.status = "Select an audio or MIDI item to add an empty take".to_owned();
                     return Task::none();
                 }
-                if item_ids.iter().any(|item_id| {
+                if audio_item_ids.iter().any(|item_id| {
+                    self.project.audio_items().iter().any(|item| {
+                        item.id() == *item_id
+                            && self.project.tracks().iter().any(|track| {
+                                track.id() == item.track_id()
+                                    && track.frozen_audio_item_id().is_some()
+                            })
+                    })
+                }) || midi_item_ids.iter().any(|item_id| {
                     self.project.midi_items().iter().any(|item| {
                         item.id() == *item_id
                             && self
@@ -10147,10 +10156,19 @@ impl App {
                     self.status = "Frozen items cannot have takes added".to_owned();
                     return Task::none();
                 }
+                let item_ids = audio_item_ids
+                    .iter()
+                    .copied()
+                    .chain(midi_item_ids.iter().copied())
+                    .collect::<Vec<_>>();
                 let actions = item_ids
                     .into_iter()
                     .map(|item_id| {
-                        if before_active {
+                        if audio_item_ids.contains(&item_id) && before_active {
+                            DawAction::AddEmptyAudioItemTakeBefore { item_id }
+                        } else if audio_item_ids.contains(&item_id) {
+                            DawAction::AddEmptyAudioItemTakeAfter { item_id }
+                        } else if before_active {
                             DawAction::AddEmptyMidiItemTakeBefore { item_id }
                         } else {
                             DawAction::AddEmptyMidiItemTakeAfter { item_id }
@@ -14198,6 +14216,9 @@ impl App {
         }
         if start_sample == old_start && end_sample == old_end {
             return Ok(None);
+        }
+        if item.active_take_is_empty() {
+            return Ok(Some((start_sample, 0, end_sample - start_sample)));
         }
         let waveform = self.audio_waveforms.get(item.media_ref()).ok_or_else(|| {
             "Audio source bounds are unavailable until waveform scanning finishes".to_owned()
@@ -19483,9 +19504,13 @@ impl App {
                         "Could not trim an audio item past its source position".to_owned();
                     return;
                 };
-                let Some(source_offset_samples) =
+                let source_offset_samples = if item.active_take_is_empty() {
+                    0
+                } else if let Some(source_offset_samples) =
                     item.source_offset_samples().checked_add(source_delta)
-                else {
+                {
+                    source_offset_samples
+                } else {
                     self.status =
                         "Could not trim an audio item past its source position".to_owned();
                     return;
@@ -20022,7 +20047,12 @@ impl App {
         let media_refs = donors
             .iter()
             .filter(|(_, start_sample, _)| *start_sample != target_start_sample)
-            .flat_map(|(_, _, takes)| takes.iter().map(|take| take.media_ref.clone()))
+            .flat_map(|(_, _, takes)| {
+                takes
+                    .iter()
+                    .filter(|take| !take.is_empty)
+                    .map(|take| take.media_ref.clone())
+            })
             .collect::<Vec<_>>();
         let source_sample_rates = match self.audio_source_sample_rates(media_refs) {
             Ok(rates) => rates,
@@ -20037,7 +20067,7 @@ impl App {
         for (_, donor_start_sample, takes) in &donors {
             let project_positions_differ = *donor_start_sample != target_start_sample;
             for mut take in takes.iter().cloned() {
-                if project_positions_differ {
+                if project_positions_differ && !take.is_empty {
                     let Some(source_sample_rate) =
                         source_sample_rates.get(&take.media_ref).copied()
                     else {

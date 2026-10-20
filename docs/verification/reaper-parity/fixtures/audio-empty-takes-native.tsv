@@ -1,0 +1,28 @@
+before	active_index=1	take_count=2	selected=1
+take	before	index=0	name=Take A	active=0	midi=0	source_type=WAVE	source_path=/workspace/AAADAW/examples/first-project/melody.wav	source_length=4.000000000000	length_is_qn=0	source_offset=0.000000000000
+take	before	index=1	name=Take B	active=1	midi=0	source_type=WAVE	source_path=/workspace/AAADAW/examples/first-project/melody.wav	source_length=4.000000000000	length_is_qn=0	source_offset=0.250000000000
+before-active	active_index=2	take_count=3	selected=1
+take	before-active	index=0	name=Take A	active=0	midi=0	source_type=WAVE	source_path=/workspace/AAADAW/examples/first-project/melody.wav	source_length=4.000000000000	length_is_qn=0	source_offset=0.000000000000
+take	before-active	index=1	api_take=none
+take	before-active	index=2	name=Take B	active=1	midi=0	source_type=WAVE	source_path=/workspace/AAADAW/examples/first-project/melody.wav	source_length=4.000000000000	length_is_qn=0	source_offset=0.250000000000
+undo-before-active	active_index=1	take_count=2	selected=1
+take	undo-before-active	index=0	name=Take A	active=0	midi=0	source_type=WAVE	source_path=/workspace/AAADAW/examples/first-project/melody.wav	source_length=4.000000000000	length_is_qn=0	source_offset=0.000000000000
+take	undo-before-active	index=1	name=Take B	active=1	midi=0	source_type=WAVE	source_path=/workspace/AAADAW/examples/first-project/melody.wav	source_length=4.000000000000	length_is_qn=0	source_offset=0.250000000000
+redo-before-active	active_index=2	take_count=3	selected=1
+take	redo-before-active	index=0	name=Take A	active=0	midi=0	source_type=WAVE	source_path=/workspace/AAADAW/examples/first-project/melody.wav	source_length=4.000000000000	length_is_qn=0	source_offset=0.000000000000
+take	redo-before-active	index=1	api_take=none
+take	redo-before-active	index=2	name=Take B	active=1	midi=0	source_type=WAVE	source_path=/workspace/AAADAW/examples/first-project/melody.wav	source_length=4.000000000000	length_is_qn=0	source_offset=0.250000000000
+after-active	active_index=1	take_count=3	selected=1
+take	after-active	index=0	name=Take A	active=0	midi=0	source_type=WAVE	source_path=/workspace/AAADAW/examples/first-project/melody.wav	source_length=4.000000000000	length_is_qn=0	source_offset=0.000000000000
+take	after-active	index=1	name=Take B	active=1	midi=0	source_type=WAVE	source_path=/workspace/AAADAW/examples/first-project/melody.wav	source_length=4.000000000000	length_is_qn=0	source_offset=0.250000000000
+take	after-active	index=2	api_take=none
+undo-after-active	active_index=1	take_count=2	selected=1
+take	undo-after-active	index=0	name=Take A	active=0	midi=0	source_type=WAVE	source_path=/workspace/AAADAW/examples/first-project/melody.wav	source_length=4.000000000000	length_is_qn=0	source_offset=0.000000000000
+take	undo-after-active	index=1	name=Take B	active=1	midi=0	source_type=WAVE	source_path=/workspace/AAADAW/examples/first-project/melody.wav	source_length=4.000000000000	length_is_qn=0	source_offset=0.250000000000
+redo-after-active	active_index=1	take_count=3	selected=1
+take	redo-after-active	index=0	name=Take A	active=0	midi=0	source_type=WAVE	source_path=/workspace/AAADAW/examples/first-project/melody.wav	source_length=4.000000000000	length_is_qn=0	source_offset=0.000000000000
+take	redo-after-active	index=1	name=Take B	active=1	midi=0	source_type=WAVE	source_path=/workspace/AAADAW/examples/first-project/melody.wav	source_length=4.000000000000	length_is_qn=0	source_offset=0.250000000000
+take	redo-after-active	index=2	api_take=none
+action_before	41351	Item: Add an empty take before the active take
+action_after	41352	Item: Add an empty take after the active take
+reference	REAPER 7.82/linux-x86_64; Default_7.0.ReaperThemeZip

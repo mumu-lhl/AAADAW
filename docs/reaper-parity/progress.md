@@ -3002,3 +3002,12 @@ AAADAW still rejects mixed selections because Audio and MIDI Items have separate
 REAPER 7.82 action 40438 was run on selected MIDI Items whose ranges meet exactly at 3 seconds. The action leaves all three project Items and the selected pair unchanged; the native Undo label remains identical, confirming no history entry. The existing native screenshot still records the successful four-Take action; no-overlap before/after RPPs and TSV readback are included in the [MIDI cross-track manifest](../verification/reaper-parity/fixtures/midi-implode-cross-track-aaadaw.tsv).
 
 AAADAW's new regression covers both abutting and separated MIDI pairs: action 40438 stays disabled, direct command dispatch leaves the project snapshot/history unchanged, and selection remains intact. The Stable desktop suite passes **883/883** and the native capture script passes `bash -n`. The dedicated `EDIT-TAKE-IMPLODE-MIDI-XTRACK-001` acceptance is complete; general `EDIT-TAKE-001` remains `in_progress` because heterogeneous Audio/MIDI Takes and other Take features are still open.
+
+
+### 2026-10-20 P5 Take: Audio 空 Take 插入
+
+Linux REAPER 7.82 / Default 7 的 Main actions 41351/41352 已实测：在活动 Take 前后插入 `TAKE NULL`，保留项目与选中状态；Undo/Redo 精确移除/恢复对应槽位。原厂探针确认空槽计入 Take 数量但没有 Take API 对象和媒体源。对照读取、四份 RPP 状态与原厂截图见[验证页](../verification/reaper-parity/audio-item-empty-take-insertion.md)。
+
+AAADAW 现在把 Audio 空 Take 显式保存在 Core/snapshot 和 SQLite schema 70 中，允许激活、撤销/重做、空源项目的时间位置编辑及静音播放/离线渲染；播放准备不解析或读取媒体文件，实时 consumer 零填充且不报告 underrun。Item 菜单动作也扩展到 Audio、MIDI 与混合选区，Inspector 和 Arrange 明确显示 Empty Take。Stable 桌面测试 **884/884**、Core `audio_item_takes` **15/15**、Storage **108/108**、Audio playback **27/27** 通过。Nightly Cranelift 实窗截图覆盖前后、Undo/Redo 与空 Take 激活，native/AAADAW 图像均已目视核验；完整哈希与 native binary identity 见[证据清单](../verification/reaper-parity/fixtures/audio-empty-takes-evidence.tsv)。
+
+`EDIT-TAKE-001` 继续保持 `in_progress`；空 Take 的录音创建、其他创建/编辑路径、混合媒体 Take 语义及完整 REAPER 兼容仍待推进。

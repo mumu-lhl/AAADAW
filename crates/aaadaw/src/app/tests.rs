@@ -265,7 +265,7 @@ fn midi_take_action_list_switches_and_adds_empty_takes_with_undo() {
         .select_items(vec![(item_id, track_id), (second_item_id, track_id)]);
     let before_multi = app.project.snapshot();
     let cursor = app.project.history_cursor();
-    let _ = app.update(Message::AddEmptyMidiTakes(false));
+    let _ = app.update(Message::AddEmptyTakes(false));
     assert_eq!(app.project.history_cursor(), cursor + 1);
     assert_eq!(app.project.midi_items()[0].take_count(), 5);
     assert_eq!(app.project.midi_items()[0].active_take_index(), 1);
@@ -292,6 +292,36 @@ fn midi_take_action_list_switches_and_adds_empty_takes_with_undo() {
     assert_eq!(app.project.snapshot(), before_delete);
     let _ = app.update(Message::Redo);
     assert_eq!(app.project.snapshot(), after_delete);
+
+    app.project
+        .apply(DawAction::InsertAudioItem {
+            track_id,
+            media_ref: "asset://empty-audio-take-ui.wav".to_owned(),
+            start_sample: 0,
+            source_offset_samples: 0,
+            length_samples: 4_800,
+        })
+        .unwrap();
+    let audio_id = app.project.audio_items()[0].id();
+    app.timeline.rebuild(&app.project);
+    app.timeline.select_items(vec![(audio_id, track_id)]);
+    assert!(commands::is_enabled(
+        &app,
+        CommandId::AddEmptyMidiTakeBeforeActive
+    ));
+    let before_audio_insert = app.project.snapshot();
+    let _ = app.update(Message::ExecuteCommand(
+        CommandId::AddEmptyMidiTakeBeforeActive,
+    ));
+    let audio_item = &app.project.audio_items()[0];
+    assert_eq!(audio_item.take_count(), 2);
+    assert_eq!(audio_item.active_take_index(), 1);
+    assert!(audio_item.other_takes()[0].is_empty());
+    let after_audio_insert = app.project.snapshot();
+    let _ = app.update(Message::Undo);
+    assert_eq!(app.project.snapshot(), before_audio_insert);
+    let _ = app.update(Message::Redo);
+    assert_eq!(app.project.snapshot(), after_audio_insert);
 }
 
 #[test]
@@ -344,6 +374,58 @@ fn deleting_mixed_selected_audio_and_midi_takes_is_one_undoable_action() {
     assert_eq!(app.project.midi_items()[0].take_count(), 1);
     assert_eq!(app.project.midi_items()[0].active_take_index(), 0);
     let after = app.project.snapshot();
+    let _ = app.update(Message::Undo);
+    assert_eq!(app.project.snapshot(), before);
+    let _ = app.update(Message::Redo);
+    assert_eq!(app.project.snapshot(), after);
+}
+
+#[test]
+fn empty_take_command_handles_mixed_audio_and_midi_selection_in_one_undo_step() {
+    let mut app = App::default();
+    app.project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Mixed empty takes".to_owned(),
+        })
+        .unwrap();
+    let track_id = app.project.tracks()[0].id();
+    app.project
+        .apply(DawAction::InsertAudioItem {
+            track_id,
+            media_ref: "asset://mixed-empty-audio.wav".to_owned(),
+            start_sample: 0,
+            source_offset_samples: 0,
+            length_samples: 4_800,
+        })
+        .unwrap();
+    app.project
+        .apply(DawAction::InsertMidiItem {
+            track_id,
+            start_tick: 0,
+            length_ticks: 480,
+        })
+        .unwrap();
+    let audio_id = app.project.audio_items()[0].id();
+    let midi_id = app.project.midi_items()[0].id();
+    app.timeline.rebuild(&app.project);
+    app.timeline
+        .select_items(vec![(audio_id, track_id), (midi_id, track_id)]);
+
+    let before = app.project.snapshot();
+    let cursor = app.project.history_cursor();
+    let _ = app.update(Message::AddEmptyTakes(false));
+    assert_eq!(app.project.history_cursor(), cursor + 1);
+    assert_eq!(app.project.audio_items()[0].active_take_index(), 0);
+    assert!(app.project.audio_items()[0].other_takes()[0].is_empty());
+    assert_eq!(app.project.midi_items()[0].active_take_index(), 0);
+    assert!(
+        app.project.midi_items()[0].take_snapshots()[1]
+            .name
+            .is_empty()
+    );
+    let after = app.project.snapshot();
+
     let _ = app.update(Message::Undo);
     assert_eq!(app.project.snapshot(), before);
     let _ = app.update(Message::Redo);
