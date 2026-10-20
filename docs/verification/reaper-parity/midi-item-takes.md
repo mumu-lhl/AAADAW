@@ -16,6 +16,8 @@ REAPER action 40639 duplicates a selected MIDI item's active Take after all exis
 
 REAPER action 40129 deletes the active MIDI Take, activates the preceding Take when possible (otherwise the new first Take), and removes the Item when it had only one Take. AAADAW supports MIDI and mixed Audio/MIDI selections as one undoable transaction. Native readback covers middle, first, last, and single-Take cases; the live 1280×800 captures show before/after/Undo/Redo. See [Delete the active MIDI Take](midi-item-delete-active-take.md).
 
+REAPER action 41380 moves each selected active MIDI Take below index 0 to the top while keeping it active and preserving all other Takes in order. Single-Take and already-top items remain unchanged; one Undo/Redo covers the selection. AAADAW supports MIDI-only and mixed Audio/MIDI selections, including the Inspector control. See [Move the active MIDI Take to the top](midi-item-move-active-take-to-top.md).
+
 The current Cranelift desktop binary was run under an isolated Xvfb display at 1280×800. The [four-state capture manifest](fixtures/midi-item-takes-aaadaw.tsv) records the fixture, binary, script, and before/after/Undo/Redo screenshot hashes. The overlapped takes share one Arrange range, so the image alone does not reveal the item count; Core/App assertions and native REAPER's item-count readback provide that check.
 
 Focused verification:

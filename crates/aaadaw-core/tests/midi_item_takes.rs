@@ -1002,3 +1002,144 @@ fn splitting_looped_midi_take_wraps_its_source_phase_per_take() {
     project.redo().unwrap();
     assert_eq!(project.snapshot(), after);
 }
+
+#[test]
+fn moving_midi_active_take_to_top_preserves_take_data_and_undoes() {
+    let mut project = Project::new();
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Move active MIDI take".to_owned(),
+        })
+        .unwrap();
+    let track_id = project.tracks()[0].id();
+    project
+        .apply(DawAction::InsertMidiItem {
+            track_id,
+            start_tick: 0,
+            length_ticks: 3_840,
+        })
+        .unwrap();
+    let item_id = project.midi_items()[0].id();
+    project
+        .apply(DawAction::AddMidiNotes {
+            item_id,
+            notes: vec![MidiNoteData {
+                pitch: 64,
+                channel: 2,
+                tick: 720,
+                duration: 240,
+                velocity: 92,
+                off_velocity: 17,
+            }],
+        })
+        .unwrap();
+
+    let mut snapshot = project.snapshot();
+    let item = &mut snapshot.midi_items[0];
+    let active_note = item.notes[0].clone();
+    item.name = "Take C".to_owned();
+    item.active_take_index = 2;
+    item.source_offset_ticks = 375;
+    item.other_takes = vec![
+        MidiItemTakeSnapshot {
+            index: 0,
+            name: "Take A".to_owned(),
+            source_offset_ticks: 125,
+            loop_source: true,
+            source_loop_length_ticks: 1_920,
+            notes: vec![MidiNoteSnapshot {
+                id: 2,
+                data: MidiNoteData {
+                    pitch: 60,
+                    channel: 0,
+                    tick: 120,
+                    duration: 240,
+                    velocity: 100,
+                    off_velocity: 0,
+                },
+            }],
+            controllers: vec![MidiControllerData {
+                controller: 1,
+                channel: 0,
+                tick: 360,
+                value: 64,
+            }],
+            pitch_bends: Vec::new(),
+            program_changes: Vec::new(),
+            poly_aftertouches: Vec::new(),
+            channel_pressures: Vec::new(),
+            opaque_events: Vec::new(),
+            event_order: Vec::new(),
+        },
+        MidiItemTakeSnapshot {
+            index: 1,
+            name: "Take B".to_owned(),
+            source_offset_ticks: 250,
+            loop_source: false,
+            source_loop_length_ticks: 3_840,
+            notes: vec![MidiNoteSnapshot {
+                id: 3,
+                data: MidiNoteData {
+                    pitch: 67,
+                    channel: 1,
+                    tick: 480,
+                    duration: 360,
+                    velocity: 84,
+                    off_velocity: 0,
+                },
+            }],
+            controllers: Vec::new(),
+            pitch_bends: vec![MidiPitchBendData {
+                channel: 1,
+                tick: 600,
+                value: 9_000,
+            }],
+            program_changes: Vec::new(),
+            poly_aftertouches: Vec::new(),
+            channel_pressures: Vec::new(),
+            opaque_events: Vec::new(),
+            event_order: Vec::new(),
+        },
+    ];
+    item.notes = vec![active_note];
+    let mut project = Project::from_snapshot(snapshot).unwrap();
+
+    let before = project.snapshot();
+    let before_takes = project.midi_items()[0].take_snapshots();
+    let cursor = project.history_cursor();
+    project
+        .apply(DawAction::MoveMidiItemActiveTakeToTop { item_id })
+        .unwrap();
+    let item = &project.midi_items()[0];
+    assert_eq!(project.history_cursor(), cursor + 1);
+    assert_eq!(item.active_take_index(), 0);
+    let takes = item.take_snapshots();
+    assert_eq!(
+        takes
+            .iter()
+            .map(|take| take.name.as_str())
+            .collect::<Vec<_>>(),
+        ["Take C", "Take A", "Take B"]
+    );
+    assert_eq!(takes[0].source_offset_ticks, 375);
+    assert_eq!(takes[0].notes[0].data, before_takes[2].notes[0].data);
+    assert_eq!(takes[1].source_offset_ticks, 125);
+    assert!(takes[1].loop_source);
+    assert_eq!(takes[1].controllers, before_takes[0].controllers);
+    assert_eq!(takes[2].source_offset_ticks, 250);
+    assert_eq!(takes[2].pitch_bends, before_takes[1].pitch_bends);
+    assert_eq!(takes[0].notes[0].id, before_takes[2].notes[0].id);
+    let after = project.snapshot();
+
+    project.undo().unwrap();
+    assert_eq!(project.snapshot(), before);
+    project.redo().unwrap();
+    assert_eq!(project.snapshot(), after);
+    let cursor = project.history_cursor();
+    project
+        .apply(DawAction::MoveMidiItemActiveTakeToTop { item_id })
+        .unwrap();
+    assert_eq!(project.history_cursor(), cursor);
+    assert_eq!(project.snapshot(), after);
+}

@@ -3123,6 +3123,9 @@ impl Project {
         ) || matches!(
             &event,
             ProjectEvent::AudioItemChanged { before, after } if before == after
+        ) || matches!(
+            &event,
+            ProjectEvent::MidiItemChanged { before, after } if before == after
         ) {
             return Ok(());
         }
@@ -5483,6 +5486,26 @@ impl Project {
                 let mut after = before.clone();
                 after.move_active_take_to_top();
                 ProjectEvent::AudioItemChanged { before, after }
+            }
+            DawAction::MoveMidiItemActiveTakeToTop { item_id } => {
+                let before = state
+                    .midi_items
+                    .iter()
+                    .find(|item| item.id == item_id)
+                    .ok_or(ActionError::MidiItemNotFound { item_id })?;
+                let track_id = before.track_id;
+                let track = state
+                    .tracks
+                    .iter()
+                    .find(|track| track.id == track_id)
+                    .ok_or(ActionError::TrackNotFound { track_id })?;
+                if track.is_frozen() {
+                    return Err(ActionError::CannotEditFrozenTrackSource { track_id });
+                }
+                let before = before.clone();
+                let mut after = before.clone();
+                after.move_active_take_to_top();
+                ProjectEvent::MidiItemChanged { before, after }
             }
             DawAction::CropAudioItemToActiveTake { item_id } => {
                 let before = state
@@ -8067,6 +8090,7 @@ fn source_track_for_action(state: &ProjectState, action: &DawAction) -> Option<T
         | DawAction::DuplicateMidiItemToTrack { item_id, .. }
         | DawAction::DuplicateMidiItemTake { item_id }
         | DawAction::DeleteActiveMidiItemTake { item_id }
+        | DawAction::MoveMidiItemActiveTakeToTop { item_id }
         | DawAction::SplitMidiItem { item_id, .. }
         | DawAction::DeleteMidiItem { item_id }
         | DawAction::AddMidiNotes { item_id, .. }

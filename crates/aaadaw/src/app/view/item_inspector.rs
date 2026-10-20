@@ -124,7 +124,7 @@ fn selected_item_view(app: &App, item_id: ItemId, touch_targets: bool) -> Elemen
             if take_count > 1 && !multi_take_selection {
                 take_controls = take_controls.push(buttons.action(
                     "Move active to top",
-                    Message::MoveSelectedAudioItemActiveTakesToTop,
+                    Message::MoveSelectedItemActiveTakesToTop,
                 ));
                 take_controls = take_controls.push(buttons.danger(
                     "Crop to active take",
@@ -135,7 +135,7 @@ fn selected_item_view(app: &App, item_id: ItemId, touch_targets: bool) -> Elemen
         if multi_take_selection {
             take_controls = take_controls.push(buttons.action(
                 "Move selected to top",
-                Message::MoveSelectedAudioItemActiveTakesToTop,
+                Message::MoveSelectedItemActiveTakesToTop,
             ));
             take_controls = take_controls.push(buttons.danger(
                 "Crop selected to active",
@@ -295,6 +295,18 @@ fn selected_item_view(app: &App, item_id: ItemId, touch_targets: bool) -> Elemen
             take_controls = take_controls
                 .push(buttons.action("Previous take", Message::SwitchMidiItemTake(item_id, false)))
                 .push(buttons.action("Next take", Message::SwitchMidiItemTake(item_id, true)));
+            if super::super::commands::is_enabled(
+                app,
+                super::super::commands::CommandId::MoveActiveTakesToTop,
+            ) {
+                let label = if app.timeline.selected_items.len() > 1 {
+                    "Move selected to top"
+                } else {
+                    "Move active to top"
+                };
+                take_controls = take_controls
+                    .push(buttons.action(label, Message::MoveSelectedItemActiveTakesToTop));
+            }
         }
         if super::super::commands::is_enabled(
             app,

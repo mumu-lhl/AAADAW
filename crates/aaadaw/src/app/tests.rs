@@ -1572,7 +1572,7 @@ fn moving_active_audio_take_to_top_is_registered_and_undoable() {
     assert_eq!(app.project.audio_items()[0].active_take_index(), 0);
     assert_eq!(app.project.audio_items()[0].media_ref(), "asset://take-b");
     let history_cursor = app.project.history_cursor();
-    let _ = app.update(Message::MoveSelectedAudioItemActiveTakesToTop);
+    let _ = app.update(Message::MoveSelectedItemActiveTakesToTop);
     assert_eq!(app.project.history_cursor(), history_cursor);
     assert_eq!(app.status, "Active take is already at the top");
 }
@@ -1695,6 +1695,238 @@ fn moving_multiple_selected_audio_items_to_top_is_one_undoable_transaction() {
     assert_eq!(app.project.snapshot(), before);
     let _ = app.update(Message::Redo);
     assert_eq!(app.project.snapshot(), moved);
+}
+
+#[test]
+fn moving_selected_audio_and_midi_takes_to_top_is_one_undoable_transaction() {
+    let mut app = App::default();
+    let _ = app.update(Message::AddTrack);
+    let track_id = app.project.tracks()[0].id();
+    app.project
+        .apply(DawAction::InsertAudioItem {
+            track_id,
+            media_ref: "asset://move-take-a".to_owned(),
+            start_sample: 0,
+            source_offset_samples: 0,
+            length_samples: 48_000,
+        })
+        .unwrap();
+    let audio_id = app.project.audio_items()[0].id();
+    let mut audio_take = app.project.audio_items()[0].active_take_snapshot();
+    audio_take.media_ref = "asset://move-take-b".to_owned();
+    audio_take.name = "Take B".to_owned();
+    audio_take.source_offset_samples = 1_920;
+    app.project
+        .apply(DawAction::PasteAudioItemAsTake {
+            item_id: audio_id,
+            take: audio_take,
+        })
+        .unwrap();
+
+    app.project
+        .apply(DawAction::InsertMidiItem {
+            track_id,
+            start_tick: 0,
+            length_ticks: 3_840,
+        })
+        .unwrap();
+    let midi_id = app.project.midi_items()[0].id();
+    app.project
+        .apply(DawAction::AddMidiNotes {
+            item_id: midi_id,
+            notes: vec![MidiNoteData {
+                pitch: 64,
+                channel: 2,
+                tick: 720,
+                duration: 240,
+                velocity: 92,
+                off_velocity: 17,
+            }],
+        })
+        .unwrap();
+    let mut snapshot = app.project.snapshot();
+    let item = &mut snapshot.midi_items[0];
+    item.name = "Take C".to_owned();
+    item.active_take_index = 2;
+    item.source_offset_ticks = 375;
+    item.other_takes = vec![
+        MidiItemTakeSnapshot {
+            index: 0,
+            name: "Take A".to_owned(),
+            source_offset_ticks: 125,
+            loop_source: true,
+            source_loop_length_ticks: 1_920,
+            notes: vec![aaadaw_core::MidiNoteSnapshot {
+                id: 2,
+                data: MidiNoteData {
+                    pitch: 60,
+                    channel: 0,
+                    tick: 120,
+                    duration: 240,
+                    velocity: 100,
+                    off_velocity: 0,
+                },
+            }],
+            controllers: Vec::new(),
+            pitch_bends: Vec::new(),
+            program_changes: Vec::new(),
+            poly_aftertouches: Vec::new(),
+            channel_pressures: Vec::new(),
+            opaque_events: Vec::new(),
+            event_order: Vec::new(),
+        },
+        MidiItemTakeSnapshot {
+            index: 1,
+            name: "Take B".to_owned(),
+            source_offset_ticks: 250,
+            loop_source: false,
+            source_loop_length_ticks: 3_840,
+            notes: vec![aaadaw_core::MidiNoteSnapshot {
+                id: 3,
+                data: MidiNoteData {
+                    pitch: 67,
+                    channel: 1,
+                    tick: 480,
+                    duration: 360,
+                    velocity: 84,
+                    off_velocity: 0,
+                },
+            }],
+            controllers: Vec::new(),
+            pitch_bends: vec![MidiPitchBendData {
+                channel: 1,
+                tick: 600,
+                value: 9_000,
+            }],
+            program_changes: Vec::new(),
+            poly_aftertouches: Vec::new(),
+            channel_pressures: Vec::new(),
+            opaque_events: Vec::new(),
+            event_order: Vec::new(),
+        },
+    ];
+    app.project = Project::from_snapshot(snapshot).unwrap();
+
+    app.project
+        .apply(DawAction::InsertMidiItem {
+            track_id,
+            start_tick: 3_840,
+            length_ticks: 3_840,
+        })
+        .unwrap();
+    let already_top_midi_id = app.project.midi_items()[1].id();
+    app.project
+        .apply(DawAction::AddMidiNotes {
+            item_id: already_top_midi_id,
+            notes: vec![MidiNoteData {
+                pitch: 72,
+                channel: 3,
+                tick: 960,
+                duration: 360,
+                velocity: 88,
+                off_velocity: 0,
+            }],
+        })
+        .unwrap();
+    let mut snapshot = app.project.snapshot();
+    let next_note_id = snapshot
+        .midi_items
+        .iter()
+        .flat_map(|item| {
+            item.notes
+                .iter()
+                .chain(item.other_takes.iter().flat_map(|take| take.notes.iter()))
+                .map(|note| note.id)
+        })
+        .max()
+        .unwrap()
+        + 1;
+    let item = snapshot
+        .midi_items
+        .iter_mut()
+        .find(|item| item.id == already_top_midi_id.value())
+        .unwrap();
+    item.name = "Take B".to_owned();
+    item.active_take_index = 0;
+    item.source_offset_ticks = 250;
+    item.other_takes = vec![MidiItemTakeSnapshot {
+        index: 1,
+        name: "Take A".to_owned(),
+        source_offset_ticks: 125,
+        loop_source: false,
+        source_loop_length_ticks: 3_840,
+        notes: vec![aaadaw_core::MidiNoteSnapshot {
+            id: next_note_id,
+            data: MidiNoteData {
+                pitch: 67,
+                channel: 1,
+                tick: 480,
+                duration: 240,
+                velocity: 84,
+                off_velocity: 0,
+            },
+        }],
+        controllers: Vec::new(),
+        pitch_bends: Vec::new(),
+        program_changes: Vec::new(),
+        poly_aftertouches: Vec::new(),
+        channel_pressures: Vec::new(),
+        opaque_events: Vec::new(),
+        event_order: Vec::new(),
+    }];
+    app.project = Project::from_snapshot(snapshot).unwrap();
+    app.timeline.rebuild(&app.project);
+    app.timeline.select_items(vec![
+        (audio_id, track_id),
+        (midi_id, track_id),
+        (already_top_midi_id, track_id),
+    ]);
+    let before = app.project.snapshot();
+    let history_cursor = app.project.history_cursor();
+    assert!(commands::is_enabled(&app, CommandId::MoveActiveTakesToTop));
+
+    let _ = app.update(Message::ExecuteCommand(CommandId::MoveActiveTakesToTop));
+    assert_eq!(app.project.history_cursor(), history_cursor + 1);
+    let audio = &app.project.audio_items()[0];
+    assert_eq!(audio.active_take_index(), 0);
+    assert_eq!(audio.media_ref(), "asset://move-take-b");
+    assert_eq!(audio.other_takes()[0].index(), 1);
+    assert_eq!(audio.other_takes()[0].media_ref(), "asset://move-take-a");
+    let midi = &app.project.midi_items()[0];
+    assert_eq!(midi.active_take_index(), 0);
+    let takes = midi.take_snapshots();
+    assert_eq!(
+        takes
+            .iter()
+            .map(|take| take.name.as_str())
+            .collect::<Vec<_>>(),
+        ["Take C", "Take A", "Take B"]
+    );
+    assert_eq!(takes[0].source_offset_ticks, 375);
+    assert_eq!(takes[1].source_offset_ticks, 125);
+    assert!(takes[1].loop_source);
+    assert_eq!(takes[2].pitch_bends[0].value, 9_000);
+    let already_top = app
+        .project
+        .midi_items()
+        .iter()
+        .find(|item| item.id() == already_top_midi_id)
+        .unwrap();
+    assert_eq!(already_top.active_take_index(), 0);
+    assert_eq!(
+        already_top
+            .take_snapshots()
+            .iter()
+            .map(|take| take.name.as_str())
+            .collect::<Vec<_>>(),
+        ["Take B", "Take A"]
+    );
+    let after = app.project.snapshot();
+
+    let _ = app.update(Message::Undo);
+    assert_eq!(app.project.snapshot(), before);
+    let _ = app.update(Message::Redo);
+    assert_eq!(app.project.snapshot(), after);
 }
 
 #[test]

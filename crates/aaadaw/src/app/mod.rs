@@ -5492,7 +5492,7 @@ impl App {
                             | Message::DuplicateAudioItemTake(_)
                             | Message::DuplicateSelectedItemActiveTakes
                             | Message::DeleteSelectedItemActiveTakes
-                            | Message::MoveSelectedAudioItemActiveTakesToTop
+                            | Message::MoveSelectedItemActiveTakesToTop
                             | Message::ImplodeSelectedAudioItemsAsTakes
                             | Message::ImplodeSelectedAudioItemsAcrossTracksAsTakes
                             | Message::ExplodeSelectedAudioItemTakesInPlace
@@ -9860,28 +9860,18 @@ impl App {
                     },
                 );
             }
-            Message::MoveSelectedAudioItemActiveTakesToTop => {
+            Message::MoveSelectedItemActiveTakesToTop => {
                 if commands::project_edit_busy(self) {
                     self.status =
                         "Stop playback or finish the current project operation before reordering takes"
                             .to_owned();
                     return Task::none();
                 }
-                let selected_audio_ids = commands::selected_audio_item_ids(self);
-                let selected_multi_take_count = selected_audio_ids
-                    .iter()
-                    .filter(|item_id| {
-                        self.project
-                            .audio_items()
-                            .iter()
-                            .find(|item| item.id() == **item_id)
-                            .is_some_and(|item| item.take_count() > 1)
-                    })
-                    .count();
+                let selected_multi_take_count = commands::selected_multi_take_item_ids(self).len();
                 let move_targets = commands::move_active_take_to_top_targets(self);
                 if selected_multi_take_count == 0 {
                     self.status =
-                        "Select a multi-take audio item to move its active take to the top"
+                        "Select a multi-take audio or MIDI item to move its active take to the top"
                             .to_owned();
                     return Task::none();
                 }
@@ -9899,14 +9889,33 @@ impl App {
                         .tracks()
                         .iter()
                         .any(|track| track.frozen_audio_item_id() == Some(*item_id))
+                        || self.project.midi_items().iter().any(|item| {
+                            item.id() == *item_id
+                                && self
+                                    .project
+                                    .tracks()
+                                    .iter()
+                                    .any(|track| track.id() == item.track_id() && track.is_frozen())
+                        })
                 }) {
-                    self.status = "Frozen render items cannot be edited".to_owned();
+                    self.status = "Frozen items cannot be edited".to_owned();
                     return Task::none();
                 }
                 let moved_count = move_targets.len();
                 let actions = move_targets
                     .into_iter()
-                    .map(|item_id| DawAction::MoveAudioItemActiveTakeToTop { item_id })
+                    .map(|item_id| {
+                        if self
+                            .project
+                            .audio_items()
+                            .iter()
+                            .any(|item| item.id() == item_id)
+                        {
+                            DawAction::MoveAudioItemActiveTakeToTop { item_id }
+                        } else {
+                            DawAction::MoveMidiItemActiveTakeToTop { item_id }
+                        }
+                    })
                     .collect::<Vec<_>>();
                 let action = if actions.len() == 1 {
                     actions.into_iter().next().unwrap()

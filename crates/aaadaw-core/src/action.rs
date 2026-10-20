@@ -375,6 +375,10 @@ pub enum DawAction {
     MoveAudioItemActiveTakeToTop {
         item_id: ItemId,
     },
+    /// Move the active MIDI take to list index zero without changing its source.
+    MoveMidiItemActiveTakeToTop {
+        item_id: ItemId,
+    },
     /// Remove the inactive takes from an audio item while preserving its active source.
     CropAudioItemToActiveTake {
         item_id: ItemId,

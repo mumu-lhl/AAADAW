@@ -463,6 +463,22 @@ impl MidiItem {
         true
     }
 
+    /// Moves the active Take to list index zero while preserving every Take's source and events.
+    pub(crate) fn move_active_take_to_top(&mut self) -> bool {
+        if self.active_take_index == 0 {
+            return false;
+        }
+        let active_index = self.active_take_index;
+        for take in &mut self.other_takes {
+            if take.index < active_index {
+                take.index += 1;
+            }
+        }
+        self.active_take_index = 0;
+        self.other_takes.sort_unstable_by_key(|take| take.index);
+        true
+    }
+
     /// Returns the item Takes in their original order, including the active Take.
     pub fn take_snapshots(&self) -> Vec<crate::MidiItemTakeSnapshot> {
         let mut takes = Vec::with_capacity(self.take_count());
