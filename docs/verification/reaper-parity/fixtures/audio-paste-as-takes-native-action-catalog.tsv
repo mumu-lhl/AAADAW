@@ -1,0 +1,4 @@
+reference	7.82/linux-x86_64	Default 7
+section	command_id	action_name
+Main	40057	Edit: Copy items/tracks
+Main	40603	Take: Paste as takes in items

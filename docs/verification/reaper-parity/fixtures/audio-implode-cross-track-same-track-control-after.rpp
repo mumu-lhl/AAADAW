@@ -1,0 +1,469 @@
+<REAPER_PROJECT 0.1 "7.82/linux-x86_64" 1792433268 0
+  <NOTES 0 2
+  >
+  RIPPLE 0 0
+  GROUPOVERRIDE 0 0 0 0
+  AUTOXFADE 129
+  ENVATTACH 3
+  POOLEDENVATTACH 0
+  TCPUIFLAGS 0
+  MIXERUIFLAGS 11 48 0
+  ENVFADESZ10 40
+  PEAKGAIN 1
+  FEEDBACK 0
+  PANLAW 1
+  PROJOFFS 0 0 0
+  MAXPROJLEN 0 0
+  GRID 3199 8 1 8 1 0 0 0
+  TIMEMODE 1 5 -1 30 0 0 -1 0
+  VIDEO_CONFIG 0 0 65792
+  PANMODE 3
+  PANLAWFLAGS 3
+  CURSOR 9
+  ZOOM 100 618 0
+  VZOOMEX 6 0
+  USE_REC_CFG 0
+  RECMODE 1
+  SMPTESYNC 0 30 100 40 1000 300 0 0 1 0 0
+  LOOP 0
+  LOOPGRAN 0 4
+  RECORD_PATH "Media" ""
+  <RECORD_CFG
+    ZXZhdxgAAQ==
+  >
+  <APPLYFX_CFG
+  >
+  RENDER_FILE ""
+  RENDER_PATTERN ""
+  RENDER_FMT 0 2 0
+  RENDER_1X 0
+  RENDER_RANGE 1 0 0 0 1000
+  RENDER_RESAMPLE 3 0 1
+  RENDER_ADDTOPROJ 0
+  RENDER_STEMS 0
+  RENDER_DITHER 0
+  RENDER_TRIM 0.000001 0.000001 0 0
+  TIMELOCKMODE 1
+  TEMPOENVLOCKMODE 1
+  ITEMMIX 1
+  DEFPITCHMODE 589824 0
+  TAKELANE 1
+  SAMPLERATE 48000 0 0
+  <RENDER_CFG
+    ZXZhdxgAAQ==
+  >
+  LOCK 1
+  <METRONOME 6 2
+    VOL 0.25 0.125
+    BEATLEN 4
+    FREQ 1760 880 1
+    SAMPLES "" "" "" ""
+    SPLIGNORE 0 0
+    SPLDEF 2 660 "" 0 ""
+    SPLDEF 3 440 "" 0 ""
+    PATTERN 0 169
+    PATTERNSTR ABBB
+    MULT 1
+  >
+  GLOBAL_AUTO -1
+  TEMPO 120 4 4 0
+  PLAYRATE 1 0 0.25 4
+  SELECTION 0 0
+  SELECTION2 0 0
+  MASTERAUTOMODE 0
+  MASTERTRACKHEIGHT 0 0
+  MASTERPEAKCOL 16576
+  MASTERMUTESOLO 0
+  MASTERTRACKVIEW 0 0.6667 0.5 0.5 0 0 0 0 0 0 0 0 0 0 1
+  MASTERHWOUT 0 0 1 0 0 0 0 -1
+  MASTER_NCH 2 2
+  MASTER_VOLUME 1 0 -1 -1 1
+  MASTER_PANMODE 3
+  MASTER_PANLAWFLAGS 3
+  MASTER_FX 1
+  MASTER_TRACKID {B63F7C7C-56D0-BB4D-F2A2-283CD3389BA8}
+  MASTER_SEL 0
+  <MASTERPLAYSPEEDENV
+    EGUID {3FEE51C3-D401-70F4-E5BF-44E6B14AAB11}
+    ACT 0 -1
+    VIS 0 1 1
+    LANEHEIGHT 0 0
+    ARM 0
+    DEFSHAPE 0 -1 -1
+  >
+  <TEMPOENVEX
+    EGUID {825050C3-4AC4-23B8-1D8E-69A6FFF08D11}
+    ACT 1 -1
+    VIS 1 0 1
+    LANEHEIGHT 0 0
+    ARM 0
+    DEFSHAPE 1 -1 -1
+  >
+  RULERHEIGHT 86 86
+  RULERLANE 1 4 "" 0 -1 0
+  RULERLANE 2 8 "" 0 -1 0
+  <PROJBAY
+  >
+  <TRACK {6A8A3F96-B791-2DC0-6C54-815E6B10539F}
+    NAME "Top track"
+    PEAKCOL 16576
+    BEAT -1
+    AUTOMODE 0
+    PANLAWFLAGS 3
+    VOLPAN 1 0 -1 -1 1
+    MUTESOLO 0 0 0
+    IPHASE 0
+    PLAYOFFS 0 1
+    ISBUS 0 0
+    BUSCOMP 0 0 0 0 0
+    SHOWINMIX 1 0.6667 0.5 1 0.5 0 0 0 0
+    FIXEDLANES 9 0 0 0 0
+    SEL 0
+    REC 0 0 1 0 0 0 0 0
+    VU 64
+    TRACKHEIGHT 0 0 0 0 0 0 0
+    INQ 0 0 0 0.5 100 0 0 100
+    NCHAN 2
+    FX 1
+    TRACKID {6A8A3F96-B791-2DC0-6C54-815E6B10539F}
+    PERF 0
+    MIDIOUT -1 -1
+    MAINSEND 1 0
+    <ITEM
+      POSITION 1
+      SNAPOFFS 0
+      LENGTH 1.25
+      LOOP 1
+      ALLTAKES 0
+      FADEIN 1 0 0 1 0 0 0 1 0 0 1 0 0
+      FADEOUT 1 0 0 1 0 0 0 1 0 0 1 0 0
+      MUTE 0 0
+      SEL 0
+      IGUID {A464C480-907A-F738-7DD4-1406D83153DA}
+      IID 1
+      NAME "Top item"
+      VOLPAN 1 -0.5 0.8 -1
+      SOFFS 0.125
+      PLAYRATE 0.9 1 0 -1 0 0.0025
+      CHANMODE 0
+      GUID {AFCAB0B4-3CBD-F9DD-0754-C8ACD7E51E42}
+      <SOURCE WAVE
+        FILE "/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav"
+      >
+      TAKE
+      NAME "Earlier item"
+      TAKEVOLPAN 0.25 0.7 -1
+      SOFFS 1.35
+      PLAYRATE 1.1 1 0 -1 0 0.0025
+      CHANMODE 0
+      GUID {AEB05590-AEC9-E5A2-0ADD-F8B0AD3CE42E}
+      <SOURCE WAVE
+        FILE "/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-02.wav"
+      >
+      TAKE
+      NAME "Earlier alternate"
+      TAKEVOLPAN 0.25 0.7 -1
+      SOFFS 1.05
+      PLAYRATE 0.8 1 0 -1 0 0.0025
+      CHANMODE 0
+      GUID {AD33492A-3DF7-30D1-FDD5-D2EA0E2C3B42}
+      <SOURCE WAVE
+        FILE "/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-02.wav"
+      >
+      TAKE
+      NAME "Lower item"
+      TAKEVOLPAN 0.5 0.6 -1
+      SOFFS -0.825
+      PLAYRATE 1.2 1 0 -1 0 0.0025
+      CHANMODE 0
+      GUID {974A716B-12C7-3E5C-DCBB-FA213958E29F}
+      <SOURCE WAVE
+        FILE "/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav"
+      >
+    >
+  >
+  <TRACK {15CFFFC3-3B08-2870-B387-9D4795FBA09F}
+    NAME "Earlier item track"
+    PEAKCOL 16576
+    BEAT -1
+    AUTOMODE 0
+    PANLAWFLAGS 3
+    VOLPAN 1 0 -1 -1 1
+    MUTESOLO 0 0 0
+    IPHASE 0
+    PLAYOFFS 0 1
+    ISBUS 0 0
+    BUSCOMP 0 0 0 0 0
+    SHOWINMIX 1 0.6667 0.5 1 0.5 0 0 0 0
+    FIXEDLANES 9 0 0 0 0
+    SEL 0
+    REC 0 0 1 0 0 0 0 0
+    VU 64
+    TRACKHEIGHT 0 0 0 0 0 0 0
+    INQ 0 0 0 0.5 100 0 0 100
+    NCHAN 2
+    FX 1
+    TRACKID {15CFFFC3-3B08-2870-B387-9D4795FBA09F}
+    PERF 0
+    MIDIOUT -1 -1
+    MAINSEND 1 0
+  >
+  <TRACK {3B2C0BAE-A8F4-7A37-35F8-DB3B3C729F24}
+    NAME "Lower track"
+    PEAKCOL 16576
+    BEAT -1
+    AUTOMODE 0
+    PANLAWFLAGS 3
+    VOLPAN 1 0 -1 -1 1
+    MUTESOLO 0 0 0
+    IPHASE 0
+    PLAYOFFS 0 1
+    ISBUS 0 0
+    BUSCOMP 0 0 0 0 0
+    SHOWINMIX 1 0.6667 0.5 1 0.5 0 0 0 0
+    FIXEDLANES 9 0 0 0 0
+    SEL 0
+    REC 0 0 1 0 0 0 0 0
+    VU 64
+    TRACKHEIGHT 0 0 0 0 0 0 0
+    INQ 0 0 0 0.5 100 0 0 100
+    NCHAN 2
+    FX 1
+    TRACKID {3B2C0BAE-A8F4-7A37-35F8-DB3B3C729F24}
+    PERF 0
+    MIDIOUT -1 -1
+    MAINSEND 1 0
+  >
+  <TRACK {8E037D40-9924-5A4F-8EE3-D0EBB2DB776F}
+    NAME "Aligned top track"
+    PEAKCOL 16576
+    BEAT -1
+    AUTOMODE 0
+    PANLAWFLAGS 3
+    VOLPAN 1 0 -1 -1 1
+    MUTESOLO 0 0 0
+    IPHASE 0
+    PLAYOFFS 0 1
+    ISBUS 0 0
+    BUSCOMP 0 0 0 0 0
+    SHOWINMIX 1 0.6667 0.5 1 0.5 0 0 0 0
+    FIXEDLANES 9 0 0 0 0
+    SEL 0
+    REC 0 0 1 0 0 0 0 0
+    VU 64
+    TRACKHEIGHT 0 0 0 0 0 0 0
+    INQ 0 0 0 0.5 100 0 0 100
+    NCHAN 2
+    FX 1
+    TRACKID {8E037D40-9924-5A4F-8EE3-D0EBB2DB776F}
+    PERF 0
+    MIDIOUT -1 -1
+    MAINSEND 1 0
+    <ITEM
+      POSITION 6
+      SNAPOFFS 0
+      LENGTH 1
+      LOOP 1
+      ALLTAKES 0
+      FADEIN 1 0 0 1 0 0 0 1 0 0 1 0 0
+      FADEOUT 1 0 0 1 0 0 0 1 0 0 1 0 0
+      MUTE 0 0
+      SEL 0
+      IGUID {485A18C9-CED1-ECD4-5B4A-AAA518C895BA}
+      IID 8
+      NAME "Aligned top"
+      VOLPAN 1 -0.5 0.8 -1
+      SOFFS 0.125
+      PLAYRATE 0.9 1 0 -1 0 0.0025
+      CHANMODE 0
+      GUID {F9BAA3D0-CD97-38F2-814B-62FEFFE60813}
+      <SOURCE WAVE
+        FILE "/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav"
+      >
+      TAKE SEL
+      NAME "Aligned top alternate"
+      TAKEVOLPAN -0.5 0.8 -1
+      SOFFS 0.125
+      PLAYRATE 0.9 1 0 -1 0 0.0025
+      CHANMODE 0
+      GUID {5B372691-7CE4-15D6-0795-B8C16B203294}
+      <SOURCE WAVE
+        FILE "/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav"
+      >
+      TAKE
+      NAME "Aligned middle"
+      TAKEVOLPAN 0.25 0.7 -1
+      SOFFS 0.25
+      PLAYRATE 1.1 1 0 -1 0 0.0025
+      CHANMODE 0
+      GUID {D211EE36-9CFC-608F-28A3-E70EB22E33F6}
+      <SOURCE WAVE
+        FILE "/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-02.wav"
+      >
+      TAKE
+      NAME "Aligned middle active"
+      TAKEVOLPAN 0.25 0.7 -1
+      SOFFS 0.25
+      PLAYRATE 1.1 1 0 -1 0 0.0025
+      CHANMODE 0
+      GUID {CC9A9B7C-341F-EA3E-8827-F1B63A84A4D8}
+      <SOURCE WAVE
+        FILE "/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-02.wav"
+      >
+      TAKE
+      NAME "Aligned lower"
+      TAKEVOLPAN 0.5 0.6 -1
+      SOFFS 0.375
+      PLAYRATE 1.2 1 0 -1 0 0.0025
+      CHANMODE 0
+      GUID {3CD82FCC-DE7B-A9AD-D10B-AA6F3CFE9500}
+      <SOURCE WAVE
+        FILE "/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav"
+      >
+    >
+  >
+  <TRACK {0A4784C3-9F39-A31C-A7E3-0E21822A5467}
+    NAME "Aligned middle track"
+    PEAKCOL 16576
+    BEAT -1
+    AUTOMODE 0
+    PANLAWFLAGS 3
+    VOLPAN 1 0 -1 -1 1
+    MUTESOLO 0 0 0
+    IPHASE 0
+    PLAYOFFS 0 1
+    ISBUS 0 0
+    BUSCOMP 0 0 0 0 0
+    SHOWINMIX 1 0.6667 0.5 1 0.5 0 0 0 0
+    FIXEDLANES 9 0 0 0 0
+    SEL 0
+    REC 0 0 1 0 0 0 0 0
+    VU 64
+    TRACKHEIGHT 0 0 0 0 0 0 0
+    INQ 0 0 0 0.5 100 0 0 100
+    NCHAN 2
+    FX 1
+    TRACKID {0A4784C3-9F39-A31C-A7E3-0E21822A5467}
+    PERF 0
+    MIDIOUT -1 -1
+    MAINSEND 1 0
+  >
+  <TRACK {16392719-8A2F-A56C-34C7-585498AC6F40}
+    NAME "Aligned lower track"
+    PEAKCOL 16576
+    BEAT -1
+    AUTOMODE 0
+    PANLAWFLAGS 3
+    VOLPAN 1 0 -1 -1 1
+    MUTESOLO 0 0 0
+    IPHASE 0
+    PLAYOFFS 0 1
+    ISBUS 0 0
+    BUSCOMP 0 0 0 0 0
+    SHOWINMIX 1 0.6667 0.5 1 0.5 0 0 0 0
+    FIXEDLANES 9 0 0 0 0
+    SEL 0
+    REC 0 0 1 0 0 0 0 0
+    VU 64
+    TRACKHEIGHT 0 0 0 0 0 0 0
+    INQ 0 0 0 0.5 100 0 0 100
+    NCHAN 2
+    FX 1
+    TRACKID {16392719-8A2F-A56C-34C7-585498AC6F40}
+    PERF 0
+    MIDIOUT -1 -1
+    MAINSEND 1 0
+  >
+  <TRACK {27BA3F28-BCEA-865C-71A1-58A00CB8FE89}
+    NAME "Single track control"
+    PEAKCOL 16576
+    BEAT -1
+    AUTOMODE 0
+    PANLAWFLAGS 3
+    VOLPAN 1 0 -1 -1 1
+    MUTESOLO 0 0 0
+    IPHASE 0
+    PLAYOFFS 0 1
+    ISBUS 0 0
+    BUSCOMP 0 0 0 0 0
+    SHOWINMIX 1 0.6667 0.5 1 0.5 0 0 0 0
+    FIXEDLANES 9 0 0 0 0
+    SEL 1
+    REC 0 0 1 0 0 0 0 0
+    VU 64
+    TRACKHEIGHT 0 0 0 0 0 0 0
+    INQ 0 0 0 0.5 100 0 0 100
+    NCHAN 2
+    FX 1
+    TRACKID {27BA3F28-BCEA-865C-71A1-58A00CB8FE89}
+    PERF 0
+    MIDIOUT -1 -1
+    MAINSEND 1 0
+    <ITEM
+      POSITION 11
+      SNAPOFFS 0
+      LENGTH 1.5
+      LOOP 1
+      ALLTAKES 0
+      FADEIN 1 0 0 1 0 0 0 1 0 0 1 0 0
+      FADEOUT 1 0 0 1 0 0 0 1 0 0 1 0 0
+      MUTE 0 0
+      SEL 1
+      IGUID {C26B56F7-4A2E-B51E-B6A3-3366E9D94ECE}
+      IID 16
+      NAME "Earlier same-track item"
+      VOLPAN 1 0.25 0.7 -1
+      SOFFS 0.25
+      PLAYRATE 1.1 1 0 -1 0 0.0025
+      CHANMODE 0
+      GUID {D8CB835C-6C03-B2C4-3BE0-098E9A2AB046}
+      <SOURCE WAVE
+        FILE "/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-02.wav"
+      >
+    >
+    <ITEM
+      POSITION 12
+      SNAPOFFS 0
+      LENGTH 1.25
+      LOOP 1
+      ALLTAKES 0
+      FADEIN 1 0 0 1 0 0 0 1 0 0 1 0 0
+      FADEOUT 1 0 0 1 0 0 0 1 0 0 1 0 0
+      MUTE 0 0
+      SEL 1
+      IGUID {4532A3BB-DADE-F9FC-E356-0F22CF57BA45}
+      IID 15
+      NAME "Top same-track item"
+      VOLPAN 1 -0.5 0.8 -1
+      SOFFS 0.125
+      PLAYRATE 0.9 1 0 -1 0 0.0025
+      CHANMODE 0
+      GUID {D7C98DAD-C900-1F4B-2D2D-DEFA066EA8AC}
+      <SOURCE WAVE
+        FILE "/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav"
+      >
+    >
+    <ITEM
+      POSITION 13
+      SNAPOFFS 0
+      LENGTH 1.25
+      LOOP 1
+      ALLTAKES 0
+      FADEIN 1 0 0 1 0 0 0 1 0 0 1 0 0
+      FADEOUT 1 0 0 1 0 0 0 1 0 0 1 0 0
+      MUTE 0 0
+      SEL 1
+      IGUID {8D37ADA6-C848-0846-44AE-9DF59E0FEBA1}
+      IID 17
+      NAME "Later same-track item"
+      VOLPAN 1 0.5 0.6 -1
+      SOFFS 0.375
+      PLAYRATE 1.2 1 0 -1 0 0.0025
+      CHANMODE 0
+      GUID {6B949580-831E-EC87-2F43-E029B10F7824}
+      <SOURCE WAVE
+        FILE "/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav"
+      >
+    >
+  >
+>

@@ -1,0 +1,15 @@
+artifact	sha256
+fixtures/midi-event-filter-native-options.png	d6b9ece18e24d30a45f703571e5ace142a56f4136abfaf97f190d1581891106a
+fixtures/midi-event-filter-native-sysex-meta.png	90a048bc95d45838b5037ac3dc6415156d4d48102035e9f5f97a4e2ab1d7165c
+fixtures/midi-event-filter-native-inverted.png	a964c3975a81d8ea4b96e49f7a1421f42293e745a70d7c8875ffbeacdc35e7b9
+fixtures/midi-event-filter-aaadaw-options.png	2e5075d491c4c798cb0fe76c5adc1119bed82d46cbbc6278b6a9fd08f855420a
+fixtures/midi-event-filter-aaadaw-sysex-meta.png	ea701b6638da84af64ec52b7bd21c591dad51cc40410e6836e9616a8e6980994
+fixtures/midi-event-filter-aaadaw-inverted.png	f739c6185f3be2257f1ca589b490cb9b3cf391bfb6a8f417bb184ccf86fe41ef
+native_sha256	9976f5608068b7a58518969001b00b527fb0de6ed7459e0e5dda6f29878ee254
+native_build_id	fb9ade2f211bc91a3ee6193630ef17bcf5f6528b
+aaadaw_binary_sha256	71b66e18941140a439ffaf6d39a986182469d627184281734a4474caa5a03ced
+aaadaw_build_id	6303654aef28033a94eeddb284b99239a55f426d
+environment	Linux Xvfb; REAPER 7.82 / Default 7 and AAADAW current stable debug binary; 1280x800; native probe imports docs/reaper-parity/fixtures/midi-file-import-native/probe-type1.mid; AAADAW imports the same fixture with default options
+assertion	Native Event type choices and order are <all events>, Note, Poly Aftertouch, Control Change (CC), Program Change (PC), Channel Pressure, Pitch, Sysex/Meta. Selecting Sysex/Meta and enabling the filter shows track-name/text/marker/SysEx rows and hides channel events and the synthetic (end) row; Invert hides those opaque rows and shows channel events plus the synthetic (end) All Notes Off row. AAADAW reproduces the choice order, grouping, matching, inverse result, and terminal-row visibility.
+verification	crates/aaadaw/src/app/view/midi_editor.rs::event_list_orders_and_filters_the_modeled_event_types; crates/aaadaw/src/app/view/midi_editor.rs::event_list_shows_text_marker_and_sysex_item_events; AAADAW binary tests 771/771; strict workspace all-target Clippy (-D warnings); stable cargo fmt and git diff --check
+limitation	Native comparison covers the Sysex/Meta category and inverse state; other event-type filter results and channel-mask interactions still need individual native probes. CC Parameter and Value criteria are implemented; Repeat and Solo remain unimplemented; Note Position and Length are modeled for homogeneous selected-Note ranges. Set filter from selection and Clear filter are documented separately. Filter visibility criteria preserve selected events even when their rows are hidden; Set/Add/Remove selection actions are implemented and covered separately in midi-event-filter-selection.md. Screenshots are behavioral evidence, not pixel-diff certification.

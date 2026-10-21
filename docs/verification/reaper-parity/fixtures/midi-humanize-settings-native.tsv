@@ -1,0 +1,8 @@
+reference	Linux REAPER 7.82 / Default 7
+initial_defaults	Selected notes; Timing 0; Velocity 0; Timing bias 0
+applied_values	All notes; Timing 37; Velocity 61; Timing bias -42
+reopened_after_restart	All notes; Timing 37; Velocity 61; Timing bias -42
+settings_after_ok_reaper_ini	humanall=1; humantiming=37; humanvel=61; humanbias=-42
+cancel_dialog_values	Selected notes; Timing 12; Velocity 23; Timing bias 0
+settings_after_cancel_reaper_ini	humanall=1; humantiming=37; humanvel=61; humanbias=-42
+observed_rule	OK persists the four dialog settings across REAPER restart; Cancel leaves the last accepted settings unchanged

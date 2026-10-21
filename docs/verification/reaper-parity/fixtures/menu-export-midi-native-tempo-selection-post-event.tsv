@@ -1,0 +1,9 @@
+version	7.82/linux-x86_64
+theme	Default_7.0.ReaperThemeZip
+time_selection_seconds	0.5-2.5
+time_selection_project_ticks	960-4560
+midi_item_seconds	0.25-1.25
+tempo_meter_change	2 seconds; project tick 3840; output tick 2880; 90 BPM; 3/4
+midi_events	C4 project ticks 480-1440; CC1 tick 720; pitch bend tick 840
+post_tempo_note	separate D4 item at 2.125-2.375 seconds; inside the time selection
+export_action	40849

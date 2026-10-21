@@ -1,0 +1,37 @@
+native_environment	REAPER 7.82/linux-x86_64 / Default_7.0.ReaperThemeZip; isolated Xvfb 1280x800; audio device closed
+native_binary	target/reaper-7.82/reaper_linux_x86_64/REAPER/reaper; SHA-256 9976f5608068b7a58518969001b00b527fb0de6ed7459e0e5dda6f29878ee254
+native_probe	scripts/reaper_parity/probe-midi-delete-active-take.lua; SHA-256 ea5834c19bde8d81738d75c66c9726cc216973f5db4ab3e3cd45ae9d2c19c941
+native_capture_script	scripts/reaper_parity/capture-midi-delete-active-take-native.sh; SHA-256 49f8dc84bee9f4eaee7991abef97c8623dbf149b3aff707e34fc112b92679258
+native_fixture	One selected MIDI item with ordered Takes A/B/C, active B at index 1; distinct notes and source offsets; plus a single-Take control
+native_readback	docs/verification/reaper-parity/fixtures/midi-delete-active-take-native.tsv; SHA-256 f80b7c04ed9bf3b36d95542138ef2b05934898f284e6cfcee91e7e18f6f62ee6
+native_state_before	docs/verification/reaper-parity/fixtures/midi-delete-active-take-before.rpp; 3 Takes, active B/index 1; SHA-256 482502bd52da0ce0cea30967df4a46debe9e40b8f1208c9a03792181eb51918d
+native_state_after	docs/verification/reaper-parity/fixtures/midi-delete-active-take-after.rpp; B removed; A/C remain, active A/index 0; SHA-256 2b3c7e4183b4c25e7d458bebe6f1c93c3077facea4160a9f4114dec4f4882a1c
+native_state_undo	docs/verification/reaper-parity/fixtures/midi-delete-active-take-undo.rpp; restores A/B/C, active B/index 1; SHA-256 482502bd52da0ce0cea30967df4a46debe9e40b8f1208c9a03792181eb51918d
+native_state_redo	docs/verification/reaper-parity/fixtures/midi-delete-active-take-redo.rpp; A/C, active A/index 0; SHA-256 2b3c7e4183b4c25e7d458bebe6f1c93c3077facea4160a9f4114dec4f4882a1c
+native_state_first-before	docs/verification/reaper-parity/fixtures/midi-delete-active-take-first-before.rpp; 3 Takes, active A/index 0; SHA-256 3a3b5c05718d736e53f45ac49cf6ee178454613a815a0f68d475a27f6db9491e
+native_state_first-after	docs/verification/reaper-parity/fixtures/midi-delete-active-take-first-after.rpp; A removed; B/C remain, active B/index 0; SHA-256 1c5f1c98c6992b4d305d3f9254e5249cbc2135a82a27de08bc93e89db42cde2d
+native_state_first-undo	docs/verification/reaper-parity/fixtures/midi-delete-active-take-first-undo.rpp; restores A/B/C, active A/index 0; SHA-256 3a3b5c05718d736e53f45ac49cf6ee178454613a815a0f68d475a27f6db9491e
+native_state_first-redo	docs/verification/reaper-parity/fixtures/midi-delete-active-take-first-redo.rpp; B/C, active B/index 0; SHA-256 1c5f1c98c6992b4d305d3f9254e5249cbc2135a82a27de08bc93e89db42cde2d
+native_state_last-before	docs/verification/reaper-parity/fixtures/midi-delete-active-take-last-before.rpp; 3 Takes, active C/index 2; SHA-256 1f17c21d5c9d645e34b2f2fca3132257a49097a2641e0f3473cffdf7fd15a7be
+native_state_last-after	docs/verification/reaper-parity/fixtures/midi-delete-active-take-last-after.rpp; C removed; A/B remain, active B/index 1; SHA-256 03ac82ae5b04e8c3dca7832348225fd68c4145bac2a7cb0d5208e44078716baf
+native_state_last-undo	docs/verification/reaper-parity/fixtures/midi-delete-active-take-last-undo.rpp; restores A/B/C, active C/index 2; SHA-256 1f17c21d5c9d645e34b2f2fca3132257a49097a2641e0f3473cffdf7fd15a7be
+native_state_last-redo	docs/verification/reaper-parity/fixtures/midi-delete-active-take-last-redo.rpp; A/B, active B/index 1; SHA-256 03ac82ae5b04e8c3dca7832348225fd68c4145bac2a7cb0d5208e44078716baf
+native_state_single-before	docs/verification/reaper-parity/fixtures/midi-delete-active-take-single-before.rpp; one MIDI Take; Item exists and is selected; SHA-256 e6684efe8e530d88e63ed10dc1ad4e8754b1040385d43d5e025d6cc6acd82102
+native_state_single-after	docs/verification/reaper-parity/fixtures/midi-delete-active-take-single-after.rpp; Item removed; SHA-256 2c1525814c84d14e3c216f3701a9b4554a9fe03206d1288c777a841ea0708e53
+native_state_single-undo	docs/verification/reaper-parity/fixtures/midi-delete-active-take-single-undo.rpp; Item restored and selected; SHA-256 e6684efe8e530d88e63ed10dc1ad4e8754b1040385d43d5e025d6cc6acd82102
+native_state_single-redo	docs/verification/reaper-parity/fixtures/midi-delete-active-take-single-redo.rpp; Item removed; SHA-256 2c1525814c84d14e3c216f3701a9b4554a9fe03206d1288c777a841ea0708e53
+native_state_visual-after	docs/verification/reaper-parity/fixtures/midi-delete-active-take-visual-after.rpp; B removed; native Arrange displays Take 1/2: Take A; SHA-256 2b3c7e4183b4c25e7d458bebe6f1c93c3077facea4160a9f4114dec4f4882a1c
+native_screenshot	docs/verification/reaper-parity/fixtures/midi-delete-active-take-native-after.png; 1280x800; Arrange displays Take 1/2: Take A; SHA-256 41334634c070cba84b3b8bee9bf828d8b6d521361f791ec203b6992d098ed58d
+aaadaw_fixture_generator	crates/aaadaw/examples/generate_midi_delete_active_take_fixture.rs; SHA-256 6e27af4953c20c7da5aef32872daf4407a8ddacb3b0f886c5585775d398af123
+aaadaw_fixture	docs/verification/reaper-parity/fixtures/midi-delete-active-take-aaadaw.aaadaw; SHA-256 f23cd6b298d56890f9b106282baf34f40f66168e7750b60d8686e8ae3df18c18
+aaadaw_capture_script	scripts/reaper_parity/capture-midi-delete-active-take-aaadaw.sh; capture-only Ctrl+Shift+X binding for take.delete-active; SHA-256 7ea8d6e2f078c869c977c5ee361c99759a7e711775bcd7e8effeec2a1c480822
+aaadaw_binary	target/cranelift/debug/aaadaw; rustc 1.101.0-nightly (5d8fec066 2026-10-16); Build ID e19403034093607e6d77148c057069635cb408d6; Cranelift backend; audio-device disabled; SHA-256 05f1b99ad25fb2fd838c611a5ebe99df20f4033b13cb435974d3d986423d1853
+aaadaw_screenshot_before	docs/verification/reaper-parity/fixtures/midi-delete-active-take-aaadaw-before.png; 1280x800; Inspector shows Take 2/3 · Take B; SHA-256 d9ac9c45d5427b460d0e3499f47d6fec050407109d178fb5855f4c477f680ea8
+aaadaw_screenshot_after	docs/verification/reaper-parity/fixtures/midi-delete-active-take-aaadaw-after.png; 1280x800; Inspector shows Take 1/2 · Take A; SHA-256 7e88ce7e31912a6ecc33687323c66865c6affa958d9384cfe115dc9461ed5de2
+aaadaw_screenshot_undo	docs/verification/reaper-parity/fixtures/midi-delete-active-take-aaadaw-undo.png; 1280x800; Inspector shows Take 2/3 · Take B; SHA-256 4f20c9d7258f9f93fb2242897143b6399079ca1577e69a1fa360fd4ea39f098a
+aaadaw_screenshot_redo	docs/verification/reaper-parity/fixtures/midi-delete-active-take-aaadaw-redo.png; 1280x800; Inspector shows Take 1/2 · Take A; SHA-256 03c443fac6b7382a1dd1787071803f00840791887ecc9da6eb214214745036f7
+app_verification	cargo +stable nextest run -p aaadaw --bin aaadaw; 869/869 passed
+core_storage_verification	cargo +stable nextest run -p aaadaw-core -p aaadaw-storage --status-level fail; 388/388 passed across 49 binaries
+clippy_verification	cargo +stable clippy -p aaadaw-core -p aaadaw-storage -p aaadaw --all-targets -- -D warnings -A future-incompatible; passed
+other_verification	cargo +stable fmt --all -- --check; bash -n on both capture scripts; 113 unique matrix rows / 15 columns; git diff --check; evidence artifact hash audit 30/30
+scope_note	Screenshots verify project state and UI; audio playback audibility is outside this capture.

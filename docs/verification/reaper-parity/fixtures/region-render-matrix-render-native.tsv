@@ -1,0 +1,26 @@
+key	value
+reference	Linux REAPER 7.82 linux-x86_64 / Default 7 / isolated configuration
+source_generator	scripts/reaper_parity/generate-region-render-matrix-sources.py
+native_probe	scripts/reaper_parity/probe-region-render-matrix-render.lua
+fixture	Three 4-second 48 kHz PCM24 stereo tracks with constant L/R samples: Drums 0.125; Bass 0.25; Guitar 0.375
+source_drums_sha256	232528e25ad3b76440bc4b5413e3bd540e94be6750612a4ea6848de3f2651de8
+source_bass_sha256	9974a87d96a63464245e68fb9a4ca888ced645eea12cac2c6ca40e0dc0d590af
+source_guitar_sha256	0a36ea42ae636fc31c9fc16bf6fe7c6150eb09ce926058181bfd423b72d8f8c7
+regions	Intro [0,2) seconds; Verse [2,4) seconds
+matrix_intro	Master mix; Drums; Guitar
+matrix_verse	Bass
+render_source	Region Render Matrix (RENDER_SETTINGS=8); All project regions; WAV PCM24; 48 kHz; stereo; no tail or normalization
+native_render_action	42230 / File: Render project, using the most recent render settings, auto-close render dialog
+native_pattern	$region-$track
+native_output_count	4; only assigned region/target combinations produced files
+audio_device_note	An initial missing-device prompt was dismissed; no hardware audio behavior is inferred
+aaadaw_test	app::audio_export::tests::region_render_matrix_wavs_match_native_target_count_ranges_and_samples
+aaadaw_comparison	Four outputs; 96,000 frames each; every PCM24 stereo sample equals the matching native file payload
+aaadaw_naming	The optional $region-$track field emits exactly the four native filenames; an empty field retains generated prefix naming
+open_parity_gap	The Wildcards chooser, full token/escaping rules, filename-pattern presets/persistence, and remaining source/range combinations are not verified
+
+output	region_target	filename	frames	rate	channels	format	first_left_pcm24	first_right_pcm24	pcm_sha256	file_sha256
+1	Intro_Master	Intro-Master.wav	96000	48000	2	PCM24	6291456	6291456	55987919336b141527a836d35bb71c8ce5e967e7662540d84fcb2ef37dfcb6e9	66b6fa6b0cf7eaa0cd6276f095d3d53af952202a0f42fbfb4ecfac828646e2e9
+2	Intro_Drums	Intro-Drums.wav	96000	48000	2	PCM24	1048576	1048576	3664570cd6df844ac3f51488eba01b6cb26d88c034dec19f82e7a6881fdac7b8	5bc9af1d73efa83bba45b9ea98796bdce76dae270a741ed26297e819973c840c
+3	Intro_Guitar	Intro-Guitar.wav	96000	48000	2	PCM24	3145728	3145728	f12e5631d16b3c9ac3a583aecd0c48cb74666f13cd8e958a79114e1a95c7f5c1	1415a7415aa2ba85d0291ba67387d16eb60bd7cb565074c2aa8e54aa27db6407
+4	Verse_Bass	Verse-Bass.wav	96000	48000	2	PCM24	2097152	2097152	0f8ddefbfd34ba84e4f4dcb826dd7dafab60e6237b9f19675f441c831a0da16f	82650b6540a0a21fd02513cba895c7e85ac7dd3e2905228fbeeb29fd76415b3a

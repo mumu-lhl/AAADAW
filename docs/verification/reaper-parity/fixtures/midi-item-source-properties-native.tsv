@@ -1,0 +1,12 @@
+reaper_version	7.82/linux-x86_64
+reaper_theme	Default_7.0.ReaperThemeZip
+native_project	Fresh unsaved project; one selected loop-source MIDI item at 0 seconds, 2 seconds long
+item_properties_window	Media Item Properties; xwininfo 526x693
+source_properties_entry	Take media source > Properties... button; opens MIDI item properties
+source_properties_window	MIDI item properties; xwininfo 421x507
+source_length_display	4 quarter notes; read-only text; PPQ 960; MIDI item estimated length 0:02.000
+source_length_edit_control	None visible in native MIDI item properties dialog
+source_api_state	GetMediaSourceLength=4 quarter notes; length_is_qn=true; loop_source=true
+direct_action	40011 Item properties: Show media item source properties; opens the same MIDI item properties dialog
+native_screenshot	midi-item-source-properties-native.png; 1280x1024; SHA-256 85ab4d25d73544ae1adc29b6496cb28ebbdc26941f817386aa4c0df7885a2abd
+reproduction_script	../../../../scripts/reaper_parity/probe-midi-source-properties.lua

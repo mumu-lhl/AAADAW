@@ -1,0 +1,13 @@
+version	7.82/linux-x86_64
+theme	Default_7.0.ReaperThemeZip
+action	41249 Item edit: Nudge right by last nudge dialog settings
+probe	selected audio item; start 2s; length 10s; source offset 0s; amount 250ms
+case	target	result items (position,length,source offset,selection)	edit cursor
+left_trim	left trim	2.25,9.75,0.25,selected	7.00
+left_edge	left edge	2.25,9.75,0.00,selected	7.00
+end_position	end position	2.25,10.00,0.00,selected	7.00
+right_trim	right trim	2.00,10.25,0.00,selected	7.00
+contents_zero_offset	contents	2.00,10.00,9.75,selected	7.00
+contents_five_second_offset	contents	2.00,10.00,4.75,selected	7.00
+duplicate	duplicate	2.00,10.00,0.00,unselected;2.25,10.00,0.00,selected	7.00
+edit_cursor	edit cursor	2.00,10.00,0.00,selected	7.25

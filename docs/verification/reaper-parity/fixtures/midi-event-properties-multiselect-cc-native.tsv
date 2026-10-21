@@ -1,0 +1,6 @@
+version	7.82/linux-x86_64
+theme	Default_7.0.ReaperThemeZip
+action	40004	Edit: Event properties	Ctrl+F2
+mode	40056	Mode: Event List	Alt+3
+cc	1	1	0	480.0	176	3	7	90
+cc	2	1	0	960.0	176	6	10	100

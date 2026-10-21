@@ -1,0 +1,20 @@
+record	value
+application	Linux desktop AAADAW binary built from the worktree with `--no-default-features`
+binary_sha256	`07616cf0373ead822842980c572bb4a20f9163ac67fe7368666c3c19a4e3c667`
+build_id	`05509b38bdd21729a99d227453d1cf2ce2687a49`
+display	Xvfb :798, 1280x800x24; actual 1280x800 AAADAW window; pointer input injected through XTest
+configuration	Isolated XDG config/data/state/cache/runtime directories under `target/aaadaw-template-menu-clean`; user configuration was not read or modified
+empty_template_fixture	Two empty runs are isolated. The populated run copied `examples/first-project/first-project.aaadaw` to `alpha.aaadaw` and `Zeta.aaadaw`; both hashes are `956cc6027f75f66e4cda3570eb9e5926e1cbf0a9682fbfccf2f9e90c1fb9d9f2`.
+menu_input	Clicked File at (35,30), then Project templates at (145,286).
+populated_capture	`project-template-menu-populated-aaadaw.png`; SHA-256 `31a88b7c61c0cd74ef33dbf2def6e0f249699f5af0a1a0804ed1b0d0eb292deb`; 1280x800 full-screen capture. Focused crop: `project-template-menu-populated-aaadaw-crop.png`; SHA-256 `f5fd25f590918a65bc2f40fa42757f63de4f59eaf021c9b0bf603f4823f14f8d`.
+empty_capture	`project-template-menu-empty-aaadaw.png`; SHA-256 `840a51fbf056dc38896c247391e79c684b8818ee60f32b49ec404d3f56a3c718`; 1280x800 full-screen capture. Focused crop: `project-template-menu-empty-aaadaw-crop.png`; SHA-256 `8e9d0ec0a51646f058dbd56461c93711c04ab7e3662dd463775d29af42615c2e`.
+show_path_capture	`project-template-menu-show-path-aaadaw.png`; SHA-256 `ca54018a496a6b6dd11270e80b3eb37f728d9b81e52bc0f86f555ba7c4613a62`; status bar displays the opened isolated path.
+show_path_input	Clicked `Show project template path in explorer/finder` at (500,329). A controlled `xdg-open` test executable recorded `/workspace/AAADAW/target/aaadaw-template-menu-clean/config/aaadaw/ProjectTemplates` as its exact argument.
+menu_order	`Save project as template...`; `Show project template path in explorer/finder`; separator; disabled `Load project template:`; then `alpha`, `Zeta`.
+empty_state	The disabled `(no project templates)` row follows the disabled `Load project template:` header.
+readability	The long directory action wraps to two lines at the current 360px menu width and remains fully visible.
+unit_verification	`CARGO_TARGET_DIR=target/verify-stable PKG_CONFIG_PATH=target/pkgconfig cargo xtest -p aaadaw --bin aaadaw -E 'test(project_template)'`: 8 passed; save-template non-overwrite regression: 1 passed.
+full_app_suite	`cargo xtest -p aaadaw --bin aaadaw`: 696 passed, 0 skipped.
+strict_clippy	`cargo clippy --locked -p aaadaw --bin aaadaw --all-targets -- -D warnings`: no issues.
+format_and_diff	`cargo fmt --all -- --check` and `git diff --check` passed.
+parity_limit	REAPER uses `.RPP` and asks before overwriting. AAADAW now confirms before atomically replacing a duplicate `.aaadaw`; screenshot and workflow limits are recorded in `project-template-overwrite-aaadaw.tsv`. Multiple project tabs and complete native template/default-project behavior remain incomplete.

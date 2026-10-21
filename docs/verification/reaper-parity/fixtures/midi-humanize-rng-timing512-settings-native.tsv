@@ -1,0 +1,10 @@
+version	7.82/linux-x86_64
+theme	Default_7.0.ReaperThemeZip
+humanall	0	Selected notes
+humantiming	100
+humanvel	0
+humanbias	0
+project_ppq	960
+midi_grid_ticks	120
+project_grid_division	0.03125
+tempo_bpm	120.000

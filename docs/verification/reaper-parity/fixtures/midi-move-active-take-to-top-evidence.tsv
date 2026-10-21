@@ -1,0 +1,25 @@
+native_environment	REAPER 7.82/linux-x86_64 / Default_7.0.ReaperThemeZip; isolated Xvfb 1280x800; audio device closed
+native_binary	target/reaper-7.82/reaper_linux_x86_64/REAPER/reaper; SHA-256 9976f5608068b7a58518969001b00b527fb0de6ed7459e0e5dda6f29878ee254
+native_probe	scripts/reaper_parity/probe-midi-move-active-take-to-top.lua; SHA-256 354aa33cc31db5bdb100aec2a96a4fcc6847e89210e52f9cd7cd697ffad14f35
+native_capture_script	scripts/reaper_parity/capture-midi-move-active-take-to-top-native.sh; SHA-256 efd750f890b055f6dc14f7d9779d359f415578552f62e5ff878e0a00958bc94a
+native_fixture	Four selected MIDI items: active Take A at index 1, a single Take, active Take C at index 2, and an already-top Take A at index 0; each multi-Take has distinct notes and source offsets
+native_readback	docs/verification/reaper-parity/fixtures/midi-move-active-take-to-top-native.tsv; SHA-256 af8675e0d7fa0b0d0459b959c20a837a26886374e3add7378d9cb3ba918b2136
+native_state_before	docs/verification/reaper-parity/fixtures/midi-move-active-take-to-top-before.rpp; selected active indices 1/0/2/0; SHA-256 9d62b1b5bc0ea1a0c6b1eb572be970978a797999a1786b86ff9b0b6266fffbb2
+native_state_after	docs/verification/reaper-parity/fixtures/midi-move-active-take-to-top-after.rpp; 0/0/0/0; active names/events/offsets retained and non-active order preserved; SHA-256 8538c15fe04310f36d9ebe030e1904615ff69c9763c8c1e0c937885613519e1e
+native_state_undo	docs/verification/reaper-parity/fixtures/midi-move-active-take-to-top-undo.rpp; restores indices 1/0/2/0 and all Take snapshots; SHA-256 9d62b1b5bc0ea1a0c6b1eb572be970978a797999a1786b86ff9b0b6266fffbb2
+native_state_redo	docs/verification/reaper-parity/fixtures/midi-move-active-take-to-top-redo.rpp; restores 0/0/0/0; SHA-256 8538c15fe04310f36d9ebe030e1904615ff69c9763c8c1e0c937885613519e1e
+native_state_already-top	docs/verification/reaper-parity/fixtures/midi-move-active-take-to-top-already-top.rpp; repeating action leaves all indices at zero and adds no history entry; SHA-256 8538c15fe04310f36d9ebe030e1904615ff69c9763c8c1e0c937885613519e1e
+native_screenshot	docs/verification/reaper-parity/fixtures/midi-move-active-take-to-top-native-after.png; 1280x800; Arrange shows four items, the single Take, and active Takes at index 0; SHA-256 ad2035fa87a0bcefaf56f6d59f6b4769674d93adaf66c0d7c36e4e869714a6b2
+aaadaw_fixture_generator	crates/aaadaw/examples/generate_midi_move_active_take_to_top_fixture.rs; SHA-256 af0721f507777c1b44089f63d0a48632ed7d30cc26aea68bb6791e4e91fbe2a4
+aaadaw_fixture	docs/verification/reaper-parity/fixtures/midi-move-active-take-to-top-aaadaw.aaadaw; SHA-256 fcccc8210b1a9804b07221fdd17a37be57a7c605bf363bcee8b06652ad6e333c
+aaadaw_capture_script	scripts/reaper_parity/capture-midi-move-active-take-to-top-aaadaw.sh; capture-only Ctrl+Shift+T binding for take.move-active-to-top; SHA-256 06e4dc3cebbda07154cf020f70762335232807789ebf56a66a2f6ececbafd596
+aaadaw_binary	target/cranelift/debug/aaadaw; rustc 1.101.0-nightly (5d8fec066 2026-10-16); Build ID d1804a572e9b2165e114369d4f354a43a6ee0f03; Cranelift backend; audio-device disabled; SHA-256 90f8a6f208929558aff2f22027fb541b4cdab9027974adf9ddbea32dad2fd2d4
+aaadaw_screenshot_before	docs/verification/reaper-parity/fixtures/midi-move-active-take-to-top-aaadaw-before.png; 1280x800; Inspector shows Take 2/2 · Take A and the Move selected to top control; SHA-256 a72eebfe8767351e0522a6a232c7fcc6153178a65ac05af706277dca159f8fa4
+aaadaw_screenshot_after	docs/verification/reaper-parity/fixtures/midi-move-active-take-to-top-aaadaw-after.png; 1280x800; Inspector shows Take 1/2 · Take A; SHA-256 0c15912b7f76adec52c1fc838daf48b1597b2118551d0ea8636e14cfb4d9f62b
+aaadaw_screenshot_undo	docs/verification/reaper-parity/fixtures/midi-move-active-take-to-top-aaadaw-undo.png; 1280x800; Undo restores Take 2/2 · Take A; SHA-256 a7a2545f6c77a29f981e25e7179306edae9157ecbd4479af58525ed0a9b5c698
+aaadaw_screenshot_redo	docs/verification/reaper-parity/fixtures/midi-move-active-take-to-top-aaadaw-redo.png; 1280x800; Redo restores Take 1/2 · Take A; SHA-256 11c1111590d065564359d6c6a3d107b5d6b847f86bacbe14463304bbf6505b21
+app_verification	cargo +stable nextest run -p aaadaw --bin aaadaw --status-level fail; 870/870 passed
+core_storage_verification	cargo +stable nextest run -p aaadaw-core -p aaadaw-storage --status-level fail; 389/389 passed across 49 binaries
+clippy_verification	cargo +stable clippy -p aaadaw-core -p aaadaw-storage -p aaadaw --all-targets -- -D warnings -A future-incompatible; passed
+other_verification	cargo +stable fmt --all -- --check; bash -n on both capture scripts; parity matrix 113 unique rows / 15 columns; git diff --check; manifest hash audit 18/18
+scope_note	Capture-only Ctrl+Shift+T does not create a default REAPER binding. Screenshots verify project/UI state, not audio playback audibility.

@@ -1,0 +1,10 @@
+version	7.82/linux-x86_64
+theme	Default_7.0.ReaperThemeZip
+save_all_action	40897	File: Save all projects
+close_all_action	40886	File: Close all projects
+save_all_default_shortcut	None
+tracks_before_save_all	1
+save_all_wrote_track	true
+active_path_after_close_all	
+tracks_after_close_all	0
+blank_project_workspace_after_close_all	true

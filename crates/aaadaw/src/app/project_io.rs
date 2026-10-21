@@ -67,6 +67,24 @@ pub(super) fn save_project(app: &mut App, save_as: Option<PathBuf>) -> Task<Mess
         app.status = "Enter a project file path first".to_owned();
         return Task::none();
     };
+    let template_source = app.project_template_source.as_deref();
+    let saves_into_template_folder = super::project_templates::directory()
+        .is_some_and(|directory| super::project_templates::is_within_directory(&path, &directory));
+    let saves_into_working_copy =
+        app.project_template_working_copy
+            .as_ref()
+            .is_some_and(|working_copy| {
+                super::project_templates::is_within_directory(&path, &working_copy.directory)
+            });
+    let replaces_template_source = template_source
+        .is_some_and(|template| super::project_templates::same_path(&path, template));
+    if app.current_project_is_template()
+        && (saves_into_template_folder || saves_into_working_copy || replaces_template_source)
+    {
+        app.status =
+            "Save a project opened from a template outside the ProjectTemplates folder".to_owned();
+        return Task::none();
+    }
     if !app.commit_pending_track_drafts() {
         return Task::none();
     }
@@ -76,7 +94,7 @@ pub(super) fn save_project(app: &mut App, save_as: Option<PathBuf>) -> Task<Mess
     let plugin_state_warning = None;
     let revision = app.revision;
     let snapshot = app.project.snapshot();
-    let arrangement_view_state = app.timeline.arrangement_view_state(&app.project);
+    let arrangement_view_state = app.project_arrangement_view_state();
     let source_media_path = app.media_store_path();
     let reuse_session_lock =
         app.project_path.as_deref() == Some(path.as_path()) && app.project_lock.is_some();
@@ -118,6 +136,65 @@ pub(super) fn save_project(app: &mut App, save_as: Option<PathBuf>) -> Task<Mess
     )
 }
 
+pub(super) fn save_project_template(
+    path: PathBuf,
+    snapshot: ProjectSnapshot,
+    arrangement_view_state: ArrangementViewState,
+    source_media_path: Option<PathBuf>,
+) -> Result<(), String> {
+    if path.exists() {
+        return Err("a project template with that name already exists".to_owned());
+    }
+    let mut lock = ProjectSessionLock::acquire(&path).map_err(|error| error.to_string())?;
+    let project = Project::from_snapshot(snapshot).map_err(|error| error.to_string())?;
+    save_new_project_session_file(
+        path,
+        &project,
+        &arrangement_view_state,
+        &mut lock,
+        source_media_path,
+        false,
+    )
+}
+
+pub(super) fn overwrite_project_template(
+    path: PathBuf,
+    snapshot: ProjectSnapshot,
+    arrangement_view_state: ArrangementViewState,
+    source_media_path: Option<PathBuf>,
+) -> Result<(), String> {
+    if !path.is_file() {
+        return Err("the project template to overwrite no longer exists".to_owned());
+    }
+    let mut lock = ProjectSessionLock::acquire(&path).map_err(|error| error.to_string())?;
+    let project = Project::from_snapshot(snapshot).map_err(|error| error.to_string())?;
+    save_new_project_session_file(
+        path,
+        &project,
+        &arrangement_view_state,
+        &mut lock,
+        source_media_path,
+        true,
+    )
+}
+
+pub(super) fn save_new_project_version(app: &mut App) -> Task<Message> {
+    if app.current_project_is_template() {
+        return app.pick_path(super::PathPickerTarget::SaveProject);
+    }
+    let Some(current_path) = app.project_path.as_deref() else {
+        return app.pick_path(super::PathPickerTarget::SaveProject);
+    };
+    let version_path = match next_project_version_path(current_path) {
+        Ok(path) => path,
+        Err(error) => {
+            app.status = format!("Could not create project version: {error}");
+            return Task::none();
+        }
+    };
+    save_project(app, Some(version_path))
+}
+
 pub(super) fn resolve_save_target(
     current: Option<&Path>,
     query: &str,
@@ -131,6 +208,41 @@ pub(super) fn resolve_save_target(
         return Some((path.to_path_buf(), true));
     }
     project_path_from_query(query).map(|path| (path, false))
+}
+
+pub(super) fn next_project_version_path(current: &Path) -> Result<PathBuf, String> {
+    let stem = current
+        .file_stem()
+        .ok_or_else(|| "project path must name a file".to_owned())?;
+    let parent = current.parent().unwrap_or_else(|| Path::new(""));
+    let extension = current.extension();
+    let (base, mut version) = match stem.to_str().and_then(|stem| {
+        let (base, suffix) = stem.rsplit_once('_')?;
+        if suffix.is_empty() || !suffix.bytes().all(|byte| byte.is_ascii_digit()) {
+            return None;
+        }
+        let version = suffix.parse::<u64>().ok()?.checked_add(1)?;
+        Some((base.to_owned(), version))
+    }) {
+        Some((base, version)) => (std::ffi::OsString::from(base), version),
+        None => (stem.to_os_string(), 1),
+    };
+
+    loop {
+        let mut file_name = base.clone();
+        file_name.push(format!("_{version:03}"));
+        if let Some(extension) = extension {
+            file_name.push(".");
+            file_name.push(extension);
+        }
+        let candidate = parent.join(file_name);
+        if !candidate.exists() {
+            return Ok(candidate);
+        }
+        version = version
+            .checked_add(1)
+            .ok_or_else(|| "project version number is too large".to_owned())?;
+    }
 }
 
 #[cfg(test)]
@@ -297,6 +409,7 @@ pub(super) fn save_project_session_file_with_media(
             &arrangement_view_state,
             new_session_lock,
             source_media_path,
+            false,
         );
     }
     if !can_overwrite && path.exists() {
@@ -318,6 +431,7 @@ fn save_new_project_session_file(
     arrangement_view_state: &ArrangementViewState,
     new_session_lock: &mut ProjectSessionLock,
     source_media_path: Option<PathBuf>,
+    replace_existing: bool,
 ) -> Result<(), String> {
     let parent = path
         .parent()
@@ -349,8 +463,14 @@ fn save_new_project_session_file(
     let close = store.close().map_err(|error| error.to_string());
     save?;
     close?;
-    temporary_path
-        .persist_noclobber(&path)
-        .map_err(|error| error.error.to_string())?;
+    if replace_existing {
+        temporary_path
+            .persist(&path)
+            .map_err(|error| error.error.to_string())?;
+    } else {
+        temporary_path
+            .persist_noclobber(&path)
+            .map_err(|error| error.error.to_string())?;
+    }
     Ok(())
 }

@@ -1,0 +1,22 @@
+version	7.82/linux-x86_64
+theme	Default_7.0.ReaperThemeZip
+fixture	track Piano; item 0.25-1.25 seconds; C4 note, CC1, pitch bend
+project_ppq_at_item_start	480
+project_ppq_at_note_end	1440
+project_ppq_at_cc	720
+project_ppq_at_pitch_bend	840
+tempo_meter_change	2.0 seconds; project tick 3840; 90 BPM; 3/4; step
+export_action	40849
+export_mode	Multitrack MIDI file (type 1 MIDI file)
+export_ppqn	960
+export_tempo_meter_changes	checked
+export_smpte_markers	unchecked
+native_export_path	/tmp/aaadaw-midi-tempo-meter-native-20261016/midi-tempo-meter-native-20261016.mid
+native_export_bytes	133
+native_export_sha256	3ac0aa9526dd38e54a484c5a0ac1b361bd84279cd1f1e983ca75f42a4e859d60
+native_conductor_events	at tick 0: filename track name, 4/4, 120 BPM; at tick 3840: 3/4, 90 BPM; End-of-Track tick 3840
+native_midi_track_events	Piano note-on tick 480, CC1 tick 720, pitch bend tick 840, note-off and End-of-Track tick 1440
+native_dialog_screenshot	fixtures/menu-export-midi-native-tempo-meter-dialog.png
+native_dialog_screenshot_sha256	d3460638c8f99cf59fb71ac24e8706fb3d32490b77682ab733eeceb73ac334e7
+native_binary_fixture	fixtures/menu-export-midi-native-tempo-meter.mid
+native_probe	scripts/reaper_parity/probe-midi-export-tempo-meter.lua

@@ -1,0 +1,27 @@
+single_after	take_count=1	active_index=0	position=1	length=2	item_volume=0.8
+single_after	take_0	name=Take A	source=render-item-take-name-Hit-01.wav	source_offset=0.125	volume=0.7	pan=-0.25	play_rate=1.25
+single_undo_before	Prepare single-take no-op probe
+single_undo_after	Prepare single-take no-op probe
+active-a_before	take_count=2	active_index=1	position=1	length=2	item_volume=0.8
+active-a_before	take_0	name=Take B	source=render-item-take-name-Hit-02.wav	source_offset=0.375	volume=0.9	pan=0.4	play_rate=0.8
+active-a_before	take_1	name=Take A	source=render-item-take-name-Hit-01.wav	source_offset=0.125	volume=0.7	pan=-0.25	play_rate=1.25
+active-a_after	take_count=1	active_index=0	position=1	length=2	item_volume=0.8
+active-a_after	take_0	name=Take A	source=render-item-take-name-Hit-01.wav	source_offset=0.125	volume=0.7	pan=-0.25	play_rate=1.25
+active-a_undo	take_count=2	active_index=1	position=1	length=2	item_volume=0.8
+active-a_undo	take_0	name=Take B	source=render-item-take-name-Hit-02.wav	source_offset=0.375	volume=0.9	pan=0.4	play_rate=0.8
+active-a_undo	take_1	name=Take A	source=render-item-take-name-Hit-01.wav	source_offset=0.125	volume=0.7	pan=-0.25	play_rate=1.25
+active-a_redo	take_count=1	active_index=0	position=1	length=2	item_volume=0.8
+active-a_redo	take_0	name=Take A	source=render-item-take-name-Hit-01.wav	source_offset=0.125	volume=0.7	pan=-0.25	play_rate=1.25
+active-a_undo_description	Crop to active take
+active-b_before	take_count=2	active_index=0	position=1	length=2	item_volume=0.8
+active-b_before	take_0	name=Take B	source=render-item-take-name-Hit-02.wav	source_offset=0.375	volume=0.9	pan=0.4	play_rate=0.8
+active-b_before	take_1	name=Take A	source=render-item-take-name-Hit-01.wav	source_offset=0.125	volume=0.7	pan=-0.25	play_rate=1.25
+active-b_after	take_count=1	active_index=0	position=1	length=2	item_volume=0.8
+active-b_after	take_0	name=Take B	source=render-item-take-name-Hit-02.wav	source_offset=0.375	volume=0.9	pan=0.4	play_rate=0.8
+active-b_undo	take_count=2	active_index=0	position=1	length=2	item_volume=0.8
+active-b_undo	take_0	name=Take B	source=render-item-take-name-Hit-02.wav	source_offset=0.375	volume=0.9	pan=0.4	play_rate=0.8
+active-b_undo	take_1	name=Take A	source=render-item-take-name-Hit-01.wav	source_offset=0.125	volume=0.7	pan=-0.25	play_rate=1.25
+active-b_redo	take_count=1	active_index=0	position=1	length=2	item_volume=0.8
+active-b_redo	take_0	name=Take B	source=render-item-take-name-Hit-02.wav	source_offset=0.375	volume=0.9	pan=0.4	play_rate=0.8
+active-b_undo_description	Crop to active take
+action	40131	Take: Crop to active take in items

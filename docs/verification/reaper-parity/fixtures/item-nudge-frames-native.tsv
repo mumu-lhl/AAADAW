@@ -1,0 +1,20 @@
+version	7.82/linux-x86_64
+theme	Default_7.0.ReaperThemeZip
+project_sample_rate	44100
+frame_rate_fps	30.0
+frame_rate_drop	false
+dialog_action	41226
+nudge_right_action	41249
+fixture	selected non-loop Audio item at 1.270s; length 0.500s; source offset 0.200s
+baseline	state_change_count	2	state_change_delta	0	position_s	1.270000000	length_s	0.500000000	source_offset_s	0.200000000	selected	1	undo_label	Nudge frames probe setup
+frame_one_no_snap_right	state_change_count	3	state_change_delta	1	position_s	1.303333333	length_s	0.500000000	source_offset_s	0.200000000	selected	1	undo_label	Nudge items
+baseline_frames_snap	state_change_count	3	state_change_delta	0	position_s	1.270000000	length_s	0.500000000	source_offset_s	0.200000000	selected	1	undo_label	Nudge items
+frame_one_snap_right	state_change_count	4	state_change_delta	1	position_s	1.300000000	length_s	0.500000000	source_offset_s	0.200000000	selected	1	undo_label	Nudge items
+baseline_frames_snap_left	state_change_count	4	state_change_delta	0	position_s	1.270000000	length_s	0.500000000	source_offset_s	0.200000000	selected	1	undo_label	Nudge items
+frame_one_snap_left	state_change_count	5	state_change_delta	1	position_s	1.233333333	length_s	0.500000000	source_offset_s	0.200000000	selected	1	undo_label	Nudge items
+baseline_half_frame	state_change_count	5	state_change_delta	0	position_s	1.270000000	length_s	0.500000000	source_offset_s	0.200000000	selected	1	undo_label	Nudge items
+half_frame_no_snap_right	state_change_count	6	state_change_delta	1	position_s	1.286666667	length_s	0.500000000	source_offset_s	0.200000000	selected	1	undo_label	Nudge items
+baseline_half_snap	state_change_count	6	state_change_delta	0	position_s	1.270000000	length_s	0.500000000	source_offset_s	0.200000000	selected	1	undo_label	Nudge items
+half_frame_snap_right	state_change_count	7	state_change_delta	1	position_s	1.300000000	length_s	0.500000000	source_offset_s	0.200000000	selected	1	undo_label	Nudge items
+undo_half_snap	state_change_count	8	state_change_delta	2	position_s	1.286666667	length_s	0.500000000	source_offset_s	0.200000000	selected	1	undo_label	Nudge items
+redo_half_snap	state_change_count	9	state_change_delta	3	position_s	1.300000000	length_s	0.500000000	source_offset_s	0.200000000	selected	1	undo_label	Nudge items

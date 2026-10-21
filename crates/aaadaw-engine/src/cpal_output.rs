@@ -1,7 +1,7 @@
 use crate::AudioRenderGraph;
 use crate::cpal_common::is_supported_pcm_format;
 #[cfg(target_os = "android")]
-use crate::{MIDI_INPUT_EVENTS_PER_BLOCK, MidiEventKind, ScheduledMidiEvent};
+use crate::{MIDI_CHANNEL_COUNT, MIDI_INPUT_EVENTS_PER_BLOCK, MidiEventKind, ScheduledMidiEvent};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{BufferSize, FromSample, Sample, SampleFormat, SizedSample, SupportedBufferSize};
 use rtrb::{Consumer, Producer, PushError, RingBuffer};
@@ -35,6 +35,9 @@ pub struct CpalMidiInputSender(Producer<ScheduledMidiEvent>);
 #[cfg(target_os = "android")]
 impl CpalMidiInputSender {
     pub fn send(&mut self, event: ScheduledMidiEvent) -> Result<(), ScheduledMidiEvent> {
+        if event.channel >= MIDI_CHANNEL_COUNT {
+            return Err(event);
+        }
         self.0.push(event).map_err(|error| match error {
             PushError::Full(event) => event,
         })
@@ -285,14 +288,14 @@ impl Callback {
             for event in &mut self.midi_output_scratch {
                 *event = None;
             }
-            graph.render_with_midi_input(
+            graph.render_with_midi_input_realtime(
                 &mut self.midi_output_scratch,
                 &self.midi_input_scratch[..input_count],
                 &mut self.scratch[..frames],
             )
         };
         #[cfg(not(target_os = "android"))]
-        let render_result = graph.render_into(&mut self.scratch[..frames]);
+        let render_result = graph.render_into_realtime(&mut self.scratch[..frames]);
         match render_result {
             Ok(stats) => {
                 #[cfg(target_os = "android")]
@@ -303,17 +306,33 @@ impl Callback {
                     .flatten()
                 {
                     let (status, data1, data2) = match event.kind {
-                        MidiEventKind::NoteOn => (0x90, event.pitch, event.velocity),
-                        MidiEventKind::NoteOff => (0x80, event.pitch, event.velocity),
+                        MidiEventKind::NoteOn => {
+                            (0x90 | event.channel, event.pitch, event.velocity)
+                        }
+                        MidiEventKind::NoteOff => {
+                            (0x80 | event.channel, event.pitch, event.velocity)
+                        }
                         MidiEventKind::ControllerChange => (
-                            0xB0,
+                            0xB0 | event.channel,
                             event.controller.unwrap_or(event.pitch),
                             event.velocity,
                         ),
                         MidiEventKind::PitchBend => {
                             let bend = event.pitch_bend.unwrap_or(8192);
-                            (0xE0, bend as u8 & 0x7F, (bend >> 7) as u8 & 0x7F)
+                            (
+                                0xE0 | event.channel,
+                                bend as u8 & 0x7F,
+                                (bend >> 7) as u8 & 0x7F,
+                            )
                         }
+                        MidiEventKind::ProgramChange => {
+                            (0xC0 | event.channel, event.program.unwrap_or(0), 0)
+                        }
+                        MidiEventKind::PolyAftertouch => {
+                            (0xA0 | event.channel, event.pitch, event.velocity)
+                        }
+                        MidiEventKind::ChannelPressure => (0xD0 | event.channel, event.velocity, 0),
+                        MidiEventKind::SystemExclusive => continue,
                     };
                     if self
                         .midi_output

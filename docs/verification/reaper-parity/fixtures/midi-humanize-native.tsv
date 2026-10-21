@@ -1,0 +1,15 @@
+version	7.82/linux-x86_64
+theme	Default_7.0.ReaperThemeZip
+project_ppq	960
+midi_grid_quarter_notes	0.125000
+midi_grid_ticks	120
+swing	0.000000
+case	initial-seed-state; timing=100%; velocity=100%; timing-bias=0%; New-random-seed=not-clicked
+before	notes=selected,channel,pitch,start,end,velocity:1,1,60,170,260,70;1,1,64,350,460,80;1,1,67,550,700,90;0,1,69,730,920,100
+after	notes=selected,channel,pitch,start,end,velocity:1,1,60,131,221,68;1,1,64,288,398,96;1,1,67,510,660,92;0,1,69,730,920,100
+case	explicit-new-seed; timing=100%; velocity=100%; timing-bias=0%; New-random-seed=clicked
+before	notes=selected,channel,pitch,start,end,velocity:1,1,60,170,260,70;1,1,64,350,460,80;1,1,67,550,700,90;0,1,69,730,920,100
+after	notes=selected,channel,pitch,start,end,velocity:1,1,60,170,260,41;1,1,64,381,491,63;1,1,67,557,707,93;0,1,69,730,920,100
+case	bias-probe; timing=100%; velocity=0%; timing-bias=100%; New-random-seed=not-clicked
+before	notes=selected,channel,pitch,start,end,velocity:1,1,60,170,260,70;1,1,64,350,460,80;1,1,67,550,700,90;0,1,69,730,920,100
+after	notes=selected,channel,pitch,start,end,velocity:1,1,64,264,374,80;1,1,60,537,627,70;0,1,69,730,920,100;1,1,67,816,966,90

@@ -1,0 +1,75 @@
+staggered_before	item_count=3	selected_count=3
+staggered_before	item=0	position=0.000000000	length=1.250000000	selected=1	take_count=1	active_index=0
+staggered_before	item=0	take=0	name=Early A	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav	offset=0.125000000	rate=0.900000000	volume=0.800000000	pan=-0.500000000
+staggered_before	item=1	position=1.000000000	length=1.500000000	selected=1	take_count=1	active_index=0
+staggered_before	item=1	take=0	name=Middle B	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-02.wav	offset=0.250000000	rate=1.100000000	volume=0.700000000	pan=0.250000000
+staggered_before	item=2	position=2.000000000	length=1.250000000	selected=1	take_count=1	active_index=0
+staggered_before	item=2	take=0	name=Late C	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav	offset=0.375000000	rate=1.200000000	volume=0.600000000	pan=0.500000000
+staggered_after	item_count=1	selected_count=1
+staggered_after	item=0	position=0.000000000	length=1.250000000	selected=1	take_count=3	active_index=0
+staggered_after	item=0	take=0	name=Early A	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav	offset=0.125000000	rate=0.900000000	volume=0.800000000	pan=-0.500000000
+staggered_after	item=0	take=1	name=Middle B	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-02.wav	offset=0.250000000	rate=1.100000000	volume=0.700000000	pan=0.250000000
+staggered_after	item=0	take=2	name=Late C	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav	offset=0.375000000	rate=1.200000000	volume=0.600000000	pan=0.500000000
+staggered_undo	item_count=3	selected_count=0
+staggered_undo	item=0	position=0.000000000	length=1.250000000	selected=0	take_count=1	active_index=0
+staggered_undo	item=0	take=0	name=Early A	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav	offset=0.125000000	rate=0.900000000	volume=0.800000000	pan=-0.500000000
+staggered_undo	item=1	position=1.000000000	length=1.500000000	selected=0	take_count=1	active_index=0
+staggered_undo	item=1	take=0	name=Middle B	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-02.wav	offset=0.250000000	rate=1.100000000	volume=0.700000000	pan=0.250000000
+staggered_undo	item=2	position=2.000000000	length=1.250000000	selected=0	take_count=1	active_index=0
+staggered_undo	item=2	take=0	name=Late C	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav	offset=0.375000000	rate=1.200000000	volume=0.600000000	pan=0.500000000
+staggered_redo	item_count=1	selected_count=1
+staggered_redo	item=0	position=0.000000000	length=1.250000000	selected=1	take_count=3	active_index=0
+staggered_redo	item=0	take=0	name=Early A	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav	offset=0.125000000	rate=0.900000000	volume=0.800000000	pan=-0.500000000
+staggered_redo	item=0	take=1	name=Middle B	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-02.wav	offset=0.250000000	rate=1.100000000	volume=0.700000000	pan=0.250000000
+staggered_redo	item=0	take=2	name=Late C	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav	offset=0.375000000	rate=1.200000000	volume=0.600000000	pan=0.500000000
+aligned_before	item_count=3	selected_count=3
+aligned_before	item=0	position=6.000000000	length=1.000000000	selected=1	take_count=1	active_index=0
+aligned_before	item=0	take=0	name=Aligned C	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav	offset=0.375000000	rate=1.200000000	volume=0.600000000	pan=0.500000000
+aligned_before	item=1	position=6.000000000	length=1.000000000	selected=1	take_count=1	active_index=0
+aligned_before	item=1	take=0	name=Aligned B	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-02.wav	offset=0.250000000	rate=1.100000000	volume=0.700000000	pan=0.250000000
+aligned_before	item=2	position=6.000000000	length=1.000000000	selected=1	take_count=1	active_index=0
+aligned_before	item=2	take=0	name=Aligned A	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav	offset=0.125000000	rate=0.900000000	volume=0.800000000	pan=-0.500000000
+aligned_after	item_count=1	selected_count=1
+aligned_after	item=0	position=6.000000000	length=1.000000000	selected=1	take_count=3	active_index=0
+aligned_after	item=0	take=0	name=Aligned C	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav	offset=0.375000000	rate=1.200000000	volume=0.600000000	pan=0.500000000
+aligned_after	item=0	take=1	name=Aligned B	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-02.wav	offset=0.250000000	rate=1.100000000	volume=0.700000000	pan=0.250000000
+aligned_after	item=0	take=2	name=Aligned A	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav	offset=0.125000000	rate=0.900000000	volume=0.800000000	pan=-0.500000000
+aligned_undo	item_count=3	selected_count=0
+aligned_undo	item=0	position=6.000000000	length=1.000000000	selected=0	take_count=1	active_index=0
+aligned_undo	item=0	take=0	name=Aligned C	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav	offset=0.375000000	rate=1.200000000	volume=0.600000000	pan=0.500000000
+aligned_undo	item=1	position=6.000000000	length=1.000000000	selected=0	take_count=1	active_index=0
+aligned_undo	item=1	take=0	name=Aligned B	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-02.wav	offset=0.250000000	rate=1.100000000	volume=0.700000000	pan=0.250000000
+aligned_undo	item=2	position=6.000000000	length=1.000000000	selected=0	take_count=1	active_index=0
+aligned_undo	item=2	take=0	name=Aligned A	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav	offset=0.125000000	rate=0.900000000	volume=0.800000000	pan=-0.500000000
+aligned_redo	item_count=1	selected_count=1
+aligned_redo	item=0	position=6.000000000	length=1.000000000	selected=1	take_count=3	active_index=0
+aligned_redo	item=0	take=0	name=Aligned C	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav	offset=0.375000000	rate=1.200000000	volume=0.600000000	pan=0.500000000
+aligned_redo	item=0	take=1	name=Aligned B	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-02.wav	offset=0.250000000	rate=1.100000000	volume=0.700000000	pan=0.250000000
+aligned_redo	item=0	take=2	name=Aligned A	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav	offset=0.125000000	rate=0.900000000	volume=0.800000000	pan=-0.500000000
+existing-takes_before	item_count=2	selected_count=2
+existing-takes_before	item=0	position=9.000000000	length=1.000000000	selected=1	take_count=2	active_index=1
+existing-takes_before	item=0	take=0	name=Existing base	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav	offset=0.500000000	rate=1.000000000	volume=1.000000000	pan=0.000000000
+existing-takes_before	item=0	take=1	name=Existing alternate	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav	offset=0.500000000	rate=1.000000000	volume=1.000000000	pan=0.000000000
+existing-takes_before	item=1	position=10.000000000	length=1.000000000	selected=1	take_count=2	active_index=1
+existing-takes_before	item=1	take=0	name=New source	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-02.wav	offset=0.625000000	rate=1.000000000	volume=1.000000000	pan=0.000000000
+existing-takes_before	item=1	take=1	name=New source active	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-02.wav	offset=0.625000000	rate=1.000000000	volume=1.000000000	pan=0.000000000
+existing-takes_after	item_count=1	selected_count=1
+existing-takes_after	item=0	position=9.000000000	length=1.000000000	selected=1	take_count=4	active_index=1
+existing-takes_after	item=0	take=0	name=Existing base	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav	offset=0.500000000	rate=1.000000000	volume=1.000000000	pan=0.000000000
+existing-takes_after	item=0	take=1	name=Existing alternate	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav	offset=0.500000000	rate=1.000000000	volume=1.000000000	pan=0.000000000
+existing-takes_after	item=0	take=2	name=New source	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-02.wav	offset=0.625000000	rate=1.000000000	volume=1.000000000	pan=0.000000000
+existing-takes_after	item=0	take=3	name=New source active	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-02.wav	offset=0.625000000	rate=1.000000000	volume=1.000000000	pan=0.000000000
+existing-takes_undo	item_count=2	selected_count=0
+existing-takes_undo	item=0	position=9.000000000	length=1.000000000	selected=0	take_count=2	active_index=1
+existing-takes_undo	item=0	take=0	name=Existing base	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav	offset=0.500000000	rate=1.000000000	volume=1.000000000	pan=0.000000000
+existing-takes_undo	item=0	take=1	name=Existing alternate	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav	offset=0.500000000	rate=1.000000000	volume=1.000000000	pan=0.000000000
+existing-takes_undo	item=1	position=10.000000000	length=1.000000000	selected=0	take_count=2	active_index=1
+existing-takes_undo	item=1	take=0	name=New source	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-02.wav	offset=0.625000000	rate=1.000000000	volume=1.000000000	pan=0.000000000
+existing-takes_undo	item=1	take=1	name=New source active	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-02.wav	offset=0.625000000	rate=1.000000000	volume=1.000000000	pan=0.000000000
+existing-takes_redo	item_count=1	selected_count=1
+existing-takes_redo	item=0	position=9.000000000	length=1.000000000	selected=1	take_count=4	active_index=1
+existing-takes_redo	item=0	take=0	name=Existing base	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav	offset=0.500000000	rate=1.000000000	volume=1.000000000	pan=0.000000000
+existing-takes_redo	item=0	take=1	name=Existing alternate	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav	offset=0.500000000	rate=1.000000000	volume=1.000000000	pan=0.000000000
+existing-takes_redo	item=0	take=2	name=New source	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-02.wav	offset=0.625000000	rate=1.000000000	volume=1.000000000	pan=0.000000000
+existing-takes_redo	item=0	take=3	name=New source active	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-02.wav	offset=0.625000000	rate=1.000000000	volume=1.000000000	pan=0.000000000
+action	40543	Take: Implode items on same track into takes

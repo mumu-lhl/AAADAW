@@ -1,0 +1,9 @@
+field	value
+date	2026-10-17
+binary	target/cranelift/debug/aaadaw; Build ID f945a8c4356a2e2a628c56059c7307b10ff48841; SHA-256 fd61eea54bcbacf270a2839539bb24d6d787ffee8028f0f74d81d5d515778bb0
+desktop	Linux X11; Xvfb :787; 1280x800; WGPU_BACKEND=gl; isolated XDG profile; audio-device feature disabled
+project	Temporary copy of target/take-rate-properties-demo.aaadaw; Audio item loaded with stored Take rate 1.25; source WAV item-hover-actionlist-target-audio.wav
+interaction	Selected the Audio item in Arrange and pressed F2; Media Item Properties displayed the loaded Take rate 1.25
+window	Media Item Properties; xwininfo 526x526
+screenshot	audio-take-rate-properties-aaadaw.png; 1280x800; SHA-256 ced799fbcb9f595671be2d0365422cbb7149fa686e4bc9e968fe1dd628180140
+comparison	AAADAW live UI only; this is not a native REAPER window comparison

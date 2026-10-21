@@ -1,0 +1,2 @@
+# REAPER project readbacks use CRLF line endings as part of their native format.
+*.rpp whitespace=cr-at-eol

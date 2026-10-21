@@ -1,0 +1,18 @@
+application	AAADAW Linux desktop
+reference	REAPER 7.82/linux-x86_64; Default_7.0.ReaperThemeZip
+binary_build_id	c1ecc03c19bdc0926f29f9f446ae03a15f543d00
+binary_sha256	50564654fdb35cda50ce56d7a8e5ec4f281b60ce419ec55f2e35defde8561af5
+display	Xvfb :1700; 1280x800x24; WGPU_BACKEND=gl; isolated XDG config/data/state/cache/runtime under ignored target/
+interaction	Opened File > Export project MIDI... from the live AAADAW main window
+dialog_window_geometry	520x452, measured with xwininfo
+dialog_default_scopes	Entire project; All MIDI items
+dialog_default_format	Type 1; PPQN 960; optional metadata and marker controls unchecked
+dialog_screenshot	menu-export-midi-aaadaw-scope-dialog.png
+dialog_screenshot_sha256	ad4b45c820d1529182a88cbd262c46ad03cb623341784b6d1eab238207f24403
+interactive_scope_state_screenshot	menu-export-midi-aaadaw-time-selection-scope.png; Time selection only selected through the live radio control
+interactive_scope_state_screenshot_sha256	0c3a2a2395592e92caf74dc71375201ff985dc183cead69fe67e242bc92ebca9
+native_reference_screenshot	menu-export-midi-native-consolidation-all-dialog.png; 518x452
+aaadaw_binary_tests	cargo nextest run -p aaadaw --bin aaadaw; 716 passed
+core_tests	cargo nextest run -p aaadaw-core; 183 passed
+strict_clippy	cargo clippy -p aaadaw -p aaadaw-core --all-targets -- -D warnings; passed
+format_checks	cargo fmt --all -- --check; CRLF-aware git diff --check; passed

@@ -1,0 +1,13 @@
+artifact	sha256
+crates/aaadaw/examples/generate_midi_filter_position_repeat_fixture.rs	088114f970cb5c82c69ecf72f9504d10d0e8d63749412a1534b452346b0bc00e
+fixtures/midi-event-filter-position-repeat-aaadaw.aaadaw	39f8218434b753bbb16e5733df163ee881abedb287808699e7893dec81b3128f
+fixtures/midi-event-filter-position-repeat-aaadaw-quarter.png	0548c25ddddafd7c90a5b5227d5cfdaffc1fd89f661de15966fd8d3a965d81bb
+binary_sha256	30afcc9d2c69272374f9ba5252cd6ba59bc5193530233ceb3a6d6de705088c37
+binary_build_id	5ce40eacac6fbdb9459e6081026f06dab446b007
+build_backend	rustc 1.101.0-nightly (5d8fec066, 2026-10-16) with Cranelift
+environment	Linux Xvfb :327, root 1440x900; MIDI Editor window 1280x880; audio unavailable; project opened from a temporary copy
+input	Four-measure MIDI item, 960 PPQ, 4/4; six Notes and 128 CC7 events spaced every 120 ticks
+filter	Show-only; Control Change; Control 07 Volume MSB; Position in measure 0.125–0.125; Repeat every 1/4
+assertion	Event List reports 16 matching CC7 events with four evenly spaced events per measure at the same positions as native REAPER; screenshot shows the first 11 rows and total count. Position 3/4 yields four events per measure and none at Repeat 1/4.
+verification	AAADAW desktop interaction screenshot; midi_editor::event_list_repeats_note_and_controller_position_filter_each_selected_period; full Cranelift aaadaw binary test suite, 813/813
+limitation	Behavior evidence, not pixel-diff certification; native meter probe covers 4/4 at 960 PPQ; Position for other event types and non-4/4 meters remains open

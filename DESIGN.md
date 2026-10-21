@@ -2,13 +2,15 @@
 
 本文是 AAADAW 桌面 UI 的产品设计 contract。以后新增或重构 UI 时，按本文决定信息位置、空间关系、交互和视觉优先级；若具体实现与本文冲突，应先修正设计或记录有理由的例外，不要把现有 widget 的限制当作产品要求。
 
-本文与其他项目文档的职责如下：`DESIGN.md` 约束 UI/UX；[`ROADMAP.md`](ROADMAP.md) 决定功能范围和开发顺序；[系统架构文档](docs/design/AAADAW_System_Architecture_Design.md) 决定技术、领域和实时安全边界。架构文档中的高级功能矩阵不自动成为当前版本的交付要求。UI 中的工程状态仍必须通过 `aaadaw-core` 的公开 `Project` 接口和 `DawAction` 修改。
+本文与其他项目文档的职责如下：`DESIGN.md` 约束 UI/UX；[`ROADMAP.md`](ROADMAP.md) 决定功能范围和开发顺序；[系统架构文档](docs/design/AAADAW_System_Architecture_Design.md) 决定技术、领域和实时安全边界。架构文档中的高级功能矩阵原本不属于 Core MVP；2026-10-09 批准的 [REAPER 全量对齐实施计划](docs/plans/reaper-parity-implementation.md) 已将固定参照的适用高级能力纳入本次交付。UI 中的工程状态仍必须通过 `aaadaw-core` 的公开 `Project` 接口和 `DawAction` 修改。
 
 ## Product Direction
 
 AAADAW 是一款 **REAPER-inspired professional desktop DAW**：桌面优先、信息密集、功能优先、紧凑、高效，适合键盘和鼠标，也为高级用户保留较高的可配置性。Arrange View 是主窗口的固定工作区域；轨道控制与时间线协作；Mixer 完成后可作为独立且与轨道状态一致的主要工作区；Transport 始终清楚可访问。Media Browser 是可停靠的辅助面板，不是全屏工作区；工程管理和 Action Search 通过菜单与命令入口完成，不创建 Project 工具页。
 
-REAPER 是产品工作流和信息架构的主要参照。继承可验证的工作方式，不追求逐像素相似，也不复刻其视觉主题。
+2026-10-09 用户批准新的桌面目标：以 **Linux REAPER 7.82、Default 7、默认主题与配置** 为固定参照，完整对齐视觉布局、控件状态、操作、快捷键和交互，并实现支撑界面的功能。保留 AAADAW 品牌与 `.aaadaw` 工程格式；视觉使用项目实现或许可清晰的资源。
+
+以 [固定参照](docs/reaper-parity/reference-baseline.md)、[对齐矩阵](docs/reaper-parity/parity-matrix.csv) 和 [验证计划](docs/reaper-parity/verification-plan.md) 为此次验收依据。以下已有细节描述是历史产品契约；与固定参照冲突的默认值、布局、手势和行为必须在 P0 实测后更新，不能以旧规范降低新目标。Android 保留独立触控 profile；Linux 桌面窄窗仍按桌面参照验收。
 
 以下不是目标：
 
@@ -150,7 +152,7 @@ Settings 窗口采用左侧类别栏和右侧设置面板。点击“Keyboard Sh
 | Context menu | 提供与命中对象相关的常用命令；命令名称与菜单、Action 搜索一致，危险/破坏性操作在触发前清楚表达结果。 |
 | Selection | Click 选择；Ctrl/Cmd click 增减选择；Shift click 选择范围。各编辑器明确说明跨轨道/跨 Item 选择与焦点关系。 |
 
-修饰键的默认映射应遵循桌面音频编辑惯例，但形成 AAADAW 自己的一套一致映射，不要求逐键复制 REAPER。用户应能重映射高频操作；映射、菜单文字、toolbar button 和 Action search 不得各自实现不同命令。
+桌面修饰键、快捷键与鼠标上下文默认映射必须逐项对齐 Linux REAPER 7.82 原厂配置；实际键表经 P0 采集确认，不能直接使用旧架构表。用户应能重映射高频操作；映射、菜单文字、toolbar button 和 Action search 不得各自实现不同命令。
 
 快捷键设置以命令列表和当前绑定为主，不要求用户学习或输入快捷键语法。点击某命令的绑定控件后进入按键捕获状态；随后按下的组合键成为候选绑定，界面须显示正在录制、候选键、冲突或成功状态。用户可清除单条绑定、恢复全部默认值，重复绑定需给出明确冲突并保留原设置。文本输入与捕获控件聚焦时，不触发主窗口快捷键。
 
@@ -166,7 +168,7 @@ Settings 窗口采用左侧类别栏和右侧设置面板。点击“Keyboard Sh
 - Typography 分为工程/轨道身份、主要数值、辅助标签和状态提示四级。身份和电平/时间数值优先可读，辅助信息弱化但不能低于可读阈值。
 - 使用清楚的 active、selected、armed、recording、bypassed、muted、soloed、clipping 状态。Meter 采用分段/渐变电平语义：正常电平绿色系、接近峰值黄色系、clip 红色；warning 使用琥珀色。颜色之外同时使用形状、标记、文字或状态灯表达含义。
 - 当前工程、活动工作区、focus 和当前播放位置各自有一致且互不混淆的表现。
-- 产品品牌、图标和控件主题需形成自己的视觉身份；仅用文本、开源自制图标或项目拥有/许可清晰的资源。
+- 保留 AAADAW 品牌；控件主题、布局和状态按固定参照验收，使用自制、开源或项目拥有/许可清晰的资源，不直接分发未经授权的 REAPER 资源。
 
 ## Responsive / Dense Layout Behavior
 
@@ -215,9 +217,9 @@ Shell、菜单、按钮、文本输入、对话框、列表、状态提示等优
 
 ## REAPER Reference Policy
 
-**允许参考**：信息架构、主工作区关系、TCP/Mixer 的双入口状态一致、时间标尺和项目对象的空间编辑、Action/快捷键/上下文菜单共用命令、面板可配置，以及高密度桌面工作流。此处的“为什么”是从 REAPER 手册记录的实际布局和交互推导：例如 TCP 宽度和轨道高度可调、窄布局隐藏部分次要控件、Mixer 复用轨道控制、不同上下文提供菜单/Action/快捷键、Transport 和 Docker 可停靠或隐藏。我们的结论是：这些做法保留工作画布、缩小状态差异并让熟练用户减少切页；这是设计推论，不是对 REAPER 内部设计意图的事实断言。
+**允许参考与实现**：固定参照的视觉几何、控件状态、操作与默认映射，以及信息架构、主工作区关系、TCP/Mixer 的双入口状态一致、时间标尺和项目对象的空间编辑、Action/快捷键/上下文菜单共用命令、面板可配置，以及高密度桌面工作流。此处的“为什么”是从 REAPER 手册记录的实际布局和交互推导：例如 TCP 宽度和轨道高度可调、窄布局隐藏部分次要控件、Mixer 复用轨道控制、不同上下文提供菜单/Action/快捷键、Transport 和 Docker 可停靠或隐藏。我们的结论是：这些做法保留工作画布、缩小状态差异并让熟练用户减少切页；这是设计推论，不是对 REAPER 内部设计意图的事实断言。
 
-**禁止复制**：REAPER/Cockos 专有图标、logo/branding、插画、截图作为产品素材、主题资源、像素级布局，以及其未授权的图片、皮肤或其他受版权保护的视觉资产。参考图片仅用于内部理解并保留原始来源链接；不得打包进 AAADAW 或将参考本身当成 UI 资源。
+**禁止复制**：REAPER/Cockos 专有图标、logo/branding、插画、截图作为产品素材、主题资源，以及其未授权的图片、皮肤或其他受版权保护的视觉资产。参考图片仅用于内部理解并保留原始来源链接；不得打包进 AAADAW 或将参考本身当成 UI 资源。
 
 **调查来源（访问日期：2026-10-01）**
 
@@ -227,6 +229,8 @@ Shell、菜单、按钮、文本输入、对话框、列表、状态提示等优
 - 官方公开界面参考：[TCP](https://www.reaper.fm/v7img/tcp.jpg)、[Routing](https://www.reaper.fm/v7img/routing.jpg)、[FX/EQ](https://www.reaper.fm/v7img/eq.jpg)、[Theme](https://www.reaper.fm/v5img/320_theme.jpg)。这些图片只作为 REAPER 产品资料的链接，不复制到本项目。
 
 ## Current UI Audit
+
+本节及后续 Modernization Roadmap 保留为历史审计线索；2026-10-09 起按 [P0–P12 实施计划](docs/plans/reaper-parity-implementation.md) 排序并以实际证据更新矩阵。审计中“已有”不表示通过全量对齐验收。
 
 本审计于 2026-10-08 对照当前 `main`、`crates/aaadaw/src/app/view/`、`timeline.rs` 和 #216 重新核对。主工作区已有可编辑的空间编排、音频/MIDI 边界操作、Snap、自动化和对象菜单；下表只记录仍可从代码确认的缺口，不重复列出已完成的旧审计项。真实设备、窄窗口、高 DPI 和端到端操作仍需单独验收。
 

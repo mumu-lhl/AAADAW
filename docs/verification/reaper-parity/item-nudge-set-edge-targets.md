@@ -1,0 +1,68 @@
+# Item Nudge/Set edge targets
+
+This comparison covers Linux REAPER `7.82/linux-x86_64`, the Default 7 theme, and Main action 41226. REAPER's dialog exposes Set targets `left trim`, `left edge`, `end position`, and `right trim`. Native single-item and staggered selections are measured for Audio, loop-source MIDI, non-loop MIDI, and mixed Audio/MIDI. Other units, tempo cases, and Set/Snap combinations remain open.
+
+## Native measurements
+
+The Audio fixture is one selected loop-source item at 2 seconds with a 10-second length and zero source offset. Applying each Set target changed project state once and used the `Nudge items` Undo label:
+
+| Target | Entered value | Position after | Length after | Source offset after |
+| --- | ---: | ---: | ---: | ---: |
+| Left Trim | 4 s | 4 s | 8 s | 2 s |
+| Left Edge | 4 s | 4 s | 8 s | 0 s |
+| End Position | 14 s | 4 s | 10 s | 0 s |
+| Right Trim | 14 s | 2 s | 12 s | 0 s |
+
+The left targets use the first selected item's left edge as their dialog anchor. End Position and Right Trim use the last selected item's right edge. The End Position dialog displays Relative Set; the other three edge targets do not. Snap to unit is visible for all four. The exact item states and undo/redo evidence are in the [Audio native fixture](fixtures/item-nudge-audio-set-edges-native.tsv).
+
+A staggered Audio fixture selects two 10-second loop-source items at 2 and 6 seconds. With Relative Set off, each target places the corresponding edge of every selected item at the entered absolute time. At 4 seconds, Left Trim and Left Edge move both starts to 4 seconds, leaving lengths 8 and 12 seconds. Left Trim advances both source offsets by 2 seconds, including the item whose old start was after the target; Left Edge preserves both offsets. At 14 seconds, End Position makes both ends coincide at 14 seconds (both starts become 4 seconds), while Right Trim makes both ends coincide without changing their starts (lengths become 12 and 8 seconds). The exact rows and one-step End Position Undo/Redo are in the [staggered native fixture](fixtures/item-nudge-audio-set-edge-multiselect-native.tsv).
+
+With Relative Set enabled for End Position, the entered value remains an absolute destination for the last selected item's right edge. Setting it to 14 seconds moves that edge from 16 to 14 seconds, then applies the resulting −2-second delta to every selected item: starts become 0 and 4 seconds, and both lengths stay 10 seconds. The field is not a raw delta input.
+
+A matching staggered loop-source MIDI fixture uses two items at 2 and 6 seconds, each 10 seconds long, with a 20-quarter-note source loop and identical notes. The four targets produce the same timeline positions and lengths as Audio, and note PPQ remains unchanged. Left Trim differs in source phase: the first item advances to a 2-second source offset, while the item starting after the target wraps backward by 2 seconds to an 8-second offset in its 10-second loop. A fresh-project Left Trim action is one undo step; Undo restores both original items and Redo restores both trims. See the [loop-source MIDI fixture](fixtures/item-nudge-midi-set-edge-multiselect-native.tsv).
+
+A separate non-loop MIDI fixture runs Set → Left Trim at 4 seconds on items starting at 2 and 6 seconds. REAPER moves both starts to 4 seconds and rebases their source data: the first item's offset/source length/notes become 1.5 seconds, 19 QN, and 0/1,920 PPQ; the later item extends its source to 24 QN and shifts its notes to 4,800/6,720 PPQ. One Undo restores both complete source states and one Redo reapplies them. Values and the actual after window are recorded in the [non-loop MIDI edge fixture](item-nudge-midi-set-edge-nonloop.md).
+
+The same non-loop MIDI fixture now measures Left Edge, End Position, and Right Trim on the staggered selection. Left Edge preserves source offsets and source lengths while moving both starts to 4 seconds; End Position moves both ends to 14 seconds without resizing; Right Trim keeps starts at 2 and 6 seconds, changes lengths to 12 and 8 seconds, and resizes source lengths to 24 and 16 QN. After a Left Trim, Right Trim preserves the first item's 1.5-second offset and resizes its source to 23 QN, equal to source offset plus its new 10-second visible length. Native before/after/Undo/Redo states and actual REAPER screenshots are recorded in the [expanded non-loop MIDI edge fixture](item-nudge-midi-set-edge-nonloop.md).
+
+A mixed Audio/MIDI fixture starts both selected loop-source items at 2 seconds with 10-second lengths. Set → Left Trim to 4 seconds moves both to 4 seconds, reduces both lengths to 8 seconds, and advances both source offsets by 2 seconds. The MIDI note stays at the same PPQ range. Undo restores both items together and Redo reapplies the edit; each is one history step. See the [mixed native fixture](fixtures/item-nudge-set-edges-mixed-native.tsv).
+
+A staggered mixed-media fixture selects loop-source Audio at 2 seconds and loop-source MIDI at 6 seconds, both 10 seconds long. Left Trim to 4 seconds puts both left edges at 4 seconds: Audio becomes 4–12 seconds with a 2-second source offset, while MIDI becomes 4–16 seconds and wraps its source offset backward to 8 seconds in the 10-second loop. Left Edge to 4 seconds preserves both source offsets; End Position to 14 seconds makes both items 4–14 seconds; Right Trim to 14 seconds keeps the starts at 2 and 6 seconds and sets the lengths to 12 and 8 seconds. MIDI note, CC, and pitch-bend events remain unchanged. Each Apply has the native `Nudge items` undo label; Undo and Redo restore both selected items together. The complete [native TSV](fixtures/item-nudge-mixed-set-edge-multiselect-native.tsv) records all four targets, selection, state-change counts, and source events.
+
+## AAADAW behavior
+
+AAADAW applies edge edits to selected Audio and MIDI items in one batch transaction. Audio Left Trim advances each source offset by the absolute distance between its old start and the target, using the source sample rate. Loop-source MIDI Left Trim applies the signed edge displacement through the project tempo map and wraps source phase. Non-loop MIDI Left Trim adjusts the take phase and rebases events/source length when a source boundary is crossed. Left Edge preserves source offsets, MIDI events, and source length. Absolute End Position places each item's end at the target without changing its length or MIDI source length. Right Trim places each item's end at the target without moving its start; for non-loop MIDI, source length becomes source offset plus the new visible length. End Position Relative Set computes a shared signed delta from the last selected item's right edge to the absolute target. Snap rounds the target before these transforms. Invalid trims and unavailable source metadata reject the entire batch.
+
+The regression suite compares the single-item and staggered mixed Audio/MIDI results above, verifies absolute target snapping, and checks all four Audio and looped MIDI targets on staggered selections against native positions, lengths, and source offsets. Non-loop MIDI Left Trim covers the measured source rebase in both directions; a separate regression covers Left Edge, End Position, and Right Trim, including MIDI source length, notes, CC, pitch bends, selection, and Undo/Redo. End Position Relative Set, atomic over-trim rejection, one-step transactions, and preserved MIDI events and selection are covered as well.
+
+## Evidence
+
+Native REAPER captures show the Set dialog and actual item state for [Left Trim before/after](fixtures/item-nudge-audio-set-edges-native-left-trim-before.png), [Left Edge before/after](fixtures/item-nudge-audio-set-edges-native-left-edge-before.png), [End Position before/after](fixtures/item-nudge-audio-set-edges-native-end-position-before.png), and [Right Trim before/after](fixtures/item-nudge-audio-set-edges-native-right-trim-before.png). The [staggered Audio Left Trim result](fixtures/item-nudge-audio-set-edges-multiselect-native-left-trim-after.png) and [staggered MIDI Left Trim result](fixtures/item-nudge-midi-set-edge-multiselect-native-left-trim-after.png) show actual selected items after the 4-second target. The [mixed Audio/MIDI before](fixtures/item-nudge-set-edges-mixed-native-before.png), [after](fixtures/item-nudge-set-edges-mixed-native-after.png), and [Redo](fixtures/item-nudge-set-edges-mixed-native-redo.png) captures use the same REAPER version and theme.
+
+The staggered mixed-media [before](fixtures/item-nudge-mixed-set-edge-multiselect-native-before.png), [Left Trim](fixtures/item-nudge-mixed-set-edge-multiselect-native-left-trim-after.png), [Left Edge](fixtures/item-nudge-mixed-set-edge-multiselect-native-left-edge-after.png), [End Position](fixtures/item-nudge-mixed-set-edge-multiselect-native-end-position-after.png), and [Right Trim](fixtures/item-nudge-mixed-set-edge-multiselect-native-right-trim-after.png) captures show the actual REAPER 7.82 window and selected Audio/MIDI items. Their TSV includes before/after/Undo/Redo states, event data, and native history labels.
+
+The [non-loop MIDI before/Left Edge/End Position/Right Trim captures](item-nudge-midi-set-edge-nonloop.md) show the same native REAPER window with visible MIDI item boundaries; the native TSV contains the corresponding source offsets, source lengths, events, selection, and Undo/Redo state.
+
+The rebuilt AAADAW desktop binary (Build ID `c74dcb7cac16f9824f5ceba6bc586d221e49ff99`, SHA-256 `f70bf2cbd1a100ea2c4709a31255e544eecdbe5e7031347401b7a3f156d1e78d`) was launched on Xvfb `:102`. Its [live End Position screenshot](fixtures/aaadaw-set-edge-end-position-relative.png) shows the actual 528×121 dialog with Relative Set enabled. No item was selected in this capture, so it verifies the rendered controls only; the edge behavior is covered by app regressions and native fixtures.
+
+After the staggered-edge correction, Build ID `027235a78569b58fbf6072409f0a74d65336d0c3` (nightly Cranelift, SHA-256 `b6f8ce725ab437fab8f212d0d79e5709a4ff0176a8923243fd0e2414a7e319fa`) launched the actual 1280×800 main window on bundled Xvfb `:90`. Its [current-build startup capture](fixtures/aaadaw-set-edge-multiselect-desktop-smoke.png) is byte-identical to the standard startup fixture; the [runtime record](desktop-runtime.md) documents the isolated XDG profile and OpenGL backend.
+
+The subsequent loop-source MIDI edge build (Build ID `e284d4328a874c8155f86697481144d8bf124b34`, nightly Cranelift, SHA-256 `11483a8e032fb40d03167a70b7fb19c69c76390f499c0a7a7392ec6239abe03e`) also launched a real 1280×800 window on bundled Xvfb :90. The [startup capture](fixtures/aaadaw-midi-multiselect-desktop-smoke.png) is byte-identical to the baseline; native MIDI values and live item state are recorded separately above.
+
+After adding non-loop MIDI Left Trim source rebasing, the stable desktop binary (ELF Build ID `ae5d78c679f41119b767d24ca48b015c01b0fe5b`, SHA-256 `22257c1a633ac6b3518cf68702b535733cbd0048d8db0856b91c796c62fab463`) launched through the repository helper on bundled Xvfb :90. The actual 1280×800 main-window capture [matches the baseline startup frame](fixtures/aaadaw-nonloop-midi-set-edge-desktop-smoke.png) byte-for-byte; it verifies that the new binary runs in this headless workspace, while the native fixture and App regression cover the item behavior.
+
+The staggered native TSV has SHA-256 `63d4b9c15e74ab3a52244f8f410b2ad777783cef1a88d8597fe64b955122ed4a`; the [Left Trim after screenshot](fixtures/item-nudge-audio-set-edges-multiselect-native-left-trim-after.png) has SHA-256 `020fd820df938bf5858f16a698cf20ae6ebe9e73ba4dc3b09ae1e7896a96be38`.
+
+The staggered loop-source MIDI fixture has SHA-256 `37351affae529ff04ed7c470df1716c4fd26c5d24a56ee768949ee1d4199505a`; its [Left Trim after screenshot](fixtures/item-nudge-midi-set-edge-multiselect-native-left-trim-after.png) has SHA-256 `6c8513c170b287928051978e8c58a2074e0b652ba21e46473d6d912038b395d0`. The separate non-loop MIDI measurement and screenshot are recorded in the [non-loop edge verification](item-nudge-midi-set-edge-nonloop.md).
+
+SHA-256 for the key native captures:
+
+- Left Trim after: `ac582c0e7d183f089c9f50f109dcf7be86952166192d865abd814ef3aa25ea12`
+- Left Edge after: `9ce8e4ea0e0cfeab0c6fbd28c5727708d0ff22f73ec367d4ad2e72f8e75f4549`
+- End Position before/after: `f878cbbdce46379157fc1a27860e6febc69b393a2724d43b2a8af5f9bee16e8a` / `a68d340c064b5ccc23bca7da74ee85d8587b307411c5a3bfbb51a8efccc8bdd7`
+- Right Trim before/after: `e96ed7a8e8116037cd5372473564ba0f39e7fec6dfbe007dd5a5bc91a27315e3` / `d518fe4d7a830c53f328c2831d9c8ac2879aa380fd6b0002ea67d70d65ad2540`
+- Mixed Left Trim before/after/Redo: `74cd362a4b04a83d5d6ca849bfc1d97104411dc9c665a0ca35852b218ffb077b` / `40f43ceafc14842c519d7835017588eee528b277feafa85bf93690b37b62c3ab` / `68f5f1aff4b8a4b31e8eeef81a8d5c539b710b20c0cf0e06ca24871582c6cd8c`
+
+## Remaining parity work
+
+Native staggered edge comparisons cover Audio, loop-source MIDI, non-loop MIDI, and mixed Audio/loop-source MIDI for all four targets. Non-default Units and Snap combinations, mixed Relative Set, variable-tempo MIDI edge conversion, playback state, and broader Undo behavior remain open. The tests prove AAADAW behavior for these measured inputs, but they do not replace the remaining native comparisons. `ITEM-NUDGE-SET-001` therefore remains `in_progress`.

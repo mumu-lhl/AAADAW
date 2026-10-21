@@ -1,0 +1,14 @@
+version	7.82/linux-x86_64
+theme	Default_7.0.ReaperThemeZip
+tempo_map	120 BPM at project start; linear to 60 BPM at measure 3 (5.333333 seconds)
+source	length_qn	5.192708333	length_is_qn	true
+nudge	Mode Set; Target contents; absolute target 4.150 seconds; Snap off
+tempo_marker	0	time_s	0.000000000	measure	0	beat	0.000000	bpm	120.000000	meter	4/4	linear	1
+tempo_marker	1	time_s	5.333333333	measure	2	beat	0.000000	bpm	60.000000	meter	4/4	linear	0
+before	position_s	3.900000000	length_s	5.000000000	loop_source	1	source_offset_s	0.000000000	phase_ppq	0.000	loop_endpoint_ppq	4984.900	notes	0,0,0,960.000,1920.000,0,60,96;1,0,0,2880.000,3840.000,0,64,108	selected	1	state_change_count	2
+after_set	position_s	3.900000000	length_s	5.000000000	loop_source	1	source_offset_s	3.041994609	phase_ppq	4537.985	loop_endpoint_ppq	9522.885	notes	0,0,0,960.000,1920.000,0,60,96;1,0,0,2880.000,3840.000,0,64,108	selected	1	state_change_count	3
+dialog_window	Nudge/Set Items; xwininfo 528x121
+before_screenshot	item-nudge-midi-linear-tempo-set-native-before.png; 1280x1024; SHA-256 0b9bc4dbfccfc5878d3e73766aad68f19c5fbdc827873e7e17d27e6a8f0318c2
+after_screenshot	item-nudge-midi-linear-tempo-set-native-after.png; 1280x1024; SHA-256 b1c615287c4eb27406751642b0fc683db315006289b0e2b12136d6c6cb9f24de
+reproduction_script	../../../../scripts/reaper_parity/probe-item-nudge-midi-linear-tempo-set.lua
+aaadaw_mapping_note	Regression maps native phase 4537.985 PPQ to 4531 integer ticks in the 4974-tick AAADAW source loop; source-loop/timebase precision is still open. Project Tempo Map conversion reports 3.138147277 seconds for that integer phase, while REAPER exposes D_STARTOFFS 3.041994609 seconds; these raw second offsets are not equivalent mappings in the current model and are not asserted as parity.

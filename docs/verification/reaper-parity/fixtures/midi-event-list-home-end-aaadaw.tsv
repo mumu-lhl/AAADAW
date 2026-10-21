@@ -1,0 +1,9 @@
+binary_sha256	a1a6bb936d43fc4219e511572d4533ded013c3204ec0bd2e4c0de6d1d5ba6f21
+build_id	8b355d36dc6e34b6e2005cc99083f13e63d46095
+item_start_tick	0
+item_length_ticks	3840
+note_tick	480
+note_duration_ticks	120
+case	Home	selects first visible Note; project cursor tick 480 (0.250 s); MIDI editor cursor tick 480
+case	End	retains selected Note; project cursor tick 3840 (2.000 s); MIDI editor cursor tick 3840
+project_data_after_navigation	unchanged by Home and End

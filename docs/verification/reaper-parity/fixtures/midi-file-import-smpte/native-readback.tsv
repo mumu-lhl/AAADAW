@@ -1,0 +1,16 @@
+version	7.82/linux-x86_64
+theme	Default_7.0.ReaperThemeZip
+fixture	/workspace/AAADAW/target/midi-timebase-native/smpte-25fps-40ticks-per-frame.mid
+insert_result	1
+project_tempo_marker_count	0
+track	1	SMPTE	1
+item	1	1	0.0	0.5
+ppq_to_project_time	1	1	0	0.0
+ppq_to_project_time	1	1	250	0.0021123428416926
+ppq_to_project_time	1	1	500	0.0042246856833852
+ppq_to_project_time	1	1	750	0.0063370285250777
+ppq_to_project_time	1	1	1000	0.0084493713667703
+project_time_to_ppq	1	1	0.25	29588.0
+project_time_to_ppq	1	1	0.5	59176.0
+project_time_to_ppq	1	1	0.75	88764.0
+note	1	1	250.0	750.0	1	60	100	0.0021123428416926	0.0063370285250777	0.0042246856833852	0.012674057050155

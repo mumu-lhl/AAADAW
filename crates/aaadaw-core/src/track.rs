@@ -116,16 +116,51 @@ pub struct Track {
     pub(crate) id: TrackId,
     pub(crate) name: String,
     pub(crate) is_bus: bool,
+    pub(crate) is_folder: bool,
+    pub(crate) parent_track: Option<TrackId>,
     pub(crate) output_track: Option<TrackId>,
+    pub(crate) main_send_enabled: bool,
+    pub(crate) sends: Vec<crate::AudioSend>,
+    pub(crate) hardware_outputs: Vec<crate::AudioHardwareOutput>,
     pub(crate) volume_db: f32,
     pub(crate) pan: f32,
+    pub(crate) pan_mode: crate::PanMode,
     pub(crate) muted: bool,
+    pub(crate) phase_inverted: bool,
     pub(crate) solo: bool,
     pub(crate) record_armed: bool,
     pub(crate) instrument: Option<TrackInstrument>,
     pub(crate) fx_chain: Vec<TrackFxPlugin>,
     pub(crate) volume_automation: Vec<VolumeAutomationPoint>,
+    pub(crate) razor_edit_areas: Vec<RazorEditArea>,
     pub(crate) frozen_audio_item_id: Option<crate::ItemId>,
+}
+
+/// A track-scoped media razor edit area in the project's sample clock.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct RazorEditArea {
+    start_sample: u64,
+    end_sample: u64,
+}
+
+impl RazorEditArea {
+    /// Creates a non-empty time range using the project's sample clock.
+    pub fn new(start_sample: u64, end_sample: u64) -> Option<Self> {
+        (start_sample < end_sample).then_some(Self {
+            start_sample,
+            end_sample,
+        })
+    }
+
+    /// Returns the inclusive start sample.
+    pub fn start_sample(self) -> u64 {
+        self.start_sample
+    }
+
+    /// Returns the exclusive end sample.
+    pub fn end_sample(self) -> u64 {
+        self.end_sample
+    }
 }
 
 /// A CLAP instrument selected for a track. The bundle path is a load hint;
@@ -306,6 +341,25 @@ impl TrackFxPlugin {
 }
 
 impl Track {
+    /// Whether the existing main output (Master or selected track) is enabled.
+    pub fn main_send_enabled(&self) -> bool {
+        self.main_send_enabled
+    }
+    /// Ordered sender-owned post-fader audio connections.
+    pub fn sends(&self) -> &[crate::AudioSend] {
+        &self.sends
+    }
+
+    /// Returns the direct audio-device outputs owned by this track.
+    pub fn hardware_outputs(&self) -> &[crate::AudioHardwareOutput] {
+        &self.hardware_outputs
+    }
+
+    /// Returns the inherited project gain policy.
+    pub fn pan_mode(&self) -> crate::PanMode {
+        self.pan_mode
+    }
+
     /// Returns this track's identifier.
     pub fn id(&self) -> TrackId {
         self.id
@@ -326,6 +380,19 @@ impl Track {
         self.output_track
     }
 
+    pub fn is_folder(&self) -> bool {
+        self.is_folder
+    }
+
+    pub fn parent_track(&self) -> Option<TrackId> {
+        self.parent_track
+    }
+
+    /// Main output follows the folder parent unless an explicit output is set.
+    pub fn effective_output_track(&self) -> Option<TrackId> {
+        self.output_track.or(self.parent_track)
+    }
+
     /// Returns this track's volume in decibels.
     pub fn volume_db(&self) -> f32 {
         self.volume_db
@@ -334,6 +401,11 @@ impl Track {
     /// Returns this track's pan position in the inclusive range `-1.0..=1.0`.
     pub fn pan(&self) -> f32 {
         self.pan
+    }
+
+    /// Returns whether the post-fader track signal has inverted polarity.
+    pub fn is_phase_inverted(&self) -> bool {
+        self.phase_inverted
     }
 
     /// Returns whether this track is muted.
@@ -364,6 +436,11 @@ impl Track {
     /// Returns this track's ordered sample-clock volume automation points.
     pub fn volume_automation(&self) -> &[VolumeAutomationPoint] {
         &self.volume_automation
+    }
+
+    /// Returns the track's persisted media razor edit areas in timeline order.
+    pub fn razor_edit_areas(&self) -> &[RazorEditArea] {
+        &self.razor_edit_areas
     }
 
     /// Returns the frozen render item while this track is frozen.

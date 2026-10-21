@@ -1,0 +1,13 @@
+version	7.82/linux-x86_64
+theme	Default_7.0.ReaperThemeZip
+fixture	Two tracks; MIDI items A1/A2 and B1/B2 at 1-2, 4-5, 1-2, and 3-4 seconds
+case	action_id	pointer_xy	hovered_item	selection_before	selection_after	selected_tracks_after	project_state_delta	undo_before	undo_after	cursor_seconds
+direct_a1	40528	560,130	A1		A1		2		Change media item selection	0.500000
+empty_40528	40528	680,130	none	A1			2	Change media item selection	Change media item selection	0.500000
+add_b1	40529	560,205	B1	A1	A1,B1		2	Change media item selection	Change media item selection	0.500000
+add_b1_repeat	40529	560,205	B1	A1,B1	A1,B1		0	Change media item selection	Change media item selection	0.500000
+toggle_b1_off	40530	560,205	B1	A1,B1	A1		2	Change media item selection	Change media item selection	0.500000
+toggle_empty	40530	680,130	none	A1	A1		0	Change media item selection	Change media item selection	0.500000
+clear_before_actionlist	40289	560,205	B1				0	Change media item selection	Change media item selection	0.500000
+reset_selected_a1	40528	560,130	A1		A1		2	Change media item selection	Change media item selection	0.500000
+actions_window_40528	40528	300,120	none	A1	A1		0	Change media item selection	Change media item selection	0.500000

@@ -1,0 +1,16 @@
+artifact	sha256
+crates/aaadaw/examples/generate_midi_filter_from_pitch_selection_fixture.rs	0a7dd5adbfe590bac851822b847747533a571ba44196af5bd02bfc54cbae2d26
+fixtures/midi-event-filter-from-pitch-aaadaw.aaadaw	15b13c38adbd79fa4e5c35002054690104adebc048bf62ac4d32d22855824b77
+fixtures/midi-event-filter-from-pitch-aaadaw-after-set.png	809508ac00a36521802ef2b97b5883c05ca6136cbcc30704179f357655ffee54
+fixtures/midi-event-filter-from-pitch-aaadaw-list-unfiltered.png	fd3bbf3dc8837508bd07cd12df1e1686ad6cd095fa7d35948440a69362e340b5
+fixtures/midi-event-filter-from-pitch-aaadaw-list-filtered.png	4fa8de153721a7fda0293cd8338b8f148049ff1c1aa242276aea38ca42d18a50
+binary_sha256	054bf3b6aae5e16297a45005a1df529771daf245e565630d009b054e42d7d33c
+binary_build_id	654abf2324d7e73aa608215a9ba851d7c5230ddd
+build_backend	rustc nightly with Cranelift codegen backend
+environment	Linux dummy Xorg :545, 1600x1000 root; MIDI Editor/Event List 1000x620; isolated AAADAW profile; audio unavailable
+starting_state	One C4 note; selected raw Pitch Bend 4096 on channel 2 @ tick 480 and 12288 on channel 3 @ tick 960; unselected raw 10000 on channel 2 @ tick 600; one CC7 row
+action	Open Event List; Ctrl-click the two endpoint Pitch Bend rows; Filter events… > Set filter from selection; close dialog; toggle Event List Filter on
+assertion	The dialog shows Pitch, channels 2–3, signed range -4096–4096, Position 0.125–0.25026042, disabled Repeat every, and Draw channel 2. Set leaves the funnel off and all six rows visible. Event List displays signed values -4096, +1808, and +4096 around center 8192.
+list_result	After explicitly turning the funnel on, exactly the three Pitch Bend rows remain; the two selected endpoint rows stay selected and the unselected +1808 row also passes.
+verification	Current Cranelift binary real-window captures of selected rows, Set dialog, all six unfiltered rows, and three filtered rows; App regression checks derived values, filter state, selection retention, and unchanged project/undo history
+limitation	Behavior evidence for homogeneous Pitch Bend selection across two channels; mixed event kinds and complete pixel-diff certification remain open.

@@ -1,0 +1,12 @@
+before_paste_as_takes	count=1	active_index=0	active_name=Target A	active_source=render-item-take-name-Hit-01.wav
+before_paste_as_takes_take_0	name=Target A	source=render-item-take-name-Hit-01.wav
+after_paste_as_takes	count=2	active_index=1	active_name=Source B	active_source=render-item-take-name-Hit-02.wav
+after_paste_as_takes_take_0	name=Target A	source=render-item-take-name-Hit-01.wav
+after_paste_as_takes_take_1	name=Source B	source=render-item-take-name-Hit-02.wav
+track_item_count_after	2
+undo_before	Paste as takes from alternate source
+after_undo	count=1	active_index=0	active_name=Target A	active_source=render-item-take-name-Hit-01.wav
+after_undo_take_0	name=Target A	source=render-item-take-name-Hit-01.wav
+after_redo	count=2	active_index=1	active_name=Source B	active_source=render-item-take-name-Hit-02.wav
+after_redo_take_0	name=Target A	source=render-item-take-name-Hit-01.wav
+after_redo_take_1	name=Source B	source=render-item-take-name-Hit-02.wav

@@ -47,15 +47,22 @@ pub use midi_editing::{
     move_midi_note_by_sixteenth, quantize_midi_item_to_sixteenth,
 };
 pub use offline_render::{
-    DEFAULT_EFFECT_TAIL_SECONDS, FrozenTrackRender, OfflineRenderError,
-    project_render_length_samples, render_freeze_track_to_float32_wav, render_graph_to_pcm24_wav,
-    render_graph_to_wav, render_prepared_audio_to_pcm24_wav, render_prepared_audio_to_wav,
+    DEFAULT_EFFECT_TAIL_SECONDS, FrozenTrackRender, OfflineRenderError, ProjectWavRenderSettings,
+    ProjectWavRenderSource, project_content_end_sample, project_render_length_samples,
+    render_freeze_track_to_float32_wav, render_graph_to_pcm24_wav, render_graph_to_wav,
+    render_prepared_audio_to_pcm24_wav, render_prepared_audio_to_wav,
     render_project_file_to_pcm24_wav, render_project_file_to_wav,
+    render_project_file_to_wav_with_settings, render_project_wav_jobs_to_wavs,
+    render_project_wav_sources_to_wavs, render_range_length_samples,
+    render_range_length_samples_with_tail_milliseconds, render_selected_tracks_via_master_to_wavs,
 };
 pub use wav_export::{
-    Float32WavExport, Float32WavExportError, IntegerPcmWavExportError, Pcm16WavExport,
-    Pcm16WavExportError, Pcm24WavExport, Pcm24WavExportError, WavExport, WavExportError,
-    WavExportOptions, WavSampleFormat,
+    AdpcmWavExportError, Cadpcm2WavExport, Cadpcm2WavExportError, Float32WavExport,
+    Float32WavExportError, Float64WavExport, Float64WavExportError, ImaAdpcm4WavExport,
+    ImaAdpcmWavExportError, IntegerPcmWavExportError, MuLaw8WavExport, MuLaw8WavExportError,
+    Pcm8WavExport, Pcm8WavExportError, Pcm16WavExport, Pcm16WavExportError, Pcm24WavExport,
+    Pcm24WavExportError, Pcm32WavExport, Pcm32WavExportError, WavChannelCount, WavExport,
+    WavExportError, WavExportOptions, WavSampleFormat,
 };
 pub use waveform::{AudioWaveformResult, AudioWaveformWorker};
 
@@ -70,7 +77,7 @@ use aaadaw_engine::TrackMixController;
 use aaadaw_engine::TransportClockAnchor;
 use aaadaw_engine::{
     AudioGraphBuildError, AudioItemStream, AudioRenderGraph, PcmStreamError,
-    STEREO_PCM_QUEUE_FRAME_BYTES, audio_monitor_stream, stereo_pcm_stream,
+    STEREO_PCM_QUEUE_FRAME_BYTES, TransportLoopRange, audio_monitor_stream, stereo_pcm_stream,
 };
 #[cfg(all(
     feature = "cpal-backend",
@@ -83,9 +90,14 @@ use aaadaw_engine::{JackAudioOutput, JackOutputError, JackOutputStats};
 use aaadaw_engine::{PipeWireAudioOutput, PipeWireOutputError, PipeWireOutputStats};
 use aaadaw_media::{
     AudioFeedWorker, DecodedAudioCache, DecodedAudioCacheKey, MAX_CACHED_AUDIO_SOURCE_BYTES,
-    MediaError, decode_audio_source_for_cache, spawn_cached_stereo_audio_item_stream,
-    spawn_stereo_audio_item_stream, spawn_stereo_audio_item_stream_at,
-    spawn_stereo_audio_item_stream_from_reader, spawn_stereo_audio_item_stream_from_reader_at,
+    MediaError, ResamplingQuality, decode_audio_source_for_cache,
+    spawn_cached_stereo_audio_item_stream_with_quality,
+    spawn_stereo_audio_item_stream_at_with_quality,
+    spawn_stereo_audio_item_stream_for_transport_loop_at,
+    spawn_stereo_audio_item_stream_from_reader_at_with_quality,
+    spawn_stereo_audio_item_stream_from_reader_for_transport_loop,
+    spawn_stereo_audio_item_stream_from_reader_with_quality,
+    spawn_stereo_audio_item_stream_with_quality,
 };
 use aaadaw_storage::{ProjectStore, ResolvedAudioAsset, StorageError};
 use std::collections::{HashMap, HashSet};
@@ -491,6 +503,10 @@ impl PreparedAudioPlayback {
     #[cfg(feature = "jack-backend")]
     pub fn into_jack_output(self) -> Result<RunningJackPlayback, PlaybackBuildError> {
         let mix_controller = self.graph.track_mix_controller();
+        let master_mix_controller = self.graph.master_mix_controller();
+        let item_fade_controller = self.graph.item_fade_controller();
+        let item_volume_controller = self.graph.item_volume_controller();
+        let item_take_mix_controller = self.graph.item_take_mix_controller();
         let midi_preview_controller = self.graph.midi_preview_controller();
         let master_output_safety = self.graph.master_output_safety_controller();
         let input_monitor_controller = self.graph.input_monitor_controller();
@@ -502,6 +518,10 @@ impl PreparedAudioPlayback {
         Ok(RunningJackPlayback {
             output,
             mix_controller,
+            master_mix_controller,
+            item_fade_controller,
+            item_volume_controller,
+            item_take_mix_controller,
             midi_preview_controller,
             master_output_safety,
             input_monitor_controller,
@@ -531,6 +551,10 @@ impl PreparedAudioPlayback {
         _cpal_device_id: Option<&str>,
     ) -> Result<RunningAudioPlayback, PlaybackBuildError> {
         let mix_controller = self.graph.track_mix_controller();
+        let master_mix_controller = self.graph.master_mix_controller();
+        let item_fade_controller = self.graph.item_fade_controller();
+        let item_volume_controller = self.graph.item_volume_controller();
+        let item_take_mix_controller = self.graph.item_take_mix_controller();
         let midi_preview_controller = self.graph.midi_preview_controller();
         let master_output_safety = self.graph.master_output_safety_controller();
         let input_monitor_controller = self.graph.input_monitor_controller();
@@ -558,6 +582,10 @@ impl PreparedAudioPlayback {
         Ok(RunningAudioPlayback {
             output,
             mix_controller,
+            master_mix_controller,
+            item_fade_controller,
+            item_volume_controller,
+            item_take_mix_controller,
             midi_preview_controller,
             master_output_safety,
             input_monitor_controller,
@@ -728,6 +756,10 @@ enum DeviceAudioOutput {
 pub struct RunningAudioPlayback {
     output: DeviceAudioOutput,
     mix_controller: TrackMixController,
+    master_mix_controller: aaadaw_engine::MasterMixController,
+    item_fade_controller: aaadaw_engine::ItemFadeController,
+    item_volume_controller: aaadaw_engine::ItemVolumeController,
+    item_take_mix_controller: aaadaw_engine::ItemTakeMixController,
     midi_preview_controller: aaadaw_engine::MidiPreviewController,
     master_output_safety: MasterOutputSafetyController,
     input_monitor_controller: Option<AudioInputMonitorController>,
@@ -777,9 +809,49 @@ impl RunningAudioPlayback {
         self.mix_controller.reset_track_peaks();
     }
 
+    /// Publishes live manual Item fades without replacing the graph.
+    pub fn set_item_fades(
+        &self,
+        item_id: aaadaw_core::ItemId,
+        fades: aaadaw_core::AudioItemFades,
+    ) -> bool {
+        self.item_fade_controller.set_fades(item_id, fades)
+    }
+
+    /// Publishes an audio item's live linear volume without replacing the graph.
+    pub fn set_item_volume(&self, item_id: aaadaw_core::ItemId, volume: f32) -> bool {
+        self.item_volume_controller.set_volume(item_id, volume)
+    }
+
+    /// Publishes an audio item's live mute state without replacing the graph.
+    pub fn set_item_muted(&self, item_id: aaadaw_core::ItemId, muted: bool) -> bool {
+        self.item_volume_controller.set_muted(item_id, muted)
+    }
+
+    /// Publishes an audio item's polarity without replacing the graph.
+    pub fn set_item_phase(&self, item_id: aaadaw_core::ItemId, inverted: bool) -> bool {
+        self.item_volume_controller
+            .set_phase_inverted(item_id, inverted)
+    }
+
+    /// Publishes an audio item's active take mix without replacing the graph.
+    pub fn set_item_take_mix(&self, item_id: aaadaw_core::ItemId, volume: f32, pan: f32) -> bool {
+        self.item_take_mix_controller.set_mix(item_id, volume, pan)
+    }
+
+    /// Updates live stereo Master output controls.
+    pub fn set_master_mix(&self, mix: aaadaw_core::MasterMix) {
+        self.master_mix_controller.set_mix(mix);
+    }
+
     /// Updates a track's live playback coefficients without replacing the graph.
     pub fn set_track_mix(&self, track_id: aaadaw_core::TrackId, volume_db: f32, pan: f32) -> bool {
         self.mix_controller.set_track_mix(track_id, volume_db, pan)
+    }
+
+    /// Updates a track's live post-fader polarity without replacing the graph.
+    pub fn set_track_phase(&self, track_id: aaadaw_core::TrackId, inverted: bool) -> bool {
+        self.mix_controller.set_track_phase(track_id, inverted)
     }
 
     /// Updates a track's live mute and solo state without replacing the graph.
@@ -1051,6 +1123,10 @@ impl RunningAudioPlayback {
             input_monitor_controller.set_track_enabled(track_id, true);
         }
         let mix_controller = prepared.graph.track_mix_controller();
+        let master_mix_controller = prepared.graph.master_mix_controller();
+        let item_fade_controller = prepared.graph.item_fade_controller();
+        let item_volume_controller = prepared.graph.item_volume_controller();
+        let item_take_mix_controller = prepared.graph.item_take_mix_controller();
         let midi_preview_controller = prepared.graph.midi_preview_controller();
         let master_output_safety = prepared.graph.master_output_safety_controller();
         master_output_safety.set_ceiling(self.master_output_safety.ceiling());
@@ -1097,6 +1173,10 @@ impl RunningAudioPlayback {
             DeviceAudioOutput::Unavailable => {}
         }
         self.mix_controller = mix_controller;
+        self.master_mix_controller = master_mix_controller;
+        self.item_fade_controller = item_fade_controller;
+        self.item_volume_controller = item_volume_controller;
+        self.item_take_mix_controller = item_take_mix_controller;
         self.midi_preview_controller.release();
         self.midi_preview_controller = midi_preview_controller;
         self.master_output_safety = master_output_safety;
@@ -1333,6 +1413,10 @@ impl From<CpalOutputStats> for PlaybackStats {
 pub struct RunningJackPlayback {
     output: JackAudioOutput,
     mix_controller: TrackMixController,
+    master_mix_controller: aaadaw_engine::MasterMixController,
+    item_fade_controller: aaadaw_engine::ItemFadeController,
+    item_volume_controller: aaadaw_engine::ItemVolumeController,
+    item_take_mix_controller: aaadaw_engine::ItemTakeMixController,
     midi_preview_controller: aaadaw_engine::MidiPreviewController,
     master_output_safety: MasterOutputSafetyController,
     input_monitor_controller: Option<AudioInputMonitorController>,
@@ -1381,9 +1465,49 @@ impl RunningJackPlayback {
         self.mix_controller.reset_track_peaks();
     }
 
+    /// Publishes live manual Item fades without replacing the graph.
+    pub fn set_item_fades(
+        &self,
+        item_id: aaadaw_core::ItemId,
+        fades: aaadaw_core::AudioItemFades,
+    ) -> bool {
+        self.item_fade_controller.set_fades(item_id, fades)
+    }
+
+    /// Publishes an audio item's live linear volume without replacing the graph.
+    pub fn set_item_volume(&self, item_id: aaadaw_core::ItemId, volume: f32) -> bool {
+        self.item_volume_controller.set_volume(item_id, volume)
+    }
+
+    /// Publishes an audio item's live mute state without replacing the graph.
+    pub fn set_item_muted(&self, item_id: aaadaw_core::ItemId, muted: bool) -> bool {
+        self.item_volume_controller.set_muted(item_id, muted)
+    }
+
+    /// Publishes an audio item's polarity without replacing the graph.
+    pub fn set_item_phase(&self, item_id: aaadaw_core::ItemId, inverted: bool) -> bool {
+        self.item_volume_controller
+            .set_phase_inverted(item_id, inverted)
+    }
+
+    /// Publishes an audio item's active take mix without replacing the graph.
+    pub fn set_item_take_mix(&self, item_id: aaadaw_core::ItemId, volume: f32, pan: f32) -> bool {
+        self.item_take_mix_controller.set_mix(item_id, volume, pan)
+    }
+
+    /// Updates live stereo Master output controls.
+    pub fn set_master_mix(&self, mix: aaadaw_core::MasterMix) {
+        self.master_mix_controller.set_mix(mix);
+    }
+
     /// Updates a track's live playback coefficients without replacing the graph.
     pub fn set_track_mix(&self, track_id: aaadaw_core::TrackId, volume_db: f32, pan: f32) -> bool {
         self.mix_controller.set_track_mix(track_id, volume_db, pan)
+    }
+
+    /// Updates a track's live post-fader polarity without replacing the graph.
+    pub fn set_track_phase(&self, track_id: aaadaw_core::TrackId, inverted: bool) -> bool {
+        self.mix_controller.set_track_phase(track_id, inverted)
     }
 
     /// Updates a track's live mute and solo state without replacing the graph.
@@ -1494,6 +1618,10 @@ impl RunningJackPlayback {
             input_monitor_controller.set_track_enabled(track_id, true);
         }
         let mix_controller = prepared.graph.track_mix_controller();
+        let master_mix_controller = prepared.graph.master_mix_controller();
+        let item_fade_controller = prepared.graph.item_fade_controller();
+        let item_volume_controller = prepared.graph.item_volume_controller();
+        let item_take_mix_controller = prepared.graph.item_take_mix_controller();
         let midi_preview_controller = prepared.graph.midi_preview_controller();
         let master_output_safety = prepared.graph.master_output_safety_controller();
         master_output_safety.set_ceiling(self.master_output_safety.ceiling());
@@ -1502,6 +1630,10 @@ impl RunningJackPlayback {
             .replace_graph(graph, self.is_playing)
             .map_err(PlaybackBuildError::Jack)?;
         self.mix_controller = mix_controller;
+        self.master_mix_controller = master_mix_controller;
+        self.item_fade_controller = item_fade_controller;
+        self.item_volume_controller = item_volume_controller;
+        self.item_take_mix_controller = item_take_mix_controller;
         self.midi_preview_controller.release();
         self.midi_preview_controller = midi_preview_controller;
         self.master_output_safety = master_output_safety;
@@ -1591,7 +1723,31 @@ pub fn prepare_audio_playback(
     queue_capacity_frames: usize,
     max_block_frames: usize,
 ) -> Result<PreparedAudioPlayback, PlaybackBuildError> {
-    prepare_audio_playback_at(project, store, 0, queue_capacity_frames, max_block_frames)
+    prepare_audio_playback_with_resampling_quality(
+        project,
+        store,
+        queue_capacity_frames,
+        max_block_frames,
+        ResamplingQuality::Sinc64,
+    )
+}
+
+/// Prepares a project media graph with a selected worker-side resampling quality.
+pub fn prepare_audio_playback_with_resampling_quality(
+    project: &Project,
+    store: &ProjectStore,
+    queue_capacity_frames: usize,
+    max_block_frames: usize,
+    quality: ResamplingQuality,
+) -> Result<PreparedAudioPlayback, PlaybackBuildError> {
+    prepare_audio_playback_at_with_resampling_quality(
+        project,
+        store,
+        0,
+        queue_capacity_frames,
+        max_block_frames,
+        quality,
+    )
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1698,18 +1854,79 @@ pub fn prepare_audio_playback_at(
     queue_capacity_frames: usize,
     max_block_frames: usize,
 ) -> Result<PreparedAudioPlayback, PlaybackBuildError> {
+    prepare_audio_playback_at_with_resampling_quality(
+        project,
+        store,
+        timeline_sample,
+        queue_capacity_frames,
+        max_block_frames,
+        ResamplingQuality::Sinc64,
+    )
+}
+
+/// Prepares a seek-positioned media graph with a selected worker-side quality.
+pub fn prepare_audio_playback_at_with_resampling_quality(
+    project: &Project,
+    store: &ProjectStore,
+    timeline_sample: u64,
+    queue_capacity_frames: usize,
+    max_block_frames: usize,
+    quality: ResamplingQuality,
+) -> Result<PreparedAudioPlayback, PlaybackBuildError> {
+    prepare_audio_playback_at_with_loop_range(
+        project,
+        store,
+        timeline_sample,
+        None,
+        queue_capacity_frames,
+        max_block_frames,
+        quality,
+    )
+}
+
+/// Prepares playback with an active transport repeat range.
+///
+/// Audio items overlapping the loop repeat only the source segment corresponding to their
+/// intersection with the transport range. The feeder resamples that segment to the project rate
+/// when the source offset and segment duration map to exact source-frame boundaries; fractional
+/// mappings are rejected. Mono sources are centered in the stereo graph. Bounded source loops must
+/// exactly match the full range; normal trimmed items may partially overlap or span it, regardless
+/// of their Loop source setting. Incompatible items are rejected before the graph is started.
+pub fn prepare_audio_playback_at_with_loop_range(
+    project: &Project,
+    store: &ProjectStore,
+    timeline_sample: u64,
+    transport_loop_range: Option<TransportLoopRange>,
+    queue_capacity_frames: usize,
+    max_block_frames: usize,
+    quality: ResamplingQuality,
+) -> Result<PreparedAudioPlayback, PlaybackBuildError> {
     let active_items = project
         .audio_items()
         .iter()
-        .filter(|item| timeline_sample < item.end_sample())
+        .filter(|item| {
+            !item.active_take_is_empty()
+                && (timeline_sample < item.end_sample()
+                    || (transport_loop_range.is_some_and(|range| {
+                        timeline_sample >= range.start_sample()
+                            && timeline_sample <= range.end_sample()
+                            && item.start_sample() < range.end_sample()
+                            && item.end_sample() > range.start_sample()
+                    })))
+        })
         .count();
     let mut source_hashes_by_media_ref = HashMap::new();
     let mut source_use_counts = HashMap::new();
-    for item in project
-        .audio_items()
-        .iter()
-        .filter(|item| timeline_sample < item.end_sample())
-    {
+    for item in project.audio_items().iter().filter(|item| {
+        !item.active_take_is_empty()
+            && (timeline_sample < item.end_sample()
+                || (transport_loop_range.is_some_and(|range| {
+                    timeline_sample >= range.start_sample()
+                        && timeline_sample <= range.end_sample()
+                        && item.start_sample() < range.end_sample()
+                        && item.end_sample() > range.start_sample()
+                })))
+    }) {
         if !source_hashes_by_media_ref.contains_key(item.media_ref()) {
             let source_hash = store
                 .audio_asset_content_hash(item.media_ref())
@@ -1724,7 +1941,19 @@ pub fn prepare_audio_playback_at(
             *source_use_counts.entry(source_hash).or_insert(0_usize) += 1;
         }
     }
-    let past_items = project.audio_items().len().saturating_sub(active_items);
+    let past_items = project
+        .audio_items()
+        .iter()
+        .filter(|item| {
+            !item.active_take_is_empty()
+                && timeline_sample >= item.end_sample()
+                && !transport_loop_range.is_some_and(|range| {
+                    timeline_sample <= range.end_sample()
+                        && item.start_sample() < range.end_sample()
+                        && item.end_sample() > range.start_sample()
+                })
+        })
+        .count();
     let queue_plan = plan_pcm_queue_capacities(
         active_items,
         past_items,
@@ -1739,19 +1968,95 @@ pub fn prepare_audio_playback_at(
     let mut uncacheable_sources = HashSet::new();
 
     for item in project.audio_items() {
+        let overlaps_transport_loop = transport_loop_range.is_some_and(|range| {
+            timeline_sample <= range.end_sample()
+                && item.start_sample() < range.end_sample()
+                && item.end_sample() > range.start_sample()
+        });
+        if item.active_take_is_empty() {
+            item_streams.push(AudioItemStream::new_silence(item.id()));
+            continue;
+        }
         let item_queue_capacity = if timeline_sample >= item.end_sample() {
-            queue_plan.past_item_capacity_frames
+            if overlaps_transport_loop {
+                queue_plan.active_item_capacity_frames
+            } else {
+                queue_plan.past_item_capacity_frames
+            }
         } else {
             queue_plan.active_item_capacity_frames
         };
         let (producer, consumer) =
             stereo_pcm_stream(item_queue_capacity).map_err(PlaybackBuildError::PcmStream)?;
-        if timeline_sample >= item.end_sample() {
+        if timeline_sample >= item.end_sample() && !overlaps_transport_loop {
             drop(producer);
             item_streams.push(AudioItemStream::new_stereo_at_sample(
                 item.id(),
                 item.end_sample(),
                 consumer,
+            ));
+            continue;
+        }
+        if overlaps_transport_loop {
+            let range = transport_loop_range.expect("overlap requires a transport loop range");
+            let item_loop_range = TransportLoopRange::new(
+                item.start_sample().max(range.start_sample()),
+                item.end_sample().min(range.end_sample()),
+            )
+            .expect("overlapping item and transport ranges have a nonempty intersection");
+            let feeder_sample = if timeline_sample < range.start_sample()
+                && item.start_sample() < range.start_sample()
+            {
+                timeline_sample.max(item.start_sample())
+            } else if (item_loop_range.start_sample()..item_loop_range.end_sample())
+                .contains(&timeline_sample)
+            {
+                timeline_sample
+            } else {
+                item_loop_range.start_sample()
+            };
+            let resolved = store
+                .resolve_audio_asset(item.media_ref())
+                .map_err(PlaybackBuildError::Storage)?;
+            let mut feeder = match resolved {
+                ResolvedAudioAsset::Embedded(reader) => {
+                    let byte_len = reader.byte_len();
+                    let extension = Path::new(reader.original_name())
+                        .extension()
+                        .and_then(|value| value.to_str())
+                        .map(str::to_owned);
+                    spawn_stereo_audio_item_stream_from_reader_for_transport_loop(
+                        item,
+                        range,
+                        feeder_sample,
+                        reader,
+                        Some(byte_len),
+                        extension.as_deref(),
+                        output_sample_rate,
+                        producer,
+                    )
+                }
+                ResolvedAudioAsset::LinkedFile { path, .. } => {
+                    spawn_stereo_audio_item_stream_for_transport_loop_at(
+                        item,
+                        range,
+                        feeder_sample,
+                        path,
+                        output_sample_rate,
+                        producer,
+                    )
+                }
+            }
+            .map_err(PlaybackBuildError::Media)?;
+            feeder.wait_ready().map_err(PlaybackBuildError::Media)?;
+            let position = feeder.timeline_position();
+            feeders.push(feeder);
+            item_streams.push(AudioItemStream::new_stereo_looping_at_sample_with_position(
+                item.id(),
+                feeder_sample,
+                item_loop_range,
+                consumer,
+                position,
             ));
             continue;
         }
@@ -1772,12 +2077,13 @@ pub fn prepare_audio_playback_at(
                 cached_embedded_source(store, item.media_ref(), cache_key, should_decode)?
             {
                 let needs_refill = timeline_sample > item.start_sample();
-                let mut feeder = spawn_cached_stereo_audio_item_stream(
+                let mut feeder = spawn_cached_stereo_audio_item_stream_with_quality(
                     item,
                     timeline_sample,
                     source,
                     output_sample_rate,
                     producer,
+                    quality,
                 )
                 .map_err(PlaybackBuildError::Media)?;
                 feeder.wait_ready().map_err(PlaybackBuildError::Media)?;
@@ -1815,7 +2121,7 @@ pub fn prepare_audio_playback_at(
                     .and_then(|value| value.to_str())
                     .map(str::to_owned);
                 if needs_refill {
-                    spawn_stereo_audio_item_stream_from_reader_at(
+                    spawn_stereo_audio_item_stream_from_reader_at_with_quality(
                         item,
                         timeline_sample,
                         reader,
@@ -1823,29 +2129,38 @@ pub fn prepare_audio_playback_at(
                         extension.as_deref(),
                         output_sample_rate,
                         producer,
+                        quality,
                     )
                 } else {
-                    spawn_stereo_audio_item_stream_from_reader(
+                    spawn_stereo_audio_item_stream_from_reader_with_quality(
                         item,
                         reader,
                         Some(byte_len),
                         extension.as_deref(),
                         output_sample_rate,
                         producer,
+                        quality,
                     )
                 }
                 .map_err(PlaybackBuildError::Media)?
             }
             ResolvedAudioAsset::LinkedFile { path, .. } => if needs_refill {
-                spawn_stereo_audio_item_stream_at(
+                spawn_stereo_audio_item_stream_at_with_quality(
                     item,
                     timeline_sample,
                     path,
                     output_sample_rate,
                     producer,
+                    quality,
                 )
             } else {
-                spawn_stereo_audio_item_stream(item, path, output_sample_rate, producer)
+                spawn_stereo_audio_item_stream_with_quality(
+                    item,
+                    path,
+                    output_sample_rate,
+                    producer,
+                    quality,
+                )
             }
             .map_err(PlaybackBuildError::Media)?,
         };
@@ -1886,6 +2201,7 @@ pub fn prepare_audio_playback_at(
     let mut graph = AudioRenderGraph::new_for_audio_items(project, item_streams, max_block_frames)
         .map_err(PlaybackBuildError::AudioGraph)?;
     graph.install_input_monitor(monitor_consumer.clone(), monitor_gate.clone());
+    graph.transport_mut().set_loop_range(transport_loop_range);
     graph.transport_mut().seek_sample(timeline_sample);
     Ok(PreparedAudioPlayback {
         graph,

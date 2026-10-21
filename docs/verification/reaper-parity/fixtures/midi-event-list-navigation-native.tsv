@@ -1,0 +1,11 @@
+version	7.82/linux-x86_64
+theme	Default_7.0.ReaperThemeZip
+probe	4 notes, rows 1-3 selected before navigation
+key	selection
+start	1,1,1,0
+ArrowDown	1,0,0,0
+ArrowDown	0,1,0,0
+Ctrl+A	1,1,1,1
+Ctrl+ArrowDown	1,1,1,1
+shift-probe-start	1,0,0,0
+Shift+ArrowDown	1,1,0,0

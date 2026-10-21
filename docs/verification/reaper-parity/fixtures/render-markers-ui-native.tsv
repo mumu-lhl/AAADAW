@@ -1,0 +1,16 @@
+field	value
+version	Linux REAPER 7.82/linux-x86_64 rev 338578
+theme	Default_7.0.ReaperThemeZip; isolated factory configuration
+audio_device	Dummy Audio; no hardware I/O
+fixture	48 kHz stereo PCM24 source; one-second media items at [0,1], [2,3], [4,5]; markers at 0, 2, 4 named Marker 1, Marker 2, Marker 3
+source_sha256	3fc2b329a255fba613ee7af55714f8a2facb47b9352ec1859b8bb9e4b502f5d6
+ui_bounds_selection	All project markers
+ui_range_label	3 markers
+ui_render_button	Render 3 files
+filename_wildcard	markers-$marker-$item
+output_1	markers-Marker 1.wav	[0,2) seconds	96000 frames	PCM24 stereo 48 kHz	0afd423f05e8817bd0d2624f1f34626447dc75195f1a0b6d0ea38792c50ed5cd
+output_2	markers-Marker 2.wav	[2,4) seconds	96000 frames	PCM24 stereo 48 kHz	e5b6e66a470e725831182f3b34700ab9b52950487de349214f60eca187174133
+output_3	markers-Marker 3.wav	[4,5) seconds	48000 frames	PCM24 stereo 48 kHz	216b2fc37d62284b70eec782976933a34475d04443efbbefa8b5627d7a3f350b
+project_end_probe	A region extending to 8 s while the last media item ends at 5 s leaves marker 3 at [4,5), 48000 frames
+unnamed_marker_wildcard	An unnamed marker 3 expands the native $marker wildcard to 03; output empty-03.wav, 48000 frames, SHA-256 d8abb2162f5b934468d83419886cf5a2d0b8ff3e5792ecf22719feeb9e98739c
+setter_caution	Bounds semantics were selected in the actual dialog; raw RENDER_BOUNDSFLAG values are not authoritative

@@ -1,0 +1,43 @@
+version	7.82/linux-x86_64
+theme	Default_7.0.ReaperThemeZip
+cursor_seconds	2.0
+track_count	2
+tempo_marker_count	4
+project_marker_counts	2	0
+project_marker	1	0	2.25	0.0	Unattached marker
+project_marker	2	0	2.6	0.0	Cue A
+tempo	1	0.0	0	1e-11	120.0	4	4	0
+tempo	2	2.0	1	1e-11	120.0	-1	-1	0
+tempo	3	2.5	1	1.00000000001	150.0	-1	-1	0
+tempo	4	3.7	2	1e-11	150.0	3	4	0
+track	1	Lead	1
+item	1	1	2.0	0.9	Lead
+take	1	1	1	3	4
+note	1	1	0	0	0.0	480.0	3	60	100
+cc	1	1	0	0	480.0	0xB0	3	0	11
+cc	1	2	0	0	480.0	0xB0	3	32	22
+cc	1	3	0	0	480.0	0xC0	3	41	0
+text_sysex	1	1	0	0	0.0	3	4C656164
+text_sysex	1	2	0	0	240.0	1	56657273652074657874
+text_sysex	1	3	0	0	960.0	-1	4312
+text_sysex	1	4	0	0	1200.0	6	4375652041
+raw	1	1	0	0	FF034C656164
+raw	1	1	0	0	923C64
+raw	1	1	240	0	FF0156657273652074657874
+raw	1	1	480	0	B2000B
+raw	1	1	480	0	B22016
+raw	1	1	480	0	C229
+raw	1	1	480	0	823C25
+raw	1	1	960	0	F04312F7
+raw	1	1	1200	0	FF064375652041
+raw	1	1	1920	0	B07B00
+track	2	Meta only	1
+item	2	1	2.0	0.9	Meta only
+take	2	1	0	0	3
+text_sysex	2	1	0	0	0.0	3	4D657461206F6E6C79
+text_sysex	2	2	0	0	0.0	1	556E61747461636865642074657874
+text_sysex	2	3	0	0	480.0	6	556E6174746163686564206D61726B6572
+raw	2	1	0	0	FF034D657461206F6E6C79
+raw	2	1	0	0	FF01556E61747461636865642074657874
+raw	2	1	480	0	FF06556E6174746163686564206D61726B6572
+raw	2	1	1920	0	B07B00

@@ -1,0 +1,127 @@
+[
+  {
+    "file": "item-fade-shape-0.wav",
+    "sha256": "143a718a1ddb4cbf9e10423c8ce6a44e7e130151ac21972500c7dcf1a92a1085",
+    "max_normalized_error": 4.755655924615354e-07
+  },
+  {
+    "file": "item-fade-shape-1.wav",
+    "sha256": "ecee29804825261c9345035626b8d2545efe30b0ae2a5fe326e0b88c919f3b33",
+    "max_normalized_error": 4.7677951386937423e-07
+  },
+  {
+    "file": "item-fade-shape-2.wav",
+    "sha256": "d6dee27f16ae46d1e78d186c66e9ee9f0c73bf87af5f8ba0929459be7d0e79af",
+    "max_normalized_error": 4.7677951388888987e-07
+  },
+  {
+    "file": "item-fade-shape-3.wav",
+    "sha256": "9c61bff56d6e1b0047e7f079b5db0adf788a16289de82df24651566d69ec784d",
+    "max_normalized_error": 4.767582947318161e-07
+  },
+  {
+    "file": "item-fade-shape-4.wav",
+    "sha256": "083f9cbf8311cd66f3664f841981322e09f28a6f98bdbd0f577a90d4453591de",
+    "max_normalized_error": 4.7675829475308656e-07
+  },
+  {
+    "file": "item-fade-shape-5.wav",
+    "sha256": "659314335bd901eb8b9bbe1b05f35405c1c959353d77cab76fdce29491760b56",
+    "max_normalized_error": 4.7675457538753907e-07
+  },
+  {
+    "file": "item-fade-shape-6.wav",
+    "sha256": "e4252ecbcbeba6f0e9a99ff1be6a9c8c0d44412901493be918fcea328a959c8d",
+    "max_normalized_error": 4.7672411510046864e-07
+  },
+  {
+    "file": "item-fade-overlap-linear.wav",
+    "sha256": "10019a1bfdef49849716213d2d81680af6a8a63dbf274df5438c1ae4977df03f",
+    "max_normalized_error": 4.764133029744322e-07
+  },
+  {
+    "file": "item-fade-overlap-asymmetric.wav",
+    "sha256": "aecdc1cf79e9cf43d320e5170acdd61274286783f682d2cf362f8a01f2e6dc26",
+    "max_normalized_error": 4.755655924615354e-07
+  },
+  {
+    "file": "item-fade-overlap-full.wav",
+    "sha256": "0db0223f729678bded1a6851dfdddcb7a6db21c5089084652739b9c391b3f187",
+    "max_normalized_error": 4.755655924615354e-07
+  },
+  {
+    "file": "item-fade-long-in.wav",
+    "sha256": "0db0223f729678bded1a6851dfdddcb7a6db21c5089084652739b9c391b3f187",
+    "max_normalized_error": 4.755655924615354e-07
+  },
+  {
+    "file": "item-fade-long-out.wav",
+    "sha256": "012e0009bd8916abf332c6fed080bd7ab5b4d45b2fd334691fd749712584d557",
+    "max_normalized_error": 4.755655924615354e-07
+  },
+  {
+    "file": "item-fade-curve--0.75.wav",
+    "sha256": "499bd9b01d36eaa771e63c04d7064ff5929b30c02d794eabba7dec7e9148969c",
+    "max_normalized_error": 4.76837158203125e-07
+  },
+  {
+    "file": "item-fade-s--0.75.wav",
+    "sha256": "cc011cc4707cd80efe2888a2ca72ee951cee6399f1873d2da0f651dda2f60c47",
+    "max_normalized_error": 4.7676237890925677e-07
+  },
+  {
+    "file": "item-fade-curve--0.5.wav",
+    "sha256": "b54973453682d46bcff653aad1c443c5f7da8612ed9dda6bc468ac4604b6f273",
+    "max_normalized_error": 4.767795138884562e-07
+  },
+  {
+    "file": "item-fade-s--0.5.wav",
+    "sha256": "d640920924187c7cd7c3d2b66216d407393a7205f94dc4629919ec0f05d445a4",
+    "max_normalized_error": 4.768337673599632e-07
+  },
+  {
+    "file": "item-fade-curve--0.25.wav",
+    "sha256": "0390c142e73bd67c174aa8fb768635f012dde90e94ece56392cbd87928dabfd7",
+    "max_normalized_error": 4.768066406424243e-07
+  },
+  {
+    "file": "item-fade-s--0.25.wav",
+    "sha256": "4ee833d96eba9eb83cf5fac36b60b4b58142523c06a06276f0d08de3ec0e5375",
+    "max_normalized_error": 4.767456054377561e-07
+  },
+  {
+    "file": "item-fade-curve-0.25.wav",
+    "sha256": "604382c76ba949ccb0a342c1bd5b896f13ba8f3c8049558862ee13be722655bb",
+    "max_normalized_error": 4.768066406146687e-07
+  },
+  {
+    "file": "item-fade-s-0.25.wav",
+    "sha256": "6de675cc28ee31fd20980dc7888914bbae3ed0524c170dd4ad9b51353fb19810",
+    "max_normalized_error": 4.767456054377561e-07
+  },
+  {
+    "file": "item-fade-curve-0.5.wav",
+    "sha256": "33e2494ad7a826763df9e3a2eec84330f16ee04296ecc5368183b37d67e1cd74",
+    "max_normalized_error": 4.7677951386937423e-07
+  },
+  {
+    "file": "item-fade-s-0.5.wav",
+    "sha256": "465dea50219316b67252087abc73b7e2947cafcc6efdb366bbcf068fe7c332c4",
+    "max_normalized_error": 4.7683376738771877e-07
+  },
+  {
+    "file": "item-fade-curve-0.75.wav",
+    "sha256": "480a7cb077147f6d97440a88e7c905e0885c3a420a79e8428756af1dce08f238",
+    "max_normalized_error": 4.76837158203125e-07
+  },
+  {
+    "file": "item-fade-s-0.75.wav",
+    "sha256": "69b68da30dc3f5844f7c286482ecb0563da0e2c9b24804df66cdb6cc2030092b",
+    "max_normalized_error": 4.7676237890925677e-07
+  },
+  {
+    "file": "item-fade-combined.wav",
+    "sha256": "b0827394f93bd2cdb43b3aa477c5e1b093abb02f8abad0ae98f48769d188daa2",
+    "max_normalized_error": 4.76837158203125e-07
+  }
+]

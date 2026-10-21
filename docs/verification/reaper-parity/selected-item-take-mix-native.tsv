@@ -1,0 +1,33 @@
+property	value
+target	Linux REAPER 7.82/linux-x86_64, Default_7.0.ReaperThemeZip
+fixture	Unsaved disposable project; four selected audio items on separate tracks
+source	48 kHz PCM24 stereo, constant L=0.125/R=0.375
+source_sha256	3fc2b329a255fba613ee7af55714f8a2facb47b9352ec1859b8bb9e4b502f5d6
+render_source	Selected media items
+render_format	WAV 24-bit PCM, 48 kHz, stereo, 48000 frames per item
+probe_script	scripts/reaper_parity/probe-render-selected-item-take-mix.lua
+setup_screenshot_sha256	20d4b412301e32a7ca9b686407a1232c7102e3709a159b83588c0cdee78785cf
+finished_screenshot_sha256	0ab545efe4d603ef7e0432d52d524a5ac154622e08d052418bd84f29d19f2c8f
+track_volume_linear	1.0
+media_item_volume_linear	1.0
+take_volume_linear	0.5 (-6.02 dB)
+pan	center (0.0)
+output_1	take-mix-item_01-001.wav
+output_1_first_frame_pcm24	524288,1572864
+output_1_first_frame_float	0.0625,0.1875
+output_1_sha256	2523abacfffdb20fb4cf56d8b6dbd05cacbf3f339777cee487f20246011f23f3
+pan	25%R (0.25)
+output_2	take-mix-item_01-002.wav
+output_2_first_frame_pcm24	393216,1572864
+output_2_first_frame_float	0.046875,0.1875
+output_2_sha256	e2a564cd3f63d421f67673563d7398adc84ee3067790964958e8b407564081b9
+pan	hard left (-1.0)
+output_3	take-mix-item_01-003.wav
+output_3_first_frame_pcm24	524288,0
+output_3_first_frame_float	0.0625,0.0
+output_3_sha256	f0cb6a220674e70a66863be1d42f9118394880b7ae1ec6069ad0a0b12144d54a
+pan	hard right (1.0)
+output_4	take-mix-item_01-004.wav
+output_4_first_frame_pcm24	0,1572864
+output_4_first_frame_float	0.0,0.1875
+output_4_sha256	0dc668f65dc234ba3f4e6c0604eb50fa28cf2876e17789ed2815cf59d884fe28

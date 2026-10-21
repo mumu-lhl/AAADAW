@@ -1,0 +1,16 @@
+artifact	path	sha256	details
+aaadaw_binary	target/cranelift/debug/aaadaw	3dd18ff3fa72cbf19d0e73e3c2cf1411e507a4b2e61c16607b216fc8a600b6b5	Nightly Cranelift; Build ID 89b2148658418f93f6e4d9aaff99d3d54f890ba2
+project_fixture	docs/verification/reaper-parity/fixtures/midi-item-takes-aaadaw.aaadaw	f80cff4d4eb87de5eb260a92d20a914f0b6bc57737ac249a270337c98d6ab68d	Two MIDI takes; Take B active before switching
+capture_script	scripts/reaper_parity/capture-midi-item-switch-take-aaadaw.sh	a4075ce5b893c95374ee4eaf541fb14097a966bd2dab9a7a1eb6a85e44a626ea	Isolated Xvfb 1280x800; invokes take.switch-next and captures Undo/Redo
+before	docs/verification/reaper-parity/fixtures/midi-item-switch-take-aaadaw-before.png	f6c87fbb3ecbd869eb13d97b06b6b190a721cf07d78fa1c9f2929fb5a3151433	Take B active; Inspector shows previous/next controls
+after	docs/verification/reaper-parity/fixtures/midi-item-switch-take-aaadaw-after.png	12839ea0a891089984fdce1fd3e198a7386b68a8651b2e852ab6915743d3e65a	Take A active; note pitch 60 visible
+undo	docs/verification/reaper-parity/fixtures/midi-item-switch-take-aaadaw-undo.png	e6dcdf1f37ae27f2951870116845d0811ea7f08842d49b1650a94f950569a5d3	Undo restores Take B
+redo	docs/verification/reaper-parity/fixtures/midi-item-switch-take-aaadaw-redo.png	f133df8ee80670b42f68928e7edaf4bd6dfce4d61b0eafc59531ca0b7228e0b0	Redo restores Take A
+native_probe	scripts/reaper_parity/probe-midi-switch-takes.lua	dbb427ed15d874f09624749bc1947af8eaa59935af953fcbec022dc4e545f9f1	REAPER 7.82 Default 7; actions 40125/40126; checks event readback and history
+native_binary	target/reaper-7.82/reaper_linux_x86_64/REAPER/reaper	9976f5608068b7a58518969001b00b527fb0de6ed7459e0e5dda6f29878ee254	REAPER 7.82/linux-x86_64 rev 338578; Build ID fb9ade2f211bc91a3ee6193630ef17bcf5f6528b
+native_readback	docs/verification/reaper-parity/fixtures/midi-switch-takes-native.tsv	b7d99c0ddb195181ce09f0bb959186df7ba499605f6492c5f2d15c160c5f67b4	Next: 1/B/64 to 0/A/60; Undo and Redo restore; Previous returns to B
+native_before	docs/verification/reaper-parity/fixtures/midi-switch-takes-before.rpp	429837e047473df2ec699d7733e94b479e458820a24aa9df00b9a440ad38c9f3	Native project before action 40125
+native_next	docs/verification/reaper-parity/fixtures/midi-switch-takes-next.rpp	13f58d16328ec19f3f43be1479ebd88edac18d03b4b6d2a9d3e343556d2f0522	Native project after action 40125
+native_undo	docs/verification/reaper-parity/fixtures/midi-switch-takes-undo.rpp	429837e047473df2ec699d7733e94b479e458820a24aa9df00b9a440ad38c9f3	Native project after Undo
+native_redo	docs/verification/reaper-parity/fixtures/midi-switch-takes-redo.rpp	13f58d16328ec19f3f43be1479ebd88edac18d03b4b6d2a9d3e343556d2f0522	Native project after Redo
+native_previous	docs/verification/reaper-parity/fixtures/midi-switch-takes-previous.rpp	429837e047473df2ec699d7733e94b479e458820a24aa9df00b9a440ad38c9f3	Native project after action 40126

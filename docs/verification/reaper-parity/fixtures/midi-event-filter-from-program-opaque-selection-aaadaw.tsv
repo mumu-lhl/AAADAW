@@ -1,0 +1,19 @@
+artifact	sha256
+crates/aaadaw/examples/generate_midi_filter_from_program_opaque_selection_fixture.rs	411b5cf8c03e1d92599e9c8039e21d0da1218ece9d40793dc953df9f9c90b9de
+docs/verification/reaper-parity/fixtures/midi-event-filter-from-program-opaque-selection-aaadaw.aaadaw	bfd36f329d26dae493bb46b80a72fa23418c6a071d845fd97a7845c0ca98f492
+docs/verification/reaper-parity/fixtures/midi-event-filter-from-program-opaque-selection-aaadaw-selected-before-set.png	c41bda521404e4cb18f8bd99b095ad141c283b88e04622795fe5dae545096410
+docs/verification/reaper-parity/fixtures/midi-event-filter-from-program-opaque-selection-aaadaw-filter-before-set.png	3c361823f3d6f632628a898276da297f41bdc60d8f543a973f4ffb66b4c42cb2
+docs/verification/reaper-parity/fixtures/midi-event-filter-from-program-opaque-selection-aaadaw-after-set.png	91b37d4420ef72c0679fbd48df8fbe32d647ac8a7322ee668f8932db16173146
+docs/verification/reaper-parity/fixtures/midi-event-filter-from-program-opaque-selection-aaadaw-list-filtered.png	64a76ff368a7bf8539c3831f86121896ae6fc5576256c56c8a4365611c8bde17
+docs/verification/reaper-parity/fixtures/midi-event-filter-from-program-opaque-selection-aaadaw-funnel-off.png	789f879505120738baec313836ec0d454fa19cf9f7a1d46a6aceb8fe10407f86
+binary_sha256	22552f48fe60737cb465353e88f4993cdcd610e019adafb6b00ded17ed2298cf
+binary_build_id	1c641790c843799657841c7e54724c31c1e32193
+build_backend	rustc nightly with Cranelift codegen backend
+environment	Linux Xvfb :558, 1600x900; actual AAADAW MIDI Event List window; isolated XDG runtime/config/data/cache/state; audio unavailable
+starting_state	Eight Event List rows, selected Program Change 8 ch2 @ tick 480 and Text Meta @ tick 960; Show-only and funnel off
+action	Open fixture in AAADAW, open MIDI Editor > Event List; select Program Change; Ctrl-click Text Meta; Filter events > Set filter from selection; turn funnel off
+assertion	The live panel shows <all events>, All channels, Position 0.12500000–0.25026042, Repeat measure, Show-only unchecked, and Draw events on Channel 1; both selected endpoints remain selected
+list_result	The eight-row list filters immediately to five in-range events: selected Program Change, CC7, unselected Text Meta, unselected Program Change, and selected Text Meta. Turning the funnel off restores all eight rows and retains both selections.
+selection_and_data	The App regression verifies matching Program Change, CC, and opaque event identities; retained PC and Text Meta selection; five matching rows and eight restored rows; and unchanged project snapshot and Undo/Redo history. Native REAPER readbacks confirm the same selection and unchanged raw MIDI bytes.
+verification	Focused App Nextest 1/1; AAADAW package Nextest 856/856; strict AAADAW all-target Clippy (-D warnings -A future-incompatible); nightly Cranelift desktop build; final binary launched in a real Xvfb window; five screenshots capture selected rows, pre-Set controls, derived filter, filtered list, and restored list; fixture project and binary identity are recorded above.
+limitation	REAPER displays Position as combo-box values 1/8–0.250 while AAADAW uses editable decimal fields. With the REAPER filter active, MIDI_GetNote and MIDI_GetTextSysexEvt omit hidden rows; unchanged MIDI_GetAllEvts bytes and RPP states preserve them. Screenshots verify behavior and controls, not pixel identity.

@@ -1,0 +1,25 @@
+version	7.82/linux-x86_64
+theme	Default_7.0.ReaperThemeZip
+fixture	track Piano; item 0.25-1.25 seconds; C4 note, CC1, pitch bend; visible #Intro at tick 0 and Verse at tick 960
+project_ppq_at_note_start	480
+project_ppq_at_cc	720
+project_ppq_at_pitch_bend	840
+project_ppq_at_note_end	1440
+export_action	40849
+export_mode	Merge to single MIDI track (type 0 MIDI file)
+export_ppqn	960
+export_tempo_meter_changes	unchecked
+export_smpte_offset	unchecked
+export_markers	checked
+export_marker_type	markers
+export_marker_filter	checked
+export_hidden_markers	unchecked
+native_track	one merged track; 0x06 marker #Intro at tick 0; no track-name, tempo, or time-signature meta-events
+native_events	one merged track; #Intro marker at tick 0; note-on tick 480; CC1 tick 720; pitch bend tick 840; note-off and End-of-Track tick 1440
+native_export_path	/tmp/midi-type0-markers-filtered-native-20261016.mid
+native_export_bytes	55
+native_export_sha256	82da9d861cce11fcec9a63bc030daeef39871970cc365f56b67940ac6f5ec8bb
+native_dialog_screenshot	fixtures/menu-export-midi-native-type0-markers-filtered-dialog.png
+native_dialog_screenshot_sha256	6d4e0d8ff1bd609bc381762374d5f7aa0fc52023ef7cf16cff031c8f4122a833
+native_binary_fixture	fixtures/menu-export-midi-native-type0-markers-filtered.mid
+native_probe	scripts/reaper_parity/probe-midi-export-type0-marker-filter.lua

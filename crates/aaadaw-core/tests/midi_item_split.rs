@@ -24,22 +24,28 @@ fn project_with_midi_item() -> (Project, aaadaw_core::TrackId, aaadaw_core::Item
             item_id,
             notes: vec![
                 MidiNoteData {
+                    channel: 0,
                     pitch: 60,
                     tick: 240,
                     duration: 1_200,
                     velocity: 100,
+                    off_velocity: 37,
                 },
                 MidiNoteData {
+                    channel: 0,
                     pitch: 64,
                     tick: 1_440,
                     duration: 1_680,
                     velocity: 90,
+                    off_velocity: 0,
                 },
                 MidiNoteData {
+                    channel: 0,
                     pitch: 67,
                     tick: 3_500,
                     duration: 100,
                     velocity: 80,
+                    off_velocity: 0,
                 },
             ],
         })
@@ -77,6 +83,11 @@ fn splitting_midi_item_preserves_notes_clip_positions_and_one_step_undo_redo() {
         "the first note should stop at the first split"
     );
     assert_eq!(
+        items[0].notes()[0].off_velocity(),
+        0,
+        "a split-created note release uses the default velocity"
+    );
+    assert_eq!(
         items[1]
             .notes()
             .iter()
@@ -84,6 +95,7 @@ fn splitting_midi_item_preserves_notes_clip_positions_and_one_step_undo_redo() {
             .collect::<Vec<_>>(),
         [(60, 0, 480), (64, 480, 480)]
     );
+    assert_eq!(items[1].notes()[0].off_velocity(), 37);
     assert_eq!(
         items[2]
             .notes()
@@ -108,10 +120,12 @@ fn splitting_a_trimmed_clip_keeps_hidden_events_in_the_final_segment() {
         .apply(DawAction::AddMidiNotes {
             item_id,
             notes: vec![MidiNoteData {
+                channel: 0,
                 pitch: 72,
                 tick: 3_600,
                 duration: 240,
                 velocity: 90,
+                off_velocity: 0,
             }],
         })
         .unwrap();
@@ -119,6 +133,7 @@ fn splitting_a_trimmed_clip_keeps_hidden_events_in_the_final_segment() {
         .apply(DawAction::SetMidiControllers {
             item_id,
             controllers: vec![MidiControllerData {
+                channel: 0,
                 controller: 1,
                 tick: 3_700,
                 value: 80,
@@ -129,6 +144,7 @@ fn splitting_a_trimmed_clip_keeps_hidden_events_in_the_final_segment() {
         .apply(DawAction::SetMidiPitchBends {
             item_id,
             pitch_bends: vec![MidiPitchBendData {
+                channel: 0,
                 tick: 3_750,
                 value: 12_000,
             }],
@@ -170,16 +186,20 @@ fn splitting_a_left_trimmed_clip_keeps_source_offsets_and_hidden_leading_events(
             item_id,
             notes: vec![
                 MidiNoteData {
+                    channel: 0,
                     pitch: 60,
                     tick: 120,
                     duration: 240,
                     velocity: 90,
+                    off_velocity: 0,
                 },
                 MidiNoteData {
+                    channel: 0,
                     pitch: 72,
                     tick: 2_100,
                     duration: 480,
                     velocity: 100,
+                    off_velocity: 0,
                 },
             ],
         })
@@ -207,13 +227,13 @@ fn splitting_a_left_trimmed_clip_keeps_source_offsets_and_hidden_leading_events(
 
     let second = &project.midi_items()[1];
     assert_eq!(second.start_tick(), 2_880);
-    assert_eq!(second.source_offset_ticks(), 0);
+    assert_eq!(second.source_offset_ticks(), 1_920);
     let continued = second
         .notes()
         .iter()
         .find(|note| note.pitch() == 72)
         .unwrap();
-    assert_eq!((continued.tick(), continued.duration()), (180, 480));
+    assert_eq!((continued.tick(), continued.duration()), (2_100, 480));
     assert_eq!(
         second.project_tick_at_content_tick(continued.tick()),
         Some(3_060)

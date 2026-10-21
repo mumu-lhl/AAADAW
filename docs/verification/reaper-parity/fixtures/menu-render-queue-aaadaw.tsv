@@ -1,0 +1,16 @@
+field	value
+native_version	Linux REAPER 7.82 / Default_7.0.ReaperThemeZip
+native_action	40929 / File: Open render queue / no default shortcut
+native_menu_label	Queued Renders
+native_reference_screenshot	menu-file-native.png
+native_reference_screenshot_sha256	c5a37d3fa3c79c458dbd9caf868123d4dd64a0c0c95382c78e1bbbdb42c7229b
+aaadaw_environment	Linux AAADAW / Xvfb :256 / 1280x800 / fresh isolated XDG profile / audio unavailable
+aaadaw_menu_label	Queued Renders
+aaadaw_default_shortcut	None
+aaadaw_action_list_label	File: Open render queue
+aaadaw_screenshot	menu-render-queue-aaadaw.png
+aaadaw_screenshot_sha256	17cbc20cdf3abb6761b0cdb6adbb35ed6962df47c0e48cf6c84321f31128d311
+test	crates/aaadaw/src/app/tests.rs::native_open_render_queue_action_opens_the_offline_jobs_panel_idempotently
+test	crates/aaadaw/src/app/tests.rs::offline_jobs_panel_is_available_from_view_menu_and_action_search
+comparison_scope	Menu label/order/shortcut, Action List identity and open-versus-toggle command behavior
+limitation	AAADAW currently reuses its Offline Jobs panel; native render queue dialog contents and complete File menu parity remain in_progress

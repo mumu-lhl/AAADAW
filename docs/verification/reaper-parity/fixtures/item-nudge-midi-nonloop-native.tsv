@@ -1,0 +1,11 @@
+version	7.82/linux-x86_64
+theme	Default_7.0.ReaperThemeZip
+dialog_action	41226	Item edit: Nudge/Set...
+dialog	Nudge	contents	250	milliseconds	Snap off
+columns	label	position_s	length_s	loop_source	source_offset_s	source_length_qn	length_is_qn	phase_ppq	endpoint_ppq	notes	selection	state_change	undo_label
+initial_offset_100ms	2.000000000	5.000000000	0.0	0.100000000	10.000000000	true	192.000	9792.000	0,0,0,2880.000,4800.000,0,60,96;1,0,0,6720.000,8640.000,0,64,108	selected	2	Fixture setup
+right_250ms_from_100ms	2.000000000	5.000000000	0.0	0.000000000	10.300000000	true	0.000	9600.000	0,0,0,3168.000,5088.000,0,60,96;1,0,0,7008.000,8928.000,0,64,108	selected	2	Fixture setup
+left_250ms_after_right	2.000000000	5.000000000	0.0	0.000000000	9.800000000	true	0.000	9600.000	0,0,0,2688.000,4608.000,0,60,96;1,0,0,6528.000,8448.000,0,64,108	selected	3	Nudge items
+left_250ms_from_100ms	2.000000000	5.000000000	0.0	0.350000000	10.000000000	true	672.000	10272.000	0,0,0,2880.000,4800.000,0,60,96;1,0,0,6720.000,8640.000,0,64,108	selected	2	Fixture setup
+initial_offset_zero	2.000000000	5.000000000	0.0	0.000000000	10.000000000	true	0.000	9600.000	0,0,0,2880.000,4800.000,0,60,96;1,0,0,6720.000,8640.000,0,64,108	selected	2	Fixture setup
+left_250ms_from_zero	2.000000000	5.000000000	0.0	0.000000000	9.500000000	true	0.000	9600.000	0,0,0,2400.000,4320.000,0,60,96;1,0,0,6240.000,8160.000,0,64,108	selected	2	Fixture setup

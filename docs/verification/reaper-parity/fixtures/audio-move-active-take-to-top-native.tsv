@@ -1,0 +1,20 @@
+before	take_count=2	active_index=1
+before	take_0	name=Take B	source=render-item-take-name-Hit-02.wav
+before	take_1	name=Take A	source=render-item-take-name-Hit-01.wav
+after	take_count=2	active_index=0
+after	take_0	name=Take A	source=render-item-take-name-Hit-01.wav
+after	take_1	name=Take B	source=render-item-take-name-Hit-02.wav
+undo	take_count=2	active_index=1
+undo	take_0	name=Take B	source=render-item-take-name-Hit-02.wav
+undo	take_1	name=Take A	source=render-item-take-name-Hit-01.wav
+redo	take_count=2	active_index=0
+redo	take_0	name=Take A	source=render-item-take-name-Hit-01.wav
+redo	take_1	name=Take B	source=render-item-take-name-Hit-02.wav
+undo_description	Move active take to top
+redo_description	Move active take to top
+already_top	take_count=2	active_index=0
+already_top	take_0	name=Take A	source=render-item-take-name-Hit-01.wav
+already_top	take_1	name=Take B	source=render-item-take-name-Hit-02.wav
+already_top_undo_before	Move active take to top
+already_top_undo_after	Move active take to top
+action	41380	Item: Move active takes to top

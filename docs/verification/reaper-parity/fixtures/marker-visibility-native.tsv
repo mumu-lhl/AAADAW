@@ -1,0 +1,4 @@
+version	7.82/linux-x86_64
+theme	/workspace/AAADAW/target/reaper782/marker-visibility-probe/ColorThemes/Default_7.0.ReaperThemeZip
+case	action	state_delta	undo_label	marker_count	region_count
+hide_all	43485	1	Change region/marker display	3	1

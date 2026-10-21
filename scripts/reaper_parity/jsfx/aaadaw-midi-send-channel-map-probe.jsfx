@@ -1,0 +1,17 @@
+desc:AAADAW MIDI Send Channel Map Probe
+options:gmem=aaadaw_midi_send_channel_map_probe
+
+@block
+while (midirecv(offset, message, data)) (
+  status = message & 240;
+  channel = message & 15;
+  data2 = (data >> 8) & 255;
+  status == 144 && data2 > 0 ? gmem[channel] += 1;
+  status == 128 || (status == 144 && data2 == 0) ? gmem[channel + 16] += 1;
+  status == 176 ? gmem[channel + 32] += 1;
+  status == 224 ? gmem[channel + 48] += 1;
+  status == 192 ? gmem[channel + 64] += 1;
+  status == 160 ? gmem[channel + 80] += 1;
+  status == 208 ? gmem[channel + 96] += 1;
+  midisend(offset, message, data);
+);

@@ -111,7 +111,12 @@ fn midi_input_worker(commands: mpsc::Receiver<Option<CpalMidiInputSender>>) {
                                         active_note_tracks.remove(&note_id).unwrap_or(track_id);
                                 }
                             }
-                            MidiEventKind::ControllerChange | MidiEventKind::PitchBend => {}
+                            MidiEventKind::ControllerChange
+                            | MidiEventKind::PitchBend
+                            | MidiEventKind::ProgramChange
+                            | MidiEventKind::PolyAftertouch
+                            | MidiEventKind::ChannelPressure => {}
+                            MidiEventKind::SystemExclusive => continue,
                         }
                         let _ = sender.send(event);
                     }

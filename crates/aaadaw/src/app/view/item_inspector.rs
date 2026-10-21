@@ -1,7 +1,7 @@
 use super::super::{App, Message};
 use super::tokens;
 use aaadaw_app::{AudioAssetSourceStatus, AudioAssetSourceStatusEntry};
-use aaadaw_core::ItemId;
+use aaadaw_core::{ItemId, MidiItemPosition};
 use iced::widget::{Button, button, column, container, row, scrollable, text, text_input};
 use iced::{Element, Length};
 
@@ -61,11 +61,103 @@ fn selected_item_view(app: &App, item_id: ItemId, touch_targets: bool) -> Elemen
         .iter()
         .find(|item| item.id() == item_id)
     {
-        let status = app.audio_asset_source_statuses.get(item.media_ref());
+        let status = (!item.active_take_is_empty())
+            .then(|| app.audio_asset_source_statuses.get(item.media_ref()))
+            .flatten();
+        let take_count = item.take_count();
+        let take_name = if item.active_take_is_empty() {
+            "Empty Take"
+        } else if item.name().is_empty() {
+            item.media_ref()
+        } else {
+            item.name()
+        };
+        let multi_take_selection = app.timeline.selected_items.len() > 1
+            && !super::super::commands::selected_multi_take_item_ids(app).is_empty();
+        let selected_audio_ids = super::super::commands::selected_audio_item_ids(app);
+        let multi_audio_selection = selected_audio_ids.len() > 1;
+        let mut take_controls = row![
+            text(format!(
+                "Take {}/{} · {}",
+                item.active_take_index() + 1,
+                take_count,
+                take_name
+            ))
+            .width(Length::Fill),
+        ]
+        .spacing(if touch_targets {
+            tokens::SPACING_SM
+        } else {
+            tokens::SPACING_COMPACT
+        });
+        if !multi_audio_selection
+            && super::super::commands::is_enabled(
+                app,
+                super::super::commands::CommandId::DuplicateActiveTake,
+            )
+        {
+            take_controls = take_controls
+                .push(buttons.action("Duplicate take", Message::DuplicateAudioItemTake(item_id)));
+        }
+        if take_count > 1 || multi_take_selection {
+            let (previous_label, previous_message, next_label, next_message) =
+                if multi_take_selection {
+                    (
+                        "Previous takes",
+                        Message::SwitchSelectedAudioItemTakes(false),
+                        "Next takes",
+                        Message::SwitchSelectedAudioItemTakes(true),
+                    )
+                } else {
+                    (
+                        "Previous take",
+                        Message::SwitchAudioItemTake(item_id, false),
+                        "Next take",
+                        Message::SwitchAudioItemTake(item_id, true),
+                    )
+                };
+            take_controls = take_controls
+                .push(buttons.action(previous_label, previous_message))
+                .push(buttons.action(next_label, next_message));
+            if take_count > 1 && !multi_take_selection {
+                take_controls = take_controls.push(buttons.action(
+                    "Move active to top",
+                    Message::MoveSelectedItemActiveTakesToTop,
+                ));
+                if super::super::commands::is_enabled(
+                    app,
+                    super::super::commands::CommandId::CropAudioItemToActiveTake,
+                ) {
+                    take_controls = take_controls.push(buttons.danger(
+                        "Crop to active take",
+                        Message::CropSelectedItemsToActiveTake,
+                    ));
+                }
+            }
+        }
+        if multi_take_selection {
+            take_controls = take_controls.push(buttons.action(
+                "Move selected to top",
+                Message::MoveSelectedItemActiveTakesToTop,
+            ));
+            if super::super::commands::is_enabled(
+                app,
+                super::super::commands::CommandId::CropAudioItemToActiveTake,
+            ) {
+                take_controls = take_controls.push(buttons.danger(
+                    "Crop selected to active",
+                    Message::CropSelectedItemsToActiveTake,
+                ));
+            }
+        }
         let mut actions = row![
-            text(format!("Audio · {}", item.media_ref())).width(Length::Fill),
+            text(if item.active_take_is_empty() {
+                "Audio · Empty Take".to_owned()
+            } else {
+                format!("Audio · {}", item.media_ref())
+            })
+            .width(Length::Fill),
             buttons.action("Duplicate", Message::DuplicateAudioItem(item_id)),
-            buttons.danger("Delete", Message::DeleteAudioItem(item_id)),
         ]
         .spacing(if touch_targets {
             tokens::SPACING_SM
@@ -80,6 +172,35 @@ fn selected_item_view(app: &App, item_id: ItemId, touch_targets: bool) -> Elemen
         if status.is_some_and(can_relink_source) {
             actions = actions.push(buttons.action("Relink", Message::RelinkAudioItem(item_id)));
         }
+        if multi_audio_selection
+            && super::super::commands::is_enabled(
+                app,
+                super::super::commands::CommandId::DuplicateActiveTake,
+            )
+        {
+            actions = actions.push(buttons.action(
+                "Duplicate selected takes",
+                Message::DuplicateSelectedItemActiveTakes,
+            ));
+        }
+        if super::super::commands::is_enabled(
+            app,
+            super::super::commands::CommandId::PasteAudioItemAsTake,
+        ) {
+            actions = actions.push(buttons.action("Paste as takes", Message::PasteAudioItemAsTake));
+        }
+        if super::super::commands::is_enabled(
+            app,
+            super::super::commands::CommandId::DeleteActiveTake,
+        ) {
+            let label = if app.timeline.selected_items.len() > 1 {
+                "Delete selected active takes"
+            } else {
+                "Delete active take"
+            };
+            actions = actions.push(buttons.danger(label, Message::DeleteSelectedItemActiveTakes));
+        }
+        actions = actions.push(buttons.danger("Delete", Message::DeleteAudioItem(item_id)));
         let position_controls = if let Some(query) = app.audio_item_start_edits.get(&item_id) {
             row![
                 text("Start sample"),
@@ -120,6 +241,7 @@ fn selected_item_view(app: &App, item_id: ItemId, touch_targets: bool) -> Elemen
         }
         column![
             action_row(actions, touch_targets),
+            action_row(take_controls, touch_targets),
             row![text(format!(
                 "Position {start_seconds:.3} s · Length {duration_seconds:.3} s"
             )),]
@@ -168,10 +290,64 @@ fn selected_item_view(app: &App, item_id: ItemId, touch_targets: bool) -> Elemen
                 style
             })
             .width(Length::Fill);
+        let multi_take_selection = app.timeline.selected_items.len() > 1
+            && !super::super::commands::selected_multi_take_item_ids(app).is_empty();
+        let mut take_controls = row![
+            text(format!(
+                "Take {}/{} · {}",
+                item.active_take_index() + 1,
+                item.take_count(),
+                item.name()
+            ))
+            .width(Length::Fill),
+        ]
+        .spacing(if touch_targets {
+            tokens::SPACING_SM
+        } else {
+            tokens::SPACING_COMPACT
+        });
+        if item.take_count() > 1 {
+            take_controls = take_controls
+                .push(buttons.action("Previous take", Message::SwitchMidiItemTake(item_id, false)))
+                .push(buttons.action("Next take", Message::SwitchMidiItemTake(item_id, true)));
+            if super::super::commands::is_enabled(
+                app,
+                super::super::commands::CommandId::MoveActiveTakesToTop,
+            ) {
+                let label = if multi_take_selection {
+                    "Move selected to top"
+                } else {
+                    "Move active to top"
+                };
+                take_controls = take_controls
+                    .push(buttons.action(label, Message::MoveSelectedItemActiveTakesToTop));
+            }
+        }
+        if (item.take_count() > 1 || multi_take_selection)
+            && super::super::commands::is_enabled(
+                app,
+                super::super::commands::CommandId::CropAudioItemToActiveTake,
+            )
+        {
+            let label = if multi_take_selection {
+                "Crop selected to active"
+            } else {
+                "Crop to active take"
+            };
+            take_controls =
+                take_controls.push(buttons.danger(label, Message::CropSelectedItemsToActiveTake));
+        }
+        if super::super::commands::is_enabled(
+            app,
+            super::super::commands::CommandId::DeleteActiveTake,
+        ) {
+            take_controls = take_controls
+                .push(buttons.danger("Delete active take", Message::DeleteSelectedItemActiveTakes));
+        }
         let mut item_actions = row![
             text(format!(
                 "Tick {} · length {}",
-                item.start_tick(),
+                format_midi_item_position(item.start_position()),
                 item.length_ticks()
             ))
             .width(Length::Fill),
@@ -235,6 +411,7 @@ fn selected_item_view(app: &App, item_id: ItemId, touch_targets: bool) -> Elemen
             })
             .collect::<Vec<Element<'_, Message>>>();
         column![
+            take_controls,
             row![text("Name"), name_input].spacing(if touch_targets {
                 tokens::SPACING_SM
             } else {
@@ -252,6 +429,18 @@ fn selected_item_view(app: &App, item_id: ItemId, touch_targets: bool) -> Elemen
     } else {
         column![text("Selected Item no longer exists.")].into()
     }
+}
+
+fn format_midi_item_position(position: MidiItemPosition) -> String {
+    if position.subtick() == 0 {
+        return position.tick().to_string();
+    }
+    let thousandths = u16::from(position.subtick()) * 5;
+    let mut formatted = format!("{}.{thousandths:03}", position.tick());
+    while formatted.ends_with('0') {
+        formatted.pop();
+    }
+    formatted
 }
 
 fn action_row<'a>(
@@ -338,4 +527,22 @@ fn midi_pitch_name(pitch: u8) -> String {
     let pitch_class = PITCH_CLASSES[usize::from(pitch % 12)];
     let octave = i16::from(pitch) / 12 - 1;
     format!("{pitch_class}{octave}")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::format_midi_item_position;
+    use aaadaw_core::MidiItemPosition;
+
+    #[test]
+    fn midi_item_inspector_formats_fractional_ppq_without_rounding() {
+        for (position, expected) in [
+            (MidiItemPosition::new(0, 0).unwrap(), "0"),
+            (MidiItemPosition::new(0, 1).unwrap(), "0.005"),
+            (MidiItemPosition::new(964, 160).unwrap(), "964.8"),
+            (MidiItemPosition::new(964, 199).unwrap(), "964.995"),
+        ] {
+            assert_eq!(format_midi_item_position(position), expected);
+        }
+    }
 }

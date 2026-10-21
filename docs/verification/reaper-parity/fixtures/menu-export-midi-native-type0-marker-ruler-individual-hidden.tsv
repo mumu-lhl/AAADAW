@@ -1,0 +1,23 @@
+version	7.82/linux-x86_64
+theme	Default_7.0.ReaperThemeZip
+project	fixtures/menu-export-midi-native-type0-marker-ruler-individual-hidden.rpp
+project_sha256	cac5b483229129f1fd71909be1866b875676b608e9af0e920ecc45d225551a7b
+project_source	fixtures/menu-export-midi-native-type0-hidden-markers.rpp; added RULERLANECFG 4 to the REAPER-saved individual-hidden-marker project
+project_readback	fixtures/menu-export-midi-native-type0-marker-ruler-individual-hidden-project-readback.tsv; Main action 40849 opened in REAPER 7.82 / Default 7; markers read back as #Intro tick 0, Verse tick 960, and #Hidden tick 1920
+project_visibility	project marker ruler hidden; #Intro and Verse individually visible; #Hidden individually hidden (marker flags 24, originally hidden by Main action 43484)
+export_action	40849 / File: Export project MIDI...
+export_mode	Type 0 / Merge to single MIDI track
+export_ppqn	960
+export_marker_filter	unchecked
+export_markers	checked; Export hidden markers checked
+export_tempo_meter	unchecked
+export_smpte_offset	unchecked
+marker_dialog	fixtures/menu-export-midi-native-type0-marker-ruler-individual-hidden-markers-included-dialog.png; 518x452; SHA-256 d4e39075510f19700c1f4547524f5386d537e1b77f8e76fd116ef7057a8e3a5a
+marker_export_path	/tmp/aaadaw-type0-ruler-hidden-individual-marker-check.mid
+marker_export_file	fixtures/menu-export-midi-native-type0-marker-ruler-individual-hidden-markers-included.mid; 64 bytes; SHA-256 bad852e9d322144a0287782ff88d22dcdcc7eb89a58fdd38e64edd82f680fccc
+marker_export_events	One SMF Type 0 track; #Intro marker tick 0; Verse marker tick 960; C4 note 480-1440; CC1 tick 720; pitch bend tick 840; #Hidden omitted; End-of-Track tick 1440
+cue_dialog	fixtures/menu-export-midi-native-type0-marker-ruler-individual-hidden-cues-included-dialog.png; 518x452; SHA-256 ed75a8980478031a6328872af49773980dcb8a2795fc068981594107e330bbcb
+cue_export_path	/tmp/aaadaw-type0-ruler-hidden-individual-cue-check.mid
+cue_export_file	fixtures/menu-export-midi-native-type0-marker-ruler-individual-hidden-cues-included.mid; 64 bytes; SHA-256 61024b8de96421d3c9a3efc075fae1678ad287e8abac673e1196156cd17798ae
+cue_export_events	One SMF Type 0 track; #Intro cue tick 0; Verse cue tick 960; C4 note 480-1440; CC1 tick 720; pitch bend tick 840; #Hidden omitted; End-of-Track tick 1440
+observation	With the project ruler hidden and Export hidden markers checked, Type 0 exports ruler-hidden events but continues to omit an individually hidden marker/cue

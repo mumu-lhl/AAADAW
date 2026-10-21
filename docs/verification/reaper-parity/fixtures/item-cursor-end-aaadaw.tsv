@@ -1,0 +1,19 @@
+key	value
+captured_at_utc	2026-10-16
+platform	Linux x86_64; Xorg dummy display :112; 24-bit TrueColor; X11; root 1280x800
+display_config	/tmp/aaadaw-dummy-xorg.conf; no window manager; WGPU_BACKEND=gl; isolated XDG directories under target/aaadaw-cursor-visual
+project_fixture	cursor-sample.aaadaw project template; Track B Audio take is mono PCM16/48 kHz, starts sample 192012 (4.00025 s), duration 48000 samples
+project_template_sha256	6a175b9b9608a10c1eff779eeb7763155bf531fd9dd110804e3b16eeb9ab4d37
+binary	target/debug/aaadaw
+binary_build_id	501a2645dcc0be1bc0b878cef77851f433e9afe8
+binary_sha256	956f69368c4da5e5490c697a80ebf00b1e0a5c2ab4458448a49be1f9917fb14c
+interaction	Selected Track B Audio item, opened Main Action List with Shift+/, filtered "move cursor to end of items", selected the matching result and clicked Run; XSetInputFocus was set to the Main and Actions X11 windows.
+before_result	Audio item selected; Inspector shows Position 4.000 s, Length 1.000 s, and exact start sample 192012; edit cursor begins at project start.
+after_result	Main action 41174 moved the cursor to the Audio end; Transport shows 3.3.0 / 0:05.000, the Audio item remains selected, and Inspector still reports start sample 192012. The real Action List result remains selected after Run.
+before_screenshot	item-cursor-end-before-aaadaw.png; 1280x800; SHA-256 f09e56d527258edcfa388555ddfc7b4183cd6d94aee38234bc4bd3641f1bfd65
+actionlist_before_screenshot	item-cursor-end-actionlist-before-aaadaw.png; filtered Main result before Run; SHA-256 b8fe67e75a042f55398b9420891bf23ecf88ce12c58e20beac86abc0a54ee1ce
+actionlist_after_screenshot	item-cursor-end-actionlist-after-aaadaw.png; result selected after Run; SHA-256 693dcb1bfed0925793ef1114014cf9c4472036f17986ac99efad08c2a19794d9
+after_screenshot	item-cursor-end-after-aaadaw.png; Track B visible in Arrange after vertical scroll; SHA-256 4eb65be7e931d4292e70f1914764deb546cc33310e151277eac00ae12b39c3f2
+native_result	REAPER 7.82 / Default 7 independently returns end sample 240012 (5.00025 s) for Main 41174 with Snap on and off; see item-cursor-sample-native.tsv.
+precision_limit	The GUI Transport rounds to milliseconds and the sample-offset displacement is below one screen pixel at this zoom. Exact Audio sample behavior is established by App regressions and the independent native ReaScript measurement, not by visual pixel measurement.
+remaining_scope	No-selection Action List availability was separately exercised in AAADAW; native Action List availability, complete window focus behavior, and full Arrange visual parity remain open.

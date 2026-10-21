@@ -1,0 +1,16 @@
+key	value
+captured_at_utc	2026-10-16
+platform	Linux x86_64; Xvfb :354; X11
+screen_size	Xvfb root 1280x800; screenshot includes the AAADAW Arrange and separate Actions window
+project_fixture	Disposable Audio-Selection-Demo project; Track A MIDI A1 and Track B PCM Audio B1 at 4 seconds; WAV fixture item-hover-actionlist-target-audio.wav
+project_generator	crates/aaadaw-storage/examples/generate_item_hover_audio_demo.rs
+project_regeneration	cargo run --locked -p aaadaw-storage --example generate_item_hover_audio_demo -- <project.aaadaw> docs/verification/reaper-parity/fixtures/item-hover-actionlist-target-audio.wav
+project_source_sha256	ae16b7a50a7dd0496d5867981ab7209da6ab523b987754ef2d47ead41280500c
+binary	target/debug/aaadaw
+binary_build_id	fda58cf28ba57c9c30f520bf78522b03ef32de2b
+binary_sha256	004e67d3bd3c4e5bea9efedf48bcb96a53a2b5f481f12ef8c3cccf789f21e8c5
+action	Main 40529; searched for “leaving other items selected”, selected the result, moved the pointer over Audio B1 at 930,220, and invoked Enter
+before	Audio B1 has no selection outline; MIDI A1 is the existing selection
+result	Audio B1 gains the orange selection outline after the Action List run
+before_screenshot	item-hover-actionlist-audio-add-aaadaw-before.png; 1280x800; SHA-256 845e1528a604a436e737f944c4b36ed2e351e1d55101bf3b79b56cf81001c494
+after_screenshot	item-hover-actionlist-audio-add-aaadaw-after.png; 1280x800; SHA-256 1e3155234fa0ba43676e60f829193009f906292d4d6621a90844062e64678948

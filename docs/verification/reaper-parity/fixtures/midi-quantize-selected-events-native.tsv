@@ -1,0 +1,10 @@
+reference	Linux REAPER 7.82 / Default 7
+grid	1/32; 120 PPQ ticks; straight; Strength 100%
+scope	Selected events; operation Position; Bypass off; Fix overlaps on
+selected_before	Note 1; CC1 at tick 475; Pitch Bend at tick 835
+collision_setup	Selected CC1 at 475 collides with unselected CC1 at 480; selected Pitch Bend at 835 collides with unselected Pitch Bend at 840
+before	notes=1,1,60,170,260;0,1,62,350,430;0,1,64,550,670	cc=1,475,B0,1,1,64;0,480,B0,1,1,65;0,730,B0,1,7,96	pitch_bends=1,835,E0,1,64,62;0,840,E0,1,0,64
+after	notes=1,1,60,120,210;0,1,62,350,430;0,1,64,550,670	cc=1,480,B0,1,1,64;0,730,B0,1,7,96	pitch_bends=1,840,E0,1,64,62
+behavior	Selected note, CC, and Pitch Bend move; unselected note and CC remain unchanged. A selected event wins a same-tick collision with an unselected event, even when the unselected event had the later original tick; selection flags remain set after quantizing.
+dialog_capture	midi-quantize-selected-events-reaper-native.png; 1280x800; SHA-256 0745e6043509ded750b9fb02e32d0fa6f368c19a8f0a89ee3d2448defe7071aa; native scope menu shows Selected events and dialog is configured to Position at 100%
+probe	scripts/reaper_parity/probe-midi-quantize-dialog-selected-events.lua; select Selected events in Quantize Events and press OK

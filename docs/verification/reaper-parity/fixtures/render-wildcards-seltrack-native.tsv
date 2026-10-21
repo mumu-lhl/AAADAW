@@ -1,0 +1,30 @@
+key	value
+reference	Linux REAPER 7.82 / Default 7 / isolated configuration
+probe_script	../../../../scripts/reaper_parity/probe-render-selected-track-wildcard.lua
+configuration	Isolated REAPER profile with Default_7.0.ReaperThemeZip explicitly loaded
+pattern	$seltrack-$track
+selected_track_probe	Bass and Keys selected; Bass is first in project track order
+stems_source	Selected tracks (stems), selected in the Render dialog
+stems_preview_first_output	Bass-Bass.wav
+stems_rendered_outputs	Bass-Bass.wav; Bass-Keys.wav
+stems_wildcard_observation	$seltrack remains Bass for both outputs; $track follows each rendered stem
+stems_sample_format	WAV; 24-bit PCM; 48,000 Hz; 2 channels; 48,000 frames
+stems_bass_bass_file_size_bytes	288690
+stems_bass_bass_sha256	ee1c388586b4add2ae277a6e980a8612e4a165f885cde346b8c5db1d09bd5e32
+stems_bass_keys_file_size_bytes	288690
+stems_bass_keys_sha256	ee1c388586b4add2ae277a6e980a8612e4a165f885cde346b8c5db1d09bd5e32
+stems_preview_screenshot	render-wildcards-seltrack-stems-preview-native.png
+stems_preview_screenshot_sha256	0444ec52bf464dbc0568dd4345521a428ec2a1056a8f13cc140c44816be7ff0c
+stems_finished_screenshot	render-wildcards-seltrack-stems-finished-native.png
+stems_finished_screenshot_sha256	fe8257d4b61e608ef369dab2380898285e63f6bc2598a505a548f63219a3c893
+single_track_probe	Only Keys selected
+single_track_source	Master mix
+single_track_preview	Keys-Master.wav
+single_track_rendered_output	Keys-Master.wav
+single_track_sample_format	WAV; 24-bit PCM; 48,000 Hz; 2 channels; 48,000 frames
+single_track_file_size_bytes	288690
+single_track_file_sha256	36597a2ce1c885bca2c42300351dffd897a74ba4afb0f74fb677665a4d174c66
+single_track_preview_screenshot	render-wildcards-seltrack-master-preview-native.png
+single_track_preview_screenshot_sha256	0de0b533a8cdf484eeac4dc6cf21dfacde104d4c8e511780dd64131ab35e7f0d
+single_track_finished_screenshot	render-wildcards-seltrack-master-finished-native.png
+single_track_finished_screenshot_sha256	13e0d4d13f705db97733b0dc1ec6a818e9dd11b1d17e6c3da1e4114810c402f1

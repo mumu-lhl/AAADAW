@@ -1,0 +1,9 @@
+artifact	path	sha256	details
+desktop-binary	target/cranelift/debug/aaadaw	3dd18ff3fa72cbf19d0e73e3c2cf1411e507a4b2e61c16607b216fc8a600b6b5	Nightly Cranelift; Build ID 89b2148658418f93f6e4d9aaff99d3d54f890ba2; rebuilt from current working tree
+project-fixture	docs/verification/reaper-parity/fixtures/midi-item-takes-aaadaw.aaadaw	f80cff4d4eb87de5eb260a92d20a914f0b6bc57737ac249a270337c98d6ab68d	One MIDI item; two takes; active take index 1
+fixture-generator	crates/aaadaw/examples/generate_midi_item_takes_fixture.rs	c93bebe1152bb543795f340345a3f2ee2f3c44c8818a8122e34b6e9f5b2d65e0	cargo run -p aaadaw --example generate_midi_item_takes_fixture -- <project>
+capture-script	scripts/reaper_parity/capture-audio-explode-takes-in-place-aaadaw.sh	e9f86c8f5b99d177055c932cbfd234ae7de3bd047c72efc23f776b778b7b988b	Uses item select-all and Action 40642 binding under isolated Xvfb
+before	docs/verification/reaper-parity/fixtures/midi-item-takes-aaadaw-before.png	d929d6c0612be48c51d898c0c1b4406f3541cd9e42db22dafe2cee93b38785bf	1280x800; selected multi-take MIDI item
+after	docs/verification/reaper-parity/fixtures/midi-item-takes-aaadaw-after.png	062b3833523a4d6a333e41b00d34b8ed37b6ea6ce053fbb5e39b513c8504d098	1280x800; action reports selected item takes exploded
+undo	docs/verification/reaper-parity/fixtures/midi-item-takes-aaadaw-undo.png	1457c3eebae40c5808ec505fd018b743f3192dd05966b67cf83935a41509d195	1280x800; Action undone
+redo	docs/verification/reaper-parity/fixtures/midi-item-takes-aaadaw-redo.png	f5de546dc5f4b76bd3c2cf720dcd9bab768bf7523b6d22bf2697c9c84ce965f7	1280x800; Action redone

@@ -1,0 +1,16 @@
+version	7.82/linux-x86_64
+theme	Default_7.0.ReaperThemeZip
+display	X11 Xvfb 1280x1024, no window manager
+audio	device closed; transport was stopped throughout the input probes
+probe	scripts/reaper_parity/probe-action-list-focus.lua; isolated unsaved project
+step	filter_value	input	track_count	play_state	time_selection_seconds	loop_points_seconds	project_state_change_count	observation
+ready	(empty)	Show action list (40605)	1	0	4.000-6.000	4.000-6.000	2	one temporary track and linked ranges visible
+filter_text	undo	type ordinary text	1	0	4.000-6.000	4.000-6.000	2	Filter shows Edit: Undo and Show undo history
+filter_ctrl_z	undo	Ctrl+Z	1	0	4.000-6.000	4.000-6.000	2	query and project remain unchanged while Filter has focus
+main_ctrl_z	(closed)	close Action List, focus main, Ctrl+Z	0	0	4.000-6.000	4.000-6.000	3	main-window Undo removes the temporary track
+filter_space	insert track	press Space at end of filter	0	0	4.000-6.000	4.000-6.000	3	Filter keeps the query; transport remains stopped
+filter_escape	insert track	press Escape	0	0	4.000-6.000	4.000-6.000	3	Action List closes
+screenshot_search_before	fixtures/action-list-search-before-ctrl-z-native.png	SHA-256 37f8e1ede03b5d1266ca580d2e5cf98edf174e3b6832afcec6a11b0f148d00f3
+screenshot_search_after	fixtures/action-list-search-after-ctrl-z-native.png	SHA-256 891ca010848ee7d8c62152795be88116b6d0e8c03a8eae697081deab755eaab7
+screenshot_space	fixtures/action-list-filter-space-native.png	SHA-256 c4a700073b68e60bc98679d119ab3b5a97bf25a2307670eff16f502b07d70b14
+screenshot_escape	fixtures/action-list-filter-escape-native.png	SHA-256 12ea7188e6898e0edd03d1cc6c317d3868f52f6679c43eec20fbeb532b41ba17

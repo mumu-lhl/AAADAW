@@ -1,0 +1,33 @@
+version	7.82/linux-x86_64
+theme	Default_7.0.ReaperThemeZip
+action	42409	Razor edit: Enclose media items, including space between items
+selected_before	4
+selected_after_first	0
+first_state_change_delta	1
+first_area	0	2.00000000000000 12.00000000000000 ""
+first_area	1	2.00000000000000 12.00000000000000 ""
+first_area	2	(empty)
+redo_api_type	function
+undo_selected	1
+undo_selected_item	0	14.000000000	10.000000000
+undo_area	0	(empty)
+undo_area	1	(empty)
+undo_area	2	(empty)
+redo_selected	0
+redo_area	0	2.00000000000000 12.00000000000000 ""
+redo_area	1	2.00000000000000 12.00000000000000 ""
+redo_area	2	(empty)
+second_selected	0
+second_state_change_delta	1
+second_area	0	14.00000000000000 16.00000000000000 ""
+second_area	1	(empty)
+second_area	2	(empty)
+empty_selected	0
+empty_state_change_delta	1
+empty_area	0	(empty)
+empty_area	1	(empty)
+empty_area	2	(empty)
+undo_after_empty_action	Select razor edit area
+undo_restores_area	0	14.00000000000000 16.00000000000000 ""
+undo_restores_area	1	(empty)
+undo_restores_area	2	(empty)

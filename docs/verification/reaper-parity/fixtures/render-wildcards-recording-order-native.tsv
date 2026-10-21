@@ -1,0 +1,27 @@
+key	value
+reference	Linux REAPER 7.82 / Default 7 / isolated configuration
+probe_script	scripts/reaper_parity/probe-render-recording-wildcards.lua
+project	Eight one-second regions named Verse, placed every two seconds on one track; each region has a matching audio item
+source	Master mix; All project regions
+format	WAV; 24-bit PCM; 48,000 Hz; stereo
+pattern	$region-$namenumber-$note-$note[B2]-$natural
+native_preview	Verse-01-C-1-B2-C-1.wav; Verse-02-C#-1-C3-D-1.wav; Verse-03-D-1-C#3-E-1.wav; Verse-04-D#-1-D3-F-1.wav; Verse-05-E-1-D#3-G-1.wav; Verse-06-F-1-E3-A-1.wav; Verse-07-F#-1-F3-B-1.wav; Verse-08-G-1-F#3-C0.wav
+native_finished_outputs	Same eight names as the preview; all eight PCM24 WAV files are archived below
+preview_screenshot	render-wildcards-recording-order-preview-native.png
+preview_screenshot_sha256	b7b319b6691c27594ab85b28b7a15374d4bda2e05f63b68da886919a2de900f1
+finished_screenshot	render-wildcards-recording-order-finished-native.png
+finished_screenshot_sha256	0c75b6b10e868005a49bc94920dad061c891520b0efe36f5916f6467700c09f7
+note_template_pattern	$note[X]-$natural-$namenumber
+note_template_dialog_screenshot	render-wildcards-recording-namenumber-dialog-native.png
+note_template_dialog_screenshot_sha256	b6abd58f35c490b03021941ae6c12a111f4b68b5dbb393ff503739cbbda08aa0
+note_template_preview	C-1.wav; C-1-D-1.wav; C#-1-E-1.wav; D-1-F-1.wav; D#-1-G-1.wav; E-1-A-1.wav; F-1-B-1.wav; F#-1-C0.wav
+note_placeholder_screenshot	render-wildcards-recording-namenumber-context-native.png; SHA-256 1987c009d7dabb9915513f1ade0dcce85e2b6f8e7aa60aff0a4ca4ceaccb4a43; the captured Render dialog shows the exact pattern; literal X is empty on the first output and remaining names show its default chromatic sequence; $namenumber is empty without a matching $region or $item name token
+output_01	Verse-01-C-1-B2-C-1.wav; SHA-256 12765fa229e30dac82626be570be87c3ceb8b63c4f123d2c70dbbea2cb4ead78
+output_02	Verse-02-C#-1-C3-D-1.wav; SHA-256 21a2e60a45bdea654bc0e9cb57b4162b971eb17970efc5cf0f0a62305cd721a6
+output_03	Verse-03-D-1-C#3-E-1.wav; SHA-256 42d23ae8ca182492b5117f516042972b16430c9b9fd36dd0f1ab41431b04401d
+output_04	Verse-04-D#-1-D3-F-1.wav; SHA-256 89e1be83bec554a32d4a47eadc37899de1b10e7785e16e4bdf8307f0b0c73d0b
+output_05	Verse-05-E-1-D#3-G-1.wav; SHA-256 a1489b3544a3467f911115d10b3437b14ec1732a85a1fa42d8ac76b681358ec5
+output_06	Verse-06-F-1-E3-A-1.wav; SHA-256 141a0745abfc1de6a5abecdfca82aec2519bd11ca8899f9896f61e352497f980
+output_07	Verse-07-F#-1-F3-B-1.wav; SHA-256 a84dbfeb8bb5aaa32feda60aaf59e273ece64ecf65e6a4db4f729e77df22b74a
+output_08	Verse-08-G-1-F#3-C0.wav; SHA-256 f743e6380a14c42b2cb27f5cc1cc9c7199832394347f12bd0328cd0d42eabc87
+native_observation	$note increments chromatically starting at C-1; $note[B2] starts at B2 and increments by semitone; $natural advances C-1, D-1, E-1, F-1, G-1, A-1, B-1, C0; $namenumber is 01-08 for repeated Verse regions when $region is present. REAPER Help page 5 describes the first note as C0, while this Default 7 preview shows C-1; the observed output is preserved pending confirmation of octave-label preferences.

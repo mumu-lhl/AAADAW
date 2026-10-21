@@ -1,0 +1,13 @@
+version	Linux REAPER 7.82/linux-x86_64
+theme	Default_7.0.ReaperThemeZip
+project	fresh unsaved scratch project; transport stopped
+source	10-second mono PCM WAV at 48000 Hz; SHA-256 f77653ee4f856b2baf950baa54691fac16bdee8cb6ea321c2177c14ece3680ff
+copy_action	40014	Item: Copy loop of selected area of audio items
+paste_action	42398	Item: Paste items/tracks
+dialog_action	41226	Item edit: Nudge/Set...
+dialog	Mode Nudge; Target contents; amount 250 milliseconds; Snap to unit off
+nudge_action	41249	Item edit: Nudge right by last nudge dialog settings
+case	selection_seconds	section_start_seconds	section_length_seconds	loop_source	before_offset_seconds	after_offset_seconds	item_position_seconds	item_length_seconds	state_change_delta
+zero_origin	0.000000000-3.000000000	0.000000000	3.000000000	0	0.100000000	-0.150000000	12.000000000	3.000000000	0
+nonzero_origin	3.000000000-6.000000000	3.000000000	3.000000000	0	0.100000000	-0.150000000	12.000000000	3.000000000	0
+screenshot	item-nudge-bounded-section-native-dialog.png; 528x121; SHA-256 241586412f38e8643aa18667086fc52d23974962c0f865a5db3d06d92a4b10fd

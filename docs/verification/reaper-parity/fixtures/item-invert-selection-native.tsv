@@ -1,0 +1,10 @@
+version	7.82/linux-x86_64
+theme	Default_7.0.ReaperThemeZip
+audio_device	Dummy Audio; no hardware I/O
+fixture	2 tracks; 2 Audio and 2 MIDI items; unsaved project
+case	items_before	items_after	selection_order_after	tracks_before	tracks_after	cursor_before	cursor_after	state_change_delta	undo_before	undo_after	redo_before	redo_after	selected_count_after
+empty_selection		audio-1,audio-2,midi-1,midi-2	audio-1,audio-2,midi-1,midi-2			4.000000	4.000000	1		Invert item selection			4
+one_midi_selected	midi-2	audio-1,audio-2,midi-1	audio-1,audio-2,midi-1			4.000000	4.000000	1	Invert item selection	Invert item selection			3
+all_items_selected	audio-1,audio-2,midi-1,midi-2					4.000000	4.000000	1	Select all items	Invert item selection			0
+one_audio_selected	audio-1	audio-2,midi-1,midi-2	audio-2,midi-1,midi-2			4.000000	4.000000	1	Invert item selection	Invert item selection			3
+no_items_in_project						4.000000	4.000000	1	Invert item selection	Invert item selection			0

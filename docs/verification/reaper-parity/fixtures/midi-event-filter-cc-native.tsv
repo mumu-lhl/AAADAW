@@ -1,0 +1,14 @@
+artifact	sha256
+scripts/reaper_parity/probe-midi-event-filter-cc.lua	e6e65c194b334b52167d601837f2f503c5b2053615ba69f46f3eaa737afc669d
+fixtures/midi-event-filter-cc-native-before.png	47a7ba550ecc2244b8d6effeeaf88435341cb485cb8339ce42b2cf2f3ce2526f
+fixtures/midi-event-filter-cc-native-after.png	45f5f952063aaebb824221cf53ee2d866301e421d3b01b5ccf0055cb9b8b43ec
+fixtures/midi-event-filter-cc-native.rpp	4f5e0e3c0f1860e4afb5777b18a94ebd06a758c530591fa9604a7093720b2cbb
+fixtures/midi-event-filter-cc-native-readback.tsv	3e5b4daa0edcd41a593944584ff5f9f316b646f35000e184731e19a19b285ead
+native_sha256	9976f5608068b7a58518969001b00b527fb0de6ed7459e0e5dda6f29878ee254
+native_build_id	fb9ade2f211bc91a3ee6193630ef17bcf5f6528b
+environment	Linux Xvfb :510, 1600x1000; REAPER 7.82 / Default 7; isolated configuration; no audio device
+probe	Three Notes and four CCs on channel 1: CC7 values 64/100/127 and CC10 value 64; MIDI readback preserves all four events
+filter	Show-only enabled; Event type Control Change (CC); Control 07 Volume MSB; Value 64–100
+assertion	Only CC7 values 64 and 100 remain visible; CC10 value 64, CC7 value 127, Notes, and the synthetic end row are hidden; saved RPP EVTFILTER is 0 176 -1 64 100 0 1 1 0 -1 -1 -1 -1 0 -1 1 7 7
+verification	Interactive REAPER 7.82 Event List Filter Events dialog, MIDI_GetCC readback, saved RPP EVTFILTER state, native screenshots
+limitation	Native reset behavior for Control and Value, inverted parameter/value behavior, CC0/32 pairing, other controller parameters, and Set filter from controller selection remain unmeasured; screenshots are behavior evidence, not pixel-diff certification

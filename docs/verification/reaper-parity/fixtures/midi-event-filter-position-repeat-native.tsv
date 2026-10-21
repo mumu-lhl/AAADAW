@@ -1,0 +1,14 @@
+fixture	value
+reference	Linux REAPER 7.82 x86_64; Default 7 theme; Xvfb display :510, 1600x1000
+probe_script	scripts/reaper_parity/probe-midi-event-filter-position-repeat.lua
+project	Four measures; 128 CC7 events spaced every 120 ticks; six Notes; MIDI PPQ 960
+filter	Show only on; Event type Control Change; Control 07 Volume MSB; Position in measure 1/8 to 1/8
+saved_project	midi-event-filter-position-repeat-native.rpp; SHA-256 c0e8d79ec837bf167aa13e7692524c2557d29c96675d167118ffc5a98f7acf57
+native_readback	midi-event-filter-position-repeat-native-readback.tsv; 128 CCs; SHA-256 84d8a3c284f9c056d88d01ed2071092d946a4b2d183c3bff70a1edb51cc7a14c
+evtfilter_readback	EVTFILTER 0 176 -1 -1 -1 0 1 0 0 -1 -1 0.125 0.125 1 0 1 7 7
+measure_result	4 visible CCs at ticks 480, 4320, 8160, 12000; SHA-256 92ede0af84df8237def57894c7fb114d35556d6a593c9c6646aaac1731fc08d6
+half_result	8 visible CCs at ticks 480, 2400, 4320, 6240, 8160, 10080, 12000, 13920; SHA-256 fc3bb02519bae1169ffd87165badee961f38381cb6cea633c21415029d09108e
+quarter_result	16 visible CCs at ticks 480, 1440, 2400, 3360, 4320, 5280, 6240, 7200, 8160, 9120, 10080, 11040, 12000, 12960, 13920, 14880; SHA-256 e52e37456e9a90506e2a9bab8e66197fb8ee21c06e4bccae75a094622fd7eef8
+three_quarter_measure	With Position 3/4 to 3/4 and Repeat every measure, 4 visible CCs at ticks 2880, 6720, 10560, 14400; screenshot midi-event-filter-position-repeat-native-three-quarter-measure.png; SHA-256 2594e7026d90401afdd044e5c5f5933bf563df84bb3b7483b20899c5011586f5
+three_quarter_quarter	With Position 3/4 to 3/4 and Repeat every 1/4, 0 visible CCs; screenshot midi-event-filter-position-repeat-native-three-quarter-quarter.png; SHA-256 2d931d6e811618521435062e482689452897d2c546b799c6d8a98f323d0d728d
+repeat_phase_assertion	A selected position beyond the selected Repeat period does not wrap back into that period; the same CC source yields 4 measure matches and no 1/4 matches at Position 3/4

@@ -1,0 +1,29 @@
+artifact	sha256
+scripts/reaper_parity/probe-midi-event-filter-from-cc-channel-pressure-opaque-selection.lua	076d24d7b6bbc3dd9ad429184b242eada813bbbdaad92e1ff5fbb57c83091553
+docs/verification/reaper-parity/fixtures/midi-event-filter-from-cc-channel-pressure-opaque-selection-native-before.png	86c5df8d76979a04105131105f2dd2af5c73539bb9f6b43275c9c3fd22d2a3e1
+docs/verification/reaper-parity/fixtures/midi-event-filter-from-cc-channel-pressure-opaque-selection-native-filter-before-set.png	28ee59d406191e7c62efc35f0f3aec6e479a0d56066b8f3a11715968ea1a62b4
+docs/verification/reaper-parity/fixtures/midi-event-filter-from-cc-channel-pressure-opaque-selection-native-after-set.png	2bfe1e309786c178686298bcf1c8c779fb3bedc485f2b744f3f2b7a949165fac
+docs/verification/reaper-parity/fixtures/midi-event-filter-from-cc-channel-pressure-opaque-selection-native-list-filtered.png	be60c56761cdab5f35372ae822dc64409605d5d9879d331ee2b27d1a86e65515
+docs/verification/reaper-parity/fixtures/midi-event-filter-from-cc-channel-pressure-opaque-selection-native-funnel-off.png	2bfe1e309786c178686298bcf1c8c779fb3bedc485f2b744f3f2b7a949165fac
+docs/verification/reaper-parity/fixtures/midi-event-filter-from-cc-channel-pressure-opaque-selection-native-before.tsv	28ebdcc6c5879b4dd4d2ad9392259885a073d7a9ca03c56d5fb952647a13a285
+docs/verification/reaper-parity/fixtures/midi-event-filter-from-cc-channel-pressure-opaque-selection-native-after-set.tsv	28ebdcc6c5879b4dd4d2ad9392259885a073d7a9ca03c56d5fb952647a13a285
+docs/verification/reaper-parity/fixtures/midi-event-filter-from-cc-channel-pressure-opaque-selection-native-funnel-on.tsv	31ac4e67c37db5a12756eb92b962a78884b1f649e4de9e6aca55c17fe98dcb08
+docs/verification/reaper-parity/fixtures/midi-event-filter-from-cc-channel-pressure-opaque-selection-native-funnel-off.tsv	28ebdcc6c5879b4dd4d2ad9392259885a073d7a9ca03c56d5fb952647a13a285
+docs/verification/reaper-parity/fixtures/midi-event-filter-from-cc-channel-pressure-opaque-selection-native-before.rpp	3efcb17770f8e68b509df246d7a1d9ade8941fc35feda83689cc00979aeadf2e
+docs/verification/reaper-parity/fixtures/midi-event-filter-from-cc-channel-pressure-opaque-selection-native-after-set.rpp	dd1790a09b66acd2d57eeeb5c245db499fa97746438e936fbfaf76bc5a300783
+docs/verification/reaper-parity/fixtures/midi-event-filter-from-cc-channel-pressure-opaque-selection-native-funnel-on.rpp	f43d07601afd5efc19268cb8adec7b9906cae8ac6944dd480163989184d16b44
+docs/verification/reaper-parity/fixtures/midi-event-filter-from-cc-channel-pressure-opaque-selection-native-funnel-off.rpp	c99d321a4d66b6d1f3a8d1e39e72a10e40d74be40eff16afaed5921df306c547
+docs/verification/reaper-parity/fixtures/midi-event-filter-from-cc-channel-pressure-opaque-selection-native-before.bin	b1fe0b7c5294047ad98ec935a329d8608d6053cbb720be00642d293ae1bed329
+docs/verification/reaper-parity/fixtures/midi-event-filter-from-cc-channel-pressure-opaque-selection-native-after-set.bin	b1fe0b7c5294047ad98ec935a329d8608d6053cbb720be00642d293ae1bed329
+native_build_id	fb9ade2f211bc91a3ee6193630ef17bcf5f6528b
+native_binary_sha256	9976f5608068b7a58518969001b00b527fb0de6ed7459e0e5dda6f29878ee254
+theme	REAPER 7.82 Linux Default 7; theme SHA-256 575544606736a395520703e532209ad9635f13a41b7ea000bb9810d60025be48
+environment	Linux Xvfb :561, 1600x900; isolated REAPER profile; audio device closed
+starting_state	Nine Event List rows; selected channel 2 CC7/value 64 at tick 480, Channel Pressure/value 32 at tick 600, and Text Meta at tick 960; Show-only unchecked and funnel off
+action	Event List > Filter Events > Set filter from selection; close panel; invoke native Event List funnel action 40504 to capture funnel-on and funnel-off states
+assertion	Set derives All events, All channels, Position 1/8–0.250 (RPP 0.125–0.25026042), Repeat measure; Show-only and funnel remain off after Set
+list_result	Six in-range rows pass with funnel on; all three selected endpoints remain selected; funnel-off restores all nine rows
+selection_and_data	MIDI_GetAllEvts is 166 bytes before and after Set with identical SHA-256 b1fe0b7c5294047ad98ec935a329d8608d6053cbb720be00642d293ae1bed329; before/after/funnel-off ReaScript reads retain event counts and selection bits; funnel-on readback omits hidden Note/SysEx rows
+rpp_state	Before Set Position is disabled; after Set and funnel-off RPPs store Position 0.125–0.25026042; Show-only remains off
+verification	Native readbacks before/after/funnel-on/funnel-off, identical raw MIDI blobs, four RPP states, five REAPER Default 7 real-window screenshots; 16 artifact SHA-256 entries
+limitation	Screenshots verify behavior and displayed controls, not pixel identity

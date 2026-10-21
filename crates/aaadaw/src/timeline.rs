@@ -1,9 +1,12 @@
 mod renderer;
 
-use aaadaw_core::{ItemId, Project, TempoCurve, TrackId, VolumeAutomationPoint};
+use aaadaw_core::{
+    ItemId, MarkerId, MidiNoteData, NoteId, Project, TempoCurve, TrackId, VolumeAutomationPoint,
+};
 use aaadaw_media::{AudioWaveform, WaveformPeak};
 use aaadaw_storage::{
-    ArrangementViewState, FxAutomationLaneViewState, VolumeAutomationLaneViewState,
+    ArrangementTimeRangeState, ArrangementViewState, FxAutomationLaneViewState,
+    VolumeAutomationLaneViewState,
 };
 use iced::advanced::text::{Alignment as TextAlignment, LineHeight, Shaping};
 use iced::widget::canvas;
@@ -14,7 +17,6 @@ use iced::{
     Color, Element, Event, Font, Length, Pixels, Point, Rectangle, Size, Theme, keyboard, mouse,
 };
 use std::collections::{HashMap, HashSet};
-use std::fmt;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -32,6 +34,14 @@ const MIN_PIXELS_PER_TICK: f32 = 0.002;
 const MAX_PIXELS_PER_TICK: f32 = 1.5;
 const TIME_SELECTION_EDGE_HIT_RADIUS_PX: f64 = 7.0;
 const ITEM_TRIM_EDGE_HIT_RADIUS_PX: f64 = 6.0;
+const PROJECT_MARKER_DOUBLE_CLICK_INTERVAL: Duration = Duration::from_millis(500);
+const PROJECT_MARKER_DOUBLE_CLICK_DISTANCE: f32 = 6.0;
+const INLINE_MIDI_DOUBLE_CLICK_DISTANCE: f32 = 6.0;
+const LOOP_POINT_HANDLE_ROW_HEIGHT: f32 = 9.0;
+const LOOP_POINT_HANDLE_HIT_RADIUS: f32 = 8.0;
+const LOOP_POINT_HANDLE_WIDTH: f32 = 7.0;
+
+pub(crate) use aaadaw_storage::GridDivision as SnapGrid;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ArrangementPane {
@@ -39,107 +49,34 @@ pub(crate) enum ArrangementPane {
     Timeline,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum SnapGrid {
-    Whole,
-    Half,
-    Quarter,
-    Eighth,
-    Sixteenth,
-    ThirtySecond,
-    DottedHalf,
-    DottedQuarter,
-    DottedEighth,
-    DottedSixteenth,
-    HalfTriplet,
-    QuarterTriplet,
-    EighthTriplet,
-    SixteenthTriplet,
-    ThirtySecondTriplet,
-}
-
-impl SnapGrid {
-    pub(crate) const ALL: [Self; 15] = [
-        Self::Whole,
-        Self::Half,
-        Self::Quarter,
-        Self::Eighth,
-        Self::Sixteenth,
-        Self::ThirtySecond,
-        Self::DottedHalf,
-        Self::DottedQuarter,
-        Self::DottedEighth,
-        Self::DottedSixteenth,
-        Self::HalfTriplet,
-        Self::QuarterTriplet,
-        Self::EighthTriplet,
-        Self::SixteenthTriplet,
-        Self::ThirtySecondTriplet,
-    ];
-
-    fn ratio(self) -> (u64, u64) {
-        match self {
-            Self::Whole => (4, 1),
-            Self::Half => (2, 1),
-            Self::Quarter => (1, 1),
-            Self::Eighth => (1, 2),
-            Self::Sixteenth => (1, 4),
-            Self::ThirtySecond => (1, 8),
-            Self::DottedHalf => (3, 1),
-            Self::DottedQuarter => (3, 2),
-            Self::DottedEighth => (3, 4),
-            Self::DottedSixteenth => (3, 8),
-            Self::HalfTriplet => (4, 3),
-            Self::QuarterTriplet => (2, 3),
-            Self::EighthTriplet => (1, 3),
-            Self::SixteenthTriplet => (1, 6),
-            Self::ThirtySecondTriplet => (1, 12),
-        }
-    }
-
-    pub(crate) fn tick_interval(self, ppq: u32) -> Option<u64> {
-        let (numerator, denominator) = self.ratio();
-        let ticks = u64::from(ppq).checked_mul(numerator)?;
-        (ticks % denominator == 0)
-            .then_some(ticks / denominator)
-            .filter(|ticks| *ticks > 0)
-    }
-}
-
-impl fmt::Display for SnapGrid {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(match self {
-            Self::Whole => "1/1",
-            Self::Half => "1/2",
-            Self::Quarter => "1/4",
-            Self::Eighth => "1/8",
-            Self::Sixteenth => "1/16",
-            Self::ThirtySecond => "1/32",
-            Self::DottedHalf => "1/2 dotted",
-            Self::DottedQuarter => "1/4 dotted",
-            Self::DottedEighth => "1/8 dotted",
-            Self::DottedSixteenth => "1/16 dotted",
-            Self::HalfTriplet => "1/2 triplet",
-            Self::QuarterTriplet => "1/4 triplet",
-            Self::EighthTriplet => "1/8 triplet",
-            Self::SixteenthTriplet => "1/16 triplet",
-            Self::ThirtySecondTriplet => "1/32 triplet",
-        })
-    }
-}
-
 #[derive(Debug, Clone)]
 pub(crate) enum TimelineEvent {
-    PanByPixels(f32),
+    CycleFolderCompact(TrackId),
+    PanByPixelsAt {
+        delta_x: f32,
+        pointer_position: Point,
+    },
     ZoomAt {
         factor: f32,
         anchor_x: f32,
+    },
+    ZoomAtPosition {
+        factor: f32,
+        anchor_x: f32,
+        pointer_position: Point,
     },
     SelectItem {
         item_id: Option<ItemId>,
         additive: bool,
         range: bool,
     },
+    SetInlineMidiNoteSelection {
+        item_id: ItemId,
+        note_ids: Vec<NoteId>,
+    },
+    SetHoveredItem(Option<ItemId>),
+    PointerMoved(Point),
+    SelectHoveredItem(HoveredItemSelectionMode),
     SelectItemsInMarquee {
         start_tick: u64,
         end_tick: u64,
@@ -153,6 +90,18 @@ pub(crate) enum TimelineEvent {
         y: f32,
     },
     CloseItemContextMenu,
+    OpenFadeMenu {
+        item_id: ItemId,
+        edge: ItemFadeEdge,
+        x: f32,
+        y: f32,
+    },
+    CloseFadeMenu,
+    SetFadeCurvePreset {
+        item_id: ItemId,
+        edge: ItemFadeEdge,
+        shape: aaadaw_core::FadeShape,
+    },
     OpenVolumeAutomationPointMenu {
         track_id: TrackId,
         index: usize,
@@ -220,13 +169,56 @@ pub(crate) enum TimelineEvent {
     ClearSelectedFxAutomationPoint,
     SelectEmpty(u64),
     SetEditCursor(u64),
+    SetEditCursorPosition {
+        tick: u64,
+        position: EditCursorPosition,
+    },
+    SelectProjectMarker {
+        marker_id: MarkerId,
+        position_ticks: u64,
+    },
+    SelectProjectRegion {
+        region_id: aaadaw_core::RegionId,
+        start_ticks: u64,
+        end_ticks: u64,
+    },
+    EditProjectMarker {
+        marker_id: MarkerId,
+    },
+    MoveProjectMarker {
+        marker_id: MarkerId,
+        position_ticks: u64,
+    },
+    MoveProjectRegion {
+        region_id: aaadaw_core::RegionId,
+        original_start_ticks: u64,
+        original_end_ticks: u64,
+        start_ticks: u64,
+        end_ticks: u64,
+    },
     SetTimeSelection {
         start_tick: u64,
         end_tick: u64,
     },
     ClearTimeSelection,
+    SetLoopPoints {
+        start_tick: u64,
+        end_tick: u64,
+    },
+    SetLoopPointStartAtCursor,
+    SetLoopPointEndAtCursor,
+    ToggleLoopPointsLinked,
+    MoveLoopPointsToTimeSelection,
+    ClearLoopPointsIfUnlinked,
+    ClearLoopPoints,
+    ClearTimeSelectionAndLoopPoints,
     ToggleSnap,
     SetSnapGrid(SnapGrid),
+    SetSnapSwingEnabled(bool),
+    ToggleSnapSwing,
+    SetSnapSwingAmountPercent(i16),
+    ToggleMidiEditorSnap,
+    SetMidiEditorSnapGrid(SnapGrid),
     BeginItemDrag {
         item_id: ItemId,
         pointer_delta_ticks: i128,
@@ -243,6 +235,12 @@ pub(crate) enum TimelineEvent {
     },
     EndItemDrag,
     CancelItemDrag,
+    PreviewItemFades {
+        item_id: ItemId,
+        fades: aaadaw_core::AudioItemFades,
+    },
+    CommitItemFades,
+    CancelItemFades,
     BeginItemTrim {
         item_id: ItemId,
         edge: ItemTrimEdge,
@@ -270,6 +268,48 @@ pub(crate) enum TimelineEvent {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum EditCursorPosition {
+    Tick(u64),
+    Sample(u64),
+}
+
+impl EditCursorPosition {
+    pub(crate) fn tick(self, project: &Project) -> Result<u64, aaadaw_core::TimebaseError> {
+        match self {
+            Self::Tick(tick) => Ok(tick),
+            Self::Sample(sample) => project.tick_at_sample(sample),
+        }
+    }
+
+    pub(crate) fn tick_position(
+        self,
+        project: &Project,
+    ) -> Result<f64, aaadaw_core::TimebaseError> {
+        match self {
+            Self::Tick(tick) => Ok(tick as f64),
+            Self::Sample(sample) => project.tick_at_sample_position(sample as f64),
+        }
+    }
+
+    pub(crate) fn sample(self, project: &Project) -> Result<u64, aaadaw_core::TimebaseError> {
+        match self {
+            Self::Tick(tick) => project.sample_at_tick(tick),
+            Self::Sample(sample) => Ok(sample),
+        }
+    }
+
+    pub(crate) fn sample_position(
+        self,
+        project: &Project,
+    ) -> Result<f64, aaadaw_core::TimebaseError> {
+        match self {
+            Self::Tick(tick) => project.sample_at_tick_position(tick as f64),
+            Self::Sample(sample) => Ok(sample as f64),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ItemKind {
     Audio,
     Midi,
@@ -277,6 +317,19 @@ pub(crate) enum ItemKind {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct TimeSelection {
+    pub(crate) start_tick: u64,
+    pub(crate) end_tick: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum HoveredItemSelectionMode {
+    Replace,
+    Add,
+    Toggle,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct LoopPoints {
     pub(crate) start_tick: u64,
     pub(crate) end_tick: u64,
 }
@@ -310,21 +363,45 @@ struct TimelineItem {
     track_id: TrackId,
     track_index: usize,
     start_tick: u64,
+    start_tick_subtick: u8,
     end_tick: u64,
+    end_tick_subtick: u8,
     kind: ItemKind,
+    muted: bool,
     label: String,
     media_ref: Option<String>,
     midi_notes: Vec<MidiNotePreview>,
+    midi_source_offset_ticks: i64,
+    midi_source_loop_length_ticks: Option<u64>,
     start_sample: u64,
     length_samples: u64,
-    source_offset_samples: u64,
+    source_offset_samples: i64,
+    source_section_start_samples: Option<u64>,
+    source_section_length_samples: Option<u64>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct MidiNotePreview {
+    id: NoteId,
+    data: MidiNoteData,
     tick: u64,
     duration: u64,
     pitch: u8,
+}
+
+#[derive(Clone, Copy)]
+struct MidiPreviewSource {
+    offset_ticks: i64,
+    loop_length_ticks: Option<u64>,
+}
+
+#[derive(Clone, Copy)]
+struct MidiPreviewBounds {
+    item_left: f32,
+    item_width: f32,
+    viewport_width: f32,
+    top: f32,
+    height: f32,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -360,6 +437,32 @@ struct TimelineCache {
     track_ids: Arc<[TrackId]>,
     ppq: u32,
     snap_grid_ticks: Option<u64>,
+    swing_grid: SwingGridSettings,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct SwingGridSettings {
+    enabled: bool,
+    amount_percent: i16,
+}
+
+impl Default for SwingGridSettings {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            amount_percent: 50,
+        }
+    }
+}
+
+impl SwingGridSettings {
+    fn active_amount_percent(self) -> i16 {
+        if self.enabled {
+            self.amount_percent.clamp(-100, 100)
+        } else {
+            0
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -407,14 +510,27 @@ impl TimelineCache {
                 track_id: item.track_id(),
                 track_index,
                 start_tick,
+                start_tick_subtick: 0,
                 end_tick: end_tick.max(start_tick),
+                end_tick_subtick: 0,
                 kind: ItemKind::Audio,
-                label: media_label(item.media_ref()),
-                media_ref: Some(item.media_ref().to_owned()),
+                muted: item.is_muted(),
+                label: if item.active_take_is_empty() {
+                    "Empty Take".to_owned()
+                } else if item.name().is_empty() {
+                    media_label(item.media_ref())
+                } else {
+                    item.name().to_owned()
+                },
+                media_ref: (!item.active_take_is_empty()).then(|| item.media_ref().to_owned()),
                 midi_notes: Vec::new(),
+                midi_source_offset_ticks: 0,
+                midi_source_loop_length_ticks: None,
                 start_sample: item.start_sample(),
                 length_samples: item.length_samples(),
                 source_offset_samples: item.source_offset_samples(),
+                source_section_start_samples: item.source_section_start_samples(),
+                source_section_length_samples: item.source_section_length_samples(),
             });
         }
 
@@ -427,41 +543,52 @@ impl TimelineCache {
                 track_id: item.track_id(),
                 track_index,
                 start_tick: item.start_tick(),
+                start_tick_subtick: item.start_position().subtick(),
                 end_tick: item.start_tick().saturating_add(item.length_ticks()),
+                end_tick_subtick: item.start_position().subtick(),
                 kind: ItemKind::Midi,
+                muted: item.is_muted(),
                 label: item.name().to_owned(),
                 media_ref: None,
                 midi_notes: item
                     .notes()
                     .iter()
-                    .filter_map(|note| {
-                        let start_tick = note.tick();
-                        let end_tick = start_tick.checked_add(note.duration())?;
-                        let source_start_tick = item.source_offset_ticks();
-                        let source_end_tick = source_start_tick.saturating_add(item.length_ticks());
-                        (source_start_tick..source_end_tick)
-                            .contains(&start_tick)
-                            .then(|| MidiNotePreview {
-                                tick: start_tick - source_start_tick,
-                                duration: end_tick.min(source_end_tick) - start_tick,
-                                pitch: note.pitch(),
-                            })
+                    .map(|note| MidiNotePreview {
+                        id: note.id(),
+                        data: MidiNoteData {
+                            pitch: note.pitch(),
+                            channel: note.channel(),
+                            tick: note.tick(),
+                            duration: note.duration(),
+                            velocity: note.velocity(),
+                            off_velocity: note.off_velocity(),
+                        },
+                        tick: note.tick(),
+                        duration: note.duration(),
+                        pitch: note.pitch(),
                     })
-                    .step_by(
-                        item.notes()
-                            .len()
-                            .div_ceil(MAX_MIDI_ITEM_PREVIEW_NOTES)
-                            .max(1),
-                    )
-                    .take(MAX_MIDI_ITEM_PREVIEW_NOTES)
                     .collect(),
+                midi_source_offset_ticks: item.signed_source_offset_ticks(),
+                midi_source_loop_length_ticks: item
+                    .is_loop_source()
+                    .then_some(item.source_loop_length_ticks())
+                    .filter(|length| *length > 0),
                 start_sample: 0,
                 length_samples: 0,
                 source_offset_samples: 0,
+                source_section_start_samples: None,
+                source_section_length_samples: None,
             });
         }
 
-        items.sort_by_key(|item| (item.track_index, item.start_tick, item.id.value()));
+        items.sort_by_key(|item| {
+            (
+                item.track_index,
+                item.start_tick,
+                item.start_tick_subtick,
+                item.id.value(),
+            )
+        });
         self.generation = self.generation.wrapping_add(1);
         self.item_indices = items
             .iter()
@@ -514,11 +641,31 @@ impl TimelineCache {
             }
             let source_length =
                 (u128::from(item.length_samples) * source_rate).div_ceil(project_rate);
-            let Some(item_source_end) =
-                u64::try_from(u128::from(item.source_offset_samples) + source_length).ok()
-            else {
+            let Ok(source_length) = i128::try_from(source_length) else {
                 continue;
             };
+            let item_source_start = item.source_section_start_samples.map_or(0_i128, i128::from)
+                + i128::from(item.source_offset_samples);
+            let Some(item_source_end) = item_source_start.checked_add(source_length) else {
+                continue;
+            };
+            let source_limit = i128::from(waveform.frame_count());
+            let section_start = item.source_section_start_samples.map_or(0_i128, i128::from);
+            let section_end = item
+                .source_section_start_samples
+                .zip(item.source_section_length_samples)
+                .map(|(start, length)| i128::from(start) + i128::from(length));
+            let source_min = item_source_start
+                .max(section_start)
+                .max(0)
+                .min(source_limit);
+            let source_max = section_end
+                .map_or(item_source_end, |end| item_source_end.min(end))
+                .max(0)
+                .min(source_limit);
+            if source_min >= source_max {
+                continue;
+            }
             let visible_start_tick = item.start_tick.max(origin_tick);
             let visible_end_tick = item.end_tick.min(visible_end_tick);
             let Ok(visible_start_sample) = project.sample_at_tick(visible_start_tick) else {
@@ -537,22 +684,30 @@ impl TimelineCache {
             if visible_start_sample >= visible_end_sample {
                 continue;
             }
-            let source_start = u64::try_from(
-                u128::from(item.source_offset_samples)
-                    + (u128::from(visible_start_sample - item.start_sample) * source_rate)
-                        / project_rate,
-            )
-            .unwrap_or(item_source_end)
-            .min(item_source_end)
-            .min(waveform.frame_count());
-            let source_end = u64::try_from(
-                u128::from(item.source_offset_samples)
-                    + (u128::from(visible_end_sample - item.start_sample) * source_rate)
-                        .div_ceil(project_rate),
-            )
-            .unwrap_or(item_source_end)
-            .min(item_source_end)
-            .min(waveform.frame_count());
+            let Ok(visible_source_start_delta) = i128::try_from(
+                (u128::from(visible_start_sample - item.start_sample) * source_rate) / project_rate,
+            ) else {
+                continue;
+            };
+            let Ok(visible_source_end_delta) = i128::try_from(
+                (u128::from(visible_end_sample - item.start_sample) * source_rate)
+                    .div_ceil(project_rate),
+            ) else {
+                continue;
+            };
+            let Some(visible_source_start) =
+                item_source_start.checked_add(visible_source_start_delta)
+            else {
+                continue;
+            };
+            let Some(visible_source_end) = item_source_start.checked_add(visible_source_end_delta)
+            else {
+                continue;
+            };
+            let source_start = u64::try_from(visible_source_start.clamp(source_min, source_max))
+                .unwrap_or(waveform.frame_count());
+            let source_end = u64::try_from(visible_source_end.clamp(source_min, source_max))
+                .unwrap_or(waveform.frame_count());
             if source_start >= source_end {
                 continue;
             }
@@ -571,12 +726,23 @@ impl TimelineCache {
                 if overlap_start >= overlap_end {
                     return;
                 }
-                let start_delta = (u128::from(overlap_start - item.source_offset_samples)
-                    * project_rate)
-                    / source_rate;
-                let end_delta = (u128::from(overlap_end - item.source_offset_samples)
-                    * project_rate)
-                    .div_ceil(source_rate);
+                let Some(start_source_delta) =
+                    i128::from(overlap_start).checked_sub(item_source_start)
+                else {
+                    return;
+                };
+                let Some(end_source_delta) = i128::from(overlap_end).checked_sub(item_source_start)
+                else {
+                    return;
+                };
+                let Ok(start_source_delta) = u128::try_from(start_source_delta) else {
+                    return;
+                };
+                let Ok(end_source_delta) = u128::try_from(end_source_delta) else {
+                    return;
+                };
+                let start_delta = (start_source_delta * project_rate) / source_rate;
+                let end_delta = (end_source_delta * project_rate).div_ceil(source_rate);
                 let Some(start_sample) =
                     u64::try_from(u128::from(item.start_sample) + start_delta).ok()
                 else {
@@ -631,8 +797,8 @@ impl TimelineCache {
                 let peak_end = peak_start
                     .saturating_add(frames_per_peak)
                     .min(waveform.frame_count());
-                let overlap_start = peak_start.max(source_start).max(item.source_offset_samples);
-                let overlap_end = peak_end.min(source_end).min(item_source_end);
+                let overlap_start = peak_start.max(source_start);
+                let overlap_end = peak_end.min(source_end);
                 if overlap_start >= overlap_end {
                     continue;
                 }
@@ -668,7 +834,9 @@ impl TimelineCache {
                         // Peak summaries cannot be clipped to individual samples. Omit a
                         // partial base bin at a trim edge rather than leaking audio from
                         // outside the clip into its waveform.
-                        if base_start < item.source_offset_samples || base_end > item_source_end {
+                        if i128::from(base_start) < item_source_start
+                            || i128::from(base_end) > item_source_end
+                        {
                             continue;
                         }
                         let clipped_start = base_start.max(overlap_start);
@@ -693,7 +861,8 @@ impl TimelineCache {
                         );
                     }
                 } else if frames_per_peak == u64::from(waveform.frames_per_peak())
-                    && (peak_start < item.source_offset_samples || peak_end > item_source_end)
+                    && (i128::from(peak_start) < item_source_start
+                        || i128::from(peak_end) > item_source_end)
                 {
                     // A base-level summary still contains samples outside an unaligned trim.
                     continue;
@@ -720,18 +889,29 @@ pub(crate) struct TimelineState {
     pub(crate) viewport_height: f32,
     pub(crate) selected_track: Option<TrackId>,
     pub(crate) selected_tracks: HashSet<TrackId>,
+    pub(crate) delete_focus: DeleteFocusTarget,
     pub(crate) selected_item: Option<ItemId>,
     pub(crate) selected_items: HashSet<ItemId>,
+    pub(crate) inline_midi_items: HashSet<ItemId>,
+    pub(crate) inline_midi_note_selection: HashMap<ItemId, HashSet<NoteId>>,
+    pub(crate) hovered_item: Option<ItemId>,
+    pub(crate) selected_project_marker: Option<MarkerId>,
     pub(crate) time_selection: Option<TimeSelection>,
+    pub(crate) loop_points: Option<LoopPoints>,
+    pub(crate) loop_points_linked: bool,
+    pub(crate) modifiers: keyboard::Modifiers,
     pub(crate) context_track: Option<TrackId>,
     pub(crate) context_item: Option<ItemId>,
+    pub(crate) context_fade: Option<FadeMenuContext>,
     pub(crate) context_item_position: Option<(f32, f32)>,
     pub(crate) context_automation_point: Option<AutomationPointContext>,
     pub(crate) context_automation_position: Option<(f32, f32)>,
     audio_waveforms: HashMap<String, Arc<AudioWaveform>>,
     pub(crate) snap_enabled: bool,
     pub(crate) snap_grid: SnapGrid,
+    pub(crate) midi_editor_snap_grid: SnapGrid,
     pub(crate) edit_cursor_tick: u64,
+    edit_cursor_position: Option<EditCursorPosition>,
     pub(crate) origin_tick: u64,
     pub(crate) pixels_per_tick: f32,
     cache: TimelineCache,
@@ -742,6 +922,7 @@ pub(crate) struct TimelineState {
     track_selection_anchor: Option<TrackId>,
     drag_preview: Option<ItemDragPreview>,
     item_trim_preview: Option<ItemTrimPreview>,
+    item_fade_preview: Option<(ItemId, aaadaw_core::AudioItemFades)>,
     pub(crate) volume_automation_tracks: HashSet<TrackId>,
     pub(crate) hidden_volume_automation_tracks: HashSet<TrackId>,
     selected_volume_automation_point: Option<(TrackId, usize)>,
@@ -753,6 +934,28 @@ pub(crate) struct TimelineState {
     fx_lane_snapshot:
         HashMap<(TrackId, usize, u32), Option<Vec<aaadaw_core::FxParameterAutomationPoint>>>,
     row_layout: Vec<TrackRowLayout>,
+    hovered_item_position: Option<Point>,
+    folder_compact: HashMap<TrackId, u8>,
+    folder_parents: HashMap<TrackId, Option<TrackId>>,
+    folder_tracks: HashSet<TrackId>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ItemSelectionState {
+    selected_item: Option<ItemId>,
+    selected_items: HashSet<ItemId>,
+    selected_track: Option<TrackId>,
+    selection_anchor: Option<ItemId>,
+    selected_volume_automation_point: Option<(TrackId, usize)>,
+    selected_fx_automation_point: Option<(TrackId, usize, u32, usize)>,
+}
+
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum DeleteFocusTarget {
+    #[default]
+    Arrange,
+    TrackPanel,
+    Automation,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -761,6 +964,23 @@ pub(super) struct TrackRowLayout {
     pub(super) height: f32,
     pub(super) base_height: f32,
     pub(super) fx_lane_count: usize,
+}
+
+impl TrackRowLayout {
+    pub(super) fn item_geometry(self, automation: bool) -> (f32, f32) {
+        if self.base_height < 43.0 {
+            let padding = (self.base_height / 4.0).min(2.0);
+            (
+                self.top + padding,
+                (self.base_height - 2.0 * padding).max(0.0),
+            )
+        } else {
+            (
+                self.top + 7.0,
+                (self.base_height - if automation { 42.0 } else { 14.0 }).max(0.0),
+            )
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -870,7 +1090,9 @@ pub(crate) struct SelectedItemGeometry {
     pub(crate) cache_index: usize,
     pub(crate) item_id: ItemId,
     pub(crate) start_tick: u64,
+    pub(crate) start_tick_subtick: u8,
     pub(crate) end_tick: u64,
+    pub(crate) end_tick_subtick: u8,
     pub(crate) track_index: usize,
     pub(crate) kind: ItemKind,
 }
@@ -879,7 +1101,7 @@ impl Default for TimelineState {
     fn default() -> Self {
         let project = Project::new();
         let mut cache = TimelineCache::default();
-        cache.rebuild(&project, SnapGrid::Sixteenth);
+        cache.rebuild(&project, SnapGrid::Quarter);
         let (mut panes, track_pane) = pane_grid::State::new(ArrangementPane::TrackControls);
         let (_timeline_pane, split) = panes
             .split(Axis::Vertical, track_pane, ArrangementPane::Timeline)
@@ -892,18 +1114,29 @@ impl Default for TimelineState {
             viewport_height: 480.0,
             selected_track: None,
             selected_tracks: HashSet::new(),
+            delete_focus: DeleteFocusTarget::Arrange,
             selected_item: None,
             selected_items: HashSet::new(),
+            inline_midi_items: HashSet::new(),
+            inline_midi_note_selection: HashMap::new(),
+            hovered_item: None,
+            selected_project_marker: None,
             time_selection: None,
+            loop_points: None,
+            loop_points_linked: true,
+            modifiers: keyboard::Modifiers::default(),
             context_track: None,
             context_item: None,
+            context_fade: None,
             context_item_position: None,
             context_automation_point: None,
             context_automation_position: None,
             audio_waveforms: HashMap::new(),
             snap_enabled: true,
-            snap_grid: SnapGrid::Sixteenth,
+            snap_grid: SnapGrid::Quarter,
+            midi_editor_snap_grid: SnapGrid::ThirtySecond,
             edit_cursor_tick: 0,
+            edit_cursor_position: None,
             origin_tick: 0,
             pixels_per_tick: 0.065,
             cache,
@@ -914,6 +1147,7 @@ impl Default for TimelineState {
             track_selection_anchor: None,
             drag_preview: None,
             item_trim_preview: None,
+            item_fade_preview: None,
             volume_automation_tracks: HashSet::new(),
             hidden_volume_automation_tracks: HashSet::new(),
             selected_volume_automation_point: None,
@@ -924,16 +1158,128 @@ impl Default for TimelineState {
             fx_chain_snapshot: HashMap::new(),
             fx_lane_snapshot: HashMap::new(),
             row_layout: Vec::new(),
+            hovered_item_position: None,
+            folder_compact: HashMap::new(),
+            folder_parents: HashMap::new(),
+            folder_tracks: HashSet::new(),
         }
     }
 }
 
 impl TimelineState {
+    pub(crate) fn item_selection_state(&self) -> ItemSelectionState {
+        ItemSelectionState {
+            selected_item: self.selected_item,
+            selected_items: self.selected_items.clone(),
+            selected_track: self.selected_track,
+            selection_anchor: self.selection_anchor,
+            selected_volume_automation_point: self.selected_volume_automation_point,
+            selected_fx_automation_point: self.selected_fx_automation_point,
+        }
+    }
+
+    pub(crate) fn restore_item_selection_state(&mut self, state: &ItemSelectionState) {
+        self.selected_item = state.selected_item;
+        self.selected_items.clone_from(&state.selected_items);
+        self.selected_track = state.selected_track;
+        self.selection_anchor = state.selection_anchor;
+        self.selected_volume_automation_point = state.selected_volume_automation_point;
+        self.selected_fx_automation_point = state.selected_fx_automation_point;
+    }
+
+    pub(crate) fn clear_selected_items(&mut self) {
+        self.selected_items.clear();
+        self.selected_item = None;
+        self.selection_anchor = None;
+    }
+
+    pub(crate) fn toggle_inline_midi_editors(&mut self, close: bool) {
+        let selected_midi_items = self
+            .selected_items
+            .iter()
+            .filter(|item_id| {
+                self.cache
+                    .item_indices
+                    .get(item_id)
+                    .is_some_and(|index| self.cache.items[*index].kind == ItemKind::Midi)
+            })
+            .copied()
+            .collect::<Vec<_>>();
+        let close_selected = close
+            || (!selected_midi_items.is_empty()
+                && selected_midi_items
+                    .iter()
+                    .all(|item_id| self.inline_midi_items.contains(item_id)));
+        if close_selected {
+            for item_id in selected_midi_items {
+                self.inline_midi_items.remove(&item_id);
+            }
+        } else {
+            self.inline_midi_items.extend(selected_midi_items);
+        }
+    }
+
+    pub(crate) fn set_inline_midi_editor(&mut self, item_id: ItemId, open: bool) {
+        let is_midi_item = self
+            .cache
+            .item_indices
+            .get(&item_id)
+            .is_some_and(|index| self.cache.items[*index].kind == ItemKind::Midi);
+        if !is_midi_item {
+            return;
+        }
+        if open {
+            self.inline_midi_items.insert(item_id);
+        } else {
+            self.inline_midi_items.remove(&item_id);
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn selection_anchor(&self) -> Option<ItemId> {
+        self.selection_anchor
+    }
+
+    pub(crate) fn select_items(&mut self, items: Vec<(ItemId, TrackId)>) {
+        self.selected_items = items.iter().map(|(item_id, _)| *item_id).collect();
+        self.selected_item = items.last().map(|(item_id, _)| *item_id);
+        self.selection_anchor = self.selected_item;
+        if let Some((_, track_id)) = items.last() {
+            self.selected_track = Some(*track_id);
+        }
+        self.selected_volume_automation_point = None;
+        self.selected_fx_automation_point = None;
+    }
+
+    fn first_selected_item_in_project_order(&self) -> Option<ItemId> {
+        self.cache
+            .items
+            .iter()
+            .find(|item| self.selected_items.contains(&item.id))
+            .map(|item| item.id)
+    }
+
     pub(crate) fn replace_project(
         &mut self,
         project: &Project,
         view_state: Option<&ArrangementViewState>,
     ) {
+        self.snap_enabled = view_state.is_none_or(|state| state.snap_enabled);
+        self.snap_grid = view_state.map_or(SnapGrid::Quarter, |state| state.snap_grid);
+        self.midi_editor_snap_grid =
+            view_state.map_or(SnapGrid::ThirtySecond, |state| state.midi_editor_snap_grid);
+        self.cache.swing_grid =
+            view_state.map_or_else(SwingGridSettings::default, |state| SwingGridSettings {
+                enabled: state.swing_grid_enabled,
+                amount_percent: state.swing_amount_percent.clamp(-100, 100),
+            });
+        self.selected_project_marker = None;
+        self.hovered_item = None;
+        self.inline_midi_items.clear();
+        self.hovered_item_position = None;
+        self.context_fade = None;
+        self.item_fade_preview = None;
+        self.folder_compact.clear();
         self.volume_automation_tracks.clear();
         self.hidden_volume_automation_tracks.clear();
         self.selected_volume_automation_point = None;
@@ -949,8 +1295,31 @@ impl TimelineState {
         self.selected_tracks.clear();
         self.track_selection_anchor = None;
         self.rebuild(project);
+        self.time_selection = None;
+        self.loop_points = None;
 
         if let Some(view_state) = view_state {
+            self.time_selection = view_state
+                .time_selection
+                .and_then(|range| time_range_ticks_at_project_seconds(project, range))
+                .and_then(|(start_tick, end_tick)| TimeSelection::normalized(start_tick, end_tick));
+            self.loop_points = view_state
+                .loop_points
+                .and_then(|range| time_range_ticks_at_project_seconds(project, range))
+                .map(|(start_tick, end_tick)| LoopPoints {
+                    start_tick: start_tick.min(end_tick),
+                    end_tick: start_tick.max(end_tick),
+                });
+            for folder in &view_state.folder_compact {
+                if folder.mode <= 2
+                    && let Some(track) = project
+                        .tracks()
+                        .iter()
+                        .find(|track| track.id().value() == folder.track_id && track.is_folder())
+                {
+                    self.folder_compact.insert(track.id(), folder.mode);
+                }
+            }
             let saved_volume_visibility = view_state
                 .volume_lanes
                 .iter()
@@ -1066,13 +1435,57 @@ impl TimelineState {
                 lane.parameter_id,
             )
         });
+        let mut folder_compact: Vec<_> = self
+            .folder_compact
+            .iter()
+            .filter(|(id, _)| self.folder_tracks.contains(id))
+            .map(|(id, mode)| aaadaw_storage::FolderCompactViewState {
+                track_id: id.value(),
+                mode: *mode,
+            })
+            .collect();
+        folder_compact.sort_by_key(|folder| folder.track_id);
         ArrangementViewState {
+            folder_compact,
             volume_lanes,
             fx_lanes,
+            time_selection: self.time_selection.and_then(|range| {
+                time_range_at_project_seconds(project, range.start_tick, range.end_tick)
+            }),
+            loop_points: self.loop_points.and_then(|range| {
+                time_range_at_project_seconds(project, range.start_tick, range.end_tick)
+            }),
+            repeat_enabled: false,
+            snap_enabled: self.snap_enabled,
+            snap_grid: self.snap_grid,
+            midi_editor_snap_grid: self.midi_editor_snap_grid,
+            swing_grid_enabled: self.cache.swing_grid.enabled,
+            swing_amount_percent: self.cache.swing_grid.amount_percent,
         }
     }
 
     pub(crate) fn rebuild(&mut self, project: &Project) {
+        if self.selected_project_marker.is_some_and(|marker_id| {
+            !project
+                .markers()
+                .iter()
+                .any(|marker| marker.id() == marker_id)
+        }) {
+            self.selected_project_marker = None;
+        }
+        self.folder_parents = project
+            .tracks()
+            .iter()
+            .map(|track| (track.id(), track.parent_track()))
+            .collect();
+        self.folder_tracks = project
+            .tracks()
+            .iter()
+            .filter(|track| track.is_folder())
+            .map(|track| track.id())
+            .collect();
+        self.folder_compact
+            .retain(|id, _| self.folder_tracks.contains(id));
         self.reconcile_fx_automation_lanes(project);
         self.volume_automation_tracks.extend(
             project
@@ -1089,6 +1502,12 @@ impl TimelineState {
         self.hidden_volume_automation_tracks
             .retain(|track_id| project.tracks().iter().any(|track| track.id() == *track_id));
         self.cache.rebuild(project, self.snap_grid);
+        self.inline_midi_items.retain(|item_id| {
+            self.cache
+                .item_indices
+                .get(item_id)
+                .is_some_and(|index| self.cache.items[*index].kind == ItemKind::Midi)
+        });
         self.waveform_source_generation = self.waveform_source_generation.wrapping_add(1);
         self.rebuild_row_layout();
         if self.cache.snap_grid_ticks.is_none() {
@@ -1115,11 +1534,17 @@ impl TimelineState {
         }
         self.selected_items
             .retain(|item_id| self.cache.item_indices.contains_key(item_id));
+        if self
+            .hovered_item
+            .is_some_and(|item_id| !self.cache.item_indices.contains_key(&item_id))
+        {
+            self.hovered_item = None;
+        }
         if !self
             .selected_item
             .is_some_and(|item_id| self.selected_items.contains(&item_id))
         {
-            self.selected_item = self.selected_items.iter().copied().next();
+            self.selected_item = self.first_selected_item_in_project_order();
         }
         if self
             .selection_anchor
@@ -1132,6 +1557,12 @@ impl TimelineState {
             .is_some_and(|track_id| !self.cache.track_ids.contains(&track_id))
         {
             self.context_track = None;
+        }
+        if self
+            .context_fade
+            .is_some_and(|context| !self.cache.item_indices.contains_key(&context.item_id))
+        {
+            self.context_fade = None;
         }
         if self
             .context_item
@@ -1276,6 +1707,20 @@ impl TimelineState {
             .collect();
     }
 
+    pub(crate) fn folder_compact(&self, track_id: TrackId) -> u8 {
+        self.folder_compact.get(&track_id).copied().unwrap_or(0)
+    }
+
+    fn inherited_folder_compact(&self, track_id: TrackId) -> u8 {
+        let mut parent = self.folder_parents.get(&track_id).copied().flatten();
+        let mut mode = 0;
+        while let Some(id) = parent {
+            mode = mode.max(self.folder_compact(id));
+            parent = self.folder_parents.get(&id).copied().flatten();
+        }
+        mode
+    }
+
     fn rebuild_row_layout(&mut self) {
         let mut top = 0.0;
         self.row_layout = self
@@ -1283,6 +1728,12 @@ impl TimelineState {
             .track_ids
             .iter()
             .map(|track_id| {
+                let compact = self.inherited_folder_compact(*track_id);
+                let base_height = match compact {
+                    1 => 25.0,
+                    2 => 4.0,
+                    _ => TIMELINE_ROW_HEIGHT,
+                };
                 let fx_lane_count = self
                     .fx_automation_lanes
                     .iter()
@@ -1294,17 +1745,68 @@ impl TimelineState {
                     .filter(|(id, _, _)| id == track_id)
                     .map(|key| self.fx_automation_lane_height(*key))
                     .sum::<f32>();
-                let height = TIMELINE_ROW_HEIGHT + fx_lane_height;
+                let fx_lane_count = if compact == 0 { fx_lane_count } else { 0 };
+                let height = base_height + if compact == 0 { fx_lane_height } else { 0.0 };
                 let row = TrackRowLayout {
                     top,
                     height,
-                    base_height: TIMELINE_ROW_HEIGHT,
+                    base_height,
                     fx_lane_count,
                 };
                 top += height;
                 row
             })
             .collect();
+        self.refresh_hovered_item();
+    }
+
+    fn hovered_item_at(&self, position: Point) -> Option<ItemId> {
+        if !position.x.is_finite() || !position.y.is_finite() {
+            return None;
+        }
+        let (track_index, row_y) = row_at_y(&self.row_layout, position.y)?;
+        if row_y >= TIMELINE_ROW_HEIGHT {
+            return None;
+        }
+        let tick = tick_at_x(self.origin_tick, self.pixels_per_tick, position.x);
+        self.cache.item_at(track_index, tick).map(|item| item.id)
+    }
+
+    pub(crate) fn pointer_is_over_item_lane(&self) -> bool {
+        self.hovered_item_position
+            .and_then(|position| row_at_y(&self.row_layout, position.y))
+            .is_some_and(|(_, row_y)| row_y < TIMELINE_ROW_HEIGHT)
+    }
+
+    fn refresh_hovered_item(&mut self) {
+        self.hovered_item = self
+            .hovered_item_position
+            .and_then(|position| self.hovered_item_at(position));
+    }
+
+    fn pan_by_pixels(&mut self, delta_x: f32) {
+        let delta =
+            -(f64::from(delta_x) / f64::from(self.pixels_per_tick)) + self.pan_fractional_tick;
+        let whole_ticks = delta.trunc();
+        self.pan_fractional_tick = delta - whole_ticks;
+        self.origin_tick = (i128::from(self.origin_tick) + whole_ticks as i128)
+            .clamp(0, i128::from(u64::MAX)) as u64;
+        self.refresh_hovered_item();
+    }
+
+    fn zoom_at(&mut self, factor: f32, anchor_x: f32) {
+        if !factor.is_finite() || factor <= 0.0 {
+            return;
+        }
+        let anchor_tick = self.origin_tick as f64
+            + f64::from(anchor_x.max(0.0)) / f64::from(self.pixels_per_tick);
+        self.pixels_per_tick =
+            (self.pixels_per_tick * factor).clamp(MIN_PIXELS_PER_TICK, MAX_PIXELS_PER_TICK);
+        let new_origin =
+            anchor_tick - f64::from(anchor_x.max(0.0)) / f64::from(self.pixels_per_tick);
+        self.origin_tick = new_origin.clamp(0.0, u64::MAX as f64).round() as u64;
+        self.pan_fractional_tick = 0.0;
+        self.refresh_hovered_item();
     }
 
     pub(crate) fn row_layout(&self, track_index: usize) -> Option<TrackRowLayout> {
@@ -1317,6 +1819,22 @@ impl TimelineState {
             .map_or(0.0, |row| row.top + row.height)
     }
 
+    pub(crate) fn set_vertical_scroll(&mut self, offset: f32) {
+        if !offset.is_finite() {
+            return;
+        }
+        let delta = offset - self.vertical_scroll;
+        self.vertical_scroll = offset;
+        if delta.abs() <= f32::EPSILON {
+            return;
+        }
+        if let Some(mut position) = self.hovered_item_position {
+            position.y += delta;
+            self.hovered_item_position = Some(position);
+            self.refresh_hovered_item();
+        }
+    }
+
     fn fx_automation_lane_height(&self, key: (TrackId, usize, u32)) -> f32 {
         self.fx_automation_lane_heights
             .get(&key)
@@ -1327,6 +1845,9 @@ impl TimelineState {
     }
 
     fn fx_automation_bands(&self, track_id: TrackId) -> Vec<FxAutomationBand> {
+        if self.inherited_folder_compact(track_id) != 0 {
+            return Vec::new();
+        }
         fx_automation_bands_for_track(
             track_id,
             &self.fx_automation_lanes,
@@ -1344,37 +1865,144 @@ impl TimelineState {
         self.cache.generation = self.cache.generation.wrapping_add(1);
     }
 
+    fn set_time_selection(&mut self, selection: Option<TimeSelection>) {
+        self.time_selection = selection;
+        if self.loop_points_linked {
+            self.loop_points = selection.map(|selection| LoopPoints {
+                start_tick: selection.start_tick,
+                end_tick: selection.end_tick,
+            });
+        }
+    }
+
+    fn set_loop_points(&mut self, loop_points: Option<LoopPoints>) {
+        self.loop_points = loop_points;
+        if self.loop_points_linked {
+            self.time_selection = loop_points
+                .and_then(|range| TimeSelection::normalized(range.start_tick, range.end_tick));
+        }
+    }
+
+    pub(crate) fn cursor_position(&self) -> EditCursorPosition {
+        self.edit_cursor_position
+            .unwrap_or(EditCursorPosition::Tick(self.edit_cursor_tick))
+    }
+
+    pub(crate) fn edit_cursor_sample(
+        &self,
+        project: &Project,
+    ) -> Result<u64, aaadaw_core::TimebaseError> {
+        self.cursor_position().sample(project)
+    }
+
+    pub(crate) fn edit_cursor_tick_position(&self, project: &Project) -> f64 {
+        self.cursor_position()
+            .tick_position(project)
+            .unwrap_or(self.edit_cursor_tick as f64)
+    }
+
+    pub(crate) fn set_edit_cursor_tick(&mut self, tick: u64) {
+        self.edit_cursor_tick = tick;
+        self.edit_cursor_position = None;
+    }
+
     pub(crate) fn handle(&mut self, event: TimelineEvent) {
+        if !matches!(
+            event,
+            TimelineEvent::OpenFadeMenu { .. }
+                | TimelineEvent::SetHoveredItem(_)
+                | TimelineEvent::PointerMoved(_)
+        ) {
+            self.context_fade = None;
+        }
         match event {
-            TimelineEvent::PanByPixels(delta_x) => {
-                let delta = -(f64::from(delta_x) / f64::from(self.pixels_per_tick))
-                    + self.pan_fractional_tick;
-                let whole_ticks = delta.trunc();
-                self.pan_fractional_tick = delta - whole_ticks;
-                self.origin_tick = (i128::from(self.origin_tick) + whole_ticks as i128)
-                    .clamp(0, i128::from(u64::MAX)) as u64;
+            TimelineEvent::PanByPixelsAt {
+                delta_x,
+                pointer_position,
+            } => {
+                self.hovered_item_position = Some(pointer_position);
+                self.pan_by_pixels(delta_x);
             }
             TimelineEvent::ZoomAt { factor, anchor_x } => {
-                if !factor.is_finite() || factor <= 0.0 {
-                    return;
-                }
-                let anchor_tick = self.origin_tick as f64
-                    + f64::from(anchor_x.max(0.0)) / f64::from(self.pixels_per_tick);
-                self.pixels_per_tick =
-                    (self.pixels_per_tick * factor).clamp(MIN_PIXELS_PER_TICK, MAX_PIXELS_PER_TICK);
-                let new_origin =
-                    anchor_tick - f64::from(anchor_x.max(0.0)) / f64::from(self.pixels_per_tick);
-                self.origin_tick = new_origin.clamp(0.0, u64::MAX as f64).round() as u64;
-                self.pan_fractional_tick = 0.0;
+                self.zoom_at(factor, anchor_x);
+            }
+            TimelineEvent::ZoomAtPosition {
+                factor,
+                anchor_x,
+                pointer_position,
+            } => {
+                self.hovered_item_position = Some(pointer_position);
+                self.zoom_at(factor, anchor_x);
             }
             TimelineEvent::SelectItem {
                 item_id,
                 additive,
                 range,
             } => {
+                self.delete_focus = DeleteFocusTarget::Arrange;
                 self.selected_volume_automation_point = None;
                 self.selected_fx_automation_point = None;
                 self.select_item(item_id, additive, range, false);
+            }
+            TimelineEvent::SetInlineMidiNoteSelection { item_id, note_ids } => {
+                if let Some(item) = self
+                    .cache
+                    .item_indices
+                    .get(&item_id)
+                    .and_then(|index| self.cache.items.get(*index))
+                {
+                    let valid_note_ids = item
+                        .midi_notes
+                        .iter()
+                        .map(|note| note.id)
+                        .collect::<HashSet<_>>();
+                    let note_ids = note_ids
+                        .into_iter()
+                        .filter(|note_id| valid_note_ids.contains(note_id))
+                        .collect::<HashSet<_>>();
+                    if note_ids.is_empty() {
+                        self.inline_midi_note_selection.remove(&item_id);
+                    } else {
+                        self.inline_midi_note_selection.insert(item_id, note_ids);
+                    }
+                }
+            }
+            TimelineEvent::SetHoveredItem(item_id) => {
+                if item_id.is_none() {
+                    self.hovered_item_position = None;
+                }
+                self.hovered_item = item_id.filter(|id| self.cache.item_indices.contains_key(id));
+            }
+            TimelineEvent::PointerMoved(position) => {
+                self.hovered_item_position = Some(position);
+                self.refresh_hovered_item();
+            }
+            TimelineEvent::SelectHoveredItem(mode) => {
+                if let Some(item_id) = self.hovered_item {
+                    self.delete_focus = DeleteFocusTarget::Arrange;
+                    self.selected_volume_automation_point = None;
+                    self.selected_fx_automation_point = None;
+                    let selection_anchor = self.selection_anchor;
+                    let (additive, preserve_existing_for_drag) = match mode {
+                        HoveredItemSelectionMode::Replace => (false, false),
+                        HoveredItemSelectionMode::Add => (true, true),
+                        HoveredItemSelectionMode::Toggle => (true, false),
+                    };
+                    self.select_item(Some(item_id), additive, false, preserve_existing_for_drag);
+                    if matches!(
+                        mode,
+                        HoveredItemSelectionMode::Add | HoveredItemSelectionMode::Toggle
+                    ) {
+                        self.selection_anchor = selection_anchor;
+                    }
+                } else if mode == HoveredItemSelectionMode::Replace
+                    && self.pointer_is_over_item_lane()
+                {
+                    self.delete_focus = DeleteFocusTarget::Arrange;
+                    self.selected_volume_automation_point = None;
+                    self.selected_fx_automation_point = None;
+                    self.select_item(None, false, false, false);
+                }
             }
             TimelineEvent::SelectItemsInMarquee {
                 start_tick,
@@ -1382,9 +2010,33 @@ impl TimelineState {
                 top,
                 bottom,
                 additive,
-            } => self.select_items_in_marquee(start_tick, end_tick, top, bottom, additive),
+            } => {
+                self.delete_focus = DeleteFocusTarget::Arrange;
+                self.select_items_in_marquee(start_tick, end_tick, top, bottom, additive);
+            }
+            TimelineEvent::OpenFadeMenu {
+                item_id,
+                edge,
+                x,
+                y,
+            } => {
+                if self.cache.item_indices.contains_key(&item_id) {
+                    self.context_item = None;
+                    self.context_item_position = None;
+                    self.context_automation_point = None;
+                    self.context_fade = Some(FadeMenuContext {
+                        item_id,
+                        edge,
+                        x,
+                        y,
+                    });
+                }
+            }
+            TimelineEvent::CloseFadeMenu => self.context_fade = None,
+            TimelineEvent::SetFadeCurvePreset { .. } => {}
             TimelineEvent::OpenItemContextMenu { item_id, x, y } => {
                 if self.cache.item_indices.contains_key(&item_id) {
+                    self.delete_focus = DeleteFocusTarget::Arrange;
                     if !self.selected_items.contains(&item_id) {
                         self.select_item(Some(item_id), false, false, false);
                     }
@@ -1402,6 +2054,7 @@ impl TimelineState {
                 x,
                 y,
             } => {
+                self.delete_focus = DeleteFocusTarget::Automation;
                 self.context_automation_point =
                     Some(AutomationPointContext::Volume { track_id, index });
                 self.context_automation_position = Some((x, y));
@@ -1414,6 +2067,7 @@ impl TimelineState {
                 x,
                 y,
             } => {
+                self.delete_focus = DeleteFocusTarget::Automation;
                 self.context_automation_point = Some(AutomationPointContext::Fx {
                     track_id,
                     chain_index,
@@ -1434,6 +2088,18 @@ impl TimelineState {
                     self.volume_automation_tracks.insert(track_id);
                 }
                 self.cache.generation = self.cache.generation.wrapping_add(1);
+            }
+            TimelineEvent::CycleFolderCompact(track_id) => {
+                if self.folder_tracks.contains(&track_id) {
+                    let mode = (self.folder_compact(track_id) + 1) % 3;
+                    if mode == 0 {
+                        self.folder_compact.remove(&track_id);
+                    } else {
+                        self.folder_compact.insert(track_id, mode);
+                    }
+                    self.rebuild_row_layout();
+                    self.cache.generation = self.cache.generation.wrapping_add(1);
+                }
             }
             TimelineEvent::ToggleFxAutomation {
                 track_id,
@@ -1494,6 +2160,7 @@ impl TimelineState {
                 parameter_id,
                 index,
             } => {
+                self.delete_focus = DeleteFocusTarget::Automation;
                 self.selected_volume_automation_point = None;
                 self.selected_fx_automation_point =
                     Some((track_id, chain_index, parameter_id, index));
@@ -1505,6 +2172,7 @@ impl TimelineState {
                 self.cache.generation = self.cache.generation.wrapping_add(1);
             }
             TimelineEvent::SelectVolumeAutomationPoint { track_id, index } => {
+                self.delete_focus = DeleteFocusTarget::Automation;
                 self.selected_fx_automation_point = None;
                 self.selected_volume_automation_point = Some((track_id, index));
                 self.cache.generation = self.cache.generation.wrapping_add(1);
@@ -1520,17 +2188,118 @@ impl TimelineState {
             | TimelineEvent::InsertVolumeAutomationAt { .. }
             | TimelineEvent::DeleteVolumeAutomationPoint { .. } => {}
             TimelineEvent::SelectEmpty(tick) => {
+                self.delete_focus = DeleteFocusTarget::Arrange;
                 self.selected_volume_automation_point = None;
                 self.selected_fx_automation_point = None;
-                self.edit_cursor_tick = tick;
+                self.set_edit_cursor_tick(tick);
                 self.select_item(None, false, false, false);
             }
-            TimelineEvent::SetEditCursor(tick) => self.edit_cursor_tick = tick,
+            TimelineEvent::SetEditCursor(tick) => self.set_edit_cursor_tick(tick),
+            TimelineEvent::SetEditCursorPosition { tick, position } => {
+                self.edit_cursor_tick = tick;
+                self.edit_cursor_position = Some(position);
+            }
+            TimelineEvent::SelectProjectMarker {
+                marker_id,
+                position_ticks,
+            } => {
+                self.selected_project_marker = Some(marker_id);
+                self.set_edit_cursor_tick(position_ticks);
+            }
+            TimelineEvent::SelectProjectRegion {
+                start_ticks,
+                end_ticks,
+                ..
+            } => {
+                self.set_time_selection(TimeSelection::normalized(start_ticks, end_ticks));
+                self.set_edit_cursor_tick(start_ticks);
+            }
+            TimelineEvent::EditProjectMarker { .. } => {}
+            TimelineEvent::MoveProjectMarker { marker_id, .. } => {
+                self.selected_project_marker = Some(marker_id);
+            }
+            TimelineEvent::MoveProjectRegion { .. } => {}
             TimelineEvent::SetTimeSelection {
                 start_tick,
                 end_tick,
-            } => self.time_selection = TimeSelection::normalized(start_tick, end_tick),
-            TimelineEvent::ClearTimeSelection => self.time_selection = None,
+            } => self.set_time_selection(TimeSelection::normalized(start_tick, end_tick)),
+            TimelineEvent::ClearTimeSelection => self.set_time_selection(None),
+            TimelineEvent::SetLoopPoints {
+                start_tick,
+                end_tick,
+            } => self.set_loop_points(Some(LoopPoints {
+                start_tick: start_tick.min(end_tick),
+                end_tick: start_tick.max(end_tick),
+            })),
+            TimelineEvent::SetLoopPointStartAtCursor => {
+                let cursor = self.edit_cursor_tick;
+                let current = self.loop_points.unwrap_or(LoopPoints {
+                    start_tick: cursor,
+                    end_tick: cursor,
+                });
+                let range = if cursor <= current.end_tick {
+                    LoopPoints {
+                        start_tick: cursor,
+                        end_tick: current.end_tick,
+                    }
+                } else {
+                    LoopPoints {
+                        start_tick: cursor,
+                        end_tick: cursor,
+                    }
+                };
+                self.set_loop_points(Some(range));
+            }
+            TimelineEvent::SetLoopPointEndAtCursor => {
+                let cursor = self.edit_cursor_tick;
+                let current = self.loop_points.unwrap_or(LoopPoints {
+                    start_tick: 0,
+                    end_tick: cursor,
+                });
+                let range = if cursor >= current.start_tick {
+                    LoopPoints {
+                        start_tick: current.start_tick,
+                        end_tick: cursor,
+                    }
+                } else {
+                    LoopPoints {
+                        start_tick: cursor,
+                        end_tick: cursor,
+                    }
+                };
+                self.set_loop_points(Some(range));
+            }
+            TimelineEvent::ToggleLoopPointsLinked => {
+                self.loop_points_linked = !self.loop_points_linked;
+                if self.loop_points_linked {
+                    self.loop_points = self.time_selection.map(|selection| LoopPoints {
+                        start_tick: selection.start_tick,
+                        end_tick: selection.end_tick,
+                    });
+                }
+            }
+            TimelineEvent::MoveLoopPointsToTimeSelection => {
+                self.set_time_selection(
+                    self.loop_points.and_then(|range| {
+                        TimeSelection::normalized(range.start_tick, range.end_tick)
+                    }),
+                );
+            }
+            TimelineEvent::ClearLoopPointsIfUnlinked => {
+                if !self.loop_points_linked {
+                    self.loop_points = None;
+                }
+            }
+            TimelineEvent::ClearLoopPoints => {
+                self.loop_points = None;
+                if self.loop_points_linked {
+                    self.time_selection = None;
+                }
+            }
+            TimelineEvent::ClearTimeSelectionAndLoopPoints => {
+                self.time_selection = None;
+                self.loop_points = None;
+            }
             TimelineEvent::ToggleSnap => {
                 if self.cache.snap_grid_ticks.is_some() {
                     self.snap_enabled = !self.snap_enabled;
@@ -1542,6 +2311,21 @@ impl TimelineState {
                 if self.cache.snap_grid_ticks.is_none() {
                     self.snap_enabled = false;
                 }
+            }
+            TimelineEvent::SetSnapSwingEnabled(enabled) => {
+                self.set_snap_swing_enabled(enabled);
+            }
+            TimelineEvent::ToggleSnapSwing => self.toggle_snap_swing(),
+            TimelineEvent::SetSnapSwingAmountPercent(amount) => {
+                self.set_snap_swing_amount_percent(amount);
+            }
+            TimelineEvent::ToggleMidiEditorSnap => {
+                if self.midi_editor_has_snap_grid() {
+                    self.snap_enabled = !self.snap_enabled;
+                }
+            }
+            TimelineEvent::SetMidiEditorSnapGrid(grid) => {
+                self.midi_editor_snap_grid = grid;
             }
             TimelineEvent::BeginItemDrag {
                 item_id,
@@ -1578,6 +2362,9 @@ impl TimelineState {
             }
             TimelineEvent::EndItemDrag => self.drag_preview = None,
             TimelineEvent::CancelItemDrag => self.drag_preview = None,
+            TimelineEvent::PreviewItemFades { .. }
+            | TimelineEvent::CommitItemFades
+            | TimelineEvent::CancelItemFades => {}
             TimelineEvent::BeginItemTrim {
                 item_id,
                 edge,
@@ -1599,19 +2386,27 @@ impl TimelineState {
             TimelineEvent::EndItemTrim | TimelineEvent::CancelItemTrim => {
                 self.item_trim_preview = None;
             }
-            TimelineEvent::SelectTrack(track_id) => self.select_track_only(track_id),
+            TimelineEvent::SelectTrack(track_id) => {
+                self.delete_focus = DeleteFocusTarget::TrackPanel;
+                self.select_track_only(track_id);
+            }
             TimelineEvent::SelectTrackWithModifiers {
                 track_id,
                 modifiers,
-            } => self.select_track_with_modifiers(track_id, modifiers),
+            } => {
+                self.delete_focus = DeleteFocusTarget::TrackPanel;
+                self.select_track_with_modifiers(track_id, modifiers);
+            }
             TimelineEvent::OpenTrackContextMenu(track_id) => {
                 if self.cache.track_ids.contains(&track_id) {
+                    self.delete_focus = DeleteFocusTarget::TrackPanel;
                     self.select_track_only(track_id);
                     self.context_track = Some(track_id);
                 }
             }
             TimelineEvent::ToggleTrackContextMenu(track_id) => {
                 if self.cache.track_ids.contains(&track_id) {
+                    self.delete_focus = DeleteFocusTarget::TrackPanel;
                     if self.context_track == Some(track_id) {
                         self.context_track = None;
                     } else {
@@ -1630,6 +2425,21 @@ impl TimelineState {
 
     pub(crate) fn is_track_selected(&self, track_id: TrackId) -> bool {
         self.selected_tracks.contains(&track_id) || self.selected_track == Some(track_id)
+    }
+
+    pub(crate) fn selected_automation_point_delete_event(&self) -> Option<TimelineEvent> {
+        if let Some((track_id, chain_index, parameter_id, index)) =
+            self.selected_fx_automation_point
+        {
+            return Some(TimelineEvent::DeleteFxAutomationPoint {
+                track_id,
+                chain_index,
+                parameter_id,
+                index,
+            });
+        }
+        self.selected_volume_automation_point
+            .map(|(track_id, index)| TimelineEvent::DeleteVolumeAutomationPoint { track_id, index })
     }
 
     pub(crate) fn select_track_only(&mut self, track_id: TrackId) {
@@ -1698,10 +2508,9 @@ impl TimelineState {
         range: bool,
         preserve_existing_for_drag: bool,
     ) {
+        self.delete_focus = DeleteFocusTarget::Arrange;
         let Some(item_id) = item_id else {
-            self.selected_items.clear();
-            self.selected_item = None;
-            self.selection_anchor = None;
+            self.clear_selected_items();
             return;
         };
         let Some(&item_index) = self.cache.item_indices.get(&item_id) else {
@@ -1732,7 +2541,7 @@ impl TimelineState {
                 self.selected_items.insert(item_id);
                 self.selected_item = Some(item_id);
             } else if self.selected_item == Some(item_id) {
-                self.selected_item = self.selected_items.iter().copied().next();
+                self.selected_item = self.first_selected_item_in_project_order();
             }
             self.selection_anchor = Some(item_id);
         } else if additive {
@@ -1815,10 +2624,15 @@ impl TimelineState {
         let target_start = i128::from(anchor.start_tick) + pointer_delta_ticks;
         let snapped_delta = if self.snap_enabled && !ignore_snap {
             self.cache.snap_grid_ticks.map(|grid| {
-                let grid = i128::from(grid);
-                if target_start >= 0 {
-                    let snapped_start = ((target_start + grid / 2) / grid) * grid;
-                    snapped_start - i128::from(anchor.start_tick)
+                if (0..=i128::from(u64::MAX)).contains(&target_start) {
+                    let snapped_start = snap_tick_to_grid(
+                        target_start as u64,
+                        Some(grid),
+                        true,
+                        false,
+                        self.cache.swing_grid.active_amount_percent(),
+                    );
+                    i128::from(snapped_start) - i128::from(anchor.start_tick)
                 } else {
                     pointer_delta_ticks
                 }
@@ -1870,6 +2684,7 @@ impl TimelineState {
             self.cache.snap_grid_ticks,
             self.snap_enabled,
             ignore_snap,
+            self.cache.swing_grid.active_amount_percent(),
         );
         let (start_tick, end_tick) = match edge {
             ItemTrimEdge::Start => (target_tick, item.end_tick),
@@ -1894,12 +2709,58 @@ impl TimelineState {
         self.drag_preview
     }
 
+    pub(crate) fn item_fade_preview(&self) -> Option<(ItemId, aaadaw_core::AudioItemFades)> {
+        self.item_fade_preview
+    }
+    pub(crate) fn set_item_fade_preview(
+        &mut self,
+        item_id: ItemId,
+        fades: aaadaw_core::AudioItemFades,
+    ) {
+        self.item_fade_preview = Some((item_id, fades));
+    }
+    pub(crate) fn take_item_fade_preview(
+        &mut self,
+    ) -> Option<(ItemId, aaadaw_core::AudioItemFades)> {
+        self.item_fade_preview.take()
+    }
+
     pub(crate) fn item_trim_preview(&self) -> Option<ItemTrimPreview> {
         self.item_trim_preview
     }
 
     pub(crate) fn has_snap_grid(&self) -> bool {
         self.cache.snap_grid_ticks.is_some()
+    }
+
+    pub(crate) fn snap_swing_enabled(&self) -> bool {
+        self.cache.swing_grid.enabled
+    }
+
+    pub(crate) fn snap_swing_amount_percent(&self) -> i16 {
+        self.cache.swing_grid.amount_percent
+    }
+
+    pub(crate) fn active_snap_swing_amount_percent(&self) -> i16 {
+        self.cache.swing_grid.active_amount_percent()
+    }
+
+    pub(crate) fn set_snap_swing_enabled(&mut self, enabled: bool) {
+        self.cache.swing_grid.enabled = enabled;
+    }
+
+    pub(crate) fn toggle_snap_swing(&mut self) {
+        self.cache.swing_grid.enabled = !self.cache.swing_grid.enabled;
+    }
+
+    pub(crate) fn set_snap_swing_amount_percent(&mut self, amount_percent: i16) {
+        self.cache.swing_grid.amount_percent = amount_percent.clamp(-100, 100);
+    }
+
+    pub(crate) fn midi_editor_has_snap_grid(&self) -> bool {
+        self.midi_editor_snap_grid
+            .tick_interval(self.cache.ppq)
+            .is_some()
     }
 
     pub(crate) fn selected_item_geometries(&self) -> Vec<SelectedItemGeometry> {
@@ -1913,7 +2774,9 @@ impl TimelineState {
                     cache_index: index,
                     item_id: item.id,
                     start_tick: item.start_tick,
+                    start_tick_subtick: item.start_tick_subtick,
                     end_tick: item.end_tick,
+                    end_tick_subtick: item.end_tick_subtick,
                     track_index: item.track_index,
                     kind: item.kind,
                 })
@@ -1937,14 +2800,33 @@ impl TimelineState {
             waveform_geometry_cache: Arc::clone(&self.waveform_geometry_cache),
             origin_tick: self.origin_tick,
             pixels_per_tick: self.pixels_per_tick,
-            edit_cursor_tick: self.edit_cursor_tick,
+            edit_cursor_tick_position: self.edit_cursor_tick_position(project),
             playhead_tick,
             selected_items: self.selected_item_geometries(),
+            inline_midi_items: &self.inline_midi_items,
+            inline_midi_note_selection: &self.inline_midi_note_selection,
+            razor_edit_areas: project
+                .tracks()
+                .iter()
+                .enumerate()
+                .flat_map(|(track_index, track)| {
+                    track.razor_edit_areas().iter().filter_map(move |area| {
+                        Some((
+                            project.tick_at_sample(area.start_sample()).ok()?,
+                            project.tick_at_sample(area.end_sample()).ok()?,
+                            u32::try_from(track_index).ok()?,
+                        ))
+                    })
+                })
+                .collect(),
+            hovered_item: self.hovered_item,
+            hovered_item_position: self.hovered_item_position,
             time_selection: self.time_selection,
             snap_enabled: self.snap_enabled,
             selected_track: self.selected_track,
             drag_preview: self.drag_preview,
             item_trim_preview: self.item_trim_preview,
+            item_fade_preview: self.item_fade_preview,
             volume_automation_tracks: &self.volume_automation_tracks,
             hidden_volume_automation_tracks: &self.hidden_volume_automation_tracks,
             selected_volume_automation_point: self.selected_volume_automation_point,
@@ -1961,13 +2843,46 @@ impl TimelineState {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+fn time_range_at_project_seconds(
+    project: &Project,
+    start_tick: u64,
+    end_tick: u64,
+) -> Option<ArrangementTimeRangeState> {
+    let sample_rate = f64::from(project.settings().sample_rate());
+    let start_sample = project.sample_at_tick(start_tick).ok()?;
+    let end_sample = project.sample_at_tick(end_tick).ok()?;
+    Some(ArrangementTimeRangeState {
+        start_seconds: start_sample as f64 / sample_rate,
+        end_seconds: end_sample as f64 / sample_rate,
+    })
+}
+
+fn time_range_ticks_at_project_seconds(
+    project: &Project,
+    range: ArrangementTimeRangeState,
+) -> Option<(u64, u64)> {
+    let sample_rate = f64::from(project.settings().sample_rate());
+    let sample_at_seconds = |seconds: f64| {
+        let sample = seconds * sample_rate;
+        (sample.is_finite() && (0.0..=((1_u64 << 53) - 1) as f64).contains(&sample))
+            .then(|| sample.round() as u64)
+    };
+    let start_sample = sample_at_seconds(range.start_seconds)?;
+    let end_sample = sample_at_seconds(range.end_seconds)?;
+    Some((
+        project.tick_at_sample(start_sample).ok()?,
+        project.tick_at_sample(end_sample).ok()?,
+    ))
+}
+
+#[derive(Debug, Clone)]
 pub(crate) struct RulerLine {
     pub(crate) tick: u64,
     pub(crate) x: f32,
-    pub(crate) measure: u64,
+    pub(crate) measure: i64,
     pub(crate) is_measure: bool,
     pub(crate) show_label: bool,
+    pub(crate) time_label: Option<String>,
 }
 
 struct TimelineProgram<'a> {
@@ -1978,14 +2893,20 @@ struct TimelineProgram<'a> {
     waveform_geometry_cache: Arc<Mutex<CachedWaveformGeometry>>,
     origin_tick: u64,
     pixels_per_tick: f32,
-    edit_cursor_tick: u64,
+    edit_cursor_tick_position: f64,
     playhead_tick: Option<u64>,
     selected_items: Vec<SelectedItemGeometry>,
+    inline_midi_items: &'a HashSet<ItemId>,
+    inline_midi_note_selection: &'a HashMap<ItemId, HashSet<NoteId>>,
+    razor_edit_areas: Vec<(u64, u64, u32)>,
+    hovered_item: Option<ItemId>,
+    hovered_item_position: Option<Point>,
     time_selection: Option<TimeSelection>,
     snap_enabled: bool,
     selected_track: Option<TrackId>,
     drag_preview: Option<ItemDragPreview>,
     item_trim_preview: Option<ItemTrimPreview>,
+    item_fade_preview: Option<(ItemId, aaadaw_core::AudioItemFades)>,
     volume_automation_tracks: &'a HashSet<TrackId>,
     hidden_volume_automation_tracks: &'a HashSet<TrackId>,
     selected_volume_automation_point: Option<(TrackId, usize)>,
@@ -2002,12 +2923,85 @@ struct TimelineInteractionState {
     middle_drag: Option<MiddleDragState>,
     pending_item_drag: Option<PendingItemDrag>,
     pending_item_trim: Option<PendingItemTrim>,
+    pending_item_fade: Option<PendingItemFade>,
     pending_time_selection_drag: Option<PendingTimeSelectionDrag>,
     pending_item_selection_drag: Option<PendingItemSelectionDrag>,
+    pending_inline_note_move: Option<PendingInlineNoteMove>,
+    pending_inline_note_insert: Option<PendingInlineNoteInsert>,
+    last_inline_note_click: Option<(ItemId, Point, Instant)>,
     last_item_click: Option<(ItemId, Instant)>,
     pending_automation_point: Option<PendingAutomationPoint>,
     automation_point_preview: Option<AutomationPointPreview>,
     pending_fx_lane_resize: Option<PendingFxAutomationLaneResize>,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct InlineMidiTarget {
+    item_id: ItemId,
+    item_start_tick: u64,
+    item_length_ticks: u64,
+    source_offset_ticks: i64,
+    source_loop_length_ticks: Option<u64>,
+    item_left: f32,
+    item_width: f32,
+    pitch_low: u8,
+    pitch_high: u8,
+    notes_top: f32,
+    notes_height: f32,
+}
+
+#[derive(Debug, Clone)]
+struct PendingInlineNoteMove {
+    target: InlineMidiTarget,
+    note_id: NoteId,
+    note: MidiNoteData,
+    display_tick: u64,
+    notes: Vec<(NoteId, MidiNoteData)>,
+    start_position: Point,
+    resize: bool,
+    copy: bool,
+    click_selection: Option<HashSet<NoteId>>,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct PendingInlineNoteInsert {
+    target: InlineMidiTarget,
+    start_position: Point,
+    is_dragging: bool,
+    is_double_click: bool,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct InlineMidiNoteHit {
+    note: MidiNotePreview,
+    display_tick: u64,
+    resize: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) enum ItemFadeEdge {
+    In,
+    Out,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct FadeMenuContext {
+    pub(crate) item_id: ItemId,
+    pub(crate) edge: ItemFadeEdge,
+    pub(crate) x: f32,
+    pub(crate) y: f32,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct PendingItemFade {
+    item_id: ItemId,
+    edge: ItemFadeEdge,
+    start_x: f32,
+    handle_tick: f64,
+    item_start: u64,
+    item_length: u64,
+    original: aaadaw_core::AudioItemFades,
+    dragging: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -2103,13 +3097,17 @@ impl MiddleDragState {
         let event = match self.axis? {
             MiddleDragAxis::HorizontalPan => {
                 let delta = position.x - self.last.x;
-                (delta.abs() > f32::EPSILON).then_some(TimelineEvent::PanByPixels(delta))
+                (delta.abs() > f32::EPSILON).then_some(TimelineEvent::PanByPixelsAt {
+                    delta_x: delta,
+                    pointer_position: position,
+                })
             }
             MiddleDragAxis::VerticalZoom => {
                 let delta = position.y - self.last.y;
-                (delta.abs() > f32::EPSILON).then_some(TimelineEvent::ZoomAt {
+                (delta.abs() > f32::EPSILON).then_some(TimelineEvent::ZoomAtPosition {
                     factor: 1.12_f32.powf(-delta / 24.0),
                     anchor_x: self.start.x,
+                    pointer_position: position,
                 })
             }
         };
@@ -2172,6 +3170,525 @@ impl PendingTimeSelectionDrag {
 }
 
 impl TimelineProgram<'_> {
+    fn fade_segments(&self, width: f32) -> Vec<renderer::FadeSegment> {
+        let mut segments = Vec::new();
+        for item in self.project.audio_items() {
+            let Some(index) = self
+                .cache
+                .track_ids
+                .iter()
+                .position(|id| *id == item.track_id())
+            else {
+                continue;
+            };
+            let Some(row) = self.row_layout.get(index).copied() else {
+                continue;
+            };
+            let track = &self.project.tracks()[index];
+            let automation = self.volume_automation_tracks.contains(&track.id())
+                || (!self.hidden_volume_automation_tracks.contains(&track.id())
+                    && !track.volume_automation().is_empty());
+            let (top, height) = fade_body_geometry(row, automation);
+            if height < 8.0 {
+                continue;
+            }
+            let fades = self
+                .item_fade_preview
+                .filter(|(id, _)| *id == item.id())
+                .map_or(item.fades(), |(_, fades)| fades);
+            let (fade_in, fade_out) = effective_fade_lengths(fades, item.length_samples());
+            for (edge, fade, length) in [
+                (ItemFadeEdge::In, fades.fade_in, fade_in),
+                (ItemFadeEdge::Out, fades.fade_out, fade_out),
+            ] {
+                let (start, end) = match edge {
+                    ItemFadeEdge::In => (
+                        item.start_sample() as f64,
+                        item.start_sample() as f64 + length,
+                    ),
+                    ItemFadeEdge::Out => {
+                        (item.end_sample() as f64 - length, item.end_sample() as f64)
+                    }
+                };
+                let (Ok(start_tick), Ok(end_tick)) = (
+                    self.project.tick_at_sample_position(start),
+                    self.project.tick_at_sample_position(end),
+                ) else {
+                    continue;
+                };
+                let x_at = |tick: f64| {
+                    ((tick - self.origin_tick as f64) * f64::from(self.pixels_per_tick)) as f32
+                };
+                let left = x_at(start_tick);
+                let right = x_at(end_tick);
+                if right < 0.0 || left > width {
+                    continue;
+                }
+                if length > 0.0 {
+                    let visible_start = start_tick.max(self.origin_tick as f64);
+                    let visible_end = end_tick
+                        .min(self.origin_tick as f64 + f64::from(width / self.pixels_per_tick));
+                    let count = (x_at(visible_end) - x_at(visible_start))
+                        .ceil()
+                        .clamp(2.0, 128.0) as usize;
+                    let mut previous = None;
+                    for step in 0..=count {
+                        let tick = visible_start
+                            + (visible_end - visible_start) * step as f64 / count as f64;
+                        let Ok(sample) = self.project.sample_at_tick_position(tick) else {
+                            previous = None;
+                            continue;
+                        };
+                        let progress = match edge {
+                            ItemFadeEdge::In => (sample - start) / length,
+                            ItemFadeEdge::Out => (end - sample) / length,
+                        };
+                        let point = Point::new(
+                            x_at(tick),
+                            top + height * (1.0 - fade.gain_at_progress(progress)),
+                        );
+                        if let Some(start) = previous {
+                            segments.push(renderer::FadeSegment {
+                                start,
+                                end: point,
+                                color: [188, 48, 48, 255],
+                            });
+                        }
+                        previous = Some(point);
+                    }
+                }
+                if track.frozen_audio_item_id() == Some(item.id()) {
+                    continue;
+                }
+                let x = if edge == ItemFadeEdge::In {
+                    right
+                } else {
+                    left
+                };
+                if !(0.0..=width).contains(&x) {
+                    continue;
+                }
+                let corner = Point::new(x, top);
+                let side = Point::new(x + if edge == ItemFadeEdge::In { -4.0 } else { 4.0 }, top);
+                let bottom = Point::new(x, top + 4.0);
+                for (start, end) in [(corner, side), (side, bottom), (bottom, corner)] {
+                    segments.push(renderer::FadeSegment {
+                        start,
+                        end,
+                        color: [221, 225, 228, 255],
+                    });
+                }
+            }
+        }
+        segments
+    }
+
+    fn fade_handle_at(&self, position: Point) -> Option<(ItemId, ItemFadeEdge, f64)> {
+        let (row_index, _) = row_at_y(self.row_layout, position.y)?;
+        let track = self.project.tracks().get(row_index)?;
+        let row = *self.row_layout.get(row_index)?;
+        let automation = self.volume_automation_tracks.contains(&track.id())
+            || (!self.hidden_volume_automation_tracks.contains(&track.id())
+                && !track.volume_automation().is_empty());
+        let (top, height) = fade_body_geometry(row, automation);
+        if height < 8.0 || position.y < top || position.y > top + 8.0 {
+            return None;
+        }
+        self.project
+            .audio_items()
+            .iter()
+            .rev()
+            .filter(|item| {
+                item.track_id() == track.id() && track.frozen_audio_item_id() != Some(item.id())
+            })
+            .find_map(|item| {
+                let fades = self
+                    .item_fade_preview
+                    .filter(|(id, _)| *id == item.id())
+                    .map_or(item.fades(), |(_, fades)| fades);
+                let (fade_in, fade_out) = effective_fade_lengths(fades, item.length_samples());
+                [
+                    (ItemFadeEdge::In, item.start_sample() as f64 + fade_in),
+                    (ItemFadeEdge::Out, item.end_sample() as f64 - fade_out),
+                ]
+                .into_iter()
+                .find_map(|(edge, sample)| {
+                    let tick = self.project.tick_at_sample_position(sample).ok()?;
+                    let x = (tick - self.origin_tick as f64) * f64::from(self.pixels_per_tick);
+                    ((f64::from(position.x) - x).abs() <= 6.0).then_some((item.id(), edge, tick))
+                })
+            })
+    }
+
+    fn inline_midi_target_at(&self, position: Point) -> Option<InlineMidiTarget> {
+        let (track_index, _) = row_at_y(self.row_layout, position.y)?;
+        let tick = tick_at_x(self.origin_tick, self.pixels_per_tick, position.x);
+        let item = self.cache.item_at(track_index, tick)?;
+        if item.kind != ItemKind::Midi || !self.inline_midi_items.contains(&item.id) {
+            return None;
+        }
+        let row = self.row_layout.get(track_index)?;
+        let subticks_per_tick = f64::from(aaadaw_core::MIDI_ITEM_SUBTICKS_PER_TICK);
+        let item_start =
+            item.start_tick as f64 + f64::from(item.start_tick_subtick) / subticks_per_tick;
+        let item_end = item.end_tick as f64 + f64::from(item.end_tick_subtick) / subticks_per_tick;
+        let item_left =
+            ((item_start - self.origin_tick as f64) * f64::from(self.pixels_per_tick)) as f32;
+        let item_width = ((item_end - item_start) * f64::from(self.pixels_per_tick)) as f32;
+        let notes_top = row.top + 24.0;
+        let notes_height = (row.base_height - 34.0).max(12.0);
+        if !item_width.is_finite()
+            || item_width <= 0.0
+            || position.x < item_left
+            || position.x > item_left + item_width
+            || position.y < notes_top
+            || position.y > notes_top + notes_height
+        {
+            return None;
+        }
+        let (pitch_low, pitch_high) = midi_inline_pitch_bounds(&item.midi_notes);
+        Some(InlineMidiTarget {
+            item_id: item.id,
+            item_start_tick: item.start_tick,
+            item_length_ticks: item.end_tick.saturating_sub(item.start_tick),
+            source_offset_ticks: item.midi_source_offset_ticks,
+            source_loop_length_ticks: item.midi_source_loop_length_ticks,
+            item_left,
+            item_width,
+            pitch_low,
+            pitch_high,
+            notes_top,
+            notes_height,
+        })
+    }
+
+    fn inline_midi_note_hit(
+        &self,
+        target: InlineMidiTarget,
+        position: Point,
+    ) -> Option<InlineMidiNoteHit> {
+        let item = self
+            .cache
+            .item_indices
+            .get(&target.item_id)
+            .and_then(|index| self.cache.items.get(*index))?;
+        if target.item_length_ticks == 0 || target.item_width <= 0.0 {
+            return None;
+        }
+        let local_tick = (((position.x - target.item_left) / target.item_width)
+            * target.item_length_ticks as f32)
+            .floor()
+            .clamp(0.0, target.item_length_ticks.saturating_sub(1) as f32)
+            as u64;
+        let (low_pitch, high_pitch) = midi_inline_pitch_bounds(&item.midi_notes);
+        let pitch_range = f32::from((high_pitch - low_pitch).max(1));
+        let note_height = (target.notes_height / (pitch_range + 1.0)).clamp(2.0, 6.0);
+        let visible_pitch_height = (target.notes_height - note_height).max(0.0);
+        let loop_length = target.source_loop_length_ticks.filter(|length| *length > 0);
+        let mut nearest: Option<(f32, InlineMidiNoteHit)> = None;
+        for note in &item.midi_notes {
+            let mut occurrences = [None; 3];
+            if let Some(loop_length) = loop_length {
+                let source_tick = note.tick % loop_length;
+                let phase = (i128::from(source_tick) - i128::from(target.source_offset_ticks))
+                    .rem_euclid(i128::from(loop_length)) as u64;
+                let near_index = local_tick.saturating_sub(phase) / loop_length;
+                for (slot, index) in
+                    (near_index.saturating_sub(1)..=near_index.saturating_add(1)).enumerate()
+                {
+                    occurrences[slot] = phase.checked_add(index.saturating_mul(loop_length));
+                }
+            } else {
+                let local_start = i128::from(note.tick) - i128::from(target.source_offset_ticks);
+                let local_end = local_start + i128::from(note.duration);
+                if local_end > 0 && local_start < i128::from(target.item_length_ticks) {
+                    occurrences[0] = u64::try_from(local_start.max(0)).ok();
+                }
+            }
+            for occurrence_tick in occurrences.into_iter().flatten() {
+                let duration = if loop_length.is_some() {
+                    note.duration.min(target.item_length_ticks)
+                } else {
+                    let source_offset = i128::from(target.source_offset_ticks);
+                    let note_end = i128::from(note.tick) + i128::from(note.duration);
+                    let local_end = note_end - source_offset;
+                    u64::try_from(local_end - i128::from(occurrence_tick))
+                        .unwrap_or_default()
+                        .min(target.item_length_ticks)
+                };
+                let note_end = occurrence_tick
+                    .saturating_add(duration)
+                    .min(target.item_length_ticks);
+                if occurrence_tick >= target.item_length_ticks || note_end <= occurrence_tick {
+                    continue;
+                }
+                let rect_x = target.item_left
+                    + occurrence_tick as f32 / target.item_length_ticks as f32 * target.item_width;
+                let rect_width = ((note_end - occurrence_tick) as f32
+                    / target.item_length_ticks as f32
+                    * target.item_width)
+                    .max(1.25)
+                    .min(target.item_width);
+                let pitch_offset = f32::from(high_pitch.saturating_sub(note.pitch));
+                let rect_y = target.notes_top + pitch_offset / pitch_range * visible_pitch_height;
+                let dx = if position.x < rect_x {
+                    rect_x - position.x
+                } else if position.x > rect_x + rect_width {
+                    position.x - (rect_x + rect_width)
+                } else {
+                    0.0
+                };
+                let dy = if position.y < rect_y {
+                    rect_y - position.y
+                } else if position.y > rect_y + note_height {
+                    position.y - (rect_y + note_height)
+                } else {
+                    0.0
+                };
+                if dx > 3.0 || dy > 4.0 {
+                    continue;
+                }
+                let distance = dx * dx + dy * dy;
+                if nearest.as_ref().is_none_or(|(best, _)| distance < *best) {
+                    let display_tick = occurrence_tick;
+                    nearest = Some((
+                        distance,
+                        InlineMidiNoteHit {
+                            note: *note,
+                            display_tick,
+                            resize: rect_width > 8.0 && position.x >= rect_x + rect_width - 4.0,
+                        },
+                    ));
+                }
+            }
+        }
+        nearest.map(|(_, hit)| hit)
+    }
+
+    fn inline_note_data_after_drag(
+        &self,
+        drag: PendingInlineNoteMove,
+        position: Point,
+        ignore_snap: bool,
+    ) -> Option<MidiNoteData> {
+        let target = drag.target;
+        if (position.x - drag.start_position.x).hypot(position.y - drag.start_position.y) < 2.0 {
+            return Some(drag.note);
+        }
+        let delta_ticks = (f64::from(position.x - drag.start_position.x)
+            / f64::from(self.pixels_per_tick))
+        .round();
+        if !delta_ticks.is_finite() {
+            return None;
+        }
+        if drag.resize {
+            let raw_end = (drag.display_tick as f64 + drag.note.duration as f64 + delta_ticks)
+                .clamp(
+                    drag.display_tick.saturating_add(1) as f64,
+                    target.item_length_ticks as f64,
+                ) as u64;
+            let snapped_end = snap_tick_to_grid(
+                target.item_start_tick.saturating_add(raw_end),
+                self.cache.snap_grid_ticks,
+                self.snap_enabled,
+                ignore_snap,
+                self.cache.swing_grid.active_amount_percent(),
+            );
+            let mut duration = snapped_end
+                .saturating_sub(target.item_start_tick.saturating_add(drag.display_tick))
+                .clamp(
+                    1,
+                    target.item_length_ticks.saturating_sub(drag.display_tick),
+                );
+            if let Some(loop_length) = target.source_loop_length_ticks.filter(|length| *length > 0)
+            {
+                duration = duration.min(loop_length - (drag.note.tick % loop_length));
+            }
+            return Some(MidiNoteData {
+                duration,
+                ..drag.note
+            });
+        }
+        let target_local_tick = (drag.display_tick as f64 + delta_ticks)
+            .clamp(0.0, target.item_length_ticks.saturating_sub(1) as f64)
+            as u64;
+        let project_tick = target.item_start_tick.saturating_add(target_local_tick);
+        let snapped_tick = snap_tick_to_grid(
+            project_tick,
+            self.cache.snap_grid_ticks,
+            self.snap_enabled,
+            ignore_snap,
+            self.cache.swing_grid.active_amount_percent(),
+        );
+        let local_tick = snapped_tick
+            .saturating_sub(target.item_start_tick)
+            .min(target.item_length_ticks.saturating_sub(1));
+        let mut tick = i128::from(target.source_offset_ticks) + i128::from(local_tick);
+        if let Some(loop_length) = target.source_loop_length_ticks.filter(|length| *length > 0) {
+            tick = tick.rem_euclid(i128::from(loop_length));
+        } else {
+            let source_start = i128::from(target.source_offset_ticks).max(0);
+            let source_end = (i128::from(target.source_offset_ticks)
+                + i128::from(target.item_length_ticks))
+            .max(source_start);
+            let latest_start = (source_end - i128::from(drag.note.duration)).max(source_start);
+            tick = tick.clamp(source_start, latest_start);
+        }
+        let tick = u64::try_from(tick).ok()?;
+        let pitch_range =
+            f32::from((u16::from(target.pitch_high) - u16::from(target.pitch_low)).max(1));
+        let semitone_height = (target.notes_height / pitch_range).max(1.0);
+        let pitch_delta = ((drag.start_position.y - position.y) / semitone_height).round();
+        let pitch = (f32::from(drag.note.pitch) + pitch_delta).clamp(0.0, 127.0) as u8;
+        Some(MidiNoteData {
+            tick,
+            pitch,
+            ..drag.note
+        })
+    }
+
+    fn inline_note_edits_after_drag(
+        &self,
+        drag: PendingInlineNoteMove,
+        position: Point,
+        ignore_snap: bool,
+    ) -> Option<Vec<(NoteId, MidiNoteData)>> {
+        let anchor_data = self.inline_note_data_after_drag(drag.clone(), position, ignore_snap)?;
+        if drag.resize {
+            return Some(vec![(drag.note_id, anchor_data)]);
+        }
+
+        let mut delta_tick = i128::from(anchor_data.tick) - i128::from(drag.note.tick);
+        if let Some(loop_length) = drag
+            .target
+            .source_loop_length_ticks
+            .filter(|length| *length > 0)
+        {
+            let loop_length = i128::from(loop_length);
+            delta_tick = delta_tick.rem_euclid(loop_length);
+            if delta_tick > loop_length / 2 {
+                delta_tick -= loop_length;
+            }
+            delta_tick = delta_tick.clamp(i128::from(i64::MIN), i128::from(i64::MAX));
+        } else {
+            let min_tick = drag.notes.iter().map(|(_, note)| note.tick).min()?;
+            let max_end_tick = drag
+                .notes
+                .iter()
+                .map(|(_, note)| note.tick.saturating_add(note.duration))
+                .max()?;
+            let source_start = i128::from(drag.target.source_offset_ticks).max(0);
+            let source_end = (i128::from(drag.target.source_offset_ticks)
+                + i128::from(drag.target.item_length_ticks))
+            .max(source_start);
+            let min_delta = source_start - i128::from(min_tick);
+            let max_delta = source_end - i128::from(max_end_tick);
+            delta_tick = delta_tick.clamp(min_delta, max_delta);
+        }
+
+        let min_pitch = drag.notes.iter().map(|(_, note)| note.pitch).min()?;
+        let max_pitch = drag.notes.iter().map(|(_, note)| note.pitch).max()?;
+        let delta_pitch = (i16::from(anchor_data.pitch) - i16::from(drag.note.pitch))
+            .clamp(-i16::from(min_pitch), 127 - i16::from(max_pitch));
+        let loop_length = drag
+            .target
+            .source_loop_length_ticks
+            .filter(|length| *length > 0)
+            .map(i128::from);
+
+        Some(
+            drag.notes
+                .into_iter()
+                .map(|(note_id, note)| {
+                    let tick = loop_length.map_or_else(
+                        || (i128::from(note.tick) + delta_tick) as u64,
+                        |length| (i128::from(note.tick) + delta_tick).rem_euclid(length) as u64,
+                    );
+                    (
+                        note_id,
+                        MidiNoteData {
+                            tick,
+                            pitch: (i16::from(note.pitch) + delta_pitch) as u8,
+                            ..note
+                        },
+                    )
+                })
+                .collect(),
+        )
+    }
+
+    fn inline_note_data_between(
+        &self,
+        target: InlineMidiTarget,
+        start_position: Point,
+        end_position: Point,
+        ignore_snap: bool,
+    ) -> Option<MidiNoteData> {
+        let start_tick = snap_tick_to_grid(
+            tick_at_x(self.origin_tick, self.pixels_per_tick, start_position.x),
+            self.cache.snap_grid_ticks,
+            self.snap_enabled,
+            ignore_snap,
+            self.cache.swing_grid.active_amount_percent(),
+        );
+        let end_tick = snap_tick_to_grid(
+            tick_at_x(self.origin_tick, self.pixels_per_tick, end_position.x),
+            self.cache.snap_grid_ticks,
+            self.snap_enabled,
+            ignore_snap,
+            self.cache.swing_grid.active_amount_percent(),
+        );
+        if target.item_length_ticks == 0 {
+            return None;
+        }
+        let start_local_tick = start_tick
+            .saturating_sub(target.item_start_tick)
+            .min(target.item_length_ticks.saturating_sub(1));
+        let end_local_tick = end_tick
+            .saturating_sub(target.item_start_tick)
+            .min(target.item_length_ticks);
+        let default_duration = self
+            .cache
+            .snap_grid_ticks
+            .unwrap_or_else(|| (u64::from(self.project.settings().ppq()) / 4).max(1));
+        let (local_tick, requested_duration) = match end_local_tick.cmp(&start_local_tick) {
+            std::cmp::Ordering::Greater => (
+                start_local_tick,
+                end_local_tick.saturating_sub(start_local_tick),
+            ),
+            std::cmp::Ordering::Less => (
+                end_local_tick,
+                start_local_tick.saturating_sub(end_local_tick),
+            ),
+            std::cmp::Ordering::Equal => (start_local_tick, default_duration),
+        };
+        let mut tick = i128::from(target.source_offset_ticks) + i128::from(local_tick);
+        if let Some(loop_length) = target.source_loop_length_ticks.filter(|length| *length > 0) {
+            tick = tick.rem_euclid(i128::from(loop_length));
+        }
+        let tick = u64::try_from(tick).ok()?;
+        let pitch_span = u16::from(target.pitch_high - target.pitch_low).max(1);
+        let pitch_from_top = ((target.notes_top + target.notes_height - start_position.y)
+            / target.notes_height
+            * f32::from(pitch_span))
+        .round()
+        .clamp(0.0, f32::from(pitch_span)) as u16;
+        let pitch = (u16::from(target.pitch_low) + pitch_from_top).min(127) as u8;
+        let mut duration =
+            requested_duration.min(target.item_length_ticks.saturating_sub(local_tick));
+        if let Some(loop_length) = target.source_loop_length_ticks.filter(|length| *length > 0) {
+            duration = duration.min(loop_length - (tick % loop_length));
+        }
+        (duration > 0).then_some(MidiNoteData {
+            channel: 0,
+            pitch,
+            tick,
+            duration,
+            velocity: 96,
+            off_velocity: 0,
+        })
+    }
+
     fn automation_point_preview(
         &self,
         drag: PendingAutomationPoint,
@@ -2185,6 +3702,7 @@ impl TimelineProgram<'_> {
             self.cache.snap_grid_ticks,
             self.snap_enabled,
             ignore_snap,
+            self.cache.swing_grid.active_amount_percent(),
         );
         let sample = self.project.sample_at_tick(tick).ok()?;
         if let Some((track_id, chain_index, parameter_id)) = drag.fx_target {
@@ -2242,6 +3760,9 @@ impl TimelineProgram<'_> {
                 .map_or(u64::MAX, |point| point.sample().saturating_sub(1));
             let sample = automation_sample_between(sample, min_sample, max_sample)?;
             let tick = self.project.tick_at_sample(sample).ok()?;
+            if row.base_height < 64.0 {
+                return None;
+            }
             let row_y = (position.y - row.top).clamp(62.0, row.base_height - 1.0);
             let gain_db = (6.0 - ((row_y - 66.0) / 16.0) * 66.0).clamp(-60.0, 6.0);
             Some(AutomationPointPreview {
@@ -2253,6 +3774,16 @@ impl TimelineProgram<'_> {
     }
 
     fn fx_bands_for_track(&self, track_id: TrackId) -> Vec<FxAutomationBand> {
+        if self
+            .project
+            .tracks()
+            .iter()
+            .position(|track| track.id() == track_id)
+            .and_then(|index| self.row_layout.get(index))
+            .is_some_and(|row| row.base_height < TIMELINE_ROW_HEIGHT)
+        {
+            return Vec::new();
+        }
         fx_automation_bands_for_track(
             track_id,
             self.fx_automation_lanes,
@@ -2261,6 +3792,16 @@ impl TimelineProgram<'_> {
     }
 
     fn fx_lane_at_y(&self, track_id: TrackId, row_y: f32) -> Option<FxAutomationBand> {
+        if self
+            .project
+            .tracks()
+            .iter()
+            .position(|track| track.id() == track_id)
+            .and_then(|index| self.row_layout.get(index))
+            .is_some_and(|row| row.base_height < TIMELINE_ROW_HEIGHT)
+        {
+            return None;
+        }
         fx_automation_band_at_y(
             track_id,
             row_y,
@@ -2270,6 +3811,16 @@ impl TimelineProgram<'_> {
     }
 
     fn fx_lane_resize_target(&self, track_id: TrackId, row_y: f32) -> Option<FxAutomationBand> {
+        if self
+            .project
+            .tracks()
+            .iter()
+            .position(|track| track.id() == track_id)
+            .and_then(|index| self.row_layout.get(index))
+            .is_some_and(|row| row.base_height < TIMELINE_ROW_HEIGHT)
+        {
+            return None;
+        }
         fx_automation_lane_resize_target(
             track_id,
             row_y,
@@ -2336,6 +3887,7 @@ impl shader::Program<crate::app::Message> for TimelineProgram<'_> {
         if let Event::Keyboard(keyboard::Event::KeyPressed { key, .. }) = event
             && *key == keyboard::Key::Named(keyboard::key::Named::Escape)
         {
+            let cancel_fade = state.pending_item_fade.take().is_some();
             let cancel_drag = state
                 .pending_item_drag
                 .take()
@@ -2352,9 +3904,19 @@ impl shader::Program<crate::app::Message> for TimelineProgram<'_> {
                 .pending_item_selection_drag
                 .take()
                 .is_some_and(|drag| drag.is_dragging);
+            let cancel_inline_midi_gesture = state.pending_inline_note_move.take().is_some()
+                || state.pending_inline_note_insert.take().is_some();
+            state.last_inline_note_click = None;
             let cancel_automation_point = state.pending_automation_point.take().is_some();
             state.automation_point_preview = None;
-            return if cancel_drag {
+            return if cancel_fade {
+                Some(
+                    shader::Action::publish(crate::app::Message::Timeline(
+                        TimelineEvent::CancelItemFades,
+                    ))
+                    .and_capture(),
+                )
+            } else if cancel_drag {
                 Some(
                     shader::Action::publish(crate::app::Message::Timeline(
                         TimelineEvent::CancelItemDrag,
@@ -2370,14 +3932,37 @@ impl shader::Program<crate::app::Message> for TimelineProgram<'_> {
                 )
             } else if cancel_time_selection_drag {
                 Some(shader::Action::capture())
-            } else if cancel_item_selection_drag || cancel_automation_point {
+            } else if cancel_item_selection_drag
+                || cancel_inline_midi_gesture
+                || cancel_automation_point
+            {
                 Some(shader::Action::request_redraw().and_capture())
             } else {
                 None
             };
         }
 
+        if matches!(
+            event,
+            Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Right))
+        ) && state.pending_item_fade.take().is_some()
+        {
+            return Some(
+                shader::Action::publish(crate::app::Message::Timeline(
+                    TimelineEvent::CancelItemFades,
+                ))
+                .and_capture(),
+            );
+        }
+
         match event {
+            Event::Mouse(mouse::Event::CursorLeft)
+                if self.hovered_item.is_some() || self.hovered_item_position.is_some() =>
+            {
+                Some(shader::Action::publish(crate::app::Message::Timeline(
+                    TimelineEvent::SetHoveredItem(None),
+                )))
+            }
             Event::Mouse(mouse::Event::WheelScrolled { delta }) => {
                 let position = cursor.position_in(bounds)?;
                 let (x, y) = match delta {
@@ -2387,9 +3972,10 @@ impl shader::Program<crate::app::Message> for TimelineProgram<'_> {
                 if state.modifiers.alt() && y != 0.0 {
                     Some(
                         shader::Action::publish(crate::app::Message::Timeline(
-                            TimelineEvent::ZoomAt {
+                            TimelineEvent::ZoomAtPosition {
                                 factor: 1.12_f32.powf(y),
                                 anchor_x: position.x,
+                                pointer_position: position,
                             },
                         ))
                         .and_capture(),
@@ -2398,7 +3984,10 @@ impl shader::Program<crate::app::Message> for TimelineProgram<'_> {
                     let delta_x = if x != 0.0 { x } else { y * 42.0 };
                     Some(
                         shader::Action::publish(crate::app::Message::Timeline(
-                            TimelineEvent::PanByPixels(delta_x),
+                            TimelineEvent::PanByPixelsAt {
+                                delta_x,
+                                pointer_position: position,
+                            },
                         ))
                         .and_capture(),
                     )
@@ -2416,6 +4005,19 @@ impl shader::Program<crate::app::Message> for TimelineProgram<'_> {
             }
             Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Right)) => {
                 let position = cursor.position_in(bounds)?;
+                if let Some((item_id, edge, _)) = self.fade_handle_at(position) {
+                    return Some(
+                        shader::Action::publish(crate::app::Message::Timeline(
+                            TimelineEvent::OpenFadeMenu {
+                                item_id,
+                                edge,
+                                x: position.x,
+                                y: position.y,
+                            },
+                        ))
+                        .and_capture(),
+                    );
+                }
                 let tick = tick_at_x(self.origin_tick, self.pixels_per_tick, position.x);
                 let (track_index, row_y) = row_at_y(self.row_layout, position.y)?;
                 if let Some(track) = self.project.tracks().get(track_index)
@@ -2537,7 +4139,73 @@ impl shader::Program<crate::app::Message> for TimelineProgram<'_> {
                 }
             }
             Event::Mouse(mouse::Event::CursorMoved { position }) => {
-                if let Some(middle_drag) = &mut state.middle_drag {
+                let interaction_in_progress = state.middle_drag.is_some()
+                    || state.pending_item_drag.is_some()
+                    || state.pending_item_trim.is_some()
+                    || state.pending_item_fade.is_some()
+                    || state.pending_inline_note_move.is_some()
+                    || state.pending_inline_note_insert.is_some()
+                    || state.pending_time_selection_drag.is_some()
+                    || state.pending_item_selection_drag.is_some()
+                    || state.pending_automation_point.is_some()
+                    || state.pending_fx_lane_resize.is_some();
+                if !interaction_in_progress
+                    && let Some(position) = cursor.position_in(bounds)
+                    && self.hovered_item_position != Some(position)
+                {
+                    return Some(shader::Action::publish(crate::app::Message::Timeline(
+                        TimelineEvent::PointerMoved(position),
+                    )));
+                }
+                if let Some(mut insert) = state.pending_inline_note_insert {
+                    if let Some(current_position) = cursor.position_in(bounds) {
+                        insert.is_dragging |= (current_position.x - insert.start_position.x)
+                            .hypot(current_position.y - insert.start_position.y)
+                            >= 3.0;
+                        state.pending_inline_note_insert = Some(insert);
+                    }
+                    Some(shader::Action::request_redraw().and_capture())
+                } else if state.pending_inline_note_move.is_some() {
+                    Some(shader::Action::request_redraw().and_capture())
+                } else if let Some(mut fade) = state.pending_item_fade {
+                    let delta = position.x - fade.start_x;
+                    if !fade.dragging && delta.abs() < 1.0 {
+                        return Some(shader::Action::capture());
+                    }
+                    fade.dragging = true;
+                    state.pending_item_fade = Some(fade);
+                    let tick = (fade.handle_tick
+                        + f64::from(delta) / f64::from(self.pixels_per_tick))
+                    .max(0.0);
+                    let sample = self.project.sample_at_tick_position(tick).ok()?;
+                    let length = match fade.edge {
+                        ItemFadeEdge::In => sample - fade.item_start as f64,
+                        ItemFadeEdge::Out => (fade.item_start + fade.item_length) as f64 - sample,
+                    }
+                    .clamp(0.0, fade.item_length as f64);
+                    let mut fades = fade.original;
+                    match fade.edge {
+                        ItemFadeEdge::In => {
+                            fades.fade_in =
+                                aaadaw_core::AudioFade::with_curve(length, fades.fade_in.curve())
+                                    .ok()?
+                        }
+                        ItemFadeEdge::Out => {
+                            fades.fade_out =
+                                aaadaw_core::AudioFade::with_curve(length, fades.fade_out.curve())
+                                    .ok()?
+                        }
+                    }
+                    Some(
+                        shader::Action::publish(crate::app::Message::Timeline(
+                            TimelineEvent::PreviewItemFades {
+                                item_id: fade.item_id,
+                                fades,
+                            },
+                        ))
+                        .and_capture(),
+                    )
+                } else if let Some(middle_drag) = &mut state.middle_drag {
                     let local_position = Point::new(position.x - bounds.x, position.y - bounds.y);
                     middle_drag.update(local_position).map(|event| {
                         shader::Action::publish(crate::app::Message::Timeline(event)).and_capture()
@@ -2660,6 +4328,7 @@ impl shader::Program<crate::app::Message> for TimelineProgram<'_> {
                             self.cache.snap_grid_ticks,
                             self.snap_enabled,
                             state.modifiers.shift(),
+                            self.cache.swing_grid.active_amount_percent(),
                         );
                         let (start_tick, end_tick) = drag.range_at(active_tick);
                         Some(
@@ -2679,6 +4348,114 @@ impl shader::Program<crate::app::Message> for TimelineProgram<'_> {
             Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => {
                 let position = cursor.position_in(bounds)?;
                 let raw_tick = tick_at_x(self.origin_tick, self.pixels_per_tick, position.x);
+                if let Some(target) = self.inline_midi_target_at(position) {
+                    state.pending_item_drag = None;
+                    state.pending_item_trim = None;
+                    state.pending_time_selection_drag = None;
+                    if let Some(hit) = self.inline_midi_note_hit(target, position) {
+                        state.last_inline_note_click = None;
+                        let selected_before = self
+                            .inline_midi_note_selection
+                            .get(&target.item_id)
+                            .cloned()
+                            .unwrap_or_default();
+                        let copy = state.modifiers.command() || state.modifiers.control();
+                        let selected_after = if copy {
+                            let mut selected = selected_before.clone();
+                            if !selected.remove(&hit.note.id) {
+                                selected.insert(hit.note.id);
+                            }
+                            selected
+                        } else if selected_before.contains(&hit.note.id) {
+                            selected_before.clone()
+                        } else {
+                            HashSet::from([hit.note.id])
+                        };
+                        let move_ids = if hit.resize {
+                            HashSet::from([hit.note.id])
+                        } else if copy && selected_before.contains(&hit.note.id) {
+                            selected_before.clone()
+                        } else if copy {
+                            HashSet::from([hit.note.id])
+                        } else if selected_after.contains(&hit.note.id) {
+                            selected_after.clone()
+                        } else {
+                            HashSet::from([hit.note.id])
+                        };
+                        let notes = self
+                            .cache
+                            .item_indices
+                            .get(&target.item_id)
+                            .and_then(|index| self.cache.items.get(*index))
+                            .map(|item| {
+                                item.midi_notes
+                                    .iter()
+                                    .filter(|note| move_ids.contains(&note.id))
+                                    .map(|note| (note.id, note.data))
+                                    .collect::<Vec<_>>()
+                            })
+                            .unwrap_or_default();
+                        state.pending_inline_note_move = Some(PendingInlineNoteMove {
+                            target,
+                            note_id: hit.note.id,
+                            note: hit.note.data,
+                            display_tick: hit.display_tick,
+                            notes,
+                            start_position: position,
+                            resize: hit.resize,
+                            copy,
+                            click_selection: copy.then_some(selected_after.clone()),
+                        });
+                        state.pending_inline_note_insert = None;
+                        if !copy && selected_after != selected_before {
+                            return Some(
+                                shader::Action::publish(crate::app::Message::Timeline(
+                                    TimelineEvent::SetInlineMidiNoteSelection {
+                                        item_id: target.item_id,
+                                        note_ids: selected_after.into_iter().collect(),
+                                    },
+                                ))
+                                .and_capture(),
+                            );
+                        }
+                    } else {
+                        let had_selection = self
+                            .inline_midi_note_selection
+                            .get(&target.item_id)
+                            .is_some_and(|selection| !selection.is_empty());
+                        let now = Instant::now();
+                        let is_double_click = state.last_inline_note_click.take().is_some_and(
+                            |(item_id, previous_position, previous_time)| {
+                                item_id == target.item_id
+                                    && now.duration_since(previous_time)
+                                        <= PROJECT_MARKER_DOUBLE_CLICK_INTERVAL
+                                    && (position.x - previous_position.x)
+                                        .hypot(position.y - previous_position.y)
+                                        <= INLINE_MIDI_DOUBLE_CLICK_DISTANCE
+                            },
+                        );
+                        state.pending_inline_note_insert = Some(PendingInlineNoteInsert {
+                            target,
+                            start_position: position,
+                            is_dragging: false,
+                            is_double_click,
+                        });
+                        state.pending_inline_note_move = None;
+                        if had_selection {
+                            return Some(
+                                shader::Action::publish(crate::app::Message::Timeline(
+                                    TimelineEvent::SetInlineMidiNoteSelection {
+                                        item_id: target.item_id,
+                                        note_ids: Vec::new(),
+                                    },
+                                ))
+                                .and_capture(),
+                            );
+                        }
+                    }
+                    return Some(shader::Action::capture());
+                }
+                state.last_inline_note_click = None;
                 let Some((track_index, row_y)) = row_at_y(self.row_layout, position.y) else {
                     state.pending_item_drag = None;
                     state.pending_item_trim = None;
@@ -2690,6 +4467,7 @@ impl shader::Program<crate::app::Message> for TimelineProgram<'_> {
                             self.cache.snap_grid_ticks,
                             self.snap_enabled,
                             state.modifiers.shift(),
+                            self.cache.swing_grid.active_amount_percent(),
                         ),
                         deselect_items_on_click: false,
                         pointer_start_x: position.x,
@@ -2698,11 +4476,41 @@ impl shader::Program<crate::app::Message> for TimelineProgram<'_> {
                     });
                     return Some(shader::Action::capture());
                 };
+                if let Some((item_id, edge, handle_tick)) = self.fade_handle_at(position) {
+                    let item = self
+                        .project
+                        .audio_items()
+                        .iter()
+                        .find(|item| item.id() == item_id)?;
+                    state.pending_item_drag = None;
+                    state.pending_item_trim = None;
+                    state.pending_item_fade = Some(PendingItemFade {
+                        item_id,
+                        edge,
+                        start_x: cursor.position()?.x,
+                        handle_tick,
+                        item_start: item.start_sample(),
+                        item_length: item.length_samples(),
+                        original: item.fades(),
+                        dragging: false,
+                    });
+                    return Some(
+                        shader::Action::publish(crate::app::Message::Timeline(
+                            TimelineEvent::SelectItem {
+                                item_id: Some(item_id),
+                                additive: state.modifiers.control(),
+                                range: false,
+                            },
+                        ))
+                        .and_capture(),
+                    );
+                }
                 let tick = snap_tick_to_grid(
                     raw_tick,
                     self.cache.snap_grid_ticks,
                     self.snap_enabled,
                     state.modifiers.shift(),
+                    self.cache.swing_grid.active_amount_percent(),
                 );
                 if let Some(track) = self.project.tracks().get(track_index)
                     && let Some(band) = self.fx_lane_resize_target(track.id(), row_y)
@@ -2758,6 +4566,7 @@ impl shader::Program<crate::app::Message> for TimelineProgram<'_> {
                         self.cache.snap_grid_ticks,
                         self.snap_enabled,
                         state.modifiers.shift(),
+                        self.cache.swing_grid.active_amount_percent(),
                     );
                     let Ok(sample) = self.project.sample_at_tick(snapped_tick) else {
                         return None;
@@ -2918,6 +4727,7 @@ impl shader::Program<crate::app::Message> for TimelineProgram<'_> {
                             self.cache.snap_grid_ticks,
                             self.snap_enabled,
                             state.modifiers.shift(),
+                            self.cache.swing_grid.active_amount_percent(),
                         ),
                         deselect_items_on_click: true,
                         pointer_start_x: position.x,
@@ -2930,6 +4740,104 @@ impl shader::Program<crate::app::Message> for TimelineProgram<'_> {
             Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
                 if state.pending_fx_lane_resize.take().is_some() {
                     Some(shader::Action::capture())
+                } else if let Some(drag) = state.pending_inline_note_move.take() {
+                    let Some(position) = cursor.position_in(bounds) else {
+                        return Some(shader::Action::capture());
+                    };
+                    let was_dragged = (position.x - drag.start_position.x)
+                        .hypot(position.y - drag.start_position.y)
+                        >= 3.0;
+                    if drag.copy && !was_dragged {
+                        let selected = drag.click_selection.unwrap_or_default();
+                        let selection_before = self
+                            .inline_midi_note_selection
+                            .get(&drag.target.item_id)
+                            .cloned()
+                            .unwrap_or_default();
+                        if selected == selection_before {
+                            return Some(shader::Action::capture());
+                        }
+                        return Some(
+                            shader::Action::publish(crate::app::Message::Timeline(
+                                TimelineEvent::SetInlineMidiNoteSelection {
+                                    item_id: drag.target.item_id,
+                                    note_ids: selected.into_iter().collect(),
+                                },
+                            ))
+                            .and_capture(),
+                        );
+                    }
+                    let original = drag.notes.iter().copied().collect::<HashMap<_, _>>();
+                    let Some(edits) = self.inline_note_edits_after_drag(
+                        drag.clone(),
+                        position,
+                        state.modifiers.shift(),
+                    ) else {
+                        return Some(shader::Action::capture());
+                    };
+                    if drag.copy {
+                        let copied_notes =
+                            edits.into_iter().map(|(_, data)| data).collect::<Vec<_>>();
+                        if copied_notes.is_empty() {
+                            return Some(shader::Action::capture());
+                        }
+                        return Some(
+                            shader::Action::publish(crate::app::Message::CopyDragMidiNotes(
+                                drag.target.item_id,
+                                copied_notes,
+                            ))
+                            .and_capture(),
+                        );
+                    }
+                    let edits = edits
+                        .into_iter()
+                        .filter(|(note_id, data)| original.get(note_id) != Some(data))
+                        .collect::<Vec<_>>();
+                    if edits.is_empty() {
+                        Some(shader::Action::capture())
+                    } else {
+                        Some(
+                            shader::Action::publish(crate::app::Message::EditMidiNotes(
+                                drag.target.item_id,
+                                edits,
+                            ))
+                            .and_capture(),
+                        )
+                    }
+                } else if let Some(insert) = state.pending_inline_note_insert.take() {
+                    let Some(position) = cursor.position_in(bounds) else {
+                        return Some(shader::Action::capture());
+                    };
+                    let is_dragging = insert.is_dragging
+                        || (position.x - insert.start_position.x)
+                            .hypot(position.y - insert.start_position.y)
+                            >= 3.0;
+                    if !is_dragging && !insert.is_double_click {
+                        state.last_inline_note_click =
+                            Some((insert.target.item_id, insert.start_position, Instant::now()));
+                        return Some(shader::Action::capture());
+                    }
+                    state.last_inline_note_click = None;
+                    let end_position = if is_dragging {
+                        position
+                    } else {
+                        insert.start_position
+                    };
+                    let Some(data) = self.inline_note_data_between(
+                        insert.target,
+                        insert.start_position,
+                        end_position,
+                        state.modifiers.shift(),
+                    ) else {
+                        return Some(shader::Action::capture());
+                    };
+                    Some(
+                        shader::Action::publish(crate::app::Message::AddMidiNoteAt(
+                            insert.target.item_id,
+                            data,
+                        ))
+                        .and_capture(),
+                    )
                 } else if let Some(drag) = state.pending_automation_point.take() {
                     state.automation_point_preview = None;
                     let Some(track) = self.project.tracks().get(drag.track_index) else {
@@ -2946,6 +4854,7 @@ impl shader::Program<crate::app::Message> for TimelineProgram<'_> {
                         self.cache.snap_grid_ticks,
                         self.snap_enabled,
                         state.modifiers.shift(),
+                        self.cache.swing_grid.active_amount_percent(),
                     );
                     let sample = self.project.sample_at_tick(tick).ok()?;
                     if let Some((track_id, chain_index, parameter_id)) = drag.fx_target {
@@ -3020,6 +4929,9 @@ impl shader::Program<crate::app::Message> for TimelineProgram<'_> {
                     let Some(row) = self.row_layout.get(drag.track_index) else {
                         return Some(shader::Action::capture());
                     };
+                    if row.base_height < 64.0 {
+                        return Some(shader::Action::capture());
+                    }
                     let y = (position.y - row.top).clamp(62.0, row.base_height - 1.0);
                     let gain_db = (6.0 - ((y - 66.0) / 16.0) * 66.0).clamp(-60.0, 6.0);
                     let mut points = track.volume_automation().to_vec();
@@ -3048,6 +4960,18 @@ impl shader::Program<crate::app::Message> for TimelineProgram<'_> {
                         ))
                         .and_capture(),
                     )
+                } else if let Some(fade) = state.pending_item_fade.take() {
+                    state.last_item_click = None;
+                    if fade.dragging {
+                        Some(
+                            shader::Action::publish(crate::app::Message::Timeline(
+                                TimelineEvent::CommitItemFades,
+                            ))
+                            .and_capture(),
+                        )
+                    } else {
+                        Some(shader::Action::capture())
+                    }
                 } else if let Some(trim) = state.pending_item_trim.take() {
                     if trim.is_dragging {
                         state.last_item_click = None;
@@ -3163,10 +5087,13 @@ impl shader::Program<crate::app::Message> for TimelineProgram<'_> {
             .tracks()
             .iter()
             .enumerate()
-            .filter(|(_, track)| {
-                self.volume_automation_tracks.contains(&track.id())
-                    || (!self.hidden_volume_automation_tracks.contains(&track.id())
-                        && !track.volume_automation().is_empty())
+            .filter(|(index, track)| {
+                self.row_layout
+                    .get(*index)
+                    .is_some_and(|row| row.base_height >= TIMELINE_ROW_HEIGHT)
+                    && (self.volume_automation_tracks.contains(&track.id())
+                        || (!self.hidden_volume_automation_tracks.contains(&track.id())
+                            && !track.volume_automation().is_empty()))
             })
             .map(|(track_index, track)| renderer::AutomationLane {
                 track_index: track_index as u32,
@@ -3278,6 +5205,7 @@ impl shader::Program<crate::app::Message> for TimelineProgram<'_> {
             (cached.generation, Arc::clone(&cached.bins))
         };
         renderer::TimelinePrimitive {
+            fade_segments: self.fade_segments(bounds.width),
             generation: self.cache.generation,
             waveform_generation,
             waveform_render_generation: self.cache.generation,
@@ -3286,9 +5214,10 @@ impl shader::Program<crate::app::Message> for TimelineProgram<'_> {
             row_layout: self.row_layout.to_vec(),
             origin_tick: self.origin_tick,
             pixels_per_tick: self.pixels_per_tick,
-            edit_cursor_tick: self.edit_cursor_tick,
+            edit_cursor_tick_position: self.edit_cursor_tick_position,
             playhead_tick: self.playhead_tick,
             selected_items: self.selected_items.clone(),
+            razor_edit_areas: self.razor_edit_areas.clone(),
             waveform_bins,
             time_selection: self.time_selection,
             drag_preview: self.drag_preview,
@@ -3325,6 +5254,44 @@ impl shader::Program<crate::app::Message> for TimelineProgram<'_> {
             .into_iter()
             .map(|line| (line.tick, line.is_measure))
             .collect(),
+            marker_ticks: self
+                .project
+                .markers()
+                .iter()
+                .filter(|marker| self.project.show_project_markers() && marker.is_visible())
+                .filter(|marker| {
+                    let x = project_marker_x(
+                        marker.position_ticks(),
+                        self.origin_tick,
+                        self.pixels_per_tick,
+                    );
+                    x.is_finite() && (-8.0..=bounds.width).contains(&x)
+                })
+                .map(|marker| marker.position_ticks())
+                .collect(),
+            region_spans: self
+                .project
+                .regions()
+                .iter()
+                .filter(|region| self.project.show_project_regions() && region.is_visible())
+                .filter(|region| {
+                    let start_x = project_marker_x(
+                        region.start_ticks(),
+                        self.origin_tick,
+                        self.pixels_per_tick,
+                    );
+                    let end_x = project_marker_x(
+                        region.end_ticks(),
+                        self.origin_tick,
+                        self.pixels_per_tick,
+                    );
+                    start_x.is_finite()
+                        && end_x.is_finite()
+                        && end_x > 0.0
+                        && start_x < bounds.width
+                })
+                .map(|region| (region.start_ticks(), region.end_ticks()))
+                .collect(),
         }
     }
 
@@ -3335,6 +5302,12 @@ impl shader::Program<crate::app::Message> for TimelineProgram<'_> {
         cursor: mouse::Cursor,
     ) -> mouse::Interaction {
         if let Some(position) = cursor.position_in(bounds) {
+            if self.inline_midi_target_at(position).is_some() {
+                return mouse::Interaction::Crosshair;
+            }
+            if self.fade_handle_at(position).is_some() {
+                return mouse::Interaction::ResizingHorizontally;
+            }
             let tick = tick_at_x(self.origin_tick, self.pixels_per_tick, position.x);
             if self.time_selection.is_some_and(|selection| {
                 time_selection_edge_at_tick(selection, tick, self.pixels_per_tick).is_some()
@@ -3385,14 +5358,24 @@ fn item_trim_edge_at_x(
         .filter(|item| item.track_index == track_index)
         .flat_map(|item| {
             [
-                (item.start_tick, ItemTrimEdge::Start),
-                (item.end_tick, ItemTrimEdge::End),
+                (
+                    item.start_tick as f64
+                        + f64::from(item.start_tick_subtick)
+                            / f64::from(aaadaw_core::MIDI_ITEM_SUBTICKS_PER_TICK),
+                    ItemTrimEdge::Start,
+                ),
+                (
+                    item.end_tick as f64
+                        + f64::from(item.end_tick_subtick)
+                            / f64::from(aaadaw_core::MIDI_ITEM_SUBTICKS_PER_TICK),
+                    ItemTrimEdge::End,
+                ),
             ]
             .into_iter()
             .map(move |(tick, edge)| (item, tick, edge))
         })
         .filter_map(|(item, tick, edge)| {
-            let edge_x = (tick as f64 - origin_tick as f64) * f64::from(pixels_per_tick);
+            let edge_x = (tick - origin_tick as f64) * f64::from(pixels_per_tick);
             let distance = (f64::from(x) - edge_x).abs();
             (distance <= ITEM_TRIM_EDGE_HIT_RADIUS_PX).then_some((item.id, edge, distance))
         })
@@ -3453,16 +5436,34 @@ fn ruler_lines(
         }
         let beat_width = pixels_per_tick * ticks_per_beat as f32;
         let show_beat = is_measure || beat_width >= 18.0;
-        let show_label =
-            is_measure && (position.measure().saturating_sub(1) % labels_per_measure == 0);
+        let labels_per_measure = i64::try_from(labels_per_measure).unwrap_or(i64::MAX).max(1);
+        let label_spacing_measure = if project.settings().base_ruler_label_spacing_on_measure() {
+            project.settings().start_measure()
+        } else {
+            1
+        };
+        let measure_offset = position.measure() - i64::from(label_spacing_measure);
+        let show_label = is_measure
+            && measure_offset.rem_euclid(labels_per_measure) == 0
+            && (project.settings().base_ruler_label_spacing_on_measure()
+                || labels_per_measure == 1
+                || position.measure() >= 1);
         if tick >= origin_tick && (show_beat || show_label) {
             let x = (tick - origin_tick) as f32 * pixels_per_tick;
+            let time_label = show_label.then(|| {
+                project
+                    .sample_at_tick(tick)
+                    .and_then(|sample| project.project_time_at_sample(sample))
+                    .map(crate::project_time::format_project_time)
+                    .unwrap_or_else(|_| "Unavailable".to_owned())
+            });
             lines.push(RulerLine {
                 tick,
                 x,
                 measure: position.measure(),
                 is_measure,
                 show_label,
+                time_label,
             });
         }
         let until_next_beat = ticks_per_beat.saturating_sub(position.tick_in_beat());
@@ -3497,7 +5498,7 @@ pub(crate) fn ruler_widget<'a>(
         .into()
 }
 
-pub(crate) fn item_labels_widget<'a>(state: &'a TimelineState) -> Element<'a, crate::app::Message> {
+pub(crate) fn item_labels_widget(state: &TimelineState) -> Element<'_, crate::app::Message> {
     canvas::Canvas::new(ItemLabelsProgram { state })
         .width(Length::Fill)
         .height(Length::Fixed(state.content_height()))
@@ -3510,32 +5511,395 @@ struct RulerProgram<'a> {
 }
 
 impl canvas::Program<crate::app::Message> for RulerProgram<'_> {
-    type State = ();
+    type State = ProjectMarkerInteraction;
 
     fn update(
         &self,
-        _state: &mut Self::State,
+        state: &mut Self::State,
         event: &Event,
         bounds: Rectangle,
         cursor: mouse::Cursor,
     ) -> Option<canvas::Action<crate::app::Message>> {
-        if let Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) = event {
-            let position = cursor.position_in(bounds)?;
-            let tick = tick_at_x(
-                self.state.origin_tick,
-                self.state.pixels_per_tick,
-                position.x,
-            );
-            return Some(canvas::Action::publish(crate::app::Message::Timeline(
-                TimelineEvent::SetEditCursor(tick),
-            )));
+        match event {
+            Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => {
+                let position = cursor.position_in(bounds)?;
+                if let Some(loop_points) = self.state.loop_points
+                    && let Some(target) = loop_point_target_at(
+                        loop_points,
+                        self.state.origin_tick,
+                        self.state.pixels_per_tick,
+                        position,
+                        bounds.height,
+                    )
+                {
+                    state.drag = None;
+                    state.region_drag = None;
+                    state.last_click = None;
+                    state.pending_double_click = None;
+                    let pointer_tick = tick_at_x(
+                        self.state.origin_tick,
+                        self.state.pixels_per_tick,
+                        position.x,
+                    );
+                    let anchor_tick = match target {
+                        LoopPointDragTarget::Start => loop_points.start_tick,
+                        LoopPointDragTarget::End => loop_points.end_tick,
+                        LoopPointDragTarget::Move | LoopPointDragTarget::SetPoint => {
+                            loop_points.start_tick
+                        }
+                    };
+                    state.loop_drag = Some(LoopPointDrag {
+                        target,
+                        original: Some(loop_points),
+                        pointer_offset_ticks: i128::from(anchor_tick) - i128::from(pointer_tick),
+                        start_pointer: position,
+                        preview: loop_points,
+                        moved: false,
+                    });
+                    return Some(canvas::Action::capture());
+                }
+                if let Some(marker) = project_marker_hit(self.project, self.state, position) {
+                    state.loop_drag = None;
+                    state.region_drag = None;
+                    let now = Instant::now();
+                    let is_double_click =
+                        state
+                            .last_click
+                            .is_some_and(|(last_marker, last_position, clicked_at)| {
+                                last_marker == marker.id()
+                                    && (position.x - last_position.x).abs()
+                                        <= PROJECT_MARKER_DOUBLE_CLICK_DISTANCE
+                                    && (position.y - last_position.y).abs()
+                                        <= PROJECT_MARKER_DOUBLE_CLICK_DISTANCE
+                                    && now.saturating_duration_since(clicked_at)
+                                        <= PROJECT_MARKER_DOUBLE_CLICK_INTERVAL
+                            });
+                    state.pending_double_click = is_double_click.then_some(marker.id());
+                    state.last_click = None;
+                    let pointer_tick = tick_at_x(
+                        self.state.origin_tick,
+                        self.state.pixels_per_tick,
+                        position.x,
+                    );
+                    state.drag = Some(ProjectMarkerDrag {
+                        marker_id: marker.id(),
+                        original_position_ticks: marker.position_ticks(),
+                        pointer_offset_ticks: i128::from(marker.position_ticks())
+                            - i128::from(pointer_tick),
+                        start_pointer: position,
+                        preview_position_ticks: marker.position_ticks(),
+                        moved: false,
+                    });
+                    return Some(canvas::Action::capture());
+                }
+                if let Some((region, target)) =
+                    project_region_hit(self.project, self.state, position)
+                {
+                    state.loop_drag = None;
+                    state.last_click = None;
+                    state.pending_double_click = None;
+                    state.drag = None;
+                    let pointer_tick = tick_at_x(
+                        self.state.origin_tick,
+                        self.state.pixels_per_tick,
+                        position.x,
+                    );
+                    let (anchor_tick, start_ticks, end_ticks) = match target {
+                        ProjectRegionDragTarget::Start => (
+                            region.start_ticks(),
+                            region.start_ticks(),
+                            region.end_ticks(),
+                        ),
+                        ProjectRegionDragTarget::End => {
+                            (region.end_ticks(), region.start_ticks(), region.end_ticks())
+                        }
+                        ProjectRegionDragTarget::Move => (
+                            region.start_ticks(),
+                            region.start_ticks(),
+                            region.end_ticks(),
+                        ),
+                    };
+                    state.region_drag = Some(ProjectRegionDrag {
+                        region_id: region.id(),
+                        target,
+                        original_start_ticks: start_ticks,
+                        original_end_ticks: end_ticks,
+                        pointer_offset_ticks: i128::from(anchor_tick) - i128::from(pointer_tick),
+                        start_pointer: position,
+                        preview_start_ticks: start_ticks,
+                        preview_end_ticks: end_ticks,
+                        moved: false,
+                    });
+                    return Some(canvas::Action::capture());
+                }
+                if position.y >= bounds.height - LOOP_POINT_HANDLE_ROW_HEIGHT {
+                    let pointer_tick = tick_at_x(
+                        self.state.origin_tick,
+                        self.state.pixels_per_tick,
+                        position.x,
+                    );
+                    if self.state.modifiers.shift()
+                        && let Some(loop_points) = self.state.loop_points
+                        && loop_point_body_hit(
+                            loop_points,
+                            self.state.origin_tick,
+                            self.state.pixels_per_tick,
+                            position.x,
+                        )
+                    {
+                        state.last_click = None;
+                        state.pending_double_click = None;
+                        state.drag = None;
+                        state.region_drag = None;
+                        state.loop_drag = Some(LoopPointDrag {
+                            target: LoopPointDragTarget::Move,
+                            original: Some(loop_points),
+                            pointer_offset_ticks: i128::from(loop_points.start_tick)
+                                - i128::from(pointer_tick),
+                            start_pointer: position,
+                            preview: loop_points,
+                            moved: false,
+                        });
+                        return Some(canvas::Action::capture());
+                    }
+                    state.last_click = None;
+                    state.pending_double_click = None;
+                    state.drag = None;
+                    state.region_drag = None;
+                    state.loop_drag = Some(LoopPointDrag {
+                        target: LoopPointDragTarget::SetPoint,
+                        original: self.state.loop_points,
+                        pointer_offset_ticks: 0,
+                        start_pointer: position,
+                        preview: LoopPoints {
+                            start_tick: pointer_tick,
+                            end_tick: pointer_tick,
+                        },
+                        moved: false,
+                    });
+                    return Some(canvas::Action::capture());
+                }
+                state.last_click = None;
+                state.pending_double_click = None;
+                state.drag = None;
+                state.region_drag = None;
+                state.loop_drag = None;
+                let tick = tick_at_x(
+                    self.state.origin_tick,
+                    self.state.pixels_per_tick,
+                    position.x,
+                );
+                Some(canvas::Action::publish(crate::app::Message::Timeline(
+                    TimelineEvent::SetEditCursor(tick),
+                )))
+            }
+            Event::Mouse(mouse::Event::CursorMoved { .. }) => {
+                if let Some(mut drag) = state.loop_drag {
+                    let position = cursor.position_from(Point::new(bounds.x, bounds.y))?;
+                    if !drag.moved
+                        && (position.x - drag.start_pointer.x)
+                            .hypot(position.y - drag.start_pointer.y)
+                            < 3.0
+                    {
+                        return Some(canvas::Action::capture());
+                    }
+                    drag.moved = true;
+                    let pointer_tick = tick_at_x(
+                        self.state.origin_tick,
+                        self.state.pixels_per_tick,
+                        position.x,
+                    );
+                    let target_tick = (i128::from(pointer_tick) + drag.pointer_offset_ticks)
+                        .clamp(0, i128::from(u64::MAX))
+                        as u64;
+                    let target_tick = snap_tick_to_grid(
+                        target_tick,
+                        self.state.cache.snap_grid_ticks,
+                        self.state.snap_enabled,
+                        false,
+                        self.state.cache.swing_grid.active_amount_percent(),
+                    );
+                    if drag.target != LoopPointDragTarget::SetPoint {
+                        drag.preview = loop_points_at_drag_target(
+                            drag.original
+                                .expect("existing loop drags retain their range"),
+                            drag.target,
+                            target_tick,
+                        );
+                    }
+                    state.loop_drag = Some(drag);
+                    return Some(canvas::Action::request_redraw().and_capture());
+                }
+                if let Some(drag) = state.region_drag.as_mut() {
+                    let position = cursor.position_from(Point::new(bounds.x, bounds.y))?;
+                    if !drag.moved && (position.x - drag.start_pointer.x).abs() < 3.0 {
+                        return Some(canvas::Action::capture());
+                    }
+                    drag.moved = true;
+                    state.last_click = None;
+                    state.pending_double_click = None;
+                    let pointer_tick = tick_at_x(
+                        self.state.origin_tick,
+                        self.state.pixels_per_tick,
+                        position.x,
+                    );
+                    let target_tick = (i128::from(pointer_tick) + drag.pointer_offset_ticks)
+                        .clamp(0, i128::from(aaadaw_core::MAX_PROJECT_REGION_TICKS))
+                        as u64;
+                    let target_tick = snap_tick_to_grid(
+                        target_tick,
+                        self.state.cache.snap_grid_ticks,
+                        self.state.snap_enabled,
+                        false,
+                        self.state.cache.swing_grid.active_amount_percent(),
+                    )
+                    .min(aaadaw_core::MAX_PROJECT_REGION_TICKS);
+                    (drag.preview_start_ticks, drag.preview_end_ticks) = match drag.target {
+                        ProjectRegionDragTarget::Start => (
+                            target_tick.min(drag.original_end_ticks.saturating_sub(1)),
+                            drag.original_end_ticks,
+                        ),
+                        ProjectRegionDragTarget::End => (
+                            drag.original_start_ticks,
+                            target_tick.max(drag.original_start_ticks.saturating_add(1)),
+                        ),
+                        ProjectRegionDragTarget::Move => {
+                            let length = drag.original_end_ticks - drag.original_start_ticks;
+                            let start_ticks = target_tick
+                                .min(aaadaw_core::MAX_PROJECT_REGION_TICKS.saturating_sub(length));
+                            (start_ticks, start_ticks + length)
+                        }
+                    };
+                    return Some(canvas::Action::request_redraw().and_capture());
+                }
+                let drag = state.drag.as_mut()?;
+                let position = cursor.position_from(Point::new(bounds.x, bounds.y))?;
+                if !drag.moved && (position.x - drag.start_pointer.x).abs() < 3.0 {
+                    return Some(canvas::Action::capture());
+                }
+                drag.moved = true;
+                state.last_click = None;
+                state.pending_double_click = None;
+                let pointer_tick = tick_at_x(
+                    self.state.origin_tick,
+                    self.state.pixels_per_tick,
+                    position.x,
+                );
+                let target_tick = (i128::from(pointer_tick) + drag.pointer_offset_ticks)
+                    .clamp(0, i128::from(u64::MAX)) as u64;
+                drag.preview_position_ticks = snap_tick_to_grid(
+                    target_tick,
+                    self.state.cache.snap_grid_ticks,
+                    self.state.snap_enabled,
+                    false,
+                    self.state.cache.swing_grid.active_amount_percent(),
+                );
+                Some(canvas::Action::request_redraw().and_capture())
+            }
+            Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
+                if let Some(drag) = state.loop_drag.take() {
+                    if drag.moved && Some(drag.preview) != drag.original {
+                        return Some(
+                            canvas::Action::publish(crate::app::Message::Timeline(
+                                TimelineEvent::SetLoopPoints {
+                                    start_tick: drag.preview.start_tick,
+                                    end_tick: drag.preview.end_tick,
+                                },
+                            ))
+                            .and_capture(),
+                        );
+                    }
+                    if !drag.moved && drag.target == LoopPointDragTarget::SetPoint {
+                        let tick = tick_at_x(
+                            self.state.origin_tick,
+                            self.state.pixels_per_tick,
+                            drag.start_pointer.x,
+                        );
+                        return Some(
+                            canvas::Action::publish(crate::app::Message::Timeline(
+                                TimelineEvent::SetEditCursor(tick),
+                            ))
+                            .and_capture(),
+                        );
+                    }
+                    return Some(canvas::Action::capture());
+                }
+                if let Some(drag) = state.region_drag.take() {
+                    if drag.moved {
+                        if drag.preview_start_ticks != drag.original_start_ticks
+                            || drag.preview_end_ticks != drag.original_end_ticks
+                        {
+                            return Some(
+                                canvas::Action::publish(crate::app::Message::Timeline(
+                                    TimelineEvent::MoveProjectRegion {
+                                        region_id: drag.region_id,
+                                        original_start_ticks: drag.original_start_ticks,
+                                        original_end_ticks: drag.original_end_ticks,
+                                        start_ticks: drag.preview_start_ticks,
+                                        end_ticks: drag.preview_end_ticks,
+                                    },
+                                ))
+                                .and_capture(),
+                            );
+                        }
+                        return Some(canvas::Action::capture());
+                    }
+                    return Some(
+                        canvas::Action::publish(crate::app::Message::Timeline(
+                            TimelineEvent::SelectProjectRegion {
+                                region_id: drag.region_id,
+                                start_ticks: drag.original_start_ticks,
+                                end_ticks: drag.original_end_ticks,
+                            },
+                        ))
+                        .and_capture(),
+                    );
+                }
+                let drag = state.drag.take()?;
+                if drag.moved {
+                    (drag.preview_position_ticks != drag.original_position_ticks)
+                        .then(|| {
+                            canvas::Action::publish(crate::app::Message::Timeline(
+                                TimelineEvent::MoveProjectMarker {
+                                    marker_id: drag.marker_id,
+                                    position_ticks: drag.preview_position_ticks,
+                                },
+                            ))
+                            .and_capture()
+                        })
+                        .or_else(|| Some(canvas::Action::capture()))
+                } else {
+                    if state.pending_double_click == Some(drag.marker_id) {
+                        state.pending_double_click = None;
+                        return Some(
+                            canvas::Action::publish(crate::app::Message::Timeline(
+                                TimelineEvent::EditProjectMarker {
+                                    marker_id: drag.marker_id,
+                                },
+                            ))
+                            .and_capture(),
+                        );
+                    }
+                    state.pending_double_click = None;
+                    state.last_click = Some((drag.marker_id, drag.start_pointer, Instant::now()));
+                    Some(
+                        canvas::Action::publish(crate::app::Message::Timeline(
+                            TimelineEvent::SelectProjectMarker {
+                                marker_id: drag.marker_id,
+                                position_ticks: drag.original_position_ticks,
+                            },
+                        ))
+                        .and_capture(),
+                    )
+                }
+            }
+            _ => None,
         }
-        None
     }
 
     fn draw(
         &self,
-        _state: &Self::State,
+        state: &Self::State,
         renderer: &iced::Renderer,
         _theme: &Theme,
         bounds: Rectangle,
@@ -3583,7 +5947,7 @@ impl canvas::Program<crate::app::Message> for RulerProgram<'_> {
             if line.show_label {
                 frame.fill_text(Text {
                     content: line.measure.to_string(),
-                    position: Point::new(line.x + 4.0, bounds.height / 2.0),
+                    position: Point::new(line.x + 4.0, bounds.height * 0.28),
                     max_width: 36.0,
                     color: Color::from_rgb8(190, 197, 201),
                     size: Pixels(11.0),
@@ -3593,25 +5957,600 @@ impl canvas::Program<crate::app::Message> for RulerProgram<'_> {
                     align_y: iced::alignment::Vertical::Center,
                     shaping: Shaping::Basic,
                 });
+                if let Some(time_label) = line.time_label {
+                    frame.fill_text(Text {
+                        content: time_label,
+                        position: Point::new(line.x + 4.0, bounds.height * 0.73),
+                        max_width: 50.0,
+                        color: Color::from_rgb8(142, 151, 156),
+                        size: Pixels(9.0),
+                        line_height: LineHeight::Relative(1.0),
+                        font: Font::default(),
+                        align_x: TextAlignment::Left,
+                        align_y: iced::alignment::Vertical::Center,
+                        shaping: Shaping::Basic,
+                    });
+                }
             }
+        }
+        for region in self
+            .project
+            .regions()
+            .iter()
+            .filter(|region| self.project.show_project_regions() && region.is_visible())
+        {
+            let drag = state
+                .region_drag
+                .filter(|drag| drag.region_id == region.id() && drag.moved);
+            let start_ticks = drag.map_or(region.start_ticks(), |drag| drag.preview_start_ticks);
+            let end_ticks = drag.map_or(region.end_ticks(), |drag| drag.preview_end_ticks);
+            let start_x = project_marker_x(
+                start_ticks,
+                self.state.origin_tick,
+                self.state.pixels_per_tick,
+            );
+            let end_x = project_marker_x(
+                end_ticks,
+                self.state.origin_tick,
+                self.state.pixels_per_tick,
+            );
+            if !start_x.is_finite() || !end_x.is_finite() || end_x < 0.0 || start_x > bounds.width {
+                continue;
+            }
+            let left = start_x.max(0.0);
+            let right = end_x.min(bounds.width);
+            frame.fill_rectangle(
+                Point::new(left, 1.0),
+                Size::new((right - left).max(0.0), bounds.height.min(6.0)),
+                if drag.is_some() {
+                    Color::from_rgba8(170, 205, 130, 0.48)
+                } else {
+                    Color::from_rgba8(135, 163, 105, 75.0 / 255.0)
+                },
+            );
+            for x in [start_x, end_x] {
+                if (0.0..=bounds.width).contains(&x) {
+                    let path = canvas::Path::line(Point::new(x, 0.0), Point::new(x, bounds.height));
+                    frame.stroke(
+                        &path,
+                        canvas::Stroke::default()
+                            .with_color(Color::from_rgb8(135, 163, 105))
+                            .with_width(1.0),
+                    );
+                }
+            }
+        }
+        if let Some(loop_points) = state
+            .loop_drag
+            .filter(|drag| drag.moved)
+            .map(|drag| drag.preview)
+            .or(self.state.loop_points)
+        {
+            let start_x = project_marker_x(
+                loop_points.start_tick,
+                self.state.origin_tick,
+                self.state.pixels_per_tick,
+            );
+            let end_x = project_marker_x(
+                loop_points.end_tick,
+                self.state.origin_tick,
+                self.state.pixels_per_tick,
+            );
+            if start_x.is_finite() && end_x.is_finite() && end_x >= 0.0 && start_x <= bounds.width {
+                let color = Color::from_rgb8(132, 136, 136);
+                let top = (bounds.height - LOOP_POINT_HANDLE_ROW_HEIGHT).max(0.0);
+                let middle = (top + bounds.height) * 0.5;
+                let start_handle = canvas::Path::new(|path| {
+                    path.move_to(Point::new(start_x, top));
+                    path.line_to(Point::new(start_x + LOOP_POINT_HANDLE_WIDTH, middle));
+                    path.line_to(Point::new(start_x, bounds.height));
+                    path.close();
+                });
+                let end_handle = canvas::Path::new(|path| {
+                    path.move_to(Point::new(end_x, top));
+                    path.line_to(Point::new(end_x - LOOP_POINT_HANDLE_WIDTH, middle));
+                    path.line_to(Point::new(end_x, bounds.height));
+                    path.close();
+                });
+                frame.fill(&start_handle, color);
+                frame.fill(&end_handle, color);
+                let bar_left = start_x + LOOP_POINT_HANDLE_WIDTH - 1.0;
+                let bar_right = end_x - LOOP_POINT_HANDLE_WIDTH + 1.0;
+                if bar_right > bar_left {
+                    frame.fill_rectangle(
+                        Point::new(bar_left, middle - 2.0),
+                        Size::new(bar_right - bar_left, 4.0),
+                        color,
+                    );
+                }
+            }
+        }
+        for marker in self
+            .project
+            .markers()
+            .iter()
+            .filter(|marker| self.project.show_project_markers() && marker.is_visible())
+        {
+            let position_ticks = state
+                .drag
+                .as_ref()
+                .filter(|drag| drag.marker_id == marker.id() && drag.moved)
+                .map_or(marker.position_ticks(), |drag| drag.preview_position_ticks);
+            let x = project_marker_x(
+                position_ticks,
+                self.state.origin_tick,
+                self.state.pixels_per_tick,
+            );
+            if !x.is_finite() || x < -8.0 || x > bounds.width {
+                continue;
+            }
+            let color = if self.state.selected_project_marker == Some(marker.id())
+                || state
+                    .drag
+                    .as_ref()
+                    .is_some_and(|drag| drag.marker_id == marker.id())
+            {
+                Color::from_rgb8(255, 135, 113)
+            } else {
+                Color::from_rgb8(224, 91, 76)
+            };
+            let stem = canvas::Path::line(Point::new(x, 8.0), Point::new(x, bounds.height));
+            frame.stroke(
+                &stem,
+                canvas::Stroke::default().with_color(color).with_width(1.5),
+            );
+            let flag = canvas::Path::new(|path| {
+                path.move_to(Point::new(x, 0.0));
+                path.line_to(Point::new(x + 8.0, 4.0));
+                path.line_to(Point::new(x, 9.0));
+                path.close();
+            });
+            frame.fill(&flag, color);
+            let label = if marker.name().is_empty() {
+                marker.number().to_string()
+            } else {
+                marker.name().to_owned()
+            };
+            frame.fill_text(Text {
+                content: label,
+                position: Point::new(x + 9.0, 3.0),
+                max_width: (bounds.width - x - 9.0).clamp(0.0, 140.0),
+                color,
+                size: Pixels(10.0),
+                line_height: LineHeight::Relative(1.0),
+                font: Font::default(),
+                align_x: TextAlignment::Left,
+                align_y: iced::alignment::Vertical::Center,
+                shaping: Shaping::Basic,
+            });
         }
         vec![frame.into_geometry()]
     }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct ProjectMarkerDrag {
+    marker_id: MarkerId,
+    original_position_ticks: u64,
+    pointer_offset_ticks: i128,
+    start_pointer: Point,
+    preview_position_ticks: u64,
+    moved: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ProjectRegionDragTarget {
+    Start,
+    End,
+    Move,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LoopPointDragTarget {
+    Start,
+    End,
+    Move,
+    SetPoint,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct LoopPointDrag {
+    target: LoopPointDragTarget,
+    original: Option<LoopPoints>,
+    pointer_offset_ticks: i128,
+    start_pointer: Point,
+    preview: LoopPoints,
+    moved: bool,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct ProjectRegionDrag {
+    region_id: aaadaw_core::RegionId,
+    target: ProjectRegionDragTarget,
+    original_start_ticks: u64,
+    original_end_ticks: u64,
+    pointer_offset_ticks: i128,
+    start_pointer: Point,
+    preview_start_ticks: u64,
+    preview_end_ticks: u64,
+    moved: bool,
+}
+
+#[derive(Debug, Default)]
+struct ProjectMarkerInteraction {
+    drag: Option<ProjectMarkerDrag>,
+    region_drag: Option<ProjectRegionDrag>,
+    loop_drag: Option<LoopPointDrag>,
+    last_click: Option<(MarkerId, Point, Instant)>,
+    pending_double_click: Option<MarkerId>,
+}
+
+fn loop_point_target_at(
+    loop_points: LoopPoints,
+    origin_tick: u64,
+    pixels_per_tick: f32,
+    position: Point,
+    bounds_height: f32,
+) -> Option<LoopPointDragTarget> {
+    if position.y < bounds_height - LOOP_POINT_HANDLE_ROW_HEIGHT {
+        return None;
+    }
+    let start_x = project_marker_x(loop_points.start_tick, origin_tick, pixels_per_tick);
+    let end_x = project_marker_x(loop_points.end_tick, origin_tick, pixels_per_tick);
+    let start_distance = (position.x - start_x).abs();
+    let end_distance = (position.x - end_x).abs();
+    let start_hit = start_x.is_finite() && start_distance <= LOOP_POINT_HANDLE_HIT_RADIUS;
+    let end_hit = end_x.is_finite() && end_distance <= LOOP_POINT_HANDLE_HIT_RADIUS;
+    match (start_hit, end_hit) {
+        (true, true) if start_distance <= end_distance => Some(LoopPointDragTarget::Start),
+        (true, true) => Some(LoopPointDragTarget::End),
+        (true, false) => Some(LoopPointDragTarget::Start),
+        (false, true) => Some(LoopPointDragTarget::End),
+        (false, false) => None,
+    }
+}
+
+fn loop_points_at_drag_target(
+    original: LoopPoints,
+    target: LoopPointDragTarget,
+    tick: u64,
+) -> LoopPoints {
+    match target {
+        LoopPointDragTarget::Move => {
+            let length = original.end_tick - original.start_tick;
+            let start_tick = tick.min(u64::MAX.saturating_sub(length));
+            LoopPoints {
+                start_tick,
+                end_tick: start_tick + length,
+            }
+        }
+        LoopPointDragTarget::SetPoint => LoopPoints {
+            start_tick: tick,
+            end_tick: tick,
+        },
+        LoopPointDragTarget::Start if tick <= original.end_tick => LoopPoints {
+            start_tick: tick,
+            end_tick: original.end_tick,
+        },
+        LoopPointDragTarget::Start => LoopPoints {
+            start_tick: tick,
+            end_tick: tick,
+        },
+        LoopPointDragTarget::End if tick >= original.start_tick => LoopPoints {
+            start_tick: original.start_tick,
+            end_tick: tick,
+        },
+        LoopPointDragTarget::End => LoopPoints {
+            start_tick: tick,
+            end_tick: tick,
+        },
+    }
+}
+
+fn loop_point_body_hit(
+    loop_points: LoopPoints,
+    origin_tick: u64,
+    pixels_per_tick: f32,
+    x: f32,
+) -> bool {
+    let start_x = project_marker_x(loop_points.start_tick, origin_tick, pixels_per_tick);
+    let end_x = project_marker_x(loop_points.end_tick, origin_tick, pixels_per_tick);
+    start_x.is_finite()
+        && end_x.is_finite()
+        && end_x - start_x > LOOP_POINT_HANDLE_HIT_RADIUS * 2.0
+        && x > start_x + LOOP_POINT_HANDLE_HIT_RADIUS
+        && x < end_x - LOOP_POINT_HANDLE_HIT_RADIUS
+}
+
+fn project_marker_hit<'a>(
+    project: &'a Project,
+    state: &TimelineState,
+    position: Point,
+) -> Option<&'a aaadaw_core::ProjectMarker> {
+    if !(0.0..=14.0).contains(&position.y) {
+        return None;
+    }
+    if !project.show_project_markers() {
+        return None;
+    }
+    project
+        .markers()
+        .iter()
+        .filter(|marker| marker.is_visible())
+        .filter_map(|marker| {
+            let x = project_marker_x(
+                marker.position_ticks(),
+                state.origin_tick,
+                state.pixels_per_tick,
+            );
+            let label = if marker.name().is_empty() {
+                marker.number().to_string()
+            } else {
+                marker.name().to_owned()
+            };
+            let right = x + 12.0 + label.chars().count() as f32 * 6.0;
+            (position.x >= x - 5.0 && position.x <= right)
+                .then_some((marker, (position.x - x).abs()))
+        })
+        .min_by(|left, right| left.1.total_cmp(&right.1))
+        .map(|(marker, _)| marker)
+}
+
+fn project_region_hit<'a>(
+    project: &'a Project,
+    state: &TimelineState,
+    position: Point,
+) -> Option<(&'a aaadaw_core::ProjectRegion, ProjectRegionDragTarget)> {
+    if !project.show_project_regions() {
+        return None;
+    }
+    if position.y >= 14.0 {
+        project
+            .regions()
+            .iter()
+            .filter(|region| region.is_visible())
+            .flat_map(|region| {
+                [
+                    (region, ProjectRegionDragTarget::Start, region.start_ticks()),
+                    (region, ProjectRegionDragTarget::End, region.end_ticks()),
+                ]
+            })
+            .filter_map(|(region, target, tick)| {
+                let x = project_marker_x(tick, state.origin_tick, state.pixels_per_tick);
+                let distance = (position.x - x).abs();
+                (x.is_finite() && distance <= 7.0).then_some((region, target, distance))
+            })
+            .min_by(|left, right| left.2.total_cmp(&right.2))
+            .map(|(region, target, _)| (region, target))
+    } else if (0.0..=7.0).contains(&position.y) {
+        project
+            .regions()
+            .iter()
+            .filter(|region| region.is_visible())
+            .filter_map(|region| {
+                let start_x = project_marker_x(
+                    region.start_ticks(),
+                    state.origin_tick,
+                    state.pixels_per_tick,
+                );
+                let end_x =
+                    project_marker_x(region.end_ticks(), state.origin_tick, state.pixels_per_tick);
+                (start_x.is_finite()
+                    && end_x.is_finite()
+                    && position.x > start_x + 8.0
+                    && position.x < end_x - 8.0)
+                    .then_some((region, end_x - start_x))
+            })
+            .min_by(|left, right| left.1.total_cmp(&right.1))
+            .map(|(region, _)| (region, ProjectRegionDragTarget::Move))
+    } else {
+        None
+    }
+}
+
+fn project_marker_x(position_tick: u64, origin_tick: u64, pixels_per_tick: f32) -> f32 {
+    ((i128::from(position_tick) - i128::from(origin_tick)) as f64 * f64::from(pixels_per_tick))
+        as f32
 }
 
 struct ItemLabelsProgram<'a> {
     state: &'a TimelineState,
 }
 
-fn midi_note_preview_geometry<'a>(
-    notes: &'a [MidiNotePreview],
+fn midi_note_preview_geometry(
+    notes: &[MidiNotePreview],
+    source: MidiPreviewSource,
     item_length: u64,
-    item_left: f32,
-    item_width: f32,
-    top: f32,
-    height: f32,
-) -> impl Iterator<Item = Rectangle> + 'a {
-    let valid_geometry = item_length > 0 && item_width > 0.0 && height > 0.0;
+    bounds: MidiPreviewBounds,
+) -> Vec<Rectangle> {
+    midi_note_preview_geometry_in_pitch_range(
+        notes,
+        source,
+        item_length,
+        bounds,
+        midi_preview_pitch_bounds(notes),
+    )
+}
+
+fn midi_note_preview_geometry_in_pitch_range(
+    notes: &[MidiNotePreview],
+    source: MidiPreviewSource,
+    item_length: u64,
+    bounds: MidiPreviewBounds,
+    pitch_bounds: (u8, u8),
+) -> Vec<Rectangle> {
+    if item_length == 0
+        || !bounds.item_width.is_finite()
+        || bounds.item_width <= 0.0
+        || !bounds.viewport_width.is_finite()
+        || bounds.viewport_width <= 0.0
+        || !bounds.height.is_finite()
+        || bounds.height <= 0.0
+    {
+        return Vec::new();
+    }
+
+    #[derive(Clone, Copy)]
+    struct Candidate {
+        note_index: usize,
+        first_tick: u64,
+        interval: u64,
+        count: u64,
+        duration: u64,
+    }
+
+    let item_left = f64::from(bounds.item_left);
+    let item_width = f64::from(bounds.item_width);
+    let visible_left = item_left.max(0.0);
+    let visible_right = (item_left + item_width).min(f64::from(bounds.viewport_width));
+    if visible_right <= visible_left {
+        return Vec::new();
+    }
+    let visible_start_tick = (((visible_left - item_left) / item_width) * item_length as f64)
+        .floor()
+        .clamp(0.0, item_length as f64) as u64;
+    let visible_end_tick = (((visible_right - item_left) / item_width) * item_length as f64)
+        .ceil()
+        .clamp(0.0, item_length as f64) as u64;
+    if visible_end_tick <= visible_start_tick {
+        return Vec::new();
+    }
+
+    let candidate_for = |note_index, note: &MidiNotePreview| {
+        let duration = note.duration.min(item_length);
+        if duration == 0 {
+            return None;
+        }
+
+        if let Some(loop_length) = source.loop_length_ticks.filter(|length| *length > 0) {
+            let source_tick = note.tick % loop_length;
+            let phase = (i128::from(source_tick) - i128::from(source.offset_ticks))
+                .rem_euclid(i128::from(loop_length)) as u64;
+            let earliest_visible_start =
+                visible_start_tick.saturating_sub(duration.saturating_sub(1));
+            let first_index = if earliest_visible_start <= phase {
+                0
+            } else {
+                let distance = earliest_visible_start - phase;
+                distance.div_ceil(loop_length)
+            };
+            let latest_visible_start = visible_end_tick.checked_sub(1)?;
+            if latest_visible_start < phase {
+                return None;
+            }
+            let last_index = (latest_visible_start - phase) / loop_length;
+            if last_index < first_index {
+                return None;
+            }
+            let first_tick = phase.checked_add(first_index.saturating_mul(loop_length))?;
+            Some(Candidate {
+                note_index,
+                first_tick,
+                interval: loop_length,
+                count: last_index - first_index + 1,
+                duration,
+            })
+        } else {
+            let local_start = i128::from(note.tick) - i128::from(source.offset_ticks);
+            let local_end = local_start + i128::from(duration);
+            if local_start >= i128::from(visible_end_tick)
+                || local_end <= i128::from(visible_start_tick)
+                || local_end <= 0
+            {
+                return None;
+            }
+            let first_tick = u64::try_from(local_start.max(0)).ok()?;
+            let duration = u64::try_from(local_end - i128::from(first_tick)).ok()?;
+            if duration == 0 {
+                return None;
+            }
+            Some(Candidate {
+                note_index,
+                first_tick,
+                interval: 0,
+                count: 1,
+                duration,
+            })
+        }
+    };
+
+    let candidate_count = notes
+        .iter()
+        .enumerate()
+        .filter_map(|(index, note)| candidate_for(index, note))
+        .count();
+    if candidate_count == 0 {
+        return Vec::new();
+    }
+
+    let selected_count = candidate_count.min(MAX_MIDI_ITEM_PREVIEW_NOTES);
+    let occurrences_per_note = MAX_MIDI_ITEM_PREVIEW_NOTES / selected_count;
+    let (low_pitch, high_pitch) = pitch_bounds;
+    let pitch_range = f32::from((u16::from(high_pitch) - u16::from(low_pitch)).max(1));
+    let note_height = (bounds.height / (pitch_range + 1.0)).clamp(2.0, 6.0);
+
+    let mut rectangles = Vec::with_capacity(selected_count * occurrences_per_note);
+    let mut candidate_index = 0;
+    let mut selected_index = 0;
+    for (note_index, note) in notes.iter().enumerate() {
+        let Some(candidate) = candidate_for(note_index, note) else {
+            continue;
+        };
+        let target_candidate_index = if selected_count == 1 {
+            0
+        } else {
+            ((selected_index as u128 * (candidate_count - 1) as u128)
+                / (selected_count - 1) as u128) as usize
+        };
+        if candidate_index != target_candidate_index {
+            candidate_index += 1;
+            continue;
+        }
+        let note = notes[candidate.note_index];
+        let occurrence_count = usize::try_from(candidate.count)
+            .unwrap_or(occurrences_per_note)
+            .min(occurrences_per_note);
+        for occurrence_sample in 0..occurrence_count {
+            let occurrence_index = if occurrence_count == 1 {
+                if selected_count == 1 {
+                    candidate.count - 1
+                } else {
+                    (selected_index as u128 * (candidate.count - 1) as u128
+                        / (selected_count - 1) as u128) as u64
+                }
+            } else {
+                (occurrence_sample as u128 * (candidate.count - 1) as u128
+                    / (occurrence_count - 1) as u128) as u64
+            };
+            let tick = candidate
+                .first_tick
+                .saturating_add(occurrence_index.saturating_mul(candidate.interval));
+            let note_end = tick.saturating_add(candidate.duration).min(item_length);
+            if tick >= item_length || note_end <= tick {
+                continue;
+            }
+            let x = item_left + (tick as f64 / item_length as f64) * item_width;
+            let right = item_left + (note_end as f64 / item_length as f64) * item_width;
+            let width = (right - x).max(1.25).min(item_width);
+            let pitch_offset =
+                f32::from(u16::from(high_pitch).saturating_sub(u16::from(note.pitch)));
+            let y =
+                bounds.top + (pitch_offset / pitch_range) * (bounds.height - note_height).max(0.0);
+            rectangles.push(Rectangle::new(
+                Point::new(x as f32, y),
+                Size::new(width as f32, note_height),
+            ));
+        }
+        candidate_index += 1;
+        selected_index += 1;
+        if selected_index == selected_count {
+            break;
+        }
+    }
+    rectangles
+}
+
+fn midi_preview_pitch_bounds(notes: &[MidiNotePreview]) -> (u8, u8) {
     let lowest = notes.iter().map(|note| note.pitch).min().unwrap_or(0);
     let highest = notes.iter().map(|note| note.pitch).max().unwrap_or(127);
     let range = u16::from(highest - lowest);
@@ -3620,27 +6559,16 @@ fn midi_note_preview_geometry<'a>(
     let mut low_pitch = u16::from(lowest).saturating_sub(padding_below);
     let high_pitch = (low_pitch + padded_range).min(127);
     low_pitch = high_pitch.saturating_sub(padded_range);
-    let pitch_range = f32::from((high_pitch - low_pitch).max(1));
-    let note_height = (height / f32::from((padded_range + 1).max(12))).clamp(2.0, 6.0);
+    (low_pitch as u8, high_pitch as u8)
+}
 
-    notes.iter().filter_map(move |note| {
-        if !valid_geometry {
-            return None;
-        }
-        let note_end = note.tick.saturating_add(note.duration).min(item_length);
-        if note.tick >= item_length || note_end <= note.tick {
-            return None;
-        }
-        let x = item_left + (note.tick as f32 / item_length as f32) * item_width;
-        let right = item_left + (note_end as f32 / item_length as f32) * item_width;
-        let width = (right - x).max(1.25);
-        let pitch_offset = f32::from(high_pitch.saturating_sub(u16::from(note.pitch)));
-        let y = top + (pitch_offset / pitch_range) * (height - note_height).max(0.0);
-        Some(Rectangle::new(
-            Point::new(x, y),
-            Size::new(width.min(item_width), note_height),
-        ))
-    })
+fn midi_inline_pitch_bounds(notes: &[MidiNotePreview]) -> (u8, u8) {
+    let lowest = notes.iter().map(|note| note.pitch).min().unwrap_or(60);
+    let highest = notes.iter().map(|note| note.pitch).max().unwrap_or(71);
+    let low_pitch = (u16::from(lowest) / 12 * 12).saturating_sub(12);
+    let high_pitch = (low_pitch + 35).max(u16::from(highest)).min(127);
+    let low_pitch = high_pitch.saturating_sub(35).min(low_pitch);
+    (low_pitch as u8, high_pitch as u8)
 }
 
 impl canvas::Program<crate::app::Message> for ItemLabelsProgram<'_> {
@@ -3680,6 +6608,9 @@ impl canvas::Program<crate::app::Message> for ItemLabelsProgram<'_> {
                     shaping: Shaping::Basic,
                 });
             }
+            if row.base_height < TIMELINE_ROW_HEIGHT {
+                continue;
+            }
             if !self.state.volume_automation_tracks.contains(track_id)
                 || self
                     .state
@@ -3712,58 +6643,192 @@ impl canvas::Program<crate::app::Message> for ItemLabelsProgram<'_> {
                 .state
                 .item_trim_preview
                 .filter(|trim| trim.item_id == item.id);
-            let (start_tick, end_tick, track_index) = if let Some(trim) = trim {
-                (trim.start_tick, trim.end_tick, item.track_index as i128)
-            } else if let Some(preview) = preview {
-                let start_tick = u64::try_from(i128::from(item.start_tick) + preview.delta_ticks)
-                    .unwrap_or(item.start_tick);
-                let end_tick = u64::try_from(i128::from(item.end_tick) + preview.delta_ticks)
-                    .unwrap_or(item.end_tick);
-                let track_index = i128::try_from(item.track_index).unwrap_or(i128::MAX)
-                    + i128::from(preview.track_delta);
-                (start_tick, end_tick, track_index)
-            } else {
-                (
-                    item.start_tick,
-                    item.end_tick,
-                    i128::try_from(item.track_index).unwrap_or(i128::MAX),
-                )
-            };
+            let (start_tick, start_tick_subtick, end_tick, end_tick_subtick, track_index) =
+                if let Some(trim) = trim {
+                    (
+                        trim.start_tick,
+                        0,
+                        trim.end_tick,
+                        0,
+                        item.track_index as i128,
+                    )
+                } else if let Some(preview) = preview {
+                    let start_tick =
+                        u64::try_from(i128::from(item.start_tick) + preview.delta_ticks)
+                            .unwrap_or(item.start_tick);
+                    let end_tick = u64::try_from(i128::from(item.end_tick) + preview.delta_ticks)
+                        .unwrap_or(item.end_tick);
+                    let track_index = i128::try_from(item.track_index).unwrap_or(i128::MAX)
+                        + i128::from(preview.track_delta);
+                    (
+                        start_tick,
+                        item.start_tick_subtick,
+                        end_tick,
+                        item.end_tick_subtick,
+                        track_index,
+                    )
+                } else {
+                    (
+                        item.start_tick,
+                        item.start_tick_subtick,
+                        item.end_tick,
+                        item.end_tick_subtick,
+                        i128::try_from(item.track_index).unwrap_or(i128::MAX),
+                    )
+                };
             let Some(row) = usize::try_from(track_index)
                 .ok()
                 .and_then(|index| self.state.row_layout(index))
             else {
                 continue;
             };
+            if row.base_height < 25.0 {
+                continue;
+            }
             if row.top + row.height < self.state.vertical_scroll
                 || row.top > self.state.vertical_scroll + self.state.viewport_height
             {
                 continue;
             }
-            let left = (i128::from(start_tick) - i128::from(self.state.origin_tick)) as f64
+            let subticks_per_tick = f64::from(aaadaw_core::MIDI_ITEM_SUBTICKS_PER_TICK);
+            let left = (start_tick as f64 + f64::from(start_tick_subtick) / subticks_per_tick
+                - self.state.origin_tick as f64)
                 * f64::from(self.state.pixels_per_tick);
-            let right = (i128::from(end_tick) - i128::from(self.state.origin_tick)) as f64
+            let right = (end_tick as f64 + f64::from(end_tick_subtick) / subticks_per_tick
+                - self.state.origin_tick as f64)
                 * f64::from(self.state.pixels_per_tick);
             let width = right - left;
             if right < 0.0 || left > f64::from(bounds.width) || width < 18.0 {
                 continue;
             }
-            if item.kind == ItemKind::Midi && !item.midi_notes.is_empty() {
-                let preview_top = row.top + 34.0;
-                let preview_height = 50.0_f32.min(row.base_height - 42.0);
-                for note_rect in midi_note_preview_geometry(
-                    &item.midi_notes,
-                    item.end_tick.saturating_sub(item.start_tick),
-                    left as f32,
-                    width as f32,
-                    preview_top,
-                    preview_height,
-                ) {
+            if row.base_height < 12.0 {
+                continue;
+            }
+            if item.muted {
+                let badge_left = left + 23.0;
+                if badge_left >= 0.0
+                    && badge_left + 13.0 <= right
+                    && badge_left < f64::from(bounds.width)
+                {
+                    let badge_top = row.top + 2.0;
+                    frame.fill_rectangle(
+                        Point::new(badge_left as f32, badge_top),
+                        Size::new(13.0, 14.0),
+                        Color::from_rgb8(77, 25, 33),
+                    );
+                    frame.fill_text(Text {
+                        content: "M".to_owned(),
+                        position: Point::new(badge_left as f32 + 6.5, badge_top + 7.0),
+                        max_width: 13.0,
+                        color: Color::from_rgb8(244, 39, 63),
+                        size: Pixels(10.0),
+                        line_height: LineHeight::Relative(1.0),
+                        font: Font::default(),
+                        align_x: TextAlignment::Center,
+                        align_y: iced::alignment::Vertical::Center,
+                        shaping: Shaping::Basic,
+                    });
+                }
+            }
+            if row.base_height >= 43.0
+                && item.kind == ItemKind::Midi
+                && (!item.midi_notes.is_empty() || self.state.inline_midi_items.contains(&item.id))
+            {
+                let inline = self.state.inline_midi_items.contains(&item.id);
+                let (preview_top, preview_height) = if inline {
+                    (row.top + 24.0, (row.base_height - 34.0).max(12.0))
+                } else {
+                    (row.top + 34.0, 50.0_f32.min(row.base_height - 42.0))
+                };
+                if inline {
+                    let (low_pitch, high_pitch) = midi_inline_pitch_bounds(&item.midi_notes);
+                    let pitch_span = f32::from((high_pitch - low_pitch).max(1));
+                    for row_index in 0..=u16::from(high_pitch - low_pitch) {
+                        let y = preview_top + f32::from(row_index) * preview_height / pitch_span;
+                        let line = canvas::Path::line(
+                            Point::new((left as f32).max(0.0), y),
+                            Point::new((right as f32).min(bounds.width), y),
+                        );
+                        frame.stroke(
+                            &line,
+                            canvas::Stroke::default()
+                                .with_color(Color::from_rgba8(202, 214, 190, 0.18))
+                                .with_width(0.5),
+                        );
+                    }
+                }
+                let note_rectangles = if inline {
+                    midi_note_preview_geometry_in_pitch_range(
+                        &item.midi_notes,
+                        MidiPreviewSource {
+                            offset_ticks: item.midi_source_offset_ticks,
+                            loop_length_ticks: item.midi_source_loop_length_ticks,
+                        },
+                        item.end_tick.saturating_sub(item.start_tick),
+                        MidiPreviewBounds {
+                            item_left: left as f32,
+                            item_width: width as f32,
+                            viewport_width: bounds.width,
+                            top: preview_top,
+                            height: preview_height,
+                        },
+                        midi_inline_pitch_bounds(&item.midi_notes),
+                    )
+                } else {
+                    midi_note_preview_geometry(
+                        &item.midi_notes,
+                        MidiPreviewSource {
+                            offset_ticks: item.midi_source_offset_ticks,
+                            loop_length_ticks: item.midi_source_loop_length_ticks,
+                        },
+                        item.end_tick.saturating_sub(item.start_tick),
+                        MidiPreviewBounds {
+                            item_left: left as f32,
+                            item_width: width as f32,
+                            viewport_width: bounds.width,
+                            top: preview_top,
+                            height: preview_height,
+                        },
+                    )
+                };
+                for note_rect in note_rectangles {
                     frame.fill_rectangle(
                         note_rect.position(),
                         note_rect.size(),
                         Color::from_rgb8(195, 222, 153),
                     );
+                }
+                if inline
+                    && let Some(selected) = self.state.inline_midi_note_selection.get(&item.id)
+                {
+                    let selected_notes = item
+                        .midi_notes
+                        .iter()
+                        .filter(|note| selected.contains(&note.id))
+                        .copied()
+                        .collect::<Vec<_>>();
+                    for note_rect in midi_note_preview_geometry_in_pitch_range(
+                        &selected_notes,
+                        MidiPreviewSource {
+                            offset_ticks: item.midi_source_offset_ticks,
+                            loop_length_ticks: item.midi_source_loop_length_ticks,
+                        },
+                        item.end_tick.saturating_sub(item.start_tick),
+                        MidiPreviewBounds {
+                            item_left: left as f32,
+                            item_width: width as f32,
+                            viewport_width: bounds.width,
+                            top: preview_top,
+                            height: preview_height,
+                        },
+                        midi_inline_pitch_bounds(&item.midi_notes),
+                    ) {
+                        frame.fill_rectangle(
+                            note_rect.position(),
+                            note_rect.size(),
+                            Color::from_rgb8(104, 179, 204),
+                        );
+                    }
                 }
             }
             if width < 54.0 {
@@ -3774,7 +6839,9 @@ impl canvas::Program<crate::app::Message> for ItemLabelsProgram<'_> {
                 position: Point::new(
                     (left.max(0.0) + 5.0) as f32,
                     row.top
-                        + if item.kind == ItemKind::Midi {
+                        + if row.base_height < 43.0 {
+                            row.base_height / 2.0
+                        } else if item.kind == ItemKind::Midi {
                             20.0
                         } else if item.media_ref.as_ref().is_some_and(|media_ref| {
                             self.state.audio_waveforms.contains_key(media_ref)
@@ -3796,6 +6863,23 @@ impl canvas::Program<crate::app::Message> for ItemLabelsProgram<'_> {
         }
         vec![frame.into_geometry()]
     }
+}
+
+fn fade_body_geometry(row: TrackRowLayout, automation: bool) -> (f32, f32) {
+    let (top, height) = row.item_geometry(automation);
+    let header = if row.base_height >= 43.0 { 16.0 } else { 0.0 };
+    (top + header, (height - header).max(0.0))
+}
+
+fn effective_fade_lengths(fades: aaadaw_core::AudioItemFades, item_length: u64) -> (f64, f64) {
+    let fade_in = fades.fade_in.length_samples().min(item_length as f64);
+    (
+        fade_in,
+        fades
+            .fade_out
+            .length_samples()
+            .min(item_length as f64 - fade_in),
+    )
 }
 
 fn tick_at_x(origin_tick: u64, pixels_per_tick: f32, x: f32) -> u64 {
@@ -3895,16 +6979,57 @@ fn fx_automation_point_at(
         .map(|(index, _)| index)
 }
 
-fn snap_tick_to_grid(tick: u64, grid: Option<u64>, enabled: bool, ignore_snap: bool) -> u64 {
+pub(crate) fn snap_tick_to_grid(
+    tick: u64,
+    grid: Option<u64>,
+    enabled: bool,
+    ignore_snap: bool,
+    swing_amount_percent: i16,
+) -> u64 {
     let Some(grid) = grid.filter(|grid| enabled && !ignore_snap && *grid > 0) else {
         return tick;
     };
-    let grid = u128::from(grid);
-    (((u128::from(tick) + grid / 2) / grid) * grid).min(u128::from(u64::MAX)) as u64
+    if swing_amount_percent == 0 {
+        let grid = u128::from(grid);
+        return (((u128::from(tick) + grid / 2) / grid) * grid).min(u128::from(u64::MAX)) as u64;
+    }
+    let base_index = tick / grid;
+    let swing_amount_percent = swing_amount_percent.clamp(-100, 100);
+    let target_numerator = i128::from(tick) * 200;
+    let mut nearest: Option<(i128, i128)> = None;
+    for index in base_index.saturating_sub(2)..=base_index.saturating_add(3) {
+        let straight_numerator = i128::from(index) * i128::from(grid) * 200;
+        let candidate_numerator = if index % 2 == 1 {
+            straight_numerator + i128::from(grid) * i128::from(swing_amount_percent)
+        } else {
+            straight_numerator
+        };
+        if candidate_numerator < 0 {
+            continue;
+        }
+        let distance = (candidate_numerator - target_numerator).abs();
+        if nearest.is_none_or(|(best_distance, best_numerator)| {
+            distance < best_distance
+                || (distance == best_distance && candidate_numerator < best_numerator)
+        }) {
+            nearest = Some((distance, candidate_numerator));
+        }
+    }
+    let Some((_, numerator)) = nearest else {
+        return tick;
+    };
+    let rounded_tick = (numerator + 100) / 200;
+    rounded_tick.min(i128::from(u64::MAX)) as u64
 }
 
-fn fx_automation_tick_at(tick: u64, grid: Option<u64>, enabled: bool, ignore_snap: bool) -> u64 {
-    snap_tick_to_grid(tick, grid, enabled, ignore_snap)
+fn fx_automation_tick_at(
+    tick: u64,
+    grid: Option<u64>,
+    enabled: bool,
+    ignore_snap: bool,
+    swing_amount_percent: i16,
+) -> u64 {
+    snap_tick_to_grid(tick, grid, enabled, ignore_snap, swing_amount_percent)
 }
 
 fn time_selection_edge_at_tick(
@@ -3939,23 +7064,454 @@ fn media_label(media_ref: &str) -> String {
 mod tests {
     use super::{
         AutomationPointContext, FX_AUTOMATION_LANE_HEIGHT, ItemKind, ItemTrimEdge,
-        MAX_FX_AUTOMATION_LANE_HEIGHT, MiddleDragState, MidiNotePreview, PendingAutomationPoint,
-        PendingTimeSelectionDrag, RulerProgram, SnapGrid, TIMELINE_ROW_HEIGHT, TimeSelection,
-        TimeSelectionDragMode, TimelineCache, TimelineEvent, TimelineInteractionState,
-        TimelineState, automation_sample_between, fx_automation_band_at_y,
-        fx_automation_lane_resize_target, fx_automation_tick_at, item_trim_edge_at_x,
-        midi_note_preview_geometry, row_at_y, slowest_tempo_in_viewport, snap_tick_to_grid,
-        tick_at_x, time_selection_edge_at_tick,
+        LOOP_POINT_HANDLE_ROW_HEIGHT, LoopPointDragTarget, LoopPoints,
+        MAX_FX_AUTOMATION_LANE_HEIGHT, MAX_MIDI_ITEM_PREVIEW_NOTES, MiddleDragState, MidiNoteData,
+        MidiNotePreview, MidiPreviewBounds, MidiPreviewSource, NoteId, PendingAutomationPoint,
+        PendingInlineNoteMove, PendingTimeSelectionDrag, ProjectMarkerInteraction, RulerProgram,
+        SnapGrid, TIMELINE_ROW_HEIGHT, TimeSelection, TimeSelectionDragMode, TimelineCache,
+        TimelineEvent, TimelineInteractionState, TimelineState, automation_sample_between,
+        fx_automation_band_at_y, fx_automation_lane_resize_target, fx_automation_tick_at,
+        item_trim_edge_at_x, loop_point_body_hit, loop_point_target_at, loop_points_at_drag_target,
+        midi_note_preview_geometry, project_marker_x, project_region_hit, row_at_y,
+        slowest_tempo_in_viewport, snap_tick_to_grid, tick_at_x, time_selection_edge_at_tick,
     };
     use aaadaw_core::{
-        DawAction, FxParameterAutomationPoint, Project, ProjectSettings, TempoCurve, TimeSignature,
-        TrackFxPlugin, VolumeAutomationPoint,
+        DawAction, FxParameterAutomationPoint, MidiItemPosition, Project, ProjectSettings,
+        TempoCurve, TimeSignature, TrackFxPlugin, VolumeAutomationPoint,
     };
     use aaadaw_media::{AudioStreamDecoder, AudioWaveform};
     use iced::{Event, Point, Rectangle, Size, keyboard, mouse};
     use std::collections::{HashMap, HashSet};
     use std::io::Cursor;
     use std::sync::Arc;
+
+    #[test]
+    fn loop_point_handles_only_hit_the_bottom_ruler_lane_and_keep_endpoint_order() {
+        let points = LoopPoints {
+            start_tick: 100,
+            end_tick: 400,
+        };
+        assert_eq!(
+            loop_point_target_at(points, 0, 1.0, Point::new(100.0, 28.0), 32.0),
+            Some(LoopPointDragTarget::Start)
+        );
+        assert_eq!(
+            loop_point_target_at(
+                points,
+                0,
+                1.0,
+                Point::new(400.0, 32.0 - LOOP_POINT_HANDLE_ROW_HEIGHT),
+                32.0,
+            ),
+            Some(LoopPointDragTarget::End)
+        );
+        assert_eq!(
+            loop_point_target_at(points, 0, 1.0, Point::new(100.0, 22.0), 32.0),
+            None
+        );
+        assert_eq!(
+            loop_points_at_drag_target(points, LoopPointDragTarget::Start, 250),
+            LoopPoints {
+                start_tick: 250,
+                end_tick: 400,
+            }
+        );
+        assert_eq!(
+            loop_points_at_drag_target(points, LoopPointDragTarget::Start, 450),
+            LoopPoints {
+                start_tick: 450,
+                end_tick: 450,
+            }
+        );
+        assert_eq!(
+            loop_points_at_drag_target(points, LoopPointDragTarget::End, 50),
+            LoopPoints {
+                start_tick: 50,
+                end_tick: 50,
+            }
+        );
+        assert_eq!(
+            loop_points_at_drag_target(points, LoopPointDragTarget::Move, 250),
+            LoopPoints {
+                start_tick: 250,
+                end_tick: 550,
+            }
+        );
+        assert!(loop_point_body_hit(points, 0, 1.0, 250.0));
+        assert!(!loop_point_body_hit(points, 0, 1.0, 101.0));
+    }
+
+    #[test]
+    fn ruler_loop_start_handle_previews_and_publishes_a_loop_endpoint_drag() {
+        let project = Project::new();
+        let timeline = TimelineState {
+            loop_points: Some(LoopPoints {
+                start_tick: 100,
+                end_tick: 400,
+            }),
+            pixels_per_tick: 1.0,
+            snap_enabled: false,
+            ..TimelineState::default()
+        };
+        let program = RulerProgram {
+            state: &timeline,
+            project: &project,
+        };
+        let mut interaction = ProjectMarkerInteraction::default();
+        let bounds = Rectangle::new(Point::ORIGIN, Size::new(800.0, 32.0));
+        let press = Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left));
+        let press_action = iced::widget::canvas::Program::update(
+            &program,
+            &mut interaction,
+            &press,
+            bounds,
+            mouse::Cursor::Available(Point::new(100.0, 28.0)),
+        )
+        .expect("loop handle press should begin a captured drag");
+        assert_eq!(press_action.into_inner().2, iced::event::Status::Captured);
+
+        let cursor_move = Event::Mouse(mouse::Event::CursorMoved {
+            position: Point::new(150.0, 28.0),
+        });
+        let move_action = iced::widget::canvas::Program::update(
+            &program,
+            &mut interaction,
+            &cursor_move,
+            bounds,
+            mouse::Cursor::Available(Point::new(150.0, 28.0)),
+        )
+        .expect("loop handle movement should update the preview");
+        let (move_message, _, move_status) = move_action.into_inner();
+        assert!(move_message.is_none());
+        assert_eq!(move_status, iced::event::Status::Captured);
+        assert_eq!(
+            interaction.loop_drag.map(|drag| drag.preview),
+            Some(LoopPoints {
+                start_tick: 150,
+                end_tick: 400,
+            })
+        );
+
+        let release = Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left));
+        let release_action = iced::widget::canvas::Program::update(
+            &program,
+            &mut interaction,
+            &release,
+            bounds,
+            mouse::Cursor::Available(Point::new(150.0, 28.0)),
+        )
+        .expect("loop handle release should commit the endpoint");
+        let (message, _, release_status) = release_action.into_inner();
+        assert_eq!(release_status, iced::event::Status::Captured);
+        assert!(matches!(
+            message,
+            Some(crate::app::Message::Timeline(
+                TimelineEvent::SetLoopPoints {
+                    start_tick: 150,
+                    end_tick: 400,
+                }
+            ))
+        ));
+    }
+
+    #[test]
+    fn ruler_shift_drag_moves_the_loop_body_and_preserves_its_length() {
+        let project = Project::new();
+        let timeline = TimelineState {
+            loop_points: Some(LoopPoints {
+                start_tick: 100,
+                end_tick: 400,
+            }),
+            pixels_per_tick: 1.0,
+            snap_enabled: false,
+            modifiers: keyboard::Modifiers::SHIFT,
+            ..TimelineState::default()
+        };
+        let program = RulerProgram {
+            state: &timeline,
+            project: &project,
+        };
+        let mut interaction = ProjectMarkerInteraction::default();
+        let bounds = Rectangle::new(Point::ORIGIN, Size::new(800.0, 32.0));
+        let press = Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left));
+        let press_action = iced::widget::canvas::Program::update(
+            &program,
+            &mut interaction,
+            &press,
+            bounds,
+            mouse::Cursor::Available(Point::new(250.0, 28.0)),
+        )
+        .expect("Shift-drag on the bracket body should capture the gesture");
+        assert_eq!(press_action.into_inner().2, iced::event::Status::Captured);
+
+        let cursor_move = Event::Mouse(mouse::Event::CursorMoved {
+            position: Point::new(350.0, 28.0),
+        });
+        let move_action = iced::widget::canvas::Program::update(
+            &program,
+            &mut interaction,
+            &cursor_move,
+            bounds,
+            mouse::Cursor::Available(Point::new(350.0, 28.0)),
+        )
+        .expect("Shift-drag movement should update the whole-range preview");
+        let (message, _, status) = move_action.into_inner();
+        assert!(message.is_none());
+        assert_eq!(status, iced::event::Status::Captured);
+        assert_eq!(
+            interaction.loop_drag.map(|drag| drag.preview),
+            Some(LoopPoints {
+                start_tick: 200,
+                end_tick: 500,
+            })
+        );
+
+        let release = Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left));
+        let release_action = iced::widget::canvas::Program::update(
+            &program,
+            &mut interaction,
+            &release,
+            bounds,
+            mouse::Cursor::Available(Point::new(350.0, 28.0)),
+        )
+        .expect("Shift-drag release should publish the moved loop range");
+        assert!(matches!(
+            release_action.into_inner().0,
+            Some(crate::app::Message::Timeline(
+                TimelineEvent::SetLoopPoints {
+                    start_tick: 200,
+                    end_tick: 500,
+                }
+            ))
+        ));
+    }
+
+    #[test]
+    fn ruler_shift_drag_snaps_the_loop_start_and_preserves_its_length() {
+        let project = Project::new();
+        let mut timeline = TimelineState {
+            loop_points: Some(LoopPoints {
+                start_tick: 100,
+                end_tick: 400,
+            }),
+            pixels_per_tick: 1.0,
+            snap_enabled: true,
+            modifiers: keyboard::Modifiers::SHIFT,
+            ..TimelineState::default()
+        };
+        timeline.cache.snap_grid_ticks = Some(100);
+        let program = RulerProgram {
+            state: &timeline,
+            project: &project,
+        };
+        let mut interaction = ProjectMarkerInteraction::default();
+        let bounds = Rectangle::new(Point::ORIGIN, Size::new(800.0, 32.0));
+        let press = Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left));
+        iced::widget::canvas::Program::update(
+            &program,
+            &mut interaction,
+            &press,
+            bounds,
+            mouse::Cursor::Available(Point::new(250.0, 28.0)),
+        )
+        .expect("Shift-drag should begin on the loop body");
+
+        let cursor_move = Event::Mouse(mouse::Event::CursorMoved {
+            position: Point::new(349.0, 28.0),
+        });
+        iced::widget::canvas::Program::update(
+            &program,
+            &mut interaction,
+            &cursor_move,
+            bounds,
+            mouse::Cursor::Available(Point::new(349.0, 28.0)),
+        )
+        .expect("Shift-drag should snap the translated loop start");
+        assert_eq!(
+            interaction.loop_drag.map(|drag| drag.preview),
+            Some(LoopPoints {
+                start_tick: 200,
+                end_tick: 500,
+            })
+        );
+    }
+
+    #[test]
+    fn plain_drag_in_the_loop_body_sets_a_point_at_the_drag_origin() {
+        let project = Project::new();
+        let timeline = TimelineState {
+            loop_points: Some(LoopPoints {
+                start_tick: 100,
+                end_tick: 400,
+            }),
+            pixels_per_tick: 1.0,
+            snap_enabled: false,
+            ..TimelineState::default()
+        };
+        let program = RulerProgram {
+            state: &timeline,
+            project: &project,
+        };
+        let mut interaction = ProjectMarkerInteraction::default();
+        let bounds = Rectangle::new(Point::ORIGIN, Size::new(800.0, 32.0));
+        let press = Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left));
+        let press_action = iced::widget::canvas::Program::update(
+            &program,
+            &mut interaction,
+            &press,
+            bounds,
+            mouse::Cursor::Available(Point::new(250.0, 28.0)),
+        )
+        .expect("plain bracket-body drag should capture the point gesture");
+        assert!(press_action.into_inner().0.is_none());
+
+        let cursor_move = Event::Mouse(mouse::Event::CursorMoved {
+            position: Point::new(350.0, 28.0),
+        });
+        iced::widget::canvas::Program::update(
+            &program,
+            &mut interaction,
+            &cursor_move,
+            bounds,
+            mouse::Cursor::Available(Point::new(350.0, 28.0)),
+        )
+        .expect("plain body drag should preview the collapsed point");
+        assert_eq!(
+            interaction.loop_drag.map(|drag| drag.preview),
+            Some(LoopPoints {
+                start_tick: 250,
+                end_tick: 250,
+            })
+        );
+
+        let release = Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left));
+        let release_action = iced::widget::canvas::Program::update(
+            &program,
+            &mut interaction,
+            &release,
+            bounds,
+            mouse::Cursor::Available(Point::new(350.0, 28.0)),
+        )
+        .expect("plain body drag should publish the collapsed point");
+        assert!(matches!(
+            release_action.into_inner().0,
+            Some(crate::app::Message::Timeline(
+                TimelineEvent::SetLoopPoints {
+                    start_tick: 250,
+                    end_tick: 250,
+                }
+            ))
+        ));
+    }
+
+    #[test]
+    fn dragging_an_empty_bottom_ruler_lane_creates_a_point_at_the_drag_origin() {
+        let project = Project::new();
+        let timeline = TimelineState {
+            pixels_per_tick: 1.0,
+            snap_enabled: false,
+            ..TimelineState::default()
+        };
+        let program = RulerProgram {
+            state: &timeline,
+            project: &project,
+        };
+        let mut interaction = ProjectMarkerInteraction::default();
+        let bounds = Rectangle::new(Point::ORIGIN, Size::new(800.0, 32.0));
+        let press = Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left));
+        let press_action = iced::widget::canvas::Program::update(
+            &program,
+            &mut interaction,
+            &press,
+            bounds,
+            mouse::Cursor::Available(Point::new(200.0, 28.0)),
+        )
+        .expect("bottom-lane press should start a potential point gesture");
+        let (press_message, _, press_status) = press_action.into_inner();
+        assert!(press_message.is_none());
+        assert_eq!(press_status, iced::event::Status::Captured);
+
+        let cursor_move = Event::Mouse(mouse::Event::CursorMoved {
+            position: Point::new(250.0, 28.0),
+        });
+        iced::widget::canvas::Program::update(
+            &program,
+            &mut interaction,
+            &cursor_move,
+            bounds,
+            mouse::Cursor::Available(Point::new(250.0, 28.0)),
+        )
+        .expect("drag movement should preview the zero-length loop point");
+        assert_eq!(
+            interaction.loop_drag.map(|drag| drag.preview),
+            Some(LoopPoints {
+                start_tick: 200,
+                end_tick: 200,
+            })
+        );
+
+        let release = Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left));
+        let release_action = iced::widget::canvas::Program::update(
+            &program,
+            &mut interaction,
+            &release,
+            bounds,
+            mouse::Cursor::Available(Point::new(250.0, 28.0)),
+        )
+        .expect("bottom-lane drag release should publish the zero-length point");
+        assert!(matches!(
+            release_action.into_inner().0,
+            Some(crate::app::Message::Timeline(
+                TimelineEvent::SetLoopPoints {
+                    start_tick: 200,
+                    end_tick: 200,
+                }
+            ))
+        ));
+    }
+
+    #[test]
+    fn clicking_an_empty_bottom_ruler_lane_sets_the_edit_cursor_without_creating_loop_points() {
+        let project = Project::new();
+        let timeline = TimelineState {
+            origin_tick: 240,
+            pixels_per_tick: 0.5,
+            ..TimelineState::default()
+        };
+        let program = RulerProgram {
+            state: &timeline,
+            project: &project,
+        };
+        let mut interaction = ProjectMarkerInteraction::default();
+        let bounds = Rectangle::new(Point::ORIGIN, Size::new(800.0, 32.0));
+        let press = Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left));
+        let press_action = iced::widget::canvas::Program::update(
+            &program,
+            &mut interaction,
+            &press,
+            bounds,
+            mouse::Cursor::Available(Point::new(100.0, 28.0)),
+        )
+        .expect("empty bottom-lane click should be captured until release");
+        assert!(press_action.into_inner().0.is_none());
+
+        let release = Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left));
+        let release_action = iced::widget::canvas::Program::update(
+            &program,
+            &mut interaction,
+            &release,
+            bounds,
+            mouse::Cursor::Available(Point::new(100.0, 28.0)),
+        )
+        .expect("empty bottom-lane click should position the edit cursor");
+        assert!(matches!(
+            release_action.into_inner().0,
+            Some(crate::app::Message::Timeline(TimelineEvent::SetEditCursor(
+                440
+            )))
+        ));
+        assert!(interaction.loop_drag.is_none());
+    }
 
     #[test]
     fn ruler_click_publishes_edit_cursor_tick() {
@@ -3969,7 +7525,7 @@ mod tests {
             state: &timeline,
             project: &project,
         };
-        let mut interaction = ();
+        let mut interaction = ProjectMarkerInteraction::default();
         let event = Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left));
         let bounds = Rectangle::new(Point::ORIGIN, Size::new(800.0, 32.0));
         let cursor = mouse::Cursor::Available(Point::new(100.0, 16.0));
@@ -3988,6 +7544,823 @@ mod tests {
                 440
             )))
         ));
+    }
+
+    #[test]
+    fn ruler_marker_click_selects_marker_and_moves_edit_cursor() {
+        let mut project = Project::new();
+        project
+            .apply(DawAction::InsertProjectMarker {
+                position_ticks: 1_000,
+                name: "Verse".to_owned(),
+            })
+            .unwrap();
+        let marker_id = project.markers()[0].id();
+        let timeline = TimelineState {
+            pixels_per_tick: 0.5,
+            ..TimelineState::default()
+        };
+        let program = RulerProgram {
+            state: &timeline,
+            project: &project,
+        };
+        let mut interaction = ProjectMarkerInteraction::default();
+        let bounds = Rectangle::new(Point::ORIGIN, Size::new(800.0, 32.0));
+        let press = Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left));
+        let press_action = iced::widget::canvas::Program::update(
+            &program,
+            &mut interaction,
+            &press,
+            bounds,
+            mouse::Cursor::Available(Point::new(511.0, 6.0)),
+        )
+        .expect("marker press should begin a captured gesture");
+        assert_eq!(press_action.into_inner().2, iced::event::Status::Captured);
+
+        let release = Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left));
+        let release_action = iced::widget::canvas::Program::update(
+            &program,
+            &mut interaction,
+            &release,
+            bounds,
+            mouse::Cursor::Available(Point::new(511.0, 6.0)),
+        )
+        .expect("marker click should select the marker");
+        let (message, _, status) = release_action.into_inner();
+        assert_eq!(status, iced::event::Status::Captured);
+        assert!(matches!(
+            message,
+            Some(crate::app::Message::Timeline(
+                TimelineEvent::SelectProjectMarker {
+                    marker_id: selected_id,
+                    position_ticks: 1_000,
+                }
+            )) if selected_id == marker_id
+        ));
+    }
+
+    #[test]
+    fn ruler_region_click_selects_its_range_and_start_cursor() {
+        let mut project = Project::new();
+        project
+            .apply(DawAction::InsertProjectRegion {
+                start_ticks: 960,
+                end_ticks: 3_840,
+                name: "Verse".to_owned(),
+            })
+            .unwrap();
+        let region_id = project.regions()[0].id();
+        let timeline = TimelineState {
+            pixels_per_tick: 0.1,
+            ..TimelineState::default()
+        };
+        let program = RulerProgram {
+            state: &timeline,
+            project: &project,
+        };
+        let mut interaction = ProjectMarkerInteraction::default();
+        let bounds = Rectangle::new(Point::ORIGIN, Size::new(800.0, 32.0));
+        let press = Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left));
+        let release = Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left));
+        let cursor = mouse::Cursor::Available(Point::new(240.0, 4.0));
+        let _ = iced::widget::canvas::Program::update(
+            &program,
+            &mut interaction,
+            &press,
+            bounds,
+            cursor,
+        )
+        .expect("region body press should capture the gesture");
+        let (message, _, _) = iced::widget::canvas::Program::update(
+            &program,
+            &mut interaction,
+            &release,
+            bounds,
+            cursor,
+        )
+        .expect("region click should select its range")
+        .into_inner();
+
+        assert!(matches!(
+            message,
+            Some(crate::app::Message::Timeline(
+                TimelineEvent::SelectProjectRegion {
+                    region_id: selected,
+                    start_ticks: 960,
+                    end_ticks: 3_840,
+                }
+            )) if selected == region_id
+        ));
+    }
+
+    #[test]
+    fn ruler_region_start_edge_drag_updates_one_boundary() {
+        let mut project = Project::new();
+        project
+            .apply(DawAction::InsertProjectRegion {
+                start_ticks: 960,
+                end_ticks: 3_840,
+                name: "Verse".to_owned(),
+            })
+            .unwrap();
+        let region_id = project.regions()[0].id();
+        let timeline = TimelineState {
+            pixels_per_tick: 0.5,
+            snap_enabled: false,
+            ..TimelineState::default()
+        };
+        let program = RulerProgram {
+            state: &timeline,
+            project: &project,
+        };
+        let mut interaction = ProjectMarkerInteraction::default();
+        let bounds = Rectangle::new(Point::ORIGIN, Size::new(800.0, 32.0));
+        let press = Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left));
+        let release = Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left));
+        let _ = iced::widget::canvas::Program::update(
+            &program,
+            &mut interaction,
+            &press,
+            bounds,
+            mouse::Cursor::Available(Point::new(480.0, 24.0)),
+        )
+        .expect("region start line should begin an edge drag");
+        let moved = Event::Mouse(mouse::Event::CursorMoved {
+            position: Point::new(680.0, 24.0),
+        });
+        let _ = iced::widget::canvas::Program::update(
+            &program,
+            &mut interaction,
+            &moved,
+            bounds,
+            mouse::Cursor::Available(Point::new(680.0, 24.0)),
+        )
+        .expect("region start preview should update");
+        assert_eq!(
+            interaction
+                .region_drag
+                .map(|drag| (drag.preview_start_ticks, drag.preview_end_ticks)),
+            Some((1_360, 3_840))
+        );
+        let (message, _, _) = iced::widget::canvas::Program::update(
+            &program,
+            &mut interaction,
+            &release,
+            bounds,
+            mouse::Cursor::Available(Point::new(680.0, 24.0)),
+        )
+        .expect("region edge release should publish one range update")
+        .into_inner();
+
+        assert!(matches!(
+            message,
+            Some(crate::app::Message::Timeline(
+                TimelineEvent::MoveProjectRegion {
+                    region_id: moved_id,
+                    start_ticks: 1_360,
+                    end_ticks: 3_840,
+                    ..
+                }
+            )) if moved_id == region_id
+        ));
+    }
+
+    #[test]
+    fn ruler_region_end_edge_drag_updates_one_boundary() {
+        let mut project = Project::new();
+        project
+            .apply(DawAction::InsertProjectRegion {
+                start_ticks: 960,
+                end_ticks: 3_840,
+                name: "Verse".to_owned(),
+            })
+            .unwrap();
+        let region_id = project.regions()[0].id();
+        let timeline = TimelineState {
+            pixels_per_tick: 0.1,
+            snap_enabled: false,
+            ..TimelineState::default()
+        };
+        let program = RulerProgram {
+            state: &timeline,
+            project: &project,
+        };
+        let mut interaction = ProjectMarkerInteraction::default();
+        let bounds = Rectangle::new(Point::ORIGIN, Size::new(800.0, 32.0));
+        let press = Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left));
+        let release = Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left));
+        let _ = iced::widget::canvas::Program::update(
+            &program,
+            &mut interaction,
+            &press,
+            bounds,
+            mouse::Cursor::Available(Point::new(384.0, 24.0)),
+        )
+        .expect("region end line should begin an edge drag");
+        let moved = Event::Mouse(mouse::Event::CursorMoved {
+            position: Point::new(420.0, 24.0),
+        });
+        let _ = iced::widget::canvas::Program::update(
+            &program,
+            &mut interaction,
+            &moved,
+            bounds,
+            mouse::Cursor::Available(Point::new(420.0, 24.0)),
+        )
+        .expect("region end preview should update");
+        let (message, _, _) = iced::widget::canvas::Program::update(
+            &program,
+            &mut interaction,
+            &release,
+            bounds,
+            mouse::Cursor::Available(Point::new(420.0, 24.0)),
+        )
+        .expect("region end release should publish one range update")
+        .into_inner();
+
+        assert!(matches!(
+            message,
+            Some(crate::app::Message::Timeline(
+                TimelineEvent::MoveProjectRegion {
+                    region_id: moved_id,
+                    original_start_ticks: 960,
+                    original_end_ticks: 3_840,
+                    start_ticks: 960,
+                    end_ticks: 4_200,
+                }
+            )) if moved_id == region_id
+        ));
+    }
+
+    #[test]
+    fn ruler_region_body_drag_moves_range_without_changing_length() {
+        let mut project = Project::new();
+        project
+            .apply(DawAction::InsertProjectRegion {
+                start_ticks: 960,
+                end_ticks: 3_840,
+                name: "Verse".to_owned(),
+            })
+            .unwrap();
+        let region_id = project.regions()[0].id();
+        let timeline = TimelineState {
+            pixels_per_tick: 0.1,
+            snap_enabled: false,
+            ..TimelineState::default()
+        };
+        let program = RulerProgram {
+            state: &timeline,
+            project: &project,
+        };
+        let mut interaction = ProjectMarkerInteraction::default();
+        let bounds = Rectangle::new(Point::ORIGIN, Size::new(800.0, 32.0));
+        let press = Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left));
+        let release = Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left));
+        let _ = iced::widget::canvas::Program::update(
+            &program,
+            &mut interaction,
+            &press,
+            bounds,
+            mouse::Cursor::Available(Point::new(120.0, 4.0)),
+        )
+        .expect("region band should begin a move gesture");
+        let moved = Event::Mouse(mouse::Event::CursorMoved {
+            position: Point::new(140.0, 4.0),
+        });
+        let _ = iced::widget::canvas::Program::update(
+            &program,
+            &mut interaction,
+            &moved,
+            bounds,
+            mouse::Cursor::Available(Point::new(140.0, 4.0)),
+        )
+        .expect("region band drag should update its preview");
+        assert_eq!(
+            interaction
+                .region_drag
+                .map(|drag| (drag.preview_start_ticks, drag.preview_end_ticks)),
+            Some((1_160, 4_040))
+        );
+        let (message, _, _) = iced::widget::canvas::Program::update(
+            &program,
+            &mut interaction,
+            &release,
+            bounds,
+            mouse::Cursor::Available(Point::new(140.0, 4.0)),
+        )
+        .expect("region move release should publish one update")
+        .into_inner();
+
+        assert!(matches!(
+            message,
+            Some(crate::app::Message::Timeline(
+                TimelineEvent::MoveProjectRegion {
+                    region_id: moved_id,
+                    start_ticks: 1_160,
+                    end_ticks: 4_040,
+                    ..
+                }
+            )) if moved_id == region_id
+        ));
+    }
+
+    #[test]
+    fn ruler_region_edge_drag_snaps_to_arrange_grid() {
+        let mut project = Project::new();
+        project
+            .apply(DawAction::InsertProjectRegion {
+                start_ticks: 4_800,
+                end_ticks: 7_680,
+                name: "Verse".to_owned(),
+            })
+            .unwrap();
+        let timeline = TimelineState {
+            pixels_per_tick: 0.1,
+            snap_enabled: true,
+            snap_grid: SnapGrid::Quarter,
+            ..TimelineState::default()
+        };
+        let program = RulerProgram {
+            state: &timeline,
+            project: &project,
+        };
+        let mut interaction = ProjectMarkerInteraction::default();
+        let bounds = Rectangle::new(Point::ORIGIN, Size::new(800.0, 32.0));
+        let press = Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left));
+        let _ = iced::widget::canvas::Program::update(
+            &program,
+            &mut interaction,
+            &press,
+            bounds,
+            mouse::Cursor::Available(Point::new(480.0, 24.0)),
+        )
+        .expect("region boundary should begin a drag");
+        let moved = Event::Mouse(mouse::Event::CursorMoved {
+            position: Point::new(555.0, 24.0),
+        });
+        let _ = iced::widget::canvas::Program::update(
+            &program,
+            &mut interaction,
+            &moved,
+            bounds,
+            mouse::Cursor::Available(Point::new(555.0, 24.0)),
+        )
+        .expect("region boundary drag should snap");
+
+        assert_eq!(
+            interaction
+                .region_drag
+                .map(|drag| (drag.preview_start_ticks, drag.preview_end_ticks)),
+            Some((5_760, 7_680))
+        );
+    }
+
+    #[test]
+    fn ruler_marker_double_click_opens_marker_editor_without_second_selection() {
+        let mut project = Project::new();
+        project
+            .apply(DawAction::InsertProjectMarker {
+                position_ticks: 1_000,
+                name: "Verse".to_owned(),
+            })
+            .unwrap();
+        let marker_id = project.markers()[0].id();
+        let timeline = TimelineState {
+            pixels_per_tick: 0.5,
+            ..TimelineState::default()
+        };
+        let program = RulerProgram {
+            state: &timeline,
+            project: &project,
+        };
+        let mut interaction = ProjectMarkerInteraction::default();
+        let bounds = Rectangle::new(Point::ORIGIN, Size::new(800.0, 32.0));
+        let cursor = mouse::Cursor::Available(Point::new(511.0, 6.0));
+        let press = Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left));
+        let release = Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left));
+
+        let _ = iced::widget::canvas::Program::update(
+            &program,
+            &mut interaction,
+            &press,
+            bounds,
+            cursor,
+        )
+        .expect("first click should capture the marker");
+        let first_release = iced::widget::canvas::Program::update(
+            &program,
+            &mut interaction,
+            &release,
+            bounds,
+            cursor,
+        )
+        .expect("first click should select the marker");
+        assert!(matches!(
+            first_release.into_inner().0,
+            Some(crate::app::Message::Timeline(
+                TimelineEvent::SelectProjectMarker { marker_id: selected, .. }
+            )) if selected == marker_id
+        ));
+
+        let second_press = iced::widget::canvas::Program::update(
+            &program,
+            &mut interaction,
+            &press,
+            bounds,
+            cursor,
+        )
+        .expect("second click should open the marker editor");
+        let (message, _, status) = second_press.into_inner();
+        assert_eq!(status, iced::event::Status::Captured);
+        assert!(message.is_none());
+
+        let second_release = iced::widget::canvas::Program::update(
+            &program,
+            &mut interaction,
+            &release,
+            bounds,
+            cursor,
+        )
+        .expect("second click release should be consumed");
+        let (message, _, status) = second_release.into_inner();
+        assert_eq!(status, iced::event::Status::Captured);
+        assert!(matches!(
+            message,
+            Some(crate::app::Message::Timeline(
+                TimelineEvent::EditProjectMarker { marker_id: edited }
+            )) if edited == marker_id
+        ));
+    }
+
+    #[test]
+    fn second_marker_click_can_become_a_drag_instead_of_opening_the_editor() {
+        let mut project = Project::new();
+        project
+            .apply(DawAction::InsertProjectMarker {
+                position_ticks: 1_000,
+                name: "Verse".to_owned(),
+            })
+            .unwrap();
+        let marker_id = project.markers()[0].id();
+        let timeline = TimelineState {
+            pixels_per_tick: 0.5,
+            snap_enabled: false,
+            ..TimelineState::default()
+        };
+        let program = RulerProgram {
+            state: &timeline,
+            project: &project,
+        };
+        let mut interaction = ProjectMarkerInteraction::default();
+        let bounds = Rectangle::new(Point::ORIGIN, Size::new(800.0, 32.0));
+        let press = Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left));
+        let release = Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left));
+        let first_cursor = mouse::Cursor::Available(Point::new(511.0, 6.0));
+        let _ = iced::widget::canvas::Program::update(
+            &program,
+            &mut interaction,
+            &press,
+            bounds,
+            first_cursor,
+        )
+        .expect("first click should capture the marker");
+        let _ = iced::widget::canvas::Program::update(
+            &program,
+            &mut interaction,
+            &release,
+            bounds,
+            first_cursor,
+        )
+        .expect("first click should select the marker");
+
+        let _ = iced::widget::canvas::Program::update(
+            &program,
+            &mut interaction,
+            &press,
+            bounds,
+            first_cursor,
+        )
+        .expect("second press should remain available for dragging");
+        let moved_cursor = mouse::Cursor::Available(Point::new(611.0, 6.0));
+        let _ = iced::widget::canvas::Program::update(
+            &program,
+            &mut interaction,
+            &Event::Mouse(mouse::Event::CursorMoved {
+                position: Point::new(611.0, 6.0),
+            }),
+            bounds,
+            moved_cursor,
+        )
+        .expect("movement should cancel the pending double click and preview a drag");
+        let (message, _, _) = iced::widget::canvas::Program::update(
+            &program,
+            &mut interaction,
+            &release,
+            bounds,
+            moved_cursor,
+        )
+        .expect("drag release should commit the move")
+        .into_inner();
+        assert!(matches!(
+            message,
+            Some(crate::app::Message::Timeline(
+                TimelineEvent::MoveProjectMarker {
+                    marker_id: moved_id,
+                    position_ticks: 1_200,
+                }
+            )) if moved_id == marker_id
+        ));
+    }
+
+    #[test]
+    fn ruler_marker_double_click_requires_pointer_proximity() {
+        let mut project = Project::new();
+        project
+            .apply(DawAction::InsertProjectMarker {
+                position_ticks: 1_000,
+                name: "Verse".to_owned(),
+            })
+            .unwrap();
+        let marker_id = project.markers()[0].id();
+        let timeline = TimelineState {
+            pixels_per_tick: 0.5,
+            ..TimelineState::default()
+        };
+        let program = RulerProgram {
+            state: &timeline,
+            project: &project,
+        };
+        let mut interaction = ProjectMarkerInteraction::default();
+        let bounds = Rectangle::new(Point::ORIGIN, Size::new(800.0, 32.0));
+        let press = Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left));
+        let release = Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left));
+        let first_cursor = mouse::Cursor::Available(Point::new(511.0, 6.0));
+        let _ = iced::widget::canvas::Program::update(
+            &program,
+            &mut interaction,
+            &press,
+            bounds,
+            first_cursor,
+        )
+        .expect("first click should capture the marker");
+        let _ = iced::widget::canvas::Program::update(
+            &program,
+            &mut interaction,
+            &release,
+            bounds,
+            first_cursor,
+        )
+        .expect("first click should select the marker");
+
+        let second_cursor = mouse::Cursor::Available(Point::new(520.0, 6.0));
+        let _ = iced::widget::canvas::Program::update(
+            &program,
+            &mut interaction,
+            &press,
+            bounds,
+            second_cursor,
+        )
+        .expect("nearby point on the same label should still capture the marker");
+        let (message, _, _) = iced::widget::canvas::Program::update(
+            &program,
+            &mut interaction,
+            &release,
+            bounds,
+            second_cursor,
+        )
+        .expect("spaced click should remain an ordinary selection")
+        .into_inner();
+        assert!(matches!(
+            message,
+            Some(crate::app::Message::Timeline(
+                TimelineEvent::SelectProjectMarker {
+                    marker_id: selected,
+                    position_ticks: 1_000,
+                }
+            )) if selected == marker_id
+        ));
+    }
+
+    #[test]
+    fn ruler_marker_drag_preserves_grab_offset_and_publishes_one_move() {
+        let mut project = Project::new();
+        project
+            .apply(DawAction::InsertProjectMarker {
+                position_ticks: 1_000,
+                name: "Verse".to_owned(),
+            })
+            .unwrap();
+        let marker_id = project.markers()[0].id();
+        let timeline = TimelineState {
+            pixels_per_tick: 0.5,
+            snap_enabled: false,
+            ..TimelineState::default()
+        };
+        let program = RulerProgram {
+            state: &timeline,
+            project: &project,
+        };
+        let mut interaction = ProjectMarkerInteraction::default();
+        let bounds = Rectangle::new(Point::ORIGIN, Size::new(800.0, 32.0));
+        let press = Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left));
+        let _ = iced::widget::canvas::Program::update(
+            &program,
+            &mut interaction,
+            &press,
+            bounds,
+            mouse::Cursor::Available(Point::new(511.0, 6.0)),
+        )
+        .expect("marker press should begin a captured gesture");
+
+        let moved = Event::Mouse(mouse::Event::CursorMoved {
+            position: Point::new(611.0, 6.0),
+        });
+        let move_action = iced::widget::canvas::Program::update(
+            &program,
+            &mut interaction,
+            &moved,
+            bounds,
+            mouse::Cursor::Available(Point::new(611.0, 6.0)),
+        )
+        .expect("marker drag should update its preview");
+        assert_eq!(move_action.into_inner().2, iced::event::Status::Captured);
+        assert_eq!(
+            interaction.drag.map(|drag| drag.preview_position_ticks),
+            Some(1_200)
+        );
+
+        let release = Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left));
+        let release_action = iced::widget::canvas::Program::update(
+            &program,
+            &mut interaction,
+            &release,
+            bounds,
+            mouse::Cursor::Available(Point::new(611.0, 6.0)),
+        )
+        .expect("marker drag release should commit one move");
+        let (message, _, status) = release_action.into_inner();
+        assert_eq!(status, iced::event::Status::Captured);
+        assert!(matches!(
+            message,
+            Some(crate::app::Message::Timeline(
+                TimelineEvent::MoveProjectMarker {
+                    marker_id: moved_id,
+                    position_ticks: 1_200,
+                }
+            )) if moved_id == marker_id
+        ));
+        assert!(interaction.drag.is_none());
+    }
+
+    #[test]
+    fn ruler_marker_drag_uses_enabled_quarter_note_snap_grid() {
+        let mut project = Project::new();
+        project
+            .apply(DawAction::InsertProjectMarker {
+                position_ticks: 5_000,
+                name: String::new(),
+            })
+            .unwrap();
+        let timeline = TimelineState {
+            pixels_per_tick: 0.1,
+            snap_enabled: true,
+            snap_grid: SnapGrid::Quarter,
+            ..TimelineState::default()
+        };
+        let program = RulerProgram {
+            state: &timeline,
+            project: &project,
+        };
+        let mut interaction = ProjectMarkerInteraction::default();
+        let bounds = Rectangle::new(Point::ORIGIN, Size::new(800.0, 32.0));
+        let press = Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left));
+        let _ = iced::widget::canvas::Program::update(
+            &program,
+            &mut interaction,
+            &press,
+            bounds,
+            mouse::Cursor::Available(Point::new(511.0, 6.0)),
+        )
+        .expect("marker press should begin a captured gesture");
+        let moved = Event::Mouse(mouse::Event::CursorMoved {
+            position: Point::new(555.0, 6.0),
+        });
+        let _ = iced::widget::canvas::Program::update(
+            &program,
+            &mut interaction,
+            &moved,
+            bounds,
+            mouse::Cursor::Available(Point::new(555.0, 6.0)),
+        )
+        .expect("marker drag should update its snapped preview");
+        assert_eq!(
+            interaction.drag.map(|drag| drag.preview_position_ticks),
+            Some(5_760)
+        );
+    }
+
+    #[test]
+    fn marker_ruler_positions_use_signed_tick_distance() {
+        assert_eq!(project_marker_x(240, 200, 0.5), 20.0);
+        assert_eq!(project_marker_x(160, 200, 0.5), -20.0);
+    }
+
+    #[test]
+    fn timeline_shader_receives_project_markers_for_full_height_lines() {
+        let mut project = Project::new();
+        for (position_ticks, name) in [(720, "Bridge"), (1_200, "Outro")] {
+            project
+                .apply(DawAction::InsertProjectMarker {
+                    position_ticks,
+                    name: name.to_owned(),
+                })
+                .unwrap();
+        }
+        project
+            .apply(DawAction::InsertProjectRegion {
+                start_ticks: 960,
+                end_ticks: 1_920,
+                name: "Verse".to_owned(),
+            })
+            .unwrap();
+        let timeline = TimelineState {
+            pixels_per_tick: 0.5,
+            ..TimelineState::default()
+        };
+        let program = timeline.program(&project, None);
+        let primitive = iced::widget::shader::Program::draw(
+            &program,
+            &TimelineInteractionState::default(),
+            mouse::Cursor::Unavailable,
+            Rectangle::new(Point::ORIGIN, Size::new(800.0, 500.0)),
+        );
+        assert_eq!(primitive.marker_ticks, vec![720, 1_200]);
+        assert_eq!(primitive.region_spans, vec![(960, 1_920)]);
+        assert!(project_region_hit(&project, &timeline, Point::new(700.0, 4.0)).is_some());
+
+        let region_id = project.regions()[0].id();
+        project
+            .apply(DawAction::SetProjectRegionVisibility {
+                region_id,
+                visible: false,
+            })
+            .unwrap();
+        let program = timeline.program(&project, None);
+        let primitive = iced::widget::shader::Program::draw(
+            &program,
+            &TimelineInteractionState::default(),
+            mouse::Cursor::Unavailable,
+            Rectangle::new(Point::ORIGIN, Size::new(800.0, 500.0)),
+        );
+        assert!(primitive.region_spans.is_empty());
+        assert!(project_region_hit(&project, &timeline, Point::new(700.0, 4.0)).is_none());
+
+        project
+            .apply(DawAction::SetProjectRegionVisibility {
+                region_id,
+                visible: true,
+            })
+            .unwrap();
+        project
+            .apply(DawAction::SetProjectRegionsVisibleOnRuler { visible: false })
+            .unwrap();
+        let program = timeline.program(&project, None);
+        let primitive = iced::widget::shader::Program::draw(
+            &program,
+            &TimelineInteractionState::default(),
+            mouse::Cursor::Unavailable,
+            Rectangle::new(Point::ORIGIN, Size::new(800.0, 500.0)),
+        );
+        assert!(primitive.region_spans.is_empty());
+        assert!(project_region_hit(&project, &timeline, Point::new(700.0, 4.0)).is_none());
+
+        let hidden_marker_id = project.markers()[0].id();
+        project
+            .apply(DawAction::SetProjectMarkerVisibility {
+                marker_id: hidden_marker_id,
+                visible: false,
+            })
+            .unwrap();
+        let program = timeline.program(&project, None);
+        let primitive = iced::widget::shader::Program::draw(
+            &program,
+            &TimelineInteractionState::default(),
+            mouse::Cursor::Unavailable,
+            Rectangle::new(Point::ORIGIN, Size::new(800.0, 500.0)),
+        );
+        assert_eq!(primitive.marker_ticks, vec![1_200]);
+
+        project
+            .apply(DawAction::SetProjectMarkersVisibleOnRuler { visible: false })
+            .unwrap();
+        let program = timeline.program(&project, None);
+        let primitive = iced::widget::shader::Program::draw(
+            &program,
+            &TimelineInteractionState::default(),
+            mouse::Cursor::Unavailable,
+            Rectangle::new(Point::ORIGIN, Size::new(800.0, 500.0)),
+        );
+        assert!(primitive.marker_ticks.is_empty());
     }
 
     #[test]
@@ -4022,7 +8395,102 @@ mod tests {
     }
 
     #[test]
-    fn midi_item_preview_uses_the_trimmed_source_offset() {
+    fn fractional_midi_item_bounds_survive_timeline_geometry_cache() {
+        let mut project = Project::new();
+        project
+            .apply(DawAction::CreateTrack {
+                index: 0,
+                name: "MIDI".to_owned(),
+            })
+            .unwrap();
+        project
+            .apply(DawAction::InsertMidiItem {
+                track_id: project.tracks()[0].id(),
+                start_tick: 0,
+                length_ticks: 960,
+            })
+            .unwrap();
+        let item_id = project.midi_items()[0].id();
+        project
+            .apply(DawAction::SetMidiItemPosition {
+                item_id,
+                position: MidiItemPosition::new(964, 160).unwrap(),
+            })
+            .unwrap();
+
+        let mut cache = TimelineCache::default();
+        cache.rebuild(&project, SnapGrid::Quarter);
+        let item = cache.items.iter().find(|item| item.id == item_id).unwrap();
+        assert_eq!(item.start_tick, 964);
+        assert_eq!(item.start_tick_subtick, 160);
+        assert_eq!(item.end_tick, 1_924);
+        assert_eq!(item.end_tick_subtick, 160);
+        assert_eq!(
+            item_trim_edge_at_x(&cache, 0, 964.8, 0, 1.0),
+            Some((item_id, ItemTrimEdge::Start))
+        );
+        assert_eq!(
+            item_trim_edge_at_x(&cache, 0, 1_924.8, 0, 1.0),
+            Some((item_id, ItemTrimEdge::End))
+        );
+    }
+
+    #[test]
+    fn timeline_cache_preserves_audio_and_midi_item_mute_states() {
+        let mut project = Project::new();
+        project
+            .apply(DawAction::CreateTrack {
+                index: 0,
+                name: "Mute states".to_owned(),
+            })
+            .unwrap();
+        let track_id = project.tracks()[0].id();
+        project
+            .apply(DawAction::InsertAudioItem {
+                track_id,
+                media_ref: "asset://muted-audio".to_owned(),
+                start_sample: 0,
+                source_offset_samples: 0,
+                length_samples: 48_000,
+            })
+            .unwrap();
+        project
+            .apply(DawAction::InsertMidiItem {
+                track_id,
+                start_tick: 0,
+                length_ticks: 960,
+            })
+            .unwrap();
+        let audio_id = project.audio_items()[0].id();
+        let midi_id = project.midi_items()[0].id();
+        project
+            .apply(DawAction::SetAudioItemMute {
+                item_id: audio_id,
+                muted: true,
+            })
+            .unwrap();
+        project
+            .apply(DawAction::SetMidiItemMute {
+                item_id: midi_id,
+                muted: true,
+            })
+            .unwrap();
+
+        let mut cache = TimelineCache::default();
+        cache.rebuild(&project, SnapGrid::Quarter);
+
+        assert!(
+            cache
+                .items
+                .iter()
+                .filter(|item| item.id == audio_id || item.id == midi_id)
+                .all(|item| item.muted)
+        );
+        assert_eq!(cache.items.len(), 2);
+    }
+
+    #[test]
+    fn midi_item_preview_caches_trimmed_source_content_and_offset() {
         let mut project = Project::new();
         project
             .apply(DawAction::CreateTrack {
@@ -4044,16 +8512,20 @@ mod tests {
                 item_id,
                 notes: vec![
                     aaadaw_core::MidiNoteData {
+                        channel: 0,
                         pitch: 60,
                         tick: 120,
                         duration: 120,
                         velocity: 90,
+                        off_velocity: 0,
                     },
                     aaadaw_core::MidiNoteData {
+                        channel: 0,
                         pitch: 64,
                         tick: 720,
                         duration: 240,
                         velocity: 90,
+                        off_velocity: 0,
                     },
                 ],
             })
@@ -4070,8 +8542,10 @@ mod tests {
         let mut cache = TimelineCache::default();
         cache.rebuild(&project, SnapGrid::Sixteenth);
         let item = cache.items.iter().find(|item| item.id == item_id).unwrap();
-        assert_eq!(item.midi_notes.len(), 1);
-        assert_eq!(item.midi_notes[0].tick, 240);
+        assert_eq!(item.midi_notes.len(), 2);
+        assert_eq!(item.midi_notes[0].tick, 120);
+        assert_eq!(item.midi_notes[1].tick, 720);
+        assert_eq!(item.midi_source_offset_ticks, 480);
     }
 
     #[test]
@@ -4117,11 +8591,12 @@ mod tests {
     #[test]
     fn drag_below_track_rows_creates_a_time_selection() {
         let project = Project::new();
-        let timeline = TimelineState {
+        let mut timeline = TimelineState {
             origin_tick: 240,
             pixels_per_tick: 0.5,
             ..TimelineState::default()
         };
+        timeline.handle(TimelineEvent::SetSnapGrid(SnapGrid::Sixteenth));
         let program = timeline.program(&project, None);
         let mut interaction = super::TimelineInteractionState::default();
         let bounds = Rectangle::new(Point::ORIGIN, Size::new(800.0, 480.0));
@@ -4451,6 +8926,7 @@ mod tests {
             pixels_per_tick: 0.5,
             ..TimelineState::default()
         };
+        timeline.handle(TimelineEvent::SetSnapGrid(SnapGrid::Sixteenth));
         timeline.rebuild(&project);
         let program = timeline.program(&project, None);
         let mut interaction = super::TimelineInteractionState::default();
@@ -4524,6 +9000,97 @@ mod tests {
     }
 
     #[test]
+    fn fade_handle_drag_ignores_grid_and_preserves_fractional_samples() {
+        use super::{ItemFadeEdge, fade_body_geometry};
+        use iced::widget::shader;
+        let (mut project, tracks, _) = project_with_items();
+        project
+            .apply(DawAction::InsertAudioItem {
+                track_id: tracks[2],
+                media_ref: "asset://constant".into(),
+                start_sample: 2_500,
+                source_offset_samples: 0,
+                length_samples: 48_000,
+            })
+            .unwrap();
+        let item_id = project.audio_items()[0].id();
+        let mut timeline = TimelineState {
+            pixels_per_tick: 0.1,
+            ..TimelineState::default()
+        };
+        timeline.rebuild(&project);
+        let program = timeline.program(&project, None);
+        let row = timeline.row_layout(2).unwrap();
+        let (top, _) = fade_body_geometry(row, false);
+        let point = Point::new(10.0, top + 2.0);
+        assert_eq!(
+            program
+                .fade_handle_at(point)
+                .map(|(id, edge, _)| (id, edge)),
+            Some((item_id, ItemFadeEdge::In))
+        );
+        assert!(
+            program
+                .fade_handle_at(Point::new(10.0, top + 12.0))
+                .is_none()
+        );
+        let bounds = Rectangle::new(Point::new(40.0, 30.0), Size::new(500.0, 500.0));
+        let cursor = mouse::Cursor::Available(Point::new(bounds.x + point.x, bounds.y + point.y));
+        let mut state = TimelineInteractionState::default();
+        let _ = shader::Program::update(
+            &program,
+            &mut state,
+            &Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
+            bounds,
+            cursor,
+        );
+        assert!(state.pending_item_fade.is_some());
+        let moved = Point::new(bounds.x + point.x + 1.5, bounds.y + point.y);
+        // Selecting the item can resize the inspector and move the timeline.
+        let moved_bounds = Rectangle {
+            x: bounds.x + 20.0,
+            ..bounds
+        };
+        let action = shader::Program::update(
+            &program,
+            &mut state,
+            &Event::Mouse(mouse::Event::CursorMoved { position: moved }),
+            moved_bounds,
+            mouse::Cursor::Available(moved),
+        )
+        .unwrap();
+        let (message, _, _) = action.into_inner();
+        let Some(crate::app::Message::Timeline(TimelineEvent::PreviewItemFades {
+            item_id: actual,
+            fades,
+        })) = message
+        else {
+            panic!("expected fade preview")
+        };
+        assert_eq!(actual, item_id);
+        assert!((fades.fade_in.length_samples() - 375.0).abs() < 0.001);
+        assert_eq!(
+            fades.fade_in.curve(),
+            project.audio_items()[0].fades().fade_in.curve()
+        );
+        let action = shader::Program::update(
+            &program,
+            &mut state,
+            &Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Right)),
+            bounds,
+            mouse::Cursor::Available(moved),
+        )
+        .unwrap();
+        assert!(matches!(
+            action.into_inner().0,
+            Some(crate::app::Message::Timeline(
+                TimelineEvent::CancelItemFades
+            ))
+        ));
+        assert!(state.pending_item_fade.is_none());
+    }
+
+    #[test]
     fn automation_lane_defaults_visible_for_existing_points_and_can_be_toggled() {
         let mut project = Project::new();
         project
@@ -4556,9 +9123,9 @@ mod tests {
 
     #[test]
     fn fx_automation_placement_uses_arrangement_snap_and_shift_bypass() {
-        assert_eq!(fx_automation_tick_at(361, Some(240), true, false), 480);
-        assert_eq!(fx_automation_tick_at(361, Some(240), true, true), 361);
-        assert_eq!(fx_automation_tick_at(361, Some(240), false, false), 361);
+        assert_eq!(fx_automation_tick_at(361, Some(240), true, false, 0), 480);
+        assert_eq!(fx_automation_tick_at(361, Some(240), true, true, 50), 361);
+        assert_eq!(fx_automation_tick_at(361, Some(240), false, false, 50), 361);
     }
 
     #[test]
@@ -4670,6 +9237,20 @@ mod tests {
             parameter_id: 7,
             height: 48.0,
         });
+        source.handle(TimelineEvent::ToggleLoopPointsLinked);
+        source.handle(TimelineEvent::SetTimeSelection {
+            start_tick: 960,
+            end_tick: 1_920,
+        });
+        source.handle(TimelineEvent::SetLoopPoints {
+            start_tick: 2_880,
+            end_tick: 3_840,
+        });
+        source.handle(TimelineEvent::SetSnapGrid(SnapGrid::EighthTriplet));
+        source.handle(TimelineEvent::SetMidiEditorSnapGrid(SnapGrid::DottedEighth));
+        source.handle(TimelineEvent::ToggleSnap);
+        source.handle(TimelineEvent::SetSnapSwingEnabled(true));
+        source.handle(TimelineEvent::SetSnapSwingAmountPercent(-37));
         let saved_view = source.arrangement_view_state(&project);
 
         let mut reopened = TimelineState::default();
@@ -4679,6 +9260,25 @@ mod tests {
         assert!(reopened.fx_automation_lanes.contains(&(track_id, 0, 7)));
         assert_eq!(reopened.fx_automation_lane_height((track_id, 0, 7)), 48.0);
         assert!(reopened.fx_automation_lane_info[&(track_id, 0, 7)].stepped);
+        assert_eq!(
+            reopened.time_selection,
+            Some(TimeSelection {
+                start_tick: 960,
+                end_tick: 1_920,
+            })
+        );
+        assert_eq!(
+            reopened.loop_points,
+            Some(LoopPoints {
+                start_tick: 2_880,
+                end_tick: 3_840,
+            })
+        );
+        assert!(!reopened.snap_enabled);
+        assert_eq!(reopened.snap_grid, SnapGrid::EighthTriplet);
+        assert_eq!(reopened.midi_editor_snap_grid, SnapGrid::DottedEighth);
+        assert!(reopened.snap_swing_enabled());
+        assert_eq!(reopened.snap_swing_amount_percent(), -37);
         assert_eq!(
             reopened.row_layout(0).unwrap().height,
             TIMELINE_ROW_HEIGHT + 48.0
@@ -4704,6 +9304,13 @@ mod tests {
         reopened.replace_project(&other_project, None);
         assert!(reopened.fx_automation_lanes.is_empty());
         assert!(reopened.hidden_volume_automation_tracks.is_empty());
+        assert_eq!(reopened.time_selection, None);
+        assert_eq!(reopened.loop_points, None);
+        assert!(reopened.snap_enabled);
+        assert_eq!(reopened.snap_grid, SnapGrid::Quarter);
+        assert_eq!(reopened.midi_editor_snap_grid, SnapGrid::ThirtySecond);
+        assert!(!reopened.snap_swing_enabled());
+        assert_eq!(reopened.snap_swing_amount_percent(), 50);
         assert_eq!(reopened.row_layout(0).unwrap().height, TIMELINE_ROW_HEIGHT);
     }
 
@@ -5041,16 +9648,20 @@ mod tests {
                 item_id,
                 notes: vec![
                     aaadaw_core::MidiNoteData {
+                        channel: 0,
                         pitch: 60,
                         tick: 0,
                         duration: 240,
                         velocity: 100,
+                        off_velocity: 0,
                     },
                     aaadaw_core::MidiNoteData {
+                        channel: 0,
                         pitch: 67,
                         tick: 480,
                         duration: 360,
                         velocity: 100,
+                        off_velocity: 0,
                     },
                 ],
             })
@@ -5065,45 +9676,1001 @@ mod tests {
             .find(|item| item.id == item_id)
             .unwrap();
         assert_eq!(cached.label, "Opening theme");
+        assert_eq!(cached.midi_source_offset_ticks, 0);
+        assert_eq!(cached.midi_source_loop_length_ticks, Some(960));
         assert_eq!(
-            cached.midi_notes,
-            vec![
-                MidiNotePreview {
-                    tick: 0,
-                    duration: 240,
+            cached
+                .midi_notes
+                .iter()
+                .map(|note| (note.data.tick, note.data.duration, note.data.pitch))
+                .collect::<Vec<_>>(),
+            vec![(0, 240, 60), (480, 360, 67)]
+        );
+    }
+
+    #[test]
+    fn empty_inline_midi_editor_exposes_a_stable_pitch_grid_and_accepts_note_input() {
+        let mut project = Project::new();
+        project
+            .apply(DawAction::CreateTrack {
+                index: 0,
+                name: "Empty inline MIDI".to_owned(),
+            })
+            .unwrap();
+        let track_id = project.tracks()[0].id();
+        project
+            .apply(DawAction::InsertMidiItem {
+                track_id,
+                start_tick: 0,
+                length_ticks: 960,
+            })
+            .unwrap();
+        let item_id = project.midi_items()[0].id();
+
+        let mut timeline = TimelineState {
+            pixels_per_tick: 0.5,
+            ..TimelineState::default()
+        };
+        timeline.rebuild(&project);
+        timeline.inline_midi_items.insert(item_id);
+        let program = timeline.program(&project, None);
+        let target = program
+            .inline_midi_target_at(Point::new(30.0, 50.0))
+            .expect("an empty open MIDI item still exposes its inline grid");
+        assert_eq!((target.pitch_low, target.pitch_high), (48, 83));
+
+        let note = program
+            .inline_note_data_between(
+                target,
+                Point::new(30.0, target.notes_top + 1.0),
+                Point::new(30.0, target.notes_top + 1.0),
+                true,
+            )
+            .expect("an empty inline grid can create a note");
+        assert_eq!(note.tick, 60);
+        assert!(note.pitch >= 80);
+        assert!(note.duration > 0);
+    }
+
+    #[test]
+    fn inline_midi_editor_empty_click_and_drag_match_note_creation_gestures() {
+        let mut project = Project::new();
+        project
+            .apply(DawAction::CreateTrack {
+                index: 0,
+                name: "Inline gestures".to_owned(),
+            })
+            .unwrap();
+        let track_id = project.tracks()[0].id();
+        project
+            .apply(DawAction::InsertMidiItem {
+                track_id,
+                start_tick: 0,
+                length_ticks: 960,
+            })
+            .unwrap();
+        let item_id = project.midi_items()[0].id();
+        let mut timeline = TimelineState {
+            pixels_per_tick: 0.5,
+            ..TimelineState::default()
+        };
+        timeline.rebuild(&project);
+        timeline.inline_midi_items.insert(item_id);
+        let program = timeline.program(&project, None);
+        let bounds = Rectangle::new(Point::ORIGIN, Size::new(800.0, 480.0));
+        let point = Point::new(30.0, 50.0);
+        let press = Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left));
+        let release = Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left));
+        let mut interaction = TimelineInteractionState::default();
+
+        iced::widget::shader::Program::update(
+            &program,
+            &mut interaction,
+            &press,
+            bounds,
+            mouse::Cursor::Available(point),
+        )
+        .expect("a blank inline cell should capture a click");
+        let action = iced::widget::shader::Program::update(
+            &program,
+            &mut interaction,
+            &release,
+            bounds,
+            mouse::Cursor::Available(point),
+        )
+        .expect("a blank inline cell should finish the click gesture");
+        let (message, _, status) = action.into_inner();
+        assert_eq!(status, iced::event::Status::Captured);
+        assert!(message.is_none(), "a single click must not insert a note");
+        assert!(interaction.last_inline_note_click.is_some());
+
+        iced::widget::shader::Program::update(
+            &program,
+            &mut interaction,
+            &press,
+            bounds,
+            mouse::Cursor::Available(point),
+        )
+        .expect("a second click on the same cell should be captured");
+        let action = iced::widget::shader::Program::update(
+            &program,
+            &mut interaction,
+            &release,
+            bounds,
+            mouse::Cursor::Available(point),
+        )
+        .expect("double-click should insert a note");
+        let (message, _, status) = action.into_inner();
+        assert_eq!(status, iced::event::Status::Captured);
+        match message {
+            Some(crate::app::Message::AddMidiNoteAt(target_item_id, note)) => {
+                assert_eq!(target_item_id, item_id);
+                assert_eq!((note.tick, note.duration), (0, 960));
+            }
+            other => panic!("double-click should add one snapped note, got {other:?}"),
+        }
+
+        let mut drag_interaction = TimelineInteractionState::default();
+        iced::widget::shader::Program::update(
+            &program,
+            &mut drag_interaction,
+            &press,
+            bounds,
+            mouse::Cursor::Available(point),
+        )
+        .expect("a blank inline cell should begin note drawing");
+        let endpoint = Point::new(510.0, point.y);
+        let moved = Event::Mouse(mouse::Event::CursorMoved { position: endpoint });
+        iced::widget::shader::Program::update(
+            &program,
+            &mut drag_interaction,
+            &moved,
+            bounds,
+            mouse::Cursor::Available(endpoint),
+        )
+        .expect("dragging across the grid should update note length");
+        let action = iced::widget::shader::Program::update(
+            &program,
+            &mut drag_interaction,
+            &release,
+            bounds,
+            mouse::Cursor::Available(endpoint),
+        )
+        .expect("releasing the drag should insert the note");
+        let (message, _, status) = action.into_inner();
+        assert_eq!(status, iced::event::Status::Captured);
+        match message {
+            Some(crate::app::Message::AddMidiNoteAt(target_item_id, note)) => {
+                assert_eq!(target_item_id, item_id);
+                assert_eq!((note.tick, note.duration), (0, 960));
+            }
+            other => panic!("dragging should insert a grid-length note, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn inline_midi_editor_toggle_tracks_only_selected_midi_items() {
+        let mut project = Project::new();
+        project
+            .apply(aaadaw_core::DawAction::CreateTrack {
+                index: 0,
+                name: "Keys".to_owned(),
+            })
+            .unwrap();
+        let track_id = project.tracks()[0].id();
+        project
+            .apply(aaadaw_core::DawAction::InsertMidiItem {
+                track_id,
+                start_tick: 0,
+                length_ticks: 960,
+            })
+            .unwrap();
+        let item_id = project.midi_items()[0].id();
+
+        let mut timeline = TimelineState::default();
+        timeline.rebuild(&project);
+        timeline.selected_item = Some(item_id);
+        timeline.selected_items.insert(item_id);
+
+        timeline.toggle_inline_midi_editors(false);
+        assert!(timeline.inline_midi_items.contains(&item_id));
+        timeline.toggle_inline_midi_editors(false);
+        assert!(!timeline.inline_midi_items.contains(&item_id));
+        timeline.toggle_inline_midi_editors(false);
+        timeline.toggle_inline_midi_editors(true);
+        assert!(!timeline.inline_midi_items.contains(&item_id));
+    }
+
+    #[test]
+    fn inline_midi_editor_hit_testing_and_note_drag_edit_the_source_event() {
+        let mut project = Project::new();
+        project
+            .apply(DawAction::CreateTrack {
+                index: 0,
+                name: "Inline MIDI".to_owned(),
+            })
+            .unwrap();
+        let track_id = project.tracks()[0].id();
+        project
+            .apply(DawAction::InsertMidiItem {
+                track_id,
+                start_tick: 0,
+                length_ticks: 960,
+            })
+            .unwrap();
+        let item_id = project.midi_items()[0].id();
+        project
+            .apply(DawAction::AddMidiNotes {
+                item_id,
+                notes: vec![MidiNoteData {
+                    channel: 0,
                     pitch: 60,
+                    tick: 0,
+                    duration: 120,
+                    velocity: 96,
+                    off_velocity: 0,
+                }],
+            })
+            .unwrap();
+
+        let mut timeline = TimelineState::default();
+        timeline.rebuild(&project);
+        timeline.pixels_per_tick = 0.5;
+        timeline.snap_enabled = false;
+        timeline.inline_midi_items.insert(item_id);
+        let program = timeline.program(&project, None);
+        let surface = Point::new(30.0, 50.0);
+        let target = program
+            .inline_midi_target_at(surface)
+            .expect("an open MIDI item exposes its inline editing surface");
+        let pitch_range = f32::from(target.pitch_high - target.pitch_low);
+        let note_height = (target.notes_height / (pitch_range + 1.0)).clamp(2.0, 6.0);
+        let note_top = target.notes_top
+            + f32::from(target.pitch_high - 60) / pitch_range
+                * (target.notes_height - note_height).max(0.0);
+        let start = Point::new(30.0, note_top + note_height / 2.0);
+        let hit = program
+            .inline_midi_note_hit(target, start)
+            .expect("the visible note rectangle maps back to its source note");
+        assert_eq!(hit.note.data.tick, 0);
+
+        let moved = program
+            .inline_note_data_after_drag(
+                PendingInlineNoteMove {
+                    target,
+                    note_id: hit.note.id,
+                    note: hit.note.data,
+                    display_tick: hit.display_tick,
+                    notes: vec![(hit.note.id, hit.note.data)],
+                    start_position: start,
+                    resize: false,
+                    copy: false,
+                    click_selection: None,
                 },
-                MidiNotePreview {
-                    tick: 480,
-                    duration: 360,
-                    pitch: 67,
+                Point::new(
+                    start.x + 240.0,
+                    start.y - (target.notes_height / pitch_range * 2.0).round(),
+                ),
+                false,
+            )
+            .expect("a valid arrangement drag updates the MIDI note");
+        assert_eq!((moved.tick, moved.pitch, moved.duration), (480, 62, 120));
+
+        let resize_start = Point::new(58.0, start.y);
+        let resize_hit = program
+            .inline_midi_note_hit(target, resize_start)
+            .expect("the note's right edge selects its duration handle");
+        assert!(resize_hit.resize);
+        let resized = program
+            .inline_note_data_after_drag(
+                PendingInlineNoteMove {
+                    target,
+                    note_id: resize_hit.note.id,
+                    note: resize_hit.note.data,
+                    display_tick: resize_hit.display_tick,
+                    notes: vec![(resize_hit.note.id, resize_hit.note.data)],
+                    start_position: resize_start,
+                    resize: resize_hit.resize,
+                    copy: false,
+                    click_selection: None,
                 },
-            ]
+                Point::new(resize_start.x + 60.0, resize_start.y),
+                false,
+            )
+            .expect("a valid arrangement edge drag updates MIDI note duration");
+        assert_eq!(
+            (resized.tick, resized.pitch, resized.duration),
+            (0, 60, 240)
+        );
+
+        let insert_position = Point::new(100.0, target.notes_top + 2.0);
+        let inserted = program
+            .inline_note_data_between(target, insert_position, insert_position, true)
+            .expect("empty inline grid space can create a MIDI note");
+        assert_eq!(inserted.tick, 200);
+        assert_eq!(inserted.duration, 760);
+        assert!(inserted.pitch > hit.note.data.pitch);
+    }
+
+    #[test]
+    fn inline_midi_editor_maps_negative_source_offsets_to_item_local_positions() {
+        let mut project = Project::new();
+        project
+            .apply(DawAction::CreateTrack {
+                index: 0,
+                name: "Negative-offset inline MIDI".to_owned(),
+            })
+            .unwrap();
+        let track_id = project.tracks()[0].id();
+        project
+            .apply(DawAction::InsertMidiItem {
+                track_id,
+                start_tick: 0,
+                length_ticks: 3_840,
+            })
+            .unwrap();
+        let item_id = project.midi_items()[0].id();
+        project
+            .apply(DawAction::AddMidiNotes {
+                item_id,
+                notes: vec![MidiNoteData {
+                    channel: 0,
+                    pitch: 60,
+                    tick: 120,
+                    duration: 240,
+                    velocity: 96,
+                    off_velocity: 0,
+                }],
+            })
+            .unwrap();
+        project
+            .apply(DawAction::SetMidiItemLoopSource {
+                item_id,
+                enabled: false,
+            })
+            .unwrap();
+        project
+            .apply(DawAction::EditMidiItemPlacement {
+                item_id,
+                start_tick: 0,
+                length_ticks: 3_840,
+                source_offset_ticks: -960,
+            })
+            .unwrap();
+
+        let mut timeline = TimelineState {
+            pixels_per_tick: 0.5,
+            snap_enabled: false,
+            ..TimelineState::default()
+        };
+        timeline.rebuild(&project);
+        timeline.inline_midi_items.insert(item_id);
+        let program = timeline.program(&project, None);
+        let surface = Point::new(30.0, 50.0);
+        let target = program
+            .inline_midi_target_at(surface)
+            .expect("a negative-offset MIDI item exposes its inline editor");
+        let local_note_tick = 1_080;
+        let pitch_range = f32::from(target.pitch_high - target.pitch_low);
+        let note_height = (target.notes_height / (pitch_range + 1.0)).clamp(2.0, 6.0);
+        let note_top = target.notes_top
+            + f32::from(target.pitch_high - 60) / pitch_range
+                * (target.notes_height - note_height).max(0.0);
+        let note_position = Point::new(
+            target.item_left
+                + local_note_tick as f32 / target.item_length_ticks as f32 * target.item_width,
+            note_top + note_height / 2.0,
+        );
+        let hit = program
+            .inline_midi_note_hit(target, note_position)
+            .expect("the source note appears at its rebased item-local position");
+        assert_eq!(hit.display_tick, local_note_tick);
+        assert_eq!(hit.note.data.tick, 120);
+
+        let moved = program
+            .inline_note_data_after_drag(
+                PendingInlineNoteMove {
+                    target,
+                    note_id: hit.note.id,
+                    note: hit.note.data,
+                    display_tick: hit.display_tick,
+                    notes: vec![(hit.note.id, hit.note.data)],
+                    start_position: note_position,
+                    resize: false,
+                    copy: false,
+                    click_selection: None,
+                },
+                Point::new(
+                    note_position.x + 120.0 * timeline.pixels_per_tick,
+                    note_position.y,
+                ),
+                true,
+            )
+            .expect("dragging a visible source note remains within the source data");
+        assert_eq!(moved.tick, 240);
+
+        let before_source_start = Point::new(
+            target.item_left + 120.0 / target.item_length_ticks as f32 * target.item_width,
+            note_top,
+        );
+        assert!(
+            program
+                .inline_note_data_between(target, before_source_start, before_source_start, true)
+                .is_none()
+        );
+        let after_source_start = Point::new(
+            target.item_left + 1_200.0 / target.item_length_ticks as f32 * target.item_width,
+            note_top,
+        );
+        let inserted = program
+            .inline_note_data_between(target, after_source_start, after_source_start, true)
+            .expect("insertions after source time zero map to valid MIDI ticks");
+        assert_eq!(inserted.tick, 240);
+    }
+
+    #[test]
+    fn inline_midi_drag_moves_the_selected_note_group_with_reaper_snap_values() {
+        let mut project = Project::new();
+        project
+            .apply(DawAction::CreateTrack {
+                index: 0,
+                name: "Inline MIDI group drag".to_owned(),
+            })
+            .unwrap();
+        let track_id = project.tracks()[0].id();
+        project
+            .apply(DawAction::InsertMidiItem {
+                track_id,
+                start_tick: 0,
+                length_ticks: 2_400,
+            })
+            .unwrap();
+        let item_id = project.midi_items()[0].id();
+        project
+            .apply(DawAction::AddMidiNotes {
+                item_id,
+                notes: [(100, 60), (350, 62), (550, 64), (900, 65)]
+                    .into_iter()
+                    .map(|(tick, pitch)| MidiNoteData {
+                        channel: 0,
+                        pitch,
+                        tick,
+                        duration: 120,
+                        velocity: 96,
+                        off_velocity: 0,
+                    })
+                    .collect(),
+            })
+            .unwrap();
+        let selected = project.midi_items()[0]
+            .notes()
+            .iter()
+            .filter(|note| matches!(note.pitch(), 60 | 62 | 65))
+            .map(|note| note.id())
+            .collect::<HashSet<_>>();
+
+        let mut timeline = TimelineState {
+            pixels_per_tick: 0.5,
+            ..TimelineState::default()
+        };
+        timeline.rebuild(&project);
+        timeline.cache.snap_grid_ticks = Some(120);
+        timeline.inline_midi_items.insert(item_id);
+        timeline
+            .inline_midi_note_selection
+            .insert(item_id, selected.clone());
+        let program = timeline.program(&project, None);
+        let surface = Point::new(30.0, 50.0);
+        let target = program
+            .inline_midi_target_at(surface)
+            .expect("an open MIDI item exposes its inline editing surface");
+        let pitch_range = f32::from((target.pitch_high - target.pitch_low).max(1));
+        let note_height = (target.notes_height / (pitch_range + 1.0)).clamp(2.0, 6.0);
+        let note_y = target.notes_top
+            + f32::from(target.pitch_high - 60) / pitch_range
+                * (target.notes_height - note_height).max(0.0)
+            + note_height / 2.0;
+        let start = Point::new(target.item_left + 80.0, note_y);
+        let hit = program
+            .inline_midi_note_hit(target, start)
+            .expect("the first selected note is hit");
+        assert_eq!((hit.note.data.tick, hit.note.data.pitch), (100, 60));
+
+        let bounds = Rectangle::new(Point::ORIGIN, Size::new(1_400.0, 480.0));
+        let press = Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left));
+        let release = Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left));
+        let mut interaction = TimelineInteractionState::default();
+        iced::widget::shader::Program::update(
+            &program,
+            &mut interaction,
+            &press,
+            bounds,
+            mouse::Cursor::Available(start),
+        )
+        .expect("pressing a selected inline note starts a group drag");
+
+        let moved = Point::new(start.x + 370.0, start.y);
+        let action = iced::widget::shader::Program::update(
+            &program,
+            &mut interaction,
+            &release,
+            bounds,
+            mouse::Cursor::Available(moved),
+        )
+        .expect("releasing the inline note group submits the edit");
+        let (message, _, _) = action.into_inner();
+        let crate::app::Message::EditMidiNotes(changed_item, edits) = message.unwrap() else {
+            panic!("inline group drag should submit one atomic MIDI edit");
+        };
+        assert_eq!(changed_item, item_id);
+        let edits = edits.into_iter().collect::<HashMap<_, _>>();
+        assert_eq!(edits.keys().copied().collect::<HashSet<_>>(), selected);
+        assert_eq!(
+            edits
+                .values()
+                .map(|note| (note.tick, note.pitch, note.duration))
+                .collect::<HashSet<_>>(),
+            HashSet::from([(840, 60, 120), (1_090, 62, 120), (1_640, 65, 120),])
+        );
+        assert!(!edits.values().any(|note| note.pitch == 64));
+    }
+
+    #[test]
+    fn inline_midi_control_drag_copies_the_selected_note_group() {
+        let mut project = Project::new();
+        project
+            .apply(DawAction::CreateTrack {
+                index: 0,
+                name: "Inline MIDI group copy".to_owned(),
+            })
+            .unwrap();
+        let track_id = project.tracks()[0].id();
+        project
+            .apply(DawAction::InsertMidiItem {
+                track_id,
+                start_tick: 0,
+                length_ticks: 3_840,
+            })
+            .unwrap();
+        let item_id = project.midi_items()[0].id();
+        project
+            .apply(DawAction::AddMidiNotes {
+                item_id,
+                notes: [(840, 60), (1_090, 62), (550, 64), (1_640, 65)]
+                    .into_iter()
+                    .map(|(tick, pitch)| MidiNoteData {
+                        channel: 0,
+                        pitch,
+                        tick,
+                        duration: 120,
+                        velocity: 96,
+                        off_velocity: 0,
+                    })
+                    .collect(),
+            })
+            .unwrap();
+        let selected = project.midi_items()[0]
+            .notes()
+            .iter()
+            .filter(|note| matches!(note.pitch(), 60 | 62 | 65))
+            .map(|note| note.id())
+            .collect::<HashSet<_>>();
+
+        let mut timeline = TimelineState {
+            pixels_per_tick: 0.5,
+            ..TimelineState::default()
+        };
+        timeline.rebuild(&project);
+        timeline.cache.snap_grid_ticks = Some(120);
+        timeline.inline_midi_items.insert(item_id);
+        timeline
+            .inline_midi_note_selection
+            .insert(item_id, selected.clone());
+        let program = timeline.program(&project, None);
+        let target = program
+            .inline_midi_target_at(Point::new(30.0, 50.0))
+            .expect("an open MIDI item exposes its inline editing surface");
+        let pitch_range = f32::from((target.pitch_high - target.pitch_low).max(1));
+        let note_height = (target.notes_height / (pitch_range + 1.0)).clamp(2.0, 6.0);
+        let start = Point::new(
+            target.item_left + (840.0 + 60.0) / 3_840.0 * target.item_width,
+            target.notes_top
+                + f32::from(target.pitch_high - 60) / pitch_range
+                    * (target.notes_height - note_height).max(0.0)
+                + note_height / 2.0,
+        );
+        let hit = program
+            .inline_midi_note_hit(target, start)
+            .expect("the first selected note is hit");
+        assert_eq!((hit.note.data.tick, hit.note.data.pitch), (840, 60));
+
+        let bounds = Rectangle::new(Point::ORIGIN, Size::new(2_000.0, 480.0));
+        let modifiers =
+            Event::Keyboard(keyboard::Event::ModifiersChanged(keyboard::Modifiers::CTRL));
+        let press = Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left));
+        let release = Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left));
+        let mut interaction = TimelineInteractionState::default();
+        iced::widget::shader::Program::update(
+            &program,
+            &mut interaction,
+            &modifiers,
+            bounds,
+            mouse::Cursor::Available(start),
+        );
+        let press_action = iced::widget::shader::Program::update(
+            &program,
+            &mut interaction,
+            &press,
+            bounds,
+            mouse::Cursor::Available(start),
+        )
+        .expect("Control-drag starts without toggling the source group");
+        let (message, _, _) = press_action.into_inner();
+        assert!(message.is_none());
+
+        let moved = Point::new(start.x + 60.0, start.y);
+        let release_action = iced::widget::shader::Program::update(
+            &program,
+            &mut interaction,
+            &release,
+            bounds,
+            mouse::Cursor::Available(moved),
+        )
+        .expect("releasing the Control-drag submits copied MIDI notes");
+        let (message, _, _) = release_action.into_inner();
+        let crate::app::Message::CopyDragMidiNotes(copied_item, copies) = message.unwrap() else {
+            panic!("Control-drag should submit a note-copy action");
+        };
+        assert_eq!(copied_item, item_id);
+        assert_eq!(copies.len(), selected.len());
+        assert_eq!(
+            copies
+                .iter()
+                .map(|note| (note.tick, note.pitch, note.duration))
+                .collect::<HashSet<_>>(),
+            HashSet::from([(960, 60, 120), (1_210, 62, 120), (1_760, 65, 120)])
+        );
+        assert!(!copies.iter().any(|note| note.pitch == 64));
+    }
+
+    #[test]
+    fn inline_midi_control_click_adds_notes_to_the_drag_selection() {
+        let mut project = Project::new();
+        project
+            .apply(DawAction::CreateTrack {
+                index: 0,
+                name: "Inline MIDI note selection".to_owned(),
+            })
+            .unwrap();
+        let track_id = project.tracks()[0].id();
+        project
+            .apply(DawAction::InsertMidiItem {
+                track_id,
+                start_tick: 0,
+                length_ticks: 960,
+            })
+            .unwrap();
+        let item_id = project.midi_items()[0].id();
+        project
+            .apply(DawAction::AddMidiNotes {
+                item_id,
+                notes: [(100, 60), (350, 64)]
+                    .into_iter()
+                    .map(|(tick, pitch)| MidiNoteData {
+                        channel: 0,
+                        pitch,
+                        tick,
+                        duration: 120,
+                        velocity: 96,
+                        off_velocity: 0,
+                    })
+                    .collect(),
+            })
+            .unwrap();
+        let note_ids = project.midi_items()[0]
+            .notes()
+            .iter()
+            .map(|note| (note.pitch(), note.id()))
+            .collect::<HashMap<_, _>>();
+        let first_id = note_ids[&60];
+        let second_id = note_ids[&64];
+
+        let mut timeline = TimelineState {
+            pixels_per_tick: 0.5,
+            ..TimelineState::default()
+        };
+        timeline.rebuild(&project);
+        timeline.cache.snap_grid_ticks = Some(120);
+        timeline.inline_midi_items.insert(item_id);
+        let program = timeline.program(&project, None);
+        let target = program
+            .inline_midi_target_at(Point::new(30.0, 50.0))
+            .expect("an open MIDI item exposes its inline editor");
+        let pitch_range = f32::from((target.pitch_high - target.pitch_low).max(1));
+        let note_height = (target.notes_height / (pitch_range + 1.0)).clamp(2.0, 6.0);
+        let position_for = |tick: u64, pitch: u8| {
+            Point::new(
+                target.item_left + (tick as f32 + 60.0) / 960.0 * target.item_width,
+                target.notes_top
+                    + f32::from(target.pitch_high - pitch) / pitch_range
+                        * (target.notes_height - note_height).max(0.0)
+                    + note_height / 2.0,
+            )
+        };
+        let first_position = position_for(100, 60);
+        let second_position = position_for(350, 64);
+        let bounds = Rectangle::new(Point::ORIGIN, Size::new(800.0, 480.0));
+        let press = Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left));
+        let release = Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left));
+        let mut interaction = TimelineInteractionState::default();
+
+        let first_action = iced::widget::shader::Program::update(
+            &program,
+            &mut interaction,
+            &press,
+            bounds,
+            mouse::Cursor::Available(first_position),
+        )
+        .expect("clicking the first note selects it");
+        let (message, _, _) = first_action.into_inner();
+        let crate::app::Message::Timeline(TimelineEvent::SetInlineMidiNoteSelection {
+            item_id: selected_item,
+            note_ids: selected,
+        }) = message.unwrap()
+        else {
+            panic!("the first inline note click should publish note selection");
+        };
+        assert_eq!(selected_item, item_id);
+        assert_eq!(
+            selected.into_iter().collect::<HashSet<_>>(),
+            HashSet::from([first_id])
+        );
+        iced::widget::shader::Program::update(
+            &program,
+            &mut interaction,
+            &release,
+            bounds,
+            mouse::Cursor::Available(first_position),
+        )
+        .expect("releasing the first note click ends its pending gesture");
+        timeline.handle(TimelineEvent::SetInlineMidiNoteSelection {
+            item_id,
+            note_ids: vec![first_id],
+        });
+
+        let program = timeline.program(&project, None);
+        let modifiers =
+            Event::Keyboard(keyboard::Event::ModifiersChanged(keyboard::Modifiers::CTRL));
+        iced::widget::shader::Program::update(
+            &program,
+            &mut interaction,
+            &modifiers,
+            bounds,
+            mouse::Cursor::Available(second_position),
+        );
+        let second_action = iced::widget::shader::Program::update(
+            &program,
+            &mut interaction,
+            &press,
+            bounds,
+            mouse::Cursor::Available(second_position),
+        )
+        .expect("Control-clicking a second note defers selection until release");
+        let (message, _, _) = second_action.into_inner();
+        assert!(message.is_none());
+        let second_release = iced::widget::shader::Program::update(
+            &program,
+            &mut interaction,
+            &release,
+            bounds,
+            mouse::Cursor::Available(second_position),
+        )
+        .expect("releasing the Control-click toggles the selected note");
+        let (message, _, _) = second_release.into_inner();
+        let crate::app::Message::Timeline(TimelineEvent::SetInlineMidiNoteSelection {
+            item_id: selected_item,
+            note_ids: selected,
+        }) = message.unwrap()
+        else {
+            panic!("Control-click should publish the additive inline note selection");
+        };
+        assert_eq!(selected_item, item_id);
+        assert_eq!(
+            selected.into_iter().collect::<HashSet<_>>(),
+            HashSet::from([first_id, second_id])
+        );
+
+        timeline.handle(TimelineEvent::SetInlineMidiNoteSelection {
+            item_id,
+            note_ids: vec![first_id, second_id],
+        });
+        let program = timeline.program(&project, None);
+        let second_press = iced::widget::shader::Program::update(
+            &program,
+            &mut interaction,
+            &press,
+            bounds,
+            mouse::Cursor::Available(second_position),
+        )
+        .expect("Control-click on a selected note defers deselection until release");
+        let (message, _, _) = second_press.into_inner();
+        assert!(message.is_none());
+        let second_release = iced::widget::shader::Program::update(
+            &program,
+            &mut interaction,
+            &release,
+            bounds,
+            mouse::Cursor::Available(second_position),
+        )
+        .expect("releasing Control-click removes only that note from the selection");
+        let (message, _, _) = second_release.into_inner();
+        let crate::app::Message::Timeline(TimelineEvent::SetInlineMidiNoteSelection {
+            item_id: selected_item,
+            note_ids: selected,
+        }) = message.unwrap()
+        else {
+            panic!("Control-clicking a selected note should publish deselection");
+        };
+        assert_eq!(selected_item, item_id);
+        assert_eq!(
+            selected.into_iter().collect::<HashSet<_>>(),
+            HashSet::from([first_id])
         );
     }
 
     #[test]
     fn midi_note_preview_geometry_maps_project_time_and_pitch_into_the_clip() {
         let notes = [
-            MidiNotePreview {
-                tick: 0,
-                duration: 240,
-                pitch: 60,
-            },
-            MidiNotePreview {
-                tick: 480,
-                duration: 240,
-                pitch: 72,
-            },
+            test_midi_note_preview(1, 0, 240, 60),
+            test_midi_note_preview(2, 480, 240, 72),
         ];
-        let rects =
-            midi_note_preview_geometry(&notes, 960, 100.0, 200.0, 20.0, 48.0).collect::<Vec<_>>();
+        let rects = midi_note_preview_geometry(
+            &notes,
+            MidiPreviewSource {
+                offset_ticks: 0,
+                loop_length_ticks: None,
+            },
+            960,
+            MidiPreviewBounds {
+                item_left: 100.0,
+                item_width: 200.0,
+                viewport_width: 500.0,
+                top: 20.0,
+                height: 48.0,
+            },
+        );
         assert_eq!(rects.len(), 2);
         assert_eq!(rects[0].x, 100.0);
         assert_eq!(rects[0].width, 50.0);
         assert_eq!(rects[1].x, 200.0);
         assert!(rects[0].y > rects[1].y);
         assert!(rects.iter().all(|rect| (20.0..68.0).contains(&rect.y)));
+    }
+
+    #[test]
+    fn midi_note_preview_geometry_places_notes_after_negative_source_offsets() {
+        let notes = [test_midi_note_preview(1, 120, 240, 60)];
+        let rects = midi_note_preview_geometry(
+            &notes,
+            MidiPreviewSource {
+                offset_ticks: -960,
+                loop_length_ticks: None,
+            },
+            3_840,
+            MidiPreviewBounds {
+                item_left: 100.0,
+                item_width: 200.0,
+                viewport_width: 500.0,
+                top: 20.0,
+                height: 48.0,
+            },
+        );
+
+        assert_eq!(rects.len(), 1);
+        assert!((rects[0].x - 156.25).abs() < 0.01);
+        assert!((rects[0].width - 12.5).abs() < 0.01);
+    }
+
+    #[test]
+    fn midi_loop_preview_uses_signed_source_phase() {
+        let notes = [test_midi_note_preview(1, 120, 120, 60)];
+        let rects = midi_note_preview_geometry(
+            &notes,
+            MidiPreviewSource {
+                offset_ticks: -120,
+                loop_length_ticks: Some(960),
+            },
+            960,
+            MidiPreviewBounds {
+                item_left: 100.0,
+                item_width: 200.0,
+                viewport_width: 500.0,
+                top: 20.0,
+                height: 48.0,
+            },
+        );
+
+        assert_eq!(rects.len(), 1);
+        assert!((rects[0].x - 150.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn midi_loop_preview_keeps_far_right_visible_occurrences() {
+        let notes = [test_midi_note_preview(1, 120, 120, 60)];
+        let rects = midi_note_preview_geometry(
+            &notes,
+            MidiPreviewSource {
+                offset_ticks: 300,
+                loop_length_ticks: Some(960),
+            },
+            960_000,
+            MidiPreviewBounds {
+                item_left: -999_000.0,
+                item_width: 1_000_000.0,
+                viewport_width: 1_000.0,
+                top: 20.0,
+                height: 48.0,
+            },
+        );
+
+        assert_eq!(rects.len(), 1);
+        assert!((rects[0].x - 812.5).abs() < 0.01);
+    }
+
+    #[test]
+    fn midi_preview_budget_covers_visible_source_notes_and_time_range() {
+        let notes = (0..MAX_MIDI_ITEM_PREVIEW_NOTES + 88)
+            .map(|index| MidiNotePreview {
+                id: NoteId::from_value(index as u64 + 1).unwrap(),
+                data: MidiNoteData {
+                    channel: 0,
+                    pitch: 48 + (index % 36) as u8,
+                    tick: index as u64,
+                    duration: 1,
+                    velocity: 100,
+                    off_velocity: 0,
+                },
+                tick: index as u64,
+                duration: 1,
+                pitch: 48 + (index % 36) as u8,
+            })
+            .collect::<Vec<_>>();
+        let rects = midi_note_preview_geometry(
+            &notes,
+            MidiPreviewSource {
+                offset_ticks: 0,
+                loop_length_ticks: Some(960),
+            },
+            960_000,
+            MidiPreviewBounds {
+                item_left: -900.0,
+                item_width: 10_000.0,
+                viewport_width: 1_000.0,
+                top: 20.0,
+                height: 48.0,
+            },
+        );
+
+        assert_eq!(rects.len(), MAX_MIDI_ITEM_PREVIEW_NOTES);
+        assert!(rects.first().is_some_and(|rect| rect.x < 2.0));
+        assert!(rects.last().is_some_and(|rect| rect.x > 990.0));
+    }
+
+    fn test_midi_note_preview(id: u64, tick: u64, duration: u64, pitch: u8) -> MidiNotePreview {
+        MidiNotePreview {
+            id: NoteId::from_value(id).unwrap(),
+            data: MidiNoteData {
+                channel: 0,
+                pitch,
+                tick,
+                duration,
+                velocity: 100,
+                off_velocity: 0,
+            },
+            tick,
+            duration,
+            pitch,
+        }
     }
 
     #[test]
@@ -5184,6 +10751,119 @@ mod tests {
             overview.last().unwrap().end_tick,
             project.tick_at_sample(3_048).unwrap()
         );
+    }
+
+    #[test]
+    fn waveform_geometry_places_source_after_negative_offset_preroll() {
+        let mut project = Project::new();
+        project
+            .apply(DawAction::CreateTrack {
+                index: 0,
+                name: "Pre-roll waveform".to_owned(),
+            })
+            .unwrap();
+        project
+            .apply(DawAction::InsertAudioItem {
+                track_id: project.tracks()[0].id(),
+                media_ref: "asset://preroll-waveform".to_owned(),
+                start_sample: 0,
+                source_offset_samples: -1_024,
+                length_samples: 2_048,
+            })
+            .unwrap();
+        assert!(!project.audio_items()[0].is_loop_source());
+        let samples = [vec![8_192; 1_024], vec![16_384; 1_024]].concat();
+        let bytes = waveform_test_wav(&samples, 48_000);
+        let mut decoder = AudioStreamDecoder::from_reader(
+            Cursor::new(bytes.clone()),
+            Some(bytes.len() as u64),
+            Some("wav"),
+        )
+        .unwrap();
+        let waveform = Arc::new(AudioWaveform::decode(&mut decoder, 256).unwrap());
+        let waveforms = HashMap::from([("asset://preroll-waveform".to_owned(), waveform)]);
+        let mut cache = TimelineCache::default();
+        cache.rebuild(&project, SnapGrid::Sixteenth);
+
+        let geometry = cache.waveform_geometry_for_viewport(&project, &waveforms, 0, 1.0, 200.0);
+        assert_eq!(geometry.len(), 4);
+        assert!(
+            geometry
+                .iter()
+                .all(|bin| (bin.min - 0.25).abs() < 1.0e-6 && (bin.max - 0.25).abs() < 1.0e-6)
+        );
+        assert_eq!(
+            geometry[0].start_tick,
+            project.tick_at_sample(1_024).unwrap()
+        );
+        assert_eq!(geometry[3].end_tick, project.tick_at_sample(2_048).unwrap());
+    }
+
+    #[test]
+    fn waveform_geometry_places_bounded_section_after_signed_preroll() {
+        let mut project = Project::new();
+        project
+            .apply(DawAction::CreateTrack {
+                index: 0,
+                name: "Bounded pre-roll waveform".to_owned(),
+            })
+            .unwrap();
+        let track_id = project.tracks()[0].id();
+        project
+            .apply(DawAction::InsertLoopedAudioItem {
+                track_id,
+                media_ref: "asset://bounded-preroll-waveform".to_owned(),
+                start_sample: 0,
+                source_offset_samples: 0,
+                length_samples: 2_048,
+                muted: false,
+                phase_inverted: false,
+                source_section_start_samples: 1_024,
+                source_section_length_samples: 1_024,
+            })
+            .unwrap();
+        let item_id = project.audio_items()[0].id();
+        project
+            .apply(DawAction::SetAudioItemLoopSource {
+                item_id,
+                enabled: false,
+            })
+            .unwrap();
+        project
+            .apply(DawAction::EditAudioItem {
+                item_id,
+                media_ref: "asset://bounded-preroll-waveform".to_owned(),
+                start_sample: 0,
+                source_offset_samples: -1_024,
+                length_samples: 2_048,
+            })
+            .unwrap();
+
+        let samples = [vec![8_192; 1_024], vec![16_384; 1_024]].concat();
+        let bytes = waveform_test_wav(&samples, 48_000);
+        let mut decoder = AudioStreamDecoder::from_reader(
+            Cursor::new(bytes.clone()),
+            Some(bytes.len() as u64),
+            Some("wav"),
+        )
+        .unwrap();
+        let waveform = Arc::new(AudioWaveform::decode(&mut decoder, 256).unwrap());
+        let waveforms = HashMap::from([("asset://bounded-preroll-waveform".to_owned(), waveform)]);
+        let mut cache = TimelineCache::default();
+        cache.rebuild(&project, SnapGrid::Sixteenth);
+
+        let geometry = cache.waveform_geometry_for_viewport(&project, &waveforms, 0, 1.0, 200.0);
+        assert_eq!(geometry.len(), 4);
+        assert!(
+            geometry
+                .iter()
+                .all(|bin| { (bin.min - 0.5).abs() < 1.0e-6 && (bin.max - 0.5).abs() < 1.0e-6 })
+        );
+        assert_eq!(
+            geometry[0].start_tick,
+            project.tick_at_sample(1_024).unwrap()
+        );
+        assert_eq!(geometry[3].end_tick, project.tick_at_sample(2_048).unwrap());
     }
 
     #[test]
@@ -5496,13 +11176,89 @@ mod tests {
     }
 
     #[test]
+    fn ruler_labels_signed_start_measure_and_anchors_spacing_there() {
+        let project =
+            Project::with_settings(aaadaw_core::ProjectSettings::default().with_start_measure(-2));
+        let timeline = TimelineState {
+            origin_tick: 0,
+            pixels_per_tick: 0.1,
+            ..TimelineState::default()
+        };
+        let measure_lines = timeline
+            .ruler_lines(&project, 800.0)
+            .into_iter()
+            .filter(|line| line.is_measure)
+            .collect::<Vec<_>>();
+        assert_eq!(measure_lines[0].measure, -2);
+        assert!(measure_lines[0].show_label);
+        assert_eq!(measure_lines[1].measure, -1);
+        assert!(measure_lines[1].show_label);
+    }
+
+    #[test]
+    fn ruler_spacing_can_use_measure_one_as_its_origin() {
+        let project = Project::with_settings(
+            aaadaw_core::ProjectSettings::default()
+                .with_start_measure(-2)
+                .with_base_ruler_label_spacing_on_measure(false),
+        );
+        let timeline = TimelineState {
+            origin_tick: 0,
+            pixels_per_tick: 0.005,
+            ..TimelineState::default()
+        };
+        let labeled_measures = timeline
+            .ruler_lines(&project, 120.0)
+            .into_iter()
+            .filter(|line| line.show_label)
+            .map(|line| line.measure)
+            .collect::<Vec<_>>();
+        assert_eq!(labeled_measures.first(), Some(&1));
+
+        let detailed = TimelineState {
+            origin_tick: 0,
+            pixels_per_tick: 0.1,
+            ..TimelineState::default()
+        };
+        assert_eq!(
+            detailed
+                .ruler_lines(&project, 120.0)
+                .into_iter()
+                .find(|line| line.show_label)
+                .unwrap()
+                .measure,
+            -2
+        );
+    }
+
+    #[test]
+    fn ruler_clock_labels_follow_signed_project_start_time_offset() {
+        let settings = aaadaw_core::ProjectSettings::default()
+            .with_project_start_time_offset_seconds(-5.0)
+            .unwrap();
+        let project = Project::with_settings(settings);
+        let timeline = TimelineState {
+            origin_tick: 0,
+            pixels_per_tick: 0.1,
+            ..TimelineState::default()
+        };
+        let measure = timeline
+            .ruler_lines(&project, 400.0)
+            .into_iter()
+            .find(|line| line.show_label && line.tick == 0)
+            .unwrap();
+        assert_eq!(measure.time_label.as_deref(), Some("-0:05.000"));
+    }
+
+    #[test]
     fn zoom_keeps_the_tick_under_the_pointer_stationary() {
         let mut timeline = TimelineState::default();
         let anchor_x = 300.0;
         let before = tick_at_x(timeline.origin_tick, timeline.pixels_per_tick, anchor_x);
-        timeline.handle(TimelineEvent::ZoomAt {
+        timeline.handle(TimelineEvent::ZoomAtPosition {
             factor: 1.5,
             anchor_x,
+            pointer_position: Point::new(anchor_x, 10.0),
         });
         let after = tick_at_x(timeline.origin_tick, timeline.pixels_per_tick, anchor_x);
         assert!(before.abs_diff(after) <= 1);
@@ -5511,18 +11267,28 @@ mod tests {
     #[test]
     fn middle_drag_zooms_vertically_and_pans_horizontally() {
         let mut zoom = MiddleDragState::new(Point::new(120.0, 80.0));
-        let Some(TimelineEvent::ZoomAt { factor, anchor_x }) = zoom.update(Point::new(121.0, 48.0))
+        let Some(TimelineEvent::ZoomAtPosition {
+            factor,
+            anchor_x,
+            pointer_position,
+        }) = zoom.update(Point::new(121.0, 48.0))
         else {
             panic!("vertical middle drag should zoom");
         };
         assert!(factor > 1.0);
         assert_eq!(anchor_x, 120.0);
+        assert_eq!(pointer_position, Point::new(121.0, 48.0));
 
         let mut pan = MiddleDragState::new(Point::new(120.0, 80.0));
-        let Some(TimelineEvent::PanByPixels(delta_x)) = pan.update(Point::new(160.0, 81.0)) else {
+        let Some(TimelineEvent::PanByPixelsAt {
+            delta_x,
+            pointer_position,
+        }) = pan.update(Point::new(160.0, 81.0))
+        else {
             panic!("horizontal middle drag should pan");
         };
         assert_eq!(delta_x, 40.0);
+        assert_eq!(pointer_position, Point::new(160.0, 81.0));
     }
 
     #[test]
@@ -5552,11 +11318,23 @@ mod tests {
     }
 
     #[test]
-    fn default_snap_grid_is_available_in_a_new_empty_project() {
+    fn arrange_and_midi_snap_grids_match_defaults_and_change_independently() {
         let timeline = TimelineState::default();
-        assert_eq!(timeline.snap_grid, SnapGrid::Sixteenth);
+        assert_eq!(timeline.snap_grid, SnapGrid::Quarter);
+        assert_eq!(timeline.midi_editor_snap_grid, SnapGrid::ThirtySecond);
         assert!(timeline.has_snap_grid());
+        assert!(timeline.midi_editor_has_snap_grid());
         assert!(timeline.snap_enabled);
+
+        let mut timeline = timeline;
+        timeline.handle(TimelineEvent::SetSnapGrid(SnapGrid::Eighth));
+        timeline.handle(TimelineEvent::SetMidiEditorSnapGrid(
+            SnapGrid::EighthTriplet,
+        ));
+        assert_eq!(timeline.snap_grid, SnapGrid::Eighth);
+        assert_eq!(timeline.midi_editor_snap_grid, SnapGrid::EighthTriplet);
+        timeline.handle(TimelineEvent::ToggleMidiEditorSnap);
+        assert!(!timeline.snap_enabled);
     }
 
     #[test]
@@ -5905,6 +11683,155 @@ mod tests {
     }
 
     #[test]
+    fn clearing_item_selection_preserves_track_time_and_automation_selection() {
+        let (project, tracks, items) = project_with_items();
+        let mut timeline = TimelineState::default();
+        timeline.rebuild(&project);
+        timeline.selected_items = HashSet::from([items[0], items[1]]);
+        timeline.selected_item = Some(items[1]);
+        timeline.selection_anchor = Some(items[0]);
+        timeline.selected_track = Some(tracks[1]);
+        timeline.selected_tracks = HashSet::from([tracks[0], tracks[1]]);
+        timeline.time_selection = Some(TimeSelection {
+            start_tick: 240,
+            end_tick: 960,
+        });
+        timeline.selected_volume_automation_point = Some((tracks[0], 2));
+        timeline.selected_fx_automation_point = Some((tracks[1], 1, 42, 3));
+
+        timeline.clear_selected_items();
+
+        assert!(timeline.selected_items.is_empty());
+        assert_eq!(timeline.selected_item, None);
+        assert_eq!(timeline.selection_anchor, None);
+        assert_eq!(timeline.selected_track, Some(tracks[1]));
+        assert_eq!(
+            timeline.selected_tracks,
+            HashSet::from([tracks[0], tracks[1]])
+        );
+        assert_eq!(
+            timeline.time_selection,
+            Some(TimeSelection {
+                start_tick: 240,
+                end_tick: 960,
+            })
+        );
+        assert_eq!(
+            timeline.selected_volume_automation_point,
+            Some((tracks[0], 2))
+        );
+        assert_eq!(
+            timeline.selected_fx_automation_point,
+            Some((tracks[1], 1, 42, 3))
+        );
+    }
+
+    #[test]
+    fn arrange_cursor_motion_tracks_and_clears_the_hovered_item() {
+        use iced::widget::shader;
+
+        let (project, _, items) = project_with_items();
+        let mut timeline = TimelineState {
+            pixels_per_tick: 0.1,
+            ..TimelineState::default()
+        };
+        timeline.rebuild(&project);
+        let row = timeline.row_layout(0).unwrap();
+        let bounds = Rectangle::new(Point::new(30.0, 20.0), Size::new(800.0, 480.0));
+        let item_position = Point::new(27.0, row.top + 20.0);
+        let absolute_item_position =
+            Point::new(bounds.x + item_position.x, bounds.y + item_position.y);
+        let mut interaction = TimelineInteractionState::default();
+        let program = timeline.program(&project, None);
+        let action = shader::Program::update(
+            &program,
+            &mut interaction,
+            &Event::Mouse(mouse::Event::CursorMoved {
+                position: absolute_item_position,
+            }),
+            bounds,
+            mouse::Cursor::Available(absolute_item_position),
+        )
+        .expect("moving over an item should publish its hover target");
+        assert!(matches!(
+            action.into_inner().0,
+            Some(crate::app::Message::Timeline(TimelineEvent::PointerMoved(position)))
+                if position == item_position
+        ));
+        timeline.handle(TimelineEvent::PointerMoved(item_position));
+        assert_eq!(timeline.hovered_item, Some(items[0]));
+
+        let empty_position = Point::new(bounds.x + 140.0, bounds.y + row.top + 20.0);
+        let program = timeline.program(&project, None);
+        let action = shader::Program::update(
+            &program,
+            &mut interaction,
+            &Event::Mouse(mouse::Event::CursorMoved {
+                position: empty_position,
+            }),
+            bounds,
+            mouse::Cursor::Available(empty_position),
+        )
+        .expect("moving off an item should clear its hover target");
+        assert!(matches!(
+            action.into_inner().0,
+            Some(crate::app::Message::Timeline(TimelineEvent::PointerMoved(position)))
+                if position == Point::new(140.0, row.top + 20.0)
+        ));
+        timeline.handle(TimelineEvent::PointerMoved(Point::new(
+            140.0,
+            row.top + 20.0,
+        )));
+        assert_eq!(timeline.hovered_item, None);
+    }
+
+    #[test]
+    fn stationary_arrange_pointer_retargets_items_after_pan_and_zoom() {
+        let (project, _, items) = project_with_items();
+        let mut timeline = TimelineState {
+            pixels_per_tick: 0.1,
+            ..TimelineState::default()
+        };
+        timeline.rebuild(&project);
+        let pointer_position = Point::new(27.0, 20.0);
+        timeline.handle(TimelineEvent::PointerMoved(pointer_position));
+        assert_eq!(timeline.hovered_item, Some(items[0]));
+
+        timeline.handle(TimelineEvent::PanByPixelsAt {
+            delta_x: -75.0,
+            pointer_position,
+        });
+        assert!(timeline.origin_tick > 700);
+        assert_eq!(timeline.hovered_item, Some(items[1]));
+
+        timeline.handle(TimelineEvent::ZoomAtPosition {
+            factor: 2.0,
+            anchor_x: 0.0,
+            pointer_position,
+        });
+        assert_eq!(timeline.hovered_item, None);
+    }
+
+    #[test]
+    fn stationary_arrange_pointer_retargets_items_after_vertical_scroll() {
+        let (project, _, items) = project_with_items();
+        let mut timeline = TimelineState {
+            pixels_per_tick: 0.1,
+            ..TimelineState::default()
+        };
+        timeline.rebuild(&project);
+        timeline.handle(TimelineEvent::PointerMoved(Point::new(27.0, 20.0)));
+        assert_eq!(timeline.hovered_item, Some(items[0]));
+
+        timeline.set_vertical_scroll(TIMELINE_ROW_HEIGHT);
+        assert_eq!(timeline.hovered_item, Some(items[2]));
+        assert_eq!(
+            timeline.hovered_item_position,
+            Some(Point::new(27.0, 148.0))
+        );
+    }
+
+    #[test]
     fn setting_edit_cursor_preserves_item_and_time_selection() {
         let (project, _, items) = project_with_items();
         let mut timeline = TimelineState::default();
@@ -5936,17 +11863,18 @@ mod tests {
         let (project, _, _) = project_with_items();
         let mut timeline = TimelineState::default();
         timeline.rebuild(&project);
+        timeline.handle(TimelineEvent::SetSnapGrid(SnapGrid::Sixteenth));
 
         assert_eq!(
-            snap_tick_to_grid(361, timeline.cache.snap_grid_ticks, true, false),
+            snap_tick_to_grid(361, timeline.cache.snap_grid_ticks, true, false, 0),
             480
         );
         assert_eq!(
-            snap_tick_to_grid(359, timeline.cache.snap_grid_ticks, true, false),
+            snap_tick_to_grid(359, timeline.cache.snap_grid_ticks, true, false, 0),
             240
         );
         assert_eq!(
-            snap_tick_to_grid(361, timeline.cache.snap_grid_ticks, true, true),
+            snap_tick_to_grid(361, timeline.cache.snap_grid_ticks, true, true, 50),
             361
         );
 
@@ -5956,9 +11884,33 @@ mod tests {
                 361,
                 timeline.cache.snap_grid_ticks,
                 timeline.snap_enabled,
-                false
+                false,
+                50
             ),
             361
+        );
+    }
+
+    #[test]
+    fn swing_snap_points_shift_odd_grid_lines_and_choose_the_lower_tie() {
+        let snap = |tick, swing| snap_tick_to_grid(tick, Some(240), true, false, swing);
+        assert_eq!(snap(299, 50), 300);
+        assert_eq!(snap(301, 50), 300);
+        assert_eq!(snap(150, 50), 0, "ties choose the lower swung point");
+        assert_eq!(snap(190, -50), 180);
+        assert_eq!(snap(330, -50), 180, "negative swing ties also choose left");
+        assert_eq!(snap(360, 100), 360);
+        assert_eq!(snap(120, -100), 120);
+        assert_eq!(snap(299, 150), 360, "swing amount is clamped");
+        assert_eq!(
+            snap_tick_to_grid(299, Some(240), false, false, 50),
+            299,
+            "global Snap off bypasses swing"
+        );
+        assert_eq!(
+            snap_tick_to_grid(299, Some(240), true, true, 50),
+            299,
+            "Shift bypasses swing"
         );
     }
 
@@ -6034,6 +11986,35 @@ mod tests {
     }
 
     #[test]
+    fn arrange_item_drag_and_trim_use_the_enabled_swing_grid() {
+        let (project, _, items) = project_with_items();
+        let mut timeline = TimelineState::default();
+        timeline.rebuild(&project);
+        timeline.handle(TimelineEvent::SetSnapGrid(SnapGrid::Sixteenth));
+        timeline.set_snap_swing_enabled(true);
+        timeline.set_snap_swing_amount_percent(50);
+
+        timeline.handle(TimelineEvent::BeginItemDrag {
+            item_id: items[0],
+            pointer_delta_ticks: 50,
+            target_track_index: Some(0),
+            range: false,
+            ignore_snap: false,
+            copy: false,
+        });
+        assert_eq!(timeline.drag_preview().unwrap().delta_ticks, 50);
+
+        timeline.handle(TimelineEvent::BeginItemTrim {
+            item_id: items[0],
+            edge: ItemTrimEdge::End,
+            target_tick: 550,
+            ignore_snap: false,
+        });
+        let trim = timeline.item_trim_preview().unwrap();
+        assert_eq!((trim.start_tick, trim.end_tick), (250, 480));
+    }
+
+    #[test]
     fn item_drag_without_snap_keeps_pointer_delta_and_unavailable_grid_is_disabled() {
         let (project, _, items) = project_with_items();
         let mut timeline = TimelineState::default();
@@ -6053,6 +12034,7 @@ mod tests {
         let project = Project::with_settings(settings);
         let mut unavailable = TimelineState::default();
         unavailable.rebuild(&project);
+        unavailable.handle(TimelineEvent::SetSnapGrid(SnapGrid::Sixteenth));
         assert!(!unavailable.snap_enabled);
         unavailable.handle(TimelineEvent::ToggleSnap);
         assert!(!unavailable.snap_enabled);
@@ -6077,5 +12059,88 @@ mod tests {
             copy: false,
         });
         assert_eq!(timeline.drag_preview().unwrap().delta_ticks, 101);
+    }
+    #[test]
+    fn folder_compact_cycles_restore_lanes_and_media_geometry_without_project_edits() {
+        let mut project = Project::new();
+        for index in 0..3 {
+            project
+                .apply(DawAction::CreateTrack {
+                    index,
+                    name: format!("Track {index}"),
+                })
+                .unwrap();
+        }
+        let ids: Vec<_> = project.tracks().iter().map(|track| track.id()).collect();
+        for id in &ids[..2] {
+            project
+                .apply(DawAction::SetTrackFolder {
+                    track_id: *id,
+                    enabled: true,
+                })
+                .unwrap();
+        }
+        project
+            .apply(DawAction::SetTrackParent {
+                track_id: ids[1],
+                parent: Some(ids[0]),
+            })
+            .unwrap();
+        project
+            .apply(DawAction::SetTrackParent {
+                track_id: ids[2],
+                parent: Some(ids[1]),
+            })
+            .unwrap();
+        project
+            .apply(DawAction::SetTrackFxChain {
+                track_id: ids[2],
+                plugins: vec![TrackFxPlugin::new("test.fx", "fx.clap").unwrap()],
+            })
+            .unwrap();
+        let before = project.snapshot();
+        let mut timeline = TimelineState::default();
+        timeline.rebuild(&project);
+        timeline.handle(TimelineEvent::ToggleFxAutomation {
+            track_id: ids[2],
+            chain_index: 0,
+            parameter_id: 7,
+            name: "Gain".into(),
+            value_range: (0.0, 1.0),
+            stepped: false,
+        });
+        let normal = timeline.row_layout.clone();
+        for expected in [25.0, 4.0] {
+            timeline.handle(TimelineEvent::CycleFolderCompact(ids[0]));
+            assert_eq!(
+                timeline.row_layout(0).unwrap().base_height,
+                TIMELINE_ROW_HEIGHT
+            );
+            for index in [1, 2] {
+                let row = timeline.row_layout(index).unwrap();
+                assert_eq!(row.height, expected);
+                let (y, height) = row.item_geometry(true);
+                assert!(height > 0.0 && y >= row.top && y + height <= row.top + row.base_height);
+            }
+            assert!(timeline.fx_automation_bands(ids[2]).is_empty());
+            let state = timeline.arrangement_view_state(&project);
+            let mut restored = TimelineState::default();
+            restored.replace_project(&project, Some(&state));
+            assert_eq!(restored.row_layout, timeline.row_layout);
+            assert_eq!(
+                restored.folder_compact(ids[0]),
+                timeline.folder_compact(ids[0])
+            );
+        }
+        timeline.handle(TimelineEvent::CycleFolderCompact(ids[0]));
+        assert_eq!(timeline.row_layout, normal);
+        assert_eq!(timeline.fx_automation_bands(ids[2]).len(), 1);
+        assert_eq!(project.snapshot(), before);
+        // A nested tiny folder remains tiny beneath a merely small ancestor.
+        timeline.handle(TimelineEvent::CycleFolderCompact(ids[0]));
+        timeline.handle(TimelineEvent::CycleFolderCompact(ids[1]));
+        timeline.handle(TimelineEvent::CycleFolderCompact(ids[1]));
+        assert_eq!(timeline.row_layout(1).unwrap().height, 25.0);
+        assert_eq!(timeline.row_layout(2).unwrap().height, 4.0);
     }
 }

@@ -1,0 +1,17 @@
+version	7.82/linux-x86_64
+theme	Default_7.0.ReaperThemeZip
+project	Disposable numbered-markers-probe.rpp
+audio_device	closed (the marker/ruler probe does not depend on audio)
+arrange_snap_grid	1/4
+midi_editor_grid_default	not captured in this probe
+same_grid_division	false
+snap_enabled	true (shared)
+
+case	interaction	observed_result	project_file_result	undo_result
+move_to_visible_range	Main action 40657 at edit cursor 5.000 s	Marker 1 appears in ruler	MARKER 1 5	-
+drag_snap_on_a	Drag Marker 1 flag from 5.000 s to 4.500 s	Marker follows the ruler drag and snaps to 4.500 s	MARKER 1 4.5	-
+drag_snap_on_b	Drag Marker 1 flag from 4.500 s to 4.000 s	Marker snaps to 4.000 s	MARKER 1 4	One Ctrl+Z restores MARKER 1 4.5
+drag_snap_off	Disable Snap, then drag Marker 1 flag	Marker can be placed between grid lines	MARKER 1 4.34	-
+click_marker	Click Marker 1 flag/label at 4.340 s	Edit cursor display becomes 0:04.340; status reads Move marker	MARKER 1 4.34	-
+drag_snap_on_after_unsnap	Enable Snap and drag Marker 1 from 4.340 s toward 4.140 s	Marker lands on the 1/4-note grid at 4.000 s	MARKER 1 4	-
+snap_grid_dialog	Right-click Snap toolbar button	Snap is enabled; Arrange Grid spacing is 1/4; “Use the same grid division in arrange view and MIDI editor” is unchecked, so the division is separate	See marker-ruler-snap-grid-native.png	-

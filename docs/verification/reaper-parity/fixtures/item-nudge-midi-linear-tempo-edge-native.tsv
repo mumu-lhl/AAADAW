@@ -1,0 +1,17 @@
+version	7.82/linux-x86_64
+theme	Default_7.0.ReaperThemeZip
+tempo_map	120 BPM at project start; linear to 60 BPM at measure 3 (5.333333 seconds)
+tempo_marker	0	time_s	0.000000000	measure	0	beat	0.000000	bpm	120.000000	meter	4/4	linear	1
+tempo_marker	1	time_s	5.333333333	measure	2	beat	0.000000	bpm	60.000000	meter	4/4	linear	0
+probe	Mixed non-loop Audio at 2s and non-loop MIDI at 3.9s inside a 120-to-60 BPM linear ramp; both selected
+nudge	Target Left Trim; 250 milliseconds; Snap off; set in the actual Nudge/Set dialog
+actions	41249 Nudge right; 41250 Nudge left
+before	state_change_count	2	state_change_delta	0	item_count	2	undo_label	Mixed linear-tempo MIDI edge probe setup
+before_item	0	type	audio	position_s	2.000000000	length_s	10.000000000	loop_source	0	source_offset_s	0.000000000	source_length_native_units	4.000000000	ppq_at_item_start	none	selected	1	notes		controllers		midi_counts	none
+before_item	1	type	midi	position_s	3.900000000	length_s	5.000000000	loop_source	0	source_offset_s	0.000000000	source_length_native_units	6.000000000	ppq_at_item_start	0.000	selected	1	notes	0,0,0,960.000,1920.000,0,60,96;1,0,0,2880.000,3840.000,0,64,108	controllers	0,0,0,4800.000,176,0,1,80;1,0,0,5760.000,224,0,0,80	midi_counts	2,2,0
+after_right	state_change_count	3	state_change_delta	0	item_count	2	undo_label	Nudge items
+after_right_item	0	type	audio	position_s	2.250000000	length_s	9.750000000	loop_source	0	source_offset_s	0.250000000	source_length_native_units	4.000000000	ppq_at_item_start	none	selected	1	notes		controllers		midi_counts	none
+after_right_item	1	type	midi	position_s	4.150000000	length_s	4.750000000	loop_source	0	source_offset_s	0.000745908	source_length_native_units	5.689583333	ppq_at_item_start	0.875	selected	1	notes	0,0,0,662.000,1622.000,0,60,96;1,0,0,2582.000,3542.000,0,64,108	controllers	0,0,0,4502.000,176,0,1,80;1,0,0,5462.000,224,0,0,80	midi_counts	2,2,0
+after_left	state_change_count	3	state_change_delta	0	item_count	2	undo_label	Nudge items
+after_left_item	0	type	audio	position_s	2.000000000	length_s	10.000000000	loop_source	0	source_offset_s	0.000000000	source_length_native_units	4.000000000	ppq_at_item_start	none	selected	1	notes		controllers		midi_counts	none
+after_left_item	1	type	midi	position_s	3.900000000	length_s	5.000000000	loop_source	0	source_offset_s	0.000000000	source_length_native_units	6.000000000	ppq_at_item_start	0.000	selected	1	notes	0,0,0,960.000,1920.000,0,60,96;1,0,0,2880.000,3840.000,0,64,108	controllers	0,0,0,4800.000,176,0,1,80;1,0,0,5760.000,224,0,0,80	midi_counts	2,2,0

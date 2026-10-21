@@ -1,0 +1,11 @@
+version	Linux REAPER 7.82/linux-x86_64; AAADAW revision 41678b3 built with nightly + Cranelift
+theme	REAPER Default_7.0.ReaperThemeZip
+display	X11; native REAPER 1034x802 window capture; AAADAW 1275x800 client capture
+configuration	fresh isolated projects; one empty track; no media items
+audio	REAPER built-in Dummy Audio because the host has no hardware; AAADAW build has no audio device
+transport	stopped for both captures
+step	input_sequence	menu	selected_command	project_effect	screenshot	sha256	observation
+inspect_item_menu	open Item menu	Item	Select all	no action executed	menu-item-select-all-native.png	252434f823858e608c773bb83b05e9336a1129e46c4897c315b5d7954e805e22	REAPER keeps Select all enabled with no media items; one empty track is present
+inspect_item_menu	open Item menu	Item	Select all	no action executed	menu-item-select-all-aaadaw.png	250e5fbf4671ffe1ea4fd7ba3988a61b467883f2884329ed70cf19d78d4c4c7a	At captured revision 41678b3 AAADAW exposed enabled Select all first; one empty Audio 1 track is present
+scope	visual comparison	Item		no action executed			This historical screenshot records revision 41678b3; the current Remove items and Select all ordering is captured in menu-item-remove.tsv; image dimensions, remaining commands, and menu geometry differ
+regression	App unit test	Item	SelectAllItems	empty-project no-op	crates/aaadaw/src/app/tests.rs::item_menu_exposes_native_remove_and_select_all_availability_for_an_empty_project		Entry remains enabled; execution creates no selection and does not change project revision

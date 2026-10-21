@@ -1,0 +1,43 @@
+before_multi	exists=1	track_item_count=2
+before_multi	take_count=2	active_index=1
+before_multi	take_0	name=Take A	source=render-item-take-name-Hit-01.wav
+before_multi	take_1	name=Take B	source=render-item-take-name-Hit-02.wav
+before_single	exists=1	track_item_count=2
+before_single	take_count=1	active_index=0
+before_single	take_0	name=Single	source=render-item-take-name-Hit-01.wav
+after_single_delete	exists=0	track_item_count=1
+undo_before_single	Delete active single take
+undo_single_track_items	2
+undo_single_item	index=0	position=0	active_name=Take B
+undo_single_item	index=1	position=4	active_name=Single
+undo_single_restored	1
+undo_single_delete	exists=1	track_item_count=2
+undo_single_delete	take_count=1	active_index=0
+undo_single_delete	take_0	name=Single	source=render-item-take-name-Hit-01.wav
+after_multi_delete	exists=1	track_item_count=2
+after_multi_delete	take_count=1	active_index=0
+after_multi_delete	take_0	name=Take A	source=render-item-take-name-Hit-01.wav
+undo_before_multi	Delete active take from multiple-take item
+undo_multi_delete	exists=1	track_item_count=2
+undo_multi_delete	take_count=2	active_index=1
+undo_multi_delete	take_0	name=Take A	source=render-item-take-name-Hit-01.wav
+undo_multi_delete	take_1	name=Take B	source=render-item-take-name-Hit-02.wav
+redo_multi_delete	exists=1	track_item_count=2
+redo_multi_delete	take_count=1	active_index=0
+redo_multi_delete	take_0	name=Take A	source=render-item-take-name-Hit-01.wav
+before_delete_first_take	exists=1	track_item_count=2
+before_delete_first_take	take_count=2	active_index=0
+before_delete_first_take	take_0	name=Take A	source=render-item-take-name-Hit-01.wav
+before_delete_first_take	take_1	name=Take B	source=render-item-take-name-Hit-02.wav
+after_delete_first_take	exists=1	track_item_count=1
+after_delete_first_take	take_count=1	active_index=0
+after_delete_first_take	take_0	name=Take B	source=render-item-take-name-Hit-02.wav
+undo_delete_first_take	exists=1	track_item_count=2
+undo_delete_first_take	take_count=2	active_index=0
+undo_delete_first_take	take_0	name=Take A	source=render-item-take-name-Hit-01.wav
+undo_delete_first_take	take_1	name=Take B	source=render-item-take-name-Hit-02.wav
+redo_delete_first_take	exists=1	track_item_count=1
+redo_delete_first_take	take_count=1	active_index=0
+redo_delete_first_take	take_0	name=Take B	source=render-item-take-name-Hit-02.wav
+project	<unsaved project>
+action	40129	Take: Delete active take from items

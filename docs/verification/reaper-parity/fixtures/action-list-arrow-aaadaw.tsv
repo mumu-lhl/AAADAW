@@ -1,0 +1,7 @@
+version	AAADAW Linux X11 working tree
+display	Xvfb :126 1280x1024 with xfwm4; isolated fresh XDG directories
+audio	unavailable in this build; transport remained stopped
+scenario	Open Help > Action list and shortcuts; search for item
+step	input_sequence	selected_result	filter_focus	track_count	screenshot	sha256	observation
+first_result	Enter	Insert: MIDI item	yes	0	fixtures/action-list-arrow-aaadaw-enter.png	527dca8dc043008eb63fccff90438220892f1ce233f6f1ac808438bbd05c1df1	first Enter selects the first visible result and does not run it
+next_result	ArrowDown	Item: Item properties...	no	0	fixtures/action-list-arrow-aaadaw-down.png	fc125b572fe98ded379b3fb9fa0c0fc1925f052529c2e3071805d3d448c9f14f	ArrowDown selects the next result without running either action

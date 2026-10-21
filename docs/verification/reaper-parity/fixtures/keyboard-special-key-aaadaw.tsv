@@ -1,0 +1,22 @@
+field	value
+reference	Linux REAPER 7.82 x86_64 rev 338578 (2026-10-04), Default 7 theme
+reference_probe	Xvfb :798, 1280x800x24, no window manager; isolated profile; no project changed
+reference_interaction	Actions > Add > Special key; capture Enter; dialog stays open; Cancel discards capture (native screenshots show mode and captured Enter)
+aaadaw_display	Xvfb :798, 1280x800x24, no window manager; isolated XDG config/data/state/cache/runtime/tmp under target/reaper-special-key-aaadaw
+aaadaw_input_window	Keyboard input client 387x229; Actions client 701x475
+aaadaw_interaction	Opened Main Actions, selected Edit: Undo, clicked Add, entered Special key mode, pressed Enter (draft displayed Enter), clicked OK; Action List showed Ctrl+Z; Enter and Shortcut saved
+a	a	a	d	a	w	_	b	u	i	l	d	_	p	r	o	f	i	l	e	"	"	S	t	a	b	l	e	 	d	e	b	u	g	=	0	;	 	i	s	o	l	a	t	e	d	 	X	D	G	 	p	r	o	f	i	l	e	;	 	W	G	P	U	_	B	A	C	K	E	N	D	=	g	l
+aaadaw_binding	edit.undo => Mod+Z; StandardEnter
+aaadaw_test	Stable targeted tests special_key_capture_records_enter_and_tab_without_confirming_the_binding (1/1) and shortcut_labels_use_the_platform_modifier_name (1/1); Stable aaadaw all-target Clippy -D warnings passed
+aaadaw_build_id	7c9e9e747fcdce6366bda185f1a39db1410d99df
+aaadaw_binary_sha256	86ea7f309aa5954b0f4a1da8a8bf72edd985ce2576ea96e17f3ee8f6e4f94136
+native_mode_screenshot	keyboard-special-mode-native.png (1280x800 root capture; dialog at 0,0, 387x229)
+native_mode_screenshot_sha256	04607534f89b5b5d12359757356ad2aabc207099d43f3f5464399cd619b67166
+native_enter_screenshot	keyboard-special-enter-native.png (1280x800 root capture; dialog at 0,0, 387x229)
+native_enter_screenshot_sha256	86166c974e47ef509b79c1644b88d6d08a46c68c2720fa4f4858d52cc03cdeae
+aaadaw_mode_screenshot	keyboard-special-mode-aaadaw.png (cropped 387x229 dialog)
+aaadaw_mode_screenshot_sha256	9fd3839b8c048f64a4ebdde81783e16f7717cb66d0708f2b6447f88c7e794b5e
+aaadaw_enter_screenshot	keyboard-special-enter-aaadaw.png (cropped 387x229 dialog)
+aaadaw_enter_screenshot_sha256	9fd8bd70f0469e7e6e3113abc2ae906d91be43d7dd446b0030b45c790220dd72
+aaadaw_saved_screenshot	keyboard-special-enter-saved-aaadaw.png (cropped 701x475 Actions client)
+aaadaw_saved_screenshot_sha256	8d91945638db61695f72c0ae485a82cbf3cf3cb2163a9240097df3d5693d4f7d

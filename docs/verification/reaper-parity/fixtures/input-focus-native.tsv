@@ -1,0 +1,7 @@
+case	step	focused_control	input	transport	track_count	observation
+name_edit	ready	Track: Rename last touched track (40696)	—	Stopped	2	新建的第二轨进入名称编辑；Arrange 与 Mixer 同时可见
+name_edit	space	track name editor	Space	Stopped	2	空格进入名称字段；字段仍聚焦，未触发播放
+name_edit	text	track name editor	A	Stopped	2	名称字段显示 a，未触发播放
+name_edit	undo	track name editor	Ctrl+Z	Stopped	1	全局 Undo 穿透文本编辑并撤销最近的 Insert new track
+name_edit_escape	before	Track: Rename last touched track (40696)	—	Stopped	2	名称编辑器聚焦，标尺括线可见
+name_edit_escape	escape	track name editor	Escape	Stopped	2	编辑器关闭；标尺括线保持可见

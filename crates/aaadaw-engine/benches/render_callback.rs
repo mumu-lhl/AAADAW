@@ -87,10 +87,12 @@ fn benchmark(track_count: usize, block_frames: usize, with_midi: bool) {
                 let notes = (0..midi_length_ticks.saturating_sub(16))
                     .step_by(8)
                     .map(|tick| MidiNoteData {
+                        channel: 0,
                         pitch: 48 + (tick % 36) as u8,
                         tick,
                         duration: 16,
                         velocity: 96,
+                        off_velocity: 0,
                     })
                     .collect();
                 project

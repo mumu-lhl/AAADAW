@@ -1,0 +1,18 @@
+version	Linux REAPER 7.82/linux-x86_64
+theme	Default_7.0.ReaperThemeZip
+project	fresh unsaved project; transport stopped
+tempo_map	120 BPM at 0.000s; stepped marker to 60 BPM at 4.000s (measure 3, beat 1)
+item	selected loop-source MIDI item at 3.900s; length 5.000s; crosses tempo point 100ms after its start
+notes_before_after	PPQ 960-1920 pitch 60 velocity 96; PPQ 2880-3840 pitch 64 velocity 108; unchanged
+dialog	Mode Nudge; Target contents; amount 250 milliseconds; Snap to unit off
+right_action	41249 Item edit: Nudge right by last nudge dialog settings
+left_action	41250 Item edit: Nudge left by last nudge dialog settings
+columns	stage	item_position_s	item_length_s	loop_source	REAPER_D_STARTOFFS_s	MIDI_GetPPQPosFromProjTime_at_item_start	at_item_start_plus_250ms	at_item_end	notes	selected	state_change_delta
+before	3.900000	5.000000	1	0.000000	0.000	336.000	4896.000	960-1920;2880-3840	1	0
+after_right	3.900000	5.000000	1	2.300000	4416.000	4752.000	9312.000	960-1920;2880-3840 unchanged	1	0
+after_left	3.900000	5.000000	1	2.550000	4896.000	5232.000	9792.000	960-1920;2880-3840 unchanged	1	0
+derived_source_phase	loop length 4896 PPQ; right Nudge source phase 4416 PPQ (4896-480); left Nudge reaches loop endpoint 4896 PPQ, equivalent to phase 0 modulo the loop
+tempo_conversion	The 250ms wall-clock interval from item start integrates to 336 PPQ across the tempo point; REAPER Contents Nudge moves the source by 480 PPQ, using 120 BPM at the item's start
+screenshots	item-nudge-midi-variable-tempo-native-dialog.png (528x121; configured before action; SHA-256 00ff6644b23ca20c5df706607563540303b491523c5965ab6faa095f9de1591a); item-nudge-midi-variable-tempo-native-after-right.png (528x121; after action; SHA-256 041922433cb950d9651709dd5d3c9a5917708e98777176a5fc9ca2fd3f12fd53)
+probe_script	../../../../scripts/reaper_parity/probe-item-nudge-midi-variable-tempo.lua
+scope	One stepped tempo point crossed by a 250ms MIDI Contents Nudge, with Snap off; linear tempo ramps and other target/unit combinations remain untested.

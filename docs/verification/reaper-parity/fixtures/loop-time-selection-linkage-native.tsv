@@ -1,0 +1,22 @@
+version	7.82/linux-x86_64
+theme	Default_7.0.ReaperThemeZip
+action_40621	Options: Toggle loop points linked to time selection
+action_40622	Time selection: Move loop points to time selection
+action_40623	Time selection: Move time selection to loop points
+action_40624	Loop points: Remove (unselect) loop points, if not linked to time selection, ignoring lock state
+action_40634	Loop points: Remove (unselect) loop point selection
+action_40635	Time selection: Remove (unselect) time selection
+action_40020	Time selection: Remove (unselect) time selection and loop points
+default_link_state	linked
+case	link_before	time_selection_before	loop_points_before	action_id	link_after	time_selection_after	loop_points_after
+toggle_link_on	unlinked	10.000,20.000	30.000,40.000	40621	linked	10.000,20.000	10.000,20.000
+toggle_link_off	linked	10.000,20.000	10.000,20.000	40621	unlinked	10.000,20.000	10.000,20.000
+copy_time_selection_to_loop_points	unlinked	10.000,20.000	30.000,40.000	40622	unlinked	10.000,20.000	10.000,20.000
+copy_loop_points_to_time_selection	unlinked	10.000,20.000	30.000,40.000	40623	unlinked	30.000,40.000	30.000,40.000
+remove_loop_unlinked_only_if_unlinked	unlinked	10.000,20.000	30.000,40.000	40624	unlinked	10.000,20.000	-
+remove_loop_conditional_while_linked	linked	10.000,20.000	10.000,20.000	40624	linked	10.000,20.000	10.000,20.000
+remove_loop_unlinked	unlinked	10.000,20.000	30.000,40.000	40634	unlinked	10.000,20.000	-
+remove_time_selection_unlinked	unlinked	10.000,20.000	30.000,40.000	40635	unlinked	-	30.000,40.000
+remove_loop_linked	linked	10.000,20.000	10.000,20.000	40634	linked	-	-
+remove_time_selection_linked	linked	10.000,20.000	10.000,20.000	40635	linked	-	-
+remove_both_unlinked	unlinked	10.000,20.000	30.000,40.000	40020	unlinked	-	-

@@ -1,0 +1,27 @@
+version	7.82/linux-x86_64
+theme	Default_7.0.ReaperThemeZip
+fixture	track Piano; item 0.25-1.25 seconds; C4 note, CC1, pitch bend
+project_frame_rate	24.000000 fps; drop-frame false
+project_time_offset_seconds	10.500000000
+take_local_ppq_events	note-on 0; CC1 240; pitch bend 360; note-off 960
+project_ppq_events	note-on 480; CC1 720; pitch bend 840; note-off 1440
+export_action	40849
+export_mode	Multitrack MIDI file (type 1 MIDI file)
+export_ppqn	960
+export_tempo_meter_changes	unchecked
+export_smpte_offset	checked
+export_markers	unchecked
+native_smpte_offset_event	FF 54 05 00 00 0A 0C 00 (24 fps, 00:00:10:12)
+native_conductor_events	name at tick 0; SMPTE offset, 4/4, and 120 BPM at tick 0; End-of-Track tick 0
+native_event_order	track name; SMPTE offset; time signature; tempo
+native_midi_track_events	Piano note-on tick 480, CC1 tick 720, pitch bend tick 840, note-off and End-of-Track tick 1440
+native_project_fixture	fixtures/menu-export-midi-native-smpte-24fps-nonzero-offset.rpp
+native_project_sha256	cc150a838196582c7b4b5d6b563568fea7e8f2b5dab5907ac68c1649b0ffb15f
+native_export_fixture	fixtures/menu-export-midi-native-smpte-24fps-nonzero-offset.mid
+native_export_bytes	107
+native_export_sha256	e7299698df0c36e8178330ea549afb5c4a6d088f889081ca4354ff67b20083fc
+native_dialog_screenshot	fixtures/menu-export-midi-native-smpte-24fps-nonzero-offset-dialog.png
+native_dialog_screenshot_sha256	40c3a1b8d370591e65d23c197fd322324cd2fa34f6a900dacd80addb304cc93c
+native_dialog_observed	Type 1; PPQN 960; Embed SMPTE offset checked
+native_probe	scripts/reaper_parity/probe-midi-export-smpte-rate.lua
+native_probe_readback	24.000000 fps; drop-frame false; project offset 10.500000000 seconds

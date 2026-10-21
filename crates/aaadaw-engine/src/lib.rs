@@ -24,11 +24,19 @@ mod cpal_input;
     any(target_os = "windows", target_os = "macos", target_os = "android")
 ))]
 mod cpal_output;
+mod item_fades;
+mod item_take_mix;
+mod item_volume;
 #[cfg(feature = "jack-backend")]
 mod jack_input;
 #[cfg(feature = "jack-backend")]
 mod jack_output;
+pub use item_fades::ItemFadeController;
+pub use item_take_mix::ItemTakeMixController;
+pub use item_volume::ItemVolumeController;
+mod master_mix;
 mod master_output;
+pub use master_mix::MasterMixController;
 mod midi;
 mod pcm;
 #[cfg(feature = "pipewire-backend")]
@@ -54,9 +62,10 @@ pub use clap_instrument::{
 };
 pub use clap_ipc::{
     CLAP_IPC_CHANNELS, CLAP_IPC_MAGIC, CLAP_IPC_MAX_BLOCK_FRAMES, CLAP_IPC_MAX_EVENTS,
-    CLAP_IPC_PROTOCOL_VERSION, CLAP_IPC_SLOT_COUNT, ClapIpcAudioPort, ClapIpcAudioReader,
-    ClapIpcConfig, ClapIpcMapping, ClapIpcMidiEvent, ClapIpcMidiKind, ClapIpcRegion,
-    ClapIpcRequest, ClapIpcRequestSlot, ClapIpcSubmitError, run_clap_ipc_instrument_helper,
+    CLAP_IPC_MAX_SYSEX_BYTES_PER_BLOCK, CLAP_IPC_PROTOCOL_VERSION, CLAP_IPC_SLOT_COUNT,
+    ClapIpcAudioPort, ClapIpcAudioReader, ClapIpcConfig, ClapIpcMapping, ClapIpcMidiEvent,
+    ClapIpcMidiKind, ClapIpcRegion, ClapIpcRequest, ClapIpcRequestSlot, ClapIpcSubmitError,
+    run_clap_ipc_instrument_helper,
 };
 #[cfg(all(
     feature = "cpal-backend",
@@ -85,7 +94,8 @@ pub use master_output::{
     MasterOutputSafetyError,
 };
 pub use midi::{
-    MidiEventKind, MidiEventPlan, MidiInputDecoder, MidiInputMessage, MidiScheduleError,
+    MIDI_BUS_COUNT, MIDI_CHANNEL_COUNT, MidiEventKind, MidiEventPlan, MidiInputDecoder,
+    MidiInputMessage, MidiScheduleError, MidiSegmentCursor, MidiSegmentSchedule,
     ScheduledMidiEvent,
 };
 
@@ -129,9 +139,15 @@ pub use stream::{
     STEREO_PCM_QUEUE_FRAME_BYTES, StereoPcmStreamConsumer, StereoPcmStreamProducer, pcm_stream,
     stereo_pcm_stream,
 };
-pub use transport::{AudioBlock, Transport, TransportClockAnchor, TransportPositionOverflow};
+pub use transport::{
+    AudioBlock, Transport, TransportBlockError, TransportBlockSegment, TransportClockAnchor,
+    TransportLoopRange, TransportPositionOverflow,
+};
 
-use aaadaw_core::{ItemId, Track, TrackId, VolumeAutomationPoint};
+use aaadaw_core::{
+    AudioHardwareOutputParameters, AudioHardwareOutputSendMode, AudioSendDestinationChannels,
+    AudioSendSourceChannels, AudioSendTap, ItemId, PanMode, Track, TrackId, VolumeAutomationPoint,
+};
 use std::cell::Cell;
 use std::f64::consts::FRAC_PI_4;
 use std::fmt;
@@ -151,6 +167,9 @@ pub struct MixerPlan {
 struct TrackGains {
     track_id: TrackId,
     output_track_index: Option<usize>,
+    main_send_enabled: bool,
+    sends: Vec<CompiledSend>,
+    hardware_outputs: Vec<CompiledHardwareOutput>,
     is_bus: bool,
     live: Arc<LiveTrackGains>,
     mix_ramp: Cell<GainRamp>,
@@ -158,14 +177,44 @@ struct TrackGains {
     volume_automation: Vec<VolumeAutomationPoint>,
 }
 
+#[derive(Clone, Debug)]
+struct CompiledSend {
+    tap: AudioSendTap,
+    source_channels: AudioSendSourceChannels,
+    destination_channels: AudioSendDestinationChannels,
+    destination: usize,
+    left_gain: f32,
+    right_gain: f32,
+    muted: bool,
+}
+
+#[derive(Clone, Debug)]
+struct CompiledHardwareOutput {
+    send_mode: AudioHardwareOutputSendMode,
+    source_channels: AudioSendSourceChannels,
+    destination_channels: AudioSendDestinationChannels,
+    left_gain: f32,
+    right_gain: f32,
+    muted: bool,
+}
+impl TrackGains {
+    fn destinations(&self) -> impl Iterator<Item = usize> + '_ {
+        self.output_track_index
+            .into_iter()
+            .chain(self.sends.iter().map(|send| send.destination))
+    }
+}
+
 #[derive(Debug)]
 struct LiveTrackGains {
     version: AtomicU32,
+    pan_mode: PanMode,
     left: AtomicU32,
     right: AtomicU32,
     stereo_left: AtomicU32,
     stereo_right: AtomicU32,
     muted: AtomicBool,
+    phase_inverted: AtomicBool,
     solo: AtomicBool,
     peak_left: AtomicU32,
     peak_right: AtomicU32,
@@ -244,7 +293,6 @@ impl GainCoefficients {
 struct MixBlock {
     start_sample: u64,
     advances_timeline: bool,
-    frame_count: usize,
 }
 
 /// Control-thread handle for retargeting the active graph's per-track volume and pan.
@@ -322,7 +370,7 @@ impl TrackMixController {
         let Some((_, live)) = self.tracks.iter().find(|(id, _)| *id == track_id) else {
             return false;
         };
-        let Some(gains) = gain_coefficients(volume_db, pan) else {
+        let Some(gains) = gain_coefficients(volume_db, pan, live.pan_mode) else {
             return false;
         };
 
@@ -334,6 +382,15 @@ impl TrackMixController {
         live.stereo_right
             .store(gains.stereo_right.to_bits(), Ordering::SeqCst);
         live.version.fetch_add(1, Ordering::SeqCst);
+        true
+    }
+
+    /// Updates post-fader polarity without rebuilding the render graph.
+    pub fn set_track_phase(&self, track_id: TrackId, inverted: bool) -> bool {
+        let Some((_, live)) = self.tracks.iter().find(|(id, _)| *id == track_id) else {
+            return false;
+        };
+        live.phase_inverted.store(inverted, Ordering::Release);
         true
     }
 
@@ -375,14 +432,22 @@ impl TrackMixController {
 }
 
 impl LiveTrackGains {
-    fn new(gains: GainCoefficients, muted: bool, solo: bool) -> Self {
+    fn new(
+        gains: GainCoefficients,
+        muted: bool,
+        solo: bool,
+        pan_mode: PanMode,
+        phase_inverted: bool,
+    ) -> Self {
         Self {
             version: AtomicU32::new(0),
+            pan_mode,
             left: AtomicU32::new(gains.left.to_bits()),
             right: AtomicU32::new(gains.right.to_bits()),
             stereo_left: AtomicU32::new(gains.stereo_left.to_bits()),
             stereo_right: AtomicU32::new(gains.stereo_right.to_bits()),
             muted: AtomicBool::new(muted),
+            phase_inverted: AtomicBool::new(phase_inverted),
             solo: AtomicBool::new(solo),
             peak_left: AtomicU32::new(0),
             peak_right: AtomicU32::new(0),
@@ -428,7 +493,7 @@ fn meter_peak(value: f32) -> f32 {
     }
 }
 
-fn gain_coefficients(volume_db: f32, pan: f32) -> Option<GainCoefficients> {
+fn gain_coefficients(volume_db: f32, pan: f32, pan_mode: PanMode) -> Option<GainCoefficients> {
     if !volume_db.is_finite() || !(-1.0..=1.0).contains(&pan) {
         return None;
     }
@@ -449,6 +514,10 @@ fn gain_coefficients(volume_db: f32, pan: f32) -> Option<GainCoefficients> {
         (gain, (1.0 + pan) * gain)
     } else {
         ((1.0 - pan) * gain, gain)
+    };
+    let (left, right) = match pan_mode {
+        PanMode::LegacyMonoStereo => (left, right),
+        PanMode::ZeroDbBalance => (stereo_left, stereo_right),
     };
     Some(GainCoefficients {
         left,
@@ -496,12 +565,18 @@ pub enum MixerPlanError {
     /// The project sample rate must be positive.
     ZeroSampleRate,
     /// The track's volume cannot be represented as an `f32` gain.
-    InvalidTrackGain { track_id: u64 },
+    InvalidTrackGain {
+        track_id: u64,
+    },
+    InvalidRouting,
 }
 
 impl fmt::Display for MixerPlanError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::InvalidRouting => {
+                formatter.write_str("routing graph has missing targets or a cycle")
+            }
             Self::ZeroBlockCapacity => formatter.write_str("maximum block size must be positive"),
             Self::ZeroSampleRate => formatter.write_str("sample rate must be positive"),
             Self::InvalidTrackGain { track_id } => {
@@ -583,21 +658,88 @@ impl MixerPlan {
         let has_solo = Arc::new(AtomicBool::new(tracks.iter().any(Track::is_solo)));
         let mut compiled = Vec::with_capacity(tracks.len());
         for track in tracks {
-            let Some(gains) = gain_coefficients(track.volume_db(), track.pan()) else {
+            let Some(gains) = gain_coefficients(track.volume_db(), track.pan(), track.pan_mode())
+            else {
                 return Err(MixerPlanError::InvalidTrackGain {
                     track_id: track.id().value(),
                 });
             };
             compiled.push(TrackGains {
                 track_id: track.id(),
-                output_track_index: track.output_track().and_then(|output| {
-                    tracks.iter().position(|candidate| candidate.id() == output)
-                }),
+                output_track_index: track
+                    .effective_output_track()
+                    .map(|output| {
+                        tracks
+                            .iter()
+                            .position(|candidate| candidate.id() == output)
+                            .ok_or(MixerPlanError::InvalidRouting)
+                    })
+                    .transpose()?,
+                main_send_enabled: track.main_send_enabled(),
+                sends: track
+                    .sends()
+                    .iter()
+                    .map(|send| {
+                        let destination = tracks
+                            .iter()
+                            .position(|track| track.id() == send.destination())
+                            .ok_or(MixerPlanError::InvalidRouting)?;
+                        let parameters = send.parameters();
+                        let pan = match parameters.source_channels {
+                            AudioSendSourceChannels::Stereo => parameters.pan,
+                            AudioSendSourceChannels::Channel1
+                            | AudioSendSourceChannels::Channel2 => 0.0,
+                        };
+                        let gains =
+                            gain_coefficients(parameters.volume_db, pan, PanMode::ZeroDbBalance)
+                                .ok_or(MixerPlanError::InvalidTrackGain {
+                                    track_id: track.id().value(),
+                                })?;
+                        let phase = if parameters.phase_inverted { -1.0 } else { 1.0 };
+                        Ok(CompiledSend {
+                            tap: parameters.tap,
+                            source_channels: parameters.source_channels,
+                            destination_channels: parameters.destination_channels,
+                            destination,
+                            left_gain: gains.stereo_left * phase,
+                            right_gain: gains.stereo_right * phase,
+                            muted: parameters.muted,
+                        })
+                    })
+                    .collect::<Result<Vec<_>, MixerPlanError>>()?,
+                hardware_outputs: track
+                    .hardware_outputs()
+                    .iter()
+                    .map(|output| {
+                        let parameters: AudioHardwareOutputParameters = output.parameters();
+                        let pan = match parameters.source_channels {
+                            AudioSendSourceChannels::Stereo => parameters.pan,
+                            AudioSendSourceChannels::Channel1
+                            | AudioSendSourceChannels::Channel2 => 0.0,
+                        };
+                        let gains =
+                            gain_coefficients(parameters.volume_db, pan, PanMode::ZeroDbBalance)
+                                .ok_or(MixerPlanError::InvalidTrackGain {
+                                    track_id: track.id().value(),
+                                })?;
+                        let phase = if parameters.phase_inverted { -1.0 } else { 1.0 };
+                        Ok(CompiledHardwareOutput {
+                            send_mode: parameters.send_mode,
+                            source_channels: parameters.source_channels,
+                            destination_channels: parameters.destination_channels,
+                            left_gain: gains.stereo_left * phase,
+                            right_gain: gains.stereo_right * phase,
+                            muted: parameters.muted,
+                        })
+                    })
+                    .collect::<Result<Vec<_>, MixerPlanError>>()?,
                 is_bus: track.is_bus(),
                 live: Arc::new(LiveTrackGains::new(
                     gains,
                     track.is_muted(),
                     track.is_solo(),
+                    track.pan_mode(),
+                    track.is_phase_inverted(),
                 )),
                 mix_ramp: Cell::new(GainRamp::new(gains, ramp_frames)),
                 record_armed: track.is_record_armed(),
@@ -605,16 +747,30 @@ impl MixerPlan {
             });
         }
 
-        let mut routing_order: Vec<usize> = (0..compiled.len()).collect();
-        let route_depth = |mut index: usize| {
-            let mut depth = 0;
-            while let Some(output) = compiled[index].output_track_index {
-                depth += 1;
-                index = output;
+        let mut indegrees = vec![0usize; compiled.len()];
+        for track in &compiled {
+            for destination in track.destinations() {
+                indegrees[destination] += 1;
             }
-            depth
-        };
-        routing_order.sort_by_key(|index| (std::cmp::Reverse(route_depth(*index)), *index));
+        }
+        let mut ready: std::collections::VecDeque<_> = indegrees
+            .iter()
+            .enumerate()
+            .filter_map(|(index, degree)| (*degree == 0).then_some(index))
+            .collect();
+        let mut routing_order = Vec::with_capacity(compiled.len());
+        while let Some(index) = ready.pop_front() {
+            routing_order.push(index);
+            for destination in compiled[index].destinations() {
+                indegrees[destination] -= 1;
+                if indegrees[destination] == 0 {
+                    ready.push_back(destination);
+                }
+            }
+        }
+        if routing_order.len() != compiled.len() {
+            return Err(MixerPlanError::InvalidRouting);
+        }
 
         Ok(Self {
             max_block_frames,
@@ -688,6 +844,11 @@ impl MixerPlan {
             track.live.reset_peak();
             return;
         }
+        let polarity = if track.live.phase_inverted.load(Ordering::Acquire) {
+            -1.0
+        } else {
+            1.0
+        };
         let mut ramp = track.mix_ramp.get();
         if let Some(target) = track.live.snapshot() {
             ramp.retarget(target);
@@ -714,8 +875,8 @@ impl MixerPlan {
                     start_sample.saturating_add(offset as u64),
                 );
             }
-            let left = sample * gains.left * automation_gain;
-            let right = sample * gains.right * automation_gain;
+            let left = sample * gains.left * automation_gain * polarity;
+            let right = sample * gains.right * automation_gain * polarity;
             frame[0] += left;
             frame[1] += right;
             peak_left = peak_left.max(meter_peak(left));
@@ -743,8 +904,8 @@ impl MixerPlan {
                         start_sample.saturating_add(offset as u64),
                     );
                 }
-                let left = sample * gains.left * automation_gain;
-                let right = sample * gains.right * automation_gain;
+                let left = sample * gains.left * automation_gain * polarity;
+                let right = sample * gains.right * automation_gain * polarity;
                 frame[0] += left;
                 frame[1] += right;
                 peak_left = peak_left.max(meter_peak(left));
@@ -774,6 +935,11 @@ impl MixerPlan {
             track.live.reset_peak();
             return;
         }
+        let polarity = if track.live.phase_inverted.load(Ordering::Acquire) {
+            -1.0
+        } else {
+            1.0
+        };
         let mut ramp = track.mix_ramp.get();
         if let Some(target) = track.live.snapshot() {
             ramp.retarget(target);
@@ -805,8 +971,8 @@ impl MixerPlan {
             } else {
                 (gains.stereo_left, gains.stereo_right)
             };
-            let left = sample[0] * left_gain * automation_gain;
-            let right = sample[1] * right_gain * automation_gain;
+            let left = sample[0] * left_gain * automation_gain * polarity;
+            let right = sample[1] * right_gain * automation_gain * polarity;
             frame[0] += left;
             frame[1] += right;
             peak_left = peak_left.max(meter_peak(left));
@@ -839,8 +1005,8 @@ impl MixerPlan {
                         block.start_sample.saturating_add(offset as u64),
                     );
                 }
-                let left = sample[0] * left_gain * automation_gain;
-                let right = sample[1] * right_gain * automation_gain;
+                let left = sample[0] * left_gain * automation_gain * polarity;
+                let right = sample[1] * right_gain * automation_gain * polarity;
                 frame[0] += left;
                 frame[1] += right;
                 peak_left = peak_left.max(meter_peak(left));
@@ -854,35 +1020,30 @@ impl MixerPlan {
         track.mix_ramp.set(ramp);
     }
 
-    fn compile_solo_audibility(&self, audible: &mut [bool], solo_bus_subtrees: &mut [bool]) {
+    fn compile_solo_audibility(&self, downstream: &mut [bool], own_sources: &mut [bool]) {
         if !self.has_solo.load(Ordering::Acquire) {
-            audible.fill(true);
+            downstream.fill(true);
+            own_sources.fill(true);
             return;
         }
-        audible.fill(false);
-        solo_bus_subtrees.fill(false);
-
-        // Walk from Master toward source tracks so a soloed bus includes every
-        // track below it without searching the full graph for each track.
-        for track_index in self.routing_order.iter().rev().copied() {
-            let track = &self.tracks[track_index];
-            solo_bus_subtrees[track_index] = (track.is_bus
-                && track.live.solo.load(Ordering::Acquire))
+        downstream.fill(false);
+        own_sources.fill(false);
+        // A soloed receiver needs every source that feeds it, but those sources'
+        // unrelated parallel outputs must remain closed.
+        for index in self.routing_order.iter().rev().copied() {
+            let track = &self.tracks[index];
+            own_sources[index] = track.live.solo.load(Ordering::Acquire)
                 || track
-                    .output_track_index
-                    .is_some_and(|parent| solo_bus_subtrees[parent]);
-            audible[track_index] = solo_bus_subtrees[track_index];
+                    .destinations()
+                    .any(|destination| own_sources[destination]);
         }
-
-        // A soloed source and each bus above it must remain open on the path to Master.
-        for (track_index, track) in self.tracks.iter().enumerate() {
-            if !track.live.solo.load(Ordering::Acquire) {
-                continue;
-            }
-            let mut path = Some(track_index);
-            while let Some(index) = path {
-                audible[index] = true;
-                path = self.tracks[index].output_track_index;
+        // An explicit solo opens all paths downstream of that track.
+        for index in self.routing_order.iter().copied() {
+            downstream[index] |= self.tracks[index].live.solo.load(Ordering::Acquire);
+            if downstream[index] {
+                for destination in self.tracks[index].destinations() {
+                    downstream[destination] = true;
+                }
             }
         }
     }
@@ -1070,6 +1231,9 @@ pub enum AudioGraphError {
         requested: usize,
         maximum: usize,
     },
+    InvalidMidiChannel {
+        channel: u8,
+    },
     InstrumentEventBufferFull {
         track_id: TrackId,
     },
@@ -1085,6 +1249,10 @@ pub enum AudioGraphError {
     AudioItemSeekRequiresRefill {
         item_id: ItemId,
     },
+    LoopedIsolatedInstrumentUnsupported {
+        track_id: TrackId,
+    },
+    TransportLoop(TransportBlockError),
     TransportPositionOverflow,
 }
 
@@ -1102,6 +1270,12 @@ impl fmt::Display for AudioGraphError {
                 formatter,
                 "live MIDI input block has {requested} events; maximum is {maximum}"
             ),
+            Self::InvalidMidiChannel { channel } => {
+                write!(
+                    formatter,
+                    "MIDI channel {channel} is outside the 0..16 range"
+                )
+            }
             Self::InstrumentEventBufferFull { track_id } => write!(
                 formatter,
                 "MIDI event buffer for track {} is too small",
@@ -1126,6 +1300,14 @@ impl fmt::Display for AudioGraphError {
                 "seeking into audio item {} requires refilling its PCM stream",
                 item_id.value()
             ),
+            Self::LoopedIsolatedInstrumentUnsupported { track_id } => write!(
+                formatter,
+                "repeating playback cannot yet schedule isolated instrument track {}",
+                track_id.value()
+            ),
+            Self::TransportLoop(error) => {
+                write!(formatter, "looped transport planning failed: {error:?}")
+            }
             Self::TransportPositionOverflow => {
                 formatter.write_str("transport position exceeds the supported sample range")
             }
@@ -1164,11 +1346,13 @@ pub struct AudioItemStream {
     consumer: AudioItemPcmConsumer,
     source_start_sample: Option<u64>,
     position: Option<AudioStreamPosition>,
+    timeline_loop_range: Option<TransportLoopRange>,
 }
 
 enum AudioItemPcmConsumer {
     Mono(PcmStreamConsumer),
     Stereo(StereoPcmStreamConsumer),
+    Silence,
 }
 
 impl AudioItemPcmConsumer {
@@ -1176,6 +1360,7 @@ impl AudioItemPcmConsumer {
         match self {
             Self::Mono(_) => false,
             Self::Stereo(consumer) => consumer.is_stereo_content(),
+            Self::Silence => true,
         }
     }
 
@@ -1183,6 +1368,7 @@ impl AudioItemPcmConsumer {
         match self {
             Self::Mono(consumer) => consumer.available_samples(),
             Self::Stereo(consumer) => consumer.available_frames(),
+            Self::Silence => usize::MAX,
         }
     }
 
@@ -1192,6 +1378,10 @@ impl AudioItemPcmConsumer {
             Self::Stereo(consumer) => consumer
                 .read_into(output)
                 .saturating_mul(if consumer.is_stereo_content() { 2 } else { 1 }),
+            Self::Silence => {
+                output.fill([0.0, 0.0]);
+                0
+            }
         }
     }
 
@@ -1199,6 +1389,10 @@ impl AudioItemPcmConsumer {
         match self {
             Self::Mono(consumer) => consumer.read_timeline_stereo_into(output, start_sample),
             Self::Stereo(consumer) => consumer.read_timeline_into(output, start_sample),
+            Self::Silence => {
+                output.fill([0.0, 0.0]);
+                0
+            }
         }
     }
 }
@@ -1383,6 +1577,7 @@ struct InstrumentRoute {
     isolated_next_start_sample: u64,
     isolated_config: Option<ClapIpcConfig>,
     isolated_events: Vec<ClapIpcMidiEvent>,
+    isolated_sysex_data: Vec<u8>,
     isolated_schedule_scratch: Vec<Option<ScheduledMidiEvent>>,
     isolated_preview_pending: bool,
     isolated_preview_events: [Option<ScheduledMidiEvent>; 2],
@@ -1441,14 +1636,21 @@ fn submit_isolated_block_with_preview(
             fault_isolated_route(route);
             return false;
         };
-        let Ok(notes) = midi_plan.active_notes_at(
+        let Ok(program_changes) = midi_plan.active_program_changes_at(
             route.isolated_next_start_sample,
             &mut midi_scratch[controllers + pitch_bends..],
         ) else {
             fault_isolated_route(route);
             return false;
         };
-        count = controllers + pitch_bends + notes;
+        let Ok(notes) = midi_plan.active_notes_at(
+            route.isolated_next_start_sample,
+            &mut midi_scratch[controllers + pitch_bends + program_changes..],
+        ) else {
+            fault_isolated_route(route);
+            return false;
+        };
+        count = controllers + pitch_bends + program_changes + notes;
     }
     if include_project_events {
         let Ok(scheduled) = midi_plan.events_for_block(
@@ -1477,21 +1679,47 @@ fn submit_isolated_block_with_preview(
                 event.sample_offset,
                 event.sort_priority(),
                 event.track_id.value(),
+                event.channel,
                 event.controller.unwrap_or(event.pitch),
                 event.note_id.map_or(0, aaadaw_core::NoteId::value),
+                event.sysex_offset,
             )
         });
     }
     route.isolated_events.clear();
+    route.isolated_sysex_data.clear();
+    let sysex_source = midi_plan.sysex_payload();
     for event in midi_scratch[..count]
         .iter()
         .flatten()
         .filter(|event| event.track_id == route.track_id)
     {
-        let Some(encoded) = ClapIpcMidiEvent::from_scheduled(*event, frame_count) else {
+        let Some(mut encoded) = ClapIpcMidiEvent::from_scheduled(*event, frame_count) else {
             fault_isolated_route(route);
             return false;
         };
+        if event.kind == MidiEventKind::SystemExclusive {
+            let start = event.sysex_offset as usize;
+            let Some(end) = start.checked_add(event.sysex_length as usize) else {
+                fault_isolated_route(route);
+                return false;
+            };
+            let Some(payload) = sysex_source.get(start..end) else {
+                fault_isolated_route(route);
+                return false;
+            };
+            let offset = route.isolated_sysex_data.len();
+            let Some(next_offset) = offset.checked_add(payload.len()) else {
+                fault_isolated_route(route);
+                return false;
+            };
+            if next_offset > CLAP_IPC_MAX_SYSEX_BYTES_PER_BLOCK {
+                fault_isolated_route(route);
+                return false;
+            }
+            encoded.sysex_offset = offset as u32;
+            route.isolated_sysex_data.extend_from_slice(payload);
+        }
         if route.isolated_events.len() == config.event_capacity as usize {
             fault_isolated_route(route);
             return false;
@@ -1502,11 +1730,12 @@ fn submit_isolated_block_with_preview(
         fault_isolated_route(route);
         return false;
     };
-    let submit = port.try_submit(
+    let submit = port.try_submit_with_sysex(
         route.isolated_generation,
         route.isolated_next_sequence,
         route.isolated_next_start_sample,
         &route.isolated_events,
+        &route.isolated_sysex_data,
         frame_count,
     );
     if let Err(error) = submit {
@@ -1542,53 +1771,54 @@ fn isolated_window_ready(route: &InstrumentRoute) -> bool {
     })
 }
 
-#[derive(Clone, Copy)]
-struct TrackRoute {
-    source_index: usize,
-    destination_index: usize,
+fn add_routed_buffer(source: &[[f32; 2]], destination: &mut [[f32; 2]], left: f32, right: f32) {
+    for (frame, input) in destination.iter_mut().zip(source) {
+        frame[0] += input[0] * left;
+        frame[1] += input[1] * right;
+    }
 }
 
-fn mix_track_buffer_to_bus(
-    buffers: &mut TrackEffectBuffers,
-    route: TrackRoute,
-    mixer: &MixerPlan,
-    block: MixBlock,
-    solo_allowed: bool,
-    mono_input: bool,
+fn add_routed_send_buffer(source: &[[f32; 2]], destination: &mut [[f32; 2]], send: &CompiledSend) {
+    for (frame, input) in destination.iter_mut().zip(source) {
+        let (source_left, source_right) = match send.source_channels {
+            AudioSendSourceChannels::Stereo => (input[0], input[1]),
+            AudioSendSourceChannels::Channel1 => (input[0], input[0]),
+            AudioSendSourceChannels::Channel2 => (input[1], input[1]),
+        };
+        let left = source_left * send.left_gain;
+        let right = source_right * send.right_gain;
+        match send.destination_channels {
+            AudioSendDestinationChannels::Stereo => {
+                frame[0] += left;
+                frame[1] += right;
+            }
+            AudioSendDestinationChannels::Channel1 => frame[0] += (left + right) * 0.5,
+            AudioSendDestinationChannels::Channel2 => frame[1] += (left + right) * 0.5,
+        }
+    }
+}
+
+fn add_routed_hardware_output_buffer(
+    source: &[[f32; 2]],
+    destination: &mut [[f32; 2]],
+    output: &CompiledHardwareOutput,
 ) {
-    if route.source_index < route.destination_index {
-        let (before_destination, destination_and_after) =
-            buffers.split_at_mut(route.destination_index);
-        let source = before_destination[route.source_index]
-            .as_ref()
-            .expect("every track has a preallocated routing buffer");
-        let destination = destination_and_after[0]
-            .as_mut()
-            .expect("every bus has a preallocated routing buffer");
-        mixer.mix_stereo_routed_unchecked(
-            route.source_index,
-            &source[..block.frame_count],
-            &mut destination[..block.frame_count],
-            block,
-            solo_allowed,
-            mono_input,
-        );
-    } else {
-        let (before_source, source_and_after) = buffers.split_at_mut(route.source_index);
-        let destination = before_source[route.destination_index]
-            .as_mut()
-            .expect("every bus has a preallocated routing buffer");
-        let source = source_and_after[0]
-            .as_ref()
-            .expect("every track has a preallocated routing buffer");
-        mixer.mix_stereo_routed_unchecked(
-            route.source_index,
-            &source[..block.frame_count],
-            &mut destination[..block.frame_count],
-            block,
-            solo_allowed,
-            mono_input,
-        );
+    for (frame, input) in destination.iter_mut().zip(source) {
+        let (source_left, source_right) = match output.source_channels {
+            AudioSendSourceChannels::Stereo => (input[0], input[1]),
+            AudioSendSourceChannels::Channel1 => (input[0], input[0]),
+            AudioSendSourceChannels::Channel2 => (input[1], input[1]),
+        };
+        let left = source_left * output.left_gain;
+        let right = source_right * output.right_gain;
+        match output.destination_channels {
+            AudioSendDestinationChannels::Stereo => {
+                frame[0] += left;
+                frame[1] += right;
+            }
+            AudioSendDestinationChannels::Channel1 => frame[0] += (left + right) * 0.5,
+            AudioSendDestinationChannels::Channel2 => frame[1] += (left + right) * 0.5,
+        }
     }
 }
 
@@ -1598,7 +1828,13 @@ struct RenderGraphSources {
     track_indices: Vec<usize>,
     ranges: Vec<Option<(u64, u64)>>,
     cursors: Vec<Option<u64>>,
+    loop_ranges: Vec<Option<TransportLoopRange>>,
     item_ids: Vec<Option<ItemId>>,
+    fades: Vec<aaadaw_core::AudioItemFades>,
+    volumes: Vec<f32>,
+    muted: Vec<bool>,
+    phase_inverted: Vec<bool>,
+    take_mixes: Vec<(f32, f32)>,
 }
 
 fn compile_fx_routes(
@@ -1700,6 +1936,17 @@ fn compile_fx_routes(
 }
 
 impl AudioItemStream {
+    /// Associates a source-less Audio Take with an allocation-free silent stream.
+    pub fn new_silence(item_id: ItemId) -> Self {
+        Self {
+            item_id,
+            consumer: AudioItemPcmConsumer::Silence,
+            source_start_sample: None,
+            position: None,
+            timeline_loop_range: None,
+        }
+    }
+
     /// Associates a worker-fed PCM consumer with its timeline item.
     pub fn new(item_id: ItemId, consumer: PcmStreamConsumer) -> Self {
         Self {
@@ -1707,6 +1954,7 @@ impl AudioItemStream {
             consumer: AudioItemPcmConsumer::Mono(consumer),
             source_start_sample: None,
             position: None,
+            timeline_loop_range: None,
         }
     }
 
@@ -1717,6 +1965,7 @@ impl AudioItemStream {
             consumer: AudioItemPcmConsumer::Stereo(consumer),
             source_start_sample: None,
             position: None,
+            timeline_loop_range: None,
         }
     }
 
@@ -1732,6 +1981,7 @@ impl AudioItemStream {
             consumer: AudioItemPcmConsumer::Mono(consumer),
             source_start_sample: Some(source_start_sample),
             position: None,
+            timeline_loop_range: None,
         }
     }
 
@@ -1746,6 +1996,7 @@ impl AudioItemStream {
             consumer: AudioItemPcmConsumer::Stereo(consumer),
             source_start_sample: Some(source_start_sample),
             position: None,
+            timeline_loop_range: None,
         }
     }
 
@@ -1760,6 +2011,7 @@ impl AudioItemStream {
             consumer: AudioItemPcmConsumer::Stereo(consumer),
             source_start_sample: None,
             position: Some(position),
+            timeline_loop_range: None,
         }
     }
 
@@ -1775,6 +2027,44 @@ impl AudioItemStream {
             consumer: AudioItemPcmConsumer::Stereo(consumer),
             source_start_sample: Some(source_start_sample),
             position: Some(position),
+            timeline_loop_range: None,
+        }
+    }
+
+    /// Associates a worker-fed PCM queue that repeats one tagged project-time range.
+    ///
+    /// The producer must enqueue PCM with those same project-sample tags again after the first
+    /// pass. The render graph only accepts the backward cursor reset when the range exactly
+    /// matches the overlap between this item and the active transport loop.
+    pub fn new_stereo_looping_at_sample(
+        item_id: ItemId,
+        source_start_sample: u64,
+        timeline_loop_range: TransportLoopRange,
+        consumer: StereoPcmStreamConsumer,
+    ) -> Self {
+        Self {
+            item_id,
+            consumer: AudioItemPcmConsumer::Stereo(consumer),
+            source_start_sample: Some(source_start_sample),
+            position: None,
+            timeline_loop_range: Some(timeline_loop_range),
+        }
+    }
+
+    /// Associates a loop-tagged PCM queue with the feeder's shared sample position.
+    pub fn new_stereo_looping_at_sample_with_position(
+        item_id: ItemId,
+        source_start_sample: u64,
+        timeline_loop_range: TransportLoopRange,
+        consumer: StereoPcmStreamConsumer,
+        position: AudioStreamPosition,
+    ) -> Self {
+        Self {
+            item_id,
+            consumer: AudioItemPcmConsumer::Stereo(consumer),
+            source_start_sample: Some(source_start_sample),
+            position: Some(position),
+            timeline_loop_range: Some(timeline_loop_range),
         }
     }
 }
@@ -1786,17 +2076,24 @@ impl AudioItemStream {
 /// decode/resample PCM and feed one SPSC consumer per source.
 pub struct AudioRenderGraph {
     mixer: MixerPlan,
+    master_mix: master_mix::MasterOutputMix,
     master_output_safety: master_output::MasterOutputSafety,
     midi_plan: MidiEventPlan,
     midi_scratch: Vec<Option<ScheduledMidiEvent>>,
+    midi_input_segment_scratch: Vec<Option<ScheduledMidiEvent>>,
     instruments: Vec<InstrumentRoute>,
     effects: Vec<FxRoute>,
     track_effect_buffers: TrackEffectBuffers,
+    hardware_output_scratch: Vec<[f32; 2]>,
+    post_fader_scratch: Vec<[f32; 2]>,
+    pre_fx_scratch: Vec<[f32; 2]>,
+    pre_fader_scratch: Vec<[f32; 2]>,
     track_has_stereo_input: Vec<bool>,
     solo_audible_tracks: Vec<bool>,
     solo_bus_subtrees: Vec<bool>,
     sample_rate: u32,
     transport: Transport,
+    transport_segments: Vec<TransportBlockSegment>,
     last_midi_sample_end: Option<u64>,
     last_midi_chase_generation: Option<u64>,
     midi_preview_state: Arc<AtomicU64>,
@@ -1809,7 +2106,14 @@ pub struct AudioRenderGraph {
     stream_track_indices: Vec<usize>,
     source_ranges: Vec<Option<(u64, u64)>>,
     source_cursors: Vec<Option<u64>>,
+    source_loop_ranges: Vec<Option<TransportLoopRange>>,
     source_item_ids: Vec<Option<ItemId>>,
+    source_fades: Vec<item_fades::ItemFadeReader>,
+    item_fade_controller: ItemFadeController,
+    source_volumes: Vec<item_volume::ItemVolumeReader>,
+    item_volume_controller: ItemVolumeController,
+    source_take_mixes: Vec<item_take_mix::ItemTakeMixReader>,
+    item_take_mix_controller: ItemTakeMixController,
     scratch: Vec<Vec<[f32; 2]>>,
     input_monitor: Option<AudioMonitorConsumer>,
     input_monitor_gate: Option<AudioInputMonitorGate>,
@@ -1838,7 +2142,13 @@ impl AudioRenderGraph {
             positions: vec![None; streams.len()],
             ranges: vec![None; streams.len()],
             cursors: vec![None; streams.len()],
+            loop_ranges: vec![None; streams.len()],
             item_ids: vec![None; streams.len()],
+            fades: vec![aaadaw_core::AudioItemFades::default(); streams.len()],
+            volumes: vec![1.0; streams.len()],
+            muted: vec![false; streams.len()],
+            phase_inverted: vec![false; streams.len()],
+            take_mixes: vec![(1.0, 0.0); streams.len()],
             streams: streams
                 .into_iter()
                 .map(AudioItemPcmConsumer::Mono)
@@ -1915,7 +2225,13 @@ impl AudioRenderGraph {
             track_indices: Vec::with_capacity(item_streams.len()),
             ranges: Vec::with_capacity(item_streams.len()),
             cursors: Vec::with_capacity(item_streams.len()),
+            loop_ranges: Vec::with_capacity(item_streams.len()),
             item_ids: Vec::with_capacity(item_streams.len()),
+            fades: Vec::with_capacity(item_streams.len()),
+            volumes: Vec::with_capacity(item_streams.len()),
+            muted: Vec::with_capacity(item_streams.len()),
+            phase_inverted: Vec::with_capacity(item_streams.len()),
+            take_mixes: Vec::with_capacity(item_streams.len()),
         };
         for (item, stream) in project.audio_items().iter().zip(item_streams) {
             if item.id() != stream.item_id {
@@ -1945,7 +2261,15 @@ impl AudioRenderGraph {
                 .ranges
                 .push(Some((item.start_sample(), item.end_sample())));
             sources.cursors.push(Some(source_start_sample));
+            sources.loop_ranges.push(stream.timeline_loop_range);
             sources.item_ids.push(Some(item.id()));
+            sources.fades.push(item.fades());
+            sources.volumes.push(item.volume());
+            sources.muted.push(item.is_muted());
+            sources.phase_inverted.push(item.is_phase_inverted());
+            sources
+                .take_mixes
+                .push((item.take_volume(), item.take_pan()));
         }
 
         Self::build(project, sources, instruments, effects, max_block_frames)
@@ -1964,8 +2288,8 @@ impl AudioRenderGraph {
             project.settings().sample_rate(),
         )
         .map_err(AudioGraphBuildError::MixerPlan)?;
-        let midi_plan =
-            MidiEventPlan::compile(project).map_err(AudioGraphBuildError::MidiSchedule)?;
+        let midi_plan = MidiEventPlan::compile_for_render(project)
+            .map_err(AudioGraphBuildError::MidiSchedule)?;
         let mut instrument_routes = Vec::with_capacity(instrument_processors.len());
         let mut has_instrument = vec![false; project.tracks().len()];
         for instrument in instrument_processors.iter() {
@@ -2020,6 +2344,7 @@ impl AudioRenderGraph {
                 isolated_next_start_sample: 0,
                 isolated_config: None,
                 isolated_events: Vec::new(),
+                isolated_sysex_data: Vec::new(),
                 isolated_schedule_scratch: Vec::new(),
                 isolated_preview_pending: false,
                 isolated_preview_events: [None; 2],
@@ -2047,6 +2372,7 @@ impl AudioRenderGraph {
             None;
             midi_plan
                 .len()
+                .saturating_mul(2)
                 .saturating_add(MIDI_INPUT_EVENTS_PER_BLOCK)
                 .saturating_add(2)
                 .max(2)
@@ -2060,19 +2386,47 @@ impl AudioRenderGraph {
         {
             route.processor = Some(instrument.processor);
         }
+        let (item_fade_controller, source_fades) =
+            item_fades::compile(&sources.item_ids, sources.fades);
+        let (item_volume_controller, source_volumes) = item_volume::compile(
+            &sources.item_ids,
+            sources.volumes,
+            sources.muted,
+            sources.phase_inverted,
+        );
+        let (item_take_mix_controller, source_take_mixes) =
+            item_take_mix::compile(&sources.item_ids, sources.take_mixes);
         Ok(Self {
             mixer,
+            master_mix: master_mix::MasterOutputMix::new(
+                project.master_mix(),
+                project.settings().sample_rate(),
+            ),
             master_output_safety: master_output::MasterOutputSafety::default(),
             midi_plan,
             midi_scratch,
+            midi_input_segment_scratch: vec![None; MIDI_INPUT_EVENTS_PER_BLOCK],
             instruments: instrument_routes,
             effects: effect_routes,
             track_effect_buffers,
+            hardware_output_scratch: vec![[0.0, 0.0]; max_block_frames],
+            post_fader_scratch: vec![[0.0; 2]; max_block_frames],
+            pre_fx_scratch: vec![[0.0; 2]; max_block_frames],
+            pre_fader_scratch: vec![[0.0; 2]; max_block_frames],
             track_has_stereo_input,
             solo_audible_tracks,
             solo_bus_subtrees,
             sample_rate: project.settings().sample_rate(),
             transport: Transport::new(),
+            transport_segments: vec![
+                TransportBlockSegment {
+                    output_offset: 0,
+                    start_sample: 0,
+                    frame_count: 0,
+                    chase_generation: 0,
+                };
+                max_block_frames.saturating_add(1)
+            ],
             last_midi_sample_end: None,
             last_midi_chase_generation: None,
             midi_preview_state: Arc::new(AtomicU64::new(0)),
@@ -2085,13 +2439,35 @@ impl AudioRenderGraph {
             stream_track_indices: sources.track_indices,
             source_ranges: sources.ranges,
             source_cursors: sources.cursors,
+            source_loop_ranges: sources.loop_ranges,
             source_item_ids: sources.item_ids,
+            source_fades,
+            item_fade_controller,
+            source_volumes,
+            item_volume_controller,
+            source_take_mixes,
+            item_take_mix_controller,
             scratch,
             input_monitor: None,
             input_monitor_gate: None,
             input_monitor_scratch: vec![[0.0, 0.0]; max_block_frames],
             input_monitor_states: Vec::new(),
         })
+    }
+
+    /// Returns the control-side handle for live manual Item fade publication.
+    pub fn item_fade_controller(&self) -> ItemFadeController {
+        self.item_fade_controller.clone()
+    }
+
+    /// Returns the control-side handle for live Item volume publication.
+    pub fn item_volume_controller(&self) -> ItemVolumeController {
+        self.item_volume_controller.clone()
+    }
+
+    /// Returns the control-side handle for live take volume and pan publication.
+    pub fn item_take_mix_controller(&self) -> ItemTakeMixController {
+        self.item_take_mix_controller.clone()
     }
 
     /// Returns the project sample rate used by its tempo map.
@@ -2211,6 +2587,11 @@ impl AudioRenderGraph {
         self.master_output_safety.controller()
     }
 
+    /// Updates stereo Master gain without rebuilding the graph.
+    pub fn master_mix_controller(&self) -> MasterMixController {
+        self.master_mix.controller()
+    }
+
     /// Returns the callback-owned transport for start/stop/seek control.
     pub fn transport_mut(&mut self) -> &mut Transport {
         &mut self.transport
@@ -2321,6 +2702,7 @@ impl AudioRenderGraph {
                 isolated_next_start_sample: 0,
                 isolated_config: None,
                 isolated_events: Vec::new(),
+                isolated_sysex_data: Vec::new(),
                 isolated_schedule_scratch: Vec::new(),
                 isolated_preview_pending: false,
                 isolated_preview_events: [None; 2],
@@ -2429,6 +2811,7 @@ impl AudioRenderGraph {
                 isolated_next_start_sample: start_sample,
                 isolated_config: Some(instrument.config),
                 isolated_events: Vec::with_capacity(instrument.config.event_capacity as usize),
+                isolated_sysex_data: Vec::with_capacity(CLAP_IPC_MAX_SYSEX_BYTES_PER_BLOCK),
                 isolated_schedule_scratch: vec![None; self.midi_scratch.len()],
                 isolated_preview_pending: false,
                 isolated_preview_events: [None; 2],
@@ -2608,7 +2991,16 @@ impl AudioRenderGraph {
         &mut self,
         output: &mut [[f32; 2]],
     ) -> Result<AudioRenderStats, AudioGraphError> {
-        self.render_block(false, &[], &mut [], output)
+        self.render_callback(false, false, &[], &mut [], output)
+    }
+
+    /// Renders one real device block, including track hardware outputs in addition to the
+    /// project Master output. Offline renders intentionally use [`Self::render_into`] instead.
+    pub fn render_into_realtime(
+        &mut self,
+        output: &mut [[f32; 2]],
+    ) -> Result<AudioRenderStats, AudioGraphError> {
+        self.render_callback(false, true, &[], &mut [], output)
     }
 
     /// Renders audio and writes note events for the same half-open callback
@@ -2618,7 +3010,7 @@ impl AudioRenderGraph {
         midi_output: &mut [Option<ScheduledMidiEvent>],
         output: &mut [[f32; 2]],
     ) -> Result<AudioRenderStats, AudioGraphError> {
-        self.render_block(true, &[], midi_output, output)
+        self.render_callback(true, false, &[], midi_output, output)
     }
 
     /// Renders scheduled MIDI output and injects bounded live input into matching instruments.
@@ -2631,12 +3023,409 @@ impl AudioRenderGraph {
         midi_input: &[Option<ScheduledMidiEvent>],
         output: &mut [[f32; 2]],
     ) -> Result<AudioRenderStats, AudioGraphError> {
-        self.render_block(true, midi_input, midi_output, output)
+        self.render_with_midi_input_mode(false, midi_output, midi_input, output)
+    }
+
+    /// Device-callback variant of [`Self::render_with_midi_input`] that includes direct track
+    /// Hardware Outputs in the current device signal.
+    pub fn render_with_midi_input_realtime(
+        &mut self,
+        midi_output: &mut [Option<ScheduledMidiEvent>],
+        midi_input: &[Option<ScheduledMidiEvent>],
+        output: &mut [[f32; 2]],
+    ) -> Result<AudioRenderStats, AudioGraphError> {
+        self.render_with_midi_input_mode(true, midi_output, midi_input, output)
+    }
+
+    fn render_with_midi_input_mode(
+        &mut self,
+        include_hardware_outputs: bool,
+        midi_output: &mut [Option<ScheduledMidiEvent>],
+        midi_input: &[Option<ScheduledMidiEvent>],
+        output: &mut [[f32; 2]],
+    ) -> Result<AudioRenderStats, AudioGraphError> {
+        if let Some(event) = midi_input
+            .iter()
+            .flatten()
+            .find(|event| event.channel >= MIDI_CHANNEL_COUNT)
+        {
+            return Err(AudioGraphError::InvalidMidiChannel {
+                channel: event.channel,
+            });
+        }
+        self.render_callback(
+            true,
+            include_hardware_outputs,
+            midi_input,
+            midi_output,
+            output,
+        )
+    }
+
+    fn midi_output_event_allowed(&self, event: &ScheduledMidiEvent) -> bool {
+        // Never suppress release events: a voice may have been started before
+        // its track was muted or excluded by a later solo change.
+        if event.kind == MidiEventKind::NoteOff
+            || (event.kind == MidiEventKind::ControllerChange
+                && event.controller == Some(64)
+                && event.velocity < 64)
+        {
+            return true;
+        }
+        self.mixer.tracks.iter().enumerate().any(|(index, track)| {
+            track.track_id == event.track_id
+                && !track.live.muted.load(Ordering::Acquire)
+                && self.solo_bus_subtrees[index]
+        })
+    }
+
+    fn copy_midi_output(
+        &self,
+        count: usize,
+        output: &mut [Option<ScheduledMidiEvent>],
+    ) -> Result<usize, AudioGraphError> {
+        let events = self.midi_scratch[..count]
+            .iter()
+            .flatten()
+            .filter(|event| self.midi_output_event_allowed(event));
+        let required = events.clone().count();
+        if output.len() < required {
+            return Err(AudioGraphError::MidiSchedule(
+                MidiScheduleError::OutputBufferTooSmall {
+                    required,
+                    available: output.len(),
+                },
+            ));
+        }
+        for (slot, event) in output.iter_mut().zip(events) {
+            *slot = Some(*event);
+        }
+        Ok(required)
+    }
+
+    fn schedule_segment_midi_events(
+        &mut self,
+        start_sample: u64,
+        frame_count: usize,
+        chase_generation: u64,
+        previous: MidiSegmentCursor,
+        should_process: bool,
+    ) -> Result<(usize, MidiSegmentCursor), AudioGraphError> {
+        if !should_process || frame_count == 0 {
+            return Ok((0, previous));
+        }
+        let schedule = self
+            .midi_plan
+            .events_for_segment(
+                TransportBlockSegment {
+                    output_offset: 0,
+                    start_sample,
+                    frame_count,
+                    chase_generation,
+                },
+                previous,
+                &mut self.midi_scratch,
+            )
+            .map_err(AudioGraphError::MidiSchedule)?;
+        Ok((schedule.event_count, schedule.cursor))
+    }
+
+    fn item_loop_overlap(
+        &self,
+        index: usize,
+        transport_loop: TransportLoopRange,
+    ) -> Option<TransportLoopRange> {
+        let (item_start, item_end) = self.source_ranges.get(index).copied().flatten()?;
+        TransportLoopRange::new(
+            item_start.max(transport_loop.start_sample()),
+            item_end.min(transport_loop.end_sample()),
+        )
+    }
+
+    fn source_cursor_can_wrap(
+        &self,
+        index: usize,
+        cursor: Option<u64>,
+        overlap_start: u64,
+        transport_loop: Option<TransportLoopRange>,
+    ) -> bool {
+        let Some(transport_loop) = transport_loop else {
+            return false;
+        };
+        let Some(item_loop) = self.item_loop_overlap(index, transport_loop) else {
+            return false;
+        };
+        self.source_loop_ranges.get(index).copied().flatten() == Some(item_loop)
+            && cursor == Some(item_loop.end_sample())
+            && overlap_start == item_loop.start_sample()
+    }
+
+    fn preflight_repeating_sources(
+        &self,
+        segments: &[TransportBlockSegment],
+    ) -> Result<(), AudioGraphError> {
+        for (index, source_range) in self.source_ranges.iter().enumerate() {
+            let Some((item_start, item_end)) = source_range else {
+                continue;
+            };
+            let mut cursor = self.source_cursors[index];
+            for segment in segments {
+                let frame_count = u64::try_from(segment.frame_count)
+                    .map_err(|_| AudioGraphError::TransportPositionOverflow)?;
+                let segment_end = segment
+                    .start_sample
+                    .checked_add(frame_count)
+                    .ok_or(AudioGraphError::TransportPositionOverflow)?;
+                let overlap_start = segment.start_sample.max(*item_start);
+                let overlap_end = segment_end.min(*item_end);
+                if overlap_start < overlap_end {
+                    if cursor != Some(overlap_start)
+                        && !self.source_cursor_can_wrap(
+                            index,
+                            cursor,
+                            overlap_start,
+                            self.transport.loop_range(),
+                        )
+                    {
+                        return Err(AudioGraphError::AudioItemSeekRequiresRefill {
+                            item_id: self.source_item_ids[index]
+                                .expect("timeline ranges belong to audio items"),
+                        });
+                    }
+                    cursor = Some(overlap_end);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn collect_segment_midi_input(
+        input: &[Option<ScheduledMidiEvent>],
+        segment: TransportBlockSegment,
+        scratch: &mut [Option<ScheduledMidiEvent>],
+    ) -> Result<usize, AudioGraphError> {
+        let segment_end = segment
+            .output_offset
+            .checked_add(segment.frame_count)
+            .ok_or(AudioGraphError::TransportPositionOverflow)?;
+        let mut count = 0;
+        for event in input.iter().flatten() {
+            if (segment.output_offset..segment_end).contains(&event.sample_offset) {
+                if count == scratch.len() {
+                    return Err(AudioGraphError::MidiInputEventBufferFull {
+                        requested: count.saturating_add(1),
+                        maximum: scratch.len(),
+                    });
+                }
+                scratch[count] = Some(ScheduledMidiEvent {
+                    sample_offset: event.sample_offset - segment.output_offset,
+                    ..*event
+                });
+                count += 1;
+            }
+        }
+        Ok(count)
+    }
+
+    fn render_callback(
+        &mut self,
+        include_midi: bool,
+        include_hardware_outputs: bool,
+        midi_input: &[Option<ScheduledMidiEvent>],
+        midi_output: &mut [Option<ScheduledMidiEvent>],
+        output: &mut [[f32; 2]],
+    ) -> Result<AudioRenderStats, AudioGraphError> {
+        if output.len() > self.mixer.max_block_frames {
+            return Err(AudioGraphError::BlockTooLarge {
+                requested: output.len(),
+                maximum: self.mixer.max_block_frames,
+            });
+        }
+        if output.is_empty()
+            || !self.transport.is_playing()
+            || self.transport.loop_range().is_none()
+        {
+            return self.render_block(
+                include_midi,
+                include_hardware_outputs,
+                midi_input,
+                midi_output,
+                output,
+            );
+        }
+        if midi_input.len() > MIDI_INPUT_EVENTS_PER_BLOCK {
+            return Err(AudioGraphError::MidiInputEventBufferFull {
+                requested: midi_input.len(),
+                maximum: MIDI_INPUT_EVENTS_PER_BLOCK,
+            });
+        }
+
+        let original_transport = self.transport;
+        let mut planned_transport = original_transport;
+        let segment_count = planned_transport
+            .advance_repeating_block(output.len(), &mut self.transport_segments)
+            .map_err(AudioGraphError::TransportLoop)?;
+        if planned_transport.chase_generation() != original_transport.chase_generation()
+            && let Some(route) = self
+                .instruments
+                .iter()
+                .find(|route| route.isolated_reader.is_some())
+        {
+            return Err(AudioGraphError::LoopedIsolatedInstrumentUnsupported {
+                track_id: route.track_id,
+            });
+        }
+        self.preflight_repeating_sources(&self.transport_segments[..segment_count])?;
+        self.mixer
+            .compile_solo_audibility(&mut self.solo_audible_tracks, &mut self.solo_bus_subtrees);
+
+        let midi_is_processed =
+            !self.instruments.is_empty() || include_midi || !midi_input.is_empty();
+        let mut cursor = MidiSegmentCursor {
+            sample_end: self.last_midi_sample_end,
+            chase_generation: self.last_midi_chase_generation,
+        };
+        let mut required_midi_output = 0_usize;
+        for segment_index in 0..segment_count {
+            let segment = self.transport_segments[segment_index];
+            let (event_count, next_cursor) = self.schedule_segment_midi_events(
+                segment.start_sample,
+                segment.frame_count,
+                segment.chase_generation,
+                cursor,
+                midi_is_processed,
+            )?;
+            let input_count = Self::collect_segment_midi_input(
+                midi_input,
+                segment,
+                &mut self.midi_input_segment_scratch,
+            )?;
+            let preview_release = segment_index == 0 && self.preview_track_index.is_some();
+            let scratch_required = event_count
+                .checked_add(input_count)
+                .and_then(|count| count.checked_add(usize::from(preview_release)))
+                .ok_or(AudioGraphError::TransportPositionOverflow)?;
+            if scratch_required > self.midi_scratch.len() {
+                return Err(AudioGraphError::MidiInputEventBufferFull {
+                    requested: input_count,
+                    maximum: self
+                        .midi_scratch
+                        .len()
+                        .saturating_sub(event_count + usize::from(preview_release)),
+                });
+            }
+
+            if include_midi {
+                let allowed = self.midi_scratch[..event_count]
+                    .iter()
+                    .flatten()
+                    .filter(|event| self.midi_output_event_allowed(event))
+                    .count();
+                required_midi_output = required_midi_output
+                    .checked_add(allowed + usize::from(preview_release))
+                    .ok_or(AudioGraphError::TransportPositionOverflow)?;
+            }
+
+            for route in &self.instruments {
+                let scheduled_for_route = self.midi_scratch[..event_count]
+                    .iter()
+                    .flatten()
+                    .filter(|event| event.track_id == route.track_id)
+                    .count();
+                let input_for_route = self.midi_input_segment_scratch[..input_count]
+                    .iter()
+                    .flatten()
+                    .filter(|event| event.track_id == route.track_id)
+                    .count();
+                let preview_for_route = usize::from(
+                    preview_release && self.preview_track_index == Some(route.track_index),
+                );
+                let required = scheduled_for_route + input_for_route + preview_for_route;
+                if required > route.midi_events.capacity() {
+                    return Err(AudioGraphError::InstrumentEventBufferFull {
+                        track_id: route.track_id,
+                    });
+                }
+            }
+            cursor = next_cursor;
+        }
+        if include_midi && midi_output.len() < required_midi_output {
+            return Err(AudioGraphError::MidiSchedule(
+                MidiScheduleError::OutputBufferTooSmall {
+                    required: required_midi_output,
+                    available: midi_output.len(),
+                },
+            ));
+        }
+
+        let mut input_scratch = std::mem::take(&mut self.midi_input_segment_scratch);
+        let mut callback_underrun_samples = 0_usize;
+        let mut callback_midi_event_count = 0_usize;
+        let mut callback_master_guarded_samples = 0_usize;
+        let mut callback_master_non_finite_samples = 0_usize;
+        let mut midi_output_written = 0_usize;
+        let render_result = (|| {
+            for segment_index in 0..segment_count {
+                let segment = self.transport_segments[segment_index];
+                let input_count =
+                    Self::collect_segment_midi_input(midi_input, segment, &mut input_scratch)?;
+                let output_start = segment.output_offset;
+                let output_end = output_start + segment.frame_count;
+                self.transport
+                    .set_render_segment(segment.start_sample, segment.chase_generation);
+                let midi_output_segment = if include_midi {
+                    &mut midi_output[midi_output_written..]
+                } else {
+                    &mut []
+                };
+                let stats = self.render_block(
+                    include_midi,
+                    include_hardware_outputs,
+                    &input_scratch[..input_count],
+                    midi_output_segment,
+                    &mut output[output_start..output_end],
+                )?;
+                if include_midi {
+                    let next_written = midi_output_written + stats.midi_event_count;
+                    for event in midi_output[midi_output_written..next_written]
+                        .iter_mut()
+                        .flatten()
+                    {
+                        event.sample_offset += segment.output_offset;
+                    }
+                    midi_output_written = next_written;
+                }
+                callback_underrun_samples =
+                    callback_underrun_samples.saturating_add(stats.underrun_samples);
+                callback_midi_event_count =
+                    callback_midi_event_count.saturating_add(stats.midi_event_count);
+                callback_master_guarded_samples =
+                    callback_master_guarded_samples.saturating_add(stats.master_guarded_samples);
+                callback_master_non_finite_samples = callback_master_non_finite_samples
+                    .saturating_add(stats.master_non_finite_samples);
+            }
+            Ok(())
+        })();
+        self.midi_input_segment_scratch = input_scratch;
+        render_result?;
+        self.transport = planned_transport;
+        Ok(AudioRenderStats {
+            block: AudioBlock {
+                start_sample: original_transport.position_samples(),
+                frame_count: output.len(),
+                is_playing: true,
+            },
+            underrun_samples: callback_underrun_samples,
+            midi_event_count: callback_midi_event_count,
+            master_guarded_samples: callback_master_guarded_samples,
+            master_non_finite_samples: callback_master_non_finite_samples,
+        })
     }
 
     fn render_block(
         &mut self,
         include_midi: bool,
+        include_hardware_outputs: bool,
         midi_input: &[Option<ScheduledMidiEvent>],
         midi_output: &mut [Option<ScheduledMidiEvent>],
         output: &mut [[f32; 2]],
@@ -2660,7 +3449,14 @@ impl AudioRenderGraph {
                 };
                 let overlap_start = block_start_sample.max(*item_start);
                 let overlap_end = block_end_sample.min(*item_end);
-                if overlap_start < overlap_end && self.source_cursors[index] != Some(overlap_start)
+                if overlap_start < overlap_end
+                    && self.source_cursors[index] != Some(overlap_start)
+                    && !self.source_cursor_can_wrap(
+                        index,
+                        self.source_cursors[index],
+                        overlap_start,
+                        self.transport.loop_range(),
+                    )
                 {
                     return Err(AudioGraphError::AudioItemSeekRequiresRefill {
                         item_id: self.source_item_ids[index]
@@ -2670,77 +3466,28 @@ impl AudioRenderGraph {
             }
         }
 
+        self.mixer
+            .compile_solo_audibility(&mut self.solo_audible_tracks, &mut self.solo_bus_subtrees);
         let was_playing = self.transport.is_playing();
         let chase_generation = self.transport.chase_generation();
         let midi_is_processed =
             !self.instruments.is_empty() || include_midi || !midi_input.is_empty();
-        let mut midi_event_count = if was_playing && !output.is_empty() && midi_is_processed {
-            let (chase_state_count, chase_note_count) = if self.last_midi_sample_end
-                != Some(block_start_sample)
-                || self.last_midi_chase_generation != Some(chase_generation)
-            {
-                let controller_count = self
-                    .midi_plan
-                    .active_controllers_at(block_start_sample, &mut self.midi_scratch)
-                    .map_err(AudioGraphError::MidiSchedule)?;
-                let pitch_bend_count = self
-                    .midi_plan
-                    .active_pitch_bends_at(
-                        block_start_sample,
-                        &mut self.midi_scratch[controller_count..],
-                    )
-                    .map_err(AudioGraphError::MidiSchedule)?;
-                let note_count = self
-                    .midi_plan
-                    .active_notes_at(
-                        block_start_sample,
-                        &mut self.midi_scratch[controller_count + pitch_bend_count..],
-                    )
-                    .map_err(AudioGraphError::MidiSchedule)?;
-                (controller_count + pitch_bend_count, note_count)
-            } else {
-                (0, 0)
-            };
-            let chase_count = chase_state_count + chase_note_count;
-            let scheduled_count = self
-                .midi_plan
-                .events_for_block(
-                    block_start_sample,
-                    output.len(),
-                    &mut self.midi_scratch[chase_count..],
-                )
-                .map_err(AudioGraphError::MidiSchedule)?;
-            let count = chase_count + scheduled_count;
-            if chase_count > 0 {
-                self.midi_scratch[..count].sort_unstable_by_key(|event| {
-                    let event = event.expect("rendered MIDI event slots are initialized");
-                    (
-                        event.sample_offset,
-                        event.sort_priority(),
-                        event.track_id.value(),
-                        event.controller.unwrap_or(event.pitch),
-                        event.note_id.map_or(0, aaadaw_core::NoteId::value),
-                    )
-                });
-            }
-            if include_midi {
-                if midi_output.len() < count {
-                    return Err(AudioGraphError::MidiSchedule(
-                        MidiScheduleError::OutputBufferTooSmall {
-                            required: count,
-                            available: midi_output.len(),
-                        },
-                    ));
-                }
-                midi_output
-                    .iter_mut()
-                    .zip(self.midi_scratch.iter().take(count))
-                    .for_each(|(destination, source)| *destination = *source);
-            }
-            count
-        } else {
-            0
+        let previous_midi_cursor = MidiSegmentCursor {
+            sample_end: self.last_midi_sample_end,
+            chase_generation: self.last_midi_chase_generation,
         };
+        let should_schedule_midi = was_playing && !output.is_empty() && midi_is_processed;
+        let (mut midi_event_count, next_midi_cursor) = self.schedule_segment_midi_events(
+            block_start_sample,
+            output.len(),
+            chase_generation,
+            previous_midi_cursor,
+            should_schedule_midi,
+        )?;
+        let mut midi_output_count = 0;
+        if include_midi && midi_event_count > 0 {
+            midi_output_count = self.copy_midi_output(midi_event_count, midi_output)?;
+        }
         let block = self
             .transport
             .advance_block(output.len())
@@ -2774,6 +3521,8 @@ impl AudioRenderGraph {
                         .find(|route| route.track_index == previous_index)
                 {
                     self.midi_scratch[midi_event_count] = Some(ScheduledMidiEvent {
+                        channel: 0,
+                        bus: 0,
                         sample_offset: 0,
                         track_id: route.track_id,
                         note_id: Some(
@@ -2784,6 +3533,9 @@ impl AudioRenderGraph {
                         velocity: 0,
                         controller: None,
                         pitch_bend: None,
+                        program: None,
+                        sysex_offset: crate::midi::NO_SYSEX_OFFSET,
+                        sysex_length: 0,
                         kind: MidiEventKind::NoteOff,
                     });
                     midi_event_count += 1;
@@ -2797,6 +3549,8 @@ impl AudioRenderGraph {
                         .find(|route| route.track_index == next_index)
                 {
                     self.midi_scratch[midi_event_count] = Some(ScheduledMidiEvent {
+                        channel: 0,
+                        bus: 0,
                         sample_offset: 0,
                         track_id: route.track_id,
                         note_id: Some(
@@ -2807,6 +3561,9 @@ impl AudioRenderGraph {
                         velocity: requested_velocity,
                         controller: None,
                         pitch_bend: None,
+                        program: None,
+                        sysex_offset: crate::midi::NO_SYSEX_OFFSET,
+                        sysex_length: 0,
                         kind: MidiEventKind::NoteOn,
                     });
                     midi_event_count += 1;
@@ -2829,18 +3586,7 @@ impl AudioRenderGraph {
             }
         }
         if include_midi && midi_event_count > 0 {
-            if midi_output.len() < midi_event_count {
-                return Err(AudioGraphError::MidiSchedule(
-                    MidiScheduleError::OutputBufferTooSmall {
-                        required: midi_event_count,
-                        available: midi_output.len(),
-                    },
-                ));
-            }
-            midi_output
-                .iter_mut()
-                .zip(self.midi_scratch.iter().take(midi_event_count))
-                .for_each(|(destination, source)| *destination = *source);
+            midi_output_count = self.copy_midi_output(midi_event_count, midi_output)?;
         }
         if midi_input.len() > MIDI_INPUT_EVENTS_PER_BLOCK {
             return Err(AudioGraphError::MidiInputEventBufferFull {
@@ -2868,8 +3614,10 @@ impl AudioRenderGraph {
                     event.sample_offset,
                     event.sort_priority(),
                     event.track_id.value(),
+                    event.channel,
                     event.controller.unwrap_or(event.pitch),
                     event.note_id.map_or(0, aaadaw_core::NoteId::value),
+                    event.sysex_offset,
                 )
             });
         }
@@ -2900,12 +3648,19 @@ impl AudioRenderGraph {
             return Ok(AudioRenderStats {
                 block,
                 underrun_samples: 0,
-                midi_event_count,
+                midi_event_count: if include_midi {
+                    midi_output_count
+                } else {
+                    midi_event_count
+                },
                 master_guarded_samples: 0,
                 master_non_finite_samples: 0,
             });
         }
         output.fill([0.0, 0.0]);
+        if include_hardware_outputs {
+            self.hardware_output_scratch[..output.len()].fill([0.0, 0.0]);
+        }
         for buffer in self.track_effect_buffers.iter_mut().flatten() {
             buffer[..output.len()].fill([0.0, 0.0]);
         }
@@ -2931,6 +3686,28 @@ impl AudioRenderGraph {
         } else {
             0
         } {
+            let should_reset_loop_position =
+                self.source_ranges[stream_index].is_some_and(|(item_start, item_end)| {
+                    let overlap_start = block.start_sample.max(item_start);
+                    let overlap_end = block_end_sample.min(item_end);
+                    overlap_start < overlap_end
+                        && self.source_cursors[stream_index] != Some(overlap_start)
+                        && self.source_cursor_can_wrap(
+                            stream_index,
+                            self.source_cursors[stream_index],
+                            overlap_start,
+                            self.transport.loop_range(),
+                        )
+                });
+            if should_reset_loop_position
+                && let Some(position) = &self.stream_positions[stream_index]
+            {
+                let item_start = self.source_ranges[stream_index]
+                    .expect("loop position reset belongs to an audio item")
+                    .0;
+                let overlap_start = block.start_sample.max(item_start);
+                position.reset_for_loop(overlap_start);
+            }
             let input = &mut self.scratch[stream_index][..output.len()];
             input.fill([0.0, 0.0]);
             if let Some((item_start, item_end)) = self.source_ranges[stream_index] {
@@ -2943,6 +3720,26 @@ impl AudioRenderGraph {
                         &mut input[offset..offset + length],
                         overlap_start,
                     );
+                    let fades = self.source_fades[stream_index].read();
+                    let (volume, muted, phase_inverted) = self.source_volumes[stream_index].read();
+                    let volume = if muted { 0.0 } else { volume };
+                    let polarity = if phase_inverted { -1.0 } else { 1.0 };
+                    let (take_volume, take_pan) = self.source_take_mixes[stream_index].read();
+                    for (index, frame) in input[offset..offset + length].iter_mut().enumerate() {
+                        let gain = volume
+                            * take_volume
+                            * fades.gain_at(
+                                overlap_start - item_start + index as u64,
+                                item_end - item_start,
+                            );
+                        frame[0] *= gain * polarity;
+                        frame[1] *= gain * polarity;
+                        if take_pan < 0.0 {
+                            frame[1] *= 1.0 + take_pan;
+                        } else {
+                            frame[0] *= 1.0 - take_pan;
+                        }
+                    }
                     underrun_samples = underrun_samples.saturating_add(underruns);
                     if underruns > 0
                         && let Some(position) = &self.stream_positions[stream_index]
@@ -3152,7 +3949,11 @@ impl AudioRenderGraph {
                     .as_mut()
                     .expect("active render graphs retain their instrument processors");
                 processor
-                    .process(&route.midi_events, &mut route.audio[..output.len()])
+                    .process_with_sysex_data(
+                        &route.midi_events,
+                        self.midi_plan.sysex_payload(),
+                        &mut route.audio[..output.len()],
+                    )
                     .map_err(|error| AudioGraphError::InstrumentProcess {
                         track_id: route.track_id,
                         error,
@@ -3173,11 +3974,27 @@ impl AudioRenderGraph {
         let mix_block = MixBlock {
             start_sample: block.start_sample,
             advances_timeline: block.is_playing,
-            frame_count: output.len(),
         };
         self.mixer
             .compile_solo_audibility(&mut self.solo_audible_tracks, &mut self.solo_bus_subtrees);
+        if self.mixer.has_solo.load(Ordering::Acquire) {
+            // Output paths may remain open for a soloed upstream source without
+            // making the receiver's own media, instrument or monitor audible.
+            // Clear own content before any upstream buffers are routed into it.
+            for (index, buffer) in self.track_effect_buffers.iter_mut().enumerate() {
+                if !self.solo_bus_subtrees[index]
+                    && let Some(buffer) = buffer
+                {
+                    buffer[..output.len()].fill([0.0, 0.0]);
+                }
+            }
+        }
         for track_index in self.mixer.routing_order.iter().copied() {
+            self.pre_fx_scratch[..output.len()].copy_from_slice(
+                &self.track_effect_buffers[track_index]
+                    .as_ref()
+                    .expect("routing buffer")[..output.len()],
+            );
             while self
                 .effects
                 .get(next_effect)
@@ -3206,47 +4023,104 @@ impl AudioRenderGraph {
             let source = self.track_effect_buffers[track_index]
                 .as_ref()
                 .expect("every track has a preallocated routing buffer");
-            let solo_allowed = self.solo_audible_tracks[track_index];
-            if let Some(destination) = self.mixer.tracks[track_index].output_track_index {
-                mix_track_buffer_to_bus(
-                    &mut self.track_effect_buffers,
-                    TrackRoute {
-                        source_index: track_index,
-                        destination_index: destination,
-                    },
-                    &self.mixer,
-                    mix_block,
-                    solo_allowed,
-                    !self.track_has_stereo_input[track_index],
-                );
-            } else {
-                self.mixer.mix_stereo_routed_unchecked(
-                    track_index,
-                    &source[..output.len()],
-                    output,
-                    mix_block,
-                    solo_allowed,
-                    !self.track_has_stereo_input[track_index],
-                );
+            self.pre_fader_scratch[..output.len()].copy_from_slice(&source[..output.len()]);
+            let post_fader = &mut self.post_fader_scratch[..output.len()];
+            post_fader.fill([0.0, 0.0]);
+            // Advance source automation/ramp and publish its meter exactly once,
+            // independent of the number of output connections.
+            self.mixer.mix_stereo_routed_unchecked(
+                track_index,
+                &source[..output.len()],
+                post_fader,
+                mix_block,
+                self.solo_audible_tracks[track_index] || self.solo_bus_subtrees[track_index],
+                !self.track_has_stereo_input[track_index],
+            );
+            let track = &self.mixer.tracks[track_index];
+            if track.main_send_enabled {
+                if let Some(destination) = track.output_track_index {
+                    if self.solo_audible_tracks[track_index] || self.solo_bus_subtrees[destination]
+                    {
+                        let destination_buffer = self.track_effect_buffers[destination]
+                            .as_mut()
+                            .expect("routing destination buffer");
+                        add_routed_buffer(
+                            post_fader,
+                            &mut destination_buffer[..output.len()],
+                            1.0,
+                            1.0,
+                        );
+                    }
+                } else if self.solo_audible_tracks[track_index] {
+                    add_routed_buffer(post_fader, output, 1.0, 1.0);
+                }
+            }
+            for send in &track.sends {
+                if !send.muted
+                    && !track.live.muted.load(Ordering::Acquire)
+                    && (self.solo_audible_tracks[track_index]
+                        || self.solo_bus_subtrees[send.destination])
+                {
+                    let destination = self.track_effect_buffers[send.destination]
+                        .as_mut()
+                        .expect("send destination buffer");
+                    add_routed_send_buffer(
+                        match send.tap {
+                            AudioSendTap::PostFader => post_fader,
+                            AudioSendTap::PreFx => &self.pre_fx_scratch[..output.len()],
+                            AudioSendTap::PreFader => &self.pre_fader_scratch[..output.len()],
+                        },
+                        &mut destination[..output.len()],
+                        send,
+                    );
+                }
+            }
+            if include_hardware_outputs && !track.live.muted.load(Ordering::Acquire) {
+                for hardware_output in &track.hardware_outputs {
+                    if !hardware_output.muted
+                        && (self.solo_audible_tracks[track_index]
+                            || self.solo_bus_subtrees[track_index])
+                    {
+                        add_routed_hardware_output_buffer(
+                            match hardware_output.send_mode {
+                                AudioHardwareOutputSendMode::PostFader => post_fader,
+                                AudioHardwareOutputSendMode::PreFx => {
+                                    &self.pre_fx_scratch[..output.len()]
+                                }
+                                AudioHardwareOutputSendMode::DeprecatedPostFx
+                                | AudioHardwareOutputSendMode::PostFx => {
+                                    &self.pre_fader_scratch[..output.len()]
+                                }
+                            },
+                            &mut self.hardware_output_scratch[..output.len()],
+                            hardware_output,
+                        );
+                    }
+                }
+            }
+        }
+
+        self.master_mix.process(output);
+        if include_hardware_outputs {
+            let hardware_output = &self.hardware_output_scratch[..output.len()];
+            for (master, hardware) in output.iter_mut().zip(hardware_output) {
+                master[0] += hardware[0];
+                master[1] += hardware[1];
             }
         }
         let master_guard = self.master_output_safety.process(output);
         if was_playing && midi_is_processed && block.frame_count > 0 {
-            self.last_midi_sample_end = Some(
-                block
-                    .start_sample
-                    .checked_add(
-                        u64::try_from(block.frame_count)
-                            .map_err(|_| AudioGraphError::TransportPositionOverflow)?,
-                    )
-                    .ok_or(AudioGraphError::TransportPositionOverflow)?,
-            );
-            self.last_midi_chase_generation = Some(chase_generation);
+            self.last_midi_sample_end = next_midi_cursor.sample_end;
+            self.last_midi_chase_generation = next_midi_cursor.chase_generation;
         }
         Ok(AudioRenderStats {
             block,
             underrun_samples,
-            midi_event_count,
+            midi_event_count: if include_midi {
+                midi_output_count
+            } else {
+                midi_event_count
+            },
             master_guarded_samples: master_guard.guarded_samples,
             master_non_finite_samples: master_guard.non_finite_samples,
         })

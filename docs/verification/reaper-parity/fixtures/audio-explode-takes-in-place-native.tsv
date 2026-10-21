@@ -1,0 +1,262 @@
+multiple-items_before	track_count=2	item_count=2	selected_count=2
+multiple-items_before	track=0	track_name=Multi-selection A	track_item_count=1
+multiple-items_before	track=0	item=0	position=1.000000000	length=1.500000000	selected=1	take_count=2	active_index=1
+multiple-items_before	track=0	item=0	take=0	name=Multi A take 1	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav	offset=0.000000000	rate=0.800000000
+multiple-items_before	track=0	item=0	take=1	name=Multi A take 2	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav	offset=0.125000000	rate=1.000000000
+multiple-items_before	track=1	track_name=Multi-selection B	track_item_count=1
+multiple-items_before	track=1	item=0	position=4.000000000	length=2.000000000	selected=1	take_count=2	active_index=0
+multiple-items_before	track=1	item=0	take=0	name=Multi B take 1	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-02.wav	offset=0.000000000	rate=0.800000000
+multiple-items_before	track=1	item=0	take=1	name=Multi B take 2	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-02.wav	offset=0.125000000	rate=1.000000000
+multiple-items_after	track_count=2	item_count=4	selected_count=0
+multiple-items_after	track=0	track_name=Multi-selection A	track_item_count=2
+multiple-items_after	track=0	item=0	position=1.000000000	length=1.500000000	selected=0	take_count=1	active_index=0
+multiple-items_after	track=0	item=0	take=0	name=Multi A take 1	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav	offset=0.000000000	rate=0.800000000
+multiple-items_after	track=0	item=1	position=1.000000000	length=1.500000000	selected=0	take_count=1	active_index=0
+multiple-items_after	track=0	item=1	take=0	name=Multi A take 2	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav	offset=0.125000000	rate=1.000000000
+multiple-items_after	track=1	track_name=Multi-selection B	track_item_count=2
+multiple-items_after	track=1	item=0	position=4.000000000	length=2.000000000	selected=0	take_count=1	active_index=0
+multiple-items_after	track=1	item=0	take=0	name=Multi B take 1	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-02.wav	offset=0.000000000	rate=0.800000000
+multiple-items_after	track=1	item=1	position=4.000000000	length=2.000000000	selected=0	take_count=1	active_index=0
+multiple-items_after	track=1	item=1	take=0	name=Multi B take 2	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-02.wav	offset=0.125000000	rate=1.000000000
+multiple-items_undo	track_count=2	item_count=2	selected_count=0
+multiple-items_undo	track=0	track_name=Multi-selection A	track_item_count=1
+multiple-items_undo	track=0	item=0	position=1.000000000	length=1.500000000	selected=0	take_count=2	active_index=1
+multiple-items_undo	track=0	item=0	take=0	name=Multi A take 1	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav	offset=0.000000000	rate=0.800000000
+multiple-items_undo	track=0	item=0	take=1	name=Multi A take 2	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav	offset=0.125000000	rate=1.000000000
+multiple-items_undo	track=1	track_name=Multi-selection B	track_item_count=1
+multiple-items_undo	track=1	item=0	position=4.000000000	length=2.000000000	selected=0	take_count=2	active_index=0
+multiple-items_undo	track=1	item=0	take=0	name=Multi B take 1	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-02.wav	offset=0.000000000	rate=0.800000000
+multiple-items_undo	track=1	item=0	take=1	name=Multi B take 2	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-02.wav	offset=0.125000000	rate=1.000000000
+multiple-items_redo	track_count=2	item_count=4	selected_count=0
+multiple-items_redo	track=0	track_name=Multi-selection A	track_item_count=2
+multiple-items_redo	track=0	item=0	position=1.000000000	length=1.500000000	selected=0	take_count=1	active_index=0
+multiple-items_redo	track=0	item=0	take=0	name=Multi A take 1	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav	offset=0.000000000	rate=0.800000000
+multiple-items_redo	track=0	item=1	position=1.000000000	length=1.500000000	selected=0	take_count=1	active_index=0
+multiple-items_redo	track=0	item=1	take=0	name=Multi A take 2	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav	offset=0.125000000	rate=1.000000000
+multiple-items_redo	track=1	track_name=Multi-selection B	track_item_count=2
+multiple-items_redo	track=1	item=0	position=4.000000000	length=2.000000000	selected=0	take_count=1	active_index=0
+multiple-items_redo	track=1	item=0	take=0	name=Multi B take 1	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-02.wav	offset=0.000000000	rate=0.800000000
+multiple-items_redo	track=1	item=1	position=4.000000000	length=2.000000000	selected=0	take_count=1	active_index=0
+multiple-items_redo	track=1	item=1	take=0	name=Multi B take 2	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-02.wav	offset=0.125000000	rate=1.000000000
+mixed-items_before	track_count=3	item_count=6	selected_count=2
+mixed-items_before	track=0	track_name=Multi-selection A	track_item_count=2
+mixed-items_before	track=0	item=0	position=1.000000000	length=1.500000000	selected=0	take_count=1	active_index=0
+mixed-items_before	track=0	item=0	take=0	name=Multi A take 1	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav	offset=0.000000000	rate=0.800000000
+mixed-items_before	track=0	item=1	position=1.000000000	length=1.500000000	selected=0	take_count=1	active_index=0
+mixed-items_before	track=0	item=1	take=0	name=Multi A take 2	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav	offset=0.125000000	rate=1.000000000
+mixed-items_before	track=1	track_name=Multi-selection B	track_item_count=2
+mixed-items_before	track=1	item=0	position=4.000000000	length=2.000000000	selected=0	take_count=1	active_index=0
+mixed-items_before	track=1	item=0	take=0	name=Multi B take 1	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-02.wav	offset=0.000000000	rate=0.800000000
+mixed-items_before	track=1	item=1	position=4.000000000	length=2.000000000	selected=0	take_count=1	active_index=0
+mixed-items_before	track=1	item=1	take=0	name=Multi B take 2	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-02.wav	offset=0.125000000	rate=1.000000000
+mixed-items_before	track=2	track_name=Mixed-take selection	track_item_count=2
+mixed-items_before	track=2	item=0	position=8.000000000	length=1.250000000	selected=1	take_count=2	active_index=1
+mixed-items_before	track=2	item=0	take=0	name=Mixed multi take 1	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav	offset=0.000000000	rate=0.800000000
+mixed-items_before	track=2	item=0	take=1	name=Mixed multi take 2	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav	offset=0.125000000	rate=1.000000000
+mixed-items_before	track=2	item=1	position=10.000000000	length=1.250000000	selected=1	take_count=1	active_index=0
+mixed-items_before	track=2	item=1	take=0	name=Mixed single take 1	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-02.wav	offset=0.000000000	rate=0.800000000
+mixed-items_after	track_count=3	item_count=7	selected_count=0
+mixed-items_after	track=0	track_name=Multi-selection A	track_item_count=2
+mixed-items_after	track=0	item=0	position=1.000000000	length=1.500000000	selected=0	take_count=1	active_index=0
+mixed-items_after	track=0	item=0	take=0	name=Multi A take 1	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav	offset=0.000000000	rate=0.800000000
+mixed-items_after	track=0	item=1	position=1.000000000	length=1.500000000	selected=0	take_count=1	active_index=0
+mixed-items_after	track=0	item=1	take=0	name=Multi A take 2	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav	offset=0.125000000	rate=1.000000000
+mixed-items_after	track=1	track_name=Multi-selection B	track_item_count=2
+mixed-items_after	track=1	item=0	position=4.000000000	length=2.000000000	selected=0	take_count=1	active_index=0
+mixed-items_after	track=1	item=0	take=0	name=Multi B take 1	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-02.wav	offset=0.000000000	rate=0.800000000
+mixed-items_after	track=1	item=1	position=4.000000000	length=2.000000000	selected=0	take_count=1	active_index=0
+mixed-items_after	track=1	item=1	take=0	name=Multi B take 2	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-02.wav	offset=0.125000000	rate=1.000000000
+mixed-items_after	track=2	track_name=Mixed-take selection	track_item_count=3
+mixed-items_after	track=2	item=0	position=8.000000000	length=1.250000000	selected=0	take_count=1	active_index=0
+mixed-items_after	track=2	item=0	take=0	name=Mixed multi take 1	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav	offset=0.000000000	rate=0.800000000
+mixed-items_after	track=2	item=1	position=8.000000000	length=1.250000000	selected=0	take_count=1	active_index=0
+mixed-items_after	track=2	item=1	take=0	name=Mixed multi take 2	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav	offset=0.125000000	rate=1.000000000
+mixed-items_after	track=2	item=2	position=10.000000000	length=1.250000000	selected=0	take_count=1	active_index=0
+mixed-items_after	track=2	item=2	take=0	name=Mixed single take 1	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-02.wav	offset=0.000000000	rate=0.800000000
+mixed-items_undo	track_count=3	item_count=6	selected_count=0
+mixed-items_undo	track=0	track_name=Multi-selection A	track_item_count=2
+mixed-items_undo	track=0	item=0	position=1.000000000	length=1.500000000	selected=0	take_count=1	active_index=0
+mixed-items_undo	track=0	item=0	take=0	name=Multi A take 1	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav	offset=0.000000000	rate=0.800000000
+mixed-items_undo	track=0	item=1	position=1.000000000	length=1.500000000	selected=0	take_count=1	active_index=0
+mixed-items_undo	track=0	item=1	take=0	name=Multi A take 2	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav	offset=0.125000000	rate=1.000000000
+mixed-items_undo	track=1	track_name=Multi-selection B	track_item_count=2
+mixed-items_undo	track=1	item=0	position=4.000000000	length=2.000000000	selected=0	take_count=1	active_index=0
+mixed-items_undo	track=1	item=0	take=0	name=Multi B take 1	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-02.wav	offset=0.000000000	rate=0.800000000
+mixed-items_undo	track=1	item=1	position=4.000000000	length=2.000000000	selected=0	take_count=1	active_index=0
+mixed-items_undo	track=1	item=1	take=0	name=Multi B take 2	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-02.wav	offset=0.125000000	rate=1.000000000
+mixed-items_undo	track=2	track_name=Mixed-take selection	track_item_count=2
+mixed-items_undo	track=2	item=0	position=8.000000000	length=1.250000000	selected=0	take_count=2	active_index=1
+mixed-items_undo	track=2	item=0	take=0	name=Mixed multi take 1	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav	offset=0.000000000	rate=0.800000000
+mixed-items_undo	track=2	item=0	take=1	name=Mixed multi take 2	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav	offset=0.125000000	rate=1.000000000
+mixed-items_undo	track=2	item=1	position=10.000000000	length=1.250000000	selected=0	take_count=1	active_index=0
+mixed-items_undo	track=2	item=1	take=0	name=Mixed single take 1	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-02.wav	offset=0.000000000	rate=0.800000000
+mixed-items_redo	track_count=3	item_count=7	selected_count=0
+mixed-items_redo	track=0	track_name=Multi-selection A	track_item_count=2
+mixed-items_redo	track=0	item=0	position=1.000000000	length=1.500000000	selected=0	take_count=1	active_index=0
+mixed-items_redo	track=0	item=0	take=0	name=Multi A take 1	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav	offset=0.000000000	rate=0.800000000
+mixed-items_redo	track=0	item=1	position=1.000000000	length=1.500000000	selected=0	take_count=1	active_index=0
+mixed-items_redo	track=0	item=1	take=0	name=Multi A take 2	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav	offset=0.125000000	rate=1.000000000
+mixed-items_redo	track=1	track_name=Multi-selection B	track_item_count=2
+mixed-items_redo	track=1	item=0	position=4.000000000	length=2.000000000	selected=0	take_count=1	active_index=0
+mixed-items_redo	track=1	item=0	take=0	name=Multi B take 1	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-02.wav	offset=0.000000000	rate=0.800000000
+mixed-items_redo	track=1	item=1	position=4.000000000	length=2.000000000	selected=0	take_count=1	active_index=0
+mixed-items_redo	track=1	item=1	take=0	name=Multi B take 2	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-02.wav	offset=0.125000000	rate=1.000000000
+mixed-items_redo	track=2	track_name=Mixed-take selection	track_item_count=3
+mixed-items_redo	track=2	item=0	position=8.000000000	length=1.250000000	selected=0	take_count=1	active_index=0
+mixed-items_redo	track=2	item=0	take=0	name=Mixed multi take 1	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav	offset=0.000000000	rate=0.800000000
+mixed-items_redo	track=2	item=1	position=8.000000000	length=1.250000000	selected=0	take_count=1	active_index=0
+mixed-items_redo	track=2	item=1	take=0	name=Mixed multi take 2	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav	offset=0.125000000	rate=1.000000000
+mixed-items_redo	track=2	item=2	position=10.000000000	length=1.250000000	selected=0	take_count=1	active_index=0
+mixed-items_redo	track=2	item=2	take=0	name=Mixed single take 1	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-02.wav	offset=0.000000000	rate=0.800000000
+single-take-control_before	track_count=4	item_count=8	selected_count=1
+single-take-control_before	track=0	track_name=Multi-selection A	track_item_count=2
+single-take-control_before	track=0	item=0	position=1.000000000	length=1.500000000	selected=0	take_count=1	active_index=0
+single-take-control_before	track=0	item=0	take=0	name=Multi A take 1	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav	offset=0.000000000	rate=0.800000000
+single-take-control_before	track=0	item=1	position=1.000000000	length=1.500000000	selected=0	take_count=1	active_index=0
+single-take-control_before	track=0	item=1	take=0	name=Multi A take 2	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav	offset=0.125000000	rate=1.000000000
+single-take-control_before	track=1	track_name=Multi-selection B	track_item_count=2
+single-take-control_before	track=1	item=0	position=4.000000000	length=2.000000000	selected=0	take_count=1	active_index=0
+single-take-control_before	track=1	item=0	take=0	name=Multi B take 1	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-02.wav	offset=0.000000000	rate=0.800000000
+single-take-control_before	track=1	item=1	position=4.000000000	length=2.000000000	selected=0	take_count=1	active_index=0
+single-take-control_before	track=1	item=1	take=0	name=Multi B take 2	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-02.wav	offset=0.125000000	rate=1.000000000
+single-take-control_before	track=2	track_name=Mixed-take selection	track_item_count=3
+single-take-control_before	track=2	item=0	position=8.000000000	length=1.250000000	selected=0	take_count=1	active_index=0
+single-take-control_before	track=2	item=0	take=0	name=Mixed multi take 1	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav	offset=0.000000000	rate=0.800000000
+single-take-control_before	track=2	item=1	position=8.000000000	length=1.250000000	selected=0	take_count=1	active_index=0
+single-take-control_before	track=2	item=1	take=0	name=Mixed multi take 2	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav	offset=0.125000000	rate=1.000000000
+single-take-control_before	track=2	item=2	position=10.000000000	length=1.250000000	selected=0	take_count=1	active_index=0
+single-take-control_before	track=2	item=2	take=0	name=Mixed single take 1	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-02.wav	offset=0.000000000	rate=0.800000000
+single-take-control_before	track=3	track_name=Single-take control	track_item_count=1
+single-take-control_before	track=3	item=0	position=12.000000000	length=1.250000000	selected=1	take_count=1	active_index=0
+single-take-control_before	track=3	item=0	take=0	name=Single take 1	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-02.wav	offset=0.000000000	rate=0.800000000
+single-take-control_after	track_count=4	item_count=8	selected_count=0
+single-take-control_after	track=0	track_name=Multi-selection A	track_item_count=2
+single-take-control_after	track=0	item=0	position=1.000000000	length=1.500000000	selected=0	take_count=1	active_index=0
+single-take-control_after	track=0	item=0	take=0	name=Multi A take 1	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav	offset=0.000000000	rate=0.800000000
+single-take-control_after	track=0	item=1	position=1.000000000	length=1.500000000	selected=0	take_count=1	active_index=0
+single-take-control_after	track=0	item=1	take=0	name=Multi A take 2	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav	offset=0.125000000	rate=1.000000000
+single-take-control_after	track=1	track_name=Multi-selection B	track_item_count=2
+single-take-control_after	track=1	item=0	position=4.000000000	length=2.000000000	selected=0	take_count=1	active_index=0
+single-take-control_after	track=1	item=0	take=0	name=Multi B take 1	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-02.wav	offset=0.000000000	rate=0.800000000
+single-take-control_after	track=1	item=1	position=4.000000000	length=2.000000000	selected=0	take_count=1	active_index=0
+single-take-control_after	track=1	item=1	take=0	name=Multi B take 2	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-02.wav	offset=0.125000000	rate=1.000000000
+single-take-control_after	track=2	track_name=Mixed-take selection	track_item_count=3
+single-take-control_after	track=2	item=0	position=8.000000000	length=1.250000000	selected=0	take_count=1	active_index=0
+single-take-control_after	track=2	item=0	take=0	name=Mixed multi take 1	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav	offset=0.000000000	rate=0.800000000
+single-take-control_after	track=2	item=1	position=8.000000000	length=1.250000000	selected=0	take_count=1	active_index=0
+single-take-control_after	track=2	item=1	take=0	name=Mixed multi take 2	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav	offset=0.125000000	rate=1.000000000
+single-take-control_after	track=2	item=2	position=10.000000000	length=1.250000000	selected=0	take_count=1	active_index=0
+single-take-control_after	track=2	item=2	take=0	name=Mixed single take 1	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-02.wav	offset=0.000000000	rate=0.800000000
+single-take-control_after	track=3	track_name=Single-take control	track_item_count=1
+single-take-control_after	track=3	item=0	position=12.000000000	length=1.250000000	selected=0	take_count=1	active_index=0
+single-take-control_after	track=3	item=0	take=0	name=Single take 1	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-02.wav	offset=0.000000000	rate=0.800000000
+single-take-control	result=no-op
+three-take-item_before	track_count=5	item_count=9	selected_count=1
+three-take-item_before	track=0	track_name=Multi-selection A	track_item_count=2
+three-take-item_before	track=0	item=0	position=1.000000000	length=1.500000000	selected=0	take_count=1	active_index=0
+three-take-item_before	track=0	item=0	take=0	name=Multi A take 1	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav	offset=0.000000000	rate=0.800000000
+three-take-item_before	track=0	item=1	position=1.000000000	length=1.500000000	selected=0	take_count=1	active_index=0
+three-take-item_before	track=0	item=1	take=0	name=Multi A take 2	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav	offset=0.125000000	rate=1.000000000
+three-take-item_before	track=1	track_name=Multi-selection B	track_item_count=2
+three-take-item_before	track=1	item=0	position=4.000000000	length=2.000000000	selected=0	take_count=1	active_index=0
+three-take-item_before	track=1	item=0	take=0	name=Multi B take 1	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-02.wav	offset=0.000000000	rate=0.800000000
+three-take-item_before	track=1	item=1	position=4.000000000	length=2.000000000	selected=0	take_count=1	active_index=0
+three-take-item_before	track=1	item=1	take=0	name=Multi B take 2	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-02.wav	offset=0.125000000	rate=1.000000000
+three-take-item_before	track=2	track_name=Mixed-take selection	track_item_count=3
+three-take-item_before	track=2	item=0	position=8.000000000	length=1.250000000	selected=0	take_count=1	active_index=0
+three-take-item_before	track=2	item=0	take=0	name=Mixed multi take 1	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav	offset=0.000000000	rate=0.800000000
+three-take-item_before	track=2	item=1	position=8.000000000	length=1.250000000	selected=0	take_count=1	active_index=0
+three-take-item_before	track=2	item=1	take=0	name=Mixed multi take 2	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav	offset=0.125000000	rate=1.000000000
+three-take-item_before	track=2	item=2	position=10.000000000	length=1.250000000	selected=0	take_count=1	active_index=0
+three-take-item_before	track=2	item=2	take=0	name=Mixed single take 1	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-02.wav	offset=0.000000000	rate=0.800000000
+three-take-item_before	track=3	track_name=Single-take control	track_item_count=1
+three-take-item_before	track=3	item=0	position=12.000000000	length=1.250000000	selected=0	take_count=1	active_index=0
+three-take-item_before	track=3	item=0	take=0	name=Single take 1	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-02.wav	offset=0.000000000	rate=0.800000000
+three-take-item_before	track=4	track_name=Three-take item	track_item_count=1
+three-take-item_before	track=4	item=0	position=6.000000000	length=2.000000000	selected=1	take_count=3	active_index=1
+three-take-item_before	track=4	item=0	take=0	name=Three take 1	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav	offset=0.000000000	rate=0.800000000
+three-take-item_before	track=4	item=0	take=1	name=Three take 2	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav	offset=0.125000000	rate=1.000000000
+three-take-item_before	track=4	item=0	take=2	name=Three take 3	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav	offset=0.250000000	rate=1.200000000
+three-take-item_after	track_count=5	item_count=11	selected_count=0
+three-take-item_after	track=0	track_name=Multi-selection A	track_item_count=2
+three-take-item_after	track=0	item=0	position=1.000000000	length=1.500000000	selected=0	take_count=1	active_index=0
+three-take-item_after	track=0	item=0	take=0	name=Multi A take 1	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav	offset=0.000000000	rate=0.800000000
+three-take-item_after	track=0	item=1	position=1.000000000	length=1.500000000	selected=0	take_count=1	active_index=0
+three-take-item_after	track=0	item=1	take=0	name=Multi A take 2	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav	offset=0.125000000	rate=1.000000000
+three-take-item_after	track=1	track_name=Multi-selection B	track_item_count=2
+three-take-item_after	track=1	item=0	position=4.000000000	length=2.000000000	selected=0	take_count=1	active_index=0
+three-take-item_after	track=1	item=0	take=0	name=Multi B take 1	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-02.wav	offset=0.000000000	rate=0.800000000
+three-take-item_after	track=1	item=1	position=4.000000000	length=2.000000000	selected=0	take_count=1	active_index=0
+three-take-item_after	track=1	item=1	take=0	name=Multi B take 2	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-02.wav	offset=0.125000000	rate=1.000000000
+three-take-item_after	track=2	track_name=Mixed-take selection	track_item_count=3
+three-take-item_after	track=2	item=0	position=8.000000000	length=1.250000000	selected=0	take_count=1	active_index=0
+three-take-item_after	track=2	item=0	take=0	name=Mixed multi take 1	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav	offset=0.000000000	rate=0.800000000
+three-take-item_after	track=2	item=1	position=8.000000000	length=1.250000000	selected=0	take_count=1	active_index=0
+three-take-item_after	track=2	item=1	take=0	name=Mixed multi take 2	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav	offset=0.125000000	rate=1.000000000
+three-take-item_after	track=2	item=2	position=10.000000000	length=1.250000000	selected=0	take_count=1	active_index=0
+three-take-item_after	track=2	item=2	take=0	name=Mixed single take 1	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-02.wav	offset=0.000000000	rate=0.800000000
+three-take-item_after	track=3	track_name=Single-take control	track_item_count=1
+three-take-item_after	track=3	item=0	position=12.000000000	length=1.250000000	selected=0	take_count=1	active_index=0
+three-take-item_after	track=3	item=0	take=0	name=Single take 1	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-02.wav	offset=0.000000000	rate=0.800000000
+three-take-item_after	track=4	track_name=Three-take item	track_item_count=3
+three-take-item_after	track=4	item=0	position=6.000000000	length=2.000000000	selected=0	take_count=1	active_index=0
+three-take-item_after	track=4	item=0	take=0	name=Three take 1	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav	offset=0.000000000	rate=0.800000000
+three-take-item_after	track=4	item=1	position=6.000000000	length=2.000000000	selected=0	take_count=1	active_index=0
+three-take-item_after	track=4	item=1	take=0	name=Three take 2	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav	offset=0.125000000	rate=1.000000000
+three-take-item_after	track=4	item=2	position=6.000000000	length=2.000000000	selected=0	take_count=1	active_index=0
+three-take-item_after	track=4	item=2	take=0	name=Three take 3	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav	offset=0.250000000	rate=1.200000000
+three-take-item_undo	track_count=5	item_count=9	selected_count=0
+three-take-item_undo	track=0	track_name=Multi-selection A	track_item_count=2
+three-take-item_undo	track=0	item=0	position=1.000000000	length=1.500000000	selected=0	take_count=1	active_index=0
+three-take-item_undo	track=0	item=0	take=0	name=Multi A take 1	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav	offset=0.000000000	rate=0.800000000
+three-take-item_undo	track=0	item=1	position=1.000000000	length=1.500000000	selected=0	take_count=1	active_index=0
+three-take-item_undo	track=0	item=1	take=0	name=Multi A take 2	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav	offset=0.125000000	rate=1.000000000
+three-take-item_undo	track=1	track_name=Multi-selection B	track_item_count=2
+three-take-item_undo	track=1	item=0	position=4.000000000	length=2.000000000	selected=0	take_count=1	active_index=0
+three-take-item_undo	track=1	item=0	take=0	name=Multi B take 1	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-02.wav	offset=0.000000000	rate=0.800000000
+three-take-item_undo	track=1	item=1	position=4.000000000	length=2.000000000	selected=0	take_count=1	active_index=0
+three-take-item_undo	track=1	item=1	take=0	name=Multi B take 2	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-02.wav	offset=0.125000000	rate=1.000000000
+three-take-item_undo	track=2	track_name=Mixed-take selection	track_item_count=3
+three-take-item_undo	track=2	item=0	position=8.000000000	length=1.250000000	selected=0	take_count=1	active_index=0
+three-take-item_undo	track=2	item=0	take=0	name=Mixed multi take 1	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav	offset=0.000000000	rate=0.800000000
+three-take-item_undo	track=2	item=1	position=8.000000000	length=1.250000000	selected=0	take_count=1	active_index=0
+three-take-item_undo	track=2	item=1	take=0	name=Mixed multi take 2	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav	offset=0.125000000	rate=1.000000000
+three-take-item_undo	track=2	item=2	position=10.000000000	length=1.250000000	selected=0	take_count=1	active_index=0
+three-take-item_undo	track=2	item=2	take=0	name=Mixed single take 1	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-02.wav	offset=0.000000000	rate=0.800000000
+three-take-item_undo	track=3	track_name=Single-take control	track_item_count=1
+three-take-item_undo	track=3	item=0	position=12.000000000	length=1.250000000	selected=0	take_count=1	active_index=0
+three-take-item_undo	track=3	item=0	take=0	name=Single take 1	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-02.wav	offset=0.000000000	rate=0.800000000
+three-take-item_undo	track=4	track_name=Three-take item	track_item_count=1
+three-take-item_undo	track=4	item=0	position=6.000000000	length=2.000000000	selected=0	take_count=3	active_index=1
+three-take-item_undo	track=4	item=0	take=0	name=Three take 1	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav	offset=0.000000000	rate=0.800000000
+three-take-item_undo	track=4	item=0	take=1	name=Three take 2	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav	offset=0.125000000	rate=1.000000000
+three-take-item_undo	track=4	item=0	take=2	name=Three take 3	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav	offset=0.250000000	rate=1.200000000
+three-take-item_redo	track_count=5	item_count=11	selected_count=0
+three-take-item_redo	track=0	track_name=Multi-selection A	track_item_count=2
+three-take-item_redo	track=0	item=0	position=1.000000000	length=1.500000000	selected=0	take_count=1	active_index=0
+three-take-item_redo	track=0	item=0	take=0	name=Multi A take 1	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav	offset=0.000000000	rate=0.800000000
+three-take-item_redo	track=0	item=1	position=1.000000000	length=1.500000000	selected=0	take_count=1	active_index=0
+three-take-item_redo	track=0	item=1	take=0	name=Multi A take 2	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav	offset=0.125000000	rate=1.000000000
+three-take-item_redo	track=1	track_name=Multi-selection B	track_item_count=2
+three-take-item_redo	track=1	item=0	position=4.000000000	length=2.000000000	selected=0	take_count=1	active_index=0
+three-take-item_redo	track=1	item=0	take=0	name=Multi B take 1	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-02.wav	offset=0.000000000	rate=0.800000000
+three-take-item_redo	track=1	item=1	position=4.000000000	length=2.000000000	selected=0	take_count=1	active_index=0
+three-take-item_redo	track=1	item=1	take=0	name=Multi B take 2	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-02.wav	offset=0.125000000	rate=1.000000000
+three-take-item_redo	track=2	track_name=Mixed-take selection	track_item_count=3
+three-take-item_redo	track=2	item=0	position=8.000000000	length=1.250000000	selected=0	take_count=1	active_index=0
+three-take-item_redo	track=2	item=0	take=0	name=Mixed multi take 1	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav	offset=0.000000000	rate=0.800000000
+three-take-item_redo	track=2	item=1	position=8.000000000	length=1.250000000	selected=0	take_count=1	active_index=0
+three-take-item_redo	track=2	item=1	take=0	name=Mixed multi take 2	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav	offset=0.125000000	rate=1.000000000
+three-take-item_redo	track=2	item=2	position=10.000000000	length=1.250000000	selected=0	take_count=1	active_index=0
+three-take-item_redo	track=2	item=2	take=0	name=Mixed single take 1	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-02.wav	offset=0.000000000	rate=0.800000000
+three-take-item_redo	track=3	track_name=Single-take control	track_item_count=1
+three-take-item_redo	track=3	item=0	position=12.000000000	length=1.250000000	selected=0	take_count=1	active_index=0
+three-take-item_redo	track=3	item=0	take=0	name=Single take 1	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-02.wav	offset=0.000000000	rate=0.800000000
+three-take-item_redo	track=4	track_name=Three-take item	track_item_count=3
+three-take-item_redo	track=4	item=0	position=6.000000000	length=2.000000000	selected=0	take_count=1	active_index=0
+three-take-item_redo	track=4	item=0	take=0	name=Three take 1	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav	offset=0.000000000	rate=0.800000000
+three-take-item_redo	track=4	item=1	position=6.000000000	length=2.000000000	selected=0	take_count=1	active_index=0
+three-take-item_redo	track=4	item=1	take=0	name=Three take 2	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav	offset=0.125000000	rate=1.000000000
+three-take-item_redo	track=4	item=2	position=6.000000000	length=2.000000000	selected=0	take_count=1	active_index=0
+three-take-item_redo	track=4	item=2	take=0	name=Three take 3	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav	offset=0.250000000	rate=1.200000000
+action	40642	Take: Explode takes of items in place

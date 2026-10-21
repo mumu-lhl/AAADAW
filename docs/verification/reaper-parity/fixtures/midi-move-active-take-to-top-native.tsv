@@ -1,0 +1,63 @@
+before_1	take_count=2	active_index=0	selected=1
+before_1	take=0	active=1	name=Take A	source_offset=0.125000	notes=120:360:60:90;720:960:62:80
+before_1	take=1	active=0	name=Take B	source_offset=0.250000	notes=120:360:64:90;720:960:66:80
+before_2	take_count=1	active_index=0	selected=1
+before_2	take=0	active=1	name=Single Take	source_offset=0.125000	notes=120:360:66:90;720:960:68:80
+before_3	take_count=3	active_index=2	selected=1
+before_3	take=0	active=0	name=Take A	source_offset=0.125000	notes=120:360:72:90;720:960:74:80
+before_3	take=1	active=0	name=Take B	source_offset=0.250000	notes=120:360:76:90;720:960:78:80
+before_3	take=2	active=1	name=Take C	source_offset=0.375000	notes=120:360:78:90;720:960:80:80
+before_4	take_count=2	active_index=1	selected=1
+before_4	take=0	active=0	name=Take A	source_offset=0.125000	notes=120:360:78:90;720:960:80:80
+before_4	take=1	active=1	name=Take B	source_offset=0.250000	notes=120:360:82:90;720:960:84:80
+after_1	take_count=2	active_index=0	selected=1
+after_1	take=0	active=1	name=Take A	source_offset=0.125000	notes=120:360:60:90;720:960:62:80
+after_1	take=1	active=0	name=Take B	source_offset=0.250000	notes=120:360:64:90;720:960:66:80
+after_2	take_count=1	active_index=0	selected=1
+after_2	take=0	active=1	name=Single Take	source_offset=0.125000	notes=120:360:66:90;720:960:68:80
+after_3	take_count=3	active_index=0	selected=1
+after_3	take=0	active=1	name=Take C	source_offset=0.375000	notes=120:360:78:90;720:960:80:80
+after_3	take=1	active=0	name=Take A	source_offset=0.125000	notes=120:360:72:90;720:960:74:80
+after_3	take=2	active=0	name=Take B	source_offset=0.250000	notes=120:360:76:90;720:960:78:80
+after_4	take_count=2	active_index=0	selected=1
+after_4	take=0	active=1	name=Take B	source_offset=0.250000	notes=120:360:82:90;720:960:84:80
+after_4	take=1	active=0	name=Take A	source_offset=0.125000	notes=120:360:78:90;720:960:80:80
+undo_1	take_count=2	active_index=0	selected=1
+undo_1	take=0	active=1	name=Take A	source_offset=0.125000	notes=120:360:60:90;720:960:62:80
+undo_1	take=1	active=0	name=Take B	source_offset=0.250000	notes=120:360:64:90;720:960:66:80
+undo_2	take_count=1	active_index=0	selected=1
+undo_2	take=0	active=1	name=Single Take	source_offset=0.125000	notes=120:360:66:90;720:960:68:80
+undo_3	take_count=3	active_index=2	selected=1
+undo_3	take=0	active=0	name=Take A	source_offset=0.125000	notes=120:360:72:90;720:960:74:80
+undo_3	take=1	active=0	name=Take B	source_offset=0.250000	notes=120:360:76:90;720:960:78:80
+undo_3	take=2	active=1	name=Take C	source_offset=0.375000	notes=120:360:78:90;720:960:80:80
+undo_4	take_count=2	active_index=1	selected=1
+undo_4	take=0	active=0	name=Take A	source_offset=0.125000	notes=120:360:78:90;720:960:80:80
+undo_4	take=1	active=1	name=Take B	source_offset=0.250000	notes=120:360:82:90;720:960:84:80
+redo_1	take_count=2	active_index=0	selected=1
+redo_1	take=0	active=1	name=Take A	source_offset=0.125000	notes=120:360:60:90;720:960:62:80
+redo_1	take=1	active=0	name=Take B	source_offset=0.250000	notes=120:360:64:90;720:960:66:80
+redo_2	take_count=1	active_index=0	selected=1
+redo_2	take=0	active=1	name=Single Take	source_offset=0.125000	notes=120:360:66:90;720:960:68:80
+redo_3	take_count=3	active_index=0	selected=1
+redo_3	take=0	active=1	name=Take C	source_offset=0.375000	notes=120:360:78:90;720:960:80:80
+redo_3	take=1	active=0	name=Take A	source_offset=0.125000	notes=120:360:72:90;720:960:74:80
+redo_3	take=2	active=0	name=Take B	source_offset=0.250000	notes=120:360:76:90;720:960:78:80
+redo_4	take_count=2	active_index=0	selected=1
+redo_4	take=0	active=1	name=Take B	source_offset=0.250000	notes=120:360:82:90;720:960:84:80
+redo_4	take=1	active=0	name=Take A	source_offset=0.125000	notes=120:360:78:90;720:960:80:80
+already_top_1	take_count=2	active_index=0	selected=1
+already_top_1	take=0	active=1	name=Take A	source_offset=0.125000	notes=120:360:60:90;720:960:62:80
+already_top_1	take=1	active=0	name=Take B	source_offset=0.250000	notes=120:360:64:90;720:960:66:80
+already_top_2	take_count=1	active_index=0	selected=1
+already_top_2	take=0	active=1	name=Single Take	source_offset=0.125000	notes=120:360:66:90;720:960:68:80
+already_top_3	take_count=3	active_index=0	selected=1
+already_top_3	take=0	active=1	name=Take C	source_offset=0.375000	notes=120:360:78:90;720:960:80:80
+already_top_3	take=1	active=0	name=Take A	source_offset=0.125000	notes=120:360:72:90;720:960:74:80
+already_top_3	take=2	active=0	name=Take B	source_offset=0.250000	notes=120:360:76:90;720:960:78:80
+already_top_4	take_count=2	active_index=0	selected=1
+already_top_4	take=0	active=1	name=Take B	source_offset=0.250000	notes=120:360:82:90;720:960:84:80
+already_top_4	take=1	active=0	name=Take A	source_offset=0.125000	notes=120:360:78:90;720:960:80:80
+undo_description	Move take to top lane
+action	41380	Item: Move active takes to top
+reference	REAPER 7.82/linux-x86_64; Default_7.0.ReaperThemeZip

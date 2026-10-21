@@ -1,0 +1,17 @@
+artifact	sha256
+crates/aaadaw/examples/generate_midi_filter_from_cc_selection_fixture.rs	0181fbbb1ea1a0e966e34366063ae0e315fad0db38d0e7c89385b01ac1849b10
+fixtures/midi-event-filter-from-cc-aaadaw.aaadaw	49166d4d1c73877f95504b10eb4d2ab54f510eac27dbba757858466c9db92adc
+fixtures/midi-event-filter-from-cc-aaadaw-after.png	c79bebd5dc43a4fa79288aeded7c60991f6cdc9a925f4e52a8333216725ca774
+fixtures/midi-event-filter-from-cc-aaadaw-selection.png	1d7d2068b277632712f6ad4db50fd2d01762ad128d8685a1e03171941846769c
+fixtures/midi-event-filter-from-cc-aaadaw-show-only.png	1275768ce0307c2723fca9038eb356c925a9e1cd9efc9884fb4a3af7196ee8df
+binary_sha256	c242de990decaf6f85dbc504c481e55b9b006af986842b3c9f9b6686a0b390f9
+binary_build_id	41a64de0ae0b1a91746de21039e797c4fd7a4515
+build_backend	rustc nightly with Cranelift codegen backend
+environment	Linux Xvfb :327, 1440x900 root; MIDI Editor window 1000x620; isolated AAADAW profile; audio unavailable
+starting_state	One C4 note; CC7 value 64 on channel 2 @ tick 480 and CC7 value 100 on channel 3 @ tick 960 selected; unselected CC10 value 80 and CC7 value 127
+action	Event List > Filter events > Set filter from selection
+assertion	Filter derives channel mask 2–3, Multichannel, Control Change, Control 07 Volume MSB, Value 64–100, Position 0.125–0.25026042, Repeat measure, and Draw channel 1; Show-only, Invert, and Solo remain off; selected events and project data remain unchanged
+selection_capture	After applying the action, both CC rows remain selected while the three other rows remain unselected
+show_only_capture	With the selection-derived Event List filter active, enabling Show-only leaves the two selected CC7 values (64 and 100) visible; this capture does not isolate Show-only from the funnel
+verification	AAADAW real-window screenshots; crates/aaadaw/src/app/tests.rs::midi_editor_set_filter_from_selected_controller_events_derives_cc_criteria_without_mutation; AAADAW test suite 814/814; Stable workspace strict all-target Clippy; fmt and git diff --check
+limitation	Homogeneous same-parameter CC selection only; mixed CC parameters, mixed event types, Pitch Bend, Program Change, Aftertouch, Channel Pressure, Meta and SysEx selections remain open. Screenshots verify behavior, not pixel-diff certification

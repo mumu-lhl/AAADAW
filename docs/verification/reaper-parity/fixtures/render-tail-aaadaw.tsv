@@ -1,0 +1,11 @@
+field	value
+application	AAADAW 1.1.0
+platform	Linux x86_64; Xvfb display at 1280x1024; no audio device I/O
+build	Local nightly Rust 1.101.0 with Cranelift backend; aaadaw audio-device feature
+window	Render project to WAV; 640x720; current implemented controls fit without clipping
+project	Fresh empty project; Render is disabled because it contains no media
+default_tail	Checkbox off; duration displays 1000 ms and is disabled
+enabled_tail	Checkbox on; duration displays 1250 ms and is editable
+default_screenshot	fixtures/render-tail-aaadaw-default.png; SHA-256 45b10f3e2625b2d09a313c16e548129be13aeb88a792b3c2a0b8cf14be8d7603
+enabled_screenshot	fixtures/render-tail-aaadaw-enabled-1250ms.png; SHA-256 6cd819919a4b156f550b1f24fb902f61220e98609f8458fbac40d0192537bb4d
+scope	AAADAW visual state and dialog layout only; audio frame behavior is covered by offline render regression; this is not a full native-dialog parity capture

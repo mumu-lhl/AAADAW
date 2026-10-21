@@ -1,0 +1,148 @@
+artifact	sha256
+scripts/reaper_parity/probe-midi-event-properties.lua	0b2c8f679a5e957ccab09f6643db7100dc754b49f592219f690fba6c908127f8
+fixtures/midi-event-properties-native.tsv	4f2bd1ca1714de8fbd4f7420269ef63d4b96c34e21c2937a160e90210cd263e4
+fixtures/midi-event-properties-native.png	e513d9b0c813367b9019a306de11d5dd740e0146430d4561c8cff1b3fbf73ab9
+scripts/reaper_parity/probe-midi-program-change-event-list.lua	83dda8560ca1ac4f35526a1caddd662d9f15dfb1b7abcf7c7924b2e2303d1215
+fixtures/midi-event-properties-program-select-native.png	657f9b62a355c1dee213ab394351425b1f45f94cc415cbb42cdaff0d15571565
+fixtures/midi-event-properties-program-select-aaadaw.png	a3e1483e7d616dafaa925c8ebf1dfa919387261c3f48b1450a4ffb15a2b85309
+fixtures/midi-event-properties-program-select-aaadaw-applied.png	cf8f96615d97d4e001cc48deeb8baf4e911fa8f8f1898b2b671ab449b27bf13c
+fixtures/midi-event-properties-program-select-aaadaw-undo.png	a5ba152a32dcc5dce5c7f9cb9db172de236d092ed38186d5e9126ff896971bc5
+fixtures/midi-event-properties-program-select-aaadaw-redo.png	4f951805655af4ce13a2116e96aaa19fe10228f754e3aecef70e567f91b27bf1
+fixtures/midi-event-properties-aaadaw.png	2c99ae42c6d13cca91fc951cd2d3b523a3c119bee5e7cc3fbcbbbe57b9c27514
+scripts/reaper_parity/probe-midi-event-properties-cc.lua	3cc9c66f83349b96696b2f35a236171da738686ddfbadca747e8e0a1553cf0bc
+fixtures/midi-event-properties-cc-native.tsv	d1d952f823450c5bf92545f165a2fe55b5e39ec99481d10f920888e84fa07b0c
+fixtures/midi-event-properties-cc-native.png	d64055a345abc0e531ea832d88fb1d9eba76f73008cf0d2c88fe53e775e2e59a
+fixtures/midi-event-properties-cc-aaadaw.png	22fc4a0a66888322bf4dd37b0852e788456cd490466b64f71ae339deef84a017
+fixtures/midi-event-properties-cc-aaadaw-applied.png	b7c1ecb9d70c31dd7f9230cc6f48d309e403c7afc8116153154b70798269f3d9
+fixtures/midi-event-properties-cc-aaadaw-undo.png	19857305f20bfc9629176d5ede03499d1ba2b8e8bf94eeacbb3fde3a9128bb10
+fixtures/midi-event-properties-cc-aaadaw-redo.png	3c0288f5b35d951e30c713fda4de420f9f2c8a76f6b4b40c583a020d844f846a
+scripts/reaper_parity/probe-midi-event-properties-pitch-bend.lua	9749c0f44d80028a40dca02b87ddd08809669cd6dc3cc5e684d67bc8566dfddc
+fixtures/midi-event-properties-pitch-bend-native.tsv	cd537feada42957da1d69cc7645eb8dce8d6904eb9cc8fcd88680048ee36372b
+fixtures/midi-event-properties-pitch-bend-native.png	553c05ddbac9eccc16bde87f681f77cfcfe94ce6cffbec9f9bff177066ebe822
+fixtures/midi-event-properties-pitch-bend-aaadaw.png	3d301f851f15ba84f4e48a433c83d5aeaa3e5d09a657a7cbdc29435bea419d7c
+fixtures/midi-event-properties-pitch-bend-aaadaw-applied.png	5d8f607cf260ecf0cf8d6d0adb0531bbe4711e5116dce34fe719352a4c0c3df0
+fixtures/midi-event-properties-pitch-bend-aaadaw-undo.png	653324165f38cd8951154e0d6dc0e329b58ca74e63e61123acb112b900915c21
+fixtures/midi-event-properties-pitch-bend-aaadaw-redo.png	1ca832594d3cbcc4a5d0f6e9405c289906f64012ee365c062c3c4119e4b37b02
+scripts/reaper_parity/probe-midi-event-properties-multiselect.lua	c441c67ab0da82c2e6da0c709f67e47adf8ebe3d43873691456ad90fd3229aad
+fixtures/midi-event-properties-multiselect-note-native.tsv	793dc6b7dcc292dafed264de2a9cedcf46fdf2761197cd997f7196721c9ea4c6
+fixtures/midi-event-properties-multiselect-note-native.png	6879c2e1e8d2e1efdd4b1b8626510e49364ecbc26a8fd917811d9a931e650886
+fixtures/midi-event-properties-multiselect-cc-native.tsv	cddf519adf08074e77ec06c60d92ae9efdb6f1c6378ef8114ed324655eda6b46
+fixtures/midi-event-properties-multiselect-cc-native.png	5b03beae54726c8339274907099498cf9124ca333022a34f8d8bfd73f779dbf4
+fixtures/midi-event-properties-multiselect-pitch-native.tsv	6ec0ecdee6b14378e7863c2936e8bc7411f6492f72bef08f91ca88951da2e7d4
+fixtures/midi-event-properties-multiselect-pitch-native.png	53ff86533850f7bdd2d5410c5e325ec595efcd9c4b5159d20efa5628f4e5f3d2
+fixtures/midi-event-properties-multiselect-aaadaw.png	eb1cc104f9b30145dcf3c90434e190563a1050070c5947e931b2ad71217927de
+fixtures/midi-event-properties-multiselect-aaadaw-applied.png	a3a7d1e11287f6de63e57617c39cc848461f92520654473d37fd004030cdf259
+fixtures/midi-event-properties-multiselect-aaadaw-list-applied.png	e270b928a8819efd55a29d0be2a7de45b712f851e2933effad7df1fd25e4e55d
+fixtures/midi-event-properties-multiselect-aaadaw-undo.png	bb899530675567b38b50d7d8565d979ee36caade8eb882dcf7fbc1e6bba02843
+fixtures/midi-event-properties-multiselect-aaadaw-redo.png	545b50c7f351e1bf33830af770f96044f4381a3cd65e83ca15ecb80d7f64c493
+fixtures/midi-event-properties-relative-aaadaw-cc-applied.png	45fb3ca31f09828dc372dd183c8e7e22923724b330601b641c96daea3e4461e1
+fixtures/midi-event-properties-relative-aaadaw-cc-entered.png	ce9204b07630f58656e24e2959d038c32f95aa4645c37b4319ffb6b700793bd5
+fixtures/midi-event-properties-relative-aaadaw-cc-undo.png	3ed653d115befcfc5c9abfcfb43a77165d6bf11fd0108db24235f87ff4278b1d
+fixtures/midi-event-properties-relative-aaadaw-controller-applied.png	b3b2674fc7e6ef407d44971923c51666958ff9b58620b8695e4e50af7f15441c
+fixtures/midi-event-properties-relative-aaadaw-controller-search.png	2954ef1cf1b98cf34a8d0c8f1641b1f5768a5a90139faf7a70f2b6fbdf993594
+fixtures/midi-event-properties-relative-aaadaw-controller-selected.png	aaf1d6a117aaee383790b290aa3ee23d4246a03dc6c34ee6f879353d4032009c
+fixtures/midi-event-properties-relative-aaadaw-controller-undo.png	d46e3bda39d5473325b2cb1a51f0caaee758885c115f740196981122d2b5acf2
+fixtures/midi-event-properties-relative-aaadaw-note-octave-applied.png	7b662b4e2fcadbd3e1c02eb6b5a5650f59b14fa2a0f8932d2f8d2a74086f1c3c
+fixtures/midi-event-properties-relative-aaadaw-note-octave-entered.png	a3241fc4cbb33c10409b7a0bef966f3346fe3ec407432e96419a3dd51ca399f9
+fixtures/midi-event-properties-relative-aaadaw-note-octave-undo.png	fe72a915ed031c010b65efdaf741d850fd485a6dc523684fd2036555af99cd24
+fixtures/midi-event-properties-relative-aaadaw-note-plus10-applied.png	4eddf16c77775668e1b3baa22b0e0f32b9c3569dc9e0a65539cff165561b59bc
+fixtures/midi-event-properties-relative-aaadaw-note-plus10-entered.png	b6691699d2e576c7b84c34b2c80d351a96f7f1f89309b325879ebf5bd0281f31
+fixtures/midi-event-properties-relative-aaadaw-note-plus10-undo.png	fe72a915ed031c010b65efdaf741d850fd485a6dc523684fd2036555af99cd24
+fixtures/midi-event-properties-relative-aaadaw-pitch-applied.png	691da156650763ad220890509e86b4b89e4f8468826efbcba7435d19e6a1bc22
+fixtures/midi-event-properties-relative-aaadaw-pitch-entered.png	abba9ed87fc2756008951cbd0b7596082cc5045366edb694623ef21e7584f1af
+fixtures/midi-event-properties-relative-aaadaw-pitch-undo.png	d58c8a94b358c4550937333d9cb819b5130681b9278a2e47d256ed3d8748dc9c
+fixtures/midi-event-properties-relative-aaadaw.tsv	4651b9b58f94323d7ef6572d597a7096179e708a07aae6f891424f4f9b44ba93
+fixtures/midi-event-properties-relative-bbt-applied-native.png	b9b0c5dd2ab26b0ff793b2248d209f6f5d0a1f508b50c980c905d9b3d9bb73eb
+fixtures/midi-event-properties-relative-bbt-entered-native.png	d683efecd1ab5323bdd62f02a8073950410da197843ce9eea9eb73fd7b47bbc3
+fixtures/midi-event-properties-relative-native.tsv	6f9863784c454fb6b89ef54c3951001f7de426792db42e63fada23dc6db4759a
+fixtures/midi-event-properties-relative-octave-applied-native.png	372260aef1c28f0ed5d2bd1f9df7daf565b0616764e4b4186885a8727ef77da7
+fixtures/midi-event-properties-relative-octave-before-native.png	497fd29695d73638c07bf36a196897dcf575cb461db08d3e15702d118d557073
+fixtures/midi-event-properties-relative-octave-entered-native.png	34a8262bda65d868e44d0821d96aa99fbcb842259f9a8b1201793f1a260131ca
+fixtures/midi-event-properties-relative-plus10-applied-native.png	a1d673ababf5b48abed6eb464da4b0d90a943eaac676e986d84cd811a76432e7
+fixtures/midi-event-properties-relative-plus10-entered-native.png	4ad168d3cb9e1100a2992694582d270b763acf7b708a8ab1b478adc59ca17080
+fixtures/midi-event-properties-bank-program-aaadaw.png	2eeddd906ded1a8050f9c6d78cb6f46dc59c5433910eae31566b3a691d447c8f
+binary_sha256	02670e0c764d88dcafb18732194ca110cfcc8a49ab63e9f4e925e78038786b1f
+build_id	2dd542d14a9fa54d58cccd95373cc23f96cd441d
+assertion	Linux stable AAADAW window in Xvfb shows Event List Program Change Event Properties with Bank MSB (CC0)=0 and Bank LSB (CC32)=0.
+verification	crates/aaadaw/src/app/tests.rs::midi_bank_program_properties_edit_cc0_and_cc32_atomically_with_program verifies inherited values, same-tick CC0/CC32 replacement, one history step, Undo/Redo, and 0..127 validation; crates/aaadaw-engine/tests/midi_schedule.rs::bank_select_controllers_precede_program_change_at_the_same_tick verifies realtime event ordering.
+playback_graph_test	crates/aaadaw/src/app/tests.rs::midi_bank_program_batch_invalidates_the_audio_playback_graph passes with --features audio-device.
+scripts/reaper_parity/probe-midi-bank-program-select.lua	f948d91db974f7439845b9d4a07a133caac6f42dffdc0d5e66e439f1bdc59599
+fixtures/midi-bank-program-native-before.tsv	b161233b760aefeadf69ef5e9299d94c7016330fc2e264190a26fd569098c017
+fixtures/midi-bank-program-native-after.tsv	e7d74824ac6f2ea314180a2901eef81c3cc2edaaea22cde1416df7c7ec44afaf
+fixtures/midi-bank-program-native-dialog-initial.png	d3965468871c1a332aafdb0f09edcff29cfd62a9632a5be3e71540f51114f7de
+fixtures/midi-bank-program-native-dialog-edited.png	9e5414f371b3095825ebfcc9cc07e22d5342320cb4c93c206a3183dac9056d8b
+fixtures/midi-bank-program-native-event-list-edited.png	4bb46bfcc6a400ab03b777095f43871fa425a848b2551234aeaa67368ce5d8f7
+assertion	Linux REAPER 7.82 / Default 7 Bank/Program Select changes CC0/CC32/PC from 11/22/41 to 12/23/42; Event List displays the paired bank controllers as Bank Select 14-bit (0/32)=1559 and PC parameter 12-23-42.
+limitation	Patch-file selection, mixed event-type properties, and full Event List alignment remain open; MIDI-EVENT-PROPERTIES-001 stays in_progress.
+fixtures/midi-file-import-native/probe-type1.mid	38a38849f4a82ed615f2056bbd045c4673dff065e0a82fccd2737a231fc84f01
+fixtures/midi-event-properties-sysex-native.png	9f653ff784d21ea97a35b62f7f3fefe33f7f580d57e61654e67760b3e1ce7d15
+fixtures/midi-event-properties-meta-native.png	7b3688771ac56f0a7e16f7c870fc9e7691eac1b8132bfe3a40c460425d624f85
+fixtures/midi-event-properties-meta-types-native.png	1b2227a9827258a711db9695e725e539875bef0397bcd0ac71304f2e057b832f
+fixtures/midi-event-properties-opaque-sysex-aaadaw.png	5518bc24665f2ea359ae994afaa0df5463903b52bd830b89bf09004ec622059f
+fixtures/midi-event-properties-opaque-meta-aaadaw.png	174aa8683ec1d6eb38536741b23b618895c3576147ca1616c030127f15b7007a
+fixtures/midi-event-properties-opaque-meta-edited-aaadaw.png	aa29ce64d344e47b2b7640adec998fd7482c33c55844bc9e69fb1282d6a532b0
+fixtures/midi-event-properties-opaque-meta-applied-aaadaw.png	b9bd64aba061487b47df8fd0bb1cde3f7480cd5919a9018ad7f51bbfc780968f
+fixtures/midi-event-properties-opaque-sysex-applied-aaadaw.png	7fbb913dfff575b63dcf38579ef61b6202fe7ac03968c3acdcf2fa69261a0b59
+fixtures/midi-event-properties-opaque-sysex-undo-aaadaw.png	66a3aab571d3e6fde1dc6dce49bf0b3d08eae2067fa5d2a054f59450cc4ab3f5
+native_reaper_sha256	9976f5608068b7a58518969001b00b527fb0de6ed7459e0e5dda6f29878ee254
+native_reaper_build_id	fb9ade2f211bc91a3ee6193630ef17bcf5f6528b
+aaadaw_sha256	10c992915ca62188a73d51df1398534466859bc57bc5c74e56c6c9320ca759e1
+aaadaw_build_id	98091bbc9cf7d861cd9ddde49f75d677c3d2e663
+opaque_environment	Linux Xvfb :455 with the Type 1 MIDI probe and a controlled desktop file portal; native references from Linux REAPER 7.82 / Default 7; stable AAADAW desktop binary identified above.
+opaque_assertion	Native references show the Meta and F0 SysEx property fields. Current-build AAADAW captures show Meta Type=Marker, Multi-line enabled, two-line UTF-8 text loaded and applied to Event List; F0 SysEx payload 43 12→43 12 34 commits as F0 43 12 34 F7 and Undo restores F0 43 12 F7. Automated F7 continuation coverage confirms the editor labels the event F7 without an added F0-message terminator and preserves F7 status through edit/Undo/Redo.
+opaque_verification	crates/aaadaw/src/app/tests.rs::midi_opaque_meta_properties_edit_text_type_and_position_with_undo_redo; crates/aaadaw/src/app/tests.rs::midi_opaque_sysex_properties_reject_invalid_hex_and_undo_valid_edit; crates/aaadaw/src/app/tests.rs::midi_opaque_sysex_f7_continuation_edit_keeps_its_event_status; crates/aaadaw/src/app/tests.rs::midi_sysex_file_data_preserves_framing_and_payload_for_f0_and_f7_packets; crates/aaadaw/src/app/view/midi_editor.rs::tests::opaque_meta_text_keeps_readable_newlines; crates/aaadaw/src/app/view/midi_editor.rs::tests::sysex_properties_frame_f0_messages_and_f7_continuations_distinctly; focused opaque-related App/view tests pass 10/10, SysEx F0/F7 framing test passes 1/1, and F0/F7 property-frame test passes 1/1; strict all-target Clippy (-D warnings), cargo build, fmt --check, and git diff --check pass; current-build Xvfb screenshots verify Meta load/type/multiline/edit/commit and F0 SysEx edit/Undo.
+fixtures/midi-event-properties-raw-meta-aaadaw.png	856e1e6b4a007def646d015c404cfca105fa33662df2ceae6cad8baccdc67229
+raw_meta_environment	Linux Xvfb :456 at 1280×800 with a generated Type 0 MIDI file containing a key-signature Meta event; captured the live Event Properties window from current AAADAW desktop build below; no native REAPER semantic comparison.
+raw_meta_aaadaw_sha256	8cd0badc538df66c129f01ec0f54471336b4682b58bd94721c058ccdac8ebccd
+raw_meta_aaadaw_build_id	977623f4e8716be4b47b4d0c2c80be5fb721e3cd
+raw_meta_assertion	A non-text Meta row opens a generic raw editor labeled with the Meta name and byte type; key-signature payload bytes display in hex, invalid edits leave the project untouched, and valid edits preserve Meta kind through Undo/Redo. The current-build live screenshot shows the Data (hex), Key signature (0x59), Position, OK, and Cancel controls.
+raw_meta_verification	crates/aaadaw/src/app/tests.rs::midi_opaque_structural_meta_properties_edit_hex_and_preserve_meta_type; crates/aaadaw/src/app/view/midi_editor.rs::tests::structural_meta_events_use_named_rows_and_preserve_their_bytes; focused structural_meta tests pass 2/2; focused opaque-related App/view tests pass 10/10; strict all-target Clippy (-D warnings), cargo build, fmt --check, and git diff --check pass; screenshot SHA-256 and desktop binary identity recorded above.
+fixtures/midi-event-properties-opaque-sysex-file-io-aaadaw.png	86141c8d40d66af072dddcb6204b23a11436e0aa84669a6d7b46b72dc6621af1
+sysex_file_io_environment	Linux Xvfb :456 at 1280×800 with the generated Type 0 SysEx probe and a controlled desktop portal; Load and Save callbacks used the current AAADAW desktop build; this verifies `.syx` F0 file I/O but is not a native REAPER file chooser capture.
+sysex_file_io_aaadaw_sha256	c432e8a2e4751b0f7cbb1d370ef791455266bfbc8fdba041ceab3609576544e5
+sysex_file_io_aaadaw_build_id	7967859d966dc7387e97ba34173920b13dd23923
+sysex_file_io_assertion	Load read bytes F0 43 12 34 F7 and displayed payload 43 12 34; Save wrote exactly F0 43 12 34 F7. The current-build screenshot shows the loaded bytes, F0/F7 framing, and `SysEx data saved` feedback.
+sysex_file_io_verification	crates/aaadaw/src/app/tests.rs::midi_sysex_f0_file_io_round_trips_standard_framing; crates/aaadaw/src/app/tests.rs::midi_sysex_f7_file_io_preserves_continuation_packet_bytes; crates/aaadaw/src/app/tests.rs::midi_sysex_file_data_preserves_framing_and_payload_for_f0_and_f7_packets; AAADAW targeted Nextest 3/3 passed; current-build Linux Xvfb Load/Save portal probe; saved file bytes verified exactly as F0 43 12 34 F7; screenshot SHA-256 and desktop identity recorded above.
+opaque_limitation	`.sysex` picker selection and native file-dialog appearance/behavior, native invalid UTF-8 Meta presentation/semantics (AAADAW now uses byte-preserving hex display and editing), native semantic fields for structural Meta, native multiline edge cases, and Event Properties meter-map/source-offset/loop BBT semantics remain open; MIDI-EVENT-PROPERTIES-001 remains in_progress.
+scripts/reaper_parity/probe-midi-sysex-f7-properties.lua	Native Linux REAPER 7.82 / Default 7 probe that generates and imports a valid F0/F7 continuation chain, selects the normalized SysEx row, opens action 40004, and writes source/result readback.
+fixtures/midi-event-properties-sysex-f7-probe.mid	6136d80d774c507b3e6bd8ddea4b7e41e2f5c7e117d72536af6f74168824fad1
+fixtures/midi-event-properties-sysex-f7-native.tsv	c5e3c0f89a7c416ac44f42068b692c97609082565cf32a46c4f46a47fd7780fc
+fixtures/midi-event-properties-sysex-f7-native.png	780d455afcecedf74d7cd3070bbc5ac33de22a0508860329ee0e7950f884361c
+native_sysex_f7_environment	Linux REAPER 7.82 / Default 7, Xvfb :457 at 1280×800; isolated profile; Type 0 probe contains F0 data 43 12 at tick 240 and F7 continuation data 34 F7 at tick 480.
+native_sysex_f7_assertion	REAPER combines the packets into one event at tick 480 with MIDI_GetAllEvts message F0 43 12 34 F7; Event List shows one SYSEx row; action 40004 shows payload 43 12 34 at Position 1.1.50 between F0/F7 labels.
+native_sysex_f7_verification	scripts/reaper_parity/probe-midi-sysex-f7-properties.lua; fixtures/midi-event-properties-sysex-f7-probe.mid; fixtures/midi-event-properties-sysex-f7-native.tsv; native screenshot and hashes recorded above; AAADAW import tests project_import_merges_f7_continuations_into_open_f0_at_the_final_packet_tick and project_import_merges_multiple_f7_continuations_and_drops_unmatched_f7.
+fixtures/midi-event-list-sysex-f7-aaadaw.png	92528b5b1ead1b34862df0ff8809c7c80f227ed64101d81f8893c1cc7da813be
+fixtures/midi-event-properties-sysex-f7-aaadaw.png	ad29f515c132f174595fa94a497478643f3c458b6243cd070ae0c3fff06b76b6
+aaadaw_sysex_f7_environment	Linux Xvfb :457 at 1280×800; current stable desktop build; generated Type 0 F0/F7 chain imported via a controlled desktop portal, then opened in Event List and Properties.
+aaadaw_sysex_f7_sha256	c883076e8780092b604d5a0199e068f645ed8d0445bd990566f464d53fe01292
+aaadaw_sysex_f7_build_id	327ff0b48d46f36488faef47545f0938dd045b79
+aaadaw_sysex_f7_assertion	The Event List shows one SYSEx row at 1.1.50 with parameter F0 43 12 34 F7; Event Properties displays payload 43 12 34 at the same position with F0/F7 boundary labels.
+aaadaw_sysex_f7_verification	Current-build Xvfb MIDI File Import through the desktop portal; selected Event List and SysEx Properties screenshots; desktop SHA-256 and Build ID recorded above; aaadaw-core midi_file_import Nextest 11/11; strict aaadaw-core all-target Clippy -D warnings; stable fmt --check and git diff --check.
+scripts/reaper_parity/probe-midi-sysex-f7-edge-cases.lua	Seven isolated Type 0 fixtures imported by Linux REAPER 7.82 / Default 7; the script records MIDI_GetAllEvts output per source file.
+fixtures/midi-event-properties-sysex-f7-edge-native.tsv	6a70c3f26c04da779c3b79ace38ef2395d0a15746131f637b5ba02a50fa2d633
+fixtures/midi-event-properties-sysex-f7-unmatched.mid	fd296b930812b519970d872b63df7e133f4dee0eccc34d1e211daacf11165b01
+fixtures/midi-event-properties-sysex-f7-open-f0-eot.mid	e758560fe5bf0f31cc5a69ba7b58a3196504b859cba847b8181f47138303780b
+fixtures/midi-event-properties-sysex-f7-open-continuation-eot.mid	a1c10cef6563d44b102c0b4278ef75db0251f506ac98cf912d00e15ae696384f
+fixtures/midi-event-properties-sysex-f7-new-f0.mid	ed02de7dace0028049e1430d8e8643423d7193e7ac1854a0db3a10a80a7097b7
+fixtures/midi-event-properties-sysex-f7-after-cc.mid	a957e3c510082abb8000ba5008ebb5db3cd57644c2a4b8fa4a47f8d56f55cb1f
+fixtures/midi-event-properties-sysex-f7-after-meta.mid	af763280183c8aea54541cf69c1c32c6385124e28d23d76f78b250e613ca3b6d
+fixtures/midi-event-properties-sysex-f7-after-closed-f0.mid	bae69e2dc38ce2c7ea8d0d54142f8837ee2e6ac3b3e848472d601992e925ca1c
+native_sysex_f7_edge_environment	Linux REAPER 7.82 / Default 7, Xvfb :458 at 1280×800, isolated profiles; each Type 0 fixture inserted on a separate track and read back through MIDI_GetAllEvts.
+native_sysex_f7_edge_assertion	An unmatched F7 packet produces no SysEx row; F0 messages end with a native F7 byte at End of Track or before a non-SysEx event/new F0; only an immediately adjacent F7 continues an open F0; a continuation without its own final F7 byte is closed by REAPER.
+native_sysex_f7_edge_verification	All seven fixture inputs and the complete native readback table above; current AAADAW Core import tests cover the corresponding project normalization and preserve source decode packets independently.
+fixtures/midi-event-list-sysex-f7-edge-aaadaw.png	3259debc57cd56facfa3f47c63eb2b377336a03865485d703d54fbf08c45f286
+aaadaw_sysex_f7_edge_environment	Linux Xvfb :459 at 1280×800; current nightly Cranelift desktop build; controlled desktop portal imported the after-meta Type 0 fixture into a fresh project and the selected item was opened in Event List.
+aaadaw_sysex_f7_edge_build_id	43b9c452558714abda82b0ffa7906e86dbce039e
+aaadaw_sysex_f7_edge_sha256	820716d08d23ddf070423d34179459ef5e1d19bbb81c4d25b55b8fa987290249
+aaadaw_sysex_f7_edge_assertion	The four Event List rows are Track name, F0 43 12 F7 SysEx at 1.1.25, Text event x at 1.1.37, and the terminal end row; the source F7 packet after Meta is not retained as another row.
+aaadaw_sysex_f7_edge_verification	Native input fixture fixtures/midi-event-properties-sysex-f7-after-meta.mid; current-build desktop import through the controlled portal; screenshot and binary hashes above; project_import_closes_sysex_before_channel_and_meta_events_and_drops_later_f7; MIDI import Nextest 13/13; strict aaadaw-core Clippy -D warnings; nightly cargo build with Cranelift backend; stable fmt and diff checks.
+scripts/reaper_parity/probe-midi-sysex-f7-direct-properties.lua	Native Linux REAPER probe that attempts to write a standalone F7 34 F7 event through MIDI_SetAllEvts, sorts and reads it back, then opens Event List and action 40004.
+fixtures/midi-event-properties-sysex-f7-direct-native.tsv	365203bf546369f8ec992cbca3384f0c0cb2e36389b14b2087b867e5845285e3
+fixtures/midi-event-list-sysex-f7-direct-native.png	c0fa56935b7b053e605bbe37ab638d6721ae92cc56036af8695c3d800d51c45f
+fixtures/midi-event-properties-sysex-f7-direct-native.png	3aac4c3a058cd53d275fbd12632cc3d6c2e70251e8591c9cec8a60ae9ce7ea97
+native_sysex_f7_direct_environment	Linux REAPER 7.82 / Default 7, Xvfb :460 at 1280×800, isolated profile; a fresh MIDI take was written through MIDI_SetAllEvts and opened in Event List.
+native_sysex_f7_direct_assertion	MIDI_SetAllEvts accepted the call but, after MIDI_Sort, MIDI_GetAllEvts contained only the terminal B0 7B 00 All Notes Off event; the Event List has no standalone F7 row and action 40004 displays a blank form with no selected event.
+native_sysex_f7_direct_verification	scripts/reaper_parity/probe-midi-sysex-f7-direct-properties.lua; readback and both actual REAPER window screenshots above; this establishes that the direct-F7 editor path retained by AAADAW has no native standalone row through this API.
+
+invalid_utf8_assertion	Known text Meta payloads that are not valid UTF-8 display as hex in Event List and Event Properties; Position-only commits retain their exact bytes, and explicit hex edits preserve the Meta type with Undo/Redo.
+invalid_utf8_verification	crates/aaadaw/src/app/tests.rs::midi_opaque_text_meta_with_invalid_utf8_edits_as_hex_without_losing_bytes; automated App regression covers original-byte display, Position-only edit, explicit byte edit, and Undo/Redo; no native REAPER semantic comparison or screenshot has been made.

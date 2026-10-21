@@ -1,0 +1,10 @@
+reference	AAADAW Linux x86_64; current working-tree source built with nightly Rust 1.101.0 and Cranelift
+binary	target/cranelift/debug/aaadaw; ELF Build ID da8e46fd6e54e648d6039ce219883c4e9934c1c0; SHA-256 295e44501858a44c488deb9482c7b97dfba7024bfb3a3e2331a094d69e67bace
+runtime	Xvfb :260; 1280x800x24; WGPU_BACKEND=gl; isolated XDG profile under target/midi-quantize-swing-live
+project	docs/verification/reaper-parity/fixtures/midi-note-quantize-aaadaw.aaadaw; opened by the rebuilt binary
+swing_settings	Main Grid settings; enabled Swing grid and kept Swing amount at 50%; captured at 1280x800 in midi-quantize-swing-aaadaw-grid-settings.png; SHA-256 94f55539f480cc76d073cc6a1c2e18cd85c839bb076e9314648eebdc26663dc0
+quantize_dialog	MIDI Editor grid 1/32; Quantize Events scope All notes; operation Position; strength 100%; Fix overlaps checked; captured before apply at 1280x800 in midi-quantize-swing-aaadaw-all-notes.png; SHA-256 89c18f06959deb0ba4ef6d3fd24f776f8e0dd96f8cb06e52df99add950c9e6b5
+quantize_dialog_default	Selected notes; Position; 100%; Fix overlaps checked; captured at 1280x800 in midi-quantize-swing-aaadaw-dialog.png; SHA-256 10af09e0748f268fbfe8318ea49e353e0cae509a690dd527c696a710c7d8fa38
+interaction	Opened the fixture project, double-clicked its MIDI item, enabled Swing grid at 50%, opened Quantize Events, chose All notes and Position, then applied; the editor reports MIDI notes quantized to editor grid
+applied_capture	midi-quantize-swing-aaadaw-applied.png; 1280x800; SHA-256 5147901db81f0274653f3b73c412d4491af8bad817738106db59b81927494935
+behavior_proof	Core and App regressions assert exact note ticks, note lengths, All events CC/Pitch Bend changes, and Undo restoration; native REAPER readbacks are in midi-quantize-swing-native.tsv

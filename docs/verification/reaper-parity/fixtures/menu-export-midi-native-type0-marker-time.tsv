@@ -1,0 +1,29 @@
+version	7.82/linux-x86_64
+theme	Default_7.0.ReaperThemeZip
+export_action	40849 / File: Export project MIDI...
+export_scope	All MIDI items; Time selection only; Type 0 / Merge to single MIDI track; PPQN 960
+selection_endpoint_project	fixtures/menu-export-midi-native-scope-markers-time.rpp; SHA-256 6697a8b4203ab4cf075f1dd1743ea00351a5a8e93a425128c85e3e9daa01bcdf
+selection_endpoint_range	0.5-1.0 seconds; project ticks 960-1920
+interior_project	fixtures/menu-export-midi-native-type0-marker-time-interior.rpp; SHA-256 37ecfff1ec04956393888b240ed63fc21d93f857090a5e08266afc3020125a3e
+interior_range	0.5-1.25 seconds; project ticks 960-2400; #Hidden at 1.0 seconds is strictly inside this selection
+project_fixture	Piano MIDI item 0.25-1.25 seconds; C4 note, CC1, pitch bend; #Intro visible at 0 sec; Verse visible at 0.5 sec; #Hidden individually hidden at 1 sec (flags 24); project marker ruler hidden (RULERLANECFG 4)
+export_markers	checked; marker mode; name filter off
+export_hidden_markers_on	checked
+native_checked_file	fixtures/menu-export-midi-native-type0-marker-time.mid; 64 bytes; SHA-256 4143276ade39303559bf5b9af4024b6268b825b822dc78e354b65b6bd52e2b8d
+native_checked_events	Verse FF 06 at output tick 0; pitch bend, CC1, and C4 Note On also at tick 0 in that order; C4 Note Off at tick 480; #Hidden FF 06 at tick 960 (inclusive time-selection end); End-of-Track tick 960
+export_hidden_markers_off	unchecked
+native_unchecked_file	fixtures/menu-export-midi-native-type0-marker-time-nohidden.mid; 43 bytes; SHA-256 5f3a8ac3d56c04e546cad0b0795c17236e73f21e8637dee4318766ea87ca9022
+native_unchecked_events	No marker events; pitch bend, CC1, and C4 Note On at output tick 0; C4 Note Off and End-of-Track at tick 480
+native_interior_checked_file	Same 64-byte output as native_checked_file; #Hidden at tick 960 is inside the 960-2400 selection, proving inclusion is not limited to an endpoint
+native_interior_unchecked_file	Same 43-byte output as native_unchecked_file; no markers when hidden-marker inclusion is off
+endpoint_dialog	fixtures/menu-export-midi-native-type0-marker-time-dialog.png; 1280x800; hidden markers checked; SHA-256 8bc12eb7a4a97f39e700b2a218f9560ba7cc32c999c6cba0e30d72ad7c3ca4be
+endpoint_result	fixtures/menu-export-midi-native-type0-marker-time-result.png; REAPER confirms output path; 1280x800; SHA-256 246fcc66053fc22b5e5ce72e7a8738f5f32a56db9c054612bd1c9bd10727d098
+endpoint_unchecked_dialog	fixtures/menu-export-midi-native-type0-marker-time-nohidden-dialog.png; 1280x800; hidden markers unchecked; SHA-256 c7aedfd0ddb814792ace115e61411751f2a21a5baa72b3f03e579142ec2bdfd6
+endpoint_unchecked_result	fixtures/menu-export-midi-native-type0-marker-time-nohidden-result.png; REAPER confirms output path; 1280x800; SHA-256 7d4e0801a1e57dc0b845695d4348b1df751d7189b89c6d0cf917ca4712ea5aad
+interior_checked_dialog	fixtures/menu-export-midi-native-type0-marker-time-interior-on-dialog.png; 1280x800; hidden markers checked; SHA-256 fe06301d70c1e78a1273492d24943d63634c11fd6c7afbae41ee6d5ff3b5b182
+interior_checked_result	fixtures/menu-export-midi-native-type0-marker-time-interior-on-result.png; REAPER confirms output path; 1280x800; SHA-256 1f149c42dcf6496b127150352f026bf7b0fbd2f37d310a7bead582c34ad03fa1
+interior_unchecked_dialog	fixtures/menu-export-midi-native-type0-marker-time-interior-off-dialog.png; 1280x800; hidden markers unchecked; SHA-256 477641dd695255aa4aff221d13f1ce6859d3df775fb33410378061653cd11f87
+interior_unchecked_result	fixtures/menu-export-midi-native-type0-marker-time-interior-off-result.png; REAPER confirms output path; 1280x800; SHA-256 62fe861b20770b547fd04002f05c8353133db3cf35db1e0da82c8e968b59855d
+observation	Unlike entire-project Type 0 exports, time-selection Type 0 includes individually hidden markers when Export hidden markers is checked; this includes both selection endpoints. MIDI state events before the range from an overlapping item are retained at tick 0, while note events follow the existing clipping rule.
+core_regressions	crates/aaadaw-core/tests/midi_file_export.rs::reaper_782_type_zero_time_selection_hidden_marker_opt_in_matches_native_bytes; ::reaper_782_type_zero_time_selection_hidden_marker_inside_range_matches_native_bytes; ::reaper_782_type_zero_time_selection_hidden_ruler_checkbox_off_matches_native_bytes
+aaadaw_runtime_smoke	Actual rebuilt binary Build ID 5940df2ba6d40033e8e91697ca09e686966b0808; SHA-256 d388d965addc3ea97de685ba8d27e4e98b662351257677ecf6937d998c3555df; Xvfb :90; 1280x800 startup screenshot fixtures/menu-export-midi-aaadaw-marker-time-build-smoke.png; SHA-256 5983232a7cbe2cccfc9b20feb1d36f805f879d847cf558bb74e838e2d255ad1d

@@ -1,0 +1,19 @@
+version	7.82/linux-x86_64
+theme	Default_7.0.ReaperThemeZip
+fixture	track Piano; item 0.25-1.25 seconds; C4 note, CC1, pitch bend
+take_ppq_at_item_start	0.000000
+take_ppq_at_note_end	960.000000
+take_ppq_at_cc	240.000000
+take_ppq_at_pitch_bend	360.000000
+project_ppq_at_item_start	480
+project_ppq_at_note_end	1440
+project_ppq_at_cc	720
+project_ppq_at_pitch_bend	840
+export_action	40849
+export_defaults	Type 1; PPQN 960; tempo/meter/SMPTE/markers unchecked
+native_export_path	/tmp/aaadaw-midi-export-native-20261015.mid
+native_export_bytes	119
+native_export_sha256	f94eb8208e3eef54763dc12519cb49ec1e949639c059e25c537423313eed82ff
+native_dialog_screenshot	fixtures/menu-export-midi-native-content-dialog.png
+native_dialog_screenshot_sha256	64bd8df0253093e4c9afe69a478b940ee139b15f6fc9df1bb3ca0a13ca044403
+native_binary_fixture	fixtures/menu-export-midi-native-content.mid

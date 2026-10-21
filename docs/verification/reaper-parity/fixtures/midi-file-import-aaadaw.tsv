@@ -1,0 +1,10 @@
+artifact	sha256
+docs/reaper-parity/fixtures/midi-file-import-native/probe-type1.mid	38a38849f4a82ed615f2056bbd045c4673dff065e0a82fccd2737a231fc84f01
+fixtures/midi-file-import-aaadaw-options.png	c6919f90b71140e3ecde84ec41640dc64787787e23c1f93a8257067fbc45571c
+fixtures/midi-file-import-aaadaw-result.png	dd58d0ceb10b44dda2ebae0d9a0422404ede664e3afea490c5a776c140f59885
+fixtures/midi-file-import-aaadaw-tempo-meter.png	7f0d2ad5357d1a76d278d1c1a70d4805b6a7263ec54f457a9ca8e54eea267077
+binary_sha256	9ab0e124be688e1b512f1d659ee3b9ebbb7efaabf51161c60d86f6d41eee430b
+build_id	2afc7079777827714f5e174ba72c3cf2a6e1bdd1
+environment	Linux stable debug desktop binary; Xvfb :438; 1280x800; isolated XDG and DBus test FileChooser returning the native 212-byte Type 1 probe MIDI file
+assertion	The default dialog shows two source tracks and two Marker/Cue events with all three options unchecked. With all options enabled, the Arrangement shows Lead and Meta only tracks, two imported project markers, and the imported 150 BPM / 3/4 meter map; import reports success.
+verification	crates/aaadaw/src/app/tests.rs::midi_file_import_options_apply_tracks_tempo_markers_and_opaque_events_atomically; crates/aaadaw/src/app/tests.rs full binary suite 770/770; crates/aaadaw-core/tests/midi_file_import.rs and midi_file_export.rs 92/92; crates/aaadaw-storage/tests/project_store.rs 67/67; stable cargo fmt and git diff --check

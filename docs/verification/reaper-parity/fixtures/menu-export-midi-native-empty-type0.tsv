@@ -1,0 +1,22 @@
+version	7.82/linux-x86_64
+theme	Default_7.0.ReaperThemeZip
+track_count	0
+export_scope	All / Entire project
+file_type	Type 0 / Merge to single MIDI track
+ppqn	960
+optional_metadata	tempo/meter, SMPTE offset, and markers unchecked
+reaper_build_id	fb9ade2f211bc91a3ee6193630ef17bcf5f6528b
+reaper_binary_sha256	9976f5608068b7a58518969001b00b527fb0de6ed7459e0e5dda6f29878ee254
+project_sha256	a94bb6758322b78eaef5f0dfef37a6408cf5c7b4c799750f714f38e9c0748b27
+probe_script	../../../../scripts/reaper_parity/probe-midi-export-empty-type0.lua; SHA-256 26d08502332599673047112427ec87578814ca51b78b6c610a90889626cf5989
+error_screenshot	menu-export-midi-native-empty-type0-error-full.png; 1280x800; SHA-256 f18db619b69bfe7b50467c903c14c772702b2f04a56081d98574c34eead6096a
+error_dialog_crop	menu-export-midi-native-empty-type0-error.png; 324x81; SHA-256 d3955ac606fc9131cefa9621a035687516d0c3e563f16e3e4f8380541f7547fc
+error_text	MIDI export failed! / No unmuted tracks containing MIDI items were found
+output	No MIDI file was created in the project or isolated output directory
+aaadaw_build_id	8a0f205fa560aae417ba98e06659668c91bb974c
+aaadaw_binary_sha256	a04ab02abecae07e1217f1e834d9bf08e961f8f9e9f813c16662605f1cf8c1d9
+aaadaw_error_screenshot	menu-export-midi-aaadaw-empty-type0-error-full.png; 1280x800; SHA-256 bec10a8dc264ed2880767797e39f6e6ed343902f581cfab631894bdeaf87b05f
+aaadaw_error_dialog_crop	menu-export-midi-aaadaw-empty-type0-error.png; 324x81; SHA-256 b2e02a08d208f00ddcebf6dfe47e8a7ef1565089000653b35318dab9a38d85cf
+aaadaw_confirm_no_file	menu-export-midi-aaadaw-empty-type0-confirmed-no-file.png; status `MIDI export failed!`; no output created; SHA-256 0a8d13e8c8e8e962b619ec382f6521a57689f1bb10087b2bebb50d87e1c9d942
+aaadaw_type1_regression	menu-export-midi-aaadaw-empty-type1-warning.png; centered OK/Cancel; confirmed Type 1 file 68 bytes, 2 tracks, SHA-256 5a8e0a82bb7c528a890ae1d9b7c91e4f126b391c25af0abfe881e8773fb9d583
+aaadaw_live_run	Fresh isolated Xvfb :1773, actual rebuilt desktop binary; XTest mouse events opened File > Export project MIDI and selected Type 0/Type 1 controls

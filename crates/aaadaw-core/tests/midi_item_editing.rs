@@ -22,10 +22,12 @@ fn midi_items_can_be_deleted_and_restored_with_their_notes() {
         .apply(DawAction::AddMidiNotes {
             item_id,
             notes: vec![MidiNoteData {
+                channel: 0,
                 pitch: 60,
                 tick: 240,
                 duration: 960,
                 velocity: 100,
+                off_velocity: 0,
             }],
         })
         .expect("adding a note should succeed");
@@ -71,10 +73,12 @@ fn midi_items_can_be_moved_and_resized_without_losing_notes() {
         .apply(DawAction::AddMidiNotes {
             item_id,
             notes: vec![MidiNoteData {
+                channel: 0,
                 pitch: 64,
                 tick: 480,
                 duration: 960,
                 velocity: 96,
+                off_velocity: 0,
             }],
         })
         .expect("adding a note should succeed");
@@ -135,6 +139,152 @@ fn midi_items_can_be_moved_and_resized_without_losing_notes() {
 }
 
 #[test]
+fn midi_item_placement_edits_source_offset_with_timing_in_one_undo_step() {
+    let mut project = Project::new();
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Piano".to_owned(),
+        })
+        .unwrap();
+    let track_id = project.tracks()[0].id();
+    project
+        .apply(DawAction::InsertMidiItem {
+            track_id,
+            start_tick: 0,
+            length_ticks: 1_920,
+        })
+        .unwrap();
+    let item_id = project.midi_items()[0].id();
+    project
+        .apply(DawAction::AddMidiNotes {
+            item_id,
+            notes: vec![MidiNoteData {
+                channel: 0,
+                pitch: 60,
+                tick: 240,
+                duration: 480,
+                velocity: 100,
+                off_velocity: 0,
+            }],
+        })
+        .unwrap();
+    project
+        .apply(DawAction::SetMidiControllers {
+            item_id,
+            controllers: vec![aaadaw_core::MidiControllerData {
+                channel: 0,
+                controller: 1,
+                tick: 360,
+                value: 64,
+            }],
+        })
+        .unwrap();
+    project
+        .apply(DawAction::SetMidiPitchBends {
+            item_id,
+            pitch_bends: vec![aaadaw_core::MidiPitchBendData {
+                channel: 0,
+                tick: 480,
+                value: 10_000,
+            }],
+        })
+        .unwrap();
+    let original = project.midi_items()[0].clone();
+
+    project
+        .apply(DawAction::EditMidiItemPlacement {
+            item_id,
+            start_tick: 1_920,
+            length_ticks: 960,
+            source_offset_ticks: 480,
+        })
+        .unwrap();
+    let edited = &project.midi_items()[0];
+    assert_eq!(edited.start_tick(), 1_920);
+    assert_eq!(edited.length_ticks(), 960);
+    assert_eq!(edited.source_offset_ticks(), 480);
+    assert_eq!(edited.notes(), original.notes());
+    assert_eq!(edited.controllers(), original.controllers());
+    assert_eq!(edited.pitch_bends(), original.pitch_bends());
+
+    assert!(project.undo().unwrap());
+    assert_eq!(project.midi_items()[0], original);
+    assert!(project.redo().unwrap());
+    assert_eq!(project.midi_items()[0].start_tick(), 1_920);
+    assert_eq!(project.midi_items()[0].length_ticks(), 960);
+    assert_eq!(project.midi_items()[0].source_offset_ticks(), 480);
+
+    assert_eq!(
+        project.apply(DawAction::EditMidiItemPlacement {
+            item_id,
+            start_tick: 0,
+            length_ticks: 0,
+            source_offset_ticks: 0,
+        }),
+        Err(ActionError::InvalidMidiItemLength)
+    );
+    assert_eq!(
+        project.apply(DawAction::EditMidiItemPlacement {
+            item_id,
+            start_tick: 0,
+            length_ticks: 1,
+            source_offset_ticks: i64::MAX,
+        }),
+        Err(ActionError::InvalidMidiItemPosition)
+    );
+}
+
+#[test]
+fn signed_midi_source_offsets_place_events_after_the_item_start_and_undo_cleanly() {
+    let mut project = Project::new();
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Signed MIDI source".to_owned(),
+        })
+        .unwrap();
+    project
+        .apply(DawAction::InsertMidiItem {
+            track_id: project.tracks()[0].id(),
+            start_tick: 1_920,
+            length_ticks: 3_840,
+        })
+        .unwrap();
+    let item_id = project.midi_items()[0].id();
+    project
+        .apply(DawAction::AddMidiNotes {
+            item_id,
+            notes: vec![MidiNoteData {
+                channel: 0,
+                pitch: 60,
+                tick: 1_000,
+                duration: 120,
+                velocity: 96,
+                off_velocity: 0,
+            }],
+        })
+        .unwrap();
+    let before = project.snapshot();
+    project
+        .apply(DawAction::EditMidiItemPlacement {
+            item_id,
+            start_tick: 1_920,
+            length_ticks: 3_840,
+            source_offset_ticks: -960,
+        })
+        .unwrap();
+
+    let item = &project.midi_items()[0];
+    assert_eq!(item.signed_source_offset_ticks(), -960);
+    assert_eq!(item.source_tick_at_project_tick(1_920), Some(2_880));
+    assert_eq!(item.source_tick_at_project_tick(2_880), Some(0));
+    assert_eq!(item.project_tick_at_content_tick(1_000), Some(3_880));
+    assert!(project.undo().unwrap());
+    assert_eq!(project.snapshot(), before);
+}
+
+#[test]
 fn shortening_a_midi_clip_keeps_hidden_events_for_later_expansion() {
     let mut project = Project::new();
     project
@@ -156,10 +306,12 @@ fn shortening_a_midi_clip_keeps_hidden_events_for_later_expansion() {
         .apply(DawAction::AddMidiNotes {
             item_id,
             notes: vec![MidiNoteData {
+                channel: 0,
                 pitch: 64,
                 tick: 1_440,
                 duration: 480,
                 velocity: 96,
+                off_velocity: 0,
             }],
         })
         .expect("adding a note should succeed");
@@ -167,6 +319,7 @@ fn shortening_a_midi_clip_keeps_hidden_events_for_later_expansion() {
         .apply(DawAction::SetMidiControllers {
             item_id,
             controllers: vec![aaadaw_core::MidiControllerData {
+                channel: 0,
                 controller: 1,
                 tick: 1_680,
                 value: 80,
@@ -229,10 +382,12 @@ fn trimming_a_midi_clip_start_preserves_event_positions_and_source_bounds() {
         .apply(DawAction::AddMidiNotes {
             item_id,
             notes: vec![MidiNoteData {
+                channel: 0,
                 pitch: 64,
                 tick: 960,
                 duration: 480,
                 velocity: 96,
+                off_velocity: 0,
             }],
         })
         .unwrap();

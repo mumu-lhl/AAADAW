@@ -1,0 +1,23 @@
+artifact	sha256
+scripts/reaper_parity/probe-midi-event-filter-from-pitch-opaque-selection.lua	d8c7ef16a957eea6dcc971fbd1ad07d61602da2bae8e5fba269b3a82fa84200b
+fixtures/midi-event-filter-from-pitch-opaque-selection-native-before.png	9217f41d07af6542fed129d88bdf6231bf6bf55a2512a66b727382d6608ea43b
+fixtures/midi-event-filter-from-pitch-opaque-selection-native-after-set.png	2e42a4ae6942a8d29f88d0be73828f5e9164daa7a6220c86373e4bcebf8d779d
+fixtures/midi-event-filter-from-pitch-opaque-selection-native-funnel-off.png	52dfb045936a9c8bd319c455e415fee50c4fc9fed8c4a67af2ec73b00406cd4c
+fixtures/midi-event-filter-from-pitch-opaque-selection-native-readback-before.tsv	f79153f28949c14cd4e7db337bfca12d706a81cfc4824083e4c706c2536d3eec
+fixtures/midi-event-filter-from-pitch-opaque-selection-native-readback-after-set.tsv	b087d7993a0d87dad2de61b43eacb428ebcb6e00b17c1505cf8251257301eca8
+fixtures/midi-event-filter-from-pitch-opaque-selection-native-before.bin	415cb5da07af0d22cbf5d9f77c487bf2707b0f1cd2fd4c8e86e59e8737c3fb2e
+fixtures/midi-event-filter-from-pitch-opaque-selection-native-after-set.bin	415cb5da07af0d22cbf5d9f77c487bf2707b0f1cd2fd4c8e86e59e8737c3fb2e
+fixtures/midi-event-filter-from-pitch-opaque-selection-native-before.rpp	15a30ff3d9e1982433fbfda1fc6e30d35270f9029d4dfadd432b3d84676a5e23
+fixtures/midi-event-filter-from-pitch-opaque-selection-native-after-set.rpp	d8a4ae8ca35f395ada183dccb12bf6b592815aee841de20c68d356e813b7d908
+fixtures/midi-event-filter-from-pitch-opaque-selection-native-funnel-off.rpp	9400c30c8081bee6a60d8b6fe1f9e4fcbef723c06898ec354add5781e06f46b3
+native_build_id	fb9ade2f211bc91a3ee6193630ef17bcf5f6528b
+native_binary_sha256	9976f5608068b7a58518969001b00b527fb0de6ed7459e0e5dda6f29878ee254
+theme	REAPER 7.82 Linux Default 7; theme SHA-256 575544606736a395520703e532209ad9635f13a41b7ea000bb9810d60025be48
+environment	Linux Xvfb :555 (before screenshot) and :556 (after/funnel-off capture), 1600x1000; isolated REAPER profile; audio unavailable
+starting_state	Eight Event List rows: selected Pitch Bend +4096 ch3 @ tick 480 and Text Meta @ tick 960; unselected C4 ch2 @ 480, CC7 ch2 @ 600, G4 ch5 @ 720, Text Meta @ 720, F0 SysEx @ 1500, and terminal row; Show-only and funnel off
+action	Event List > Filter Events > Set filter from selection
+assertion	REAPER derives <all events>, All channels, Position 1/8–0.250, Repeat measure, Show-only checked, and activates the Event List funnel; Draw events on channel remains Channel 1
+list_result	Six rows pass immediately: Pitch Bend +4096, C4, CC7, unselected Text Meta, G4, and selected Text Meta. Out-of-range SysEx and terminal row are hidden. Action 40504 disables the funnel and restores all eight rows.
+selection_and_data	The selected Pitch Bend and Text Meta remain selected. MIDI_GetAllEvts is 168 bytes before and after with identical SHA-256 415cb5da07af0d22cbf5d9f77c487bf2707b0f1cd2fd4c8e86e59e8737c3fb2e. The after-set RPP stores EVTFILTER 0 -1 -1 -1 -1 0 1 0 0 -1 -1 0.125 0.25026042 1 -1 0 -1 -1; the funnel-off RPP clears Show-only.
+verification	ReaScript event readbacks before/after, identical MIDI blobs, before/after/funnel-off RPPs, REAPER 7.82 filter dialog and Event List screenshots
+limitation	MIDI_GetTextSysexEvt did not return the out-of-range SysEx row in the after-set filtered readback; its source bytes remain present in the unchanged MIDI_GetAllEvts blob and project states. Screenshots verify behavior and controls, not pixel identity.

@@ -1,0 +1,9 @@
+reference	7.82/linux-x86_64 / Linux / Default 7
+routing_matrix_action_40251	View: Show routing matrix window
+source_ordinary_send_count	1
+source_hardware_output_count	1
+source_audio_send_destination_matches	true
+hardware_output_source_channels	0
+hardware_output_destination_channels	0
+hardware_output_send_mode	0
+unused_peer_hardware_output_count	0

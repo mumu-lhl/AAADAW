@@ -27,10 +27,12 @@ fn project_with_instrument_midi() -> (Project, aaadaw_core::TrackId) {
         .apply(DawAction::AddMidiNotes {
             item_id,
             notes: vec![MidiNoteData {
+                channel: 0,
                 pitch: 60,
                 tick: 0,
                 duration: 480,
                 velocity: 100,
+                off_velocity: 0,
             }],
         })
         .unwrap();
@@ -58,6 +60,18 @@ fn freezing_is_one_undoable_source_preserving_action() {
     assert_eq!(project.midi_items().len(), 1);
 
     let frozen = project.snapshot();
+    assert!(
+        project
+            .apply(DawAction::SetTrackFolder {
+                track_id,
+                enabled: true
+            })
+            .is_err()
+    );
+    assert_eq!(project.snapshot(), frozen);
+    let mut invalid_folder = frozen.clone();
+    invalid_folder.tracks[0].is_folder = true;
+    assert!(Project::from_snapshot(invalid_folder).is_err());
     assert_eq!(
         Project::from_snapshot(frozen.clone()).unwrap().snapshot(),
         frozen
@@ -101,6 +115,12 @@ fn unfreezing_restores_source_and_removes_only_its_render() {
 #[test]
 fn failed_freeze_and_frozen_source_edits_leave_the_project_unchanged() {
     let (mut project, track_id) = project_with_instrument_midi();
+    let midi_item_id = project.midi_items()[0].id();
+    project
+        .apply(DawAction::AddEmptyMidiItemTakeAfter {
+            item_id: midi_item_id,
+        })
+        .unwrap();
     let before = project.snapshot();
     assert_eq!(
         project.apply(DawAction::FreezeTrack {
@@ -122,16 +142,24 @@ fn failed_freeze_and_frozen_source_edits_leave_the_project_unchanged() {
         })
         .unwrap();
     let frozen = project.snapshot();
-    let midi_item_id = project.midi_items()[0].id();
+    assert!(
+        project
+            .apply(DawAction::CropMidiItemToActiveTake {
+                item_id: midi_item_id,
+            })
+            .is_err()
+    );
     assert!(
         project
             .apply(DawAction::AddMidiNotes {
                 item_id: midi_item_id,
                 notes: vec![MidiNoteData {
+                    channel: 0,
                     pitch: 64,
                     tick: 0,
                     duration: 120,
                     velocity: 100,
+                    off_velocity: 0,
                 }],
             })
             .is_err()

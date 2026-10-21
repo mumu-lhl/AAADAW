@@ -1,0 +1,25 @@
+reference	Linux REAPER 7.82 / Default_7.0.ReaperThemeZip; Main action 40543
+native_probe	scripts/reaper_parity/probe-midi-implode-same-track.lua; SHA-256 38298ed2ab9137047211eadfc8ec9f4390c40fdcaf0676064c3a7e02ed0c9a92
+native_capture_script	scripts/reaper_parity/capture-midi-implode-same-track-native.sh; SHA-256 0a5668849df32fb09c84a1d2058b9069c03d36948c6349b7a43b916974e6f734
+native_fixture	Three selected same-track MIDI items at 0, 2, and 4 seconds; donor B contains two Takes and has Take 2 active
+native_readback	docs/verification/reaper-parity/fixtures/midi-implode-same-track-native.tsv; SHA-256 08f5cea6bb2647dcda1c867440199a63d76def9b59bf086086499b9559b099cb
+native_result	One selected 4-Take destination at the original 0–6 second range; base active Take preserved; donor Takes appended in Arrange order
+native_undo_redo	Undo restores all 3 items and their selection; Redo restores one selected 4-Take item; undo description `Implode items to takes`
+native_state_before	docs/verification/reaper-parity/fixtures/midi-implode-same-track-before.rpp; SHA-256 a91fc01e745e20e7be2547c3be6404d4b70c6567b0ab88c3491adae65194dc60
+native_state_after	docs/verification/reaper-parity/fixtures/midi-implode-same-track-after.rpp; SHA-256 9322520f7c89b4a3b0859e17277f843de46dc5a84bc73e38ac93afbb96b2cca3
+native_state_undo	docs/verification/reaper-parity/fixtures/midi-implode-same-track-undo.rpp; matches before state hash
+native_state_redo	docs/verification/reaper-parity/fixtures/midi-implode-same-track-redo.rpp; matches after state hash
+native_screenshot	docs/verification/reaper-parity/fixtures/midi-implode-same-track-native-after.png; 1280x800; `Take 1/4: Base A`; SHA-256 d5e4f661ab041864f9f8007242af10b9dd0af092d862c2028e90886e3ef28033
+aaadaw_fixture_generator	crates/aaadaw/examples/generate_midi_implode_same_track_fixture.rs; SHA-256 3a511d71ed2a4e8f0effa73f11e09bb5ec699a3b0718ffd87d08d778a16eaf35
+aaadaw_fixture	docs/verification/reaper-parity/fixtures/midi-implode-same-track-aaadaw.aaadaw; SHA-256 41a4a4a7804ba99f56b0192a0e58c9275262bacde354a44e46265b22813d5221
+aaadaw_capture_script	scripts/reaper_parity/capture-midi-implode-same-track-aaadaw.sh; temporary capture-only binding Ctrl+Shift+I for `take.implode-same-track`; SHA-256 597e014ededcf3df12838329cfcab1e37f94c7c6777108d4a09e36465c76320f
+aaadaw_binary	target/cranelift/debug/aaadaw; rustc 1.101.0-nightly (5d8fec066 2026-10-16); Cranelift backend; audio-device disabled; Build ID 10ef288b4f969e347ecb12420ba05cacb25065e7; SHA-256 9ab9e262cd008d7b627681b1a456c83e2dd78b0ae1dc8b80e95977fd858d2838
+aaadaw_screenshot_before	docs/verification/reaper-parity/fixtures/midi-implode-same-track-aaadaw-before.png; 1280x800; 3 selected source items; SHA-256 dad60fce93a0a750a93d3b3851247e1f8b472a52220f848234e1d33c80942b02
+aaadaw_screenshot_after	docs/verification/reaper-parity/fixtures/midi-implode-same-track-aaadaw-after.png; 1280x800; one selected item showing `Take 1/4 · Base A`; SHA-256 1cb047757e563952e93410409e70559c3b6c99d85434f22bcf386e8ba28d68b9
+aaadaw_screenshot_undo	docs/verification/reaper-parity/fixtures/midi-implode-same-track-aaadaw-undo.png; 1280x800; original items selected; SHA-256 90f68e3270536d430d50a7512fc850bb077737e62412180cbe5b7e180b61c2d8
+aaadaw_screenshot_redo	docs/verification/reaper-parity/fixtures/midi-implode-same-track-aaadaw-redo.png; 1280x800; merged item selected; SHA-256 0d1c812ffc37c69d92a982a22c0906d6e8f269d4f41a60b91c16136053255127
+focused_core_regression	crates/aaadaw-core/tests/midi_item_takes.rs::same_track_midi_implode_preserves_take_order_data_and_round_trips_as_one_step; passed
+focused_app_regression	crates/aaadaw/src/app/tests.rs::imploding_selected_midi_items_matches_take_order_and_native_selection_history; passed
+audio_device_regression	crates/aaadaw/src/app/tests.rs::midi_item_implode_and_removal_invalidate_the_audio_playback_graph; `cargo +stable test -p aaadaw --bin aaadaw --features audio-device`; passed
+workspace_verification	Stable Nextest 1284/1284 across 55 binaries; strict all-target Clippy `-D warnings -A future-incompatible`; `audio-device`-feature targeted test and all-target Clippy; stable fmt --check; capture shell `bash -n`; parity matrix 113 unique IDs / 15 columns; `git diff --check`; all artifact SHA-256 values verified
+scope_note	Screenshots verify project and UI state with audio-device disabled; MIDI event/copy correctness is covered by Core tests and native RPP readback.

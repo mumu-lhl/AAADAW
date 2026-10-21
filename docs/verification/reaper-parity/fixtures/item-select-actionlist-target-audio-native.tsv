@@ -1,0 +1,14 @@
+recorded_at_utc	2026-10-16
+version	7.82/linux-x86_64
+theme	Default_7.0.ReaperThemeZip
+platform	Linux x86_64; isolated Xvfb :353; X11; 1280x800x24
+configuration	Fresh clean Default 7 config; no custom keymap, mouse map, or third-party extensions; audio device closed; transport stopped
+audio_source	docs/verification/reaper-parity/fixtures/item-hover-actionlist-target-audio.wav; mono PCM16 48000 Hz 1.0 s; SHA-256 b2beb6e035cbd9ab3de482949160e467a29bd658807772ec9451ee9c7698983e
+fixture	Track A MIDI items A1/A2; Track B Audio item B1 and MIDI item B2; initial selection A1
+action	40528 Item: Select item under mouse cursor; no default shortcut
+procedure	Open Action List; move its 701x475 window to x0,y300; search/select the exact 40528 action; move the real pointer to Audio B1 at 500,225; press Enter. Arrangement remains visible above Action List.
+case	action_id	pointer_xy	hovered_item	selection_before	selection_api_order_before	selection_after	selection_api_order_after	selected_tracks_before	selected_tracks_after	last_touched_track_after	project_state_change_count	undo_label_after
+actionlist_select_hovered_audio_item	40528	500,225	B1	A1	A1	B1	B1			B	3	Change media item selection
+observation	Action List keyboard Run uses Audio B1 as GetItemFromPoint() target and replaces the MIDI A1 selection with B1.
+screenshot_before	item-select-actionlist-target-audio-40528-before-native.png; SHA-256 167cb3c005a4eb9900a1259f29ddffc9ebd6f49c4514620811cd6c059650f59b
+screenshot_after	item-select-actionlist-target-audio-40528-after-native.png; SHA-256 9154a8c396b7dcf04e13000e381496a44012314e02716ab2d85abcd283402969

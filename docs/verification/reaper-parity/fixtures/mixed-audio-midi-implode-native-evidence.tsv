@@ -1,0 +1,17 @@
+reference	REAPER 7.82/linux-x86_64; Default_7.0.ReaperThemeZip
+artifact	bytes	sha256
+scripts/reaper_parity/probe-item-implode-mixed-audio-midi-takes.lua	6214	3df18532f8fa4bacfd74abb863c634bc567fc53bf0ce418f0b5748bdc5b39bc7
+scripts/reaper_parity/capture-item-implode-mixed-audio-midi-native.sh	4949	e06a52ea8b3667ca8a50f96a97e0ced3658c61ae45fa6cf74bd1788654a79c8c
+examples/first-project/melody.wav	384044	28806c586ada17c9683d30a9f8aa61dc1347e9734382b586870c8ff015c04ba0
+docs/verification/reaper-parity/fixtures/mixed-audio-midi-implode-audio-target-native.tsv	2182	9d1eb6ddbdce5f79ac28202236dd744e96ef561125f64dca9039cf57c78d2df8
+docs/verification/reaper-parity/fixtures/mixed-audio-midi-implode-audio-target-before.rpp	4701	cc2d3cea09d3a73d470f6504f9df1ab8c4f36a480673795718ca3baea37215d0
+docs/verification/reaper-parity/fixtures/mixed-audio-midi-implode-audio-target-after.rpp	4438	3df15add45553186dec47ed145b8f8acef8679eb9d5f16d24df6be526d97c2fc
+docs/verification/reaper-parity/fixtures/mixed-audio-midi-implode-audio-target-undo.rpp	4701	cc2d3cea09d3a73d470f6504f9df1ab8c4f36a480673795718ca3baea37215d0
+docs/verification/reaper-parity/fixtures/mixed-audio-midi-implode-audio-target-redo.rpp	4438	3df15add45553186dec47ed145b8f8acef8679eb9d5f16d24df6be526d97c2fc
+docs/verification/reaper-parity/fixtures/mixed-audio-midi-implode-audio-target-native-after.png	78349	d977cd3ad2ad978b6e47eea7fab2590486e3f826ec9383f05858894ec22edd62
+docs/verification/reaper-parity/fixtures/mixed-audio-midi-implode-midi-target-native.tsv	2179	568c5c4bf840450af89c01749a2c7c42598de5e66427f642d09ca90816214303
+docs/verification/reaper-parity/fixtures/mixed-audio-midi-implode-midi-target-before.rpp	4701	1ebacbcba74b0244b61fcff4aba4aab2a1f4137afeb6a8298a929b5ac7c758e7
+docs/verification/reaper-parity/fixtures/mixed-audio-midi-implode-midi-target-after.rpp	4438	9cfe8a0bf456f81b2e61b2151ea0e3bba1f7bf1c6dbe783555949336d41e10a7
+docs/verification/reaper-parity/fixtures/mixed-audio-midi-implode-midi-target-undo.rpp	4701	1ebacbcba74b0244b61fcff4aba4aab2a1f4137afeb6a8298a929b5ac7c758e7
+docs/verification/reaper-parity/fixtures/mixed-audio-midi-implode-midi-target-redo.rpp	4438	9cfe8a0bf456f81b2e61b2151ea0e3bba1f7bf1c6dbe783555949336d41e10a7
+docs/verification/reaper-parity/fixtures/mixed-audio-midi-implode-midi-target-native-after.png	78184	e066c84e343b61f407e79d824de5f838a11b54ff792c4592a1dea3be559134c2

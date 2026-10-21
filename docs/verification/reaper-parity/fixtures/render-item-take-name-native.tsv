@@ -1,0 +1,24 @@
+key	value
+reference	Linux REAPER 7.82/linux-x86_64; Default 7.0.ReaperThemeZip; isolated configuration
+captured_at_utc	2026-10-16
+probe_script	../../../../scripts/reaper_parity/probe-render-item-name-wildcard.lua
+source_generator	../../../../scripts/reaper_parity/probe-render-format-vectors.py <probe-directory>; refuses to overwrite an existing source.wav
+source_file	source.wav; 48 kHz stereo PCM24; SHA-256 187b0243f13ddc06d27181da243ee07f89c593ec11ac9d2b0b3cbc342967b485
+project_fixture	One track; three one-second items at 0, 2, and 4 seconds; active take name Hit on all three
+selected_context	First and third items selected; middle item unselected despite having the same active take name
+wildcard_pattern	$item-$namenumber
+render_source	Selected media items
+render_preview	2 files; first preview path ends in Hit-01.wav
+rendered_filenames	Hit-01.wav; Hit-02.wav
+render_format	WAV; 24-bit PCM; 48,000 Hz; 2 channels
+render_length_frames	48,000 per file
+render_file_size_bytes	288,690 per file
+render_file_sha256	Hit-01.wav 1d223d3ed84fcb7283f754781ed6b419fbb32d9cc79636083e3558dc4a26a929; Hit-02.wav d8a84f37f9eb8abbfb1b44a3046f0e1669e8c13b7cf8f1dfbd0297ed6db94560
+native_render_dialog_screenshot	../images/render-item-take-name-preview-native.png; SHA-256 d4ed10b08ee9fd0d1f3bd5a660016ca06344bf390f369daee58b2da69bbd159d
+native_finished_render_screenshot	../images/render-item-take-name-finished-native.png; SHA-256 b5b1431ce3b9d09ef2748f68563b1e64b344caddf3f4da55656fb14736981d74
+native_observation	$namenumber counts matching names among rendered selected items; an unselected matching take name does not increment the number
+cross_context_pattern	$item-$region-$namenumber
+cross_context_outputs	Hit-Region 1-01.wav; Hit-Region 3-01.wav
+cross_context_observation	When both $item and $region are present, $namenumber follows the Region context; the Region names are unique, so both suffixes are 01 despite duplicate Hit take names
+cross_context_preview_screenshot	../images/render-item-region-namenumber-preview-native.png; SHA-256 7fa06e3309a67ba133b353d495156d6ea3f544abf83812506877984c6c16856c
+cross_context_finished_screenshot	../images/render-item-region-namenumber-finished-native.png; SHA-256 c1d2c3d5aa9bcf7e265cf0e642b1c1a97f722a0c0ac1ef67808c6dd9f2be4fc3

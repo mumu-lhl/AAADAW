@@ -1,0 +1,20 @@
+reference	7.82/linux-x86_64; Linux; Default 7; isolated project
+CreateTrackSend_nil	0
+category_0_count	0
+category_1_count	1
+category_2_count	1
+default_I_SRCCHAN	0.000000000
+default_I_DSTCHAN	0.000000000
+default_D_VOL	1.000000000
+default_D_PAN	0.000000000
+default_B_MUTE	0.000000000
+default_B_PHASE	0.000000000
+default_I_SENDMODE	0.000000000
+default_I_MIDIFLAGS	0.000000000
+stereo_to_stereo	I_SRCCHAN=0	I_DSTCHAN=0
+mono_1_to_stereo	I_SRCCHAN=1024	I_DSTCHAN=0
+mono_2_to_mono_1	I_SRCCHAN=1025	I_DSTCHAN=1024
+send_mode_0	accepted=true	readback=0
+send_mode_1	accepted=true	readback=1
+send_mode_2	accepted=true	readback=2
+send_mode_3	accepted=true	readback=3

@@ -1,0 +1,16 @@
+artifact	sha256
+crates/aaadaw/examples/generate_midi_filter_from_mixed_cc_selection_fixture.rs	c57382153de9fdfceb6820f6c4fa2a37f35a71c2dbfadcb6fd73685a6ebdff2a
+fixtures/midi-event-filter-from-mixed-cc-aaadaw.aaadaw	fa607ec2f5008f0056a9e7bb432a3833debd4c9ee6bfdc78f96353996c4a2b91
+fixtures/midi-event-filter-from-mixed-cc-aaadaw-filter-after.png	3c496b99a0eaf01e67b8d8051cc0cad214a22a7036a7054b687e3cc2a4660a46
+fixtures/midi-event-filter-from-mixed-cc-aaadaw-list-filtered.png	ebfe4b3e2b2f62bc61e034b75b23af28b4faae4b27a9fc3641365107725f2feb
+fixtures/midi-event-filter-from-mixed-cc-aaadaw-list-unfiltered.png	e61883bb51ab118b3af3faf983e092228965c6928a5056f0af3864d3d2f6bcbb
+binary_sha256	79e91ce84a15b91478d10c6d3a8bac8071fb8fed3f5199d62f1096f0689cc484
+binary_build_id	205cd3bfc13dd7ddedbcf248bdf167c57e63a5fd
+build_backend	rustc nightly with Cranelift codegen backend
+environment	Linux dummy Xorg :542, 1600x1000 root; MIDI Editor/Event List 1000x620; isolated AAADAW profile; audio unavailable
+starting_state	One C4 note; selected CC7 ch2 value64 @480 and CC10 ch3 value100 @960; unselected CC1 ch3 value90 @600, CC10 ch2 value80 @720, and CC7 ch2 value127 @1440
+action	Event List > Filter events > Set filter from selection; explicitly enable the Event List Filter button
+assertion	The app derives channels 2–3, Multichannel, Control Change, Control <all> disabled, Value 64–100, Position 0.125–0.25026042, and Repeat measure; Show-only stays off; Set leaves the Event List filter inactive and all 7 rows visible until the user enables the funnel, after which the same four matching CC rows as native REAPER are displayed
+filter_toggle	Turning the Event List Filter button off restores all 7 rows while leaving the selected CCs and Show-only state unchanged
+verification	Current-build real-window captures show the dialog, all 7 rows with the funnel off, and the 4 matching rows after explicitly enabling it; app regression verifies derived fields, exact filtered row set, separate Filter and Show-only toggles, Clear filter, selection preservation, and unchanged project/undo history
+limitation	Mixed CC parameters only; mixed event types and selected Pitch Bend, Program Change, Aftertouch, Channel Pressure, Meta, and SysEx remain open. Screenshots are behavior evidence, not pixel-diff certification

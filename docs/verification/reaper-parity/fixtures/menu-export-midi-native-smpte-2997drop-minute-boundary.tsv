@@ -1,0 +1,34 @@
+version	7.82/linux-x86_64
+theme	Default_7.0.ReaperThemeZip
+fixture	track Piano; item 0.25-1.25 seconds; C4 note, CC1, pitch bend
+project_frame_rate	29.970029970030 fps; drop-frame true; Project Settings > Video preset 29.97DF
+project_time_offset_seconds	60.060000000
+project_settings_start_time	1:00.060
+export_action	40849
+export_mode	Multitrack MIDI file (type 1 MIDI file)
+export_ppqn	960
+export_tempo_meter_changes	unchecked
+export_smpte_offset	checked (verified in native dialog screenshot)
+export_markers	unchecked
+native_smpte_offset_event	FF 54 05 40 01 00 02 00 (00:01:00:02; first dropped-minute boundary)
+native_conductor_events	name at tick 0; SMPTE offset, 4/4, and 120 BPM at tick 0; End-of-Track tick 0
+native_event_order	track name; SMPTE offset; time signature; tempo
+native_midi_track_events	Piano note-on tick 480, CC1 tick 720, pitch bend tick 840, note-off and End-of-Track tick 1440
+native_project_fixture	fixtures/menu-export-midi-native-smpte-2997drop-minute-boundary.rpp
+native_project_sha256	4ce8dbe5ca24651a5427ccb51bdf17f90c431df3d7219efcd550be64db7de339
+native_project_settings_start_time_screenshot	fixtures/menu-export-midi-native-smpte-2997drop-minute-boundary-start-time.png (Project start time 1:00.060)
+native_project_settings_start_time_screenshot_sha256	f3e3ff9eee9a18d9b2700ffa02c535b5d410c2af95bf886358f5a3616323280b
+native_project_settings_video_screenshot	fixtures/menu-export-midi-native-smpte-2997drop-minute-boundary-video-rate.png (Frame rate 29.97DF)
+native_project_settings_video_screenshot_sha256	b4fa8c024b4dd17f63bd3c482eb07870e697af6e431d7b06b133de4c97b42192
+native_export_fixture	fixtures/menu-export-midi-native-smpte-2997drop-minute-boundary.mid
+native_export_bytes	110
+native_export_sha256	00e688fe9aa0a256b9d0653b672082e1840cc5daeb06d5f3a4c00f9194684879
+native_dialog_screenshot	fixtures/menu-export-midi-native-smpte-2997drop-minute-boundary-dialog.png
+native_dialog_screenshot_sha256	b17db0ed9e2ac9c2e9c1742761388e3b7a9809c467253e2425395d87a400fbcf
+native_probe	scripts/reaper_parity/probe-midi-export-smpte-rate.lua
+native_probe_environment	AAADAW_REAPER_FRAME_RATE=29.97DF; AAADAW_REAPER_PROJECT_OFFSET_SECONDS=60.06
+native_project_settings_readback	29.970029970030 fps; drop-frame true; project offset 60.060000000 seconds; one track and one MIDI item
+native_project_timemode	TIMEMODE 1 3 -1 30 1 0 -1 0
+native_probe_expected_event	FF 54 05 40 01 00 02 00
+reaper_binary_build_id	fb9ade2f211bc91a3ee6193630ef17bcf5f6528b
+reaper_binary_sha256	9976f5608068b7a58518969001b00b527fb0de6ed7459e0e5dda6f29878ee254

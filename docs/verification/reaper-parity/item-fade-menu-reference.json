@@ -1,0 +1,120 @@
+{
+  "reference": "Linux REAPER 7.82 Default 7 factory settings",
+  "source": "Owned constant source in a fresh unsaved scratch project",
+  "menu": {
+    "width": 152,
+    "height": 224,
+    "curve_glyph_width": 96,
+    "curve_glyph_height": 24,
+    "curve_row_pitch": 28,
+    "low_pass_entry": true,
+    "curve_plot_width": 48,
+    "curve_plot_offset_in": 0,
+    "curve_plot_offset_out": 48,
+    "background_rgb": [
+      179,
+      179,
+      179
+    ],
+    "curve_fill_rgb": [
+      142,
+      142,
+      142
+    ],
+    "curve_border_rgb": [
+      168,
+      168,
+      168
+    ],
+    "hover_rgb": [
+      38,
+      38,
+      38
+    ]
+  },
+  "preset_selections": [
+    {
+      "shape": 0,
+      "curvature": 0.0,
+      "s": 0.0,
+      "lpf_flags": 1,
+      "state_lines": [
+        "FADEIN 0 0.29717682020802 0 0 0 0 0 1 0 0 1 0 0",
+        "FADEOUT 1 0 0 1 0 0 0 1 0 0 1 0 0",
+        "FADELPF 1"
+      ]
+    },
+    {
+      "shape": 1,
+      "curvature": 0.5,
+      "s": 0.0,
+      "lpf_flags": 1,
+      "state_lines": [
+        "FADEIN 1 0.29717682020802 0 1 0 0 0 1 0 0 1 0 0",
+        "FADEOUT 1 0 0 1 0 0 0 1 0 0 1 0 0",
+        "FADELPF 1"
+      ]
+    },
+    {
+      "shape": 2,
+      "curvature": -0.5,
+      "s": 0.0,
+      "lpf_flags": 1,
+      "state_lines": [
+        "FADEIN 2 0.29717682020802 0 2 0 1 1 1 0 0 1 0 0",
+        "FADEOUT 1 0 0 1 0 0 0 1 0 0 1 0 0",
+        "FADELPF 1"
+      ]
+    },
+    {
+      "shape": 3,
+      "curvature": 1.0,
+      "s": 0.0,
+      "lpf_flags": 1,
+      "state_lines": [
+        "FADEIN 3 0.29717682020802 0 3 0 -1 -1 1 0 0 1 0 0",
+        "FADEOUT 1 0 0 1 0 0 0 1 0 0 1 0 0",
+        "FADELPF 1"
+      ]
+    },
+    {
+      "shape": 4,
+      "curvature": -1.0,
+      "s": 0.0,
+      "lpf_flags": 1,
+      "state_lines": [
+        "FADEIN 4 0.29717682020802 0 4 0 1 1 1 0 0 1 0 0",
+        "FADEOUT 1 0 0 1 0 0 0 1 0 0 1 0 0",
+        "FADELPF 1"
+      ]
+    },
+    {
+      "shape": 5,
+      "curvature": 0.0,
+      "s": 0.5,
+      "lpf_flags": 1,
+      "state_lines": [
+        "FADEIN 5 0.29717682020802 0 5 0 0 0 0 0 0.5 1 0 0",
+        "FADEOUT 1 0 0 1 0 0 0 1 0 0 1 0 0",
+        "FADE_NEW_PARAMETERS",
+        "FADELPF 1"
+      ]
+    },
+    {
+      "shape": 6,
+      "curvature": 0.0,
+      "s": 1.0,
+      "lpf_flags": 1,
+      "state_lines": [
+        "FADEIN 5.1 0.29717682020802 0 5.1 0 0 0 1 0 0 1 0 0",
+        "FADEOUT 1 0 0 1 0 0 0 1 0 0 1 0 0",
+        "FADELPF 1"
+      ]
+    }
+  ],
+  "notes": [
+    "Menu presets 0-4 and 6 retain compatibility mode; preset 5 writes FADE_NEW_PARAMETERS and current S=0.5.",
+    "Smooth menu choice uses curvature 0 and S 0.5, not the legacy cubic mode.",
+    "Low pass fade toggles independent I_FADELPF flags; these records retain fade-in flag 1."
+  ]
+}

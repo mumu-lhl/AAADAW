@@ -1,0 +1,9 @@
+version	7.82/linux-x86_64
+theme	Default_7.0.ReaperThemeZip
+project_sample_rate	44100
+project_bpm	120
+nudge_right_action	41249
+baseline_notes_triplet_snap	state_change_count	5	edit_cursor_s	1.270000000	audio_position_s	1.000000000	audio_selected	0	midi_position_s	0.000000000	midi_selected	0
+after_right_notes_triplet_snap	state_change_count	5	edit_cursor_s	1.666666667	audio_position_s	1.000000000	audio_selected	0	midi_position_s	0.000000000	midi_selected	0
+baseline_notes_triplet_snap_off	state_change_count	6	edit_cursor_s	1.270000000	audio_position_s	1.000000000	audio_selected	0	midi_position_s	0.000000000	midi_selected	0
+after_right_notes_triplet_snap_off	state_change_count	6	edit_cursor_s	1.603333333	audio_position_s	1.000000000	audio_selected	0	midi_position_s	0.000000000	midi_selected	0

@@ -1,0 +1,14 @@
+version	7.82/linux-x86_64
+theme	Default_7.0.ReaperThemeZip
+native_probe	scripts/reaper_parity/probe-item-mute-visual.lua
+native_project	One selected C4 MIDI item, four quarter notes, item mute enabled; transport stopped
+native_capture	item-mute-native.png; 1280x800; SHA-256 d0799a3d50e6c32887ac6492fa7c53b9821f261b638ad700cc1827441a304e8c
+native_item_crop	item-mute-native-item-crop.png; 120x32; SHA-256 353ec781b5da8ed05e053988f8b1c418858dee64da3108f68f1b82e3b31a6a0f
+native_state	item mute bit 1; red M badge in the Arrange item header; Audio device closed
+aaadaw_project	crates/aaadaw-storage/examples/generate_item_mute_demo.rs; one C4 MIDI item; mute enabled
+aaadaw_build_id	f967a0887d0ae9b58b413e60baee687ccbc0f683
+aaadaw_binary_sha256	9c07cc706becc931f1344cfd2b881939ed5abe55c7e6551c16f84eb755b49dee
+aaadaw_capture	item-mute-aaadaw.png; 1280x800; SHA-256 f07c3d0810d78324110f3c4005b433cd9292de88dff8f01ba8c669697208dcb7
+aaadaw_item_crop	item-mute-aaadaw-item-crop.png; 120x32; SHA-256 da8e705511706a4b7f5373d579152707498552e88b4510c0ef170f83a20379e4
+regression	crates/aaadaw/src/timeline.rs::tests::timeline_cache_preserves_audio_and_midi_item_mute_states; 1/1 passed
+runtime_limit	REAPER playback-time mute behavior unverified because JACK is unavailable in this container

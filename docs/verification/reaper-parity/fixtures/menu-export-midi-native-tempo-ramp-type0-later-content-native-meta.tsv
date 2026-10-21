@@ -1,0 +1,39 @@
+version	7.82/linux-x86_64
+theme	Default_7.0.ReaperThemeZip
+fixture	track Piano; MIDI source spans project QN 0.5-2.187500; C4 note, CC1, pitch bend
+take_ppq_at_item_start	0.000000
+take_ppq_at_note_end	1620.000000
+take_ppq_at_cc	240.000000
+take_ppq_at_pitch_bend	360.000000
+project_ppq_at_item_start	480
+project_ppq_at_note_end	2100
+project_ppq_at_cc	720
+project_ppq_at_pitch_bend	840
+item_requested_beat_attach_mode	project default
+item_beat_attach_mode	-1
+item_loop_source	1
+project_timebase	1
+take_event_note_start	time 0.253000432; QN 0.500000000; project PPQ 480.000000
+take_event_note_end	time 1.156438255; QN 2.187500000; project PPQ 2100.000000
+take_event_cc	time 0.381834253; QN 0.750000000; project PPQ 720.000000
+take_event_pitch_bend	time 0.446860189; QN 0.875000000; project PPQ 840.000000
+tempo_ramp	120 BPM at QN 0; linear to 60 BPM at QN 8
+tempo_marker_count	2
+tempo_marker_0	time 0.000000000; measure 0.000000; beat 0.000000; 120.000000 BPM; 4/4; linear true
+tempo_marker_1	time 5.333333333; measure 2.000000; beat 0.000000; 60.000000 BPM; 4/4; linear false
+tempo_sample_tick_0	time 0.000000000; 120.000000000 BPM
+tempo_sample_tick_60	time 0.031295911; 119.647921002 BPM
+tempo_sample_tick_120	time 0.062684186; 119.294802904 BPM
+tempo_sample_tick_180	time 0.094165649; 118.940636454 BPM
+tempo_sample_tick_7680	time 5.333333333; 60.000000000 BPM
+export_action	40849
+export_settings_to_use	Type 0; PPQN 960; tempo/meter checked; SMPTE/markers unchecked
+native_export_bytes	302
+native_export_sha256	54d584c82c88317e85dd3ab9845e7348505b750f73bad4e81b099a703b63a598
+native_event_summary	Type 0; MIDI note-off at tick 2100 (1.156438255 seconds); tempo samples through tick 3360 (1.923 seconds); next sample at tick 3480 (2 seconds) omitted; End-of-Track at 3360
+native_project_fixture	fixtures/menu-export-midi-native-tempo-ramp-type0-later-content.rpp
+native_project_sha256	376ea80de828110875ef41b0535bd36a6aa8f85e4f38cc8034908a20cc6d51da
+native_dialog_screenshot	fixtures/menu-export-midi-native-tempo-ramp-type0-later-content-dialog.png
+native_dialog_screenshot_sha256	97f1e1d25505df7dacf0a403a3d164997a9190c56d353ded85b16901e5d6f9d8
+native_result_screenshot	fixtures/menu-export-midi-native-tempo-ramp-type0-later-content-result.png
+native_result_screenshot_sha256	14dd41d1029ed10e7fc5f66d925fd908edc05be0a45ac861f24fd047f558201a

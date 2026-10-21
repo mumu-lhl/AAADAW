@@ -1,0 +1,27 @@
+artifact	sha256
+scripts/reaper_parity/probe-midi-event-filter-from-program-opaque-selection.lua	6a4da29f23f0552cb2382458d84e4ae12083aded15aeba64dcc35fb8414b2b5c
+fixtures/midi-event-filter-from-program-opaque-selection-native-before.png	87576cb04a263202a2a3ad0da5bd12857b9df56f24c2891c396d8f87a206b587
+fixtures/midi-event-filter-from-program-opaque-selection-native-filter-before-set.png	be411e76acc5a47042be535fb7fce4cb3770639e1c0c720a4b5b4efb4df41016
+fixtures/midi-event-filter-from-program-opaque-selection-native-after-set.png	0eac322209e0243150c79df3f3aec3a79a38ed905b387253a4652725a5a92cca
+fixtures/midi-event-filter-from-program-opaque-selection-native-list-filtered.png	a885f4ba100574c43661ced681df596f5d82d7d8a0532982d7e8f2fcacd7a987
+fixtures/midi-event-filter-from-program-opaque-selection-native-funnel-off.png	ec7de6963420a309bd1e83290d800a97ef9b5d18ca62b96747518e9e741469c1
+fixtures/midi-event-filter-from-program-opaque-selection-native-funnel-off-panel.png	db51765ba1186ca0a19dc72cb804b885a9199828acae3d87ea0e6fa2a49f5170
+fixtures/midi-event-filter-from-program-opaque-selection-native-readback-before.tsv	d76f6a5916609664ff75a5aa089e17865712bbc113c0a19ed00e7c17600d780a
+fixtures/midi-event-filter-from-program-opaque-selection-native-readback-after-set.tsv	255f1c66222fb6f6ef8a14d6fdefddd410eae26e88ead21674dea36ef0e36bd2
+fixtures/midi-event-filter-from-program-opaque-selection-native-readback-funnel-off.tsv	d76f6a5916609664ff75a5aa089e17865712bbc113c0a19ed00e7c17600d780a
+fixtures/midi-event-filter-from-program-opaque-selection-native-before.bin	67d57b92ac659fda9833a520b514ba1de41cdeacb54fa10c924ee651020eb7a9
+fixtures/midi-event-filter-from-program-opaque-selection-native-after-set.bin	67d57b92ac659fda9833a520b514ba1de41cdeacb54fa10c924ee651020eb7a9
+fixtures/midi-event-filter-from-program-opaque-selection-native-before.rpp	4a57676e1fb2b056f45a9c9ff2e6a271ac902272ad159d889ca0f40aafb36969
+fixtures/midi-event-filter-from-program-opaque-selection-native-after-set.rpp	f22406ec2e4140cc3e064b16000129562b41694fbe23ace0f5fee5751190a0b4
+fixtures/midi-event-filter-from-program-opaque-selection-native-funnel-off.rpp	701808f365d901ede2b23bb53b1ae5b8c2f81482a231c0748681e89412aa8367
+native_build_id	fb9ade2f211bc91a3ee6193630ef17bcf5f6528b
+native_binary_sha256	9976f5608068b7a58518969001b00b527fb0de6ed7459e0e5dda6f29878ee254
+theme	REAPER 7.82 Linux Default 7; theme SHA-256 575544606736a395520703e532209ad9635f13a41b7ea000bb9810d60025be48
+environment	Linux Xvfb :558, 1600x900; fresh isolated -cfgfile profile; audio device closed
+starting_state	Eight Event List rows: Note C4 ch1 @ tick 0; selected Program Change 8 ch2 @ 480; CC7 value 64 ch2 @ 600; unselected Program Change 32 ch4 @ 720; unselected Text Meta @ 720; selected Text Meta @ 960; F0 SysEx @ 1500; and terminal row; Show-only and funnel off
+action	Event List > Filter Events > Set filter from selection
+assertion	REAPER derives <all events>, All channels, Position 1/8–0.250, Repeat measure, leaves Show-only unchecked, and activates the Event List funnel; Draw events on channel remains Channel 1
+list_result	Five in-range rows pass immediately: selected Program Change, CC7, unselected Text Meta, unselected Program Change, and selected Text Meta. Turning the funnel off restores all eight rows.
+selection_and_data	The selected Program Change and Text Meta remain selected. MIDI_GetAllEvts is 154 bytes before and after with identical SHA-256 67d57b92ac659fda9833a520b514ba1de41cdeacb54fa10c924ee651020eb7a9. The after-set RPP stores EVTFILTER 0 -1 -1 -1 -1 0 1 0 0 -1 -1 0.125 0.25026042 1 -1 0 -1 -1; funnel-off clears the funnel state while retaining Position.
+verification	ReaScript event readbacks before/after/funnel-off, identical MIDI blobs, before/after/funnel-off RPPs, and REAPER 7.82 Default 7 selected-row, filter-panel, filtered-list, and restored-list real-window screenshots
+limitation	With Position filtering active, ReaScript MIDI_GetNote and MIDI_GetTextSysexEvt omit the out-of-range Note and SysEx; unchanged MIDI_GetAllEvts bytes and project states preserve their evidence. Screenshots verify behavior and controls, not pixel identity.

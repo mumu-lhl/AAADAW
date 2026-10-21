@@ -1,0 +1,9 @@
+version	7.82/linux-x86_64
+theme	/tmp/aaadaw-numbered-marker-config2/ColorThemes/Default_7.0.ReaperThemeZip
+case	cursor	action_id	markers
+slot_1_explicit_ids_before	10.000		marker:2@2.000=ID2-earlier;marker:1@7.000=ID1-later
+slot_1_explicit_ids_after	10.000	40657	marker:2@2.000=ID2-earlier;marker:1@10.000=ID1-later
+slot_1_missing_with_sparse_ids	13.000	40657	marker:5@2.000=ID5;marker:10@7.000=ID10;marker:1@13.000=
+plain_insert_with_sparse_ids	13.000	40157	marker:5@2.000=ID5;marker:10@7.000=ID10;marker:1@13.000=
+duplicate_ids_before_slot1	10.000		marker:1@2.000=ID1-earlier;marker:1@7.000=ID1-later
+duplicate_ids_after_slot1	10.000	40657	marker:1@7.000=ID1-later;marker:1@10.000=ID1-earlier

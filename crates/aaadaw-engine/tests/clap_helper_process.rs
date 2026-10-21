@@ -81,7 +81,10 @@ fn midi_event(
         pitch,
         velocity,
         controller,
-        reserved: [0; 2],
+        channel: 0,
+        bus: 0,
+        sysex_offset: u32::MAX,
+        sysex_length: 0,
     }
 }
 
@@ -90,9 +93,18 @@ fn render_helper_block(
     sequence: u64,
     events: &[ClapIpcMidiEvent],
 ) -> [[f32; 2]; 16] {
+    render_helper_block_with_sysex(process, sequence, events, &[])
+}
+
+fn render_helper_block_with_sysex(
+    process: &ClapInstrumentHelperProcess,
+    sequence: u64,
+    events: &[ClapIpcMidiEvent],
+    sysex_data: &[u8],
+) -> [[f32; 2]; 16] {
     process
         .audio_port()
-        .try_submit(1, sequence, sequence * 16, events, 16)
+        .try_submit_with_sysex(1, sequence, sequence * 16, events, sysex_data, 16)
         .expect("fixture helper accepts a bounded MIDI block");
     let deadline = Instant::now() + Duration::from_secs(2);
     let mut output = [[0.0; 2]; 16];
@@ -109,6 +121,50 @@ fn render_helper_block(
         );
         thread::sleep(Duration::from_millis(1));
     }
+}
+
+#[test]
+fn isolated_helper_delivers_sysex_bytes_at_the_scheduled_sample() {
+    let fixture = build_test_clap_plugin();
+    let mut process = ClapInstrumentHelperProcess::spawn(
+        helper_path(),
+        &fixture,
+        "test.dynamic-clap",
+        config(),
+        None,
+    )
+    .expect("helper should load the dynamic CLAP fixture");
+    let payload = [0xF0, 0x43, 0x12, 0xF7];
+    let mut sysex = midi_event(
+        ClapIpcMidiKind::SystemExclusive,
+        8,
+        0,
+        0,
+        ClapIpcMidiEvent::NO_CONTROLLER,
+    );
+    sysex.sysex_offset = 0;
+    sysex.sysex_length = payload.len() as u32;
+    let events = [
+        midi_event(ClapIpcMidiKind::ControllerChange, 0, 0, 96, 7),
+        midi_event(
+            ClapIpcMidiKind::NoteOn,
+            0,
+            60,
+            100,
+            ClapIpcMidiEvent::NO_CONTROLLER,
+        ),
+        sysex,
+    ];
+
+    let output = render_helper_block_with_sysex(&process, 0, &events, &payload);
+
+    let before_sysex = 96.0 / 127.0;
+    let after_sysex = 48.0 / 127.0;
+    assert!((output[7][0] - before_sysex).abs() < 0.001);
+    assert!((output[8][0] - after_sysex).abs() < 0.001);
+    assert!((output[15][1] - after_sysex).abs() < 0.001);
+    process.shutdown().unwrap();
+    process.take_saved_state().unwrap();
 }
 
 fn spawn(plugin_id: &str) -> io::Result<ClapInstrumentHelperProcess> {

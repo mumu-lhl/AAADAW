@@ -1,0 +1,22 @@
+property	value
+target	Linux REAPER 7.82/linux-x86_64, Default_7.0.ReaperThemeZip
+fixture	Unsaved disposable project; one selected audio item
+source	48 kHz PCM24 stereo, constant L=0.125/R=0.375
+source_sha256	3fc2b329a255fba613ee7af55714f8a2facb47b9352ec1859b8bb9e4b502f5d6
+render_source	Selected media items
+render_format	WAV 24-bit PCM, 48 kHz, stereo, 48000 frames
+item_take_track_mix	unity gain, centered
+master_volume_linear	0.5
+master_pan	0.5
+master_fx	JS: Volume Adjustment, enabled
+master_fx_adjustment_db	3.0
+master_fx_adjustment_normalized	0.51
+master_fx_max_volume_db	150.0
+output	selected-item-master-fx-plus-3db.wav
+output_first_frame_pcm24	1048576,3145728
+output_first_frame_float	0.125,0.375
+output_sha256	a5cb852b80189c6c8c988816f725e73d0601cb8244d4703f56d8712a34bf19e2
+probe_script	scripts/reaper_parity/probe-render-selected-item-master-fx.lua
+setup_screenshot_sha256	7f1db0b55685c68066e53bfc430cdf02fa362cea8a2755698ec49c6b6ccd4066
+finished_screenshot_sha256	c770bec77c1c872b5b97713ec6a713eb6783a45749e2b2036ced3a5ab7cc85b3
+observation	Selected-item output bypassed this Master FX gain effect, as well as Master volume and pan; other FX types remain unverified

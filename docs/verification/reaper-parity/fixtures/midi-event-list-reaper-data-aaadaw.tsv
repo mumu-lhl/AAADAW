@@ -1,0 +1,19 @@
+application	AAADAW current Linux Cranelift desktop build
+build_id	5e34df6ac45ef5ba3d3f8dca92dc47f9d1353244
+binary_sha256	ca37c1f764a31ba394decfbca4895f446a3c5b87ab4bd31f726251033d6c4798
+build_backend	rustc 1.101.0-nightly with Cranelift
+project_source	midi-inline-editor-aaadaw-ctrl-drag-after.aaadaw; SHA-256 5bc6a3b02c930ff2e94c77058cd7855cffe92edf6cd8b05915e8bc377bd48c32; opened from an isolated temporary copy
+native_reference	midi-event-list-native.png confirms column order and blank REAPER Data for Notes; midi-event-list-program-change-native.png and midi-aftertouch-native-event-list.png show blank data cells for Program Change, Poly Aftertouch, and Channel Pressure
+input	Open the MIDI item in Piano Roll and switch to Event List
+full_width	At 1380x780 editor size, all nine columns render in native order through REAPER Data
+narrow_width	At 800x620 editor size, drag the horizontal scrollbar to the right; Value, Off Value, and REAPER Data become visible while left columns scroll out of view
+note_rows	Seven MIDI Note rows show empty REAPER Data cells, matching the native Note capture; the synthetic terminal row also has an empty data cell
+opaque_scope	REAPER Data formatting for Meta and SysEx rows remains unverified; these captures do not claim opaque-event parity
+cranelift_tests	cargo +nightly -Zcodegen-backend test -p aaadaw --bin aaadaw: 803 passed, 0 failed
+nextest	cargo xtest -p aaadaw --bin aaadaw: 803 passed, 0 skipped
+clippy	Stable workspace all-target Clippy with -D warnings: no issues
+format	Stable cargo fmt --all -- --check and git diff --check: passed
+capture_display	Xvfb :320, X11 1440x900x24, xfwm4 compositor disabled, isolated XDG profile; screenshots are current-build real AAADAW windows
+artifact	sha256
+midi-event-list-reaper-data-aaadaw.png	eaf488686ac0c16796cbd69adbff128ed9eb737551eedf8563ebce45d25f13ac
+midi-event-list-reaper-data-aaadaw-narrow-scroll.png	4628d183781fde07a6c14abfcaa1f68b1c2f733650a521ad531d4fcdaff6a1ff

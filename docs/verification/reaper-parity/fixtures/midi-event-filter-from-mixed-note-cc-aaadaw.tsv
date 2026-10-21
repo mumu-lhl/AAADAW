@@ -1,0 +1,17 @@
+artifact	sha256
+crates/aaadaw/examples/generate_midi_filter_from_mixed_event_selection_fixture.rs	0dd9921a9ebe9080ea668918ec7ca4bb6404df9f3a33a7e4b61bdcef8b2a57bb
+fixtures/midi-event-filter-from-mixed-note-cc-aaadaw.aaadaw	74eedb56fdd2db3cd2ebed52750825748fd04989544f8e12b85487ddbbc857de
+fixtures/midi-event-filter-from-mixed-note-cc-aaadaw-after-set.png	41b8f4acb61da4f9482e469602d68afab53d055aa61e277c35544d54f83beda1
+fixtures/midi-event-filter-from-mixed-note-cc-aaadaw-list-unfiltered.png	0d83def03482e242fb1a3d3dff96a465a81fe8bcd2bdedad896d8aab0bd2df2d
+fixtures/midi-event-filter-from-mixed-note-cc-aaadaw-list-filtered.png	1ccf19453bd38951edd6a02ded670dd6294bb455452bee86ceac99415c102897
+binary_sha256	9a0ac7abfaa584ce6ccd23dce8d3809be36a9365949dc8a784a52f8cf1e2de31
+binary_build_id	e110d9d51bd4e39769232ee23ae40d49043e63c9
+build_backend	rustc nightly with Cranelift codegen backend
+environment	Linux dummy Xorg :547, 1600x1000 root; MIDI Editor/Event List 1000x620; isolated XDG profile; audio unavailable
+starting_state	8 Event List rows: selected C4 Note ch2 @ tick 480 and CC7 value100 ch3 @ tick 960; unselected Note G4 ch5 @ tick 600, CC7 value64 ch2 @480, CC10 value70 ch2 @720, Text Meta @ tick 600, F0 SysEx @ tick 1500, and terminal row
+action	Open Event List; click the Note row; focus the MIDI Editor and Ctrl-click the CC row; Filter events… > Set filter from selection
+assertion	The live Set dialog shows <all events>, channels 2–3, Position 0.12500000–0.25026042, Repeat measure, Multichannel, Draw events on channel 2; specialized Note/CC value criteria are cleared. Set leaves all eight rows visible and the filter off.
+list_result	After enabling the Event List filter, exactly five rows remain: selected C4, CC7/64, channel-less Text Meta, CC10/70, and selected CC7/100. The unselected G4, out-of-range SysEx, and terminal row are hidden.
+selection_and_data	Both selected endpoints remain selected in the live window. App regressions verify the filtered opaque IDs, Note/CC selection, project snapshot and Undo/Redo history remain unchanged, and filtered Set/Add/Remove matching uses the derived criteria.
+verification	app::tests::midi_editor_set_filter_from_mixed_note_and_cc_selection_uses_native_common_criteria; messages::midi_channel_selection_tests::event_position_filter_applies_to_channel_less_text_and_sysex_rows; workspace Nextest 1,570/1,570 across 78 binaries, 0 skipped (DISPLAY=:327); AAADAW all-target Clippy (-D warnings -A future-incompatible); nightly Cranelift desktop build; cargo fmt --all -- --check; git diff --check; fixture SHA-256 verification
+limitation	This real-window comparison covers mixed Note+CC selection and opaque-row Position matching. Other heterogeneous combinations, and mixed or homogeneous Meta/SysEx Set-from-selection, remain unprobed. Screenshots verify behavior and controls, not pixel identity.

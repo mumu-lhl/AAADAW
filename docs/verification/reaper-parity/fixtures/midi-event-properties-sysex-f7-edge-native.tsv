@@ -1,0 +1,37 @@
+version	7.82/linux-x86_64
+theme	Default_7.0.ReaperThemeZip
+case	1	Unmatched F7
+fixture	probe-midi-sysex-f7-edge-01.mid
+source_packets	F7@240:34 F7
+counts	0	0	1
+events	0:FF 03 55 6E 6D 61 74 63 68 65 64 20 46 37; 960:B0 7B 00
+case	2	Unterminated F0 at end of track
+fixture	probe-midi-sysex-f7-edge-02.mid
+source_packets	F0@240:43 12
+counts	0	0	2
+events	0:FF 03 55 6E 74 65 72 6D 69 6E 61 74 65 64 20 46 30 20 61 74 20 65 6E 64 20 6F 66 20 74 72 61 63 6B; 240:F0 43 12 F7; 960:B0 7B 00
+case	3	Unterminated F7 continuation at end of track
+fixture	probe-midi-sysex-f7-edge-03.mid
+source_packets	F0@240:43; F7@480:12
+counts	0	0	2
+events	0:FF 03 55 6E 74 65 72 6D 69 6E 61 74 65 64 20 46 37 20 63 6F 6E 74 69 6E 75 61 74 69 6F 6E 20 61 74 20 65 6E 64 20 6F 66 20 74 72 61 63 6B; 480:F0 43 12 F7; 960:B0 7B 00
+case	4	Second F0 closes first
+fixture	probe-midi-sysex-f7-edge-04.mid
+source_packets	F0@240:43; F0@480:12 F7
+counts	0	0	3
+events	0:FF 03 53 65 63 6F 6E 64 20 46 30 20 63 6C 6F 73 65 73 20 66 69 72 73 74; 240:F0 43 F7; 480:F0 12 F7; 960:B0 7B 00
+case	5	F7 after Control Change
+fixture	probe-midi-sysex-f7-edge-05.mid
+source_packets	F0@240:43 12; CC@360:B0 07 40; F7@480:34 F7
+counts	0	1	2
+events	0:FF 03 46 37 20 61 66 74 65 72 20 43 6F 6E 74 72 6F 6C 20 43 68 61 6E 67 65; 240:F0 43 12 F7; 360:B0 07 40; 960:B0 7B 00
+case	6	F7 after text Meta
+fixture	probe-midi-sysex-f7-edge-06.mid
+source_packets	F0@240:43 12; text Meta@360:x; F7@480:34 F7
+counts	0	0	3
+events	0:FF 03 46 37 20 61 66 74 65 72 20 74 65 78 74 20 4D 65 74 61; 240:F0 43 12 F7; 360:FF 01 78; 960:B0 7B 00
+case	7	F7 after terminated F0
+fixture	probe-midi-sysex-f7-edge-07.mid
+source_packets	F0@240:43 F7; F7@480:12
+counts	0	0	2
+events	0:FF 03 46 37 20 61 66 74 65 72 20 74 65 72 6D 69 6E 61 74 65 64 20 46 30; 240:F0 43 F7; 960:B0 7B 00

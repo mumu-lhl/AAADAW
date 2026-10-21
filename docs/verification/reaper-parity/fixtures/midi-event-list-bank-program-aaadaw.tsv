@@ -1,0 +1,11 @@
+artifact	sha256
+crates/aaadaw/examples/generate_midi_bank_program_fixture.rs	07d989f96da23fedb6d9b2cc07a572b46e91c8ccc81abd06e2f5511e09899a82
+fixtures/midi-event-list-bank-program-aaadaw.png	0bec0cbe0ae6868d9273355668a245ca24fd74ca2aab5a1d65d96d1eb1e5e9af
+fixtures/midi-event-list-bank-program-selected.png	302aa57f3ac7b7aa0c53f83011aeb071adf533750f438aa14c36ab239c21e527
+fixtures/midi-event-list-bank-program-deleted.png	829c4c8095059a37f6039dea02897c9b653b1ec30672b140aa8300297dfe8ebf
+fixtures/midi-event-list-bank-program-undo.png	4af7c8f35a4e548e266dbb703ae1e65a7c4e9e07e96772fec36b26a801418a2d
+binary_sha256	c8085ee87041f73c7aa7013870b3b610a1b22a55f707497e92acb1d2969e65b0
+build_id	9122c7c08d79277bec523d8dce8ca05db4c4b7ab
+environment	Linux stable debug desktop binary; Xvfb :431; 1280x800; generated MIDI project with channel 3 C4, CC0=12, CC32=23, PC=42 at tick 480
+assertion	Event List shows one Bank Select 14-bit (0/32) row with value 1559 and Program Change parameter 12-23-42. Selecting and deleting the bank row removes both underlying CC events while retaining Program Change; Undo restores both CC events and the bank tuple.
+verification	crates/aaadaw/src/app/view/midi_editor.rs::event_list_combines_same_tick_bank_select_and_labels_program_bank; crates/aaadaw/src/app/tests.rs::midi_event_list_bank_select_row_selects_and_deletes_both_controller_events; AAADAW binary test suite 769/769; midi_ test filter 176/176; bank_select filter 2/2; strict all-target Clippy with audio-device; stable fmt and git diff --check

@@ -1,19 +1,31 @@
-use crate::prepare_audio_playback;
 use crate::{
     Float32WavExport, Float32WavExportError, Pcm24WavExport, Pcm24WavExportError,
-    PreparedAudioPlayback, WavExport, WavExportError, WavExportOptions,
+    PreparedAudioPlayback, WavChannelCount, WavExport, WavExportError, WavExportOptions,
 };
-use aaadaw_core::{ItemId, Project};
+use crate::{
+    prepare_audio_playback_at_with_resampling_quality,
+    prepare_audio_playback_with_resampling_quality,
+};
+use aaadaw_core::{DawAction, ItemId, Project, TrackId};
 use aaadaw_engine::{
     AudioGraphError, AudioRenderGraph, ClapEffectOwner, ClapInstrumentOwner, MasterOutputCeiling,
     TrackFxProcessor, TrackInstrumentProcessor,
 };
+use aaadaw_media::{ResamplingQuality, StereoPcmResampler};
 use aaadaw_storage::ProjectStore;
 use std::cell::RefCell;
+use std::collections::HashSet;
+use std::fs::{self, File, OpenOptions};
+use std::io::{BufReader, BufWriter, Read, Write};
+#[cfg(unix)]
+use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::thread;
 use std::time::Duration;
+
+static NEXT_NORMALIZATION_SPOOL_ID: AtomicU64 = AtomicU64::new(0);
+static NEXT_STEM_STAGING_ID: AtomicU64 = AtomicU64::new(0);
 
 /// Export decay allowance and minimum fallback when frozen CLAP plugins do not report longer tails.
 pub const DEFAULT_EFFECT_TAIL_SECONDS: u32 = 2;
@@ -24,9 +36,255 @@ pub struct FrozenTrackRender {
     pub length_samples: u64,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ProjectWavRenderSettings {
+    pub master_ceiling: MasterOutputCeiling,
+    pub export_options: WavExportOptions,
+    pub output_sample_rate: u32,
+    pub output_channels: WavChannelCount,
+    pub source: ProjectWavRenderSource,
+    pub start_sample: u64,
+    pub end_sample: u64,
+    pub tail_milliseconds: u32,
+    /// Enable sample-peak normalization on the completed output.
+    pub normalize_peak: bool,
+    /// Peak-normalization target in hundredths of a dBFS.
+    pub normalize_peak_target_centi_dbfs: i32,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum ProjectWavRenderSource {
+    #[default]
+    MasterMix,
+    /// Render the trimmed media source for one selected audio item directly.
+    SelectedAudioItem(ItemId),
+    /// Render one selected MIDI item through its track instrument and effects.
+    SelectedMidiItem(ItemId),
+    /// Render one selected track as a stem without the Master mix output stage.
+    SelectedTrackStem(TrackId),
+    /// Render one selected track's signal before its volume fader and automation.
+    SelectedTrackStemPreFader(TrackId),
+    /// Isolate one track in an in-memory project snapshot and render it through Master.
+    SelectedTrackViaMaster(TrackId),
+}
+
 trait OfflineWavWriter {
     fn write_frames(&mut self, frames: &[[f32; 2]]) -> Result<(), OfflineRenderError>;
     fn finish(self) -> Result<PathBuf, OfflineRenderError>;
+}
+
+struct SampleRateConvertingWriter<W> {
+    inner: W,
+    resampler: Option<StereoPcmResampler>,
+}
+
+impl<W: OfflineWavWriter> OfflineWavWriter for SampleRateConvertingWriter<W> {
+    fn write_frames(&mut self, frames: &[[f32; 2]]) -> Result<(), OfflineRenderError> {
+        match &mut self.resampler {
+            Some(resampler) => {
+                let converted = resampler
+                    .push_frames(frames)
+                    .map_err(|error| OfflineRenderError::Media(error.to_string()))?;
+                self.inner.write_frames(&converted)
+            }
+            None => self.inner.write_frames(frames),
+        }
+    }
+
+    fn finish(mut self) -> Result<PathBuf, OfflineRenderError> {
+        if let Some(resampler) = self.resampler.take() {
+            let tail = resampler.finish();
+            self.inner.write_frames(&tail)?;
+        }
+        self.inner.finish()
+    }
+}
+
+struct PeakNormalizationSpool {
+    path: PathBuf,
+    writer: Option<BufWriter<File>>,
+    peak: f32,
+    frame_count: u64,
+}
+
+impl PeakNormalizationSpool {
+    fn create() -> Result<Self, OfflineRenderError> {
+        for _ in 0..16 {
+            let id = NEXT_NORMALIZATION_SPOOL_ID.fetch_add(1, Ordering::Relaxed);
+            let path = std::env::temp_dir().join(format!(
+                "aaadaw-render-normalize-{}-{id}.f32",
+                std::process::id()
+            ));
+            let mut options = OpenOptions::new();
+            options.write(true).create_new(true);
+            #[cfg(unix)]
+            options.mode(0o600);
+            match options.open(&path) {
+                Ok(file) => {
+                    return Ok(Self {
+                        path,
+                        writer: Some(BufWriter::new(file)),
+                        peak: 0.0,
+                        frame_count: 0,
+                    });
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+                Err(error) => {
+                    return Err(OfflineRenderError::Media(format!(
+                        "could not create peak-normalization spool: {error}"
+                    )));
+                }
+            }
+        }
+        Err(OfflineRenderError::Media(
+            "could not reserve a peak-normalization spool file".to_owned(),
+        ))
+    }
+
+    fn write_frames(
+        &mut self,
+        frames: &[[f32; 2]],
+        channels: WavChannelCount,
+    ) -> Result<(), OfflineRenderError> {
+        let writer = self.writer.as_mut().ok_or_else(|| {
+            OfflineRenderError::Media("peak-normalization spool is already closed".to_owned())
+        })?;
+        let mut bytes = Vec::with_capacity(frames.len().saturating_mul(8));
+        for frame in frames {
+            if !frame[0].is_finite() || !frame[1].is_finite() {
+                return Err(OfflineRenderError::Media(
+                    "render produced a non-finite sample during peak normalization".to_owned(),
+                ));
+            }
+            let peak_sample = match channels {
+                WavChannelCount::Mono => frame[0] * 0.5 + frame[1] * 0.5,
+                WavChannelCount::Stereo => frame[0].abs().max(frame[1].abs()),
+            };
+            self.peak = self.peak.max(peak_sample.abs());
+            bytes.extend_from_slice(&frame[0].to_le_bytes());
+            bytes.extend_from_slice(&frame[1].to_le_bytes());
+        }
+        writer.write_all(&bytes).map_err(|error| {
+            OfflineRenderError::Media(format!("could not write peak-normalization spool: {error}"))
+        })?;
+        self.frame_count = self
+            .frame_count
+            .checked_add(frames.len() as u64)
+            .ok_or(OfflineRenderError::TimelineRange)?;
+        Ok(())
+    }
+
+    fn reader(&mut self) -> Result<BufReader<File>, OfflineRenderError> {
+        if let Some(mut writer) = self.writer.take() {
+            writer.flush().map_err(|error| {
+                OfflineRenderError::Media(format!(
+                    "could not flush peak-normalization spool: {error}"
+                ))
+            })?;
+        }
+        File::open(&self.path).map(BufReader::new).map_err(|error| {
+            OfflineRenderError::Media(format!("could not read peak-normalization spool: {error}"))
+        })
+    }
+}
+
+impl Drop for PeakNormalizationSpool {
+    fn drop(&mut self) {
+        self.writer.take();
+        let _ = fs::remove_file(&self.path);
+    }
+}
+
+struct PeakNormalizingWriter<'a, W> {
+    inner: W,
+    channels: WavChannelCount,
+    spool: Option<PeakNormalizationSpool>,
+    target_linear: f64,
+    cancelled: &'a AtomicBool,
+}
+
+impl<'a, W> PeakNormalizingWriter<'a, W> {
+    fn new(
+        inner: W,
+        channels: WavChannelCount,
+        enabled: bool,
+        target_linear: f64,
+        cancelled: &'a AtomicBool,
+    ) -> Result<Self, OfflineRenderError> {
+        Ok(Self {
+            inner,
+            channels,
+            spool: enabled.then(PeakNormalizationSpool::create).transpose()?,
+            target_linear,
+            cancelled,
+        })
+    }
+}
+
+impl<W: OfflineWavWriter> OfflineWavWriter for PeakNormalizingWriter<'_, W> {
+    fn write_frames(&mut self, frames: &[[f32; 2]]) -> Result<(), OfflineRenderError> {
+        if let Some(spool) = &mut self.spool {
+            spool.write_frames(frames, self.channels)
+        } else {
+            self.inner.write_frames(frames)
+        }
+    }
+
+    fn finish(mut self) -> Result<PathBuf, OfflineRenderError> {
+        if self.cancelled.load(Ordering::Acquire) {
+            return Err(OfflineRenderError::Cancelled);
+        }
+        let Some(mut spool) = self.spool.take() else {
+            return self.inner.finish();
+        };
+        let gain = if spool.peak > 0.0 {
+            self.target_linear / f64::from(spool.peak)
+        } else {
+            1.0
+        };
+        let mut reader = spool.reader()?;
+        const FRAMES_PER_PASS: usize = 4_096;
+        let mut bytes = [0_u8; FRAMES_PER_PASS * 8];
+        let mut frames = [[0.0_f32; 2]; FRAMES_PER_PASS];
+        let mut rendered = 0_u64;
+        while rendered < spool.frame_count {
+            if self.cancelled.load(Ordering::Acquire) {
+                return Err(OfflineRenderError::Cancelled);
+            }
+            let count = usize::try_from((spool.frame_count - rendered).min(FRAMES_PER_PASS as u64))
+                .expect("normalization batch is bounded by a fixed buffer");
+            reader
+                .read_exact(&mut bytes[..count * 8])
+                .map_err(|error| {
+                    OfflineRenderError::Media(format!(
+                        "could not read peak-normalization spool: {error}"
+                    ))
+                })?;
+            for (index, frame) in frames[..count].iter_mut().enumerate() {
+                let offset = index * 8;
+                let left = f32::from_le_bytes(
+                    bytes[offset..offset + 4]
+                        .try_into()
+                        .expect("four-byte sample"),
+                );
+                let right = f32::from_le_bytes(
+                    bytes[offset + 4..offset + 8]
+                        .try_into()
+                        .expect("four-byte sample"),
+                );
+                *frame = [
+                    (f64::from(left) * gain) as f32,
+                    (f64::from(right) * gain) as f32,
+                ];
+            }
+            self.inner.write_frames(&frames[..count])?;
+            rendered += count as u64;
+        }
+        if self.cancelled.load(Ordering::Acquire) {
+            return Err(OfflineRenderError::Cancelled);
+        }
+        self.inner.finish()
+    }
 }
 
 impl OfflineWavWriter for Pcm24WavExport {
@@ -140,6 +398,17 @@ pub fn project_render_length_samples(
     project: &Project,
     tail_seconds: u32,
 ) -> Result<u64, OfflineRenderError> {
+    let content_end = project_content_end_sample(project)?;
+    render_range_length_samples(
+        project.settings().sample_rate(),
+        0,
+        content_end,
+        tail_seconds,
+    )
+}
+
+/// Returns the end sample of the furthest placed audio or MIDI item.
+pub fn project_content_end_sample(project: &Project) -> Result<u64, OfflineRenderError> {
     let mut content_end = 0_u64;
     for item in project.audio_items() {
         let end = item
@@ -158,11 +427,48 @@ pub fn project_render_length_samples(
             .map_err(|_| OfflineRenderError::TimelineRange)?;
         content_end = content_end.max(end_sample);
     }
-    let tail_frames = u64::from(project.settings().sample_rate())
+    Ok(content_end)
+}
+
+/// Computes frames for a start-inclusive, end-exclusive range followed by a fixed tail.
+pub fn render_range_length_samples(
+    sample_rate: u32,
+    start_sample: u64,
+    end_sample: u64,
+    tail_seconds: u32,
+) -> Result<u64, OfflineRenderError> {
+    let range_frames = end_sample
+        .checked_sub(start_sample)
+        .ok_or(OfflineRenderError::TimelineRange)?;
+    let tail_frames = u64::from(sample_rate)
         .checked_mul(u64::from(tail_seconds))
         .ok_or(OfflineRenderError::TimelineRange)?;
-    content_end
+    range_frames
         .checked_add(tail_frames)
+        .filter(|frames| *frames > 0)
+        .ok_or(OfflineRenderError::TimelineRange)
+}
+
+/// Computes frames for a project-sample range followed by a millisecond-precision tail.
+pub fn render_range_length_samples_with_tail_milliseconds(
+    sample_rate: u32,
+    start_sample: u64,
+    end_sample: u64,
+    tail_milliseconds: u32,
+) -> Result<u64, OfflineRenderError> {
+    let scaled_tail_frames = u64::from(sample_rate)
+        .checked_mul(u64::from(tail_milliseconds))
+        .ok_or(OfflineRenderError::TimelineRange)?;
+    let tail_frames = scaled_tail_frames
+        .checked_add(500)
+        .ok_or(OfflineRenderError::TimelineRange)?
+        / 1_000;
+    let range_frames = end_sample
+        .checked_sub(start_sample)
+        .ok_or(OfflineRenderError::TimelineRange)?;
+    range_frames
+        .checked_add(tail_frames)
+        .filter(|frames| *frames > 0)
         .ok_or(OfflineRenderError::TimelineRange)
 }
 
@@ -256,6 +562,7 @@ pub fn render_prepared_audio_to_wav(
         project,
         export,
         total_frames,
+        0,
         cancelled,
         &mut report_progress,
     );
@@ -267,6 +574,7 @@ fn render_prepared_inner(
     project: &Project,
     export: impl OfflineWavWriter,
     total_frames: u64,
+    start_sample: u64,
     cancelled: &AtomicBool,
     report_progress: &mut impl FnMut(u64, u64),
 ) -> (AudioRenderGraph, Result<(), OfflineRenderError>) {
@@ -277,7 +585,7 @@ fn render_prepared_inner(
         &mut graph,
         RenderRequest {
             total_frames,
-            start_sample: 0,
+            start_sample,
             cancelled,
         },
         export,
@@ -322,9 +630,14 @@ fn render_prepared_inner(
         },
         || {
             for feeder in feeders.borrow_mut().iter_mut().filter_map(Option::take) {
-                feeder
-                    .join()
-                    .map_err(|error| OfflineRenderError::Media(error.to_string()))?;
+                let result = if feeder.is_finished() {
+                    feeder.join()
+                } else {
+                    // A bounded render range may stop before a feeder reaches EOF. Cancel its
+                    // unused remainder; joining it while its queue is full would wait forever.
+                    feeder.cancel()
+                };
+                result.map_err(|error| OfflineRenderError::Media(error.to_string()))?;
             }
             Ok(())
         },
@@ -364,36 +677,197 @@ pub fn render_project_file_to_wav(
     master_ceiling: MasterOutputCeiling,
     options: WavExportOptions,
     cancelled: &AtomicBool,
-    mut report_progress: impl FnMut(u64, u64),
+    report_progress: impl FnMut(u64, u64),
 ) -> Result<(), OfflineRenderError> {
     if cancelled.load(Ordering::Acquire) {
         return Err(OfflineRenderError::Cancelled);
     }
-    let total_frames = project_render_length_samples(project, DEFAULT_EFFECT_TAIL_SECONDS)?;
-    let export = WavExport::create(
-        destination.as_ref(),
+    let end_sample = project_content_end_sample(project)?;
+    render_project_file_to_wav_with_settings(
+        project_path,
+        project,
+        destination,
+        ProjectWavRenderSettings {
+            master_ceiling,
+            export_options: options,
+            output_sample_rate: project.settings().sample_rate(),
+            output_channels: WavChannelCount::Stereo,
+            source: ProjectWavRenderSource::MasterMix,
+            start_sample: 0,
+            end_sample,
+            tail_milliseconds: DEFAULT_EFFECT_TAIL_SECONDS * 1_000,
+            normalize_peak: false,
+            normalize_peak_target_centi_dbfs: 0,
+        },
+        cancelled,
+        report_progress,
+    )
+}
+
+/// Renders an inclusive/exclusive project-sample range followed by a fixed effect tail.
+///
+/// The output begins at `start_sample` and contains `end_sample - start_sample` timeline frames,
+/// followed by `tail_milliseconds` of tail. The saved project and live playback state are not modified.
+pub fn render_project_file_to_wav_with_settings(
+    project_path: impl AsRef<Path>,
+    project: &Project,
+    destination: impl AsRef<Path>,
+    settings: ProjectWavRenderSettings,
+    cancelled: &AtomicBool,
+    mut report_progress: impl FnMut(u64, u64),
+) -> Result<(), OfflineRenderError> {
+    if let ProjectWavRenderSource::SelectedAudioItem(item_id) = settings.source {
+        let (render_project, start_sample, end_sample) =
+            selected_audio_item_render_project(project, item_id)?;
+        return render_project_file_to_wav_with_settings(
+            project_path,
+            &render_project,
+            destination,
+            ProjectWavRenderSettings {
+                source: ProjectWavRenderSource::MasterMix,
+                start_sample,
+                end_sample,
+                tail_milliseconds: 0,
+                ..settings
+            },
+            cancelled,
+            report_progress,
+        );
+    }
+    if let ProjectWavRenderSource::SelectedMidiItem(item_id) = settings.source {
+        let (render_project, start_sample, end_sample) =
+            selected_midi_item_render_project(project, item_id)?;
+        return render_project_file_to_wav_with_settings(
+            project_path,
+            &render_project,
+            destination,
+            ProjectWavRenderSettings {
+                source: ProjectWavRenderSource::MasterMix,
+                start_sample,
+                end_sample,
+                tail_milliseconds: 0,
+                ..settings
+            },
+            cancelled,
+            report_progress,
+        );
+    }
+    let ProjectWavRenderSettings {
+        master_ceiling,
+        export_options,
+        output_sample_rate,
+        output_channels,
+        source,
+        start_sample,
+        end_sample,
+        tail_milliseconds,
+        normalize_peak,
+        normalize_peak_target_centi_dbfs,
+    } = settings;
+    if cancelled.load(Ordering::Acquire) {
+        return Err(OfflineRenderError::Cancelled);
+    }
+    let total_frames = render_range_length_samples_with_tail_milliseconds(
         project.settings().sample_rate(),
-        options,
+        start_sample,
+        end_sample,
+        tail_milliseconds,
+    )?;
+    let (isolated_project, bypass_master_output) = match source {
+        ProjectWavRenderSource::MasterMix => (None, false),
+        ProjectWavRenderSource::SelectedAudioItem(_) => {
+            unreachable!("selected audio items use their direct source renderer")
+        }
+        ProjectWavRenderSource::SelectedMidiItem(_) => {
+            unreachable!("selected MIDI items use their isolated track renderer")
+        }
+        ProjectWavRenderSource::SelectedTrackStem(track_id) => (
+            Some(selected_track_stem_project(project, track_id, false)?),
+            true,
+        ),
+        ProjectWavRenderSource::SelectedTrackStemPreFader(track_id) => (
+            Some(selected_track_stem_project(project, track_id, true)?),
+            true,
+        ),
+        ProjectWavRenderSource::SelectedTrackViaMaster(track_id) => (
+            Some(selected_track_via_master_project(project, track_id)?),
+            false,
+        ),
+    };
+    let render_project = isolated_project.as_ref().unwrap_or(project);
+    let mut created_directories = RenderOutputDirectories::default();
+    let destination_parent = destination
+        .as_ref()
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    created_directories
+        .ensure(destination_parent)
+        .map_err(|error| {
+            OfflineRenderError::Media(format!("could not create render output directory: {error}"))
+        })?;
+    let export = WavExport::create_with_channels(
+        destination.as_ref(),
+        output_sample_rate,
+        export_options,
+        output_channels,
     )
     .map_err(OfflineRenderError::WavExport)?;
+    let project_sample_rate = project.settings().sample_rate();
+    let resampler = (output_sample_rate != project_sample_rate)
+        .then(|| {
+            StereoPcmResampler::new(
+                project_sample_rate,
+                output_sample_rate,
+                ResamplingQuality::Sinc192,
+            )
+        })
+        .transpose()
+        .map_err(|error| OfflineRenderError::Media(error.to_string()))?;
+    let normalization_target = 10_f64.powf(f64::from(normalize_peak_target_centi_dbfs) / 2_000.0);
+    let export = PeakNormalizingWriter::new(
+        export,
+        output_channels,
+        normalize_peak,
+        normalization_target,
+        cancelled,
+    )?;
+    let export = SampleRateConvertingWriter {
+        inner: export,
+        resampler,
+    };
     let store = ProjectStore::open(project_path.as_ref())
         .map_err(|error| OfflineRenderError::Media(error.to_string()))?;
-    let prepared = prepare_audio_playback(project, &store, 16_384, 2_048)
-        .map_err(|error| OfflineRenderError::Media(error.to_string()));
+    let prepared = prepare_audio_playback_at_with_resampling_quality(
+        render_project,
+        &store,
+        start_sample,
+        16_384,
+        2_048,
+        ResamplingQuality::Sinc192,
+    )
+    .map_err(|error| OfflineRenderError::Media(error.to_string()));
     let close = store
         .close()
         .map_err(|error| OfflineRenderError::Media(error.to_string()));
     let mut prepared = prepared?;
     close?;
-    prepared.set_master_output_ceiling_dbfs(master_ceiling);
+    if bypass_master_output {
+        prepared
+            .graph()
+            .master_output_safety_controller()
+            .set_guard_enabled(false);
+    } else {
+        prepared.set_master_output_ceiling_dbfs(master_ceiling);
+    }
 
     let mut instrument_owners = Vec::new();
     let mut instrument_processors = Vec::new();
     let mut effect_owners = Vec::new();
     let mut effect_processors = Vec::new();
-    let sample_rate = project.settings().sample_rate();
+    let sample_rate = render_project.settings().sample_rate();
     let max_block_frames = prepared.graph().max_block_frames();
-    for track in project.tracks() {
+    for track in render_project.tracks() {
         if track.is_frozen() {
             continue;
         }
@@ -484,7 +958,7 @@ pub fn render_project_file_to_wav(
     }
     if let Err(error) = prepared
         .graph_mut()
-        .install_instrument_processors(project, &mut instrument_processors)
+        .install_instrument_processors(render_project, &mut instrument_processors)
     {
         cleanup_uninstalled_processors(
             instrument_owners,
@@ -496,7 +970,7 @@ pub fn render_project_file_to_wav(
     }
     if let Err(error) = prepared
         .graph_mut()
-        .install_fx_processors(project, &mut effect_processors)
+        .install_fx_processors(render_project, &mut effect_processors)
     {
         let _stop_failures = prepared.graph_mut().stop_processors_after_offline_render();
         let stopped_instruments = prepared.graph_mut().take_stopped_instruments();
@@ -507,16 +981,511 @@ pub fn render_project_file_to_wav(
 
     let (mut graph, result) = render_prepared_inner(
         prepared,
-        project,
+        render_project,
         export,
         total_frames,
+        start_sample,
         cancelled,
         &mut report_progress,
     );
     let _stop_failures = graph.stop_processors_after_offline_render();
     deactivate_instruments(graph.take_stopped_instruments(), instrument_owners);
     deactivate_effects(graph.take_stopped_fx_processors(), effect_owners);
-    result
+    result?;
+    created_directories.commit();
+    Ok(())
+}
+
+fn selected_audio_item_render_project(
+    project: &Project,
+    item_id: ItemId,
+) -> Result<(Project, u64, u64), OfflineRenderError> {
+    let item = project
+        .audio_items()
+        .iter()
+        .find(|item| item.id() == item_id)
+        .ok_or_else(|| OfflineRenderError::Media("selected audio item no longer exists".into()))?;
+    let start_sample = item.start_sample();
+    let end_sample = item.end_sample();
+    if end_sample <= start_sample {
+        return Err(OfflineRenderError::TimelineRange);
+    }
+
+    let mut snapshot = project.snapshot();
+    // REAPER's Selected media items source bypasses Master volume/pan and the
+    // tested Master FX. Keep the fader neutral in this in-memory snapshot.
+    snapshot.master_mix = aaadaw_core::MasterMix::default();
+    snapshot
+        .audio_items
+        .retain(|candidate| candidate.id == item_id.value());
+    let selected_frozen_track = snapshot
+        .tracks
+        .iter()
+        .find(|track| track.frozen_audio_item_id == Some(item_id.value()))
+        .map(|track| track.id);
+    for track in &mut snapshot.tracks {
+        if track.frozen_audio_item_id != Some(item_id.value()) {
+            track.frozen_audio_item_id = None;
+        }
+    }
+    if let Some(track_id) = selected_frozen_track {
+        let midi_item = snapshot
+            .midi_items
+            .iter()
+            .find(|item| item.track_id == track_id && !item.notes.is_empty())
+            .cloned()
+            .ok_or_else(|| {
+                OfflineRenderError::Media("frozen audio item has no source MIDI item".into())
+            })?;
+        snapshot.midi_items = vec![midi_item];
+    } else {
+        snapshot.midi_items.clear();
+    }
+    let render_project = Project::from_snapshot(snapshot)
+        .map_err(|error| OfflineRenderError::Media(error.to_string()))?;
+    Ok((render_project, start_sample, end_sample))
+}
+
+fn selected_midi_item_render_project(
+    project: &Project,
+    item_id: ItemId,
+) -> Result<(Project, u64, u64), OfflineRenderError> {
+    let item = project
+        .midi_items()
+        .iter()
+        .find(|item| item.id() == item_id)
+        .ok_or_else(|| OfflineRenderError::Media("selected MIDI item no longer exists".into()))?;
+    let start_tick = item.start_tick();
+    let end_tick = start_tick
+        .checked_add(item.length_ticks())
+        .ok_or(OfflineRenderError::TimelineRange)?;
+    let start_sample = project
+        .sample_at_tick(start_tick)
+        .map_err(|_| OfflineRenderError::TimelineRange)?;
+    let end_sample = project
+        .sample_at_tick(end_tick)
+        .map_err(|_| OfflineRenderError::TimelineRange)?;
+    if end_sample <= start_sample {
+        return Err(OfflineRenderError::TimelineRange);
+    }
+
+    let mut snapshot = project.snapshot();
+    // A MIDI source needs its instrument track to produce audio. Keep that chain
+    // and only this item's events, while removing unrelated media from the render.
+    snapshot.master_mix = aaadaw_core::MasterMix::default();
+    snapshot.audio_items.clear();
+    snapshot
+        .midi_items
+        .retain(|candidate| candidate.id == item_id.value());
+    for track in &mut snapshot.tracks {
+        track.frozen_audio_item_id = None;
+    }
+    let render_project = Project::from_snapshot(snapshot)
+        .map_err(|error| OfflineRenderError::Media(error.to_string()))?;
+    Ok((render_project, start_sample, end_sample))
+}
+
+/// Renders each selected track through Master and publishes the complete WAV stem set.
+///
+/// Stems are rendered into a private staging directory on the destination filesystem. Existing
+/// output files are rejected, and the staged set is published with no-clobber hard links only
+/// after every track has rendered successfully. Cancellation or a render/publication error
+/// removes the staged files and any outputs already linked by this call.
+pub fn render_selected_tracks_via_master_to_wavs(
+    project_path: impl AsRef<Path>,
+    project: &Project,
+    destinations: &[(TrackId, PathBuf)],
+    settings: ProjectWavRenderSettings,
+    cancelled: &AtomicBool,
+    report_progress: impl FnMut(u64, u64),
+) -> Result<(), OfflineRenderError> {
+    let outputs = destinations
+        .iter()
+        .map(|(track_id, destination)| {
+            (
+                ProjectWavRenderSource::SelectedTrackViaMaster(*track_id),
+                destination.clone(),
+            )
+        })
+        .collect::<Vec<_>>();
+    render_project_wav_sources_to_wavs(
+        project_path,
+        project,
+        &outputs,
+        settings,
+        cancelled,
+        report_progress,
+    )
+}
+
+/// Renders the requested Master/selected-track outputs and publishes the complete WAV set.
+///
+/// Outputs are rendered into a private staging directory on the destination filesystem. Existing
+/// output files are rejected, and staged files are published with no-clobber hard links only after
+/// every source has rendered successfully. Cancellation or a render/publication error removes the
+/// staged files and outputs already linked by this call.
+pub fn render_project_wav_sources_to_wavs(
+    project_path: impl AsRef<Path>,
+    project: &Project,
+    outputs: &[(ProjectWavRenderSource, PathBuf)],
+    settings: ProjectWavRenderSettings,
+    cancelled: &AtomicBool,
+    report_progress: impl FnMut(u64, u64),
+) -> Result<(), OfflineRenderError> {
+    let jobs = outputs
+        .iter()
+        .map(|(source, destination)| {
+            let mut settings = settings;
+            settings.source = *source;
+            (settings, destination.clone())
+        })
+        .collect::<Vec<_>>();
+    render_project_wav_jobs_to_wavs(project_path, project, &jobs, cancelled, report_progress)
+}
+
+/// Renders a bounded set of WAV jobs and publishes the complete output set atomically.
+///
+/// Each output may use different project-sample bounds, source, and subdirectory. Rendering uses
+/// private staging files; no destination is replaced, and cancellation or failure rolls back
+/// every file already published by this batch and removes newly created empty output directories.
+pub fn render_project_wav_jobs_to_wavs(
+    project_path: impl AsRef<Path>,
+    project: &Project,
+    outputs: &[(ProjectWavRenderSettings, PathBuf)],
+    cancelled: &AtomicBool,
+    mut report_progress: impl FnMut(u64, u64),
+) -> Result<(), OfflineRenderError> {
+    if outputs.is_empty() {
+        return Err(OfflineRenderError::Media(
+            "at least one render output is required".to_owned(),
+        ));
+    }
+    if cancelled.load(Ordering::Acquire) {
+        return Err(OfflineRenderError::Cancelled);
+    }
+
+    let destination_directory = outputs[0]
+        .1
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    let mut created_directories = RenderOutputDirectories::default();
+    created_directories
+        .ensure(destination_directory)
+        .map_err(|error| {
+            OfflineRenderError::Media(format!("could not create stem output directory: {error}"))
+        })?;
+
+    let mut unique_destinations = HashSet::with_capacity(outputs.len());
+    for (settings, destination) in outputs {
+        let source = settings.source;
+        if let ProjectWavRenderSource::SelectedTrackStem(track_id)
+        | ProjectWavRenderSource::SelectedTrackStemPreFader(track_id)
+        | ProjectWavRenderSource::SelectedTrackViaMaster(track_id) = source
+            && !project.tracks().iter().any(|track| track.id() == track_id)
+        {
+            return Err(OfflineRenderError::Media(format!(
+                "selected render track {} no longer exists",
+                track_id.value()
+            )));
+        }
+        if let ProjectWavRenderSource::SelectedAudioItem(item_id) = source
+            && !project
+                .audio_items()
+                .iter()
+                .any(|item| item.id() == item_id)
+        {
+            return Err(OfflineRenderError::Media(
+                "selected audio item no longer exists".to_owned(),
+            ));
+        }
+        if let ProjectWavRenderSource::SelectedMidiItem(item_id) = source
+            && !project.midi_items().iter().any(|item| item.id() == item_id)
+        {
+            return Err(OfflineRenderError::Media(
+                "selected MIDI item no longer exists".to_owned(),
+            ));
+        }
+        let parent = destination
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+            .unwrap_or_else(|| Path::new("."));
+        created_directories.ensure(parent).map_err(|error| {
+            OfflineRenderError::Media(format!("could not create stem output directory: {error}"))
+        })?;
+        if !unique_destinations.insert(destination.clone()) {
+            return Err(OfflineRenderError::Media(format!(
+                "stem outputs resolve to the same file: {}",
+                destination.display()
+            )));
+        }
+        match fs::symlink_metadata(destination) {
+            Ok(_) => {
+                return Err(OfflineRenderError::Media(format!(
+                    "stem output already exists: {}",
+                    destination.display()
+                )));
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => {
+                return Err(OfflineRenderError::Media(format!(
+                    "could not inspect stem output {}: {error}",
+                    destination.display()
+                )));
+            }
+        }
+    }
+
+    let frame_counts = outputs
+        .iter()
+        .map(|(settings, _)| {
+            render_range_length_samples_with_tail_milliseconds(
+                project.settings().sample_rate(),
+                settings.start_sample,
+                settings.end_sample,
+                settings.tail_milliseconds,
+            )
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let total_work = frame_counts.iter().try_fold(0_u64, |total, frames| {
+        total
+            .checked_add(*frames)
+            .ok_or(OfflineRenderError::TimelineRange)
+    })?;
+    let staging_directory = StemStagingDirectory::create(destination_directory)?;
+    let mut staged = Vec::with_capacity(outputs.len());
+    let mut work_offset = 0_u64;
+
+    for (index, ((settings, destination), total_frames)) in
+        outputs.iter().zip(frame_counts).enumerate()
+    {
+        if cancelled.load(Ordering::Acquire) {
+            return Err(OfflineRenderError::Cancelled);
+        }
+        let staging_path = staging_directory.0.join(format!("stem-{index:04}.wav"));
+        render_project_file_to_wav_with_settings(
+            project_path.as_ref(),
+            project,
+            &staging_path,
+            *settings,
+            cancelled,
+            |done, _| {
+                report_progress(
+                    work_offset.saturating_add(done.min(total_frames)),
+                    total_work,
+                )
+            },
+        )?;
+        staged.push((staging_path, destination));
+        work_offset = work_offset
+            .checked_add(total_frames)
+            .ok_or(OfflineRenderError::TimelineRange)?;
+    }
+
+    if cancelled.load(Ordering::Acquire) {
+        return Err(OfflineRenderError::Cancelled);
+    }
+
+    let mut published = Vec::with_capacity(staged.len());
+    for (staging_path, destination) in staged {
+        if let Err(error) = fs::hard_link(&staging_path, destination) {
+            let rollback_error = rollback_stem_publication(&published);
+            let detail = rollback_error.map_or_else(String::new, |error| {
+                format!("; could not roll back a partial stem set: {error}")
+            });
+            return Err(OfflineRenderError::Media(format!(
+                "could not publish stem {}: {error}{detail}",
+                destination.display()
+            )));
+        }
+        published.push(destination.clone());
+    }
+    report_progress(total_work, total_work);
+    created_directories.commit();
+    Ok(())
+}
+
+#[derive(Default)]
+struct RenderOutputDirectories {
+    created: Vec<PathBuf>,
+    committed: bool,
+}
+
+impl RenderOutputDirectories {
+    fn ensure(&mut self, directory: &Path) -> std::io::Result<()> {
+        let directory = if directory.as_os_str().is_empty() {
+            Path::new(".")
+        } else {
+            directory
+        };
+        let mut missing = Vec::new();
+        let mut current = directory.to_path_buf();
+        loop {
+            match fs::metadata(&current) {
+                Ok(metadata) if metadata.is_dir() => break,
+                Ok(_) => {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::NotADirectory,
+                        format!("{} is not a directory", current.display()),
+                    ));
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                    missing.push(current.clone());
+                    current = current
+                        .parent()
+                        .filter(|parent| !parent.as_os_str().is_empty())
+                        .unwrap_or_else(|| Path::new("."))
+                        .to_path_buf();
+                }
+                Err(error) => return Err(error),
+            }
+        }
+        for path in missing.iter().rev() {
+            match fs::create_dir(path) {
+                Ok(()) => self.created.push(path.clone()),
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                    if !fs::metadata(path)?.is_dir() {
+                        return Err(std::io::Error::new(
+                            std::io::ErrorKind::NotADirectory,
+                            format!("{} is not a directory", path.display()),
+                        ));
+                    }
+                }
+                Err(error) => return Err(error),
+            }
+        }
+        Ok(())
+    }
+
+    fn commit(&mut self) {
+        self.committed = true;
+    }
+}
+
+impl Drop for RenderOutputDirectories {
+    fn drop(&mut self) {
+        if !self.committed {
+            for directory in self.created.iter().rev() {
+                let _ = fs::remove_dir(directory);
+            }
+        }
+    }
+}
+
+struct StemStagingDirectory(PathBuf);
+
+impl StemStagingDirectory {
+    fn create(parent: &Path) -> Result<Self, OfflineRenderError> {
+        for _ in 0..16 {
+            let id = NEXT_STEM_STAGING_ID.fetch_add(1, Ordering::Relaxed);
+            let path = parent.join(format!(".aaadaw-render-stems-{}-{id}", std::process::id()));
+            match fs::create_dir(&path) {
+                Ok(()) => {
+                    #[cfg(unix)]
+                    {
+                        use std::os::unix::fs::PermissionsExt;
+                        if let Err(error) =
+                            fs::set_permissions(&path, fs::Permissions::from_mode(0o700))
+                        {
+                            let _ = fs::remove_dir(&path);
+                            return Err(OfflineRenderError::Media(format!(
+                                "could not secure stem staging directory: {error}"
+                            )));
+                        }
+                    }
+                    return Ok(Self(path));
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+                Err(error) => {
+                    return Err(OfflineRenderError::Media(format!(
+                        "could not create stem staging directory: {error}"
+                    )));
+                }
+            }
+        }
+        Err(OfflineRenderError::Media(
+            "could not reserve a stem staging directory".to_owned(),
+        ))
+    }
+}
+
+impl Drop for StemStagingDirectory {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.0);
+    }
+}
+
+fn rollback_stem_publication(paths: &[PathBuf]) -> Option<std::io::Error> {
+    let mut first_error = None;
+    for path in paths.iter().rev() {
+        if let Err(error) = fs::remove_file(path)
+            && first_error.is_none()
+        {
+            first_error = Some(error);
+        }
+    }
+    first_error
+}
+
+fn selected_track_via_master_project(
+    project: &Project,
+    selected_track_id: TrackId,
+) -> Result<Project, OfflineRenderError> {
+    selected_track_render_project(project, selected_track_id, false, false)
+}
+
+fn selected_track_stem_project(
+    project: &Project,
+    selected_track_id: TrackId,
+    pre_fader: bool,
+) -> Result<Project, OfflineRenderError> {
+    selected_track_render_project(project, selected_track_id, true, pre_fader)
+}
+
+fn selected_track_render_project(
+    project: &Project,
+    selected_track_id: TrackId,
+    bypass_master_mix: bool,
+    pre_fader: bool,
+) -> Result<Project, OfflineRenderError> {
+    let mut snapshot = project.snapshot();
+    if bypass_master_mix {
+        snapshot.master_mix = aaadaw_core::MasterMix::default();
+    }
+    if pre_fader
+        && let Some(track) = snapshot
+            .tracks
+            .iter_mut()
+            .find(|track| track.id == selected_track_id.value())
+    {
+        track.volume_db = 0.0;
+        track.volume_automation.clear();
+    }
+    let mut render_project = Project::from_snapshot(snapshot)
+        .map_err(|error| OfflineRenderError::Media(error.to_string()))?;
+    if !render_project
+        .tracks()
+        .iter()
+        .any(|track| track.id() == selected_track_id)
+    {
+        return Err(OfflineRenderError::Media(
+            "selected render track no longer exists".to_owned(),
+        ));
+    }
+    let solo_updates: Vec<_> = render_project
+        .tracks()
+        .iter()
+        .filter_map(|track| {
+            let solo = track.id() == selected_track_id;
+            (track.is_solo() != solo).then_some((track.id(), solo))
+        })
+        .collect();
+    for (track_id, solo) in solo_updates {
+        render_project
+            .apply(DawAction::SetTrackSolo { track_id, solo })
+            .map_err(|error| OfflineRenderError::Media(error.to_string()))?;
+    }
+    Ok(render_project)
 }
 
 /// Renders one instrument track to float WAV from its first MIDI item through its last item and
@@ -539,7 +1508,7 @@ pub fn render_freeze_track_to_float32_wav(
         .iter()
         .find(|track| track.id() == track_id)
         .ok_or_else(|| OfflineRenderError::Media("freeze track no longer exists".into()))?;
-    if track.is_frozen() || track.is_bus() || track.instrument().is_none() {
+    if track.is_frozen() || track.is_bus() || track.is_folder() || track.instrument().is_none() {
         return Err(OfflineRenderError::Media(
             "only an unfrozen instrument track can be frozen".into(),
         ));
@@ -581,9 +1550,14 @@ pub fn render_freeze_track_to_float32_wav(
         .first_mut()
         .ok_or_else(|| OfflineRenderError::Media("freeze track snapshot is missing".into()))?;
     source_track.output_track_id = None;
+    source_track.parent_track_id = None;
+    source_track.main_send_enabled = true;
+    source_track.sends.clear();
     source_track.volume_db = 0.0;
     source_track.pan = 0.0;
     source_track.muted = false;
+    source_track.phase_inverted = false;
+    snapshot.master_mix = aaadaw_core::MasterMix::default();
     source_track.solo = false;
     source_track.record_armed = false;
     source_track.volume_automation.clear();
@@ -597,8 +1571,14 @@ pub fn render_freeze_track_to_float32_wav(
 
     let store = ProjectStore::open(project_path.as_ref())
         .map_err(|error| OfflineRenderError::Media(error.to_string()))?;
-    let prepared = prepare_audio_playback(&source_project, &store, 16_384, 2_048)
-        .map_err(|error| OfflineRenderError::Media(error.to_string()));
+    let prepared = prepare_audio_playback_with_resampling_quality(
+        &source_project,
+        &store,
+        16_384,
+        2_048,
+        ResamplingQuality::Sinc192,
+    )
+    .map_err(|error| OfflineRenderError::Media(error.to_string()));
     let close = store
         .close()
         .map_err(|error| OfflineRenderError::Media(error.to_string()));
@@ -938,6 +1918,9 @@ fn render_graph_with_waiter<W: OfflineWavWriter>(
     }
 
     before_finish()?;
+    if cancelled.load(Ordering::Acquire) {
+        return Err(OfflineRenderError::Cancelled);
+    }
     export.finish()?;
     Ok(())
 }
@@ -961,8 +1944,34 @@ mod tests {
         ))
     }
 
+    struct CancelAfterFirstWrite<'a> {
+        inner: WavExport,
+        cancelled: &'a AtomicBool,
+        wrote_once: bool,
+    }
+
+    impl OfflineWavWriter for CancelAfterFirstWrite<'_> {
+        fn write_frames(&mut self, frames: &[[f32; 2]]) -> Result<(), OfflineRenderError> {
+            self.inner
+                .write_frames(frames)
+                .map_err(OfflineRenderError::WavExport)?;
+            if !self.wrote_once {
+                self.cancelled.store(true, Ordering::Release);
+                self.wrote_once = true;
+            }
+            Ok(())
+        }
+
+        fn finish(self) -> Result<PathBuf, OfflineRenderError> {
+            self.inner.finish().map_err(OfflineRenderError::WavExport)
+        }
+    }
+
     fn project_with_one_track() -> Project {
-        let mut project = Project::new();
+        let mut project = Project::with_settings(
+            aaadaw_core::ProjectSettings::default()
+                .with_pan_mode(aaadaw_core::PanMode::LegacyMonoStereo),
+        );
         project
             .apply(DawAction::CreateTrack {
                 index: 0,
@@ -970,6 +1979,348 @@ mod tests {
             })
             .expect("track creation should succeed");
         project
+    }
+
+    fn pcm24_sample_at(bytes: &[u8], frame: usize, channel: usize) -> i32 {
+        let sample_offset = 44 + (frame * 2 + channel) * 3;
+        let encoded = [
+            bytes[sample_offset],
+            bytes[sample_offset + 1],
+            bytes[sample_offset + 2],
+            if bytes[sample_offset + 2] & 0x80 == 0 {
+                0
+            } else {
+                0xff
+            },
+        ];
+        i32::from_le_bytes(encoded)
+    }
+
+    #[test]
+    fn selected_audio_item_source_applies_item_take_and_track_gain_but_bypasses_master_mix() {
+        let project_path = destination().with_extension("aaadaw");
+        let source_path = destination();
+        let output_path_base = destination();
+        let output_directory = output_path_base
+            .parent()
+            .expect("test destination should have a parent")
+            .join(format!(
+                "{}-nested-output",
+                output_path_base
+                    .file_stem()
+                    .expect("test destination should have a name")
+                    .to_string_lossy()
+            ));
+        let output_path = output_directory.join("selected-item.wav");
+        let mut source_export =
+            WavExport::create(&source_path, 48_000, WavExportOptions::default())
+                .expect("source WAV should be created");
+        source_export
+            .write_frames(&vec![[0.125, 0.375]; 24_000])
+            .expect("first source section should be written");
+        source_export
+            .write_frames(&vec![[0.25, 0.5]; 24_000])
+            .expect("second source section should be written");
+        source_export
+            .finish()
+            .expect("source WAV should be published");
+
+        let mut store = ProjectStore::open(&project_path).expect("project store should be created");
+        let media_ref = store
+            .import_audio_file(&source_path)
+            .expect("source WAV should be embedded");
+        store.close().expect("project store should close");
+
+        let mut project = project_with_one_track();
+        project
+            .apply(DawAction::InsertAudioItem {
+                track_id: project.tracks()[0].id(),
+                media_ref: media_ref.clone(),
+                start_sample: 96_000,
+                source_offset_samples: 24_000,
+                length_samples: 12_000,
+            })
+            .expect("trimmed audio item should be inserted");
+        let item_id = project.audio_items()[0].id();
+        project
+            .apply(DawAction::InsertAudioItem {
+                track_id: project.tracks()[0].id(),
+                media_ref,
+                start_sample: 96_000,
+                source_offset_samples: 0,
+                length_samples: 12_000,
+            })
+            .expect("overlapping unselected audio item should be inserted");
+        project
+            .apply(DawAction::SetAudioItemVolume {
+                item_id,
+                volume: 0.5,
+            })
+            .expect("selected item volume should be set");
+        project
+            .apply(DawAction::SetAudioItemTakeMix {
+                item_id,
+                volume: 0.5,
+                pan: 0.0,
+            })
+            .expect("selected take volume should be set");
+        project
+            .apply(DawAction::SetTrackVolume {
+                track_id: project.tracks()[0].id(),
+                volume_db: -6.020_6,
+            })
+            .expect("track volume should be set");
+        project
+            .apply(DawAction::SetMasterMix {
+                mix: aaadaw_core::MasterMix::new(-6.020_6, 0.5)
+                    .expect("master volume should be valid"),
+            })
+            .expect("Master volume and pan should be set");
+        let before = project.snapshot();
+        let settings = ProjectWavRenderSettings {
+            master_ceiling: MasterOutputCeiling::default(),
+            export_options: WavExportOptions::default(),
+            output_sample_rate: 44_100,
+            output_channels: WavChannelCount::Stereo,
+            source: ProjectWavRenderSource::SelectedAudioItem(item_id),
+            start_sample: 96_000,
+            end_sample: 108_000,
+            tail_milliseconds: 0,
+            normalize_peak: false,
+            normalize_peak_target_centi_dbfs: 0,
+        };
+        let cancelled = AtomicBool::new(false);
+        let mut last_progress = (0, 0);
+        render_project_file_to_wav_with_settings(
+            &project_path,
+            &project,
+            &output_path,
+            settings,
+            &cancelled,
+            |done, total| last_progress = (done, total),
+        )
+        .expect("selected item should render through its track and Master graph");
+
+        let bytes = fs::read(&output_path).expect("rendered WAV should be readable");
+        assert_eq!(&bytes[0..4], b"RIFF");
+        assert_eq!(&bytes[8..12], b"WAVE");
+        assert_eq!(
+            u32::from_le_bytes(bytes[24..28].try_into().unwrap()),
+            44_100
+        );
+        assert_eq!(
+            u32::from_le_bytes(bytes[40..44].try_into().unwrap()),
+            11_025 * 6
+        );
+        let left_expected = (0.03125_f64 * 8_388_608.0).round() as i32;
+        let right_expected = (0.0625_f64 * 8_388_608.0).round() as i32;
+        assert!((pcm24_sample_at(&bytes, 5_512, 0) - left_expected).abs() <= 2);
+        assert!((pcm24_sample_at(&bytes, 5_512, 1) - right_expected).abs() <= 2);
+        assert_eq!(last_progress, (12_000, 12_000));
+        assert_eq!(
+            project.snapshot(),
+            before,
+            "source render must not edit the project"
+        );
+
+        fs::remove_file(source_path).expect("source WAV should be removed");
+        fs::remove_file(output_path).expect("rendered WAV should be removed");
+        fs::remove_dir(output_directory).expect("created output directory should be removed");
+        for suffix in ["", "-wal", "-shm"] {
+            let mut path = project_path.as_os_str().to_owned();
+            path.push(suffix);
+            let _ = fs::remove_file(PathBuf::from(path));
+        }
+    }
+
+    #[test]
+    fn selected_midi_item_source_renders_only_its_timeline_range() {
+        let project_path = destination().with_extension("aaadaw");
+        let output_path = destination();
+        let mut project = project_with_one_track();
+        project
+            .apply(DawAction::InsertMidiItem {
+                track_id: project.tracks()[0].id(),
+                start_tick: 960,
+                length_ticks: 960,
+            })
+            .expect("selected MIDI item should be inserted");
+        let selected_item_id = project.midi_items()[0].id();
+        project
+            .apply(DawAction::InsertMidiItem {
+                track_id: project.tracks()[0].id(),
+                start_tick: 4_800,
+                length_ticks: 960,
+            })
+            .expect("unselected MIDI item should be inserted");
+        let mut store = ProjectStore::open(&project_path).expect("project store should open");
+        store.save(&project).expect("project snapshot should save");
+        store.close().expect("project store should close");
+
+        let (isolated, start_sample, end_sample) =
+            selected_midi_item_render_project(&project, selected_item_id)
+                .expect("selected MIDI item should be isolated for rendering");
+        assert_eq!((start_sample, end_sample), (24_000, 48_000));
+        assert!(isolated.audio_items().is_empty());
+        assert_eq!(isolated.midi_items().len(), 1);
+        assert_eq!(isolated.midi_items()[0].id(), selected_item_id);
+
+        render_project_file_to_wav_with_settings(
+            &project_path,
+            &project,
+            &output_path,
+            ProjectWavRenderSettings {
+                master_ceiling: MasterOutputCeiling::default(),
+                export_options: WavExportOptions::default(),
+                output_sample_rate: 48_000,
+                output_channels: WavChannelCount::Stereo,
+                source: ProjectWavRenderSource::SelectedMidiItem(selected_item_id),
+                // The selected source owns its range, as it does for audio items.
+                start_sample: 0,
+                end_sample: 1,
+                tail_milliseconds: 0,
+                normalize_peak: false,
+                normalize_peak_target_centi_dbfs: 0,
+            },
+            &AtomicBool::new(false),
+            |_, _| {},
+        )
+        .expect("selected MIDI item should render through the normal offline project graph");
+        let bytes = fs::read(&output_path).expect("selected MIDI item WAV should be readable");
+        assert_eq!(&bytes[0..4], b"RIFF");
+        assert_eq!(
+            u32::from_le_bytes(bytes[24..28].try_into().unwrap()),
+            48_000
+        );
+        assert_eq!(
+            u32::from_le_bytes(bytes[40..44].try_into().unwrap()),
+            24_000 * 6
+        );
+
+        fs::remove_file(output_path).expect("rendered WAV should be removed");
+        for suffix in ["", "-wal", "-shm"] {
+            let mut path = project_path.as_os_str().to_owned();
+            path.push(suffix);
+            let _ = fs::remove_file(PathBuf::from(path));
+        }
+    }
+
+    #[test]
+    fn selected_audio_item_batch_publishes_each_trimmed_source_as_a_set() {
+        let project_path = destination().with_extension("aaadaw");
+        let source_path = destination();
+        let first_output = destination();
+        let second_output = destination();
+        let mut source_export =
+            WavExport::create(&source_path, 48_000, WavExportOptions::default())
+                .expect("source WAV should be created");
+        source_export
+            .write_frames(&vec![[0.125, 0.375]; 24_000])
+            .expect("first source half should be written");
+        source_export
+            .write_frames(&vec![[0.25, 0.5]; 24_000])
+            .expect("second source half should be written");
+        source_export
+            .finish()
+            .expect("source WAV should be published");
+
+        let mut store = ProjectStore::open(&project_path).expect("project store should be created");
+        let media_ref = store
+            .link_external_audio_file(&source_path)
+            .expect("source WAV should be linked");
+        store.close().expect("project store should close");
+
+        let mut project = project_with_one_track();
+        for (start_sample, source_offset_samples) in [(0, 0), (48_000, 24_000)] {
+            project
+                .apply(DawAction::InsertAudioItem {
+                    track_id: project.tracks()[0].id(),
+                    media_ref: media_ref.clone(),
+                    start_sample,
+                    source_offset_samples,
+                    length_samples: 24_000,
+                })
+                .expect("trimmed audio item should be inserted");
+        }
+        let before = project.snapshot();
+        let settings = ProjectWavRenderSettings {
+            master_ceiling: MasterOutputCeiling::default(),
+            export_options: WavExportOptions::default(),
+            output_sample_rate: 48_000,
+            output_channels: WavChannelCount::Stereo,
+            source: ProjectWavRenderSource::MasterMix,
+            start_sample: 0,
+            end_sample: 0,
+            tail_milliseconds: 0,
+            normalize_peak: false,
+            normalize_peak_target_centi_dbfs: 0,
+        };
+        let outputs = project
+            .audio_items()
+            .iter()
+            .zip([first_output.clone(), second_output.clone()])
+            .map(|(item, path)| {
+                (
+                    ProjectWavRenderSettings {
+                        source: ProjectWavRenderSource::SelectedAudioItem(item.id()),
+                        start_sample: item.start_sample(),
+                        end_sample: item.end_sample(),
+                        ..settings
+                    },
+                    path,
+                )
+            })
+            .collect::<Vec<_>>();
+
+        let cancelled = AtomicBool::new(false);
+        assert!(matches!(
+            render_project_wav_jobs_to_wavs(
+                &project_path,
+                &project,
+                &outputs,
+                &cancelled,
+                |done, _| {
+                    if done == 24_000 {
+                        cancelled.store(true, Ordering::Release);
+                    }
+                },
+            ),
+            Err(OfflineRenderError::Cancelled)
+        ));
+        assert!(!first_output.exists() && !second_output.exists());
+
+        cancelled.store(false, Ordering::Release);
+        let mut progress = Vec::new();
+        render_project_wav_jobs_to_wavs(
+            &project_path,
+            &project,
+            &outputs,
+            &cancelled,
+            |done, total| progress.push((done, total)),
+        )
+        .expect("both selected media items should publish together");
+        assert_eq!(progress.last(), Some(&(48_000, 48_000)));
+        for (path, expected) in [(&first_output, 0.125_f64), (&second_output, 0.25_f64)] {
+            let bytes = fs::read(path).expect("selected-item output should be readable");
+            assert_eq!(
+                u32::from_le_bytes(bytes[40..44].try_into().unwrap()),
+                24_000 * 6
+            );
+            assert_eq!(
+                pcm24_sample_at(&bytes, 12_000, 0),
+                (expected * 8_388_608.0).round() as i32
+            );
+        }
+        assert_eq!(project.snapshot(), before);
+
+        fs::remove_file(source_path).expect("source WAV should be removed");
+        fs::remove_file(first_output).expect("first output should be removed");
+        fs::remove_file(second_output).expect("second output should be removed");
+        for suffix in ["", "-wal", "-shm"] {
+            let mut path = project_path.as_os_str().to_owned();
+            path.push(suffix);
+            let _ = fs::remove_file(PathBuf::from(path));
+        }
     }
 
     #[test]
@@ -987,6 +2338,437 @@ mod tests {
                 .expect("render length should be representable"),
             48_000 + 2 * 48_000
         );
+    }
+
+    #[test]
+    fn selected_track_source_clears_other_solos_only_in_its_render_snapshot() {
+        let mut project = project_with_one_track();
+        project
+            .apply(DawAction::CreateTrack {
+                index: 1,
+                name: "Other".to_owned(),
+            })
+            .expect("second track should be created");
+        let selected = project.tracks()[0].id();
+        let other = project.tracks()[1].id();
+        project
+            .apply(DawAction::SetTrackSolo {
+                track_id: other,
+                solo: true,
+            })
+            .expect("the original solo should be set");
+
+        let render_project = selected_track_via_master_project(&project, selected)
+            .expect("render snapshot should isolate the requested track");
+        assert!(render_project.tracks()[0].is_solo());
+        assert!(!render_project.tracks()[1].is_solo());
+        assert!(!project.tracks()[0].is_solo());
+        assert!(project.tracks()[1].is_solo());
+    }
+
+    #[test]
+    fn selected_track_stems_stage_as_a_set_and_publish_only_after_all_tracks_finish() {
+        let source_path = destination();
+        let mut source_export =
+            WavExport::create(&source_path, 48_000, WavExportOptions::default())
+                .expect("control source should be created");
+        source_export
+            .write_frames(&vec![[0.125, 0.375]; 48_000])
+            .expect("control source should be written");
+        source_export
+            .finish()
+            .expect("control source should be published");
+
+        let mut project = project_with_one_track();
+        project
+            .apply(DawAction::CreateTrack {
+                index: 1,
+                name: "Second".to_owned(),
+            })
+            .expect("second track should be created");
+        let base = destination();
+        let unique = base
+            .file_stem()
+            .expect("test destination should have a basename")
+            .to_string_lossy();
+        let project_path = base.with_extension("aaadaw");
+        let mut store =
+            ProjectStore::open(&project_path).expect("test project store should be created");
+        let media_ref = store
+            .import_audio_file(&source_path)
+            .expect("control audio should be imported");
+        store.close().expect("test project store should close");
+        for index in 0..project.tracks().len() {
+            let track_id = project.tracks()[index].id();
+            project
+                .apply(DawAction::InsertAudioItem {
+                    track_id,
+                    media_ref: media_ref.clone(),
+                    start_sample: 0,
+                    source_offset_samples: 0,
+                    length_samples: 48_000,
+                })
+                .expect("control audio should be placed on both tracks");
+        }
+        let first = base.with_file_name(format!("{unique}-first.wav"));
+        let second = base.with_file_name(format!("{unique}-second.wav"));
+        let outputs = vec![
+            (project.tracks()[0].id(), first.clone()),
+            (project.tracks()[1].id(), second.clone()),
+        ];
+        let settings = ProjectWavRenderSettings {
+            master_ceiling: MasterOutputCeiling::default(),
+            export_options: WavExportOptions::default(),
+            output_sample_rate: project.settings().sample_rate(),
+            output_channels: WavChannelCount::Stereo,
+            source: ProjectWavRenderSource::MasterMix,
+            start_sample: 0,
+            end_sample: 48_000,
+            tail_milliseconds: 0,
+            normalize_peak: false,
+            normalize_peak_target_centi_dbfs: 0,
+        };
+
+        fs::write(&first, b"preserve existing output")
+            .expect("collision sentinel should be written");
+        let cancelled = AtomicBool::new(false);
+        assert!(
+            render_selected_tracks_via_master_to_wavs(
+                &project_path,
+                &project,
+                &outputs,
+                settings,
+                &cancelled,
+                |_, _| {},
+            )
+            .is_err()
+        );
+        assert_eq!(fs::read(&first).unwrap(), b"preserve existing output");
+        assert!(!second.exists(), "a collision must not publish other stems");
+        fs::remove_file(&first).expect("collision sentinel should be removed");
+
+        let cancelled = AtomicBool::new(false);
+        let cancelled_after_first_stem = &cancelled;
+        assert!(matches!(
+            render_selected_tracks_via_master_to_wavs(
+                &project_path,
+                &project,
+                &outputs,
+                settings,
+                &cancelled,
+                |done, _| {
+                    if done == 48_000 {
+                        cancelled_after_first_stem.store(true, Ordering::Release);
+                    }
+                },
+            ),
+            Err(OfflineRenderError::Cancelled)
+        ));
+        assert!(!first.exists() && !second.exists());
+        cancelled.store(false, Ordering::Release);
+
+        let mut created_late_collision = false;
+        assert!(
+            render_selected_tracks_via_master_to_wavs(
+                &project_path,
+                &project,
+                &outputs,
+                settings,
+                &cancelled,
+                |done, total| {
+                    if done == total && !created_late_collision {
+                        fs::write(&second, b"preserve concurrent output")
+                            .expect("late collision should be written");
+                        created_late_collision = true;
+                    }
+                },
+            )
+            .is_err()
+        );
+        assert!(created_late_collision);
+        assert!(
+            !first.exists(),
+            "a later publish failure rolls back earlier stems"
+        );
+        assert_eq!(fs::read(&second).unwrap(), b"preserve concurrent output");
+        fs::remove_file(&second).expect("late collision sentinel should be removed");
+
+        let mut progress = Vec::new();
+        render_selected_tracks_via_master_to_wavs(
+            &project_path,
+            &project,
+            &outputs,
+            settings,
+            &cancelled,
+            |done, total| progress.push((done, total)),
+        )
+        .expect("all selected tracks should publish as stems");
+        assert_eq!(progress.last(), Some(&(96_000, 96_000)));
+        for path in [&first, &second] {
+            let bytes = fs::read(path).expect("published stem should be readable");
+            assert_eq!(bytes.len(), 44 + 48_000 * 2 * 3);
+            assert_eq!(
+                u32::from_le_bytes(bytes[40..44].try_into().unwrap()),
+                48_000 * 6
+            );
+            let sample = |offset: usize| {
+                let third = bytes[offset + 2];
+                let signed = i32::from_le_bytes([
+                    bytes[offset],
+                    bytes[offset + 1],
+                    third,
+                    if third & 0x80 == 0 { 0 } else { 0xff },
+                ]);
+                signed as f64 / 8_388_608.0
+            };
+            assert!((sample(44) - 0.125).abs() < 1.0e-6);
+            assert!((sample(47) - 0.375).abs() < 1.0e-6);
+        }
+        fs::remove_file(&first).expect("first stem should be removed");
+        fs::remove_file(&second).expect("second stem should be removed");
+
+        let cancelled_nested_root = base.with_file_name(format!("{unique}-cancelled-nested-stems"));
+        let cancelled_nested_outputs = vec![
+            (
+                project.tracks()[0].id(),
+                cancelled_nested_root.join("Drums/first.wav"),
+            ),
+            (
+                project.tracks()[1].id(),
+                cancelled_nested_root.join("Keys/second.wav"),
+            ),
+        ];
+        let cancel_nested = AtomicBool::new(false);
+        assert!(matches!(
+            render_selected_tracks_via_master_to_wavs(
+                &project_path,
+                &project,
+                &cancelled_nested_outputs,
+                settings,
+                &cancel_nested,
+                |done, _| {
+                    if done == 48_000 {
+                        cancel_nested.store(true, Ordering::Release);
+                    }
+                },
+            ),
+            Err(OfflineRenderError::Cancelled)
+        ));
+        assert!(
+            !cancelled_nested_root.exists(),
+            "cancelled renders should remove newly created empty output directories"
+        );
+
+        let nested_root = base.with_file_name(format!("{unique}-nested-stems"));
+        let nested_first = nested_root.join("Drums/first.wav");
+        let nested_second = nested_root.join("Keys/second.wav");
+        let nested_outputs = vec![
+            (project.tracks()[0].id(), nested_first.clone()),
+            (project.tracks()[1].id(), nested_second.clone()),
+        ];
+        render_selected_tracks_via_master_to_wavs(
+            &project_path,
+            &project,
+            &nested_outputs,
+            settings,
+            &cancelled,
+            |_, _| {},
+        )
+        .expect("stem rendering should create separate wildcard subdirectories");
+        for path in [&nested_first, &nested_second] {
+            assert!(
+                path.is_file(),
+                "nested stem should be published: {}",
+                path.display()
+            );
+            assert_eq!(
+                fs::metadata(path).unwrap().len(),
+                44 + 48_000 * 2 * 3,
+                "nested stem should contain the complete PCM24 render"
+            );
+        }
+        fs::remove_dir_all(nested_root).expect("nested output directories should be removed");
+
+        let first_region = base.with_file_name(format!("{unique}-region-one.wav"));
+        let second_region = base.with_file_name(format!("{unique}-region-two.wav"));
+        let region_jobs = [
+            (
+                ProjectWavRenderSettings {
+                    start_sample: 0,
+                    end_sample: 24_000,
+                    ..settings
+                },
+                first_region.clone(),
+            ),
+            (
+                ProjectWavRenderSettings {
+                    start_sample: 24_000,
+                    end_sample: 48_000,
+                    ..settings
+                },
+                second_region.clone(),
+            ),
+        ];
+        let mut region_progress = Vec::new();
+        render_project_wav_jobs_to_wavs(
+            &project_path,
+            &project,
+            &region_jobs,
+            &cancelled,
+            |done, total| region_progress.push((done, total)),
+        )
+        .expect("different bounded ranges should render into one output batch");
+        assert_eq!(region_progress.last(), Some(&(48_000, 48_000)));
+        for path in [&first_region, &second_region] {
+            let bytes = fs::read(path).expect("region output should be readable");
+            assert_eq!(bytes.len(), 44 + 24_000 * 2 * 3);
+            assert_eq!(
+                u32::from_le_bytes(bytes[40..44].try_into().unwrap()),
+                24_000 * 6
+            );
+        }
+        fs::remove_file(&first_region).expect("first region render should be removed");
+        fs::remove_file(&second_region).expect("second region render should be removed");
+
+        let mix = base.with_file_name(format!("{unique}-mix.wav"));
+        let mixed_first = base.with_file_name(format!("{unique}-mix-first.wav"));
+        let mixed_second = base.with_file_name(format!("{unique}-mix-second.wav"));
+        let via_master = base.with_file_name(format!("{unique}-mix-via-master.wav"));
+        project
+            .apply(DawAction::SetMasterMix {
+                mix: aaadaw_core::MasterMix::new(-6.0206, 0.0)
+                    .expect("half-gain Master mix should be valid"),
+            })
+            .expect("Master mix should be lowered for the source comparison");
+        let mix_and_stems = vec![
+            (ProjectWavRenderSource::MasterMix, mix.clone()),
+            (
+                ProjectWavRenderSource::SelectedTrackStem(project.tracks()[0].id()),
+                mixed_first.clone(),
+            ),
+            (
+                ProjectWavRenderSource::SelectedTrackStem(project.tracks()[1].id()),
+                mixed_second.clone(),
+            ),
+            (
+                ProjectWavRenderSource::SelectedTrackViaMaster(project.tracks()[0].id()),
+                via_master.clone(),
+            ),
+        ];
+        render_project_wav_sources_to_wavs(
+            &project_path,
+            &project,
+            &mix_and_stems,
+            settings,
+            &cancelled,
+            |_, _| {},
+        )
+        .expect("Master mix and selected stems should publish together");
+        for path in [&mix, &mixed_first, &mixed_second, &via_master] {
+            let bytes = fs::read(path).expect("Master/stem output should be readable");
+            assert_eq!(bytes.len(), 44 + 48_000 * 2 * 3);
+        }
+        let mix_bytes = fs::read(&mix).expect("Master mix should be readable");
+        let read_pcm24 = |bytes: &[u8], offset: usize| {
+            let third = bytes[offset + 2];
+            let signed = i32::from_le_bytes([
+                bytes[offset],
+                bytes[offset + 1],
+                third,
+                if third & 0x80 == 0 { 0 } else { 0xff },
+            ]);
+            signed as f64 / 8_388_608.0
+        };
+        assert!((read_pcm24(&mix_bytes, 44) - 0.125).abs() < 1.0e-6);
+        assert!((read_pcm24(&mix_bytes, 47) - 0.375).abs() < 1.0e-6);
+        for path in [&mixed_first, &mixed_second] {
+            let bytes = fs::read(path).expect("plain track stem should be readable");
+            assert!((read_pcm24(&bytes, 44) - 0.125).abs() < 1.0e-6);
+            assert!((read_pcm24(&bytes, 47) - 0.375).abs() < 1.0e-6);
+        }
+        let via_master_bytes = fs::read(&via_master).expect("via-Master track should be readable");
+        assert!((read_pcm24(&via_master_bytes, 44) - 0.0625).abs() < 1.0e-6);
+        assert!((read_pcm24(&via_master_bytes, 47) - 0.1875).abs() < 1.0e-6);
+
+        let first_track = project.tracks()[0].id();
+        let second_track = project.tracks()[1].id();
+        for track_id in [first_track, second_track] {
+            project
+                .apply(DawAction::SetTrackVolume {
+                    track_id,
+                    volume_db: -6.0206,
+                })
+                .expect("track fader should be lowered for pre-fader comparison");
+        }
+        project
+            .apply(DawAction::SetTrackVolumeAutomation {
+                track_id: first_track,
+                points: vec![
+                    aaadaw_core::VolumeAutomationPoint::new(0, -6.0206)
+                        .expect("automation gain should be valid"),
+                ],
+            })
+            .expect("track volume automation should be available for pre-fader comparison");
+        let post_fader_automated = base.with_file_name(format!("{unique}-post-fader-auto.wav"));
+        let pre_fader_automated = base.with_file_name(format!("{unique}-pre-fader-auto.wav"));
+        let post_fader = base.with_file_name(format!("{unique}-post-fader.wav"));
+        let pre_fader = base.with_file_name(format!("{unique}-pre-fader.wav"));
+        let pre_fader_sources = [
+            (
+                ProjectWavRenderSource::SelectedTrackStem(first_track),
+                post_fader_automated.clone(),
+            ),
+            (
+                ProjectWavRenderSource::SelectedTrackStemPreFader(first_track),
+                pre_fader_automated.clone(),
+            ),
+            (
+                ProjectWavRenderSource::SelectedTrackStem(second_track),
+                post_fader.clone(),
+            ),
+            (
+                ProjectWavRenderSource::SelectedTrackStemPreFader(second_track),
+                pre_fader.clone(),
+            ),
+        ];
+        render_project_wav_sources_to_wavs(
+            &project_path,
+            &project,
+            &pre_fader_sources,
+            settings,
+            &cancelled,
+            |_, _| {},
+        )
+        .expect("post-fader and pre-fader stems should render together");
+        for (path, expected) in [
+            (&post_fader_automated, [0.03125, 0.09375]),
+            (&post_fader, [0.0625, 0.1875]),
+            (&pre_fader_automated, [0.125, 0.375]),
+            (&pre_fader, [0.125, 0.375]),
+        ] {
+            let bytes = fs::read(path).expect("pre-fader comparison output should be readable");
+            assert_eq!(bytes.len(), 44 + 48_000 * 2 * 3);
+            assert!((read_pcm24(&bytes, 44) - expected[0]).abs() < 1.0e-6);
+            assert!((read_pcm24(&bytes, 47) - expected[1]).abs() < 1.0e-6);
+        }
+        for path in [
+            &post_fader_automated,
+            &pre_fader_automated,
+            &post_fader,
+            &pre_fader,
+        ] {
+            fs::remove_file(path).expect("pre-fader comparison output should be removed");
+        }
+        fs::remove_file(&mix).expect("Master mix should be removed");
+        fs::remove_file(&mixed_first).expect("first combined stem should be removed");
+        fs::remove_file(&mixed_second).expect("second combined stem should be removed");
+        fs::remove_file(&via_master).expect("via-Master comparison should be removed");
+        fs::remove_file(source_path).expect("control source should be removed");
+        for suffix in ["", "-wal", "-shm"] {
+            let mut path = project_path.as_os_str().to_owned();
+            path.push(suffix);
+            let _ = fs::remove_file(PathBuf::from(path));
+        }
     }
 
     #[test]
@@ -1105,5 +2887,246 @@ mod tests {
             Err(OfflineRenderError::Cancelled)
         ));
         assert!(!path.exists());
+    }
+
+    #[test]
+    fn range_render_length_adds_tail_at_the_output_sample_rate_and_checks_bounds() {
+        assert_eq!(
+            render_range_length_samples(48_000, 24_000, 72_000, 2)
+                .expect("valid range should have a render length"),
+            144_000
+        );
+        assert_eq!(
+            render_range_length_samples_with_tail_milliseconds(48_000, 24_000, 72_000, 1_250)
+                .expect("fractional tail should have a render length"),
+            108_000
+        );
+        assert_eq!(
+            render_range_length_samples_with_tail_milliseconds(44_100, 0, 0, 1)
+                .expect("one millisecond should round to the nearest sample"),
+            44
+        );
+        assert!(matches!(
+            render_range_length_samples(48_000, 72_000, 24_000, 2),
+            Err(OfflineRenderError::TimelineRange)
+        ));
+        assert!(matches!(
+            render_range_length_samples(48_000, 24_000, 24_000, 0),
+            Err(OfflineRenderError::TimelineRange)
+        ));
+    }
+
+    #[test]
+    fn grouped_render_jobs_keep_each_region_range_and_publish_the_complete_set() {
+        let first_output = destination();
+        let second_output = first_output.with_file_name(format!(
+            "{}-second.wav",
+            first_output
+                .file_stem()
+                .expect("render path should have a stem")
+                .to_string_lossy()
+        ));
+        let project_path = first_output.with_extension("aaadaw");
+        let mut project = project_with_one_track();
+        project
+            .apply(DawAction::InsertMidiItem {
+                track_id: project.tracks()[0].id(),
+                start_tick: 0,
+                length_ticks: 960,
+            })
+            .expect("MIDI item should be inserted for the stale-audio-source check");
+        let midi_item_id = project.midi_items()[0].id();
+        ProjectStore::open(&project_path)
+            .expect("empty project store should be created")
+            .close()
+            .expect("project store should close before rendering");
+        let settings = ProjectWavRenderSettings {
+            master_ceiling: MasterOutputCeiling::default(),
+            export_options: WavExportOptions::default(),
+            output_sample_rate: project.settings().sample_rate(),
+            output_channels: WavChannelCount::Stereo,
+            source: ProjectWavRenderSource::MasterMix,
+            start_sample: 0,
+            end_sample: 0,
+            tail_milliseconds: 0,
+            normalize_peak: false,
+            normalize_peak_target_centi_dbfs: 0,
+        };
+        let stale_audio_source = first_output.with_file_name(format!(
+            "{}-stale-item.wav",
+            first_output
+                .file_stem()
+                .expect("render path should have a stem")
+                .to_string_lossy()
+        ));
+        let error = render_project_wav_jobs_to_wavs(
+            &project_path,
+            &project,
+            &[(
+                ProjectWavRenderSettings {
+                    source: ProjectWavRenderSource::SelectedAudioItem(midi_item_id),
+                    ..settings
+                },
+                stale_audio_source.clone(),
+            )],
+            &AtomicBool::new(false),
+            |_, _| {},
+        )
+        .expect_err("a MIDI/stale item ID must fail selected-audio batch preflight");
+        assert!(
+            error
+                .to_string()
+                .contains("selected audio item no longer exists")
+        );
+        assert!(!stale_audio_source.exists());
+        let jobs = [
+            (
+                ProjectWavRenderSettings {
+                    start_sample: 0,
+                    end_sample: 1_024,
+                    ..settings
+                },
+                first_output.clone(),
+            ),
+            (
+                ProjectWavRenderSettings {
+                    start_sample: 2_048,
+                    end_sample: 4_096,
+                    ..settings
+                },
+                second_output.clone(),
+            ),
+        ];
+        let cancelled = AtomicBool::new(false);
+        let mut progress = Vec::new();
+        render_project_wav_jobs_to_wavs(
+            &project_path,
+            &project,
+            &jobs,
+            &cancelled,
+            |done, total| progress.push((done, total)),
+        )
+        .expect("all bounded jobs should finish and publish together");
+
+        assert_eq!(progress.last(), Some(&(3_072, 3_072)));
+        for (path, frames) in [(&first_output, 1_024_u32), (&second_output, 2_048_u32)] {
+            let bytes = fs::read(path).expect("rendered region should be readable");
+            assert_eq!(bytes.len(), 44 + frames as usize * 2 * 3);
+            assert_eq!(
+                u32::from_le_bytes(bytes[40..44].try_into().unwrap()),
+                frames * 6
+            );
+            assert!(bytes[44..].iter().all(|byte| *byte == 0));
+        }
+
+        fs::remove_file(first_output).expect("first region output should be removed");
+        fs::remove_file(second_output).expect("second region output should be removed");
+        for suffix in ["", "-wal", "-shm"] {
+            let mut path = project_path.as_os_str().to_owned();
+            path.push(suffix);
+            let _ = fs::remove_file(PathBuf::from(path));
+        }
+    }
+
+    #[test]
+    fn cancelled_range_render_keeps_an_existing_destination_unchanged() {
+        let path = destination();
+        fs::write(&path, b"keep existing render").expect("sentinel destination should exist");
+        let cancelled = AtomicBool::new(true);
+        assert!(matches!(
+            render_project_file_to_wav_with_settings(
+                "unused-project.aaadaw",
+                &Project::default(),
+                &path,
+                ProjectWavRenderSettings {
+                    master_ceiling: MasterOutputCeiling::default(),
+                    export_options: WavExportOptions::default(),
+                    output_sample_rate: Project::default().settings().sample_rate(),
+                    output_channels: WavChannelCount::Stereo,
+                    source: ProjectWavRenderSource::MasterMix,
+                    start_sample: 0,
+                    end_sample: 48_000,
+                    tail_milliseconds: 2_000,
+                    normalize_peak: false,
+                    normalize_peak_target_centi_dbfs: 0,
+                },
+                &cancelled,
+                |_, _| {},
+            ),
+            Err(OfflineRenderError::Cancelled)
+        ));
+        assert_eq!(
+            fs::read(&path).expect("existing file should survive"),
+            b"keep existing render"
+        );
+        fs::remove_file(path).expect("sentinel destination should be removed");
+    }
+
+    #[test]
+    fn cancelling_peak_normalization_drops_spool_and_does_not_publish_output() {
+        let path = destination();
+        let cancelled = AtomicBool::new(false);
+        let wav = WavExport::create(&path, 48_000, WavExportOptions::default())
+            .expect("temporary WAV should be created");
+        let inner = CancelAfterFirstWrite {
+            inner: wav,
+            cancelled: &cancelled,
+            wrote_once: false,
+        };
+        let mut export =
+            PeakNormalizingWriter::new(inner, WavChannelCount::Stereo, true, 1.0, &cancelled)
+                .expect("normalization spool should be created");
+        let spool_path = export
+            .spool
+            .as_ref()
+            .expect("normalization should spool")
+            .path
+            .clone();
+        export
+            .write_frames(&vec![[0.25, -0.5]; 8_192])
+            .expect("frames should be spooled");
+
+        assert!(matches!(
+            export.finish(),
+            Err(OfflineRenderError::Cancelled)
+        ));
+        assert!(!path.exists(), "cancelled output must not be published");
+        assert!(!spool_path.exists(), "cancelled spool must be removed");
+    }
+
+    #[test]
+    fn peak_normalization_scales_to_a_custom_linear_target() {
+        let path = destination();
+        let cancelled = AtomicBool::new(false);
+        let wav = WavExport::create(&path, 48_000, WavExportOptions::default())
+            .expect("temporary WAV should be created");
+        let target_linear = 10_f64.powf(-602.0 / 2_000.0);
+        let mut export = PeakNormalizingWriter::new(
+            wav,
+            WavChannelCount::Stereo,
+            true,
+            target_linear,
+            &cancelled,
+        )
+        .expect("normalization spool should be created");
+        export
+            .write_frames(&[[0.125, 0.375]])
+            .expect("reference frame should be spooled");
+        export.finish().expect("normalized WAV should be published");
+
+        let bytes = fs::read(&path).expect("normalized WAV should be readable");
+        let sample = |offset: usize| {
+            let third = bytes[offset + 2];
+            let signed = i32::from_le_bytes([
+                bytes[offset],
+                bytes[offset + 1],
+                third,
+                if third & 0x80 == 0 { 0 } else { 0xff },
+            ]);
+            signed as f64 / 8_388_608.0
+        };
+        assert!((sample(44) - target_linear / 3.0).abs() < 1.0e-6);
+        assert!((sample(47) - target_linear).abs() < 1.0e-6);
+        fs::remove_file(path).expect("normalized WAV should be removed");
     }
 }

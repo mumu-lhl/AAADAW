@@ -1,0 +1,23 @@
+key	value
+reference	Linux REAPER 7.82 / Default 7 / Linux desktop
+captured_at_utc	2026-10-16
+probe_script	../../../../scripts/reaper_parity/probe-render-selected-items-ui.lua
+source_generator	../../../../scripts/reaper_parity/probe-render-format-vectors.py
+source	48 kHz stereo PCM24 source.wav; 48,000 frames; SHA-256 187b0243f13ddc06d27181da243ee07f89c593ec11ac9d2b0b3cbc342967b485
+configuration	Isolated REAPER profile copied from render-wildcards-native; Default_7.0.ReaperThemeZip asserted by probe
+wildcard_pattern	$itemnumber
+render_source	Selected media items
+native_dialog_step	Change Source from Master mix to Selected media items before inspecting or rendering the pattern
+selected_context	Second of three project audio items, selected alone; one-second item at 2 seconds
+render_bounds	1 media item
+render_preview	1 file; preview path ends in 02.wav
+rendered_filename	02.wav
+render_format	WAV; 24-bit PCM; 48,000 Hz; 2 channels
+render_length_frames	48,000
+render_file_size_bytes	288,690
+render_file_sha256	fa7713a87bc5ae21dde97386f9269f87921870ad7e84866fb01b86472cfba488
+native_render_dialog_screenshot	render-wildcards-itemnumber-native.png
+native_render_dialog_screenshot_sha256	88040ccd44b865a60ebb906f512b6ad5a26a87442e8602f17dbea80abbb7d053
+native_finished_render_screenshot	render-wildcards-itemnumber-finished-native.png
+native_finished_render_screenshot_sha256	0734eaaf83169578ad203187cca7a19cacefd293916f6bcb6b030632b69bcb5f
+native_observation	With the second project item selected as the render source, $itemnumber expands directly to 02; the rendered output is 02.wav

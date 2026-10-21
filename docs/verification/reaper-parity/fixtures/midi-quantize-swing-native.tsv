@@ -1,0 +1,21 @@
+reference	Linux REAPER 7.82 / Default 7
+capture	midi-quantize-swing-reaper-native.png; 1280x800; SHA-256 07a64aeb99914e3c91630d75915439c1c08689eb7742674d49f97993b68ffb2b; Quantize Events scope menu shows All events selected
+probe	scripts/reaper_parity/probe-midi-quantize-dialog-swing.lua; REAPER MIDI_GetGrid reports 0.125 quarter notes and 0.5 swing amount
+project_ppq	960
+editor_grid	1/32 = 120 PPQ ticks
+swing_grid_points	0,150,240,390,480,630,720,870; odd 1/32 positions offset by +30 PPQ at 50% swing
+position_before	selected pitch 60:170-260; selected pitch 62:350-430; unselected pitch 64:550-670
+position_after_action_40469	selected pitch 60:150-240; selected pitch 62:390-470; unselected pitch 64:550-670
+position_tie_before	selected pitch 60:75-95; exactly midway between 0 and 150 PPQ grid points
+position_tie_after_action_40469	selected pitch 60:150-170; ties resolve toward the later swing grid point
+position_and_note_length_before_dialog	selected pitch 60:170-260; selected pitch 62:350-430; unselected pitch 64:550-670
+position_and_note_length_after_dialog	selected pitch 60:150-270; selected pitch 62:390-510; unselected pitch 64:550-670; positions use swing points and lengths quantize to straight 120-tick intervals
+position_and_note_end_before_action_40729	selected pitches 60, 61, 62 at 0-410, 0-430, 0-470
+position_and_note_end_after_action_40729	selected pitches 60, 61, 62 at 0-390, 0-390, 0-480
+note_end_only_before_dialog	selected pitch 60:170-260; selected pitch 62:350-430; unselected pitch 64:550-670
+note_end_only_after_dialog	selected pitch 60:170-240; selected pitch 62:350-390; unselected pitch 64:550-670; note starts remain unchanged and note ends use swing points
+note_length_only_before_dialog	selected pitch 60:170-260; selected pitch 62:350-430; unselected pitch 64:550-670
+note_length_only_after_dialog	selected pitch 60:170-290; selected pitch 62:350-470; unselected pitch 64:550-670; lengths quantize to straight 120-tick intervals
+all_events_dialog_before	notes=1,1,60,170,260;1,1,62,350,430;0,1,64,550,670;cc=1,1,176,475,1,64;1,1,176,485,1,65;1,1,176,730,7,96;pitch_bends=1,1,224,835,31,62;1,1,224,850,0,64
+all_events_dialog_after	notes=1,1,60,150,240;1,1,62,390,470;0,1,64,480,600;cc=1,1,176,480,1,65;1,1,176,720,7,96;pitch_bends=1,1,224,870,0,64
+all_events_collision	CC1 and Pitch Bend events that land on the same tick merge by retaining the event with the latest original tick and its value

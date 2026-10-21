@@ -1,0 +1,20 @@
+artifact	sha256
+scripts/reaper_parity/probe-midi-event-filter-from-mixed-cc-selection.lua	89a70cf0bb4d49ab7bb6b50540c5b0f182b06b82260795db0638860a855f2273
+fixtures/midi-event-filter-from-mixed-cc-native-event-list-before.png	ddb447b22fd87d1c39683707a42614281037dd5ae062eb1936b593c9594450d2
+fixtures/midi-event-filter-from-mixed-cc-native-filter-after.png	4926ff59e7976ddebf5a4421198d52841b3a7617578b3e3d8d03932a1b2f66fb
+fixtures/midi-event-filter-from-mixed-cc-native-event-list-after.png	3bc7c4725a646cca10cd9a2e751348459bc9d378e9f3a0207c75cde144087e57
+fixtures/midi-event-filter-from-mixed-cc-native-before.rpp	d1fb61ecff72ee642bf0d85545cbac2f8d01b35cbba2063489285c5eb5285f91
+fixtures/midi-event-filter-from-mixed-cc-native-after.rpp	18707f0c012ac41da8477d6862c8306648d3ba62b449496e3a4e038ca69bd70d
+fixtures/midi-event-filter-from-mixed-cc-native-readback.tsv	f838e1b7c008a99e754b40b30feebcc7fd6920def4db2e4c0cde6d8f51dec7fe
+fixtures/midi-event-filter-from-mixed-cc-native-result.tsv	7e6f94c3cee33565d04f927991d9179ad195f227a4e28576b0eeb7fb0270fab8
+native_build_id	fb9ade2f211bc91a3ee6193630ef17bcf5f6528b
+native_binary_sha256	9976f5608068b7a58518969001b00b527fb0de6ed7459e0e5dda6f29878ee254
+native_theme	REAPER 7.82 Linux Default 7; SHA-256 575544606736a395520703e532209ad9635f13a41b7ea000bb9810d60025be48
+environment	Linux Xvfb :510, 1600x1000; isolated REAPER 7.82 Default 7 profile; audio unavailable
+starting_state	One C4 note; selected CC7 value 64 on channel 2 @480 and CC10 value 100 on channel 3 @960; unselected CC1 value 90 @600, CC10 value 80 @720, and CC7 value 127 @1440
+action	Event List > Filter Events > Set filter from selection; manually enable the Event List funnel to inspect matching rows
+assertion	Channels 2–3 and Control Change are selected; Control is disabled (<all>); Value 64–100 and Position 0.125–0.25026042 are enabled; Repeat is measure; editor channel is Multichannel; draw channel remains Channel 1; Show-only, Invert, and Solo remain off
+list_result	After manually enabling the funnel, four CC rows pass channel, type, Value, and Position criteria, including unselected CC1 and CC10 events; Note and out-of-range CC7 rows are filtered
+selection_and_data	The two selected CCs remain selected; all eight MIDI event source lines and selection bits are identical before and after
+verification	Native MIDI_GetCC readback; interactive Filter Events dialog; before/after RPP EVTFILTER and MIDI event-line comparison; Event List screenshots
+limitation	One mixed-parameter CC selection across channels 2–3; mixed event types and non-CC selections remain open; screenshots verify behavior, not pixel-diff certification

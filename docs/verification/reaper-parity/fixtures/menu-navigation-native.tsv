@@ -1,0 +1,18 @@
+version	7.82/linux-x86_64
+theme	Default_7.0.ReaperThemeZip
+audio	Dummy Audio
+focused_control	Arrange, no text field unless noted
+key_sequence	menu_open	observation
+F10	no	does not open a menu
+F10 then Return	no	Return executes Play; transport changes from Stopped to Playing
+Alt+F	yes	File menu opens
+Alt+F twice	yes	File menu remains open and selected
+Alt+E	yes	Edit menu opens
+Alt+V	yes	View menu opens
+Alt+I	yes	Insert menu opens
+Alt+O	yes	Options menu opens
+Alt+A	yes	Actions menu opens
+Alt+H	yes	Help menu opens
+Alt+T	no	no menu opens
+Alt+M	no	no menu opens
+F10 with Track name editor focused	no	Return closes the track name editor; F10 does not open a menu

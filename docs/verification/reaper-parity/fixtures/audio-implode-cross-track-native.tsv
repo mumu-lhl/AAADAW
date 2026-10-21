@@ -1,0 +1,354 @@
+staggered_before	track_count=3	item_count=3	selected_count=3
+staggered_before	track=0	track_name=Top track	track_item_count=1
+staggered_before	track=0	item=0	position=1.000000000	length=1.250000000	loop_source=1	selected=1	take_count=1	active_index=0
+staggered_before	track=0	item=0	take=0	name=Top item	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav	offset=0.125000000	rate=0.900000000	volume=0.800000000	pan=-0.500000000
+staggered_before	track=1	track_name=Earlier item track	track_item_count=1
+staggered_before	track=1	item=0	position=0.000000000	length=1.500000000	loop_source=1	selected=1	take_count=2	active_index=1
+staggered_before	track=1	item=0	take=0	name=Earlier item	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-02.wav	offset=0.250000000	rate=1.100000000	volume=0.700000000	pan=0.250000000
+staggered_before	track=1	item=0	take=1	name=Earlier alternate	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-02.wav	offset=0.250000000	rate=0.800000000	volume=0.700000000	pan=0.250000000
+staggered_before	track=2	track_name=Lower track	track_item_count=1
+staggered_before	track=2	item=0	position=2.000000000	length=1.250000000	loop_source=1	selected=1	take_count=1	active_index=0
+staggered_before	track=2	item=0	take=0	name=Lower item	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav	offset=0.375000000	rate=1.200000000	volume=0.600000000	pan=0.500000000
+staggered_after	track_count=3	item_count=1	selected_count=1
+staggered_after	track=0	track_name=Top track	track_item_count=1
+staggered_after	track=0	item=0	position=1.000000000	length=1.250000000	loop_source=1	selected=1	take_count=4	active_index=0
+staggered_after	track=0	item=0	take=0	name=Top item	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav	offset=0.125000000	rate=0.900000000	volume=0.800000000	pan=-0.500000000
+staggered_after	track=0	item=0	take=1	name=Earlier item	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-02.wav	offset=1.350000000	rate=1.100000000	volume=0.700000000	pan=0.250000000
+staggered_after	track=0	item=0	take=2	name=Earlier alternate	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-02.wav	offset=1.050000000	rate=0.800000000	volume=0.700000000	pan=0.250000000
+staggered_after	track=0	item=0	take=3	name=Lower item	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav	offset=-0.825000000	rate=1.200000000	volume=0.600000000	pan=0.500000000
+staggered_after	track=1	track_name=Earlier item track	track_item_count=0
+staggered_after	track=2	track_name=Lower track	track_item_count=0
+staggered_undo	track_count=3	item_count=3	selected_count=0
+staggered_undo	track=0	track_name=Top track	track_item_count=1
+staggered_undo	track=0	item=0	position=1.000000000	length=1.250000000	loop_source=1	selected=0	take_count=1	active_index=0
+staggered_undo	track=0	item=0	take=0	name=Top item	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav	offset=0.125000000	rate=0.900000000	volume=0.800000000	pan=-0.500000000
+staggered_undo	track=1	track_name=Earlier item track	track_item_count=1
+staggered_undo	track=1	item=0	position=0.000000000	length=1.500000000	loop_source=1	selected=0	take_count=2	active_index=1
+staggered_undo	track=1	item=0	take=0	name=Earlier item	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-02.wav	offset=0.250000000	rate=1.100000000	volume=0.700000000	pan=0.250000000
+staggered_undo	track=1	item=0	take=1	name=Earlier alternate	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-02.wav	offset=0.250000000	rate=0.800000000	volume=0.700000000	pan=0.250000000
+staggered_undo	track=2	track_name=Lower track	track_item_count=1
+staggered_undo	track=2	item=0	position=2.000000000	length=1.250000000	loop_source=1	selected=0	take_count=1	active_index=0
+staggered_undo	track=2	item=0	take=0	name=Lower item	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav	offset=0.375000000	rate=1.200000000	volume=0.600000000	pan=0.500000000
+staggered_redo	track_count=3	item_count=1	selected_count=1
+staggered_redo	track=0	track_name=Top track	track_item_count=1
+staggered_redo	track=0	item=0	position=1.000000000	length=1.250000000	loop_source=1	selected=1	take_count=4	active_index=0
+staggered_redo	track=0	item=0	take=0	name=Top item	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav	offset=0.125000000	rate=0.900000000	volume=0.800000000	pan=-0.500000000
+staggered_redo	track=0	item=0	take=1	name=Earlier item	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-02.wav	offset=1.350000000	rate=1.100000000	volume=0.700000000	pan=0.250000000
+staggered_redo	track=0	item=0	take=2	name=Earlier alternate	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-02.wav	offset=1.050000000	rate=0.800000000	volume=0.700000000	pan=0.250000000
+staggered_redo	track=0	item=0	take=3	name=Lower item	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav	offset=-0.825000000	rate=1.200000000	volume=0.600000000	pan=0.500000000
+staggered_redo	track=1	track_name=Earlier item track	track_item_count=0
+staggered_redo	track=2	track_name=Lower track	track_item_count=0
+aligned_before	track_count=6	item_count=4	selected_count=3
+aligned_before	track=0	track_name=Top track	track_item_count=1
+aligned_before	track=0	item=0	position=1.000000000	length=1.250000000	loop_source=1	selected=0	take_count=4	active_index=0
+aligned_before	track=0	item=0	take=0	name=Top item	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav	offset=0.125000000	rate=0.900000000	volume=0.800000000	pan=-0.500000000
+aligned_before	track=0	item=0	take=1	name=Earlier item	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-02.wav	offset=1.350000000	rate=1.100000000	volume=0.700000000	pan=0.250000000
+aligned_before	track=0	item=0	take=2	name=Earlier alternate	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-02.wav	offset=1.050000000	rate=0.800000000	volume=0.700000000	pan=0.250000000
+aligned_before	track=0	item=0	take=3	name=Lower item	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav	offset=-0.825000000	rate=1.200000000	volume=0.600000000	pan=0.500000000
+aligned_before	track=1	track_name=Earlier item track	track_item_count=0
+aligned_before	track=2	track_name=Lower track	track_item_count=0
+aligned_before	track=3	track_name=Aligned top track	track_item_count=1
+aligned_before	track=3	item=0	position=6.000000000	length=1.000000000	loop_source=1	selected=1	take_count=2	active_index=1
+aligned_before	track=3	item=0	take=0	name=Aligned top	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav	offset=0.125000000	rate=0.900000000	volume=0.800000000	pan=-0.500000000
+aligned_before	track=3	item=0	take=1	name=Aligned top alternate	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav	offset=0.125000000	rate=0.900000000	volume=0.800000000	pan=-0.500000000
+aligned_before	track=4	track_name=Aligned middle track	track_item_count=1
+aligned_before	track=4	item=0	position=6.000000000	length=1.000000000	loop_source=1	selected=1	take_count=2	active_index=1
+aligned_before	track=4	item=0	take=0	name=Aligned middle	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-02.wav	offset=0.250000000	rate=1.100000000	volume=0.700000000	pan=0.250000000
+aligned_before	track=4	item=0	take=1	name=Aligned middle active	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-02.wav	offset=0.250000000	rate=1.100000000	volume=0.700000000	pan=0.250000000
+aligned_before	track=5	track_name=Aligned lower track	track_item_count=1
+aligned_before	track=5	item=0	position=6.000000000	length=1.000000000	loop_source=1	selected=1	take_count=1	active_index=0
+aligned_before	track=5	item=0	take=0	name=Aligned lower	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav	offset=0.375000000	rate=1.200000000	volume=0.600000000	pan=0.500000000
+aligned_after	track_count=6	item_count=2	selected_count=1
+aligned_after	track=0	track_name=Top track	track_item_count=1
+aligned_after	track=0	item=0	position=1.000000000	length=1.250000000	loop_source=1	selected=0	take_count=4	active_index=0
+aligned_after	track=0	item=0	take=0	name=Top item	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav	offset=0.125000000	rate=0.900000000	volume=0.800000000	pan=-0.500000000
+aligned_after	track=0	item=0	take=1	name=Earlier item	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-02.wav	offset=1.350000000	rate=1.100000000	volume=0.700000000	pan=0.250000000
+aligned_after	track=0	item=0	take=2	name=Earlier alternate	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-02.wav	offset=1.050000000	rate=0.800000000	volume=0.700000000	pan=0.250000000
+aligned_after	track=0	item=0	take=3	name=Lower item	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav	offset=-0.825000000	rate=1.200000000	volume=0.600000000	pan=0.500000000
+aligned_after	track=1	track_name=Earlier item track	track_item_count=0
+aligned_after	track=2	track_name=Lower track	track_item_count=0
+aligned_after	track=3	track_name=Aligned top track	track_item_count=1
+aligned_after	track=3	item=0	position=6.000000000	length=1.000000000	loop_source=1	selected=1	take_count=5	active_index=1
+aligned_after	track=3	item=0	take=0	name=Aligned top	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav	offset=0.125000000	rate=0.900000000	volume=0.800000000	pan=-0.500000000
+aligned_after	track=3	item=0	take=1	name=Aligned top alternate	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav	offset=0.125000000	rate=0.900000000	volume=0.800000000	pan=-0.500000000
+aligned_after	track=3	item=0	take=2	name=Aligned middle	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-02.wav	offset=0.250000000	rate=1.100000000	volume=0.700000000	pan=0.250000000
+aligned_after	track=3	item=0	take=3	name=Aligned middle active	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-02.wav	offset=0.250000000	rate=1.100000000	volume=0.700000000	pan=0.250000000
+aligned_after	track=3	item=0	take=4	name=Aligned lower	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav	offset=0.375000000	rate=1.200000000	volume=0.600000000	pan=0.500000000
+aligned_after	track=4	track_name=Aligned middle track	track_item_count=0
+aligned_after	track=5	track_name=Aligned lower track	track_item_count=0
+aligned_undo	track_count=6	item_count=4	selected_count=0
+aligned_undo	track=0	track_name=Top track	track_item_count=1
+aligned_undo	track=0	item=0	position=1.000000000	length=1.250000000	loop_source=1	selected=0	take_count=4	active_index=0
+aligned_undo	track=0	item=0	take=0	name=Top item	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav	offset=0.125000000	rate=0.900000000	volume=0.800000000	pan=-0.500000000
+aligned_undo	track=0	item=0	take=1	name=Earlier item	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-02.wav	offset=1.350000000	rate=1.100000000	volume=0.700000000	pan=0.250000000
+aligned_undo	track=0	item=0	take=2	name=Earlier alternate	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-02.wav	offset=1.050000000	rate=0.800000000	volume=0.700000000	pan=0.250000000
+aligned_undo	track=0	item=0	take=3	name=Lower item	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav	offset=-0.825000000	rate=1.200000000	volume=0.600000000	pan=0.500000000
+aligned_undo	track=1	track_name=Earlier item track	track_item_count=0
+aligned_undo	track=2	track_name=Lower track	track_item_count=0
+aligned_undo	track=3	track_name=Aligned top track	track_item_count=1
+aligned_undo	track=3	item=0	position=6.000000000	length=1.000000000	loop_source=1	selected=0	take_count=2	active_index=1
+aligned_undo	track=3	item=0	take=0	name=Aligned top	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav	offset=0.125000000	rate=0.900000000	volume=0.800000000	pan=-0.500000000
+aligned_undo	track=3	item=0	take=1	name=Aligned top alternate	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav	offset=0.125000000	rate=0.900000000	volume=0.800000000	pan=-0.500000000
+aligned_undo	track=4	track_name=Aligned middle track	track_item_count=1
+aligned_undo	track=4	item=0	position=6.000000000	length=1.000000000	loop_source=1	selected=0	take_count=2	active_index=1
+aligned_undo	track=4	item=0	take=0	name=Aligned middle	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-02.wav	offset=0.250000000	rate=1.100000000	volume=0.700000000	pan=0.250000000
+aligned_undo	track=4	item=0	take=1	name=Aligned middle active	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-02.wav	offset=0.250000000	rate=1.100000000	volume=0.700000000	pan=0.250000000
+aligned_undo	track=5	track_name=Aligned lower track	track_item_count=1
+aligned_undo	track=5	item=0	position=6.000000000	length=1.000000000	loop_source=1	selected=0	take_count=1	active_index=0
+aligned_undo	track=5	item=0	take=0	name=Aligned lower	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav	offset=0.375000000	rate=1.200000000	volume=0.600000000	pan=0.500000000
+aligned_redo	track_count=6	item_count=2	selected_count=1
+aligned_redo	track=0	track_name=Top track	track_item_count=1
+aligned_redo	track=0	item=0	position=1.000000000	length=1.250000000	loop_source=1	selected=0	take_count=4	active_index=0
+aligned_redo	track=0	item=0	take=0	name=Top item	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav	offset=0.125000000	rate=0.900000000	volume=0.800000000	pan=-0.500000000
+aligned_redo	track=0	item=0	take=1	name=Earlier item	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-02.wav	offset=1.350000000	rate=1.100000000	volume=0.700000000	pan=0.250000000
+aligned_redo	track=0	item=0	take=2	name=Earlier alternate	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-02.wav	offset=1.050000000	rate=0.800000000	volume=0.700000000	pan=0.250000000
+aligned_redo	track=0	item=0	take=3	name=Lower item	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav	offset=-0.825000000	rate=1.200000000	volume=0.600000000	pan=0.500000000
+aligned_redo	track=1	track_name=Earlier item track	track_item_count=0
+aligned_redo	track=2	track_name=Lower track	track_item_count=0
+aligned_redo	track=3	track_name=Aligned top track	track_item_count=1
+aligned_redo	track=3	item=0	position=6.000000000	length=1.000000000	loop_source=1	selected=1	take_count=5	active_index=1
+aligned_redo	track=3	item=0	take=0	name=Aligned top	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav	offset=0.125000000	rate=0.900000000	volume=0.800000000	pan=-0.500000000
+aligned_redo	track=3	item=0	take=1	name=Aligned top alternate	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav	offset=0.125000000	rate=0.900000000	volume=0.800000000	pan=-0.500000000
+aligned_redo	track=3	item=0	take=2	name=Aligned middle	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-02.wav	offset=0.250000000	rate=1.100000000	volume=0.700000000	pan=0.250000000
+aligned_redo	track=3	item=0	take=3	name=Aligned middle active	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-02.wav	offset=0.250000000	rate=1.100000000	volume=0.700000000	pan=0.250000000
+aligned_redo	track=3	item=0	take=4	name=Aligned lower	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav	offset=0.375000000	rate=1.200000000	volume=0.600000000	pan=0.500000000
+aligned_redo	track=4	track_name=Aligned middle track	track_item_count=0
+aligned_redo	track=5	track_name=Aligned lower track	track_item_count=0
+same-track-control_before	track_count=7	item_count=5	selected_count=3
+same-track-control_before	track=0	track_name=Top track	track_item_count=1
+same-track-control_before	track=0	item=0	position=1.000000000	length=1.250000000	loop_source=1	selected=0	take_count=4	active_index=0
+same-track-control_before	track=0	item=0	take=0	name=Top item	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav	offset=0.125000000	rate=0.900000000	volume=0.800000000	pan=-0.500000000
+same-track-control_before	track=0	item=0	take=1	name=Earlier item	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-02.wav	offset=1.350000000	rate=1.100000000	volume=0.700000000	pan=0.250000000
+same-track-control_before	track=0	item=0	take=2	name=Earlier alternate	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-02.wav	offset=1.050000000	rate=0.800000000	volume=0.700000000	pan=0.250000000
+same-track-control_before	track=0	item=0	take=3	name=Lower item	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav	offset=-0.825000000	rate=1.200000000	volume=0.600000000	pan=0.500000000
+same-track-control_before	track=1	track_name=Earlier item track	track_item_count=0
+same-track-control_before	track=2	track_name=Lower track	track_item_count=0
+same-track-control_before	track=3	track_name=Aligned top track	track_item_count=1
+same-track-control_before	track=3	item=0	position=6.000000000	length=1.000000000	loop_source=1	selected=0	take_count=5	active_index=1
+same-track-control_before	track=3	item=0	take=0	name=Aligned top	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav	offset=0.125000000	rate=0.900000000	volume=0.800000000	pan=-0.500000000
+same-track-control_before	track=3	item=0	take=1	name=Aligned top alternate	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav	offset=0.125000000	rate=0.900000000	volume=0.800000000	pan=-0.500000000
+same-track-control_before	track=3	item=0	take=2	name=Aligned middle	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-02.wav	offset=0.250000000	rate=1.100000000	volume=0.700000000	pan=0.250000000
+same-track-control_before	track=3	item=0	take=3	name=Aligned middle active	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-02.wav	offset=0.250000000	rate=1.100000000	volume=0.700000000	pan=0.250000000
+same-track-control_before	track=3	item=0	take=4	name=Aligned lower	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav	offset=0.375000000	rate=1.200000000	volume=0.600000000	pan=0.500000000
+same-track-control_before	track=4	track_name=Aligned middle track	track_item_count=0
+same-track-control_before	track=5	track_name=Aligned lower track	track_item_count=0
+same-track-control_before	track=6	track_name=Single track control	track_item_count=3
+same-track-control_before	track=6	item=0	position=11.000000000	length=1.500000000	loop_source=1	selected=1	take_count=1	active_index=0
+same-track-control_before	track=6	item=0	take=0	name=Earlier same-track item	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-02.wav	offset=0.250000000	rate=1.100000000	volume=0.700000000	pan=0.250000000
+same-track-control_before	track=6	item=1	position=12.000000000	length=1.250000000	loop_source=1	selected=1	take_count=1	active_index=0
+same-track-control_before	track=6	item=1	take=0	name=Top same-track item	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav	offset=0.125000000	rate=0.900000000	volume=0.800000000	pan=-0.500000000
+same-track-control_before	track=6	item=2	position=13.000000000	length=1.250000000	loop_source=1	selected=1	take_count=1	active_index=0
+same-track-control_before	track=6	item=2	take=0	name=Later same-track item	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav	offset=0.375000000	rate=1.200000000	volume=0.600000000	pan=0.500000000
+same-track-control_after	track_count=7	item_count=5	selected_count=3
+same-track-control_after	track=0	track_name=Top track	track_item_count=1
+same-track-control_after	track=0	item=0	position=1.000000000	length=1.250000000	loop_source=1	selected=0	take_count=4	active_index=0
+same-track-control_after	track=0	item=0	take=0	name=Top item	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav	offset=0.125000000	rate=0.900000000	volume=0.800000000	pan=-0.500000000
+same-track-control_after	track=0	item=0	take=1	name=Earlier item	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-02.wav	offset=1.350000000	rate=1.100000000	volume=0.700000000	pan=0.250000000
+same-track-control_after	track=0	item=0	take=2	name=Earlier alternate	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-02.wav	offset=1.050000000	rate=0.800000000	volume=0.700000000	pan=0.250000000
+same-track-control_after	track=0	item=0	take=3	name=Lower item	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav	offset=-0.825000000	rate=1.200000000	volume=0.600000000	pan=0.500000000
+same-track-control_after	track=1	track_name=Earlier item track	track_item_count=0
+same-track-control_after	track=2	track_name=Lower track	track_item_count=0
+same-track-control_after	track=3	track_name=Aligned top track	track_item_count=1
+same-track-control_after	track=3	item=0	position=6.000000000	length=1.000000000	loop_source=1	selected=0	take_count=5	active_index=1
+same-track-control_after	track=3	item=0	take=0	name=Aligned top	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav	offset=0.125000000	rate=0.900000000	volume=0.800000000	pan=-0.500000000
+same-track-control_after	track=3	item=0	take=1	name=Aligned top alternate	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav	offset=0.125000000	rate=0.900000000	volume=0.800000000	pan=-0.500000000
+same-track-control_after	track=3	item=0	take=2	name=Aligned middle	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-02.wav	offset=0.250000000	rate=1.100000000	volume=0.700000000	pan=0.250000000
+same-track-control_after	track=3	item=0	take=3	name=Aligned middle active	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-02.wav	offset=0.250000000	rate=1.100000000	volume=0.700000000	pan=0.250000000
+same-track-control_after	track=3	item=0	take=4	name=Aligned lower	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav	offset=0.375000000	rate=1.200000000	volume=0.600000000	pan=0.500000000
+same-track-control_after	track=4	track_name=Aligned middle track	track_item_count=0
+same-track-control_after	track=5	track_name=Aligned lower track	track_item_count=0
+same-track-control_after	track=6	track_name=Single track control	track_item_count=3
+same-track-control_after	track=6	item=0	position=11.000000000	length=1.500000000	loop_source=1	selected=1	take_count=1	active_index=0
+same-track-control_after	track=6	item=0	take=0	name=Earlier same-track item	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-02.wav	offset=0.250000000	rate=1.100000000	volume=0.700000000	pan=0.250000000
+same-track-control_after	track=6	item=1	position=12.000000000	length=1.250000000	loop_source=1	selected=1	take_count=1	active_index=0
+same-track-control_after	track=6	item=1	take=0	name=Top same-track item	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav	offset=0.125000000	rate=0.900000000	volume=0.800000000	pan=-0.500000000
+same-track-control_after	track=6	item=2	position=13.000000000	length=1.250000000	loop_source=1	selected=1	take_count=1	active_index=0
+same-track-control_after	track=6	item=2	take=0	name=Later same-track item	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav	offset=0.375000000	rate=1.200000000	volume=0.600000000	pan=0.500000000
+same-track-control	result=no-op
+loop-source_before	track_count=9	item_count=7	selected_count=2
+loop-source_before	track=0	track_name=Top track	track_item_count=1
+loop-source_before	track=0	item=0	position=1.000000000	length=1.250000000	loop_source=1	selected=0	take_count=4	active_index=0
+loop-source_before	track=0	item=0	take=0	name=Top item	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav	offset=0.125000000	rate=0.900000000	volume=0.800000000	pan=-0.500000000
+loop-source_before	track=0	item=0	take=1	name=Earlier item	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-02.wav	offset=1.350000000	rate=1.100000000	volume=0.700000000	pan=0.250000000
+loop-source_before	track=0	item=0	take=2	name=Earlier alternate	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-02.wav	offset=1.050000000	rate=0.800000000	volume=0.700000000	pan=0.250000000
+loop-source_before	track=0	item=0	take=3	name=Lower item	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav	offset=-0.825000000	rate=1.200000000	volume=0.600000000	pan=0.500000000
+loop-source_before	track=1	track_name=Earlier item track	track_item_count=0
+loop-source_before	track=2	track_name=Lower track	track_item_count=0
+loop-source_before	track=3	track_name=Aligned top track	track_item_count=1
+loop-source_before	track=3	item=0	position=6.000000000	length=1.000000000	loop_source=1	selected=0	take_count=5	active_index=1
+loop-source_before	track=3	item=0	take=0	name=Aligned top	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav	offset=0.125000000	rate=0.900000000	volume=0.800000000	pan=-0.500000000
+loop-source_before	track=3	item=0	take=1	name=Aligned top alternate	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav	offset=0.125000000	rate=0.900000000	volume=0.800000000	pan=-0.500000000
+loop-source_before	track=3	item=0	take=2	name=Aligned middle	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-02.wav	offset=0.250000000	rate=1.100000000	volume=0.700000000	pan=0.250000000
+loop-source_before	track=3	item=0	take=3	name=Aligned middle active	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-02.wav	offset=0.250000000	rate=1.100000000	volume=0.700000000	pan=0.250000000
+loop-source_before	track=3	item=0	take=4	name=Aligned lower	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav	offset=0.375000000	rate=1.200000000	volume=0.600000000	pan=0.500000000
+loop-source_before	track=4	track_name=Aligned middle track	track_item_count=0
+loop-source_before	track=5	track_name=Aligned lower track	track_item_count=0
+loop-source_before	track=6	track_name=Single track control	track_item_count=3
+loop-source_before	track=6	item=0	position=11.000000000	length=1.500000000	loop_source=1	selected=0	take_count=1	active_index=0
+loop-source_before	track=6	item=0	take=0	name=Earlier same-track item	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-02.wav	offset=0.250000000	rate=1.100000000	volume=0.700000000	pan=0.250000000
+loop-source_before	track=6	item=1	position=12.000000000	length=1.250000000	loop_source=1	selected=0	take_count=1	active_index=0
+loop-source_before	track=6	item=1	take=0	name=Top same-track item	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav	offset=0.125000000	rate=0.900000000	volume=0.800000000	pan=-0.500000000
+loop-source_before	track=6	item=2	position=13.000000000	length=1.250000000	loop_source=1	selected=0	take_count=1	active_index=0
+loop-source_before	track=6	item=2	take=0	name=Later same-track item	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav	offset=0.375000000	rate=1.200000000	volume=0.600000000	pan=0.500000000
+loop-source_before	track=7	track_name=Loop target track	track_item_count=1
+loop-source_before	track=7	item=0	position=16.000000000	length=1.500000000	loop_source=1	selected=1	take_count=1	active_index=0
+loop-source_before	track=7	item=0	take=0	name=Loop target	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav	offset=0.125000000	rate=1.000000000	volume=1.000000000	pan=0.000000000
+loop-source_before	track=8	track_name=Loop donor track	track_item_count=1
+loop-source_before	track=8	item=0	position=17.000000000	length=1.000000000	loop_source=1	selected=1	take_count=1	active_index=0
+loop-source_before	track=8	item=0	take=0	name=Loop donor	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-02.wav	offset=0.250000000	rate=1.200000000	volume=1.000000000	pan=0.000000000
+loop-source_after	track_count=9	item_count=6	selected_count=1
+loop-source_after	track=0	track_name=Top track	track_item_count=1
+loop-source_after	track=0	item=0	position=1.000000000	length=1.250000000	loop_source=1	selected=0	take_count=4	active_index=0
+loop-source_after	track=0	item=0	take=0	name=Top item	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav	offset=0.125000000	rate=0.900000000	volume=0.800000000	pan=-0.500000000
+loop-source_after	track=0	item=0	take=1	name=Earlier item	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-02.wav	offset=1.350000000	rate=1.100000000	volume=0.700000000	pan=0.250000000
+loop-source_after	track=0	item=0	take=2	name=Earlier alternate	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-02.wav	offset=1.050000000	rate=0.800000000	volume=0.700000000	pan=0.250000000
+loop-source_after	track=0	item=0	take=3	name=Lower item	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav	offset=-0.825000000	rate=1.200000000	volume=0.600000000	pan=0.500000000
+loop-source_after	track=1	track_name=Earlier item track	track_item_count=0
+loop-source_after	track=2	track_name=Lower track	track_item_count=0
+loop-source_after	track=3	track_name=Aligned top track	track_item_count=1
+loop-source_after	track=3	item=0	position=6.000000000	length=1.000000000	loop_source=1	selected=0	take_count=5	active_index=1
+loop-source_after	track=3	item=0	take=0	name=Aligned top	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav	offset=0.125000000	rate=0.900000000	volume=0.800000000	pan=-0.500000000
+loop-source_after	track=3	item=0	take=1	name=Aligned top alternate	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav	offset=0.125000000	rate=0.900000000	volume=0.800000000	pan=-0.500000000
+loop-source_after	track=3	item=0	take=2	name=Aligned middle	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-02.wav	offset=0.250000000	rate=1.100000000	volume=0.700000000	pan=0.250000000
+loop-source_after	track=3	item=0	take=3	name=Aligned middle active	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-02.wav	offset=0.250000000	rate=1.100000000	volume=0.700000000	pan=0.250000000
+loop-source_after	track=3	item=0	take=4	name=Aligned lower	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav	offset=0.375000000	rate=1.200000000	volume=0.600000000	pan=0.500000000
+loop-source_after	track=4	track_name=Aligned middle track	track_item_count=0
+loop-source_after	track=5	track_name=Aligned lower track	track_item_count=0
+loop-source_after	track=6	track_name=Single track control	track_item_count=3
+loop-source_after	track=6	item=0	position=11.000000000	length=1.500000000	loop_source=1	selected=0	take_count=1	active_index=0
+loop-source_after	track=6	item=0	take=0	name=Earlier same-track item	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-02.wav	offset=0.250000000	rate=1.100000000	volume=0.700000000	pan=0.250000000
+loop-source_after	track=6	item=1	position=12.000000000	length=1.250000000	loop_source=1	selected=0	take_count=1	active_index=0
+loop-source_after	track=6	item=1	take=0	name=Top same-track item	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav	offset=0.125000000	rate=0.900000000	volume=0.800000000	pan=-0.500000000
+loop-source_after	track=6	item=2	position=13.000000000	length=1.250000000	loop_source=1	selected=0	take_count=1	active_index=0
+loop-source_after	track=6	item=2	take=0	name=Later same-track item	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav	offset=0.375000000	rate=1.200000000	volume=0.600000000	pan=0.500000000
+loop-source_after	track=7	track_name=Loop target track	track_item_count=1
+loop-source_after	track=7	item=0	position=16.000000000	length=1.500000000	loop_source=1	selected=1	take_count=2	active_index=0
+loop-source_after	track=7	item=0	take=0	name=Loop target	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav	offset=0.125000000	rate=1.000000000	volume=1.000000000	pan=0.000000000
+loop-source_after	track=7	item=0	take=1	name=Loop donor	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-02.wav	offset=-0.950000000	rate=1.200000000	volume=1.000000000	pan=0.000000000
+loop-source_after	track=8	track_name=Loop donor track	track_item_count=0
+loop-source_undo	track_count=9	item_count=7	selected_count=0
+loop-source_undo	track=0	track_name=Top track	track_item_count=1
+loop-source_undo	track=0	item=0	position=1.000000000	length=1.250000000	loop_source=1	selected=0	take_count=4	active_index=0
+loop-source_undo	track=0	item=0	take=0	name=Top item	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav	offset=0.125000000	rate=0.900000000	volume=0.800000000	pan=-0.500000000
+loop-source_undo	track=0	item=0	take=1	name=Earlier item	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-02.wav	offset=1.350000000	rate=1.100000000	volume=0.700000000	pan=0.250000000
+loop-source_undo	track=0	item=0	take=2	name=Earlier alternate	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-02.wav	offset=1.050000000	rate=0.800000000	volume=0.700000000	pan=0.250000000
+loop-source_undo	track=0	item=0	take=3	name=Lower item	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav	offset=-0.825000000	rate=1.200000000	volume=0.600000000	pan=0.500000000
+loop-source_undo	track=1	track_name=Earlier item track	track_item_count=0
+loop-source_undo	track=2	track_name=Lower track	track_item_count=0
+loop-source_undo	track=3	track_name=Aligned top track	track_item_count=1
+loop-source_undo	track=3	item=0	position=6.000000000	length=1.000000000	loop_source=1	selected=0	take_count=5	active_index=1
+loop-source_undo	track=3	item=0	take=0	name=Aligned top	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav	offset=0.125000000	rate=0.900000000	volume=0.800000000	pan=-0.500000000
+loop-source_undo	track=3	item=0	take=1	name=Aligned top alternate	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav	offset=0.125000000	rate=0.900000000	volume=0.800000000	pan=-0.500000000
+loop-source_undo	track=3	item=0	take=2	name=Aligned middle	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-02.wav	offset=0.250000000	rate=1.100000000	volume=0.700000000	pan=0.250000000
+loop-source_undo	track=3	item=0	take=3	name=Aligned middle active	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-02.wav	offset=0.250000000	rate=1.100000000	volume=0.700000000	pan=0.250000000
+loop-source_undo	track=3	item=0	take=4	name=Aligned lower	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav	offset=0.375000000	rate=1.200000000	volume=0.600000000	pan=0.500000000
+loop-source_undo	track=4	track_name=Aligned middle track	track_item_count=0
+loop-source_undo	track=5	track_name=Aligned lower track	track_item_count=0
+loop-source_undo	track=6	track_name=Single track control	track_item_count=3
+loop-source_undo	track=6	item=0	position=11.000000000	length=1.500000000	loop_source=1	selected=0	take_count=1	active_index=0
+loop-source_undo	track=6	item=0	take=0	name=Earlier same-track item	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-02.wav	offset=0.250000000	rate=1.100000000	volume=0.700000000	pan=0.250000000
+loop-source_undo	track=6	item=1	position=12.000000000	length=1.250000000	loop_source=1	selected=0	take_count=1	active_index=0
+loop-source_undo	track=6	item=1	take=0	name=Top same-track item	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav	offset=0.125000000	rate=0.900000000	volume=0.800000000	pan=-0.500000000
+loop-source_undo	track=6	item=2	position=13.000000000	length=1.250000000	loop_source=1	selected=0	take_count=1	active_index=0
+loop-source_undo	track=6	item=2	take=0	name=Later same-track item	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav	offset=0.375000000	rate=1.200000000	volume=0.600000000	pan=0.500000000
+loop-source_undo	track=7	track_name=Loop target track	track_item_count=1
+loop-source_undo	track=7	item=0	position=16.000000000	length=1.500000000	loop_source=1	selected=0	take_count=1	active_index=0
+loop-source_undo	track=7	item=0	take=0	name=Loop target	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav	offset=0.125000000	rate=1.000000000	volume=1.000000000	pan=0.000000000
+loop-source_undo	track=8	track_name=Loop donor track	track_item_count=1
+loop-source_undo	track=8	item=0	position=17.000000000	length=1.000000000	loop_source=1	selected=0	take_count=1	active_index=0
+loop-source_undo	track=8	item=0	take=0	name=Loop donor	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-02.wav	offset=0.250000000	rate=1.200000000	volume=1.000000000	pan=0.000000000
+loop-source_redo	track_count=9	item_count=6	selected_count=1
+loop-source_redo	track=0	track_name=Top track	track_item_count=1
+loop-source_redo	track=0	item=0	position=1.000000000	length=1.250000000	loop_source=1	selected=0	take_count=4	active_index=0
+loop-source_redo	track=0	item=0	take=0	name=Top item	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav	offset=0.125000000	rate=0.900000000	volume=0.800000000	pan=-0.500000000
+loop-source_redo	track=0	item=0	take=1	name=Earlier item	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-02.wav	offset=1.350000000	rate=1.100000000	volume=0.700000000	pan=0.250000000
+loop-source_redo	track=0	item=0	take=2	name=Earlier alternate	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-02.wav	offset=1.050000000	rate=0.800000000	volume=0.700000000	pan=0.250000000
+loop-source_redo	track=0	item=0	take=3	name=Lower item	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav	offset=-0.825000000	rate=1.200000000	volume=0.600000000	pan=0.500000000
+loop-source_redo	track=1	track_name=Earlier item track	track_item_count=0
+loop-source_redo	track=2	track_name=Lower track	track_item_count=0
+loop-source_redo	track=3	track_name=Aligned top track	track_item_count=1
+loop-source_redo	track=3	item=0	position=6.000000000	length=1.000000000	loop_source=1	selected=0	take_count=5	active_index=1
+loop-source_redo	track=3	item=0	take=0	name=Aligned top	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav	offset=0.125000000	rate=0.900000000	volume=0.800000000	pan=-0.500000000
+loop-source_redo	track=3	item=0	take=1	name=Aligned top alternate	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav	offset=0.125000000	rate=0.900000000	volume=0.800000000	pan=-0.500000000
+loop-source_redo	track=3	item=0	take=2	name=Aligned middle	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-02.wav	offset=0.250000000	rate=1.100000000	volume=0.700000000	pan=0.250000000
+loop-source_redo	track=3	item=0	take=3	name=Aligned middle active	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-02.wav	offset=0.250000000	rate=1.100000000	volume=0.700000000	pan=0.250000000
+loop-source_redo	track=3	item=0	take=4	name=Aligned lower	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav	offset=0.375000000	rate=1.200000000	volume=0.600000000	pan=0.500000000
+loop-source_redo	track=4	track_name=Aligned middle track	track_item_count=0
+loop-source_redo	track=5	track_name=Aligned lower track	track_item_count=0
+loop-source_redo	track=6	track_name=Single track control	track_item_count=3
+loop-source_redo	track=6	item=0	position=11.000000000	length=1.500000000	loop_source=1	selected=0	take_count=1	active_index=0
+loop-source_redo	track=6	item=0	take=0	name=Earlier same-track item	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-02.wav	offset=0.250000000	rate=1.100000000	volume=0.700000000	pan=0.250000000
+loop-source_redo	track=6	item=1	position=12.000000000	length=1.250000000	loop_source=1	selected=0	take_count=1	active_index=0
+loop-source_redo	track=6	item=1	take=0	name=Top same-track item	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav	offset=0.125000000	rate=0.900000000	volume=0.800000000	pan=-0.500000000
+loop-source_redo	track=6	item=2	position=13.000000000	length=1.250000000	loop_source=1	selected=0	take_count=1	active_index=0
+loop-source_redo	track=6	item=2	take=0	name=Later same-track item	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav	offset=0.375000000	rate=1.200000000	volume=0.600000000	pan=0.500000000
+loop-source_redo	track=7	track_name=Loop target track	track_item_count=1
+loop-source_redo	track=7	item=0	position=16.000000000	length=1.500000000	loop_source=1	selected=1	take_count=2	active_index=0
+loop-source_redo	track=7	item=0	take=0	name=Loop target	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav	offset=0.125000000	rate=1.000000000	volume=1.000000000	pan=0.000000000
+loop-source_redo	track=7	item=0	take=1	name=Loop donor	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-02.wav	offset=-0.950000000	rate=1.200000000	volume=1.000000000	pan=0.000000000
+loop-source_redo	track=8	track_name=Loop donor track	track_item_count=0
+action	40438	Take: Implode items across tracks into takes
+
+no-overlap-control_before	track_count=9	item_count=7	selected_count=2
+no-overlap-control_before	track=0	track_name=Top track	track_item_count=1
+no-overlap-control_before	track=0	item=0	position=1.000000000	length=1.250000000	selected=0	take_count=4	active_index=0
+no-overlap-control_before	track=0	item=0	take=0	name=Top item	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav	offset=0.125000000	rate=0.900000000	volume=0.800000000	pan=-0.500000000
+no-overlap-control_before	track=0	item=0	take=1	name=Earlier item	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-02.wav	offset=1.350000000	rate=1.100000000	volume=0.700000000	pan=0.250000000
+no-overlap-control_before	track=0	item=0	take=2	name=Earlier alternate	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-02.wav	offset=1.050000000	rate=0.800000000	volume=0.700000000	pan=0.250000000
+no-overlap-control_before	track=0	item=0	take=3	name=Lower item	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav	offset=-0.825000000	rate=1.200000000	volume=0.600000000	pan=0.500000000
+no-overlap-control_before	track=1	track_name=Earlier item track	track_item_count=0
+no-overlap-control_before	track=2	track_name=Lower track	track_item_count=0
+no-overlap-control_before	track=3	track_name=Aligned top track	track_item_count=1
+no-overlap-control_before	track=3	item=0	position=6.000000000	length=1.000000000	selected=0	take_count=5	active_index=1
+no-overlap-control_before	track=3	item=0	take=0	name=Aligned top	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav	offset=0.125000000	rate=0.900000000	volume=0.800000000	pan=-0.500000000
+no-overlap-control_before	track=3	item=0	take=1	name=Aligned top alternate	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav	offset=0.125000000	rate=0.900000000	volume=0.800000000	pan=-0.500000000
+no-overlap-control_before	track=3	item=0	take=2	name=Aligned middle	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-02.wav	offset=0.250000000	rate=1.100000000	volume=0.700000000	pan=0.250000000
+no-overlap-control_before	track=3	item=0	take=3	name=Aligned middle active	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-02.wav	offset=0.250000000	rate=1.100000000	volume=0.700000000	pan=0.250000000
+no-overlap-control_before	track=3	item=0	take=4	name=Aligned lower	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav	offset=0.375000000	rate=1.200000000	volume=0.600000000	pan=0.500000000
+no-overlap-control_before	track=4	track_name=Aligned middle track	track_item_count=0
+no-overlap-control_before	track=5	track_name=Aligned lower track	track_item_count=0
+no-overlap-control_before	track=6	track_name=Single track control	track_item_count=3
+no-overlap-control_before	track=6	item=0	position=11.000000000	length=1.500000000	selected=0	take_count=1	active_index=0
+no-overlap-control_before	track=6	item=0	take=0	name=Earlier same-track item	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-02.wav	offset=0.250000000	rate=1.100000000	volume=0.700000000	pan=0.250000000
+no-overlap-control_before	track=6	item=1	position=12.000000000	length=1.250000000	selected=0	take_count=1	active_index=0
+no-overlap-control_before	track=6	item=1	take=0	name=Top same-track item	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav	offset=0.125000000	rate=0.900000000	volume=0.800000000	pan=-0.500000000
+no-overlap-control_before	track=6	item=2	position=13.000000000	length=1.250000000	selected=0	take_count=1	active_index=0
+no-overlap-control_before	track=6	item=2	take=0	name=Later same-track item	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav	offset=0.375000000	rate=1.200000000	volume=0.600000000	pan=0.500000000
+no-overlap-control_before	track=7	track_name=Loop target track	track_item_count=1
+no-overlap-control_before	track=7	item=0	position=16.000000000	length=1.000000000	selected=1	take_count=1	active_index=0
+no-overlap-control_before	track=7	item=0	take=0	name=Loop target	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav	offset=0.125000000	rate=1.000000000	volume=1.000000000	pan=0.000000000
+no-overlap-control_before	track=8	track_name=Loop donor track	track_item_count=1
+no-overlap-control_before	track=8	item=0	position=17.000000000	length=1.000000000	selected=1	take_count=1	active_index=0
+no-overlap-control_before	track=8	item=0	take=0	name=Loop donor	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-02.wav	offset=0.250000000	rate=1.200000000	volume=1.000000000	pan=0.000000000
+no-overlap-control_after	track_count=9	item_count=7	selected_count=2
+no-overlap-control_after	track=0	track_name=Top track	track_item_count=1
+no-overlap-control_after	track=0	item=0	position=1.000000000	length=1.250000000	selected=0	take_count=4	active_index=0
+no-overlap-control_after	track=0	item=0	take=0	name=Top item	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav	offset=0.125000000	rate=0.900000000	volume=0.800000000	pan=-0.500000000
+no-overlap-control_after	track=0	item=0	take=1	name=Earlier item	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-02.wav	offset=1.350000000	rate=1.100000000	volume=0.700000000	pan=0.250000000
+no-overlap-control_after	track=0	item=0	take=2	name=Earlier alternate	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-02.wav	offset=1.050000000	rate=0.800000000	volume=0.700000000	pan=0.250000000
+no-overlap-control_after	track=0	item=0	take=3	name=Lower item	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav	offset=-0.825000000	rate=1.200000000	volume=0.600000000	pan=0.500000000
+no-overlap-control_after	track=1	track_name=Earlier item track	track_item_count=0
+no-overlap-control_after	track=2	track_name=Lower track	track_item_count=0
+no-overlap-control_after	track=3	track_name=Aligned top track	track_item_count=1
+no-overlap-control_after	track=3	item=0	position=6.000000000	length=1.000000000	selected=0	take_count=5	active_index=1
+no-overlap-control_after	track=3	item=0	take=0	name=Aligned top	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav	offset=0.125000000	rate=0.900000000	volume=0.800000000	pan=-0.500000000
+no-overlap-control_after	track=3	item=0	take=1	name=Aligned top alternate	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav	offset=0.125000000	rate=0.900000000	volume=0.800000000	pan=-0.500000000
+no-overlap-control_after	track=3	item=0	take=2	name=Aligned middle	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-02.wav	offset=0.250000000	rate=1.100000000	volume=0.700000000	pan=0.250000000
+no-overlap-control_after	track=3	item=0	take=3	name=Aligned middle active	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-02.wav	offset=0.250000000	rate=1.100000000	volume=0.700000000	pan=0.250000000
+no-overlap-control_after	track=3	item=0	take=4	name=Aligned lower	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav	offset=0.375000000	rate=1.200000000	volume=0.600000000	pan=0.500000000
+no-overlap-control_after	track=4	track_name=Aligned middle track	track_item_count=0
+no-overlap-control_after	track=5	track_name=Aligned lower track	track_item_count=0
+no-overlap-control_after	track=6	track_name=Single track control	track_item_count=3
+no-overlap-control_after	track=6	item=0	position=11.000000000	length=1.500000000	selected=0	take_count=1	active_index=0
+no-overlap-control_after	track=6	item=0	take=0	name=Earlier same-track item	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-02.wav	offset=0.250000000	rate=1.100000000	volume=0.700000000	pan=0.250000000
+no-overlap-control_after	track=6	item=1	position=12.000000000	length=1.250000000	selected=0	take_count=1	active_index=0
+no-overlap-control_after	track=6	item=1	take=0	name=Top same-track item	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav	offset=0.125000000	rate=0.900000000	volume=0.800000000	pan=-0.500000000
+no-overlap-control_after	track=6	item=2	position=13.000000000	length=1.250000000	selected=0	take_count=1	active_index=0
+no-overlap-control_after	track=6	item=2	take=0	name=Later same-track item	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav	offset=0.375000000	rate=1.200000000	volume=0.600000000	pan=0.500000000
+no-overlap-control_after	track=7	track_name=Loop target track	track_item_count=1
+no-overlap-control_after	track=7	item=0	position=16.000000000	length=1.000000000	selected=1	take_count=1	active_index=0
+no-overlap-control_after	track=7	item=0	take=0	name=Loop target	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav	offset=0.125000000	rate=1.000000000	volume=1.000000000	pan=0.000000000
+no-overlap-control_after	track=8	track_name=Loop donor track	track_item_count=1
+no-overlap-control_after	track=8	item=0	position=17.000000000	length=1.000000000	selected=1	take_count=1	active_index=0
+no-overlap-control_after	track=8	item=0	take=0	name=Loop donor	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-02.wav	offset=0.250000000	rate=1.200000000	volume=1.000000000	pan=0.000000000
+no-overlap-control	result=no-op	item_count_before=7	item_count_after=7	selected_before=2	selected_after=2

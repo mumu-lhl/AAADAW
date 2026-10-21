@@ -1,0 +1,7 @@
+case	phase	selection_start	selection_end	loop_start	loop_end	link	project_path
+unlinked-distinct	before-save	1.250000000	2.500000000	3.500000000	5.750000000	unlinked	
+unlinked-distinct	after-save	1.250000000	2.500000000	3.500000000	5.750000000	unlinked	
+linked-shared	before-save	1.250000000	2.500000000	1.250000000	2.500000000	linked	
+linked-shared	after-save	1.250000000	2.500000000	1.250000000	2.500000000	linked	
+unlinked-distinct	after-reopen	1.250000000	2.500000000	3.500000000	5.750000000	unlinked	loop-time-selection-unlinked-distinct.rpp
+linked-shared	after-reopen	1.250000000	2.500000000	1.250000000	2.500000000	unlinked	loop-time-selection-linked-shared.rpp

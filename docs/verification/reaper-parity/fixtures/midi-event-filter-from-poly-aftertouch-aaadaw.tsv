@@ -1,0 +1,17 @@
+artifact	sha256
+crates/aaadaw/examples/generate_midi_filter_from_poly_aftertouch_selection_fixture.rs	f61d47723b58f4ee4990dcc907b59205b5f6a3a7f472927a4bba8442cdda6c2a
+fixtures/midi-event-filter-from-poly-aftertouch-aaadaw.aaadaw	deee80790735cdbd812814342d69ef735534e39b9a4e9cdf4e5925e4163cba56
+fixtures/midi-event-filter-from-poly-aftertouch-aaadaw-after-set.png	f7b62e9ee9d37da0fedf3ea9d68c5fe6f0665a3a2404253e6116be5360f0ef9b
+fixtures/midi-event-filter-from-poly-aftertouch-aaadaw-list-unfiltered.png	30a5d1240a11762694f3f8c52051cb432603967989cef73141a6b0fb45e94eaa
+fixtures/midi-event-filter-from-poly-aftertouch-aaadaw-list-filtered.png	f4cc3e5e9bc879a8430ecb195b57d72e55950aa8663a052ff44caf0b5afece7c
+binary_sha256	9747a9fdd6740b892360dffa4875a7d0307b1f3520b92cb439c85795f0b7736c
+binary_build_id	1453f9d78d18ec16c931ebb104da0da556842760
+build_backend	rustc nightly with Cranelift codegen backend
+environment	Linux dummy Xorg :547, 1600x1000 root; MIDI Editor/Event List 1000x620; isolated AAADAW profile; audio unavailable
+starting_state	One C4 note; selected Poly Aftertouch note60/value32 on channel 2 @ tick 480 and note72/value100 on channel 3 @ tick 960; unselected note64/value64 on channel 2 @ tick 600; CC7 @720 and Channel Pressure @840
+action	Open Event List; Ctrl-click the two endpoint Poly Aftertouch rows; Filter events… > Set filter from selection; close dialog; enable Show-only
+assertion	The real-window Set dialog shows Poly Aftertouch, channels 2–3, Note C4–C5, Pressure 32–100, Position 0.125–0.25026042, Repeat measure, Multichannel, and Draw events on channel 2. Set leaves the funnel off and all seven rows visible.
+list_result	After enabling Show-only, exactly three Poly Aftertouch rows remain, including unselected note64/value64; selected endpoints remain selected and Note, CC, Channel Pressure, and terminal rows are hidden.
+selection_and_data	The focused App regression verifies derived criteria, preserved selection, Show-only filtering, and unchanged project/Undo/Redo state.
+verification	Current Cranelift real-window captures; app::tests::midi_editor_set_filter_from_poly_aftertouch_selection_derives_native_criteria; app::messages::midi_channel_selection_tests::poly_aftertouch_filter_matches_note_pressure_position_and_inversion; workspace Nextest 1,566/1,566 across 78 binaries; AAADAW all-target strict Clippy (-D warnings -A future-incompatible); fmt --check and git diff --check
+limitation	Mixed event-type selection and Channel Pressure, Meta, and SysEx derivation remain open. Screenshots verify behavior and controls, not pixel identity.

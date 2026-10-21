@@ -7,6 +7,8 @@ mod clap_scanner;
 #[cfg(target_os = "android")]
 mod logging;
 #[cfg(target_os = "android")]
+mod project_time;
+#[cfg(target_os = "android")]
 mod timeline;
 
 #[cfg(target_os = "android")]

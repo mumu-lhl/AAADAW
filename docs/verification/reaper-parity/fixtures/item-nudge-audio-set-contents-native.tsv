@@ -1,0 +1,11 @@
+version	7.82/linux-x86_64
+theme	Default_7.0.ReaperThemeZip
+source_path	/workspace/AAADAW/examples/first-project/melody.wav
+columns	label	position_s	length_s	loop_source	source_offset_s	source_length_s	source_length_is_qn	selection	state_change	undo_label
+before_looped	2.000000000	5.000000000	1.0	0.100000000	4.000000000	false	selected	2	Insert media items
+snapshot	2.000000000	5.000000000	1.0	3.000000000	4.000000000	false	selected	3	Nudge items
+snapshot	2.000000000	5.000000000	1.0	2.000000000	4.000000000	false	selected	4	Nudge items
+before_loop_off_set	2.000000000	5.000000000	0.0	0.100000000	4.000000000	false	selected	4	Nudge items
+snapshot	2.000000000	5.000000000	0.0	-1.000000000	4.000000000	false	selected	5	Nudge items
+snapshot	2.000000000	5.000000000	1.0	2.000000000	4.000000000	false	selected	6	Nudge items
+snapshot	2.000000000	5.000000000	0.0	-1.000000000	4.000000000	false	selected	7	Nudge items

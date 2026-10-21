@@ -1,0 +1,20 @@
+artifact	sha256
+scripts/reaper_parity/probe-midi-event-filter-from-mixed-opaque-selection.lua	6543e92394befa43bcc572918ffee88b766b2842b1c8a6b3fc91d38fc7cb21e9
+fixtures/midi-event-filter-from-mixed-opaque-selection-native-before.png	5f8d45af8469c7fc3f3af9b28aac83a93b492b25273b534cb9dfee0edb8bd3a1
+fixtures/midi-event-filter-from-mixed-opaque-selection-native-after-set.png	d1882dbef1470feffe6d4764387efa71e953874dacf6bfee5a796d43b1333e76
+fixtures/midi-event-filter-from-mixed-opaque-selection-native-readback.tsv	07b0500d58385d917812fb4ccf5b0ba45c8f7b61234c25b5d931c9f9c2e066da
+fixtures/midi-event-filter-from-mixed-opaque-selection-native-before.bin	f823a6962e80f6903d58e64dc07884eac108790c750be86110be2990e4a2860c
+fixtures/midi-event-filter-from-mixed-opaque-selection-native-after-set.bin	f823a6962e80f6903d58e64dc07884eac108790c750be86110be2990e4a2860c
+fixtures/midi-event-filter-from-mixed-opaque-selection-native-before.rpp	442ceb3a8b9401e99e050d4db0a18729117f879d4d5018e6338f62c25985e9c6
+fixtures/midi-event-filter-from-mixed-opaque-selection-native-after-set.rpp	6dfcbaa1443010b72fe845a471c424d06875a97040656cb590be271dd3bd70e1
+native_build_id	fb9ade2f211bc91a3ee6193630ef17bcf5f6528b
+native_binary_sha256	9976f5608068b7a58518969001b00b527fb0de6ed7459e0e5dda6f29878ee254
+theme	REAPER 7.82 Linux Default 7; theme SHA-256 575544606736a395520703e532209ad9635f13a41b7ea000bb9810d60025be48
+environment	Linux Xorg :546, 1600x1000; isolated REAPER profile; audio unavailable
+starting_state	Seven Event List rows: selected CC7 ch2 @ tick 480 and Text Meta @ tick 960; unselected CC10 ch2 @ 600, Note ch5 @ 720, Text Meta @ 720, SysEx @ 1500, and terminal row; All events/channels; Show-only off
+action	Event List > Filter Events > Set filter from selection
+assertion	REAPER sets <all events>, All channels, Position 1/8–0.250, Repeat measure, Show-only on, Invert/Solo off; Draw events on channel remains Channel 1
+list_result	Five rows pass: selected CC7, unselected CC10, unselected Note, unselected Text Meta, and selected Text Meta. Out-of-range SysEx and terminal row are hidden.
+selection_and_data	Selected CC and Text Meta remain selected. MIDI_GetAllEvts is 144 bytes before and after with identical SHA-256 f823a6962e80f6903d58e64dc07884eac108790c750be86110be2990e4a2860c. Saved EVTFILTER records Position 0.125–0.25026042.
+verification	ReaScript before-state readback, identical raw MIDI blobs, before/after RPP, and REAPER 7.82 real-window before/after screenshots
+limitation	The live native controls display 1/8–0.250 while the saved RPP preserves the precise upper bound. Other heterogeneous selected-type combinations remain unprobed. Screenshots verify behavior and controls, not pixel identity.

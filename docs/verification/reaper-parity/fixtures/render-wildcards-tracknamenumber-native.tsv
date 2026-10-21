@@ -1,0 +1,19 @@
+key	value
+reference	Linux REAPER 7.82 / Default 7 / Linux desktop
+captured_at_utc	2026-10-16
+probe_script	../../../../scripts/reaper_parity/probe-render-selected-items-ui.lua
+configuration	Isolated REAPER profile copied from render-wildcards-region-name-native; Default_7.0.ReaperThemeZip asserted by probe
+track_state	One selected track with an empty name
+render_source	Selected tracks (stems)
+wildcard_pattern	$tracknamenumber
+wildcard_output	Track 01.wav
+render_bounds	Custom time range; 0:00.000 to 0:05.000
+render_format	WAV; 24-bit PCM; 48,000 Hz; 2 channels
+render_length_frames	240,000
+render_file_size_bytes	1,440,690
+render_file_sha256	c7d99d080895ebfbe3e74d7d2048d0626705762d808acf4bb2b3c00d8ce33f00
+native_preview_screenshot	render-wildcards-tracknamenumber-preview-native.png
+native_preview_screenshot_sha256	e92f205db27b15f00edff4df03730a439becc5fe883093013f1cbc5e44962130
+native_finished_screenshot	render-wildcards-tracknamenumber-finished-native.png
+native_finished_screenshot_sha256	8c2a1045a15bde8fd2a0ccac2fc8a980b3697f90e1bcae85aafdff8bff87418a
+native_observation	The native Render dialog resolves the exact menu token $tracknamenumber for an unnamed selected stem to Track 01.wav; REAPER also completes the 24-bit PCM stereo render.

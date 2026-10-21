@@ -1,0 +1,25 @@
+pair_after	target=1	take_count=3	active_index=2
+pair_after	target=1	take=0	name=Target A	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav
+pair_after	target=1	take=1	name=Source A	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav
+pair_after	target=1	take=2	name=Source B	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-02.wav
+pair_after	target=2	take_count=3	active_index=2
+pair_after	target=2	take=0	name=Target B	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-02.wav
+pair_after	target=2	take=1	name=Source A	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav
+pair_after	target=2	take=2	name=Source B	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-02.wav
+pair_undo	target=1	take_count=1	active_index=0
+pair_undo	target=1	take=0	name=Target A	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav
+pair_undo	target=2	take_count=1	active_index=0
+pair_undo	target=2	take=0	name=Target B	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-02.wav
+pair_redo	target=1	take_count=3	active_index=2
+pair_redo	target=1	take=0	name=Target A	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav
+pair_redo	target=1	take=1	name=Source A	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav
+pair_redo	target=1	take=2	name=Source B	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-02.wav
+pair_redo	target=2	take_count=3	active_index=2
+pair_redo	target=2	take=0	name=Target B	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-02.wav
+pair_redo	target=2	take=1	name=Source A	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav
+pair_redo	target=2	take=2	name=Source B	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-02.wav
+single_target_after	target=1	take_count=3	active_index=2
+single_target_after	target=1	take=0	name=Target A	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav
+single_target_after	target=1	take=1	name=Source A	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-01.wav
+single_target_after	target=1	take=2	name=Source B	source=/workspace/AAADAW/docs/verification/reaper-parity/fixtures/render-item-take-name-Hit-02.wav
+action	40603	Take: Paste as takes in items

@@ -1,0 +1,22 @@
+version	7.82/linux-x86_64
+theme	Default_7.0.ReaperThemeZip
+action	40012	Item: Split items at edit or play cursor (select right)
+transport	stopped
+selected_state_change_delta	1
+selected	0	2
+selected_item	0	0	0.000000000	5.000000000	unselected
+selected_item	0	1	5.000000000	10.000000000	selected
+selected	1	1
+selected_item	1	0	0.000000000	10.000000000	unselected
+no_selection_state_change_delta	1
+no_selection	0	2
+no_selection_item	0	0	0.000000000	5.000000000	unselected
+no_selection_item	0	1	5.000000000	10.000000000	selected
+no_selection	1	2
+no_selection_item	1	0	0.000000000	5.000000000	unselected
+no_selection_item	1	1	5.000000000	10.000000000	selected
+result_project	item-split-cursor-result.rpp
+boundary_state_change_delta	0
+boundary	0	2
+boundary_item	0	0	0.000000000	5.000000000	unselected
+boundary_item	0	1	5.000000000	10.000000000	unselected

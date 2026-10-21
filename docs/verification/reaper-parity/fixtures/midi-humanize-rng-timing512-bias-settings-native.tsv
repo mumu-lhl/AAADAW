@@ -1,0 +1,5 @@
+sample_id	humanall	humantiming	humanvel	humanbias	configured_dialog
+plus100-first	0	100	0	100	midi-humanize-rng-timing512-biasplus100-first-dialog.png
+plus100-repeat2	0	100	0	100	midi-humanize-rng-timing512-biasplus100-repeat2-dialog.png
+minus100-first	0	100	0	-100	midi-humanize-rng-timing512-biasminus100-first-dialog.png
+minus100-repeat2	0	100	0	-100	midi-humanize-rng-timing512-biasminus100-repeat2-dialog.png

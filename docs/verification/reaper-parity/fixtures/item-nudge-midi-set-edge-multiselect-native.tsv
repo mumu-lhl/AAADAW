@@ -1,0 +1,39 @@
+version	7.82/linux-x86_64
+theme	Default_7.0.ReaperThemeZip
+fixture	two selected loop-source MIDI items at 2s and 6s; each 10s long; notes at 0.5s and 1.5s PPQ offsets
+baseline	state_change_count	4	state_change_delta	0	item_count	2	undo_label	Set edge MIDI multi-select probe setup
+baseline_item_1	position_s	2.000000000	length_s	10.000000000	loop_source	1	source_offset_s	0.000000000	source_length	20.000000000	length_is_qn	true	selected	1	notes	0,0,0,960.000,1920.000,0,60,96;1,0,0,2880.000,3840.000,0,64,108
+baseline_item_2	position_s	6.000000000	length_s	10.000000000	loop_source	1	source_offset_s	0.000000000	source_length	20.000000000	length_is_qn	true	selected	1	notes	0,0,0,960.000,1920.000,0,60,96;1,0,0,2880.000,3840.000,0,64,108
+left_trim4	state_change_count	5	state_change_delta	1	item_count	2	undo_label	Nudge items
+left_trim4_item_1	position_s	4.000000000	length_s	8.000000000	loop_source	1	source_offset_s	2.000000000	source_length	20.000000000	length_is_qn	true	selected	1	notes	0,0,0,960.000,1920.000,0,60,96;1,0,0,2880.000,3840.000,0,64,108
+left_trim4_item_2	position_s	4.000000000	length_s	12.000000000	loop_source	1	source_offset_s	8.000000000	source_length	20.000000000	length_is_qn	true	selected	1	notes	0,0,0,960.000,1920.000,0,60,96;1,0,0,2880.000,3840.000,0,64,108
+baseline_left_edge4	state_change_count	5	state_change_delta	0	item_count	2	undo_label	Nudge items
+baseline_left_edge4_item_1	position_s	2.000000000	length_s	10.000000000	loop_source	1	source_offset_s	0.000000000	source_length	20.000000000	length_is_qn	true	selected	1	notes	0,0,0,960.000,1920.000,0,60,96;1,0,0,2880.000,3840.000,0,64,108
+baseline_left_edge4_item_2	position_s	6.000000000	length_s	10.000000000	loop_source	1	source_offset_s	0.000000000	source_length	20.000000000	length_is_qn	true	selected	1	notes	0,0,0,960.000,1920.000,0,60,96;1,0,0,2880.000,3840.000,0,64,108
+left_edge4	state_change_count	6	state_change_delta	1	item_count	2	undo_label	Nudge items
+left_edge4_item_1	position_s	4.000000000	length_s	8.000000000	loop_source	1	source_offset_s	0.000000000	source_length	20.000000000	length_is_qn	true	selected	1	notes	0,0,0,960.000,1920.000,0,60,96;1,0,0,2880.000,3840.000,0,64,108
+left_edge4_item_2	position_s	4.000000000	length_s	12.000000000	loop_source	1	source_offset_s	0.000000000	source_length	20.000000000	length_is_qn	true	selected	1	notes	0,0,0,960.000,1920.000,0,60,96;1,0,0,2880.000,3840.000,0,64,108
+baseline_end_absolute14	state_change_count	6	state_change_delta	0	item_count	2	undo_label	Nudge items
+baseline_end_absolute14_item_1	position_s	2.000000000	length_s	10.000000000	loop_source	1	source_offset_s	0.000000000	source_length	20.000000000	length_is_qn	true	selected	1	notes	0,0,0,960.000,1920.000,0,60,96;1,0,0,2880.000,3840.000,0,64,108
+baseline_end_absolute14_item_2	position_s	6.000000000	length_s	10.000000000	loop_source	1	source_offset_s	0.000000000	source_length	20.000000000	length_is_qn	true	selected	1	notes	0,0,0,960.000,1920.000,0,60,96;1,0,0,2880.000,3840.000,0,64,108
+end_absolute14	state_change_count	7	state_change_delta	1	item_count	2	undo_label	Nudge items
+end_absolute14_item_1	position_s	4.000000000	length_s	10.000000000	loop_source	1	source_offset_s	0.000000000	source_length	20.000000000	length_is_qn	true	selected	1	notes	0,0,0,960.000,1920.000,0,60,96;1,0,0,2880.000,3840.000,0,64,108
+end_absolute14_item_2	position_s	4.000000000	length_s	10.000000000	loop_source	1	source_offset_s	0.000000000	source_length	20.000000000	length_is_qn	true	selected	1	notes	0,0,0,960.000,1920.000,0,60,96;1,0,0,2880.000,3840.000,0,64,108
+baseline_right_trim14	state_change_count	7	state_change_delta	0	item_count	2	undo_label	Nudge items
+baseline_right_trim14_item_1	position_s	2.000000000	length_s	10.000000000	loop_source	1	source_offset_s	0.000000000	source_length	20.000000000	length_is_qn	true	selected	1	notes	0,0,0,960.000,1920.000,0,60,96;1,0,0,2880.000,3840.000,0,64,108
+baseline_right_trim14_item_2	position_s	6.000000000	length_s	10.000000000	loop_source	1	source_offset_s	0.000000000	source_length	20.000000000	length_is_qn	true	selected	1	notes	0,0,0,960.000,1920.000,0,60,96;1,0,0,2880.000,3840.000,0,64,108
+right_trim14	state_change_count	8	state_change_delta	1	item_count	2	undo_label	Nudge items
+right_trim14_item_1	position_s	2.000000000	length_s	12.000000000	loop_source	1	source_offset_s	0.000000000	source_length	20.000000000	length_is_qn	true	selected	1	notes	0,0,0,960.000,1920.000,0,60,96;1,0,0,2880.000,3840.000,0,64,108
+right_trim14_item_2	position_s	6.000000000	length_s	8.000000000	loop_source	1	source_offset_s	0.000000000	source_length	20.000000000	length_is_qn	true	selected	1	notes	0,0,0,960.000,1920.000,0,60,96;1,0,0,2880.000,3840.000,0,64,108
+baseline_end_relative14	state_change_count	8	state_change_delta	0	item_count	2	undo_label	Nudge items
+baseline_end_relative14_item_1	position_s	2.000000000	length_s	10.000000000	loop_source	1	source_offset_s	0.000000000	source_length	20.000000000	length_is_qn	true	selected	1	notes	0,0,0,960.000,1920.000,0,60,96;1,0,0,2880.000,3840.000,0,64,108
+baseline_end_relative14_item_2	position_s	6.000000000	length_s	10.000000000	loop_source	1	source_offset_s	0.000000000	source_length	20.000000000	length_is_qn	true	selected	1	notes	0,0,0,960.000,1920.000,0,60,96;1,0,0,2880.000,3840.000,0,64,108
+end_relative14	state_change_count	9	state_change_delta	1	item_count	2	undo_label	Nudge items
+end_relative14_item_1	position_s	0.000000000	length_s	10.000000000	loop_source	1	source_offset_s	0.000000000	source_length	20.000000000	length_is_qn	true	selected	1	notes	0,0,0,960.000,1920.000,0,60,96;1,0,0,2880.000,3840.000,0,64,108
+end_relative14_item_2	position_s	4.000000000	length_s	10.000000000	loop_source	1	source_offset_s	0.000000000	source_length	20.000000000	length_is_qn	true	selected	1	notes	0,0,0,960.000,1920.000,0,60,96;1,0,0,2880.000,3840.000,0,64,108
+undo_left_trim4	state_change_count	6	state_change_delta	2	item_count	2	undo_label	Set edge MIDI multi-select probe setup
+undo_left_trim4_item_1	position_s	2.000000000	length_s	10.000000000	loop_source	1	source_offset_s	0.000000000	source_length	20.000000000	length_is_qn	true	selected	1	notes	0,0,0,960.000,1920.000,0,60,96;1,0,0,2880.000,3840.000,0,64,108
+undo_left_trim4_item_2	position_s	6.000000000	length_s	10.000000000	loop_source	1	source_offset_s	0.000000000	source_length	20.000000000	length_is_qn	true	selected	1	notes	0,0,0,960.000,1920.000,0,60,96;1,0,0,2880.000,3840.000,0,64,108
+redo_left_trim4	state_change_count	7	state_change_delta	3	item_count	2	undo_label	Nudge items
+redo_left_trim4_item_1	position_s	4.000000000	length_s	8.000000000	loop_source	1	source_offset_s	2.000000000	source_length	20.000000000	length_is_qn	true	selected	1	notes	0,0,0,960.000,1920.000,0,60,96;1,0,0,2880.000,3840.000,0,64,108
+redo_left_trim4_item_2	position_s	4.000000000	length_s	12.000000000	loop_source	1	source_offset_s	8.000000000	source_length	20.000000000	length_is_qn	true	selected	1	notes	0,0,0,960.000,1920.000,0,60,96;1,0,0,2880.000,3840.000,0,64,108

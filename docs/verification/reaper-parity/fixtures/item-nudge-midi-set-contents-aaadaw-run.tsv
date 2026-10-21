@@ -1,0 +1,17 @@
+binary_build_id	dc0b012c46ad970d9c1c934e068833f18ff7a9a3
+binary_sha256	872f833897e4333b8dd039002ae6867fa188d35dce37cc061cbc24c0f616893a
+display	Xvfb :197, 1280x800, WGPU_BACKEND=gl
+mode	Set
+target	contents
+target_time_s	3.500000000
+snap_to_unit	true
+tempo	120 BPM
+item_position_before_set_s	1.000000000
+item_start_tick_after	1920
+item_length_ticks_after	3840
+source_loop_length_ticks	3840
+source_offset_ticks_after	1920
+note	pitch 60, source tick 0, duration 960 ticks, velocity 100
+selection	selected
+screenshot	item-nudge-midi-set-contents-aaadaw-applied.png; 1280x800; SHA-256 33b01fc294f8c4c6330677acd9c777465bed162f84cfa041b798ca16d93b6a53
+dialog_screenshot	item-nudge-midi-set-contents-aaadaw-dialog.png; 1280x800; SHA-256 365d4829a354ea263f5a59dc9e5def758c5835e3ecf09817c7ed5ac22092b2cd

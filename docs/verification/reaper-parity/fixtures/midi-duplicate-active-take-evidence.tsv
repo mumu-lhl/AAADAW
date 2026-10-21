@@ -1,0 +1,25 @@
+evidence	REAPER 7.82 / Linux x86_64 / Default_7.0.ReaperThemeZip; Main action 40639
+native_environment	Xvfb 1280x800; isolated -cfgfile profile; audio device closed; first-run evaluation prompt dismissed before screenshot
+native_binary	target/reaper-7.82/reaper_linux_x86_64/REAPER/reaper; SHA-256 9976f5608068b7a58518969001b00b527fb0de6ed7459e0e5dda6f29878ee254; REAPER 7.82/linux-x86_64 rev 338578
+native_probe	scripts/reaper_parity/probe-midi-duplicate-active-take.lua; SHA-256 f19e91cef7fda15a5b3c490eb099b9612795e9b6e6f7dbb215e64dd6e442b7a5
+native_capture_script	scripts/reaper_parity/capture-midi-duplicate-active-take-native.sh; SHA-256 c176554741c24f5e09d1bf9263dba08e1abc3d2eab43ca053e1365db7cb3f168
+native_fixture	One selected MIDI item with ordered Takes A/B/C, active B at index 1; distinct MIDI notes and source offsets in each Take
+native_readback	docs/verification/reaper-parity/fixtures/midi-duplicate-active-take-native.tsv; SHA-256 3a2a722cdcbe2e4ca7797414d3a8391920f1af536633a368d3442089f3cb1a31
+native_before	docs/verification/reaper-parity/fixtures/midi-duplicate-active-take-before.rpp; 3 Takes / active index 1 / selected; SHA-256 6985ce83aa088ceed8ff1a9d431e6a207c203bd2de150d9eddf8bb91619fa197
+native_after	docs/verification/reaper-parity/fixtures/midi-duplicate-active-take-after.rpp; appends Take B as index 3 / active index 3 / selected; SHA-256 06c045785998838a6de38cce0d1cbf364b0d67511d31697c813bd000ace40411
+native_undo	docs/verification/reaper-parity/fixtures/midi-duplicate-active-take-undo.rpp; restores 3 Takes / active index 1; SHA-256 6985ce83aa088ceed8ff1a9d431e6a207c203bd2de150d9eddf8bb91619fa197
+native_redo	docs/verification/reaper-parity/fixtures/midi-duplicate-active-take-redo.rpp; restores 4 Takes / active index 3; SHA-256 06c045785998838a6de38cce0d1cbf364b0d67511d31697c813bd000ace40411
+native_screenshot	docs/verification/reaper-parity/fixtures/midi-duplicate-active-take-native-after.png; 1280x800; title shows [Duplicate active take], Arrange shows Take 4/4: Take B; SHA-256 cb6cda3c8db683bec3eacea2070410beb34fa5890afb5cdf132e9f32e3c69f1f
+aaadaw_fixture_generator	crates/aaadaw/examples/generate_midi_duplicate_active_take_fixture.rs; SHA-256 fc3188668aa5f87633f1ed957f213887b7e2a501bc4c27abe25f4e58a9d4b7ed
+aaadaw_fixture	docs/verification/reaper-parity/fixtures/midi-duplicate-active-take-aaadaw.aaadaw; SHA-256 d24ae7f2039c2880431fc2a7ea66dfaef01a9222b635a6794ba53650dce51c7a
+aaadaw_capture_script	scripts/reaper_parity/capture-midi-duplicate-active-take-aaadaw.sh; SHA-256 e2e9df2a1146f04f4323114d42b6b5dda512776cb7c40b70a429fdb14dc6ccaf; custom Ctrl+Shift+D invokes Action List command take.duplicate-active
+aaadaw_binary	target/cranelift/debug/aaadaw; rustc 1.101.0-nightly (5d8fec066 2026-10-16); Build ID f7743ce8b1535a2109795293182e7d67e0a279c4; SHA-256 975b7ecf3f7ea36c58323cb3c4beb5b1bb5974e414a73c86081542b5b1f066b0; Cranelift backend; audio-device disabled
+aaadaw_screenshot_before	docs/verification/reaper-parity/fixtures/midi-duplicate-active-take-aaadaw-before.png; 1280x800; Inspector shows Take 2/3 · Take B; SHA-256 84888abef78eea0ecdc7db96e5322d128e1b8d2f0470610482d98dcded675a19
+aaadaw_screenshot_after	docs/verification/reaper-parity/fixtures/midi-duplicate-active-take-aaadaw-after.png; 1280x800; Inspector shows Take 4/4 · Take B; SHA-256 2d5b340640c0c46f857f7e63da984d8c1ddf52c9008541b86815bbb8bac5d3f4
+aaadaw_screenshot_undo	docs/verification/reaper-parity/fixtures/midi-duplicate-active-take-aaadaw-undo.png; 1280x800; Inspector shows Take 2/3 · Take B; SHA-256 7329b8dd3be9fca0cca5c5c803da483db11230c6b0b6e9cb8186fcf2bac71e80
+aaadaw_screenshot_redo	docs/verification/reaper-parity/fixtures/midi-duplicate-active-take-aaadaw-redo.png; 1280x800; Inspector shows Take 4/4 · Take B; SHA-256 8296737ab75bcfef4c04d9eb69b6a6adac7a74ebeda8ee434104369ff5af07f1
+core_verification	cargo +stable test -p aaadaw-core --test midi_item_takes; 6/6 passed including active MIDI duplicate, ID uniqueness, snapshot, and history
+app_verification	cargo +stable test -p aaadaw --bin aaadaw; 868/868 passed including MIDI action-list and mixed Audio/MIDI selection transaction
+storage_verification	cargo +stable test -p aaadaw-storage; 106/106 passed including duplicate MIDI Take SQLite round-trip and schema 67→68 migration
+static_verification	strict all-target Clippy; cargo fmt --check; native and AAADAW capture shell scripts pass bash -n; git diff --check
+scope_note	Native probe directly measures action 40639 on a MIDI item; AAADAW additionally tests mixed Audio/MIDI selections as one transaction. Screenshots verify project/UI state, not audio playback or pixel identity.

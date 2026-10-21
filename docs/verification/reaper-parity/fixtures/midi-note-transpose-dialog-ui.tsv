@@ -1,0 +1,6 @@
+artifact	sha256
+scripts/reaper_parity/probe-midi-note-transpose-dialog.lua	dd2f639a28f6701ee0b4ec3133f347fc162b581594651e905a0a32f5b2798663
+fixtures/midi-note-transpose-dialog-native.tsv	c73b22f24012b5546e939007483c1aecbccdc5bf4c2f03853209188a367616ee
+fixtures/midi-note-transpose-dialog-native.png	80f7a778706a6c8f300c9ca0cff6123c42bdddc0d95e323650856f9aa6dcbc44
+fixtures/midi-note-transpose-dialog-after-cancel-native.png	30ed5c9384fa84102284c17e1287f0209dd0d54d8952ceef253aa74ea2b8813e
+fixtures/midi-note-transpose-dialog-aaadaw.png	673bc7c1e3293974dcfa7def9445c63a66c96e5552ad52b9eb222573334bfdd1

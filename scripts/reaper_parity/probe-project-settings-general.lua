@@ -1,0 +1,20 @@
+-- Read the General page against a new owned Linux Default 7 project.
+-- This script is intentionally read-only and emits scalar facts to scratch.
+local root=assert(os.getenv('AAADAW_REAPER_PROBE_DIR'))..'/'
+assert(reaper.GetAppVersion():match('^7%.82/linux'))
+assert(reaper.GetLastColorThemeFile():match('Default_7%.0%.ReaperThemeZip$'))
+assert(reaper.CountTracks(0)==0 and reaper.CountMediaItems(0)==0 and reaper.CountTempoTimeSigMarkers(0)==0)
+local rate,enabled=reaper.GetSetProjectInfo(0,'PROJECT_SRATE',0,false),reaper.GetSetProjectInfo(0,'PROJECT_SRATE_USE',0,false)
+local timebase=reaper.GetSetProjectInfo(0,'PROJECT_TIMEBASE',0,false)
+local flags=reaper.GetSetProjectInfo(0,'PROJECT_TIMEBASE_FLAGS',0,false)
+local numerator,denominator,bpm=reaper.TimeMap_GetTimeSigAtTime(0,0)
+local log=assert(io.open(root..'project-settings-general.tsv','w'))
+log:write('property\tvalue\n')
+log:write('project_sample_rate_hz\t',tostring(rate),'\n')
+log:write('project_sample_rate_enabled\t',tostring(enabled),'\n')
+log:write('item_timebase\t',tostring(timebase),'\n')
+log:write('timebase_flags\t',tostring(flags),'\n')
+log:write('initial_tempo_bpm\t',tostring(bpm),'\n')
+log:write('initial_meter\t',tostring(numerator),'/',tostring(denominator),'\n')
+log:write('project_time_offset_seconds\t',tostring(reaper.GetProjectTimeOffset(0,false)),'\n')
+log:close()

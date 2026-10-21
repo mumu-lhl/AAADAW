@@ -1,10 +1,19 @@
 use aaadaw_core::{
-    DawAction, MidiControllerData, MidiNoteData, MidiPitchBendData, Project, TempoCurve,
+    DawAction, MidiChannelPressureData, MidiControllerData, MidiFileImportOptions,
+    MidiItemPosition, MidiItemTakeSnapshot, MidiNoteData, MidiNoteSnapshot, MidiOpaqueEventData,
+    MidiOpaqueEventKind, MidiPitchBendData, MidiPolyAftertouchData, MidiProgramChangeData, Project,
+    TempoCurve, decode_standard_midi,
 };
-use aaadaw_engine::{MidiEventKind, MidiEventPlan, MidiScheduleError, ScheduledMidiEvent};
+use aaadaw_engine::{
+    MidiEventKind, MidiEventPlan, MidiScheduleError, MidiSegmentCursor, ScheduledMidiEvent,
+    TransportBlockSegment,
+};
 
 fn project_with_note(pitch: u8, tick: u64, duration: u64) -> (Project, aaadaw_core::TrackId) {
-    let mut project = Project::new();
+    let mut project = Project::with_settings(
+        aaadaw_core::ProjectSettings::default()
+            .with_pan_mode(aaadaw_core::PanMode::LegacyMonoStereo),
+    );
     project
         .apply(DawAction::CreateTrack {
             index: 0,
@@ -24,10 +33,12 @@ fn project_with_note(pitch: u8, tick: u64, duration: u64) -> (Project, aaadaw_co
         .apply(DawAction::AddMidiNotes {
             item_id,
             notes: vec![MidiNoteData {
+                channel: 0,
                 pitch,
                 tick,
                 duration,
                 velocity: 100,
+                off_velocity: 0,
             }],
         })
         .expect("MIDI note insertion should succeed");
@@ -35,8 +46,301 @@ fn project_with_note(pitch: u8, tick: u64, duration: u64) -> (Project, aaadaw_co
 }
 
 #[test]
+fn midi_playback_compiles_only_the_active_take() {
+    let (project, track_id) = project_with_note(60, 0, 120);
+    let mut snapshot = project.snapshot();
+    let item = &mut snapshot.midi_items[0];
+    item.active_take_index = 1;
+    item.notes[0].data.pitch = 64;
+    item.other_takes = vec![MidiItemTakeSnapshot {
+        index: 0,
+        name: "Inactive take".into(),
+        source_offset_ticks: 0,
+        loop_source: false,
+        source_loop_length_ticks: item.length_ticks,
+        notes: vec![MidiNoteSnapshot {
+            id: 10_000,
+            data: MidiNoteData {
+                pitch: 72,
+                channel: 0,
+                tick: 0,
+                duration: 120,
+                velocity: 100,
+                off_velocity: 0,
+            },
+        }],
+        controllers: Vec::new(),
+        pitch_bends: Vec::new(),
+        program_changes: Vec::new(),
+        poly_aftertouches: Vec::new(),
+        channel_pressures: Vec::new(),
+        opaque_events: Vec::new(),
+        event_order: Vec::new(),
+    }];
+    let project = Project::from_snapshot(snapshot).unwrap();
+    let plan = MidiEventPlan::compile(&project).unwrap();
+    let mut events = [None; 4];
+
+    assert_eq!(plan.events_for_block(0, 12_000, &mut events).unwrap(), 2);
+    let events = events.into_iter().flatten().collect::<Vec<_>>();
+    assert_eq!(
+        events.iter().map(|event| event.pitch).collect::<Vec<_>>(),
+        [64, 64]
+    );
+    assert!(events.iter().all(|event| event.track_id == track_id));
+    assert_eq!(events[0].kind, MidiEventKind::NoteOn);
+    assert_eq!(events[1].kind, MidiEventKind::NoteOff);
+}
+
+#[test]
+fn midi_sysex_is_scheduled_with_framed_bytes_and_meta_is_not_sent_to_instruments() {
+    let (mut project, track_id) = project_with_note(60, 0, 120);
+    let item_id = project.midi_items()[0].id();
+    project
+        .apply(DawAction::SetMidiOpaqueEvents {
+            item_id,
+            events: vec![
+                MidiOpaqueEventData {
+                    tick: 120,
+                    order: 0,
+                    kind: MidiOpaqueEventKind::SystemExclusive {
+                        status: 0xF0,
+                        data: vec![0x43, 0x12, 0xF7],
+                    },
+                },
+                MidiOpaqueEventData {
+                    tick: 240,
+                    order: 1,
+                    kind: MidiOpaqueEventKind::Meta {
+                        kind: 0x01,
+                        data: b"not sent".to_vec(),
+                    },
+                },
+                MidiOpaqueEventData {
+                    tick: 360,
+                    order: 2,
+                    kind: MidiOpaqueEventKind::SystemExclusive {
+                        status: 0xF7,
+                        data: vec![0x7E, 0x7F],
+                    },
+                },
+            ],
+        })
+        .unwrap();
+
+    let plan = MidiEventPlan::compile(&project).unwrap();
+    let mut events = [None; 4];
+    assert_eq!(plan.events_for_block(0, 12_000, &mut events).unwrap(), 4);
+    let sysex_events: Vec<_> = events
+        .iter()
+        .flatten()
+        .filter(|event| event.kind == MidiEventKind::SystemExclusive)
+        .collect();
+    assert_eq!(sysex_events.len(), 2);
+    assert_eq!(sysex_events[0].track_id, track_id);
+    let first = sysex_events[0];
+    assert_eq!(
+        plan.sysex_data_for_event(*first).unwrap(),
+        [0xF0, 0x43, 0x12, 0xF7]
+    );
+    let second = sysex_events[1];
+    assert_eq!(
+        plan.sysex_data_for_event(*second).unwrap(),
+        [0xF7, 0x7E, 0x7F]
+    );
+    assert_eq!(sysex_events[0].sample_offset, 3_000);
+    assert_eq!(sysex_events[1].sample_offset, 9_000);
+}
+
+#[test]
+fn imported_f0_f7_continuation_reaches_the_sample_accurate_playback_plan() {
+    let smf = [
+        b'M', b'T', b'h', b'd', 0, 0, 0, 6, 0, 0, 0, 1, 0x03, 0xC0, // format 0, 960 PPQ
+        b'M', b'T', b'r', b'k', 0, 0, 0, 15, // one track, 15 bytes
+        0, 0xF0, 2, 0x43, 0x12, // open F0 packet at tick zero
+        0x81, 0x70, 0xF7, 2, 0x34, 0xF7, // F7 continuation at tick 240
+        0, 0xFF, 0x2F, 0, // End of Track
+    ];
+    let decoded = decode_standard_midi(&smf).expect("fixture SMF should decode");
+    let mut imported_tracks = decoded
+        .to_project_import(960)
+        .expect("source events should convert to project PPQ")
+        .tracks_for_options(MidiFileImportOptions::default());
+    let imported_track = imported_tracks.remove(0);
+
+    assert_eq!(imported_track.opaque_events.len(), 1);
+    assert_eq!(imported_track.opaque_events[0].tick, 240);
+    assert_eq!(
+        imported_track.opaque_events[0].kind,
+        MidiOpaqueEventKind::SystemExclusive {
+            status: 0xF0,
+            data: vec![0x43, 0x12, 0x34, 0xF7],
+        }
+    );
+
+    let mut project = Project::new();
+    project
+        .apply(DawAction::ImportMidiTrack {
+            start_tick: 0,
+            track: imported_track,
+        })
+        .expect("decoded MIDI track should be imported into the project");
+    let plan = MidiEventPlan::compile(&project).expect("project playback plan should compile");
+    let sysex_sample = project
+        .sample_at_tick_position(240.0)
+        .expect("imported event position should resolve") as u64;
+    let mut events = [None; 2];
+
+    assert_eq!(
+        plan.events_for_block(sysex_sample - 1, 1, &mut events)
+            .unwrap(),
+        0,
+        "the event must not leak into the preceding half-open sample block"
+    );
+    assert_eq!(
+        plan.events_for_block(sysex_sample, 1, &mut events).unwrap(),
+        1
+    );
+    let event = events[0].expect("the continuation should schedule one SysEx event");
+    assert_eq!(event.kind, MidiEventKind::SystemExclusive);
+    assert_eq!(event.sample_offset, 0);
+    assert_eq!(
+        plan.sysex_data_for_event(event).unwrap(),
+        [0xF0, 0x43, 0x12, 0x34, 0xF7]
+    );
+}
+
+#[test]
+fn event_plan_preserves_note_controller_and_pitch_bend_channels_through_chase() {
+    let (mut project, track_id) = project_with_note(60, 0, 480);
+    let item_id = project.midi_items()[0].id();
+    project
+        .apply(DawAction::AddMidiNotes {
+            item_id,
+            notes: vec![MidiNoteData {
+                pitch: 60,
+                channel: 7,
+                tick: 0,
+                duration: 480,
+                velocity: 90,
+                off_velocity: 0,
+            }],
+        })
+        .unwrap();
+    project
+        .apply(DawAction::SetMidiControllers {
+            item_id,
+            controllers: vec![
+                MidiControllerData {
+                    controller: 7,
+                    channel: 2,
+                    tick: 0,
+                    value: 80,
+                },
+                MidiControllerData {
+                    controller: 7,
+                    channel: 9,
+                    tick: 0,
+                    value: 96,
+                },
+            ],
+        })
+        .unwrap();
+    project
+        .apply(DawAction::SetMidiPitchBends {
+            item_id,
+            pitch_bends: vec![
+                MidiPitchBendData {
+                    channel: 3,
+                    tick: 0,
+                    value: 8_000,
+                },
+                MidiPitchBendData {
+                    channel: 12,
+                    tick: 0,
+                    value: 9_000,
+                },
+            ],
+        })
+        .unwrap();
+    let plan = MidiEventPlan::compile(&project).unwrap();
+    let mut events = [None; 6];
+    assert_eq!(plan.events_for_block(0, 1, &mut events).unwrap(), 6);
+    let events = events.map(Option::unwrap);
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| event.kind == MidiEventKind::NoteOn)
+            .map(|event| (event.track_id, event.channel))
+            .collect::<Vec<_>>(),
+        [(track_id, 0), (track_id, 7)]
+    );
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| event.kind == MidiEventKind::ControllerChange)
+            .map(|event| event.channel)
+            .collect::<Vec<_>>(),
+        [2, 9]
+    );
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| event.kind == MidiEventKind::PitchBend)
+            .map(|event| event.channel)
+            .collect::<Vec<_>>(),
+        [3, 12]
+    );
+
+    let mut chased = [None; 6];
+    assert_eq!(plan.active_controllers_at(1, &mut chased).unwrap(), 2);
+    assert_eq!(
+        chased[..2]
+            .iter()
+            .flatten()
+            .map(|event| event.channel)
+            .collect::<Vec<_>>(),
+        [2, 9]
+    );
+    assert_eq!(plan.active_pitch_bends_at(1, &mut chased).unwrap(), 2);
+    assert_eq!(
+        chased[..2]
+            .iter()
+            .flatten()
+            .map(|event| event.channel)
+            .collect::<Vec<_>>(),
+        [3, 12]
+    );
+    assert_eq!(plan.active_notes_at(1, &mut chased).unwrap(), 2);
+    assert_eq!(
+        chased[..2]
+            .iter()
+            .flatten()
+            .map(|event| event.channel)
+            .collect::<Vec<_>>(),
+        [0, 7]
+    );
+}
+
+#[test]
 fn event_plan_uses_tempo_map_and_queries_half_open_sample_blocks() {
     let (mut project, track_id) = project_with_note(69, 480, 240);
+    let item_id = project.midi_items()[0].id();
+    let note = &project.midi_items()[0].notes()[0];
+    project
+        .apply(DawAction::EditMidiNote {
+            item_id,
+            note_id: note.id(),
+            data: MidiNoteData {
+                channel: note.channel(),
+                pitch: note.pitch(),
+                tick: note.tick(),
+                duration: note.duration(),
+                velocity: note.velocity(),
+                off_velocity: 37,
+            },
+        })
+        .expect("setting Note Off velocity should succeed");
     project
         .apply(DawAction::SetTempo {
             start_tick: 960,
@@ -73,7 +377,255 @@ fn event_plan_uses_tempo_map_and_queries_half_open_sample_blocks() {
     );
     let event = output[0].expect("the event should be initialized");
     assert_eq!(event.kind, MidiEventKind::NoteOff);
-    assert_eq!(event.velocity, 0);
+    assert_eq!(event.velocity, 37);
+}
+
+#[test]
+fn event_plan_preserves_fractional_ppq_item_positions_in_playback_samples() {
+    let (mut project, track_id) = project_with_note(69, 0, 120);
+    let item_id = project.midi_items()[0].id();
+    let position = MidiItemPosition::new(964, 160).unwrap();
+    project
+        .apply(DawAction::SetMidiItemPosition { item_id, position })
+        .expect("fractional MIDI placement should succeed");
+
+    let expected_start = project
+        .sample_at_tick_position(position.as_ticks_f64())
+        .unwrap()
+        .round() as u64;
+    assert_eq!(expected_start, 24_120);
+    let plan = MidiEventPlan::compile(&project).expect("valid project should compile");
+    let mut output = [None; 2];
+    assert_eq!(
+        plan.events_for_block(24_100, 1, &mut output)
+            .expect("the preceding whole-tick sample should query"),
+        0
+    );
+    assert_eq!(
+        plan.events_for_block(expected_start, 1, &mut output)
+            .expect("fractional event sample should query"),
+        1
+    );
+    let event = output[0].expect("the note-on should be present");
+    assert_eq!(event.kind, MidiEventKind::NoteOn);
+    assert_eq!(event.track_id, track_id);
+    assert_eq!(event.sample_offset, 0);
+}
+
+#[test]
+fn segmented_event_plan_releases_and_chases_notes_at_a_loop_wrap() {
+    let (project, track_id) = project_with_note(69, 0, 100);
+    let plan = MidiEventPlan::compile(&project).expect("valid project should compile");
+    let segments = [
+        TransportBlockSegment {
+            output_offset: 0,
+            start_sample: 25,
+            frame_count: 5,
+            chase_generation: 4,
+        },
+        TransportBlockSegment {
+            output_offset: 5,
+            start_sample: 25,
+            frame_count: 5,
+            chase_generation: 5,
+        },
+    ];
+    let mut output = [None; 8];
+    let mut aggregate = [None; 8];
+    let mut temporary = [None; 8];
+
+    let schedule = plan
+        .events_for_segments(
+            &segments,
+            MidiSegmentCursor::default(),
+            &mut output,
+            &mut aggregate,
+            &mut temporary,
+        )
+        .expect("two short loop segments should fit the preallocated buffers");
+
+    assert_eq!(schedule.event_count, 3);
+    assert_eq!(schedule.cursor.sample_end, Some(30));
+    assert_eq!(schedule.cursor.chase_generation, Some(5));
+    let events: Vec<_> = output[..schedule.event_count]
+        .iter()
+        .flatten()
+        .copied()
+        .collect();
+    assert_eq!(
+        events
+            .iter()
+            .map(|event| (event.sample_offset, event.kind, event.track_id))
+            .collect::<Vec<_>>(),
+        vec![
+            (0, MidiEventKind::NoteOn, track_id),
+            (5, MidiEventKind::NoteOff, track_id),
+            (5, MidiEventKind::NoteOn, track_id),
+        ]
+    );
+}
+
+#[test]
+fn segmented_event_plan_chases_controller_and_pitch_bend_after_a_loop_wrap() {
+    let (mut project, track_id) = project_with_note(69, 0, 100);
+    let item_id = project.midi_items()[0].id();
+    project
+        .apply(DawAction::SetMidiControllers {
+            item_id,
+            controllers: vec![
+                MidiControllerData {
+                    channel: 0,
+                    controller: 1,
+                    tick: 0,
+                    value: 64,
+                },
+                MidiControllerData {
+                    channel: 0,
+                    controller: 64,
+                    tick: 0,
+                    value: 127,
+                },
+            ],
+        })
+        .expect("controller should be accepted");
+    project
+        .apply(DawAction::SetMidiPitchBends {
+            item_id,
+            pitch_bends: vec![MidiPitchBendData {
+                channel: 0,
+                tick: 0,
+                value: 10_000,
+            }],
+        })
+        .expect("pitch bend should be accepted");
+    let plan = MidiEventPlan::compile(&project).expect("valid project should compile");
+    let segments = [
+        TransportBlockSegment {
+            output_offset: 0,
+            start_sample: 25,
+            frame_count: 5,
+            chase_generation: 4,
+        },
+        TransportBlockSegment {
+            output_offset: 5,
+            start_sample: 25,
+            frame_count: 5,
+            chase_generation: 5,
+        },
+    ];
+    let mut output = [None; 12];
+    let mut aggregate = [None; 12];
+    let mut temporary = [None; 12];
+
+    let schedule = plan
+        .events_for_segments(
+            &segments,
+            MidiSegmentCursor::default(),
+            &mut output,
+            &mut aggregate,
+            &mut temporary,
+        )
+        .expect("controller, pitch-bend, and note chase should fit");
+    let events = output[..schedule.event_count]
+        .iter()
+        .flatten()
+        .copied()
+        .collect::<Vec<_>>();
+
+    assert_eq!(schedule.event_count, 10);
+    let boundary_events = events
+        .iter()
+        .filter(|event| event.sample_offset == 5)
+        .collect::<Vec<_>>();
+    assert_eq!(boundary_events.len(), 6);
+    assert_eq!(boundary_events[0].controller, Some(64));
+    assert_eq!(boundary_events[0].velocity, 0);
+    assert_eq!(boundary_events[1].kind, MidiEventKind::NoteOff);
+    assert!(events.iter().any(|event| {
+        event.sample_offset == 5
+            && event.track_id == track_id
+            && event.kind == MidiEventKind::ControllerChange
+            && event.controller == Some(1)
+            && event.velocity == 64
+    }));
+    assert!(events.iter().any(|event| {
+        event.sample_offset == 5
+            && event.track_id == track_id
+            && event.kind == MidiEventKind::ControllerChange
+            && event.controller == Some(64)
+            && event.velocity == 127
+    }));
+    assert!(events.iter().any(|event| {
+        event.sample_offset == 5
+            && event.track_id == track_id
+            && event.kind == MidiEventKind::PitchBend
+            && event.pitch_bend == Some(10_000)
+    }));
+    assert!(events.iter().any(|event| {
+        event.sample_offset == 5
+            && event.track_id == track_id
+            && event.kind == MidiEventKind::NoteOff
+            && event.velocity == 0
+    }));
+    assert!(events.iter().any(|event| {
+        event.sample_offset == 5
+            && event.track_id == track_id
+            && event.kind == MidiEventKind::NoteOn
+            && event.velocity == 100
+    }));
+}
+
+#[test]
+fn segmented_event_plan_keeps_output_unchanged_when_callback_buffer_is_too_small() {
+    let (project, _) = project_with_note(69, 0, 100);
+    let plan = MidiEventPlan::compile(&project).expect("valid project should compile");
+    let segments = [
+        TransportBlockSegment {
+            output_offset: 0,
+            start_sample: 25,
+            frame_count: 5,
+            chase_generation: 4,
+        },
+        TransportBlockSegment {
+            output_offset: 5,
+            start_sample: 25,
+            frame_count: 5,
+            chase_generation: 5,
+        },
+    ];
+    let sentinel = ScheduledMidiEvent {
+        sample_offset: 99,
+        track_id: project.tracks()[0].id(),
+        channel: 0,
+        bus: 0,
+        note_id: None,
+        pitch: 1,
+        velocity: 2,
+        controller: None,
+        pitch_bend: None,
+        program: None,
+        sysex_offset: u32::MAX,
+        sysex_length: 0,
+        kind: MidiEventKind::NoteOn,
+    };
+    let mut output = [Some(sentinel); 2];
+    let mut aggregate = [None; 8];
+    let mut temporary = [None; 8];
+
+    assert_eq!(
+        plan.events_for_segments(
+            &segments,
+            MidiSegmentCursor::default(),
+            &mut output,
+            &mut aggregate,
+            &mut temporary,
+        ),
+        Err(MidiScheduleError::OutputBufferTooSmall {
+            required: 3,
+            available: 2,
+        })
+    );
+    assert_eq!(output, [Some(sentinel); 2]);
 }
 
 #[test]
@@ -84,10 +636,12 @@ fn event_plan_clips_notes_and_excludes_events_outside_the_midi_item() {
         .apply(DawAction::AddMidiNotes {
             item_id,
             notes: vec![MidiNoteData {
+                channel: 0,
                 pitch: 72,
                 tick: 1_200,
                 duration: 120,
                 velocity: 90,
+                off_velocity: 0,
             }],
         })
         .expect("the second note should fit before shortening the clip");
@@ -96,11 +650,13 @@ fn event_plan_clips_notes_and_excludes_events_outside_the_midi_item() {
             item_id,
             controllers: vec![
                 MidiControllerData {
+                    channel: 0,
                     controller: 1,
                     tick: 840,
                     value: 64,
                 },
                 MidiControllerData {
+                    channel: 0,
                     controller: 1,
                     tick: 1_200,
                     value: 100,
@@ -113,10 +669,12 @@ fn event_plan_clips_notes_and_excludes_events_outside_the_midi_item() {
             item_id,
             pitch_bends: vec![
                 MidiPitchBendData {
+                    channel: 0,
                     tick: 840,
                     value: 9_000,
                 },
                 MidiPitchBendData {
+                    channel: 0,
                     tick: 1_200,
                     value: 10_000,
                 },
@@ -161,8 +719,88 @@ fn event_plan_clips_notes_and_excludes_events_outside_the_midi_item() {
 }
 
 #[test]
+fn event_plan_repeats_midi_notes_after_the_preserved_source_loop_length() {
+    let (mut project, _) = project_with_note(60, 120, 90);
+    let item_id = project.midi_items()[0].id();
+    project
+        .apply(DawAction::EditMidiItemPlacement {
+            item_id,
+            start_tick: 0,
+            length_ticks: 8_000,
+            source_offset_ticks: 3_600,
+        })
+        .expect("the visible MIDI clip should extend beyond its source loop");
+
+    let plan = MidiEventPlan::compile(&project).expect("looped MIDI should compile");
+    assert_eq!(plan.len(), 4);
+    let block_end = project.sample_at_tick(8_000).unwrap();
+    let mut events = [None; 4];
+    assert_eq!(
+        plan.events_for_block(0, block_end as usize + 1, &mut events)
+            .unwrap(),
+        4
+    );
+    let note_ons = events
+        .iter()
+        .flatten()
+        .filter(|event| event.kind == MidiEventKind::NoteOn)
+        .map(|event| event.sample_offset)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        note_ons,
+        [
+            project.sample_at_tick(360).unwrap() as usize,
+            project.sample_at_tick(4_200).unwrap() as usize,
+        ]
+    );
+}
+
+#[test]
+fn event_plan_stops_repeating_midi_source_when_loop_source_is_disabled() {
+    let (mut project, _) = project_with_note(60, 120, 90);
+    let item_id = project.midi_items()[0].id();
+    project
+        .apply(DawAction::EditMidiItemPlacement {
+            item_id,
+            start_tick: 0,
+            length_ticks: 8_000,
+            source_offset_ticks: 0,
+        })
+        .expect("the visible MIDI item should extend past its source loop");
+    assert_eq!(project.midi_items()[0].source_loop_length_ticks(), 3_840);
+
+    project
+        .apply(DawAction::SetMidiItemLoopSource {
+            item_id,
+            enabled: false,
+        })
+        .expect("loop source should be disabled");
+    assert_eq!(project.midi_items()[0].source_loop_length_ticks(), 3_840);
+
+    let plan = MidiEventPlan::compile(&project).expect("non-looped MIDI should compile");
+    assert_eq!(plan.len(), 2);
+    let block_end = project.sample_at_tick(8_000).unwrap();
+    let mut events = [None; 4];
+    assert_eq!(
+        plan.events_for_block(0, block_end as usize + 1, &mut events)
+            .unwrap(),
+        2
+    );
+    let note_ons = events
+        .iter()
+        .flatten()
+        .filter(|event| event.kind == MidiEventKind::NoteOn)
+        .map(|event| event.sample_offset)
+        .collect::<Vec<_>>();
+    assert_eq!(note_ons, [project.sample_at_tick(120).unwrap() as usize]);
+}
+
+#[test]
 fn event_plan_applies_midi_source_offset_at_the_visible_start() {
-    let mut project = Project::new();
+    let mut project = Project::with_settings(
+        aaadaw_core::ProjectSettings::default()
+            .with_pan_mode(aaadaw_core::PanMode::LegacyMonoStereo),
+    );
     project
         .apply(DawAction::CreateTrack {
             index: 0,
@@ -183,16 +821,20 @@ fn event_plan_applies_midi_source_offset_at_the_visible_start() {
             item_id,
             notes: vec![
                 MidiNoteData {
+                    channel: 0,
                     pitch: 60,
                     tick: 120,
                     duration: 240,
                     velocity: 90,
+                    off_velocity: 0,
                 },
                 MidiNoteData {
+                    channel: 0,
                     pitch: 64,
                     tick: 600,
                     duration: 720,
                     velocity: 90,
+                    off_velocity: 0,
                 },
             ],
         })
@@ -202,11 +844,13 @@ fn event_plan_applies_midi_source_offset_at_the_visible_start() {
             item_id,
             controllers: vec![
                 MidiControllerData {
+                    channel: 0,
                     controller: 1,
                     tick: 120,
                     value: 10,
                 },
                 MidiControllerData {
+                    channel: 0,
                     controller: 1,
                     tick: 600,
                     value: 80,
@@ -219,10 +863,12 @@ fn event_plan_applies_midi_source_offset_at_the_visible_start() {
             item_id,
             pitch_bends: vec![
                 MidiPitchBendData {
+                    channel: 0,
                     tick: 120,
                     value: 9_000,
                 },
                 MidiPitchBendData {
+                    channel: 0,
                     tick: 600,
                     value: 11_000,
                 },
@@ -276,10 +922,12 @@ fn pitch_bend_schedule_preserves_14_bit_values_and_chases_the_latest_state() {
             item_id,
             pitch_bends: vec![
                 MidiPitchBendData {
+                    channel: 0,
                     tick: 0,
                     value: 8192,
                 },
                 MidiPitchBendData {
+                    channel: 0,
                     tick: 960,
                     value: 16_383,
                 },
@@ -311,6 +959,234 @@ fn pitch_bend_schedule_preserves_14_bit_values_and_chases_the_latest_state() {
     assert_eq!(chased.kind, MidiEventKind::PitchBend);
     assert_eq!(chased.pitch_bend, Some(16_383));
     assert_eq!(chased.sample_offset, 0);
+}
+
+#[test]
+fn program_change_schedule_uses_channel_status_and_chases_the_latest_program() {
+    let (mut project, track_id) = project_with_note(69, 480, 240);
+    let item_id = project.midi_items()[0].id();
+    project
+        .apply(DawAction::SetMidiProgramChanges {
+            item_id,
+            program_changes: vec![
+                MidiProgramChangeData {
+                    channel: 6,
+                    tick: 0,
+                    program: 7,
+                },
+                MidiProgramChangeData {
+                    channel: 6,
+                    tick: 960,
+                    program: 41,
+                },
+            ],
+        })
+        .expect("program changes should be accepted");
+    let change_sample = project.sample_at_tick(960).unwrap();
+    let plan = MidiEventPlan::compile(&project).unwrap();
+    let mut output = [None; 8];
+
+    assert_eq!(plan.events_for_block(0, 1, &mut output).unwrap(), 1);
+    let first = output[0].unwrap();
+    assert_eq!(first.kind, MidiEventKind::ProgramChange);
+    assert_eq!(first.track_id, track_id);
+    assert_eq!(first.channel, 6);
+    assert_eq!(first.program, Some(7));
+
+    assert_eq!(
+        plan.active_program_changes_at(change_sample + 1, &mut output)
+            .unwrap(),
+        1
+    );
+    let chased = output[0].unwrap();
+    assert_eq!(chased.kind, MidiEventKind::ProgramChange);
+    assert_eq!(chased.program, Some(41));
+    assert_eq!(chased.sample_offset, 0);
+}
+
+#[test]
+fn bank_select_controllers_precede_program_change_at_the_same_tick() {
+    let (mut project, track_id) = project_with_note(69, 960, 240);
+    let item_id = project.midi_items()[0].id();
+    project
+        .apply(DawAction::SetMidiControllers {
+            item_id,
+            controllers: vec![
+                MidiControllerData {
+                    controller: 0,
+                    channel: 6,
+                    tick: 480,
+                    value: 3,
+                },
+                MidiControllerData {
+                    controller: 32,
+                    channel: 6,
+                    tick: 480,
+                    value: 4,
+                },
+            ],
+        })
+        .expect("bank-select controllers should be accepted");
+    project
+        .apply(DawAction::SetMidiProgramChanges {
+            item_id,
+            program_changes: vec![MidiProgramChangeData {
+                channel: 6,
+                tick: 480,
+                program: 41,
+            }],
+        })
+        .expect("program change should be accepted");
+
+    let start = project.sample_at_tick(480).unwrap();
+    let plan = MidiEventPlan::compile(&project).unwrap();
+    let mut output = [None; 3];
+    assert_eq!(plan.events_for_block(start, 1, &mut output).unwrap(), 3);
+    let events = output.map(Option::unwrap);
+    assert_eq!(
+        events.map(|event| (event.kind, event.controller, event.velocity, event.program)),
+        [
+            (MidiEventKind::ControllerChange, Some(0), 3, None),
+            (MidiEventKind::ControllerChange, Some(32), 4, None),
+            (MidiEventKind::ProgramChange, None, 0, Some(41)),
+        ]
+    );
+    assert!(events.iter().all(|event| event.track_id == track_id));
+    assert!(events.iter().all(|event| event.channel == 6));
+    assert!(events.iter().all(|event| event.sample_offset == 0));
+}
+
+#[test]
+fn aftertouch_schedule_preserves_message_data_and_chases_latest_pressure() {
+    let (mut project, track_id) = project_with_note(60, 960, 240);
+    let item_id = project.midi_items()[0].id();
+    project
+        .apply(DawAction::SetMidiPolyAftertouches {
+            item_id,
+            poly_aftertouches: vec![
+                MidiPolyAftertouchData {
+                    channel: 6,
+                    tick: 0,
+                    note: 60,
+                    value: 7,
+                },
+                MidiPolyAftertouchData {
+                    channel: 6,
+                    tick: 960,
+                    note: 60,
+                    value: 41,
+                },
+            ],
+        })
+        .expect("Poly Aftertouch events should be accepted");
+    project
+        .apply(DawAction::SetMidiChannelPressures {
+            item_id,
+            channel_pressures: vec![
+                MidiChannelPressureData {
+                    channel: 6,
+                    tick: 0,
+                    value: 13,
+                },
+                MidiChannelPressureData {
+                    channel: 6,
+                    tick: 960,
+                    value: 74,
+                },
+            ],
+        })
+        .expect("Channel Pressure events should be accepted");
+
+    let sample = project.sample_at_tick(960).unwrap();
+    let plan = MidiEventPlan::compile(&project).unwrap();
+    let mut events = [None; 8];
+    assert_eq!(plan.events_for_block(sample, 1, &mut events).unwrap(), 3);
+    let scheduled = events[..3]
+        .iter()
+        .map(|event| event.unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(scheduled[0].kind, MidiEventKind::ChannelPressure);
+    assert_eq!(scheduled[0].velocity, 74);
+    assert_eq!(scheduled[1].kind, MidiEventKind::NoteOn);
+    assert_eq!(scheduled[2].kind, MidiEventKind::PolyAftertouch);
+    assert_eq!(scheduled[2].pitch, 60);
+    assert_eq!(scheduled[2].velocity, 41);
+
+    let mut chased = [None; 8];
+    assert_eq!(
+        plan.active_aftertouches_at(sample + 1, &mut chased)
+            .unwrap(),
+        2
+    );
+    assert!(chased[..2].iter().flatten().any(|event| {
+        event.kind == MidiEventKind::PolyAftertouch && event.pitch == 60 && event.velocity == 41
+    }));
+    assert!(
+        chased[..2]
+            .iter()
+            .flatten()
+            .any(|event| { event.kind == MidiEventKind::ChannelPressure && event.velocity == 74 })
+    );
+    assert!(
+        chased[..2]
+            .iter()
+            .flatten()
+            .all(|event| event.track_id == track_id && event.sample_offset == 0)
+    );
+}
+
+#[test]
+fn program_change_follows_bank_select_and_precedes_note_on_at_the_same_tick() {
+    let (mut project, track_id) = project_with_note(69, 960, 240);
+    let item_id = project.midi_items()[0].id();
+    project
+        .apply(DawAction::SetMidiControllers {
+            item_id,
+            controllers: vec![
+                MidiControllerData {
+                    controller: 0,
+                    channel: 6,
+                    tick: 960,
+                    value: 4,
+                },
+                MidiControllerData {
+                    controller: 32,
+                    channel: 6,
+                    tick: 960,
+                    value: 2,
+                },
+            ],
+        })
+        .expect("bank-select controller values should be accepted");
+    project
+        .apply(DawAction::SetMidiProgramChanges {
+            item_id,
+            program_changes: vec![MidiProgramChangeData {
+                channel: 6,
+                tick: 960,
+                program: 41,
+            }],
+        })
+        .expect("program change should be accepted");
+
+    let sample = project.sample_at_tick(960).unwrap();
+    let plan = MidiEventPlan::compile(&project).unwrap();
+    let mut output = [None; 8];
+    assert_eq!(plan.events_for_block(sample, 1, &mut output).unwrap(), 4);
+    let events = output[..4]
+        .iter()
+        .map(|event| event.unwrap())
+        .collect::<Vec<_>>();
+    assert!(events.iter().all(|event| event.track_id == track_id));
+    assert!(events[..3].iter().all(|event| event.channel == 6));
+    assert_eq!(events[3].channel, 0);
+    assert_eq!(events[0].kind, MidiEventKind::ControllerChange);
+    assert_eq!(events[0].controller, Some(0));
+    assert_eq!(events[1].kind, MidiEventKind::ControllerChange);
+    assert_eq!(events[1].controller, Some(32));
+    assert_eq!(events[2].kind, MidiEventKind::ProgramChange);
+    assert_eq!(events[2].program, Some(41));
+    assert_eq!(events[3].kind, MidiEventKind::NoteOn);
 }
 
 #[test]
@@ -398,31 +1274,37 @@ fn midi_controller_schedule_is_sample_accurate_and_chases_latest_state() {
             item_id,
             controllers: vec![
                 MidiControllerData {
+                    channel: 0,
                     controller: 64,
                     tick: 0,
                     value: 127,
                 },
                 MidiControllerData {
+                    channel: 0,
                     controller: 64,
                     tick: 960,
                     value: 0,
                 },
                 MidiControllerData {
+                    channel: 0,
                     controller: 1,
                     tick: 480,
                     value: 64,
                 },
                 MidiControllerData {
+                    channel: 0,
                     controller: 11,
                     tick: 240,
                     value: 96,
                 },
                 MidiControllerData {
+                    channel: 0,
                     controller: 7,
                     tick: 120,
                     value: 88,
                 },
                 MidiControllerData {
+                    channel: 0,
                     controller: 10,
                     tick: 360,
                     value: 32,
@@ -552,7 +1434,10 @@ fn midi_controller_schedule_is_sample_accurate_and_chases_latest_state() {
 
 #[test]
 fn active_note_interval_index_matches_brute_force_for_overlapping_ranges() {
-    let mut project = Project::new();
+    let mut project = Project::with_settings(
+        aaadaw_core::ProjectSettings::default()
+            .with_pan_mode(aaadaw_core::PanMode::LegacyMonoStereo),
+    );
     project
         .apply(DawAction::CreateTrack {
             index: 0,
@@ -570,10 +1455,12 @@ fn active_note_interval_index_matches_brute_force_for_overlapping_ranges() {
     let item_id = project.midi_items()[0].id();
     let notes: Vec<_> = (0..64)
         .map(|index| MidiNoteData {
+            channel: 0,
             pitch: index,
             tick: u64::from(index) * 37,
             duration: 83 + u64::from(index % 11) * 41,
             velocity: 90,
+            off_velocity: 0,
         })
         .collect();
     project
@@ -610,7 +1497,10 @@ fn active_note_interval_index_matches_brute_force_for_overlapping_ranges() {
 
 #[test]
 fn event_plan_filters_muted_and_non_solo_tracks() {
-    let mut project = Project::new();
+    let mut project = Project::with_settings(
+        aaadaw_core::ProjectSettings::default()
+            .with_pan_mode(aaadaw_core::PanMode::LegacyMonoStereo),
+    );
     for (index, name) in ["Muted", "Solo", "Other"].into_iter().enumerate() {
         project
             .apply(DawAction::CreateTrack {
@@ -646,10 +1536,12 @@ fn event_plan_filters_muted_and_non_solo_tracks() {
             .apply(DawAction::AddMidiNotes {
                 item_id,
                 notes: vec![MidiNoteData {
+                    channel: 0,
                     pitch: 60,
                     tick: 0,
                     duration: 480,
                     velocity: 100,
+                    off_velocity: 0,
                 }],
             })
             .expect("MIDI note insertion should succeed");
@@ -682,8 +1574,62 @@ fn event_plan_filters_muted_and_non_solo_tracks() {
 }
 
 #[test]
-fn soloed_bus_keeps_midi_events_on_tracks_routed_into_it() {
+fn event_plan_omits_muted_midi_items_without_changing_other_items() {
     let mut project = Project::new();
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Piano".to_owned(),
+        })
+        .expect("track creation should succeed");
+    let track_id = project.tracks()[0].id();
+    let mut item_ids = Vec::new();
+    for pitch in [48, 60] {
+        project
+            .apply(DawAction::InsertMidiItem {
+                track_id,
+                start_tick: 0,
+                length_ticks: 960,
+            })
+            .expect("MIDI item should insert");
+        let item_id = project.midi_items().last().unwrap().id();
+        item_ids.push(item_id);
+        project
+            .apply(DawAction::AddMidiNotes {
+                item_id,
+                notes: vec![MidiNoteData {
+                    channel: 0,
+                    pitch,
+                    tick: 0,
+                    duration: 480,
+                    velocity: 100,
+                    off_velocity: 0,
+                }],
+            })
+            .expect("MIDI note should insert");
+    }
+    project
+        .apply(DawAction::SetMidiItemMute {
+            item_id: item_ids[0],
+            muted: true,
+        })
+        .expect("first MIDI item should mute");
+
+    let plan = MidiEventPlan::compile(&project).expect("muted project should compile");
+    let mut events = [None; 4];
+    assert_eq!(plan.events_for_block(0, 24_000, &mut events).unwrap(), 2);
+    assert!(events[..2].iter().flatten().all(|event| event.pitch == 60));
+    let mut active = [None; 2];
+    assert_eq!(plan.active_notes_at(1, &mut active).unwrap(), 1);
+    assert_eq!(active[0].unwrap().pitch, 60);
+}
+
+#[test]
+fn soloed_bus_keeps_midi_events_on_tracks_routed_into_it() {
+    let mut project = Project::with_settings(
+        aaadaw_core::ProjectSettings::default()
+            .with_pan_mode(aaadaw_core::PanMode::LegacyMonoStereo),
+    );
     project
         .apply(DawAction::CreateTrack {
             index: 0,
@@ -722,17 +1668,674 @@ fn soloed_bus_keeps_midi_events_on_tracks_routed_into_it() {
         .apply(DawAction::AddMidiNotes {
             item_id,
             notes: vec![MidiNoteData {
+                channel: 0,
                 pitch: 60,
                 tick: 0,
                 duration: 240,
                 velocity: 100,
+                off_velocity: 0,
             }],
         })
         .unwrap();
 
     let plan = MidiEventPlan::compile(&project).unwrap();
-    assert_eq!(plan.len(), 2);
-    let mut events = [None; 2];
-    assert_eq!(plan.events_for_block(0, 1, &mut events).unwrap(), 1);
-    assert_eq!(events[0].unwrap().track_id, source);
+    assert_eq!(plan.len(), 4);
+    let mut events = [None; 4];
+    assert_eq!(plan.events_for_block(0, 1, &mut events).unwrap(), 2);
+    let event_tracks: std::collections::HashSet<_> = events[..2]
+        .iter()
+        .map(|event| event.unwrap().track_id)
+        .collect();
+    assert_eq!(event_tracks, [source, bus].into_iter().collect());
+
+    let mut active = [None; 2];
+    assert_eq!(plan.active_notes_at(1, &mut active).unwrap(), 2);
+    assert_eq!(
+        active
+            .iter()
+            .map(|event| event.unwrap().track_id)
+            .collect::<std::collections::HashSet<_>>(),
+        [source, bus].into_iter().collect()
+    );
+}
+
+#[test]
+fn folder_parent_midi_forwarding_obeys_each_main_send_switch() {
+    for (disable_child_send, disable_inner_send, expected_tracks) in
+        [(false, false, 3), (true, false, 1), (false, true, 2)]
+    {
+        let mut project = Project::default();
+        for (index, name) in [(0, "Synth"), (1, "Inner"), (2, "Outer")] {
+            project
+                .apply(DawAction::CreateTrack {
+                    index,
+                    name: name.into(),
+                })
+                .unwrap();
+        }
+        let source = project.tracks()[0].id();
+        let inner = project.tracks()[1].id();
+        let outer = project.tracks()[2].id();
+        for folder in [inner, outer] {
+            project
+                .apply(DawAction::SetTrackFolder {
+                    track_id: folder,
+                    enabled: true,
+                })
+                .unwrap();
+        }
+        project
+            .apply(DawAction::SetTrackParent {
+                track_id: source,
+                parent: Some(inner),
+            })
+            .unwrap();
+        project
+            .apply(DawAction::SetTrackParent {
+                track_id: inner,
+                parent: Some(outer),
+            })
+            .unwrap();
+        if disable_child_send {
+            project
+                .apply(DawAction::SetTrackMainSend {
+                    track_id: source,
+                    enabled: false,
+                })
+                .unwrap();
+        }
+        if disable_inner_send {
+            project
+                .apply(DawAction::SetTrackMainSend {
+                    track_id: inner,
+                    enabled: false,
+                })
+                .unwrap();
+        }
+        project
+            .apply(DawAction::InsertMidiItem {
+                track_id: source,
+                start_tick: 0,
+                length_ticks: 960,
+            })
+            .unwrap();
+        let item_id = project.midi_items()[0].id();
+        project
+            .apply(DawAction::AddMidiNotes {
+                item_id,
+                notes: vec![MidiNoteData {
+                    channel: 0,
+                    pitch: 60,
+                    tick: 0,
+                    duration: 240,
+                    velocity: 100,
+                    off_velocity: 0,
+                }],
+            })
+            .unwrap();
+
+        let plan = MidiEventPlan::compile(&project).unwrap();
+        assert_eq!(plan.len(), expected_tracks * 2);
+        let mut attacks = vec![None; expected_tracks];
+        assert_eq!(
+            plan.events_for_block(0, 1, &mut attacks).unwrap(),
+            expected_tracks
+        );
+        let actual_tracks: std::collections::HashSet<_> = attacks
+            .iter()
+            .map(|event| event.unwrap().track_id)
+            .collect();
+        let expected: std::collections::HashSet<_> = match (disable_child_send, disable_inner_send)
+        {
+            (false, false) => [source, inner, outer].into_iter().collect(),
+            (true, false) => [source].into_iter().collect(),
+            (false, true) => [source, inner].into_iter().collect(),
+            (true, true) => unreachable!(),
+        };
+        assert_eq!(actual_tracks, expected);
+
+        let mut chased = vec![None; expected_tracks];
+        assert_eq!(
+            plan.active_notes_at(1, &mut chased).unwrap(),
+            expected_tracks
+        );
+        assert_eq!(
+            chased
+                .iter()
+                .map(|event| event.unwrap().track_id)
+                .collect::<std::collections::HashSet<_>>(),
+            expected
+        );
+
+        let mut releases = vec![None; expected_tracks];
+        assert_eq!(
+            plan.events_for_block(6_000, 1, &mut releases).unwrap(),
+            expected_tracks
+        );
+        assert!(
+            releases
+                .iter()
+                .all(|event| { event.is_some_and(|event| event.kind == MidiEventKind::NoteOff) })
+        );
+        assert_eq!(
+            releases
+                .iter()
+                .map(|event| event.unwrap().track_id)
+                .collect::<std::collections::HashSet<_>>(),
+            expected
+        );
+    }
+}
+
+#[test]
+fn soloed_audio_send_receiver_routes_midi_to_source_and_destination_tracks() {
+    let mut project = Project::with_settings(
+        aaadaw_core::ProjectSettings::default()
+            .with_pan_mode(aaadaw_core::PanMode::LegacyMonoStereo),
+    );
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Synth".to_owned(),
+        })
+        .unwrap();
+    project
+        .apply(DawAction::CreateTrack {
+            index: 1,
+            name: "Synth Bus".to_owned(),
+        })
+        .unwrap();
+    let source = project.tracks()[0].id();
+    let bus = project.tracks()[1].id();
+    project
+        .apply(DawAction::CreateAudioSend {
+            track_id: source,
+            destination: bus,
+            parameters: aaadaw_core::AudioSendParameters::default(),
+        })
+        .unwrap();
+    project
+        .apply(DawAction::SetTrackSolo {
+            track_id: bus,
+            solo: true,
+        })
+        .unwrap();
+    project
+        .apply(DawAction::InsertMidiItem {
+            track_id: source,
+            start_tick: 0,
+            length_ticks: 960,
+        })
+        .unwrap();
+    let item_id = project.midi_items()[0].id();
+    project
+        .apply(DawAction::AddMidiNotes {
+            item_id,
+            notes: vec![MidiNoteData {
+                channel: 0,
+                pitch: 60,
+                tick: 0,
+                duration: 240,
+                velocity: 100,
+                off_velocity: 0,
+            }],
+        })
+        .unwrap();
+
+    let plan = MidiEventPlan::compile(&project).unwrap();
+    assert_eq!(plan.len(), 4);
+    let mut events = [None; 4];
+    assert_eq!(plan.events_for_block(0, 1, &mut events).unwrap(), 2);
+    let tracks: std::collections::HashSet<_> = events[..2]
+        .iter()
+        .map(|event| event.unwrap().track_id)
+        .collect();
+    assert_eq!(tracks, [source, bus].into_iter().collect());
+    let mut active = [None; 2];
+    assert_eq!(plan.active_notes_at(1, &mut active).unwrap(), 2);
+    let active_tracks: std::collections::HashSet<_> =
+        active.iter().map(|event| event.unwrap().track_id).collect();
+    assert_eq!(active_tracks, [source, bus].into_iter().collect());
+}
+
+#[test]
+fn parallel_midi_sends_keep_distinct_note_ids_through_attack_release_and_chase() {
+    let (mut project, source) = project_with_note(60, 0, 240);
+    project
+        .apply(DawAction::CreateTrack {
+            index: 1,
+            name: "Instrument".to_owned(),
+        })
+        .unwrap();
+    let destination = project.tracks()[1].id();
+    for _ in 0..2 {
+        project
+            .apply(DawAction::CreateAudioSend {
+                track_id: source,
+                destination,
+                parameters: aaadaw_core::AudioSendParameters::default(),
+            })
+            .unwrap();
+    }
+    let source_note_id = project.midi_items()[0].notes()[0].id();
+    let plan = MidiEventPlan::compile(&project).unwrap();
+    let mut attacks = [None; 3];
+    assert_eq!(plan.events_for_block(0, 1, &mut attacks).unwrap(), 3);
+    let routed_attack_ids: std::collections::HashSet<_> = attacks
+        .iter()
+        .map(|event| event.unwrap())
+        .filter(|event| event.track_id == destination)
+        .map(|event| event.note_id.unwrap())
+        .collect();
+    assert_eq!(routed_attack_ids.len(), 2);
+    assert!(!routed_attack_ids.contains(&source_note_id));
+    assert!(routed_attack_ids.iter().all(|id| id.value() < 1 << 30));
+
+    let mut chased = [None; 3];
+    assert_eq!(plan.active_notes_at(1, &mut chased).unwrap(), 3);
+    let chased_route_ids: std::collections::HashSet<_> = chased
+        .iter()
+        .map(|event| event.unwrap())
+        .filter(|event| event.track_id == destination)
+        .map(|event| event.note_id.unwrap())
+        .collect();
+    assert_eq!(chased_route_ids, routed_attack_ids);
+
+    let mut releases = [None; 3];
+    assert_eq!(plan.events_for_block(6_000, 1, &mut releases).unwrap(), 3);
+    let released_route_ids: std::collections::HashSet<_> = releases
+        .iter()
+        .map(|event| event.unwrap())
+        .filter(|event| event.track_id == destination)
+        .map(|event| event.note_id.unwrap())
+        .collect();
+    assert_eq!(released_route_ids, routed_attack_ids);
+}
+
+#[test]
+fn midi_send_routes_notes_controls_and_bends_over_nested_paths() {
+    for (muted, midi_enabled) in [(false, true), (true, true), (false, false)] {
+        let (mut project, source) = project_with_note(60, 0, 240);
+        for (index, name) in [(1, "Intermediate"), (2, "Solo receiver")] {
+            project
+                .apply(DawAction::CreateTrack {
+                    index,
+                    name: name.into(),
+                })
+                .unwrap();
+        }
+        let mid = project.tracks()[1].id();
+        let receiver = project.tracks()[2].id();
+        project
+            .apply(DawAction::CreateAudioSend {
+                track_id: source,
+                destination: mid,
+                parameters: aaadaw_core::AudioSendParameters {
+                    muted,
+                    midi_enabled,
+                    ..Default::default()
+                },
+            })
+            .unwrap();
+        project
+            .apply(DawAction::CreateAudioSend {
+                track_id: mid,
+                destination: receiver,
+                parameters: Default::default(),
+            })
+            .unwrap();
+        project
+            .apply(DawAction::SetTrackSolo {
+                track_id: receiver,
+                solo: true,
+            })
+            .unwrap();
+        let item_id = project.midi_items()[0].id();
+        project
+            .apply(DawAction::SetMidiControllers {
+                item_id,
+                controllers: vec![MidiControllerData {
+                    channel: 0,
+                    controller: 64,
+                    tick: 0,
+                    value: 127,
+                }],
+            })
+            .unwrap();
+        project
+            .apply(DawAction::SetMidiPitchBends {
+                item_id,
+                pitch_bends: vec![MidiPitchBendData {
+                    channel: 0,
+                    tick: 0,
+                    value: 9000,
+                }],
+            })
+            .unwrap();
+        let plan = MidiEventPlan::compile(&project).unwrap();
+        let mut events = [None; 9];
+        let count = plan.events_for_block(0, 1, &mut events).unwrap();
+        assert_eq!(count, if muted || !midi_enabled { 0 } else { 9 });
+        if count > 0 {
+            let tracks: std::collections::HashSet<_> = events[..count]
+                .iter()
+                .map(|event| event.unwrap().track_id)
+                .collect();
+            assert_eq!(tracks, [source, mid, receiver].into_iter().collect());
+            for track_id in tracks {
+                let forwarded: Vec<_> = events[..count]
+                    .iter()
+                    .filter_map(|event| event.filter(|event| event.track_id == track_id))
+                    .collect();
+                assert_eq!(forwarded.len(), 3);
+                assert!(
+                    forwarded
+                        .iter()
+                        .any(|event| event.kind == MidiEventKind::NoteOn)
+                );
+                assert!(forwarded.iter().any(|event| {
+                    event.kind == MidiEventKind::ControllerChange && event.controller == Some(64)
+                }));
+                assert!(
+                    forwarded
+                        .iter()
+                        .any(|event| event.kind == MidiEventKind::PitchBend)
+                );
+            }
+            let mut chased_controllers = [None; 3];
+            assert_eq!(
+                plan.active_controllers_at(1, &mut chased_controllers)
+                    .unwrap(),
+                3
+            );
+            let controller_tracks: std::collections::HashSet<_> = chased_controllers
+                .iter()
+                .map(|event| event.unwrap().track_id)
+                .collect();
+            assert_eq!(
+                controller_tracks,
+                [source, mid, receiver].into_iter().collect()
+            );
+            let mut chased_bends = [None; 3];
+            assert_eq!(plan.active_pitch_bends_at(1, &mut chased_bends).unwrap(), 3);
+            let bend_tracks: std::collections::HashSet<_> = chased_bends
+                .iter()
+                .map(|event| event.unwrap().track_id)
+                .collect();
+            assert_eq!(bend_tracks, [source, mid, receiver].into_iter().collect());
+        }
+    }
+}
+
+#[test]
+fn midi_send_composes_channel_and_bus_filters_and_mappings_for_channel_voice_events() {
+    let (mut project, source) = project_with_note(60, 0, 240);
+    for (index, name) in [(1, "Intermediate"), (2, "Receiver")] {
+        project
+            .apply(DawAction::CreateTrack {
+                index,
+                name: name.into(),
+            })
+            .unwrap();
+    }
+    let intermediate = project.tracks()[1].id();
+    project
+        .apply(DawAction::CreateTrack {
+            index: 3,
+            name: "Wrong Bus Receiver".into(),
+        })
+        .unwrap();
+    let receiver = project.tracks()[2].id();
+    let wrong_bus_receiver = project.tracks()[3].id();
+    let item_id = project.midi_items()[0].id();
+    project
+        .apply(DawAction::AddMidiNotes {
+            item_id,
+            notes: [1, 2]
+                .into_iter()
+                .enumerate()
+                .map(|(index, channel)| MidiNoteData {
+                    channel,
+                    pitch: 61 + index as u8,
+                    tick: 0,
+                    duration: 240,
+                    velocity: 100,
+                    off_velocity: 0,
+                })
+                .collect(),
+        })
+        .unwrap();
+    project
+        .apply(DawAction::SetMidiControllers {
+            item_id,
+            controllers: (0..3)
+                .map(|channel| MidiControllerData {
+                    channel,
+                    controller: 64,
+                    tick: 60,
+                    value: 127,
+                })
+                .collect(),
+        })
+        .unwrap();
+    project
+        .apply(DawAction::SetMidiPitchBends {
+            item_id,
+            pitch_bends: (0..3)
+                .map(|channel| MidiPitchBendData {
+                    channel,
+                    tick: 72,
+                    value: 9_000,
+                })
+                .collect(),
+        })
+        .unwrap();
+    project
+        .apply(DawAction::SetMidiProgramChanges {
+            item_id,
+            program_changes: (0..3)
+                .map(|channel| MidiProgramChangeData {
+                    channel,
+                    tick: 84,
+                    program: 8,
+                })
+                .collect(),
+        })
+        .unwrap();
+    project
+        .apply(DawAction::SetMidiPolyAftertouches {
+            item_id,
+            poly_aftertouches: (0..3)
+                .map(|channel| MidiPolyAftertouchData {
+                    channel,
+                    tick: 96,
+                    note: 60,
+                    value: 70,
+                })
+                .collect(),
+        })
+        .unwrap();
+    project
+        .apply(DawAction::SetMidiChannelPressures {
+            item_id,
+            channel_pressures: (0..3)
+                .map(|channel| MidiChannelPressureData {
+                    channel,
+                    tick: 108,
+                    value: 80,
+                })
+                .collect(),
+        })
+        .unwrap();
+    project
+        .apply(DawAction::CreateAudioSend {
+            track_id: source,
+            destination: intermediate,
+            parameters: aaadaw_core::AudioSendParameters {
+                midi_source_channel: Some(1),
+                midi_destination_channel: Some(5),
+                midi_source_bus: Some(0),
+                midi_destination_bus: Some(1),
+                ..Default::default()
+            },
+        })
+        .unwrap();
+    project
+        .apply(DawAction::CreateAudioSend {
+            track_id: intermediate,
+            destination: receiver,
+            parameters: aaadaw_core::AudioSendParameters {
+                midi_source_channel: Some(5),
+                midi_destination_channel: Some(7),
+                midi_source_bus: Some(1),
+                midi_destination_bus: Some(2),
+                ..Default::default()
+            },
+        })
+        .unwrap();
+    project
+        .apply(DawAction::CreateAudioSend {
+            track_id: intermediate,
+            destination: wrong_bus_receiver,
+            parameters: aaadaw_core::AudioSendParameters {
+                midi_source_bus: Some(2),
+                ..Default::default()
+            },
+        })
+        .unwrap();
+
+    let plan = MidiEventPlan::compile(&project).unwrap();
+    let mut events = [None; 64];
+    let count = plan.events_for_block(0, 48_000, &mut events).unwrap();
+    let received = events[..count]
+        .iter()
+        .filter_map(|event| event.filter(|event| event.track_id == receiver))
+        .collect::<Vec<_>>();
+    assert_eq!(received.len(), 7);
+    assert!(
+        received
+            .iter()
+            .all(|event| event.channel == 7 && event.bus == 2)
+    );
+    assert!(
+        !events[..count]
+            .iter()
+            .flatten()
+            .any(|event| event.track_id == wrong_bus_receiver)
+    );
+    for kind in [
+        MidiEventKind::NoteOn,
+        MidiEventKind::NoteOff,
+        MidiEventKind::ControllerChange,
+        MidiEventKind::PitchBend,
+        MidiEventKind::ProgramChange,
+        MidiEventKind::PolyAftertouch,
+        MidiEventKind::ChannelPressure,
+    ] {
+        assert_eq!(
+            received.iter().filter(|event| event.kind == kind).count(),
+            1
+        );
+    }
+
+    let mut active_notes = [None; 8];
+    let chased_notes = plan.active_notes_at(1, &mut active_notes).unwrap();
+    assert!(active_notes[..chased_notes].iter().any(|event| {
+        event
+            .is_some_and(|event| event.track_id == receiver && event.channel == 7 && event.bus == 2)
+    }));
+    let mut active_controllers = [None; 8];
+    let chased_controllers = plan
+        .active_controllers_at(2_000, &mut active_controllers)
+        .unwrap();
+    assert!(
+        active_controllers[..chased_controllers]
+            .iter()
+            .any(|event| {
+                event.is_some_and(|event| {
+                    event.track_id == receiver && event.channel == 7 && event.bus == 2
+                })
+            })
+    );
+    let mut active_bends = [None; 8];
+    let chased_bends = plan
+        .active_pitch_bends_at(2_000, &mut active_bends)
+        .unwrap();
+    assert!(active_bends[..chased_bends].iter().any(|event| {
+        event
+            .is_some_and(|event| event.track_id == receiver && event.channel == 7 && event.bus == 2)
+    }));
+}
+
+#[test]
+fn soloed_folder_keeps_events_on_child_instruments_through_parent_send() {
+    let mut project = Project::with_settings(
+        aaadaw_core::ProjectSettings::default()
+            .with_pan_mode(aaadaw_core::PanMode::LegacyMonoStereo),
+    );
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Synth".to_owned(),
+        })
+        .unwrap();
+    project
+        .apply(DawAction::CreateTrack {
+            index: 1,
+            name: "Synth Bus".to_owned(),
+        })
+        .unwrap();
+    let source = project.tracks()[0].id();
+    let bus = project.tracks()[1].id();
+    project
+        .apply(DawAction::SetTrackFolder {
+            track_id: bus,
+            enabled: true,
+        })
+        .unwrap();
+    project
+        .apply(DawAction::SetTrackParent {
+            track_id: source,
+            parent: Some(bus),
+        })
+        .unwrap();
+    project
+        .apply(DawAction::SetTrackSolo {
+            track_id: bus,
+            solo: true,
+        })
+        .unwrap();
+    project
+        .apply(DawAction::InsertMidiItem {
+            track_id: source,
+            start_tick: 0,
+            length_ticks: 960,
+        })
+        .unwrap();
+    let item_id = project.midi_items()[0].id();
+    project
+        .apply(DawAction::AddMidiNotes {
+            item_id,
+            notes: vec![MidiNoteData {
+                channel: 0,
+                pitch: 60,
+                tick: 0,
+                duration: 240,
+                velocity: 100,
+                off_velocity: 0,
+            }],
+        })
+        .unwrap();
+
+    let plan = MidiEventPlan::compile(&project).unwrap();
+    assert_eq!(plan.len(), 4);
+    let mut events = [None; 4];
+    assert_eq!(plan.events_for_block(0, 1, &mut events).unwrap(), 2);
+    assert_eq!(
+        events[..2]
+            .iter()
+            .map(|event| event.unwrap().track_id)
+            .collect::<std::collections::HashSet<_>>(),
+        [source, bus].into_iter().collect()
+    );
 }

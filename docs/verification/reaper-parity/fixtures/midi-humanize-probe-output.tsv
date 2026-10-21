@@ -1,0 +1,8 @@
+version	7.82/linux-x86_64
+theme	Default_7.0.ReaperThemeZip
+project_ppq	960
+midi_grid_quarter_notes	0.125000
+midi_grid_ticks	120
+swing	0.000000
+before	notes=selected,channel,pitch,start,end,velocity:1,1,60,170,260,70;1,1,64,350,460,80;1,1,67,550,700,90;0,1,69,730,920,100
+after	notes=selected,channel,pitch,start,end,velocity:1,1,60,170,260,41;1,1,64,381,491,63;1,1,67,557,707,93;0,1,69,730,920,100

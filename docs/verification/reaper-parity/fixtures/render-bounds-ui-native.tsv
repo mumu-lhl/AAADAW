@@ -1,0 +1,8 @@
+version	7.82/linux-x86_64
+theme	Default_7.0.ReaperThemeZip
+audio_device	Dummy Audio; no hardware I/O
+fixture	Three one-second Audio items and same-span regions at [0,1], [2,3], [4,5]; item 2 selected; time selection [1.5,4.5]; razor [1.5,2.5]
+case	selected_bounds_option	output_file	format	rate_hz	channels	frames	duration_seconds	first_frame_l	first_frame_r
+ui_all_project_regions	All project regions	bounds-ui-Region 1.wav	WAV PCM24	48000	2	48000	1.0	0.11824941635131836	0.3547482490539551
+ui_all_project_regions	All project regions	bounds-ui-Region 2.wav	WAV PCM24	48000	2	48000	1.0	0.11824941635131836	0.3547482490539551
+ui_all_project_regions	All project regions	bounds-ui-Region 3.wav	WAV PCM24	48000	2	48000	1.0	0.11824941635131836	0.3547482490539551

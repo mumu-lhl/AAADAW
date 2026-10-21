@@ -1,0 +1,35 @@
+key	value
+reference	Linux REAPER 7.82 / Default 7 / isolated configuration
+captured_at_utc	2026-10-16
+probe_script	../../../../scripts/reaper_parity/probe-render-track-folder-wildcards.lua
+configuration	Isolated REAPER configuration with Default_7.0.ReaperThemeZip explicitly loaded
+render_source	Selected tracks (stems), chosen in the Render dialog
+track_hierarchy	Drums folder > Acoustic folder > Kick/Snare track
+wildcard_pattern	$track-$trackslashes-$folders-$folders[,]-$parent
+allow_slash_in_wildcard_substitutions	false (disabled in Wildcards > Options)
+track	Kick_Snare
+trackslashes	Kick/Snare (forced directory separator)
+folders	Drums/Acoustic (folder ancestry, outermost first)
+folders_delimited	$folders[,] => Drums,Acoustic
+parent	Acoustic (immediate folder)
+preview_output	Kick_Snare-Kick/Snare-Drums/Acoustic-Drums,Acoustic-Acoustic.wav
+rendered_output	Kick_Snare-Kick/Snare-Drums/Acoustic-Drums,Acoustic-Acoustic.wav
+render_settings	WAV; 24-bit PCM; 48,000 Hz; 2 channels; 48,000 frames
+render_file_size_bytes	288690
+render_file_sha256	caae27942e2bf7194a26e73af0baceca6c2b8ab23b688f9f844582cba3ae94f6
+native_preview_screenshot	render-wildcards-track-folders-preview-native.png
+native_preview_screenshot_sha256	7c51d477ca7986ff9d18474be7d9aa1e4e34c60b576a71ca6af13579859969c2
+native_finished_screenshot	render-wildcards-track-folders-finished-native.png
+native_finished_screenshot_sha256	fc336d9d11a1429094db8d8a7526111116484686fea918f0e30ffa87f28194cd
+aaadaw_picker_tokens	56
+aaadaw_picker_screenshot	render-filename-pattern-wildcards-track-folders-aaadaw.png
+aaadaw_picker_screenshot_sha256	7336fb70ded5c5348f558f38ac7b57bb3529c3f57eb31c8c7a65825188590112
+aaadaw_picker_scrolled_screenshot	render-filename-pattern-wildcards-track-folders-scrolled-aaadaw.png
+aaadaw_picker_scrolled_screenshot_sha256	43122ac2521e7898ab40b5a98289405619ce5e1c2fa798d458f48026d5a43a26
+aaadaw_token_insert_screenshots	render-filename-pattern-wildcard-trackslashes-aaadaw.png; render-filename-pattern-wildcard-folders-aaadaw.png; render-filename-pattern-wildcard-folders-delimited-aaadaw.png; render-filename-pattern-wildcard-parent-aaadaw.png
+aaadaw_trackslashes_insert_sha256	3e2a5c6071a741c1867b4ef528af7b40a77a5b85c02f8fa01e37620d7ad75d8b
+aaadaw_folders_insert_sha256	47141d3cb64b6f568ae71cd4778a260d6865bbad9a6e89fa69e069ac339db3ec
+aaadaw_folders_delimited_insert_sha256	641b9a4206aa5743c1e98a807e219e946842d4d9ddeab9d3bfcfe788dd508e42
+aaadaw_parent_insert_sha256	c74e98a727326eeb62b8b6c3fd7d7ef9d14e7e7fa2a907e5f77614d81ff663ed
+aaadaw_build_id	4a7f27b4516bc27bc533f60bc2671ed348a06377
+aaadaw_binary_sha256	2356db806cad853df4c810dfce6d013b6d58bb401d51c2495ef59a7a4bd70a94

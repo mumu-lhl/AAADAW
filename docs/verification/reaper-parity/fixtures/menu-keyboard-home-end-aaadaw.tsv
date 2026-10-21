@@ -1,0 +1,11 @@
+field	value
+date	2026-10-17
+binary	target/verify-stable/debug/aaadaw; Build ID 09e885366201fc507579e5719364829a8dd01a5e; SHA-256 ac9eb46e13196704806aaad49c782ba8ce612267cc22b7ac1b807aab0b644732
+display	Linux X11; Xvfb 1280x800x24 with xfwm4 for real keyboard focus; fresh isolated XDG directories
+audio	Unavailable in this build; transport stayed stopped
+initial_state	New project; zero tracks
+input	XTest mouse activation inside the editor; XTest Alt+F; Home; End; Escape
+step	menu	selected_command	project_effect	screenshot	sha256	observation
+home	File	New project	no command executed	fixtures/menu-keyboard-home-aaadaw.png	3121989df29117c70ef3a16c58fdf6943683c9779b191a33d8ceadf86d870456	Home selects the first enabled command and leaves the File menu open
+end	File	Quit	no command executed	fixtures/menu-keyboard-end-aaadaw.png	c56e0b58218163086cbda4f9e9545eb265a54cd2f743a5b266f811868065c497	End selects the last enabled command; the File menu remains open and Quit is not activated
+after_escape	closed	no command selected	New project remains open with zero tracks			Escape closes the menu without changing the project

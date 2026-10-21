@@ -1,0 +1,8 @@
+version	AAADAW working tree; Linux X11
+display	Xvfb :126 1280x1024 with xfwm4; isolated fresh XDG config and unsaved project
+audio	unavailable in this build; transport stopped throughout
+scenario	Create one track, open Actions, filter for undo, select Edit: Undo, refocus Filter
+step	query	input	track_count	project_state	filter_focus	selected_action	screenshot	sha256	observation
+first_enter	undo	Enter	1	track remains	unfocused	Edit: Undo	fixtures/action-list-filter-enter-aaadaw-first.png	7b3d4c87e13902d3d6bf55aacadc2163154aad4fcb1c72e1a1bd4c71a3aaeb93	first Enter focuses the result and does not run Undo
+second_enter	undo	Enter	0	track removed	unfocused	Edit: Undo	fixtures/action-list-filter-enter-aaadaw-second.png	379ea580fcbdf7bfc0b11857aab483e6021a29c52415ef132fbb7c267804300d	second Enter runs Undo; Action List remains open
+regression		-	-	-	-	-	crates/aaadaw/src/app/tests.rs::action_list_filter_enter_focuses_results_before_running_selected_action	-	nightly+Cranelift nextest; result recorded after this fixture was captured

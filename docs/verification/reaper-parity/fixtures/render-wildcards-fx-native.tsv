@@ -1,0 +1,20 @@
+key	value
+reference	Linux REAPER 7.82 / Default 7 / isolated configuration
+captured_at_utc	2026-10-16
+probe_script	../../../../scripts/reaper_parity/probe-render-fx-wildcards.lua
+configuration	Isolated REAPER configuration with Default_7.0.ReaperThemeZip explicitly loaded
+render_source	Selected tracks (stems), chosen in the Render dialog
+track_name	FX Wildcard
+track_fx_1	JS: Volume Adjustment
+track_fx_2	VST: ReaEQ (Cockos)
+wildcard_pattern	$track-$fx-$fx[,]
+wildcard_fx_default_separator	$fx expands to Volume Adjustment_ReaEQ
+wildcard_fx_custom_separator	$fx[,] expands to Volume Adjustment,ReaEQ
+wildcard_output	FX Wildcard-Volume Adjustment_ReaEQ-Volume Adjustment,ReaEQ.wav
+render_settings	WAV; 24-bit PCM; 48,000 Hz; 2 channels; 48,000 frames
+render_file_size_bytes	288690
+render_file_sha256	e28dbb50440335506cf8cf595ff1eeb045a3e36c73f7a2bf9597a81d5d93cb05
+native_preview_screenshot	render-wildcards-fx-preview-native.png
+native_preview_screenshot_sha256	2004f4517bbc88702054286395dd5bbb3c4959ab2948ca8faa1b056186faeabf
+native_finished_screenshot	render-wildcards-fx-finished-native.png
+native_finished_screenshot_sha256	b74ac84c347d289114a1088454d4f65dd30ca7852d963d92a8ec63fadb325b5f

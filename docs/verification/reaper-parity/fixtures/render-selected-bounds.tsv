@@ -1,0 +1,23 @@
+field	value
+reference	Linux REAPER 7.82/linux-x86_64 rev 338578; Default_7.0.ReaperThemeZip; isolated factory configuration
+native_audio_device	Dummy Audio; no hardware I/O
+native_fixture	48 kHz stereo PCM24 source; one-second media items at [0,1), [2,3), and [4,5) seconds; markers at 0, 2, and 4 seconds
+native_marker_selection	Ctrl-click selects M1 and M2 together; closing and reopening Region/Marker Manager preserves the selection; plain-click on an unselected row replaces it
+native_selected_markers_dialog	Selected markers; 2 markers; Render 2 files
+native_selected_marker_range_rule	The range ends at the next project marker, even when that marker is not selected; the final marker ends at media content end
+native_marker_m1_output	selected-marker-Marker 1.wav; [0,2) seconds; 96000 frames; PCM24 stereo 48000 Hz; SHA-256 d854ccc1f7e8db4d14ac3bf4202214c87cf9a1287bd161b3d434ce12e7780fa7
+native_marker_m3_output	selected-marker-Marker 3.wav; [4,5) seconds; 48000 frames; PCM24 stereo 48000 Hz; SHA-256 3b252de4dc00e7caa6a36fbd3ce4e68348032e8803320c6b950e324dc6c0147c
+native_selected_regions_dialog	Selected regions; 2 regions; Render 2 files
+native_empty_selection	With no selected rows, Selected markers falls back to all renderable project markers; Selected regions falls back to all project regions
+native_manager_screenshot	fixtures/render-selected-markers-manager-native.png; SHA-256 45c083958f0363405690fbf7b95adf95ae4c3248d5b1f815b326c3dbcc285093
+native_marker_render_screenshot	fixtures/render-selected-markers-native.png; SHA-256 9f32f4a49bf2585fb4e66bbab7c32430c81d6bc1bf10edc65876e393167ca46b
+native_region_render_screenshot	fixtures/render-selected-regions-native.png; SHA-256 af55d30d21df30cf68766319974d9a3b8eaedda017fe3e635761fa29f1d27907
+aaadaw_build	Linux x86_64; nightly Rust with Cranelift backend; Xvfb 1280x1024; audio-device feature disabled
+aaadaw_marker_fixture	One MIDI item and three markers; Ctrl-click M1 and M3; both rows remain selected after closing and reopening Manager
+aaadaw_marker_render_dialog	Selected markers; 2 markers; screenshot verifies the actual Render dialog state
+aaadaw_region_fixture	Generated 2.5-second MIDI project with three named regions and three named markers; Ctrl-click selected R1 and R3
+aaadaw_manager_marker_screenshot	fixtures/render-selected-markers-manager-aaadaw.png; SHA-256 1c297226d537903fe7e480e13484064d2018a4efb214aeb478a6f4523300e028
+aaadaw_marker_render_screenshot	fixtures/render-selected-markers-aaadaw.png; SHA-256 234a9175ed54a8b0ebbc1215221dcb10ecc904524d3b01930faeda9d13bc6ac8
+aaadaw_region_manager_screenshot	fixtures/render-selected-regions-manager-aaadaw.png; SHA-256 d43491dc6e6a094cbf041aec97497674ae0ffc1953bdac2805c9fe7e98dd333f
+fixture_generator	../../../crates/aaadaw/examples/generate_render_bounds_fixture.rs
+coverage_limit	The selected-region Render count and selected marker endpoint semantics are covered by unit/native output probes; no AAADAW WAV was written from this visual fixture

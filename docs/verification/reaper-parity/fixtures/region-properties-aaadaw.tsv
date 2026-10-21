@@ -1,0 +1,16 @@
+field	value
+aaadaw_environment	Linux AAADAW / Xvfb :134 / 1280x800 main window / isolated XDG profiles / audio unavailable
+aaadaw_binary_sha256	59bc8bfa475f11edc45e8eff911e63b1b003148b481ffbf07838ea4d58b86e44
+aaadaw_binary_build_id	b63071e4c3a3757051a9125dcafee4baa40453e9
+fixture_project	region-visibility-demo.aaadaw
+fixture_project_sha256	44b0c7e022e4766d0f0db418bce55181337be62b0f96715751d53d58e9a6c89e
+property_window_screenshot	region-properties-position-length-aaadaw.png
+property_window_screenshot_sha256	3a550d9694af20e3e73214e3423b7e844736fbd7bbf2ec242b31c98581dab5d8
+property_window_observation	The new desktop binary showed Name, ID, Position and Length; the sample Region displayed Position 1.1.00 and Length 0.2.00.
+manager_button_screenshot	region-properties-manager-aaadaw.png
+manager_button_screenshot_sha256	668c838101c342b79ab0b7be30f6bb8c253137509c44534a56e94e5872e790d8
+manager_button_observation	Clicked Region Manager... with the Manager closed. A new Region/Marker Manager window opened while the Edit Region properties window remained present in the X11 window tree.
+region_properties_app_test	region_manager_selects_edits_filters_and_deletes_with_undo
+region_properties_app_test_result	Included in aaadaw app suite: 572 passed; property test verifies Position/Length formatting and edit, one-step Undo, and the Manager launch state.
+verification	AAADAW test suite passed 572/572, strict app/test Clippy passed, fmt and git diff --check passed. Screenshots verify the live property controls and Manager button; no manual text-field key sequence is claimed.
+limitation	This slice does not implement Lane, Region Render Matrix, Set/Reset color or full Default 7 geometry/theme; PROJECT-REGIONS-001 remains in_progress.

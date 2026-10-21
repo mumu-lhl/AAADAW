@@ -1,0 +1,11 @@
+# Item Nudge Picker Keyboard Navigation
+
+This comparison covers the Mode, Target, Unit, and Note Value selectors in the Linux REAPER 7.82 / Default 7 `Nudge/Set Items` dialog and AAADAW's corresponding 528×121 window.
+
+In the REAPER 7.82 window, opening the Unit or Target list and pressing Arrow Down then Enter changes the selected value (`milliseconds` → `minutes:seconds`; `position` → `left trim`). Escape closes an open list and leaves the dialog available. The real REAPER captures show both the full native lists and the results; exact hashes and the Xvfb setup are in the [keyboard fixture record](fixtures/item-nudge-picker-keyboard.tsv).
+
+AAADAW's Mode, Target, Nudge Unit, Set Unit, and Note Value controls now use keyboard-navigable selectors with a visible down-arrow affordance. In the running desktop binary, Arrow Down and Enter changed Mode (`Nudge` → `Set`), Target (`position` → `left trim`), Unit (`milliseconds` → `minutes:seconds` and `milliseconds` → `notes`), and Note Value (`1/256` → `1/128`). Set exposes only its five supported units; Nudge exposes all ten units. One Escape with a list open dismisses that list while preserving the window; Escape after the list is closed closes the window. The actual 1280×800 Xvfb captures and SHA-256 values are recorded in the same fixture file.
+
+`item_nudge_keyboard_selectors_expose_only_native_mode_options` locks the five option sets. `item_nudge_combo_consumes_escape_before_closing_the_dialog` verifies that a captured Escape belongs to the selector before the dialog. The full Stable App suite passed 625/625; 57 focused `item_nudge_*` tests passed; workspace all-target Clippy with `-D warnings`, rustfmt, and `git diff --check` passed. Desktop binary SHA-256 `34fb01f29fb29602125f8934063a55967a21b77c829fcb86afee2125b463eb63` passed the bundled-Xvfb startup smoke. The 1280×800 startup screenshot SHA-256 `ae7790daa7323931332582152cd05219af623ac5530147835ee56910ba2ebd9b` matches the baseline.
+
+This verifies arrow selection after a list is opened and Escape's list/window priority. Keyboard-only opening, Tab order, repeated-key timing, type-to-filter behavior, and exact control/theme styling still need comparison. Other Nudge/Set semantics also remain open, so `ITEM-NUDGE-SET-001` stays `in_progress`.

@@ -1,9 +1,9 @@
 use aaadaw_core::{DawAction, Project};
-use aaadaw_engine::{AudioItemStream, AudioRenderGraph, pcm_stream};
+use aaadaw_engine::{AudioItemStream, AudioRenderGraph, TransportLoopRange, pcm_stream};
 use aaadaw_media::{
     AudioStreamDecoder, AudioWaveform, spawn_audio_item_stream, spawn_audio_item_stream_at,
-    spawn_audio_item_stream_from_reader_at, spawn_mono_stream,
-    spawn_stereo_audio_item_stream_from_reader,
+    spawn_audio_item_stream_from_reader, spawn_audio_item_stream_from_reader_at, spawn_mono_stream,
+    spawn_stereo_audio_item_stream_for_transport_loop, spawn_stereo_audio_item_stream_from_reader,
 };
 use aaadaw_storage::ProjectStore;
 use std::io::{Cursor, Read, Seek, SeekFrom};
@@ -211,6 +211,60 @@ fn decodes_wav_packets_as_interleaved_f32() {
 }
 
 #[test]
+fn audio_item_take_rate_changes_playback_speed() {
+    let path = wav_path();
+    let source = (0..48_000)
+        .map(|frame| {
+            (std::f64::consts::TAU * 1_000.0 * f64::from(frame) / 48_000.0)
+                .sin()
+                .mul_add(30_000.0, 0.0) as i16
+        })
+        .collect::<Vec<_>>();
+    std::fs::write(&path, pcm_wav(&source, 48_000)).expect("test WAV should be written");
+
+    let mut project = Project::new();
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Rate test".to_owned(),
+        })
+        .expect("audio track should be created");
+    project
+        .apply(DawAction::InsertAudioItem {
+            track_id: project.tracks()[0].id(),
+            media_ref: "asset://take-rate-test".to_owned(),
+            start_sample: 0,
+            source_offset_samples: 0,
+            length_samples: 38_400,
+        })
+        .expect("audio item should be inserted");
+    let item_id = project.audio_items()[0].id();
+    project
+        .apply(DawAction::SetAudioItemTakePlaybackRate {
+            item_id,
+            rate: 1.25,
+        })
+        .expect("non-unity Take rate should be stored");
+    let item = project.audio_items()[0].clone();
+    let (producer, mut consumer) = pcm_stream(40_000).expect("stream capacity should be positive");
+    let worker = spawn_audio_item_stream(&item, &path, 48_000, producer)
+        .expect("audio item worker should start");
+    worker.join().expect("Take-rate stream should finish");
+
+    let mut samples = vec![0.0; 38_400];
+    assert_eq!(consumer.read_into(&mut samples), 0);
+    let positive_zero_crossings = samples
+        .windows(2)
+        .filter(|pair| pair[0] <= 0.0 && pair[1] > 0.0)
+        .count();
+    assert!(
+        (995..=1_005).contains(&positive_zero_crossings),
+        "1.25x playback of a 1 kHz source should produce about 1,000 positive crossings, got {positive_zero_crossings}"
+    );
+    std::fs::remove_file(path).expect("test file should be removed");
+}
+
+#[test]
 fn waveform_peaks_keep_bin_boundaries_across_decoder_packets() {
     let samples = [vec![-16_384; 4_096], vec![16_384; 4_096], vec![0]].concat();
     let bytes = pcm_wav(&samples, 48_000);
@@ -272,7 +326,10 @@ fn decoded_audio_item_is_trimmed_resampled_and_scheduled_on_the_sample_clock() {
     let path = wav_path();
     std::fs::write(&path, pcm_wav(&[-32768, 0, 16384, 32767], 24_000))
         .expect("test WAV should be written");
-    let mut project = Project::new();
+    let mut project = Project::with_settings(
+        aaadaw_core::ProjectSettings::default()
+            .with_pan_mode(aaadaw_core::PanMode::LegacyMonoStereo),
+    );
     project
         .apply(DawAction::CreateTrack {
             index: 0,
@@ -289,6 +346,13 @@ fn decoded_audio_item_is_trimmed_resampled_and_scheduled_on_the_sample_clock() {
             length_samples: 4,
         })
         .expect("audio item should be inserted");
+    let item_id = project.audio_items()[0].id();
+    project
+        .apply(DawAction::SetAudioItemLoopSource {
+            item_id,
+            enabled: false,
+        })
+        .expect("test item should use one-pass source playback");
     let item = project.audio_items()[0].clone();
     let (producer, consumer) = pcm_stream(8).expect("stream capacity should be positive");
     let worker = spawn_audio_item_stream(&item, &path, 48_000, producer)
@@ -311,7 +375,7 @@ fn decoded_audio_item_is_trimmed_resampled_and_scheduled_on_the_sample_clock() {
     assert_eq!(stats.underrun_samples, 0);
     assert_eq!(output[..2], [[0.0, 0.0]; 2]);
     let center_gain = std::f32::consts::FRAC_1_SQRT_2;
-    let expected = [0.0, 0.25, 0.5, 49_151.0 / 65_536.0];
+    let expected = [0.0, 0.182_009_3, 0.5, 0.817_979_4];
     for (frame, expected_sample) in output[2..].iter().zip(expected) {
         assert!(
             (frame[0] - expected_sample * center_gain).abs() < 1.0e-5,
@@ -320,6 +384,896 @@ fn decoded_audio_item_is_trimmed_resampled_and_scheduled_on_the_sample_clock() {
         assert!((frame[1] - expected_sample * center_gain).abs() < 1.0e-5);
     }
     std::fs::remove_file(path).expect("test file should be removed");
+}
+
+#[test]
+fn non_looping_item_offset_past_source_eof_renders_silence_without_underrun() {
+    let path = wav_path();
+    std::fs::write(&path, pcm_wav(&[16_384; 4], 48_000)).expect("test WAV should be written");
+    let mut project = Project::with_settings(
+        aaadaw_core::ProjectSettings::default()
+            .with_pan_mode(aaadaw_core::PanMode::LegacyMonoStereo),
+    );
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Past source end".to_owned(),
+        })
+        .expect("audio track should be created");
+    project
+        .apply(DawAction::InsertAudioItem {
+            track_id: project.tracks()[0].id(),
+            media_ref: "asset://past-source-end".to_owned(),
+            start_sample: 0,
+            source_offset_samples: 5,
+            length_samples: 4,
+        })
+        .expect("item offset past source EOF is a valid placement");
+    let item = project.audio_items()[0].clone();
+    project
+        .apply(DawAction::SetAudioItemLoopSource {
+            item_id: item.id(),
+            enabled: false,
+        })
+        .expect("test item should use one-pass source playback");
+    let item = project.audio_items()[0].clone();
+    let (producer, consumer) = pcm_stream(8).expect("stream capacity should be positive");
+    let worker = spawn_audio_item_stream(&item, &path, 48_000, producer)
+        .expect("past-EOF item should start a worker");
+    worker.join().expect("EOF should finish the source stream");
+
+    let mut graph = AudioRenderGraph::new_for_audio_items(
+        &project,
+        vec![AudioItemStream::new(item.id(), consumer)],
+        4,
+    )
+    .expect("item stream should match project audio item");
+    graph.transport_mut().start();
+    let mut output = [[f32::NAN; 2]; 4];
+    let stats = graph
+        .render_into(&mut output)
+        .expect("past-EOF item should render silence");
+    assert_eq!(stats.underrun_samples, 0);
+    assert_eq!(output, [[0.0; 2]; 4]);
+    std::fs::remove_file(path).expect("test file should be removed");
+}
+
+#[test]
+fn negative_non_looping_item_offset_renders_leading_silence_then_source_audio() {
+    let path = wav_path();
+    std::fs::write(&path, pcm_wav(&[8_192, 16_384, 24_576, -8_192], 48_000))
+        .expect("test WAV should be written");
+    let mut project = Project::with_settings(
+        aaadaw_core::ProjectSettings::default()
+            .with_pan_mode(aaadaw_core::PanMode::LegacyMonoStereo),
+    );
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Pre-roll source".to_owned(),
+        })
+        .expect("audio track should be created");
+    project
+        .apply(DawAction::InsertAudioItem {
+            track_id: project.tracks()[0].id(),
+            media_ref: "asset://preroll-source".to_owned(),
+            start_sample: 0,
+            source_offset_samples: -2,
+            length_samples: 6,
+        })
+        .expect("negative source offset should be valid for a non-looping item");
+    let item = project.audio_items()[0].clone();
+    assert!(!item.is_loop_source());
+    let (producer, consumer) = pcm_stream(8).expect("stream capacity should be positive");
+    let worker = spawn_audio_item_stream(&item, &path, 48_000, producer)
+        .expect("negative-offset item should start a worker");
+    worker
+        .join()
+        .expect("worker should provide its leading silence");
+
+    let mut graph = AudioRenderGraph::new_for_audio_items(
+        &project,
+        vec![AudioItemStream::new(item.id(), consumer)],
+        6,
+    )
+    .expect("negative-offset stream should match project item");
+    graph.transport_mut().start();
+    let mut output = [[f32::NAN; 2]; 6];
+    let stats = graph
+        .render_into(&mut output)
+        .expect("negative-offset item should render");
+    assert_eq!(stats.underrun_samples, 0);
+    assert_eq!(output[..2], [[0.0; 2]; 2]);
+    let center_gain = std::f32::consts::FRAC_1_SQRT_2;
+    for (frame, expected_sample) in output[2..].iter().zip([0.25_f32, 0.5, 0.75, -0.25]) {
+        assert!((frame[0] - expected_sample * center_gain).abs() < 1.0e-5);
+        assert!((frame[1] - expected_sample * center_gain).abs() < 1.0e-5);
+    }
+    std::fs::remove_file(path).expect("test file should be removed");
+}
+
+#[test]
+fn negative_offset_in_disabled_bounded_section_prerolls_then_reads_only_that_section() {
+    let path = wav_path();
+    std::fs::write(
+        &path,
+        pcm_wav(
+            &[8_192, 16_384, 24_576, -8_192, -16_384, 8_192, 16_384, 0],
+            48_000,
+        ),
+    )
+    .expect("test WAV should be written");
+    let mut project = Project::with_settings(
+        aaadaw_core::ProjectSettings::default()
+            .with_pan_mode(aaadaw_core::PanMode::LegacyMonoStereo),
+    );
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Bounded pre-roll".to_owned(),
+        })
+        .expect("audio track should be created");
+    project
+        .apply(DawAction::InsertLoopedAudioItem {
+            track_id: project.tracks()[0].id(),
+            media_ref: "asset://bounded-preroll".to_owned(),
+            start_sample: 0,
+            source_offset_samples: 2,
+            length_samples: 8,
+            muted: false,
+            phase_inverted: false,
+            source_section_start_samples: 2,
+            source_section_length_samples: 3,
+        })
+        .expect("bounded loop should insert");
+    let item_id = project.audio_items()[0].id();
+    project
+        .apply(DawAction::SetAudioItemLoopSource {
+            item_id,
+            enabled: false,
+        })
+        .expect("bounded loop should be disabled");
+    project
+        .apply(DawAction::EditAudioItem {
+            item_id,
+            media_ref: "asset://bounded-preroll".to_owned(),
+            start_sample: 0,
+            source_offset_samples: -2,
+            length_samples: 8,
+        })
+        .expect("signed offset should be valid with looping disabled");
+    let item = project.audio_items()[0].clone();
+    assert_eq!(item.source_section_start_samples(), Some(2));
+    assert_eq!(item.source_section_length_samples(), Some(3));
+
+    let (producer, consumer) = pcm_stream(16).expect("stream capacity should be positive");
+    let worker = spawn_audio_item_stream(&item, &path, 48_000, producer)
+        .expect("bounded pre-roll worker should start");
+    worker
+        .join()
+        .expect("bounded section should be decoded once");
+    let mut graph = AudioRenderGraph::new_for_audio_items(
+        &project,
+        vec![AudioItemStream::new(item.id(), consumer)],
+        8,
+    )
+    .expect("bounded stream should match the project item");
+    graph.transport_mut().start();
+    let mut output = [[f32::NAN; 2]; 8];
+    let stats = graph
+        .render_into(&mut output)
+        .expect("bounded pre-roll should render");
+    assert_eq!(stats.underrun_samples, 0);
+    assert_eq!(output[..2], [[0.0; 2]; 2]);
+    let center_gain = std::f32::consts::FRAC_1_SQRT_2;
+    for (frame, expected_sample) in output[2..5].iter().zip([0.75_f32, -0.25, -0.5]) {
+        assert!((frame[0] - expected_sample * center_gain).abs() < 1.0e-5);
+        assert!((frame[1] - expected_sample * center_gain).abs() < 1.0e-5);
+    }
+    assert_eq!(output[5..], [[0.0; 2]; 3]);
+    std::fs::remove_file(path).expect("test file should be removed");
+}
+
+#[test]
+fn seeking_into_disabled_bounded_section_preroll_skips_elapsed_silence() {
+    let bytes = pcm_wav(
+        &[8_192, 16_384, 24_576, -8_192, -16_384, 8_192, 16_384, 0],
+        48_000,
+    );
+    let mut project = Project::new();
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Bounded seek pre-roll".to_owned(),
+        })
+        .expect("audio track should be created");
+    project
+        .apply(DawAction::InsertLoopedAudioItem {
+            track_id: project.tracks()[0].id(),
+            media_ref: "asset://bounded-seek-preroll".to_owned(),
+            start_sample: 10,
+            source_offset_samples: 2,
+            length_samples: 8,
+            muted: false,
+            phase_inverted: false,
+            source_section_start_samples: 2,
+            source_section_length_samples: 3,
+        })
+        .expect("bounded loop should insert");
+    let item_id = project.audio_items()[0].id();
+    project
+        .apply(DawAction::SetAudioItemLoopSource {
+            item_id,
+            enabled: false,
+        })
+        .expect("bounded loop should be disabled");
+    project
+        .apply(DawAction::EditAudioItem {
+            item_id,
+            media_ref: "asset://bounded-seek-preroll".to_owned(),
+            start_sample: 10,
+            source_offset_samples: -2,
+            length_samples: 8,
+        })
+        .expect("signed offset should be valid with looping disabled");
+    let item = project.audio_items()[0].clone();
+    let (producer, mut consumer) = pcm_stream(16).expect("stream capacity should be positive");
+    let worker = spawn_audio_item_stream_from_reader_at(
+        &item,
+        11,
+        Cursor::new(bytes.clone()),
+        Some(bytes.len() as u64),
+        Some("wav"),
+        48_000,
+        producer,
+    )
+    .expect("seek inside bounded pre-roll should start a worker");
+    worker.join().expect("bounded source should finish");
+    let mut output = [f32::NAN; 7];
+    assert_eq!(consumer.read_into(&mut output), 0);
+    assert_eq!(output[0], 0.0);
+    for (sample, expected) in output[1..4].iter().zip([0.75_f32, -0.25, -0.5]) {
+        assert!((sample - expected).abs() < 1.0e-5, "output: {output:?}");
+    }
+    assert_eq!(&output[4..], &[0.0; 3]);
+}
+
+#[test]
+fn seeking_into_negative_offset_preroll_skips_only_elapsed_silence() {
+    let bytes = pcm_wav(&[8_192, 16_384, 24_576, -8_192], 48_000);
+    let mut project = Project::new();
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Seek pre-roll".to_owned(),
+        })
+        .expect("audio track should be created");
+    project
+        .apply(DawAction::InsertAudioItem {
+            track_id: project.tracks()[0].id(),
+            media_ref: "asset://seek-preroll".to_owned(),
+            start_sample: 10,
+            source_offset_samples: -2,
+            length_samples: 6,
+        })
+        .expect("negative-offset item should insert");
+    let item = project.audio_items()[0].clone();
+    let (producer, mut consumer) = pcm_stream(8).expect("stream capacity should be positive");
+    let worker = spawn_audio_item_stream_from_reader_at(
+        &item,
+        11,
+        Cursor::new(bytes.clone()),
+        Some(bytes.len() as u64),
+        Some("wav"),
+        48_000,
+        producer,
+    )
+    .expect("seek inside leading silence should start a worker");
+    worker.join().expect("seeked source should finish");
+    let mut output = [f32::NAN; 5];
+    assert_eq!(consumer.read_into(&mut output), 0);
+    assert_eq!(output[0], 0.0);
+    for (sample, expected) in output[1..].iter().zip([0.25_f32, 0.5, 0.75, -0.25]) {
+        assert!((sample - expected).abs() < 1.0e-5, "output: {output:?}");
+    }
+}
+
+#[test]
+fn non_looping_item_pads_short_source_with_silence_to_item_end() {
+    let path = wav_path();
+    std::fs::write(&path, pcm_wav(&[16_384; 4], 48_000)).expect("test WAV should be written");
+    let mut project = Project::with_settings(
+        aaadaw_core::ProjectSettings::default()
+            .with_pan_mode(aaadaw_core::PanMode::LegacyMonoStereo),
+    );
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Short source".to_owned(),
+        })
+        .expect("audio track should be created");
+    project
+        .apply(DawAction::InsertAudioItem {
+            track_id: project.tracks()[0].id(),
+            media_ref: "asset://short-source".to_owned(),
+            start_sample: 0,
+            source_offset_samples: 0,
+            length_samples: 6,
+        })
+        .expect("item may extend beyond the source end");
+    let item = project.audio_items()[0].clone();
+    project
+        .apply(DawAction::SetAudioItemLoopSource {
+            item_id: item.id(),
+            enabled: false,
+        })
+        .expect("test item should use one-pass source playback");
+    let item = project.audio_items()[0].clone();
+    let (producer, consumer) = pcm_stream(8).expect("stream capacity should be positive");
+    let worker = spawn_audio_item_stream(&item, &path, 48_000, producer)
+        .expect("short source item should start a worker");
+    worker.join().expect("EOF should finish the source stream");
+
+    let mut graph = AudioRenderGraph::new_for_audio_items(
+        &project,
+        vec![AudioItemStream::new(item.id(), consumer)],
+        6,
+    )
+    .expect("item stream should match project audio item");
+    graph.transport_mut().start();
+    let mut output = [[f32::NAN; 2]; 6];
+    let stats = graph
+        .render_into(&mut output)
+        .expect("short source item should render through its timeline end");
+    assert_eq!(stats.underrun_samples, 0);
+    assert!(
+        output[..4]
+            .iter()
+            .all(|frame| frame[0] > 0.0 && frame[1] > 0.0)
+    );
+    assert_eq!(output[4..], [[0.0; 2]; 2]);
+    std::fs::remove_file(path).expect("test file should be removed");
+}
+
+#[test]
+fn looped_audio_item_reopens_seekable_source_and_repeats_the_bounded_section() {
+    let bytes = pcm_wav(&[8_192, 16_384, 24_576, -8_192], 48_000);
+    let mut project = Project::with_settings(
+        aaadaw_core::ProjectSettings::default()
+            .with_pan_mode(aaadaw_core::PanMode::LegacyMonoStereo),
+    );
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Looped audio".to_owned(),
+        })
+        .expect("audio track should be created");
+    project
+        .apply(DawAction::InsertLoopedAudioItem {
+            track_id: project.tracks()[0].id(),
+            media_ref: "asset://looped-wav".to_owned(),
+            start_sample: 0,
+            source_offset_samples: 2,
+            phase_inverted: false,
+            source_section_start_samples: 1,
+            length_samples: 10,
+            muted: false,
+            source_section_length_samples: 3,
+        })
+        .expect("looped audio item should be inserted");
+    let item = project.audio_items()[0].clone();
+    let (producer, consumer) = pcm_stream(16).expect("queue should fit the repeated section");
+    let worker = spawn_audio_item_stream_from_reader(
+        &item,
+        Cursor::new(bytes.clone()),
+        Some(bytes.len() as u64),
+        Some("wav"),
+        48_000,
+        producer,
+    )
+    .expect("looped item feeder should start");
+    worker
+        .join()
+        .expect("worker should repeat the bounded source section");
+
+    let mut graph = AudioRenderGraph::new_for_audio_items(
+        &project,
+        vec![AudioItemStream::new(item.id(), consumer)],
+        10,
+    )
+    .expect("looped item stream should match the project item");
+    graph.transport_mut().start();
+    let mut output = [[0.0; 2]; 10];
+    let stats = graph
+        .render_into(&mut output)
+        .expect("looped audio should render");
+    assert_eq!(stats.underrun_samples, 0);
+    let center_gain = std::f32::consts::FRAC_1_SQRT_2;
+    let expected = [
+        -0.25_f32, 0.5, 0.75, -0.25, 0.5, 0.75, -0.25, 0.5, 0.75, -0.25,
+    ];
+    for (frame, expected_sample) in output.iter().zip(expected) {
+        assert!(
+            (frame[0] - expected_sample * center_gain).abs() < 1.0e-4,
+            "output: {output:?}"
+        );
+        assert!((frame[1] - expected_sample * center_gain).abs() < 1.0e-4);
+    }
+
+    let (producer, consumer) = pcm_stream(16).expect("seek queue should fit the repeated section");
+    let worker = spawn_audio_item_stream_from_reader_at(
+        &item,
+        4,
+        Cursor::new(bytes.clone()),
+        Some(bytes.len() as u64),
+        Some("wav"),
+        48_000,
+        producer,
+    )
+    .expect("looped item seek feeder should start");
+    worker
+        .join()
+        .expect("worker should seek within the repeated source section");
+    let mut graph = AudioRenderGraph::new_for_audio_items(
+        &project,
+        vec![AudioItemStream::new_at_sample(item.id(), 4, consumer)],
+        6,
+    )
+    .expect("seeked loop stream should match the project item");
+    graph.transport_mut().seek_sample(4);
+    graph.transport_mut().start();
+    let mut output = [[0.0; 2]; 6];
+    let stats = graph
+        .render_into(&mut output)
+        .expect("seeked loop source should render");
+    assert_eq!(stats.underrun_samples, 0);
+    let expected = [0.5_f32, 0.75, -0.25, 0.5, 0.75, -0.25];
+    for (frame, expected_sample) in output.iter().zip(expected) {
+        assert!((frame[0] - expected_sample * center_gain).abs() < 1.0e-4);
+        assert!((frame[1] - expected_sample * center_gain).abs() < 1.0e-4);
+    }
+}
+
+#[test]
+fn disabled_loop_source_plays_a_bounded_section_once_then_stops() {
+    let bytes = pcm_wav(&[8_192, 16_384, 24_576, -8_192], 48_000);
+    let mut project = Project::with_settings(
+        aaadaw_core::ProjectSettings::default()
+            .with_pan_mode(aaadaw_core::PanMode::LegacyMonoStereo),
+    );
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Bounded source".to_owned(),
+        })
+        .expect("audio track should be created");
+    project
+        .apply(DawAction::InsertLoopedAudioItem {
+            track_id: project.tracks()[0].id(),
+            media_ref: "asset://bounded-source-once".to_owned(),
+            start_sample: 0,
+            source_offset_samples: 2,
+            phase_inverted: false,
+            source_section_start_samples: 1,
+            length_samples: 10,
+            muted: false,
+            source_section_length_samples: 3,
+        })
+        .expect("bounded source should be inserted");
+    let item_id = project.audio_items()[0].id();
+    project
+        .apply(DawAction::SetAudioItemLoopSource {
+            item_id,
+            enabled: false,
+        })
+        .expect("looping should be disabled");
+    let item = project.audio_items()[0].clone();
+
+    let (producer, consumer) = pcm_stream(16).expect("queue should fit source section");
+    let worker = spawn_audio_item_stream_from_reader(
+        &item,
+        Cursor::new(bytes.clone()),
+        Some(bytes.len() as u64),
+        Some("wav"),
+        48_000,
+        producer,
+    )
+    .expect("bounded source feeder should start");
+    worker.join().expect("worker should stop at section end");
+
+    let mut graph = AudioRenderGraph::new_for_audio_items(
+        &project,
+        vec![AudioItemStream::new(item.id(), consumer)],
+        10,
+    )
+    .expect("single-pass item stream should match project item");
+    graph.transport_mut().start();
+    let mut output = [[0.0; 2]; 10];
+    graph
+        .render_into(&mut output)
+        .expect("single-pass section should render");
+    let center_gain = std::f32::consts::FRAC_1_SQRT_2;
+    for (frame, expected_sample) in output[..1].iter().zip([-0.25_f32]) {
+        assert!((frame[0] - expected_sample * center_gain).abs() < 1.0e-4);
+        assert!((frame[1] - expected_sample * center_gain).abs() < 1.0e-4);
+    }
+    assert_eq!(output[1..], [[0.0, 0.0]; 9]);
+}
+
+#[test]
+fn looped_audio_item_without_a_bounded_section_repeats_the_entire_source() {
+    let bytes = pcm_wav(&[8_192, 16_384, 24_576, -8_192], 48_000);
+    let mut project = Project::with_settings(
+        aaadaw_core::ProjectSettings::default()
+            .with_pan_mode(aaadaw_core::PanMode::LegacyMonoStereo),
+    );
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Whole-source loop".to_owned(),
+        })
+        .expect("audio track should be created");
+    project
+        .apply(DawAction::InsertAudioItem {
+            track_id: project.tracks()[0].id(),
+            media_ref: "asset://whole-source-loop".to_owned(),
+            start_sample: 0,
+            source_offset_samples: 1,
+            length_samples: 10,
+        })
+        .expect("audio item should be inserted");
+    let mut snapshot = project.snapshot();
+    snapshot.audio_items[0].loop_source = true;
+    let project = Project::from_snapshot(snapshot).expect("whole-source loop should be valid");
+    let item = project.audio_items()[0].clone();
+    let (producer, consumer) = pcm_stream(16).expect("queue should fit repeated source frames");
+    let worker = spawn_audio_item_stream_from_reader(
+        &item,
+        Cursor::new(bytes.clone()),
+        Some(bytes.len() as u64),
+        Some("wav"),
+        48_000,
+        producer,
+    )
+    .expect("whole-source loop feeder should start");
+    worker
+        .join()
+        .expect("worker should restart the complete source at EOF");
+
+    let mut graph = AudioRenderGraph::new_for_audio_items(
+        &project,
+        vec![AudioItemStream::new(item.id(), consumer)],
+        10,
+    )
+    .expect("whole-source stream should match the item");
+    graph.transport_mut().start();
+    let mut output = [[0.0; 2]; 10];
+    let stats = graph
+        .render_into(&mut output)
+        .expect("whole-source loop should render");
+    assert_eq!(stats.underrun_samples, 0);
+    let center_gain = std::f32::consts::FRAC_1_SQRT_2;
+    let expected = [
+        0.5_f32, 0.75, -0.25, 0.25, 0.5, 0.75, -0.25, 0.25, 0.5, 0.75,
+    ];
+    for (frame, expected_sample) in output.iter().zip(expected) {
+        assert!(
+            (frame[0] - expected_sample * center_gain).abs() < 1.0e-4,
+            "output: {output:?}"
+        );
+        assert!((frame[1] - expected_sample * center_gain).abs() < 1.0e-4);
+    }
+}
+
+#[test]
+fn looped_audio_item_rejects_a_source_section_that_runs_past_eof() {
+    let bytes = pcm_wav(&[8_192, 16_384, 24_576, -8_192], 48_000);
+    let mut project = Project::new();
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Invalid loop".to_owned(),
+        })
+        .expect("audio track should be created");
+    project
+        .apply(DawAction::InsertLoopedAudioItem {
+            track_id: project.tracks()[0].id(),
+            media_ref: "asset://invalid-loop".to_owned(),
+            start_sample: 0,
+            source_offset_samples: 0,
+            phase_inverted: false,
+            source_section_start_samples: 3,
+            length_samples: 8,
+            muted: false,
+            source_section_length_samples: 2,
+        })
+        .expect("looped item metadata should be structurally valid");
+    let item = &project.audio_items()[0];
+    let (producer, _consumer) = pcm_stream(16).expect("queue should fit the source section");
+    let worker = spawn_audio_item_stream_from_reader(
+        item,
+        Cursor::new(bytes.clone()),
+        Some(bytes.len() as u64),
+        Some("wav"),
+        48_000,
+        producer,
+    )
+    .expect("worker should start before the media bounds are decoded");
+    assert!(matches!(
+        worker.join(),
+        Err(aaadaw_media::MediaError::AudioLoopSectionExceedsSource)
+    ));
+}
+
+#[test]
+fn looped_stereo_audio_item_repeats_through_the_realtime_stereo_stream() {
+    let bytes = stereo_pcm_wav(
+        &[[8_192, -8_192], [16_384, -16_384], [24_576, -24_576]],
+        48_000,
+    );
+    let mut project = Project::new();
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Looped stereo".to_owned(),
+        })
+        .expect("audio track should be created");
+    project
+        .apply(DawAction::InsertLoopedAudioItem {
+            track_id: project.tracks()[0].id(),
+            media_ref: "asset://looped-stereo".to_owned(),
+            start_sample: 0,
+            source_offset_samples: 0,
+            phase_inverted: false,
+            source_section_start_samples: 0,
+            length_samples: 5,
+            muted: false,
+            source_section_length_samples: 2,
+        })
+        .expect("stereo looped item should be inserted");
+    let item = project.audio_items()[0].clone();
+    let (producer, consumer) =
+        aaadaw_engine::stereo_pcm_stream(8).expect("stereo queue should have capacity");
+    let worker = spawn_stereo_audio_item_stream_from_reader(
+        &item,
+        Cursor::new(bytes.clone()),
+        Some(bytes.len() as u64),
+        Some("wav"),
+        48_000,
+        producer,
+    )
+    .expect("stereo loop feeder should start");
+    worker
+        .join()
+        .expect("stereo worker should repeat the bounded source section");
+
+    let mut graph = AudioRenderGraph::new_for_audio_items(
+        &project,
+        vec![AudioItemStream::new_stereo(item.id(), consumer)],
+        5,
+    )
+    .expect("stereo stream should match the looped item");
+    graph.transport_mut().start();
+    let mut output = [[0.0; 2]; 5];
+    let stats = graph
+        .render_into(&mut output)
+        .expect("stereo loop source should render");
+    assert_eq!(stats.underrun_samples, 0);
+    let expected = [
+        [0.25_f32, -0.25],
+        [0.5, -0.5],
+        [0.25, -0.25],
+        [0.5, -0.5],
+        [0.25, -0.25],
+    ];
+    for (frame, expected) in output.iter().zip(expected) {
+        assert!((frame[0] - expected[0]).abs() < 1.0e-4);
+        assert!((frame[1] - expected[1]).abs() < 1.0e-4);
+    }
+}
+
+#[test]
+fn file_backed_transport_loop_feeder_repeats_project_sample_tags() {
+    let path = wav_path();
+    let source_frames: Vec<_> = (0_i16..16)
+        .map(|index| {
+            let sample = (index - 8) * 2_048;
+            [sample, -sample]
+        })
+        .collect();
+    std::fs::write(&path, stereo_pcm_wav(&source_frames, 48_000))
+        .expect("test WAV should be written");
+
+    let mut project = Project::new();
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Transport loop feeder".to_owned(),
+        })
+        .expect("track should be created");
+    let loop_range = TransportLoopRange::new(16, 32).expect("loop should be nonempty");
+    project
+        .apply(DawAction::InsertLoopedAudioItem {
+            track_id: project.tracks()[0].id(),
+            media_ref: "asset://transport-loop-feeder".to_owned(),
+            start_sample: loop_range.start_sample(),
+            source_offset_samples: 0,
+            phase_inverted: false,
+            source_section_start_samples: 0,
+            length_samples: loop_range.length_samples(),
+            muted: false,
+            source_section_length_samples: loop_range.length_samples(),
+        })
+        .expect("looped audio item should be inserted");
+    let item = project.audio_items()[0].clone();
+    let (producer, consumer) =
+        aaadaw_engine::stereo_pcm_stream(64).expect("queue should have capacity");
+    let mut worker = spawn_stereo_audio_item_stream_for_transport_loop(
+        &item, loop_range, &path, 48_000, producer,
+    )
+    .expect("matching bounded source loop should start");
+    worker.wait_ready().expect("media source should open");
+
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while consumer.available_frames() < 48 && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    assert!(consumer.available_frames() >= 48, "loop PCM should prefill");
+
+    let position = worker.timeline_position();
+    let stream = AudioItemStream::new_stereo_looping_at_sample_with_position(
+        item.id(),
+        item.start_sample(),
+        loop_range,
+        consumer,
+        position.clone(),
+    );
+    let mut graph = AudioRenderGraph::new_for_audio_items(&project, vec![stream], 48)
+        .expect("loop feeder should match its audio item");
+    graph.transport_mut().set_loop_range(Some(loop_range));
+    graph.transport_mut().seek_sample(loop_range.start_sample());
+    graph.transport_mut().start();
+
+    let mut output = [[0.0_f32; 2]; 48];
+    let stats = graph
+        .render_into(&mut output)
+        .expect("queued loop PCM should render through two wraps");
+    assert_eq!(stats.underrun_samples, 0);
+    for (frame_index, frame) in output.iter().enumerate() {
+        let source_index = frame_index % source_frames.len();
+        let expected = [
+            source_frames[source_index][0] as f32 / 32_768.0,
+            source_frames[source_index][1] as f32 / 32_768.0,
+        ];
+        assert!((frame[0] - expected[0]).abs() < 1.0e-6);
+        assert!((frame[1] - expected[1]).abs() < 1.0e-6);
+    }
+    assert_eq!(position.requested_sample(), loop_range.start_sample());
+    worker.cancel().expect("loop feeder should stop cleanly");
+    std::fs::remove_file(path).expect("test file should be removed");
+}
+
+#[test]
+fn looped_cached_source_restarts_at_the_bounded_source_section() {
+    let bytes = stereo_pcm_wav(
+        &[[8_192, -8_192], [16_384, -16_384], [24_576, -24_576]],
+        48_000,
+    );
+    let source = aaadaw_media::decode_audio_source_for_cache(
+        Cursor::new(bytes.clone()),
+        Some(bytes.len() as u64),
+        Some("wav"),
+        1_024,
+    )
+    .expect("small test source should decode for cache")
+    .expect("test source should fit the cache budget");
+    let mut project = Project::new();
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Cached loop".to_owned(),
+        })
+        .expect("audio track should be created");
+    project
+        .apply(DawAction::InsertLoopedAudioItem {
+            track_id: project.tracks()[0].id(),
+            media_ref: "asset://cached-loop".to_owned(),
+            start_sample: 0,
+            source_offset_samples: 1,
+            phase_inverted: false,
+            source_section_start_samples: 1,
+            length_samples: 5,
+            muted: false,
+            source_section_length_samples: 2,
+        })
+        .expect("cached loop item should be inserted");
+    let item = &project.audio_items()[0];
+    let (producer, consumer) =
+        aaadaw_engine::stereo_pcm_stream(8).expect("stereo queue should have capacity");
+    let worker = aaadaw_media::spawn_cached_stereo_audio_item_stream_with_quality(
+        item,
+        3,
+        Arc::new(source),
+        48_000,
+        producer,
+        aaadaw_media::ResamplingQuality::Sinc192,
+    )
+    .expect("cached loop feeder should start");
+    worker
+        .join()
+        .expect("cached worker should repeat the bounded source section");
+
+    let mut graph = AudioRenderGraph::new_for_audio_items(
+        &project,
+        vec![AudioItemStream::new_stereo_at_sample(
+            item.id(),
+            3,
+            consumer,
+        )],
+        2,
+    )
+    .expect("cached stream should match the looped item");
+    graph.transport_mut().seek_sample(3);
+    graph.transport_mut().start();
+    let mut output = [[0.0; 2]; 2];
+    let stats = graph
+        .render_into(&mut output)
+        .expect("cached loop source should render");
+    assert_eq!(stats.underrun_samples, 0);
+    let expected = [[0.5_f32, -0.5], [0.75, -0.75]];
+    for (frame, expected) in output.iter().zip(expected) {
+        assert!((frame[0] - expected[0]).abs() < 1.0e-4);
+        assert!((frame[1] - expected[1]).abs() < 1.0e-4);
+    }
+}
+
+#[test]
+fn large_looped_reader_rewinds_the_decoder_for_each_source_cycle() {
+    let loop_frames = 262_145_u64;
+    let bytes = pcm_wav(&vec![8_192; loop_frames as usize], 48_000);
+    let mut project = Project::new();
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Large loop".to_owned(),
+        })
+        .expect("audio track should be created");
+    project
+        .apply(DawAction::InsertLoopedAudioItem {
+            track_id: project.tracks()[0].id(),
+            media_ref: "asset://large-loop".to_owned(),
+            start_sample: 0,
+            source_offset_samples: 0,
+            phase_inverted: false,
+            source_section_start_samples: 0,
+            length_samples: loop_frames + 1,
+            muted: false,
+            source_section_length_samples: loop_frames,
+        })
+        .expect("large looped item should be inserted");
+    let item = &project.audio_items()[0];
+    let (producer, mut consumer) =
+        pcm_stream((loop_frames + 1) as usize).expect("queue should hold both loop cycles");
+    let worker = spawn_audio_item_stream_from_reader(
+        item,
+        Cursor::new(bytes.clone()),
+        Some(bytes.len() as u64),
+        Some("wav"),
+        48_000,
+        producer,
+    )
+    .expect("large loop feeder should start");
+    worker
+        .join()
+        .expect("worker should rewind the decoder at the loop boundary");
+
+    let mut output = vec![0.0; (loop_frames + 1) as usize];
+    assert_eq!(consumer.read_into(&mut output), 0);
+    assert!(
+        output[loop_frames as usize - 2..]
+            .iter()
+            .all(|sample| (*sample - 0.25).abs() < 1.0e-4)
+    );
 }
 
 #[test]
@@ -336,7 +1290,10 @@ fn delayed_stereo_reader_skips_pcm_that_falls_behind_the_playhead() {
         byte_position: Arc::clone(&byte_position),
     };
 
-    let mut project = Project::new();
+    let mut project = Project::with_settings(
+        aaadaw_core::ProjectSettings::default()
+            .with_pan_mode(aaadaw_core::PanMode::LegacyMonoStereo),
+    );
     project
         .apply(DawAction::CreateTrack {
             index: 0,
@@ -420,7 +1377,8 @@ fn delayed_stereo_reader_skips_pcm_that_falls_behind_the_playhead() {
     let blocked_at = gate
         .blocked_position()
         .expect("blocked reader should report its source position");
-    let target_source_byte = 44 + (item.source_offset_samples() + target_offset + 2) * 4;
+    let target_source_byte =
+        44 + (u64::try_from(item.source_offset_samples()).unwrap() + target_offset + 2) * 4;
     assert!(
         blocked_at < target_source_byte,
         "reader should block before target samples are read; blocked at {blocked_at}, target starts at {target_source_byte}"
@@ -500,7 +1458,10 @@ fn embedded_sqlite_audio_asset_decodes_into_an_audio_item_stream() {
         .audio_asset_reader("asset://embedded-wav")
         .expect("embedded asset should resolve to a reader");
 
-    let mut project = Project::new();
+    let mut project = Project::with_settings(
+        aaadaw_core::ProjectSettings::default()
+            .with_pan_mode(aaadaw_core::PanMode::LegacyMonoStereo),
+    );
     project
         .apply(DawAction::CreateTrack {
             index: 0,
@@ -563,7 +1524,10 @@ fn file_backed_audio_item_stream_can_refill_at_a_timeline_seek() {
     let path = wav_path();
     std::fs::write(&path, pcm_wav(&[0, 8192, 16384, 24576], 48_000))
         .expect("test WAV should be written");
-    let mut project = Project::new();
+    let mut project = Project::with_settings(
+        aaadaw_core::ProjectSettings::default()
+            .with_pan_mode(aaadaw_core::PanMode::LegacyMonoStereo),
+    );
     project
         .apply(DawAction::CreateTrack {
             index: 0,

@@ -1,0 +1,15 @@
+version	7.82/linux-x86_64
+theme	Default_7.0.ReaperThemeZip
+audio_device	Dummy Audio; no hardware I/O
+fixture	3 tracks; 13 media items; mixed Audio/MIDI; time selection [1,3]
+case	action_id	items_before	items_after	tracks_before	tracks_after	cursor_before	cursor_after	time_selection	project_state_change_delta	undo_before	undo_after	redo_before	redo_after
+select_all_items	40182		A_after,A_before,A_end,A_inside,A_spans_end,A_start,B_end,B_inside,B_midi_spans_end,B_midi_start,B_start,C_end,C_start			0.000000	0.000000	0.000000..0.000000	1		Select all items		
+select_all_items_in_one_track_A	40421		A_after,A_before,A_end,A_inside,A_spans_end,A_start	A	A	0.000000	0.000000	0.000000..0.000000	1	Select all items	Select all items in selected tracks		
+select_all_items_in_tracks_A_then_B	40421		A_after,A_before,A_end,A_inside,A_spans_end,A_start,B_end,B_inside,B_midi_spans_end,B_midi_start,B_start	A,B	A,B	0.000000	0.000000	0.000000..0.000000	1	Select all items in selected tracks	Select all items in selected tracks		
+select_all_items_in_tracks_B_then_A	40421		A_after,A_before,A_end,A_inside,A_spans_end,A_start,B_end,B_inside,B_midi_spans_end,B_midi_start,B_start	A,B	A,B	0.000000	0.000000	0.000000..0.000000	1	Select all items in selected tracks	Select all items in selected tracks		
+select_items_overlapping_time_selection	40717		A_inside,A_spans_end,A_start,B_inside,B_midi_spans_end,B_midi_start,B_start,C_start			0.000000	0.000000	1.000000..3.000000	1	Select all items in selected tracks	Select items in time selection		
+select_items_on_selected_tracks_overlapping_time_selection	40718		A_inside,A_spans_end,A_start,C_start	A,C	A,C	0.000000	0.000000	1.000000..3.000000	1	Select items in time selection	Select items in time selection		
+unselect_all_items_preserves_other_view_state	40289	A_after,A_before,A_end,A_inside,A_spans_end,A_start,B_end,B_inside,B_midi_spans_end,B_midi_start,B_start,C_end,C_start		C	C	4.000000	4.000000	1.000000..3.000000	1	Select all items	Unselect all items		
+undo_after_unselect	40029		A_after,A_before,A_end,A_inside,A_spans_end,A_start,B_end,B_inside,B_midi_spans_end,B_midi_start,B_start,C_end,C_start		C		4.000000		1	Unselect all items	Select all items		Unselect all items
+unselect_all_after_undo_branches_history	40289	A_after,A_before,A_end,A_inside,A_spans_end,A_start,B_end,B_inside,B_midi_spans_end,B_midi_start,B_start,C_end,C_start		C	C	4.000000	4.000000	1.000000..3.000000	1	Select all items	Unselect all items	Unselect all items	
+unselect_all_when_already_empty	40289			C	C	4.000000	4.000000	1.000000..3.000000	0	Unselect all items	Unselect all items		

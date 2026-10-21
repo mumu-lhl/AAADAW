@@ -1,0 +1,4 @@
+KEY 1 120 41226 0		 # Main : F9 : Item edit: Nudge/Set...
+KEY 1 121 41182 0		 # Main : F10 : Item: Snap items left
+KEY 1 122 40182 0		 # Main : F11 : Item: Select all items
+KEY 1 123 40632 0		 # Main : F12 : Go to start of loop

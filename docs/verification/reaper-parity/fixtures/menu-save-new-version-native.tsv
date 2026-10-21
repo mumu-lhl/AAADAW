@@ -1,0 +1,11 @@
+version	7.82/linux-x86_64
+theme	Default_7.0.ReaperThemeZip
+action	41895	File: Save new version of project (automatically increment project name)
+shortcut	Ctrl+Alt+Shift+S
+baseline_path	save-version-probe.rpp
+first_version_path	save-version-probe_001.rpp
+second_version_path	save-version-probe_002.rpp
+file	save-version-probe_002.rpp
+file	save-new-version-probe.tsv
+file	save-version-probe.rpp
+file	save-version-probe_001.rpp

@@ -1,0 +1,32 @@
+version	7.82/linux-x86_64
+theme	Default_7.0.ReaperThemeZip
+fixture	track Piano; item 0.25-1.25 seconds; C4 note, CC1, pitch bend
+project_frame_rate	30 fps; non-drop; Project Settings / Video
+project_time_offset_seconds	10.500000000
+project_time_offset_timecode	00:00:10:15
+project_offset_fixture_method	native RPP PROJOFFS 10.5 0 0; reopened in REAPER and verified with GetProjectTimeOffset
+native_project_fixture	fixtures/menu-export-midi-native-smpte-nonzero-offset.rpp
+native_project_fixture_sha256	392b76733bc0c5de24b6e40030a0d0542f691551c7a0d7cd9f22a310840a59fe
+project_start_time_screenshot	fixtures/menu-export-midi-native-smpte-nonzero-offset-project-start-time.png
+project_start_time_screenshot_sha256	ed1ce37d39b0e0fef3f86509c9725b32a708ebab2a1f323a6a48e5413d9ad5c8
+video_frame_rate_screenshot	fixtures/menu-export-midi-native-smpte-nonzero-offset-video-frame-rate.png
+video_frame_rate_screenshot_sha256	90e50b0486e4038642f2fcfe8c83ab6ab462d624b104c2ce25e1973340df79b5
+take_local_ppq_events	note-on 0; CC1 240; pitch bend 360; note-off 960
+project_ppq_events	note-on 480; CC1 720; pitch bend 840; note-off 1440
+export_action	40849
+export_mode	Multitrack MIDI file (type 1 MIDI file)
+export_ppqn	960
+export_tempo_meter_changes	unchecked
+export_smpte_offset	checked
+export_markers	disabled because project has no markers
+native_smpte_offset_event	FF 54 05 60 00 0A 0F 00 (30 fps, 00:00:10:15)
+native_event_order	track name; SMPTE offset; time signature; tempo
+native_conductor_events	destination-derived name; SMPTE offset, 4/4, and 120 BPM at tick 0; End-of-Track tick 0
+native_midi_track_events	Piano note-on tick 480, CC1 tick 720, pitch bend tick 840, note-off and End-of-Track tick 1440
+native_export_path	/tmp/midi-smpte-offset-native-20261016.mid
+native_export_bytes	127
+native_export_sha256	4075a2290df914f09c4f50a90ec697da0ae979cd8015fe39bcd0fc695beb3571
+native_dialog_screenshot	fixtures/menu-export-midi-native-smpte-nonzero-offset-dialog.png
+native_dialog_screenshot_sha256	a4ea8bb533b2defba67b03269b7db6c7690e8e21f6ed81cb25dda4f050548296
+native_binary_fixture	fixtures/menu-export-midi-native-smpte-nonzero-offset.mid
+native_probe	scripts/reaper_parity/probe-midi-export-smpte-offset.lua

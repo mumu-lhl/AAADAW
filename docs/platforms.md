@@ -38,6 +38,21 @@ names. A running server and a working audio route are required for playback.
 The Linux build enables X11 and Wayland Iced shells; the host needs a compatible
 display server and graphics stack to launch the desktop application.
 
+For optional local debug builds, nightly Rust can use the experimental Cranelift
+codegen backend. Install the nightly toolchain and its Cranelift codegen
+component, then keep this build in a separate target directory:
+
+```sh
+CARGO_TARGET_DIR=target/cranelift \
+CARGO_PROFILE_DEV_CODEGEN_BACKEND=cranelift \
+cargo +nightly -Zcodegen-backend build -p aaadaw
+```
+
+Cranelift changes code generation, so it may shorten debug builds but does not
+speed up parsing, type checking, build scripts, or linking. Measure it against
+the stable LLVM build for the local workload. Use stable Rust for release builds
+and CI; nightly Cranelift is not the project’s release validation backend.
+
 ## Windows
 
 Install the stable Rust MSVC toolchain and Visual Studio Build Tools with the

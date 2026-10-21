@@ -1,0 +1,32 @@
+{
+  "evidence_id": "LNX-782-ACTIONS-001",
+  "captured_at_utc": "2026-10-09T15:14:00Z",
+  "capture_time_precision": "minute",
+  "version": "7.82/linux-x86_64",
+  "archive_url": "https://www.reaper.fm/files/7.x/reaper782_linux_x86_64.tar.xz",
+  "archive_sha256": "a4aa961534f22ae5ae910e4ec0c200dcb4476c9f7556806fe09a9743cd582563",
+  "distribution": "Debian GNU/Linux 13 (trixie)",
+  "architecture": "x86_64",
+  "display": "Xvfb :99, X11, 1920x1080x24",
+  "window_manager_at_export": "none; Openbox added after export for GUI checks",
+  "theme": "ColorThemes/Default_7.0.ReaperThemeZip",
+  "configuration": "new isolated directory; no custom bindings or extensions",
+  "resource_directory_at_capture": "/tmp/aaadaw-reaper-782/config",
+  "audio": "no hardware device; startup audio device error; not an audio acceptance run",
+  "script": "scripts/reaper_parity/export-reference.lua",
+  "scope": "enumerated action IDs, names, and shortcut descriptions for six sections only",
+  "limitations": [
+    "not a complete UI or preferences inventory",
+    "alternate recording section is enumerated but has no explicit shortcut bindings",
+    "script execution may appear in transient status; no script registered as a custom action",
+    "virtual display is not a hardware/DPI performance baseline"
+  ],
+  "files": {
+    "actions.tsv": {
+      "sha256": "15a0ea874ca14157eb9bd6a1da1a047d7f5c1b1608d0a3d47730f03966ad6bdb"
+    },
+    "sections.tsv": {
+      "sha256": "28977c206cff9111b2ac6189c5f37abf1cb9d771263aa1f806028548a7b9c7de"
+    }
+  }
+}

@@ -1,0 +1,20 @@
+version	7.82/linux-x86_64
+theme	Default_7.0.ReaperThemeZip
+export_action	40849 / File: Export project MIDI...
+project	fixtures/menu-export-midi-native-smpte-selection-offset.rpp; SHA-256 4663fa8e11b6ca7a8d6f2550b8f6af790b7fd1d4ad8930c7f4153feaddabaa58
+project_frame_rate	30 fps non-drop; same native project settings as menu-export-midi-native-smpte-nonzero-offset.rpp
+project_start_offset	10.5 seconds; 00:00:10:15; existing screenshots fixtures/menu-export-midi-native-smpte-nonzero-offset-project-start-time.png and -video-frame-rate.png
+project_midi_fixture	Piano MIDI item 0.25-1.25 sec; note-on project tick 480; CC1 tick 720; pitch bend tick 840; note-off tick 1440
+time_selection	0.5-1.5 seconds; project ticks 960-2880; rebased MIDI event start is tick 0
+export_options	All MIDI items; Time selection only; PPQN 960; Embed SMPTE offset checked; tempo/meter changes unchecked; project has no markers
+combined_smpte_origin	10.5-second project start offset + 0.5-second selection start = 11.0 seconds; 30 fps non-drop 00:00:11:00; FF 54 05 60 00 0B 00 00
+native_type0_file	fixtures/menu-export-midi-native-smpte-selection-offset-type0.mid; 52 bytes; SHA-256 f844e9cfa317d730322d991fb42b5f60984bc1fb91fdd0e23351d018401ef3e5
+native_type0_events	One merged track; SMPTE offset 00:00:11:00 at tick 0; pitch bend, CC1, and clipped C4 Note On at tick 0; Note Off and End-of-Track tick 480
+native_type0_dialog	fixtures/menu-export-midi-native-smpte-selection-offset-type0-dialog.png; 1280x800; Type 0, Time selection only, SMPTE checked; SHA-256 8de78cb215aed9436821489403ee6ecf7398eb297a0a438918f6c577bca128b8
+native_type0_result	fixtures/menu-export-midi-native-smpte-selection-offset-type0-result.png; REAPER confirms Type 0 export; SHA-256 d1d65bf42f2ef874aa71e1bad92c3c0a8059ff70c828f51648e3c7deedb81e1a
+native_type1_file	fixtures/menu-export-midi-native-smpte-selection-offset-type1.mid; 119 bytes; SHA-256 729603158b9d3368791e0310624a64b8f66ddb26f0fb56c367e8aa665d98e80d
+native_type1_events	Conductor: destination name; SMPTE offset 00:00:11:00 at tick 0; 4/4 and 120 BPM at tick 0; End-of-Track tick 0; Piano: pitch bend, CC1, and clipped C4 Note On at tick 0; Note Off and End-of-Track tick 480
+native_type1_dialog	fixtures/menu-export-midi-native-smpte-selection-offset-type1-dialog.png; 1280x800; Type 1, Time selection only, SMPTE checked; SHA-256 d5b21d5d02a7641b49c4a8044b566a617bb9c73fb06f402745c452df08b3f28d
+native_type1_result	fixtures/menu-export-midi-native-smpte-selection-offset-type1-result.png; REAPER confirms Type 1 export; SHA-256 6cda665c134866cc5beef13e2a32a4f64f90e53eb07c6c6273faf3e8ca9d7f5a
+observation	Both formats add elapsed time at the time-selection start to the configured project start offset before encoding the SMPTE field; 10.5 + 0.5 seconds rounds exactly to 00:00:11:00 at 30 fps.
+core_regressions	crates/aaadaw-core/tests/midi_file_export.rs::reaper_782_type_zero_nonzero_smpte_offset_and_time_selection_match_native_bytes; crates/aaadaw-core/tests/midi_file_export.rs::reaper_782_type_one_nonzero_smpte_offset_and_time_selection_match_native_bytes

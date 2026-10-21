@@ -1,4 +1,4 @@
-use crate::{ItemId, NoteId, TrackId};
+use crate::{ItemId, MarkerId, NoteId, TrackId};
 use std::fmt;
 
 /// An action could not be applied to the project.
@@ -17,11 +17,22 @@ pub enum ActionError {
     InvalidVolumeDb,
     /// Volume automation points must be ordered, unique by sample, and within -60..=6 dB.
     InvalidVolumeAutomation,
-    /// The requested track output is not a different bus track.
+    /// Razor edit areas must be non-empty, ordered, and non-overlapping.
+    InvalidRazorEditAreas,
+    /// The requested track output is not a different track.
     InvalidTrackOutput,
-    /// The requested bus route would create a routing cycle.
+    InvalidTrackHierarchy,
+    InvalidAudioSend,
+    SendIdExhausted,
+    AudioSendNotFound {
+        send_id: crate::SendId,
+    },
+    AudioHardwareOutputNotFound {
+        send_id: crate::SendId,
+    },
+    /// The requested route would create a routing cycle.
     TrackRoutingCycle,
-    /// A bus cannot be deleted while tracks are routed through it.
+    /// A receiving track cannot be deleted while tracks are routed through it.
     TrackHasRoutingDependents {
         track_id: TrackId,
     },
@@ -44,6 +55,32 @@ pub enum ActionError {
     InvalidTrackFxParameterAutomation,
     /// A tempo must be finite and greater than zero.
     InvalidTempoBpm,
+    /// A project start time offset must be finite.
+    InvalidProjectTimeOffset,
+    /// A project marker position or name is outside its supported range.
+    InvalidProjectMarker,
+    /// Every REAPER-compatible positive marker number is already in use.
+    ProjectMarkerNumberExhausted,
+    /// A region is empty, out of range, or has an invalid name or number.
+    InvalidProjectRegion,
+    /// A region render matrix has duplicate or missing track assignments.
+    InvalidProjectRegionRenderMatrix,
+    /// The requested project region does not exist.
+    ProjectRegionNotFound {
+        region_id: crate::RegionId,
+    },
+    /// Every REAPER-compatible positive region number is already in use.
+    ProjectRegionNumberExhausted,
+    /// The requested project marker does not exist.
+    ProjectMarkerNotFound {
+        marker_id: MarkerId,
+    },
+    /// A project sample rate must be greater than zero.
+    InvalidProjectSampleRate,
+    /// A lower project sample rate cannot represent distinct automation points.
+    ProjectSampleRateAutomationCollision,
+    /// The project sample clock cannot represent the rescaled content positions.
+    ProjectSampleClockOutOfRange,
     /// The resulting tempo map cannot be represented in sample positions.
     TempoMapOutOfRange,
     /// The requested tempo point does not exist.
@@ -66,6 +103,25 @@ pub enum ActionError {
     InvalidAudioMediaRef,
     /// An audio item must have a positive length.
     InvalidAudioItemLength,
+    /// A manual audio Item fade duration must be finite and nonnegative.
+    InvalidAudioItemFade,
+    /// An audio item volume must be finite and between silence and +24 dB.
+    InvalidAudioItemVolume,
+    /// An audio item's active take volume must be finite and between silence and +24 dB.
+    InvalidAudioItemTakeVolume,
+    /// An audio item's active take pan must be finite and between full left and full right.
+    InvalidAudioItemTakePan,
+    /// An audio item's active take playback rate must be finite and greater than zero.
+    InvalidAudioItemTakePlaybackRate,
+    /// An audio take's source offset and optional section must form a valid source view.
+    InvalidAudioItemTakeSource,
+    /// The requested take index does not exist on the audio item.
+    AudioTakeNotFound {
+        item_id: ItemId,
+        take_index: u32,
+    },
+    /// No further take can be inserted within the supported index range.
+    AudioTakeIndexExhausted,
     /// An audio item's project start and duration exceed the sample range.
     InvalidAudioItemPosition,
     /// The requested audio item does not exist in the project.
@@ -76,12 +132,23 @@ pub enum ActionError {
     InvalidMidiItemLength,
     /// A MIDI item name must contain 1 to 128 non-whitespace characters.
     InvalidMidiItemName,
+    /// An audio item name must contain no more than 128 characters.
+    InvalidAudioItemName,
     /// A MIDI item's start and length exceed the supported tick range.
     InvalidMidiItemPosition,
     /// The requested MIDI item does not exist in the project.
     MidiItemNotFound {
         item_id: ItemId,
     },
+    /// The requested take index does not exist on the MIDI item.
+    MidiTakeNotFound {
+        item_id: ItemId,
+        take_index: u32,
+    },
+    /// A MIDI item implode needs at least two existing items on one track.
+    InvalidMidiItemImplodeSelection,
+    /// The ordered MIDI Take index range cannot represent another Take.
+    MidiTakeIndexExhausted,
     /// The requested audio or MIDI item does not exist in the project.
     ItemNotFound {
         item_id: ItemId,
@@ -97,10 +164,18 @@ pub enum ActionError {
     InvalidMidiController,
     /// A MIDI pitch bend exceeds the 14-bit range or item bounds.
     InvalidMidiPitchBend,
+    /// A Program Change value, channel, or item position is invalid.
+    InvalidMidiProgramChange,
+    InvalidMidiPolyAftertouch,
+    InvalidMidiChannelPressure,
+    InvalidMidiOpaqueEvent,
+    InvalidMidiEventOrder,
     /// Quantize strength must be finite and in `0.0..=1.0`.
     InvalidQuantizeStrength,
     /// The quantization grid cannot be represented at the project's PPQ.
     InvalidQuantizeGrid,
+    /// Humanize percentages must stay within the supported timing, velocity, and bias ranges.
+    InvalidMidiHumanizeSettings,
     /// The project has exhausted its available MIDI item identifiers.
     ItemIdExhausted,
     /// The project has exhausted its available MIDI note identifiers.
@@ -109,6 +184,10 @@ pub enum ActionError {
     InvalidPan,
     /// The project has exhausted its available track identifiers.
     TrackIdExhausted,
+    /// The project has exhausted its available marker identifiers.
+    MarkerIdExhausted,
+    /// The project has exhausted its available region identifiers.
+    RegionIdExhausted,
     /// The internal event history could not be applied consistently.
     HistoryInvariantViolation,
 }
@@ -127,9 +206,17 @@ impl fmt::Display for ActionError {
             Self::InvalidVolumeAutomation => formatter.write_str(
                 "volume automation points must be ordered, unique, and within -60..=6 dB",
             ),
+            Self::InvalidRazorEditAreas => formatter.write_str(
+                "razor edit areas must be non-empty, ordered, and non-overlapping",
+            ),
+            Self::InvalidAudioSend => formatter.write_str("audio send parameters are invalid"),
+            Self::SendIdExhausted => formatter.write_str("audio send identifiers are exhausted"),
+            Self::AudioSendNotFound { send_id } => write!(formatter, "audio send {} does not exist", send_id.value()),
+            Self::AudioHardwareOutputNotFound { send_id } => write!(formatter, "audio hardware output {} does not exist", send_id.value()),
             Self::InvalidTrackOutput => {
-                formatter.write_str("track output must name a different bus or Master")
+                formatter.write_str("track output must name a different track or Master")
             }
+            Self::InvalidTrackHierarchy => formatter.write_str("invalid folder hierarchy or track order"),
             Self::TrackRoutingCycle => {
                 formatter.write_str("track output would create a routing cycle")
             }
@@ -141,7 +228,7 @@ impl fmt::Display for ActionError {
             Self::InvalidTrackInstrument => formatter
                 .write_str("track instrument reference must have a plugin ID and bundle path"),
             Self::TrackCannotBeFrozen => formatter.write_str(
-                "freeze requires a non-bus instrument track with MIDI note content and no audio items",
+                "freeze requires an instrument track outside bus/folder roles with MIDI note content and no audio items",
             ),
             Self::TrackAlreadyFrozen { track_id } => {
                 write!(formatter, "track {} is already frozen", track_id.value())
@@ -170,6 +257,39 @@ impl fmt::Display for ActionError {
             Self::InvalidTempoBpm => {
                 formatter.write_str("tempo must be finite and greater than zero")
             }
+            Self::InvalidProjectTimeOffset => {
+                formatter.write_str("project start time offset must be finite")
+            }
+            Self::InvalidProjectMarker => {
+                formatter.write_str("project marker position or name is invalid")
+            }
+            Self::ProjectMarkerNumberExhausted => {
+                formatter.write_str("project marker numbers are exhausted")
+            }
+            Self::InvalidProjectRegion => {
+                formatter.write_str("project region boundaries, number, or name are invalid")
+            }
+            Self::InvalidProjectRegionRenderMatrix => {
+                formatter.write_str("project region render matrix assignments are invalid")
+            }
+            Self::ProjectRegionNotFound { region_id } => {
+                write!(formatter, "project region {} does not exist", region_id.value())
+            }
+            Self::ProjectRegionNumberExhausted => {
+                formatter.write_str("project region numbers are exhausted")
+            }
+            Self::ProjectMarkerNotFound { marker_id } => {
+                write!(formatter, "project marker {} does not exist", marker_id.value())
+            }
+            Self::InvalidProjectSampleRate => {
+                formatter.write_str("project sample rate must be greater than zero")
+            }
+            Self::ProjectSampleRateAutomationCollision => formatter.write_str(
+                "project sample rate would merge distinct automation points",
+            ),
+            Self::ProjectSampleClockOutOfRange => {
+                formatter.write_str("project sample rate exceeds the sample position range")
+            }
             Self::TempoMapOutOfRange => {
                 formatter.write_str("tempo map exceeds the sample position range")
             }
@@ -195,6 +315,32 @@ impl fmt::Display for ActionError {
             Self::InvalidAudioMediaRef => {
                 formatter.write_str("audio media reference must not be blank")
             }
+            Self::InvalidAudioItemFade => {
+                write!(formatter, "audio Item fade duration must be finite and nonnegative")
+            }
+            Self::InvalidAudioItemVolume => formatter.write_str(
+                "audio item volume must be finite and between 0 and 16 (−∞ to +24 dB)",
+            ),
+            Self::InvalidAudioItemTakeVolume => formatter.write_str(
+                "active take volume must be finite and between 0 and 16 (−∞ to +24 dB)",
+            ),
+            Self::InvalidAudioItemTakePan => {
+                formatter.write_str("active take pan must be finite and between -1 and 1")
+            }
+            Self::InvalidAudioItemTakePlaybackRate => {
+                formatter.write_str("active take playback rate must be finite and greater than zero")
+            }
+            Self::InvalidAudioItemTakeSource => {
+                formatter.write_str("audio take source offset or section is invalid")
+            }
+            Self::AudioTakeNotFound { item_id, take_index } => write!(
+                formatter,
+                "audio take {take_index} was not found on item {}",
+                item_id.value()
+            ),
+            Self::AudioTakeIndexExhausted => {
+                formatter.write_str("audio item take index space is exhausted")
+            }
             Self::InvalidAudioItemLength => {
                 formatter.write_str("audio item length must be positive")
             }
@@ -208,12 +354,24 @@ impl fmt::Display for ActionError {
             Self::InvalidMidiItemName => {
                 formatter.write_str("MIDI item name must contain 1 to 128 characters")
             }
+            Self::InvalidAudioItemName => {
+                formatter.write_str("audio item name must contain 128 characters or fewer")
+            }
             Self::InvalidMidiItemPosition => {
                 formatter.write_str("MIDI item position exceeds the supported tick range")
             }
             Self::MidiItemNotFound { item_id } => {
                 write!(formatter, "MIDI item {} does not exist", item_id.value())
             }
+            Self::MidiTakeNotFound { item_id, take_index } => write!(
+                formatter,
+                "MIDI take {take_index} does not exist in item {}",
+                item_id.value()
+            ),
+            Self::InvalidMidiItemImplodeSelection => {
+                formatter.write_str("MIDI item implode needs at least two items on one track")
+            }
+            Self::MidiTakeIndexExhausted => formatter.write_str("MIDI take index range is exhausted"),
             Self::ItemNotFound { item_id } => {
                 write!(formatter, "item {} does not exist", item_id.value())
             }
@@ -226,16 +384,36 @@ impl fmt::Display for ActionError {
             ),
             Self::InvalidMidiController => formatter.write_str("MIDI controller data is invalid"),
             Self::InvalidMidiPitchBend => formatter.write_str("MIDI pitch-bend data is invalid"),
+            Self::InvalidMidiProgramChange => {
+                formatter.write_str("MIDI Program Change data is invalid")
+            }
+            Self::InvalidMidiPolyAftertouch => {
+                formatter.write_str("MIDI Polyphonic Aftertouch data is invalid")
+            }
+            Self::InvalidMidiChannelPressure => {
+                formatter.write_str("MIDI Channel Pressure data is invalid")
+            }
+            Self::InvalidMidiOpaqueEvent => {
+                formatter.write_str("MIDI SysEx or Meta event data is invalid")
+            }
+            Self::InvalidMidiEventOrder => {
+                formatter.write_str("MIDI event ordering metadata is invalid")
+            }
             Self::InvalidQuantizeStrength => {
                 formatter.write_str("quantize strength must be finite and in 0..=1")
             }
             Self::InvalidQuantizeGrid => {
                 formatter.write_str("quantization grid is invalid at the project PPQ")
             }
+            Self::InvalidMidiHumanizeSettings => {
+                formatter.write_str("MIDI humanize settings are outside their supported ranges")
+            }
             Self::ItemIdExhausted => formatter.write_str("item identifiers are exhausted"),
             Self::NoteIdExhausted => formatter.write_str("MIDI note identifiers are exhausted"),
             Self::InvalidPan => formatter.write_str("track pan must be finite and in -1..=1"),
             Self::TrackIdExhausted => formatter.write_str("track identifiers are exhausted"),
+            Self::MarkerIdExhausted => formatter.write_str("project marker identifiers are exhausted"),
+            Self::RegionIdExhausted => formatter.write_str("project region identifiers are exhausted"),
             Self::HistoryInvariantViolation => {
                 formatter.write_str("project event history is inconsistent with its state")
             }

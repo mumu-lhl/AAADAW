@@ -1,0 +1,57 @@
+{
+  "reference": {
+    "platform": "Linux",
+    "application": "REAPER",
+    "version": "7.82",
+    "theme": "Default 7",
+    "configuration": "fresh factory"
+  },
+  "defaults": {
+    "title": "",
+    "author": "",
+    "text": "",
+    "show_on_load": false,
+    "word_wrap": true,
+    "native_notes_header": [
+      0,
+      2
+    ]
+  },
+  "observations": [
+    {
+      "event": "edit body then Cancel",
+      "project_notes": ""
+    },
+    {
+      "event": "edit body then OK",
+      "project_notes": "Owned accepted note\r\nsecond line"
+    },
+    {
+      "event": "Ctrl+Z after Notes OK",
+      "project_notes": "Owned accepted note\r\nsecond line"
+    },
+    {
+      "event": "title author multiline body and display flags then OK",
+      "title": "Owned title",
+      "author": "Owned author",
+      "text": "First line\r\nSecond line",
+      "show_on_load": true,
+      "word_wrap": false,
+      "native_notes_header": [
+        1,
+        1
+      ]
+    },
+    {
+      "event": "reopen own saved project with show_on_load enabled",
+      "window": "Project Settings",
+      "tab": "Notes",
+      "fields_restored": true
+    }
+  ],
+  "limitations": [
+    "Full theme pixel and focus navigation acceptance remains pending",
+    "Native input generates CRLF; AAADAW preserves untouched text bytes and stores edited editor text with its actual line endings"
+  ],
+  "assets": "Owned probe strings and numeric facts only; no native application assets or native project file committed"
+}

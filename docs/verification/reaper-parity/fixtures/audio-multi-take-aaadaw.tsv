@@ -1,0 +1,21 @@
+kind	artifact_or_check	result_or_sha256
+project	fixtures/audio-multi-take-aaadaw.aaadaw	398cae8e89a940aaa2b6f454265030d9f1c414f3780fbe0f95509c62e7feb0b1
+project_generator	fixtures/audio-multi-take-aaadaw-generator.rs	SHA-256 4e0c2cf2f5fc6d3bfe83385902065c355a2bd90801dd04e2ee987e5bdc576ce6; ProjectStore fixture with embedded Hit-01.wav and Hit-02.wav; active Take A at list index 1
+source_fixture	fixtures/render-item-take-name-Hit-01.wav	Take A source; existing 24-bit stereo 48 kHz fixture
+source_fixture	fixtures/render-item-take-name-Hit-02.wav	Take B source; existing 24-bit stereo 48 kHz fixture
+capture	fixtures/audio-multi-take-aaadaw-selected.png	1280x800; SHA-256 58a2b36061b24193d1d32f51816e6e5fcc7c8f0a2a94ad634709a4f00c4cddbf; Inspector shows Take 2/2 · Take A and Duplicate/Previous/Next controls
+capture	fixtures/audio-multi-take-aaadaw-switched.png	1280x800; SHA-256 37ef65f1328f5ac255abe9ea7ab36e90eaf95d8cc5c02c9f67fea5781497a224; after Next take Inspector and Arrange show Take B at index 0
+binary	Linux desktop AAADAW 0.1.0, nightly Cranelift, target/cranelift/debug/aaadaw	SHA-256 3657f3bcc9a0aac6e7178ffdf35a907945ad6d2acecede16e9cf20c7eb51cc7e
+build_command	CARGO_PROFILE_DEV_CODEGEN_BACKEND=cranelift CARGO_PROFILE_DEV_DEBUG=0 CARGO_INCREMENTAL=0 cargo +nightly -Zcodegen-backend build -p aaadaw --bin aaadaw --locked	passed; binary opened under isolated Xvfb :576
+interaction	File > Recent projects > Two-Takes.aaadaw; select Arrange item	Opened the saved project and selected the Audio Item in the desktop window
+interaction	Inspector Next take	Take 2/2 · Take A -> Take 1/2 · Take B; title became dirty; alternate media_ref shown
+runtime_limit	Audio status in captured build	Audio unavailable in this build; screenshots verify live UI interaction, not audible playback
+stable_tests	cargo +stable nextest run -p aaadaw --bin aaadaw --locked	845 passed, 0 skipped
+stable_tests	cargo +stable nextest run -p aaadaw-core -p aaadaw-storage --locked	369 passed, 0 skipped
+stable_tests	Take action integration; REAPER action-map catalogue and unique-ID round-trip	Included in 845 AAADAW tests; take action app test and schema-65-to-66 migration also passed in focused reruns
+format	cargo +stable fmt --all --check; rustfmt generator --check; git diff --check	passed
+cranelift_test_limit	Full AAADAW Cranelift test harness	Backend panicked at llvm.x86.sse2.pmulhu.w after 100/845 tests; rerun under Stable LLVM passed all 845
+validation	cargo +stable clippy -p aaadaw-core -p aaadaw-storage -p aaadaw --all-targets --locked -- -D warnings -A future-incompatible	passed
+validation	Stable LLVM full desktop/Core/Storage suites	845/845 AAADAW and 369/369 Core/Storage passed
+validation	cargo +stable fmt --all --check; rustfmt generator --check; git diff --check	passed
+binary_scope	sha256-listed Cranelift capture binary	contains the multi-take UI and graph-switch implementation; subsequent KeyMap catalogue registration is validated by the Stable 845-test suite

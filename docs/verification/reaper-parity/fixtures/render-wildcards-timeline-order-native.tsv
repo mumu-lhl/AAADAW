@@ -1,0 +1,18 @@
+key	value
+reference	Linux REAPER 7.82 / Default 7 / isolated configuration
+probe_script	scripts/reaper_parity/probe-render-empty-name-wildcards.lua
+project	Two named regions (Verse and Chorus) on one track with three source items at 0s, 2s, and 4s
+source	Master mix; All project regions
+format	WAV; 24-bit PCM; 48,000 Hz; stereo
+pattern	file-$timelineorder-$timelineorder[005]-$timelineorder_track[01]-$region
+native_preview	file-1-005-01-Verse.wav; file-2-006-02-Chorus.wav; 2 files
+native_finished_outputs	file-1-005-01-Verse.wav; file-2-006-02-Chorus.wav
+preview_screenshot	render-wildcards-timeline-order-preview-native.png
+preview_screenshot_sha256	84e597c847a1a3a766742d885a28d03539d87c074627859864bedd4b1320a624
+finished_screenshot	render-wildcards-timeline-order-finished-native.png
+finished_screenshot_sha256	c88e1a544bf03d5e4634b230a6af877dfc9440b2f572596616df80442b6b04e2
+verse_wav	render-wildcards-timeline-order-file-1-005-01-Verse.wav
+verse_wav_sha256	2de7bc61e35a2691f900f11872c091cc16437b27fe7ca8af647b1ad390209dd4
+chorus_wav	render-wildcards-timeline-order-file-2-006-02-Chorus.wav
+chorus_wav_sha256	8c180411a96cb35cefc81af5b2111d12ddcd69c8d68cd424d05bd04c2160946f
+native_observation	$timelineorder returns 1 and 2 in region timeline order; [005] starts that sequence at 5 and pads to three digits; $timelineorder_track[01] returns 01 and 02 for these regions on the same track

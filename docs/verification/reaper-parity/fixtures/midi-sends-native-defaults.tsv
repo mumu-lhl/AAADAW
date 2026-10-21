@@ -1,0 +1,9 @@
+reference	7.82/linux-x86_64; Default 7
+new_audio_send_i_midiflags	0
+new_audio_send_i_sendmode	0
+visible_midi_route	All -> All
+visible_audio_route	1/2 -> 1/2
+send_mode	Post-Fader (Post-Pan)
+routing_screenshot	../images/midi-sends-native.png; SHA-256 309fd5077611af4e7060e805d3b0f24959870bcda21a3e6e2c46f77bfe308ad3
+probe_sha256	1ba169992a1283fa9f94005f3ee68b25d5dadd10e8acd0c8af85854aa47060bf
+notes	Linux REAPER 7.82 / Default 7; audio device closed during capture

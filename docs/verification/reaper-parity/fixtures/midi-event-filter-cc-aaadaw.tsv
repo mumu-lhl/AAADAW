@@ -1,0 +1,14 @@
+artifact	sha256
+crates/aaadaw/examples/generate_midi_filter_cc_fixture.rs	e309428973ba08477d3feb5cf3b1dd4e048d5f451875755dc5938cc9a4f0c172
+fixtures/midi-event-filter-cc-aaadaw.aaadaw	94189050f6b303b476f767e78fa499b354c73a9b68b3f22006a771ba424b9109
+fixtures/midi-event-filter-cc-aaadaw-before.png	0a8609ae371f0bf17b7bf86f1491f63270121733389cf90f0d31980f52b98fbf
+fixtures/midi-event-filter-cc-aaadaw-after.png	1441214d9017f8a478808c643423fdb0a6f36ccd2913e24583650859e889c841
+fixtures/midi-event-filter-cc-aaadaw-show-only.png	d295e8521789754df020130e4a26a8e52a4f1fac91876b1fbbc128ea254d5d94
+binary_sha256	5973af52b9f257a00e0fe8880a27132085aa8921dcbbda5a75647b6157fc8c29
+binary_build_id	bc81aca8cf81dcf9d3bdab6f18cc2b185e8233e6
+environment	Linux Xvfb :510; Cranelift AAADAW; MIDI Event List window 1000x620; audio device unavailable
+starting_state	Three Notes and CC7 values 64/100/127 plus CC10 value 64; Event List shows eight rows including synthetic end; All channels and all events
+assertion	Control Change + Control 07 Volume MSB + Value 64–100 leaves exactly two rows, CC7 values 64 and 100; with Show-only off all rows remain visible; the project source is unchanged
+list_filter_behavior	This earlier capture predates the separate Event List Filter toggle. Its row-count checks cover filter criteria, not the native behavior of Show-only alone; see midi-event-filter-toggle-native.tsv for the measured funnel/Show-only relationship.
+verification	midi_event_filter_selects_controller_parameter_and_inclusive_value_range; event_list_filters_controller_parameter_and_inclusive_value_range; Stable and Cranelift AAADAW package tests 833/833 each; strict workspace Clippy, format, and diff checks recorded in docs/reaper-parity/progress.md
+limitation	Screenshot captures confirm visible values and row filtering, not a full pixel-diff comparison; native reset, inverse, CC0/32 pairing, other CC parameters, non-Note Position/Repeat/Length, and Solo remain open

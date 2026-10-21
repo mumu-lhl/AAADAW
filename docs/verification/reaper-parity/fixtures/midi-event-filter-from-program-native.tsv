@@ -1,0 +1,21 @@
+artifact	sha256
+scripts/reaper_parity/probe-midi-event-filter-from-program-selection.lua	6a4c872b0f650032a47629ee42735d0c3da021d553edc978062ad93ba29d11ad
+fixtures/midi-event-filter-from-program-native-readback.tsv	6ec5bfe39df76b40e6d7cc20604daa84b86267bf07d4992264a18c6139da0cf6
+fixtures/midi-event-filter-from-program-native-after-set-readback.tsv	212227e669585ed4e0c3e93a05a506a2b689ac9ab421c877ee1e7352935ed6b8
+fixtures/midi-event-filter-from-program-native-before.rpp	1bf44f90bf37df3b049a865a91568b003899e71f08c850e54acf18be310d9566
+fixtures/midi-event-filter-from-program-native-after-set.rpp	a31bd2949d64bddc4695563a7f158003aa2dfc5faa73a68380e210e9245084c0
+fixtures/midi-event-filter-from-program-native-after-set.png	26d75d820a9b804c491e43726605dc63e8d7a77b437b2116a69d1481bb4df696
+fixtures/midi-event-filter-from-program-native-filter-after-set.png	f83ae3977c29c7ebc59c2c9cae27cc061edeeba0a2b4665a0d981a6eb2c74bf7
+fixtures/midi-event-filter-from-program-native-list-unfiltered.png	3e495bb612d2fdf89f03ba91593b5b773796d261a3a8f05a67509703032b58b4
+fixtures/midi-event-filter-from-program-native-list-filtered.png	6b7a4633a83c0d851fae6c589d31fd430c491a5a13c0e7bb8921aefa5372b37b
+native_build_id	fb9ade2f211bc91a3ee6193630ef17bcf5f6528b
+native_binary_sha256	9976f5608068b7a58518969001b00b527fb0de6ed7459e0e5dda6f29878ee254
+theme	REAPER 7.82 Linux Default 7; theme SHA-256 575544606736a395520703e532209ad9635f13a41b7ea000bb9810d60025be48
+environment	Linux dummy Xorg :546, 1600x1000; isolated REAPER 7.82 Default 7 profile; audio unavailable
+starting_state	One C4 note; selected Program Change 8 on channel 2 @ tick 480 and Program Change 64 on channel 3 @ tick 960; unselected Program Change 32 on channel 2 @ tick 600 and CC7 value64 @ tick 720; funnel off
+action	Event List > Filter Events > Set filter from selection
+assertion	The dialog derives Program Change (PC), channels 2–3, and Position 0.125–0.25026042. Program range is unchecked with blank low/high; Repeat every is measure; Draw events on channel is Channel 2. Set leaves Show-only and funnel off and leaves all six rows visible.
+filter_toggle	After explicitly enabling Show-only, exactly the three PC rows remain, including unselected program 32; Note, CC, and terminal All Notes Off rows are hidden.
+selection_and_data	The two selected endpoint PCs remain selected; before/after readback preserves all four CC-list event records and selected bits. RPP records EVTFILTER type192, channels 2–3, and Position 0.125–0.25026042.
+verification	Native MIDI_GetCC/readback; interactive Filter Events and Event List screenshots; before/after RPP comparison; manual Show-only toggle
+limitation	REAPER displays an unbanked PC parameter with bank MSB 121, while AAADAW currently displays 0; program values and filtering agree. Screenshots verify behavior, not pixel identity.

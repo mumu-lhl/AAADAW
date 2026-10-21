@@ -10,4 +10,7 @@ pub(super) const PANEL_PADDING: f32 = SPACING_SM;
 pub(super) const ROW_GAP: f32 = SPACING_XS;
 pub(super) const SECTION_GAP: f32 = SPACING_MD;
 pub(super) const MIXER_STRIP_COMPACT: f32 = 220.0;
+// Measured Linux REAPER 7.82 Default 7, 100% scaling.
+pub(super) const MCP_TRACK_WIDTH: f32 = 88.0;
+pub(super) const MCP_MASTER_WIDTH: f32 = 132.0;
 pub(super) const TOUCH_TARGET_MIN: f32 = 48.0;

@@ -1,0 +1,20 @@
+record	value
+application	AAADAW Linux desktop binary built from current worktree; rustc 1.99.0; `--no-default-features`
+aaadaw_binary_sha256	`8eb6bb7da84543cfcc4409658f5c9f6a8d623db4b7b3105ad3cdf891afe88901`
+source_project_sha256	`956cc6027f75f66e4cda3570eb9e5926e1cbf0a9682fbfccf2f9e90c1fb9d9f2` for `examples/first-project/first-project.aaadaw` before copying
+reference	Linux REAPER 7.82 / Default 7 File menu fixture: `menu-file-native.png` (fresh profile shows Recent projects submenu arrow; no recent entry populated)
+aaadaw_display	Xvfb :147, 1280x800x24; fresh XDG config/data/cache and isolated TMPDIR
+history_fixture	`examples/first-project/first-project.aaadaw` copied to `/tmp/aaadaw-recent-project.aaadaw`; recent-project list initialized with that path
+keyboard_open	Alt+F; Down x6 to Recent projects; Right to expand; Down to the recent path; Enter
+keyboard_return	Left closes the expanded recent list and returns selection to Recent projects
+open_result	AAADAW title changed to `aaadaw-recent-project.aaadaw`; one Audio track and `melody.wav` arrangement item loaded; status `Opened /tmp/aaadaw-recent-project.aaadaw`
+persistence	After open, `recent-projects.json` retained `/tmp/aaadaw-recent-project.aaadaw` at the head of the list
+menu_capture	`menu-file-recent-projects-aaadaw.png`; SHA-256 `db1c2cfa9382038319cd2b4e0b77ef516949afb60ead4b9325c6ecd55b7b0d4c`
+opened_capture	`menu-file-recent-project-opened-aaadaw.png`; SHA-256 `47ae81bd5087c6d9ce9188b856ab8a034542158f0ae29e8d6088790c287634c7`
+reference_capture	`menu-file-native.png`; SHA-256 `c5a37d3fa3c79c458dbd9caf868123d4dd64a0c0c95382c78e1bbbdb42c7229b`
+parity_limit	AAADAW expands recent entries inline below the parent; REAPER uses a cascading submenu. Project tab replacement semantics, MRU capacity/clear behavior, missing-file behavior, and native populated-submenu comparison remain open.
+final_binary_sha256	`6d4b86cde22dd6f8af21884ea4856b8e5276c45370ae0341297add900435573f` for the rebuilt `target/debug/aaadaw` after final source changes
+final_binary_open	Xvfb :148; clicked File at (35,30), Recent projects at (120,280), then `/tmp/aaadaw-recent-project.aaadaw` at (195,314)
+final_binary_result	Window title became `aaadaw-recent-project.aaadaw — AAADAW`; recent-project config kept the opened path
+final_menu_capture	`menu-file-recent-projects-aaadaw-rebuilt.png`; SHA-256 `01a5288813e5638a7558ba7030b49733660d3f3c21527cead0635ca47ce7fa02`
+final_opened_capture	`menu-file-recent-project-opened-aaadaw-rebuilt.png`; SHA-256 `47ae81bd5087c6d9ce9188b856ab8a034542158f0ae29e8d6088790c287634c7`

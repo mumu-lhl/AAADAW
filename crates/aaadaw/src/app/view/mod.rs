@@ -17,19 +17,40 @@ use iced::widget::button;
 #[cfg(feature = "audio-device")]
 use iced::widget::text_input;
 use iced::widget::{
-    column, container, float, mouse_area, pane_grid, responsive, row, scrollable, stack, text,
+    checkbox, column, container, float, mouse_area, pane_grid, responsive, row, scrollable, stack,
+    text,
 };
 use iced::{Alignment, Element, Length};
 
+mod about;
+mod action_list;
 mod arrangement;
 mod fx_chain;
+mod grid_settings;
 mod item_inspector;
+mod item_nudge;
+mod item_properties;
+mod marker_manager;
+mod marker_properties;
 mod media;
 mod menu;
 mod midi_editor;
+pub(super) use midi_editor::{
+    midi_event_controller_property_label, midi_event_controller_property_options,
+    midi_event_list_cursors, midi_event_list_home_target, midi_event_list_length,
+    midi_event_list_position, midi_item_local_tick, midi_source_display_end,
+    midi_source_display_start, midi_source_edit_bounds, midi_source_tick_for_local,
+    source_event_occurrences, visible_note_duration,
+};
+mod midi_export;
 mod mixer;
 mod plugin_picker;
+mod region_properties;
+mod region_render_matrix;
 mod render;
+mod routing;
+mod routing_matrix;
+mod routing_wiring;
 mod settings;
 mod tempo_map;
 mod tokens;
@@ -78,10 +99,38 @@ pub(super) fn view_for_window(app: &App, window_id: iced::window::Id) -> Element
             .main_window_size
             .unwrap_or_else(|| iced::Size::new(420.0, 640.0));
         mobile_view(app, size.width, size.height)
+    } else if app.item_properties_window_id == Some(window_id) {
+        item_properties::view(app)
+    } else if app.item_nudge_window_id == Some(window_id) {
+        item_nudge::view(app)
+    } else if app.marker_properties_window_id == Some(window_id) {
+        marker_properties::view(app)
+    } else if app.region_properties_window_id == Some(window_id) {
+        region_properties::view(app)
+    } else if app.marker_manager_window_id == Some(window_id) {
+        marker_manager::view(app)
+    } else if app.region_render_matrix_window_id == Some(window_id) {
+        region_render_matrix::view(app)
+    } else if app.routing_matrix_window_id == Some(window_id) {
+        routing_matrix::view(app)
+    } else if app.routing_window_id == Some(window_id) {
+        routing::view(app)
+    } else if app.action_input_window_id == Some(window_id) {
+        action_list::input_view(app)
+    } else if app.action_list_window_id == Some(window_id) {
+        action_list::view(app)
+    } else if app.project_settings_window_id == Some(window_id) {
+        super::project_settings::view(app)
+    } else if app.snap_grid_settings_window_id == Some(window_id) {
+        grid_settings::view(app)
     } else if app.settings_window_id == Some(window_id) {
         settings::view(app)
+    } else if app.about_window_id == Some(window_id) {
+        about::view()
     } else if app.render_window_id == Some(window_id) {
         render::view(app)
+    } else if app.midi_export_window_id == Some(window_id) {
+        midi_export::view(app)
     } else if app.tempo_map_window_id == Some(window_id) {
         tempo_map::view(app)
     } else if app.fx_chain_window_id == Some(window_id) {
@@ -97,7 +146,7 @@ pub(super) fn view_for_window(app: &App, window_id: iced::window::Id) -> Element
 
 pub(super) fn view(app: &App) -> Element<'_, Message> {
     responsive(move |size| {
-        if cfg!(target_os = "android") || size.width < 720.0 {
+        if app.is_mobile_main_window() {
             mobile_view(app, size.width, size.height)
         } else {
             desktop_view(app)
@@ -109,10 +158,10 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
 fn desktop_view(app: &App) -> Element<'_, Message> {
     let toolbar = menu::bar(app);
 
-    let workspace: Element<'_, Message> = match app.main_workspace {
-        super::MainWorkspace::Arrangement if app.media_panel_dock.open => docked_arrangement(app),
-        super::MainWorkspace::Arrangement => arrangement::view(app),
-        super::MainWorkspace::Mixer => mixer::view(app),
+    let workspace = if app.media_panel_dock.panes.is_some() {
+        docked_arrangement(app)
+    } else {
+        arrangement_with_transport(app)
     };
     let status_text = app.status.clone();
 
@@ -197,10 +246,6 @@ fn desktop_view(app: &App) -> Element<'_, Message> {
                 .padding(tokens::PANEL_PADDING),
         );
     }
-    let transport = container(transport_view(app))
-        .width(Length::Fill)
-        .padding(tokens::PANEL_PADDING)
-        .style(iced::widget::container::rounded_box);
     let offline_job_count = usize::from(app.offline_render_busy) + app.offline_job_queue.len();
     let status_row = row![
         text(status_text).width(Length::Fill),
@@ -211,7 +256,7 @@ fn desktop_view(app: &App) -> Element<'_, Message> {
     ]
     .spacing(tokens::SECTION_GAP)
     .align_y(Alignment::Center);
-    content = content.push(workspace).push(status_row).push(transport);
+    content = content.push(workspace).push(status_row);
     let base: Element<'_, Message> = container(content)
         .width(Length::Fill)
         .height(Length::Fill)
@@ -250,10 +295,149 @@ fn desktop_view(app: &App) -> Element<'_, Message> {
     } else {
         layered
     };
+    if app.active_menu == Some(super::MainMenu::File) && app.recent_projects_menu_open {
+        let parent_anchor_x = menu::anchor_x(super::MainMenu::File);
+        let parent_popup_width = menu::popup_width(super::MainMenu::File);
+        let parent_row_offset =
+            menu::submenu_parent_offset(app, super::commands::CommandId::OpenRecentProjects);
+        let submenu =
+            float(menu::recent_projects_dropdown(app, 360.0)).translate(move |bounds, viewport| {
+                let parent_max_x =
+                    (viewport.x + viewport.width - parent_popup_width).max(viewport.x);
+                let parent_x = (viewport.x + parent_anchor_x).clamp(viewport.x, parent_max_x);
+                let right_x = parent_x + parent_popup_width - 1.0;
+                let left_x = parent_x - bounds.width + 1.0;
+                let desired_x = if right_x + bounds.width <= viewport.x + viewport.width {
+                    right_x
+                } else {
+                    left_x
+                };
+                let max_x = (viewport.x + viewport.width - bounds.width).max(viewport.x);
+                let max_y = (viewport.y + viewport.height - bounds.height).max(viewport.y);
+                let target_x = desired_x.clamp(viewport.x, max_x);
+                let desired_y = viewport.y + menu::bar_bottom() + parent_row_offset;
+                let target_y = desired_y.clamp(viewport.y, max_y);
+                iced::Vector::new(target_x - bounds.x, target_y - bounds.y)
+            });
+        layered = stack![layered, submenu]
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .into();
+    }
+    if app.active_menu == Some(super::MainMenu::File) && app.project_templates_menu_open {
+        let parent_anchor_x = menu::anchor_x(super::MainMenu::File);
+        let parent_popup_width = menu::popup_width(super::MainMenu::File);
+        let parent_row_offset =
+            menu::submenu_parent_offset(app, super::commands::CommandId::OpenProjectTemplates);
+        let submenu = float(menu::project_templates_dropdown(app, 360.0)).translate(
+            move |bounds, viewport| {
+                let parent_max_x =
+                    (viewport.x + viewport.width - parent_popup_width).max(viewport.x);
+                let parent_x = (viewport.x + parent_anchor_x).clamp(viewport.x, parent_max_x);
+                let right_x = parent_x + parent_popup_width - 1.0;
+                let left_x = parent_x - bounds.width + 1.0;
+                let desired_x = if right_x + bounds.width <= viewport.x + viewport.width {
+                    right_x
+                } else {
+                    left_x
+                };
+                let max_x = (viewport.x + viewport.width - bounds.width).max(viewport.x);
+                let max_y = (viewport.y + viewport.height - bounds.height).max(viewport.y);
+                let target_x = desired_x.clamp(viewport.x, max_x);
+                let desired_y = viewport.y + menu::bar_bottom() + parent_row_offset;
+                let target_y = desired_y.clamp(viewport.y, max_y);
+                iced::Vector::new(target_x - bounds.x, target_y - bounds.y)
+            },
+        );
+        layered = stack![layered, submenu]
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .into();
+    }
+    if let Some(pending) = &app.pending_empty_midi_export {
+        let width = super::midi_export::empty_export_warning_width(pending.options);
+        let button_style = |_: &iced::Theme, status| {
+            let background = match status {
+                button::Status::Pressed => iced::Color::from_rgb8(170, 170, 170),
+                button::Status::Hovered => iced::Color::from_rgb8(232, 232, 232),
+                _ => iced::Color::from_rgb8(220, 220, 220),
+            };
+            button::Style {
+                background: Some(background.into()),
+                text_color: iced::Color::BLACK,
+                border: iced::Border {
+                    color: iced::Color::from_rgb8(128, 128, 128),
+                    width: 1.0,
+                    radius: 0.0.into(),
+                },
+                ..button::Style::default()
+            }
+        };
+        let confirm = button(text("OK"))
+            .style(button_style)
+            .padding([1.0, 3.0])
+            .on_press(Message::ConfirmEmptyMidiExport);
+        let buttons = if pending.options.file_type == aaadaw_core::MidiFileType::Type0 {
+            row![confirm]
+        } else {
+            row![
+                confirm,
+                button(text("Cancel"))
+                    .style(button_style)
+                    .padding([1.0, 3.0])
+                    .on_press(Message::CancelEmptyMidiExport),
+            ]
+        }
+        .spacing(10)
+        .align_y(Alignment::Center);
+        let dialog = container(
+            column![
+                text(super::midi_export::empty_export_warning(pending.options))
+                    .size(12)
+                    .width(Length::Fill),
+                container(buttons)
+                    .width(Length::Fill)
+                    .center_x(Length::Fill),
+            ]
+            .spacing(8)
+            .padding(0),
+        )
+        .width(Length::Fixed(width))
+        .padding(8)
+        .style(|_| iced::widget::container::Style {
+            text_color: Some(iced::Color::BLACK),
+            background: Some(iced::Color::from_rgb8(192, 192, 192).into()),
+            border: iced::Border {
+                color: iced::Color::from_rgb8(128, 128, 128),
+                width: 1.0,
+                radius: 0.0.into(),
+            },
+            ..iced::widget::container::Style::default()
+        });
+        let backdrop = mouse_area(
+            container(dialog)
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .center(Length::Fill)
+                .style(|_| iced::widget::container::Style {
+                    background: Some(iced::Background::Color(iced::Color::from_rgba8(
+                        0, 0, 0, 0.0,
+                    ))),
+                    ..iced::widget::container::Style::default()
+                }),
+        );
+        return stack![layered, backdrop]
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .into();
+    }
     if let Some(transition) = app.pending_project_transition {
         let description = match transition {
             super::PendingProjectTransition::NewProject => {
                 "Creating a new project will replace the current project."
+            }
+            super::PendingProjectTransition::CloseProject => {
+                "Closing the current project will leave an empty project workspace."
             }
             super::PendingProjectTransition::OpenProject => {
                 "Opening another project will replace the current project."
@@ -299,6 +483,146 @@ fn desktop_view(app: &App) -> Element<'_, Message> {
                 }),
         )
         .on_press(Message::DismissMainMenu);
+        return stack![layered, backdrop]
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .into();
+    }
+    if let Some(path) = &app.pending_project_template_overwrite {
+        let dialog = container(
+            column![
+                text("File exists:").size(13),
+                text(path.display().to_string())
+                    .size(10)
+                    .width(Length::Fill),
+                text("Overwrite?").size(13),
+                container(
+                    row![
+                        button(text("OK")).on_press(Message::ConfirmProjectTemplateOverwrite),
+                        button(text("Cancel"))
+                            .style(button::secondary)
+                            .on_press(Message::CancelProjectTemplateOverwrite),
+                    ]
+                    .spacing(tokens::SECTION_GAP)
+                    .align_y(Alignment::Center),
+                )
+                .width(Length::Fill)
+                .center_x(Length::Fill),
+            ]
+            .spacing(tokens::ROW_GAP),
+        )
+        .width(Length::Fixed(520.0))
+        .padding(tokens::SPACING_LG)
+        .style(iced::widget::container::rounded_box);
+        let backdrop = mouse_area(
+            container(dialog)
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .center(Length::Fill)
+                .style(|_| iced::widget::container::Style {
+                    background: Some(iced::Background::Color(iced::Color::from_rgba8(
+                        0, 0, 0, 0.66,
+                    ))),
+                    ..iced::widget::container::Style::default()
+                }),
+        )
+        .on_press(Message::CancelProjectTemplateOverwrite);
+        return stack![layered, backdrop]
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .into();
+    }
+    if let Some(import) = &app.pending_midi_file_import {
+        let expanded_track_count = import.expanded_track_count();
+        let can_import_project_meta = import.file_type != aaadaw_core::MidiFileFormat::Type2;
+        let dialog = container(
+            column![
+                text("MIDI File Import").size(18),
+                checkbox(app.midi_file_import_options.expand_tracks)
+                    .label(format!(
+                        "Expand {expanded_track_count} MIDI tracks to new AAADAW tracks"
+                    ))
+                    .on_toggle(Message::SetMidiFileImportExpandTracks),
+                checkbox(app.midi_file_import_options.import_tempo_map)
+                    .label("Import MIDI tempo map to project tempo map at the edit cursor")
+                    .on_toggle_maybe(
+                        can_import_project_meta.then_some(Message::SetMidiFileImportTempoMap),
+                    ),
+                checkbox(app.midi_file_import_options.import_markers)
+                    .label(format!(
+                        "Import {} MIDI markers/cues as project markers",
+                        import.markers.len()
+                    ))
+                    .on_toggle_maybe(
+                        can_import_project_meta.then_some(Message::SetMidiFileImportMarkers),
+                    ),
+                row![
+                    button(text("OK")).on_press(Message::ConfirmMidiFileImport),
+                    button(text("Cancel"))
+                        .style(button::secondary)
+                        .on_press(Message::CancelMidiFileImport),
+                ]
+                .spacing(tokens::SECTION_GAP)
+                .align_y(Alignment::Center),
+            ]
+            .spacing(tokens::SECTION_GAP),
+        )
+        .width(Length::Fixed(520.0))
+        .padding(tokens::SPACING_LG)
+        .style(iced::widget::container::rounded_box);
+        let backdrop = mouse_area(
+            container(dialog)
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .center(Length::Fill)
+                .style(|_| iced::widget::container::Style {
+                    background: Some(iced::Background::Color(iced::Color::from_rgba8(
+                        0, 0, 0, 0.66,
+                    ))),
+                    ..iced::widget::container::Style::default()
+                }),
+        )
+        .on_press(Message::CancelMidiFileImport);
+        return stack![layered, backdrop]
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .into();
+    }
+    if let Some(track_ids) = &app.pending_focused_track_deletion {
+        let count = track_ids.len();
+        let noun = if count == 1 { "track" } else { "tracks" };
+        let dialog = container(
+            column![
+                text(format!("Delete {count} selected {noun}?")).size(18),
+                row![
+                    button(text("Delete"))
+                        .style(button::danger)
+                        .on_press(Message::ConfirmFocusedTrackDeletion),
+                    button(text("Cancel"))
+                        .style(button::secondary)
+                        .on_press(Message::CancelFocusedTrackDeletion),
+                ]
+                .spacing(tokens::SECTION_GAP)
+                .align_y(Alignment::Center),
+            ]
+            .spacing(tokens::SECTION_GAP),
+        )
+        .width(Length::Fixed(360.0))
+        .padding(tokens::SPACING_LG)
+        .style(iced::widget::container::rounded_box);
+        let backdrop = mouse_area(
+            container(dialog)
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .center(Length::Fill)
+                .style(|_| iced::widget::container::Style {
+                    background: Some(iced::Background::Color(iced::Color::from_rgba8(
+                        0, 0, 0, 0.66,
+                    ))),
+                    ..iced::widget::container::Style::default()
+                }),
+        )
+        .on_press(Message::CancelFocusedTrackDeletion);
         return stack![layered, backdrop]
             .width(Length::Fill)
             .height(Length::Fill)
@@ -375,6 +699,7 @@ fn mobile_view(app: &App, viewport_width: f32, viewport_height: f32) -> Element<
         super::MobilePanel::MidiEditor => midi_editor::mobile_view(app),
         super::MobilePanel::MediaBrowser => media::mobile_view(app),
         super::MobilePanel::Settings => settings::view(app),
+        super::MobilePanel::Routing => routing::view(app),
         super::MobilePanel::TimeMap => tempo_map::mobile_view(app),
         super::MobilePanel::FxChain => fx_chain::mobile_view(app),
         super::MobilePanel::PluginPicker => plugin_picker::mobile_view(app),
@@ -406,7 +731,21 @@ fn mobile_view(app: &App, viewport_width: f32, viewport_height: f32) -> Element<
             ]
             .align_y(Alignment::Center),
             row![
-                text(format!("{}", app.timeline.edit_cursor_tick)).size(12),
+                text({
+                    let position = app.timeline.cursor_position();
+                    match position {
+                        crate::timeline::EditCursorPosition::Tick(tick) => tick.to_string(),
+                        crate::timeline::EditCursorPosition::Sample(_) => {
+                            let tick = app.timeline.edit_cursor_tick_position(&app.project);
+                            if tick.fract().abs() < 1.0e-9 {
+                                format!("{:.0}", tick)
+                            } else {
+                                format!("{tick:.6}")
+                            }
+                        }
+                    }
+                })
+                .size(12),
                 iced::widget::Space::new().width(Length::Fill),
                 text(app.status.clone()).size(11).width(Length::Fill),
             ]
@@ -500,6 +839,18 @@ fn candidate_needs_recovery(app: &App, candidate: &aaadaw_app::RecordingRecovery
     })
 }
 
+fn arrangement_with_transport(app: &App) -> Element<'_, Message> {
+    column![
+        arrangement::view(app),
+        container(transport_view(app))
+            .width(Length::Fill)
+            .padding(tokens::PANEL_PADDING)
+    ]
+    .height(Length::Fill)
+    .width(Length::Fill)
+    .into()
+}
+
 fn docked_arrangement(app: &App) -> Element<'_, Message> {
     let panes = app
         .media_panel_dock
@@ -508,8 +859,9 @@ fn docked_arrangement(app: &App) -> Element<'_, Message> {
         .expect("the Media Browser dock initializes its pane grid before opening");
     pane_grid(panes, |_pane, content, _is_maximized| {
         let body: Element<'_, Message> = match content {
-            super::MainPane::Arrangement => arrangement::view(app),
+            super::MainPane::Arrangement => arrangement_with_transport(app),
             super::MainPane::MediaBrowser => media::dock_view(app),
+            super::MainPane::Mixer => mixer::view(app),
         };
         pane_grid::Content::new(body)
     })
@@ -560,7 +912,7 @@ fn transport_readout_tick(app: &App) -> u64 {
 }
 
 fn transport_time_readout(project: &aaadaw_core::Project, tick: u64) -> String {
-    project
+    let musical = project
         .musical_position_at_tick(tick)
         .map(|position| {
             format!(
@@ -570,7 +922,13 @@ fn transport_time_readout(project: &aaadaw_core::Project, tick: u64) -> String {
                 position.tick_in_beat()
             )
         })
-        .unwrap_or_else(|_| format!("{tick} ticks"))
+        .unwrap_or_else(|_| format!("{tick} ticks"));
+    let clock = project
+        .sample_at_tick(tick)
+        .and_then(|sample| project.project_time_at_sample(sample))
+        .map(crate::project_time::format_project_time)
+        .unwrap_or_else(|_| "Unavailable".to_owned());
+    format!("{musical} / {clock}")
 }
 
 fn transport_view(app: &App) -> Element<'_, Message> {
@@ -654,6 +1012,7 @@ fn transport_view(app: &App) -> Element<'_, Message> {
         };
         container(content).width(Length::Fill).into()
     })
+    .height(Length::Shrink)
     .into()
 }
 
@@ -747,16 +1106,8 @@ fn playback_controls(app: &App) -> Element<'_, Message> {
         || (!app.playback_busy && app.playback.is_some());
     let can_record = playback_available && !preparation_busy && app.recording.is_none();
     row![
-        button(if app.playback_playing {
-            "Pause"
-        } else {
-            "Play"
-        })
-        .on_press_maybe(can_play.then_some(if app.playback_playing {
-            Message::TogglePlayback
-        } else {
-            Message::StartPlayback
-        })),
+        button("Play").on_press_maybe(can_play.then_some(Message::StartPlayback)),
+        button("Pause").on_press_maybe(can_play.then_some(Message::TogglePlayback)),
         button("Stop").on_press_maybe(if app.recording.is_some() || app.recording_starting {
             Some(Message::StopRecording)
         } else {
@@ -779,9 +1130,13 @@ fn playback_controls(app: &App) -> Element<'_, Message> {
         } else {
             None
         }),
-        button("Loop unavailable")
-            .style(button::secondary)
-            .on_press_maybe(None::<Message>),
+        button("Repeat")
+            .style(if app.repeat_enabled {
+                button::primary
+            } else {
+                button::secondary
+            })
+            .on_press(Message::ToggleRepeat),
     ]
     .spacing(tokens::SPACING_XS)
     .align_y(Alignment::Center)
@@ -809,7 +1164,11 @@ fn playback_controls(_app: &App) -> Element<'_, Message> {
 fn transport_details(app: &App) -> Element<'_, Message> {
     let backend_name = app.selected_playback_backend().name();
     let sample = app.playhead_sample;
-    let seconds = sample as f64 / f64::from(app.project.settings().sample_rate().max(1));
+    let clock = app
+        .project
+        .project_time_at_sample(sample)
+        .map(crate::project_time::format_project_time)
+        .unwrap_or_else(|_| "Unavailable".to_owned());
     let busy = app.playback_busy || app.recording_starting || app.recording_stopping;
     let controls = row![
         button("Restart").on_press_maybe(
@@ -898,7 +1257,7 @@ fn transport_details(app: &App) -> Element<'_, Message> {
     };
     let mut content = column![
         row![
-            text(format!("{seconds:.3}s · {sample} samples")).size(12),
+            text(format!("{clock} · {sample} samples")).size(12),
             text(format!("Output: {backend_name}")).size(12),
         ]
         .spacing(tokens::SECTION_GAP)
@@ -942,17 +1301,31 @@ mod tests {
     use aaadaw_core::Project;
 
     #[test]
-    fn transport_time_readout_uses_bars_beats_and_ticks() {
+    fn transport_time_readout_uses_musical_position_and_project_clock() {
         let project = Project::new();
 
-        assert_eq!(super::transport_time_readout(&project, 960), "1.2.0");
+        assert_eq!(
+            super::transport_time_readout(&project, 960),
+            "1.2.0 / 0:00.500"
+        );
+        let shifted = Project::with_settings(
+            aaadaw_core::ProjectSettings::default()
+                .with_project_start_time_offset_seconds(-5.0)
+                .unwrap(),
+        );
+        assert_eq!(
+            super::transport_time_readout(&shifted, 960),
+            "1.2.0 / -0:04.500"
+        );
     }
 
     #[cfg(feature = "audio-device")]
     #[test]
     fn playback_preparation_has_a_clear_status_label() {
-        let mut app = super::App::default();
-        app.playback_busy = true;
+        let app = super::App {
+            playback_busy: true,
+            ..super::App::default()
+        };
 
         assert!(super::playback_status_label(&app).starts_with("Preparing "));
     }

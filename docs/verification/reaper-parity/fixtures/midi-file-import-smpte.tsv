@@ -1,0 +1,14 @@
+REAPER	7.82/linux-x86_64
+theme	Default_7.0.ReaperThemeZip
+fixture	fixtures/midi-file-import-smpte/smpte-25fps-40ticks-per-frame.mid
+fixture_sha256	903c26f61a942167eb20e7eaf809f005d46810e7ed57561bc26992a3b8aa3319
+generator	scripts/reaper_parity/generate-midi-timebase-probes.py	sha256=45ffd8f8696b6cf86c7879681c4ad3f4b0e8645af7038e858ea2d6e4ca200ce6
+probe_script	scripts/reaper_parity/probe-midi-smpte-import.lua	sha256=84509ff2606c3dc0c706eb7384919994f5bf2652d5a37d497c2caf755f465255
+division	0xE728; SMF definition is -25 fps with 40 ticks per frame
+native_import	REAPER 7.82 treats the complete 16-bit division as unsigned PPQ 59176
+native_note_position	MIDI_GetProjTimeFromPPQPos(250)=0.0021123428416926 seconds; at tick 750=0.0063370285250777 seconds
+native_project_time_conversion	MIDI_GetPPQPosFromProjTime(0.25)=29588; this is 0.5 quarter notes at 59176 PPQ
+native_item_length	0.5 seconds at the default 120 BPM despite the last source event being before 0.01 seconds
+readback	fixtures/midi-file-import-smpte/native-readback.tsv	sha256=6de567590d6daf7f1b1aa42bf64420735a9acfa0e1c3272b510e0fa2b21fb6d9
+screenshot	fixtures/midi-file-import-smpte/reaper-7.82-result.png	sha256=eb2c53084a2251df94dfb5a1b4dfd8ba438782b50c010c58abed858a2439d8d7
+aaadaw_behavior	At project PPQ 960, source note ticks 250..750 round to project ticks 4..12; short imports retain the native one-quarter-note item minimum

@@ -1,0 +1,27 @@
+version	7.82/linux-x86_64
+theme	Default_7.0.ReaperThemeZip
+fixture	track Piano; MIDI source spans project QN 0.5-1.5; C4 note, CC1, pitch bend
+project_timebase	1 (Beats: position, length, rate)
+item_beat_attach_mode	-1 (inherit project)
+item_loop_source	1
+take_local_ppq_events	note-on 0; CC1 240; pitch bend 360; note-off 960
+project_ppq_at_item_start	480
+project_ppq_at_note_end	1440
+project_ppq_at_cc	720
+project_ppq_at_pitch_bend	840
+take_event_project_time_map	MIDI_GetProjTimeFromPPQPos reports CC1 at project tick 720 and pitch bend at 840; export places source events at ticks 725 and 846 after item-time conversion
+tempo_ramp	120 BPM at QN 0; linear to 60 BPM at QN 8; interpolation endpoint project tick 7680
+export_action	40849
+export_mode	Multitrack MIDI file (type 1 MIDI file)
+export_ppqn	960
+export_tempo_meter_changes	checked
+export_smpte_markers	unchecked
+native_export_path	/tmp/aaadaw-midi-tempo-ramp-native-20261016/midi-tempo-ramp-native-20261016.mid
+native_export_bytes	661
+native_export_sha256	fce51945c0ec6249d77967ce70e540a3cedc02b6ed7d4a53a9bee44527f39190
+native_conductor_events	65 tempo events at ticks 0..7680 in 120-tick steps; 4/4 at tick 0; start text at tick 0 and interpolation-end text at tick 7560; End-of-Track tick 7680
+native_midi_track_events	Piano note-on tick 480, CC1 tick 725, pitch bend tick 846, note-off and End-of-Track tick 1440
+native_dialog_screenshot	fixtures/menu-export-midi-native-tempo-ramp-dialog.png
+native_dialog_screenshot_sha256	e83989c646e3e130e3176db18967bc5cf92295a61b83a69978fbd59d4e98f28e
+native_binary_fixture	fixtures/menu-export-midi-native-tempo-ramp.mid
+native_probe	scripts/reaper_parity/probe-midi-export-tempo-ramp.lua

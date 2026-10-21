@@ -1,0 +1,9 @@
+version	7.82/linux-x86_64
+theme	Default_7.0.ReaperThemeZip
+display	X11 Xvfb 1280x1024; isolated unsaved project
+audio	device closed; transport stopped throughout
+probe	scripts/reaper_parity/probe-action-list-focus.lua; queried REAPER state around each Enter
+step	elapsed_seconds	filter	input	track_count	play_state	time_selection_seconds	loop_points_seconds	project_state_change_count	focus_and_selection	screenshot	sha256	observation
+enter_before	36.620	undo	(none)	1	0	4.000-6.000	4.000-6.000	2	Filter focused; Edit: Undo visible	fixtures/action-list-filter-enter-native-before.png	b53950131181dc575e7b0214158941fe9b925bfeaeb3639c7018abeb75887032	baseline before submitting the Filter
+first_enter	37.618	undo	Enter	1	0	4.000-6.000	4.000-6.000	2	Filter unfocused; Edit: Undo selected	fixtures/action-list-filter-enter-native-first.png	94317ed6681e88c306a1670384c94cad42eaefd5cf1de444cd8b20d27a6466e2	first Enter selects the result without running it
+second_enter_after	57.189	undo	Enter	0	0	4.000-6.000	4.000-6.000	3	Action List retained focus; Undo executed	(not archived)	-	state captured by ReaScript; a separate audio hardware error dialog obscured a clean screenshot

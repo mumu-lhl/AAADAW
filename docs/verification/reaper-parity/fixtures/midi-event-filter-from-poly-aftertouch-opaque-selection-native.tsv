@@ -1,0 +1,26 @@
+artifact	sha256
+scripts/reaper_parity/probe-midi-event-filter-from-poly-aftertouch-opaque-selection.lua	e8b39d511ea3aa50fa506d5f6e605ea3f8fbdbc8406772f2b3d9a824f887cce5
+fixtures/midi-event-filter-from-poly-aftertouch-opaque-selection-native-before.png	ebedc7b19555b486bb76ff7365141d434da0c5ea9de042b27451e6f111785154
+fixtures/midi-event-filter-from-poly-aftertouch-opaque-selection-native-filter-before-set.png	a8a56419ed7a42ed1d1033d666d720f7807c851a3a51c29a3ee156f05941951f
+fixtures/midi-event-filter-from-poly-aftertouch-opaque-selection-native-after-set.png	4c0878243762622b3cc1573cd960ba165485ecb4525a3d1d7056ad442e3b057b
+fixtures/midi-event-filter-from-poly-aftertouch-opaque-selection-native-list-filtered.png	02695b65e3a2965daeb2d6e1ba284c5e7d9408fc323583e582c96bd35faa0265
+fixtures/midi-event-filter-from-poly-aftertouch-opaque-selection-native-funnel-off.png	66d68f0221d127112f9ce76f5e2d5c3bfe3feecaa4aeabe77d16297f029c25eb
+fixtures/midi-event-filter-from-poly-aftertouch-opaque-selection-native-readback-before.tsv	e95343df7b2dd4fdc02113e245a108fb77199dfd11bad6399fed9ff5a4d13e97
+fixtures/midi-event-filter-from-poly-aftertouch-opaque-selection-native-readback-after-set.tsv	21e0a4ac4b33bb1c4bba3d9c3af394584521465891e5ae057f17fb292d81589d
+fixtures/midi-event-filter-from-poly-aftertouch-opaque-selection-native-readback-funnel-off.tsv	e95343df7b2dd4fdc02113e245a108fb77199dfd11bad6399fed9ff5a4d13e97
+fixtures/midi-event-filter-from-poly-aftertouch-opaque-selection-native-before.bin	db268d5a71ce0d10184809d9bd920d725670a9479a37deb0db8e7946cebc35b1
+fixtures/midi-event-filter-from-poly-aftertouch-opaque-selection-native-after-set.bin	db268d5a71ce0d10184809d9bd920d725670a9479a37deb0db8e7946cebc35b1
+fixtures/midi-event-filter-from-poly-aftertouch-opaque-selection-native-before.rpp	0cac0be178db3a1714acd21b03115239a65abb08b700360a63bf50d91e4ca3dd
+fixtures/midi-event-filter-from-poly-aftertouch-opaque-selection-native-after-set.rpp	5d3c8ba059f13623635b75125f482272de330a5cb10ec33cdf211eb5c8a532e5
+fixtures/midi-event-filter-from-poly-aftertouch-opaque-selection-native-funnel-off.rpp	56a076921c1159a5c4303dbab82561bc33e7000be04605c00343f3c54cb569ab
+native_build_id	fb9ade2f211bc91a3ee6193630ef17bcf5f6528b
+native_binary_sha256	9976f5608068b7a58518969001b00b527fb0de6ed7459e0e5dda6f29878ee254
+theme	REAPER 7.82 Linux Default 7; theme SHA-256 575544606736a395520703e532209ad9635f13a41b7ea000bb9810d60025be48
+environment	Linux Xvfb :558, 1600x900; fresh isolated -cfgfile profile; audio device closed
+starting_state	Eight Event List rows: Note C4 ch1 @ tick 0; selected Poly Aftertouch C4/32 ch2 @ 480; CC7 value 64 ch2 @ 600; unselected Text Meta @ 720; Poly Aftertouch E4/64 ch4 @ 720; selected Text Meta @ 960; F0 SysEx @ 1500; terminal row; Show-only and funnel off
+action	Event List > Filter Events > Set filter from selection
+assertion	REAPER derives <all events>, All channels, Position 1/8–0.250, and Repeat measure; Show-only remains unchecked and the Event List funnel activates; Draw events on channel stays Channel 1
+list_result	Five in-range rows pass immediately: selected Poly Aftertouch, CC7, unselected Text Meta, unselected Poly Aftertouch, and selected Text Meta. Turning the funnel off restores all eight rows.
+selection_and_data	The selected Poly Aftertouch and Text Meta remain selected. MIDI_GetAllEvts is 156 bytes before and after with identical SHA-256 db268d5a71ce0d10184809d9bd920d725670a9479a37deb0db8e7946cebc35b1. The after-set RPP stores Position 0.125–0.25026042; funnel-off leaves Position and clears the active filter state.
+verification	ReaScript event readbacks before/after/funnel-off, identical MIDI blobs, before/after/funnel-off RPPs, and REAPER 7.82 Default 7 selected-row, filter-panel, filtered-list and restored-list real-window screenshots
+limitation	With Position filtering active, ReaScript MIDI_GetNote and MIDI_GetTextSysexEvt omit the out-of-range Note and SysEx; unchanged raw MIDI bytes and project states preserve their evidence. Screenshots verify behavior and controls, not pixel identity.

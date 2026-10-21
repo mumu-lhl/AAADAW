@@ -1,7 +1,12 @@
-use crate::{ArrangementViewState, FxAutomationLaneViewState, VolumeAutomationLaneViewState};
+use crate::{
+    ArrangementViewState, FxAutomationLaneViewState, GridDivision, VolumeAutomationLaneViewState,
+};
 use aaadaw_core::{
-    AudioItemSnapshot, MeterPointSnapshot, MidiControllerData, MidiItemSnapshot, MidiNoteData,
-    MidiNoteSnapshot, MidiPitchBendData, Project, ProjectSettings, ProjectSnapshot, SnapshotError,
+    AudioItemSnapshot, BpmBasis, MeterPointSnapshot, MidiChannelPressureData, MidiControllerData,
+    MidiEventOrderData, MidiEventOrderTarget, MidiItemSnapshot, MidiItemTakeSnapshot, MidiNoteData,
+    MidiNoteSnapshot, MidiOpaqueEventData, MidiOpaqueEventKind, MidiPitchBendData,
+    MidiPolyAftertouchData, MidiProgramChangeData, PanMode, Project, ProjectMarkerSnapshot,
+    ProjectRegionSnapshot, ProjectSettings, ProjectSnapshot, RazorEditArea, SnapshotError,
     TempoCurve, TempoPointSnapshot, TrackFxParameterAutomationLaneSnapshot,
     TrackFxParameterAutomationPointSnapshot, TrackFxParameterValueSnapshot, TrackFxPluginSnapshot,
     TrackInstrumentSnapshot, TrackSnapshot, VolumeAutomationPoint,
@@ -22,9 +27,135 @@ use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 /// Latest database schema version understood by this release.
-pub const CURRENT_SCHEMA_VERSION: u32 = 17;
+pub const CURRENT_SCHEMA_VERSION: u32 = 74;
+const EMPTY_AUDIO_TAKE_MEDIA_REF: &str = "aaadaw:empty-audio-take";
+
+const EMPTY_ACTIVE_MIDI_TAKE_NAME: &str = "__AAADAW_EMPTY_ACTIVE_MIDI_TAKE__";
+
+const MIGRATION_29: &str = "ALTER TABLE project_meta ADD COLUMN start_measure INTEGER NOT NULL DEFAULT 1 CHECK(start_measure BETWEEN -2147483648 AND 2147483647);";
+const MIGRATION_30: &str = "ALTER TABLE project_meta ADD COLUMN bpm_basis INTEGER NOT NULL DEFAULT 1 CHECK(bpm_basis BETWEEN 0 AND 5);";
+const MIGRATION_31: &str = "ALTER TABLE project_meta ADD COLUMN base_ruler_label_spacing_on_measure INTEGER NOT NULL DEFAULT 1 CHECK(base_ruler_label_spacing_on_measure IN (0,1));";
+// SQLite parses these sentinels as infinities, so the check accepts every finite f64.
+const MIGRATION_32: &str = "ALTER TABLE project_meta ADD COLUMN project_start_time_offset_seconds REAL NOT NULL DEFAULT 0 CHECK(project_start_time_offset_seconds > -1.0e999 AND project_start_time_offset_seconds < 1.0e999);";
+const MIGRATION_33: &str = "ALTER TABLE project_meta ADD COLUMN project_start_time_fractional_frame_offset_allowed INTEGER NOT NULL DEFAULT 0 CHECK(project_start_time_fractional_frame_offset_allowed IN (0,1));";
+const MIGRATION_34: &str = "ALTER TABLE project_meta ADD COLUMN force_tempo_changes_to_whole_samples INTEGER NOT NULL DEFAULT 0 CHECK(force_tempo_changes_to_whole_samples IN (0,1));";
+const MIGRATION_35: &str = r#"
+CREATE TABLE IF NOT EXISTS project_markers (
+    id INTEGER PRIMARY KEY CHECK (id >= 0),
+    position_ticks INTEGER NOT NULL CHECK (position_ticks >= 0),
+    name TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS project_markers_by_position ON project_markers(position_ticks, id);
+"#;
+const MIGRATION_36: &str = r#"
+ALTER TABLE project_markers ADD COLUMN marker_number INTEGER NOT NULL DEFAULT 1 CHECK(marker_number BETWEEN 1 AND 2147483647);
+UPDATE project_markers SET marker_number = CASE WHEN id >= 2147483646 THEN 2147483647 ELSE id + 1 END;
+"#;
+const MIGRATION_37: &str = r#"
+CREATE TABLE IF NOT EXISTS project_regions (
+    id INTEGER PRIMARY KEY CHECK (id >= 0),
+    region_number INTEGER NOT NULL CHECK (region_number BETWEEN 1 AND 2147483647),
+    start_ticks INTEGER NOT NULL CHECK (start_ticks >= 0),
+    end_ticks INTEGER NOT NULL CHECK (end_ticks > start_ticks),
+    name TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS project_regions_by_start ON project_regions(start_ticks, id);
+"#;
+const MIGRATION_53: &str = r#"
+CREATE TABLE IF NOT EXISTS project_region_render_tracks (
+    region_id INTEGER NOT NULL REFERENCES project_regions(id) ON DELETE CASCADE,
+    track_id INTEGER NOT NULL REFERENCES tracks(id) ON DELETE CASCADE,
+    position INTEGER NOT NULL CHECK(position >= 0),
+    PRIMARY KEY(region_id, track_id),
+    UNIQUE(region_id, position)
+);
+"#;
+const MIGRATION_54: &str = "ALTER TABLE audio_items ADD COLUMN name TEXT NOT NULL DEFAULT '';";
+const MIGRATION_56: &str = "ALTER TABLE items ADD COLUMN start_tick_subtick INTEGER NOT NULL DEFAULT 0 CHECK (start_tick_subtick BETWEEN 0 AND 199);";
+
+const MIGRATION_38: &str = r#"
+CREATE TABLE IF NOT EXISTS arrangement_time_ranges (
+    singleton INTEGER PRIMARY KEY CHECK(singleton = 1),
+    time_selection_start_seconds REAL,
+    time_selection_end_seconds REAL,
+    loop_start_seconds REAL,
+    loop_end_seconds REAL,
+    CHECK((time_selection_start_seconds IS NULL) = (time_selection_end_seconds IS NULL)),
+    CHECK(time_selection_start_seconds IS NULL OR (
+        time_selection_start_seconds > -1.0e999 AND time_selection_start_seconds < 1.0e999 AND
+        time_selection_end_seconds > -1.0e999 AND time_selection_end_seconds < 1.0e999 AND
+        time_selection_start_seconds < time_selection_end_seconds
+    )),
+    CHECK((loop_start_seconds IS NULL) = (loop_end_seconds IS NULL)),
+    CHECK(loop_start_seconds IS NULL OR (
+        loop_start_seconds > -1.0e999 AND loop_start_seconds < 1.0e999 AND
+        loop_end_seconds > -1.0e999 AND loop_end_seconds < 1.0e999 AND
+        loop_start_seconds <= loop_end_seconds
+    ))
+);
+"#;
+
+const MIGRATION_39: &str = r#"
+ALTER TABLE audio_items ADD COLUMN volume REAL NOT NULL DEFAULT 1.0
+    CHECK(volume >= 0.0 AND volume <= 16.0);
+"#;
+
+const MIGRATION_40_TAKE_VOLUME: &str = r#"
+ALTER TABLE audio_items ADD COLUMN take_volume REAL NOT NULL DEFAULT 1.0
+    CHECK(take_volume >= 0.0 AND take_volume <= 16.0);
+"#;
+const MIGRATION_40_TAKE_PAN: &str = r#"
+ALTER TABLE audio_items ADD COLUMN take_pan REAL NOT NULL DEFAULT 0.0
+    CHECK(take_pan >= -1.0 AND take_pan <= 1.0);
+"#;
+
+const MIGRATION_41: &str = r#"
+CREATE TABLE IF NOT EXISTS track_razor_edit_areas (
+    track_id INTEGER NOT NULL REFERENCES tracks(id) ON DELETE CASCADE,
+    position INTEGER NOT NULL CHECK(position >= 0),
+    start_sample INTEGER NOT NULL CHECK(start_sample >= 0),
+    end_sample INTEGER NOT NULL CHECK(end_sample > start_sample),
+    PRIMARY KEY(track_id, position)
+);
+"#;
+
+const MIGRATION_28: &str = "CREATE TABLE IF NOT EXISTS project_notes(singleton INTEGER PRIMARY KEY CHECK(singleton = 1), title TEXT NOT NULL, author TEXT NOT NULL, notes TEXT NOT NULL, show_on_load INTEGER NOT NULL CHECK(show_on_load IN (0,1)), word_wrap INTEGER NOT NULL CHECK(word_wrap IN (0,1))); INSERT OR IGNORE INTO project_notes VALUES(1, '', '', '', 0, 1);";
+
+const MIGRATION_27: &str = "CREATE TABLE IF NOT EXISTS project_timecode(singleton INTEGER PRIMARY KEY CHECK(singleton = 1), frame_rate INTEGER NOT NULL CHECK(frame_rate BETWEEN 0 AND 9)); INSERT OR IGNORE INTO project_timecode VALUES(1, 5);";
+
+const MIGRATION_26: &str = "CREATE TABLE IF NOT EXISTS audio_item_fade_curves(item_id INTEGER PRIMARY KEY REFERENCES audio_item_fades(item_id) ON DELETE CASCADE, in_curvature REAL, in_s REAL, out_curvature REAL, out_s REAL, CHECK((in_curvature IS NULL) = (in_s IS NULL)), CHECK((out_curvature IS NULL) = (out_s IS NULL)), CHECK(in_curvature BETWEEN -1 AND 1 AND in_s BETWEEN -1 AND 1), CHECK(out_curvature BETWEEN -1 AND 1 AND out_s BETWEEN -1 AND 1), CHECK(in_curvature IS NOT NULL OR out_curvature IS NOT NULL));";
+
+const MIGRATION_25: &str = "CREATE TABLE IF NOT EXISTS audio_item_fades(item_id INTEGER PRIMARY KEY REFERENCES audio_items(id) ON DELETE CASCADE, fade_in_samples REAL NOT NULL CHECK(fade_in_samples >= 0), fade_out_samples REAL NOT NULL CHECK(fade_out_samples >= 0), fade_in_shape INTEGER NOT NULL CHECK(fade_in_shape BETWEEN 0 AND 6), fade_out_shape INTEGER NOT NULL CHECK(fade_out_shape BETWEEN 0 AND 6));";
+
+const MIGRATION_24: &str = "CREATE TABLE project_master_mix(singleton INTEGER PRIMARY KEY CHECK(singleton = 1), volume_db REAL NOT NULL, pan REAL NOT NULL CHECK(pan BETWEEN -1 AND 1)); INSERT INTO project_master_mix VALUES(1, 0, 0);";
 const APPLICATION_ID: i64 = 0x4141_4441;
 const PAGE_SIZE: u32 = 4096;
+
+// Additive migration: existing projects retain their historical signal path.
+const MIGRATION_23: &str = "ALTER TABLE tracks ADD COLUMN phase_inverted INTEGER NOT NULL DEFAULT 0 CHECK(phase_inverted IN (0, 1));";
+
+const MIGRATION_22: &str = "CREATE TABLE arrangement_folder_compact (track_id INTEGER PRIMARY KEY CHECK(track_id >= 0), mode INTEGER NOT NULL CHECK(mode BETWEEN 0 AND 2));";
+
+const MIGRATION_21: &str = "ALTER TABLE tracks ADD COLUMN is_folder INTEGER NOT NULL DEFAULT 0 CHECK(is_folder IN (0, 1)); ALTER TABLE tracks ADD COLUMN parent_track_id INTEGER REFERENCES tracks(id);";
+
+const MIGRATION_20: &str =
+    "ALTER TABLE track_sends ADD COLUMN tap INTEGER NOT NULL DEFAULT 0 CHECK(tap IN (0, 1, 3));";
+
+const MIGRATION_19: &str = "
+ALTER TABLE tracks ADD COLUMN main_send_enabled INTEGER NOT NULL DEFAULT 1 CHECK(main_send_enabled IN (0, 1));
+CREATE TABLE track_sends (
+    id INTEGER PRIMARY KEY CHECK(id >= 0),
+    source_track_id INTEGER NOT NULL REFERENCES tracks(id),
+    position INTEGER NOT NULL CHECK(position >= 0),
+    destination_track_id INTEGER NOT NULL REFERENCES tracks(id),
+    volume_db REAL NOT NULL,
+    pan REAL NOT NULL CHECK(pan BETWEEN -1 AND 1),
+    muted INTEGER NOT NULL CHECK(muted IN (0, 1)),
+    phase_inverted INTEGER NOT NULL CHECK(phase_inverted IN (0, 1)),
+    UNIQUE(source_track_id, position)
+);";
+
+const MIGRATION_18: &str = "ALTER TABLE project_meta ADD COLUMN pan_mode INTEGER NOT NULL DEFAULT 0 CHECK(pan_mode IN (0, 1));";
 
 const MIGRATION_1: &str = r#"
 CREATE TABLE project_meta (
@@ -49,7 +180,9 @@ CREATE TABLE items (
     track_id INTEGER NOT NULL REFERENCES tracks(id) ON DELETE CASCADE,
     position INTEGER NOT NULL CHECK (position >= 0),
     start_tick INTEGER NOT NULL CHECK (start_tick >= 0),
+    start_tick_subtick INTEGER NOT NULL DEFAULT 0 CHECK (start_tick_subtick BETWEEN 0 AND 199),
     length_ticks INTEGER NOT NULL CHECK (length_ticks > 0),
+    muted INTEGER NOT NULL DEFAULT 0 CHECK (muted IN (0, 1)),
     UNIQUE (track_id, position)
 );
 
@@ -238,6 +371,11 @@ ALTER TABLE items ADD COLUMN source_offset_ticks INTEGER NOT NULL DEFAULT 0
     CHECK (source_offset_ticks >= 0);
 "#;
 
+const MIGRATION_68_MIDI_ACTIVE_EMPTY_TAKE: &str = r#"
+ALTER TABLE items ADD COLUMN active_take_name_is_empty INTEGER NOT NULL DEFAULT 0
+    CHECK(active_take_name_is_empty IN (0, 1));
+"#;
+
 const AUDIO_ASSET_CHUNK_SIZE: usize = 256 * 1024;
 const AUDIO_ASSET_IMPORT_BATCH_CHUNKS: usize = 16;
 
@@ -289,12 +427,257 @@ CREATE TABLE IF NOT EXISTS audio_items (
     track_id INTEGER NOT NULL REFERENCES tracks(id) ON DELETE CASCADE,
     position INTEGER NOT NULL CHECK (position >= 0),
     media_ref TEXT NOT NULL CHECK (length(trim(media_ref)) > 0),
+    name TEXT NOT NULL DEFAULT '',
     start_sample INTEGER NOT NULL CHECK (start_sample >= 0),
     source_offset_samples INTEGER NOT NULL CHECK (source_offset_samples >= 0),
+    signed_source_offset_samples INTEGER NOT NULL DEFAULT 0,
     length_samples INTEGER NOT NULL CHECK (length_samples > 0),
+    volume REAL NOT NULL DEFAULT 1.0 CHECK (volume >= 0.0 AND volume <= 16.0),
+    take_volume REAL NOT NULL DEFAULT 1.0 CHECK (take_volume >= 0.0 AND take_volume <= 16.0),
+    take_pan REAL NOT NULL DEFAULT 0.0 CHECK (take_pan >= -1.0 AND take_pan <= 1.0),
+    take_playback_rate REAL NOT NULL DEFAULT 1.0 CHECK (take_playback_rate > 0.0),
+    muted INTEGER NOT NULL DEFAULT 0 CHECK (muted IN (0, 1)),
+    phase_inverted INTEGER NOT NULL DEFAULT 0 CHECK (phase_inverted IN (0, 1)),
+    active_take_index INTEGER NOT NULL DEFAULT 0 CHECK (active_take_index >= 0),
+    active_take_is_empty INTEGER NOT NULL DEFAULT 0 CHECK (active_take_is_empty IN (0, 1)),
     UNIQUE (track_id, position)
 );
 CREATE INDEX IF NOT EXISTS audio_items_by_project_position ON audio_items(position, id);
+"#;
+
+const MIGRATION_49: &str = r#"
+ALTER TABLE audio_items ADD COLUMN signed_source_offset_samples INTEGER NOT NULL DEFAULT 0;
+UPDATE audio_items SET signed_source_offset_samples = source_offset_samples;
+"#;
+
+const MIGRATION_50: &str = r#"
+UPDATE audio_items
+SET signed_source_offset_samples = signed_source_offset_samples - source_section_start_samples,
+    source_offset_samples = MAX(0, signed_source_offset_samples - source_section_start_samples)
+WHERE source_section_start_samples IS NOT NULL
+  AND source_section_length_samples IS NOT NULL;
+"#;
+
+const MIGRATION_51: &str = r#"
+ALTER TABLE items ADD COLUMN source_loop_length_ticks INTEGER NOT NULL DEFAULT 1
+    CHECK(source_loop_length_ticks > 0);
+UPDATE items
+SET source_loop_length_ticks = MAX(
+    length_ticks,
+    COALESCE((
+        SELECT MIN(9223372036854775807, MAX(tick + duration))
+        FROM midi_notes WHERE midi_notes.item_id = items.id
+    ), 0),
+    COALESCE((SELECT MIN(9223372036854775807, MAX(tick + 1)) FROM midi_controllers WHERE midi_controllers.item_id = items.id), 0),
+    COALESCE((SELECT MIN(9223372036854775807, MAX(tick + 1)) FROM midi_pitch_bends WHERE midi_pitch_bends.item_id = items.id), 0)
+);
+"#;
+
+const MIGRATION_52: &str = r#"
+ALTER TABLE arrangement_view_meta ADD COLUMN repeat_enabled INTEGER NOT NULL DEFAULT 0
+    CHECK(repeat_enabled IN (0, 1));
+"#;
+
+const MIGRATION_59_CONTROLLERS: &str = r#"
+CREATE TABLE midi_controllers_v59 (
+    item_id INTEGER NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+    position INTEGER NOT NULL CHECK (position >= 0),
+    controller INTEGER NOT NULL CHECK (controller BETWEEN 0 AND 127),
+    channel INTEGER NOT NULL DEFAULT 0 CHECK (channel BETWEEN 0 AND 15),
+    tick INTEGER NOT NULL CHECK (tick >= 0),
+    value INTEGER NOT NULL CHECK (value BETWEEN 0 AND 127),
+    PRIMARY KEY (item_id, position),
+    UNIQUE (item_id, channel, controller, tick)
+);
+INSERT INTO midi_controllers_v59(item_id, position, controller, channel, tick, value)
+    SELECT item_id, position, controller, 0, tick, value FROM midi_controllers;
+DROP TABLE midi_controllers;
+ALTER TABLE midi_controllers_v59 RENAME TO midi_controllers;
+CREATE INDEX midi_controllers_by_item_tick
+    ON midi_controllers(item_id, tick, channel, controller);
+"#;
+
+const MIGRATION_59_PITCH_BENDS: &str = r#"
+CREATE TABLE midi_pitch_bends_v59 (
+    item_id INTEGER NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+    position INTEGER NOT NULL CHECK (position >= 0),
+    channel INTEGER NOT NULL DEFAULT 0 CHECK (channel BETWEEN 0 AND 15),
+    tick INTEGER NOT NULL CHECK (tick >= 0),
+    value INTEGER NOT NULL CHECK (value BETWEEN 0 AND 16383),
+    PRIMARY KEY (item_id, position),
+    UNIQUE (item_id, channel, tick)
+);
+INSERT INTO midi_pitch_bends_v59(item_id, position, channel, tick, value)
+    SELECT item_id, position, 0, tick, value FROM midi_pitch_bends;
+DROP TABLE midi_pitch_bends;
+ALTER TABLE midi_pitch_bends_v59 RENAME TO midi_pitch_bends;
+CREATE INDEX midi_pitch_bends_by_item_tick
+    ON midi_pitch_bends(item_id, tick, channel);
+"#;
+
+const CREATE_MIDI_CONTROLLERS_59: &str = r#"
+CREATE TABLE midi_controllers (
+    item_id INTEGER NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+    position INTEGER NOT NULL CHECK (position >= 0),
+    controller INTEGER NOT NULL CHECK (controller BETWEEN 0 AND 127),
+    channel INTEGER NOT NULL DEFAULT 0 CHECK (channel BETWEEN 0 AND 15),
+    tick INTEGER NOT NULL CHECK (tick >= 0),
+    value INTEGER NOT NULL CHECK (value BETWEEN 0 AND 127),
+    PRIMARY KEY (item_id, position),
+    UNIQUE (item_id, channel, controller, tick)
+);
+CREATE INDEX midi_controllers_by_item_tick ON midi_controllers(item_id, tick, channel, controller);
+"#;
+
+const CREATE_MIDI_PITCH_BENDS_59: &str = r#"
+CREATE TABLE midi_pitch_bends (
+    item_id INTEGER NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+    position INTEGER NOT NULL CHECK (position >= 0),
+    channel INTEGER NOT NULL DEFAULT 0 CHECK (channel BETWEEN 0 AND 15),
+    tick INTEGER NOT NULL CHECK (tick >= 0),
+    value INTEGER NOT NULL CHECK (value BETWEEN 0 AND 16383),
+    PRIMARY KEY (item_id, position),
+    UNIQUE (item_id, channel, tick)
+);
+CREATE INDEX midi_pitch_bends_by_item_tick ON midi_pitch_bends(item_id, tick, channel);
+"#;
+
+const MIGRATION_60_PROGRAM_CHANGES: &str = r#"
+CREATE TABLE midi_program_changes (
+    item_id INTEGER NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+    position INTEGER NOT NULL CHECK (position >= 0),
+    channel INTEGER NOT NULL CHECK (channel BETWEEN 0 AND 15),
+    tick INTEGER NOT NULL CHECK (tick >= 0),
+    program INTEGER NOT NULL CHECK (program BETWEEN 0 AND 127),
+    PRIMARY KEY (item_id, position),
+    UNIQUE (item_id, channel, tick)
+);
+CREATE INDEX midi_program_changes_by_item_tick
+    ON midi_program_changes(item_id, tick, channel);
+"#;
+
+const MIGRATION_61_MIDI_AFTERTOUCH: &str = r#"
+CREATE TABLE IF NOT EXISTS midi_poly_aftertouches (
+    item_id INTEGER NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+    position INTEGER NOT NULL CHECK (position >= 0),
+    channel INTEGER NOT NULL CHECK (channel BETWEEN 0 AND 15),
+    tick INTEGER NOT NULL CHECK (tick >= 0),
+    note INTEGER NOT NULL CHECK (note BETWEEN 0 AND 127),
+    value INTEGER NOT NULL CHECK (value BETWEEN 0 AND 127),
+    PRIMARY KEY (item_id, position),
+    UNIQUE (item_id, channel, note, tick)
+);
+CREATE INDEX IF NOT EXISTS midi_poly_aftertouches_by_item_tick
+    ON midi_poly_aftertouches(item_id, tick, channel, note);
+CREATE TABLE IF NOT EXISTS midi_channel_pressures (
+    item_id INTEGER NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+    position INTEGER NOT NULL CHECK (position >= 0),
+    channel INTEGER NOT NULL CHECK (channel BETWEEN 0 AND 15),
+    tick INTEGER NOT NULL CHECK (tick >= 0),
+    value INTEGER NOT NULL CHECK (value BETWEEN 0 AND 127),
+    PRIMARY KEY (item_id, position),
+    UNIQUE (item_id, channel, tick)
+);
+CREATE INDEX IF NOT EXISTS midi_channel_pressures_by_item_tick
+    ON midi_channel_pressures(item_id, tick, channel);
+"#;
+const MIGRATION_62_NOTE_OFF_VELOCITY: &str = "ALTER TABLE midi_notes ADD COLUMN off_velocity INTEGER NOT NULL DEFAULT 0 CHECK (off_velocity BETWEEN 0 AND 127);";
+
+const MIGRATION_63_MIDI_OPAQUE_EVENTS: &str = r#"
+CREATE TABLE IF NOT EXISTS midi_opaque_events (
+    item_id INTEGER NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+    position INTEGER NOT NULL CHECK (position >= 0),
+    tick INTEGER NOT NULL CHECK (tick >= 0),
+    source_order INTEGER NOT NULL CHECK (source_order BETWEEN 0 AND 4294967295),
+    event_kind INTEGER NOT NULL CHECK (event_kind BETWEEN 0 AND 2),
+    meta_type INTEGER CHECK (meta_type BETWEEN 0 AND 255),
+    data BLOB NOT NULL,
+    PRIMARY KEY (item_id, position),
+    CHECK ((event_kind = 0 AND meta_type IS NOT NULL) OR
+           (event_kind IN (1, 2) AND meta_type IS NULL))
+);
+CREATE INDEX IF NOT EXISTS midi_opaque_events_by_item_tick
+    ON midi_opaque_events(item_id, tick, source_order);
+"#;
+const MIGRATION_64_MIDI_EVENT_ORDER: &str = r#"
+CREATE TABLE IF NOT EXISTS midi_event_order (
+    item_id INTEGER NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+    position INTEGER NOT NULL CHECK (position >= 0),
+    source_order INTEGER NOT NULL CHECK (source_order BETWEEN 0 AND 4294967295),
+    event_kind INTEGER NOT NULL CHECK (event_kind BETWEEN 0 AND 5),
+    tick INTEGER NOT NULL CHECK (tick >= 0),
+    channel INTEGER NOT NULL CHECK (channel BETWEEN 0 AND 15),
+    data1 INTEGER NOT NULL CHECK (data1 BETWEEN 0 AND 16383),
+    data2 INTEGER NOT NULL CHECK (data2 BETWEEN 0 AND 127),
+    data3 INTEGER NOT NULL CHECK (data3 BETWEEN 0 AND 127),
+    duration INTEGER NOT NULL CHECK (duration >= 0),
+    PRIMARY KEY (item_id, position),
+    UNIQUE (item_id, source_order)
+);
+CREATE INDEX IF NOT EXISTS midi_event_order_by_item_source_order
+    ON midi_event_order(item_id, source_order);
+"#;
+const MIGRATION_65_MIDI_NOTE_OFF_ORDER: &str = r#"
+ALTER TABLE midi_event_order
+    ADD COLUMN note_off_order INTEGER
+    CHECK (note_off_order IS NULL OR note_off_order BETWEEN 0 AND 4294967295);
+"#;
+const MIGRATION_66_AUDIO_TAKES: &str = r#"
+CREATE TABLE IF NOT EXISTS audio_item_takes (
+    item_id INTEGER NOT NULL REFERENCES audio_items(id) ON DELETE CASCADE,
+    take_index INTEGER NOT NULL CHECK(take_index >= 0),
+    media_ref TEXT NOT NULL CHECK(length(trim(media_ref)) > 0),
+    name TEXT NOT NULL,
+    source_offset_samples INTEGER NOT NULL,
+    phase_inverted INTEGER NOT NULL CHECK(phase_inverted IN (0,1)),
+    loop_source INTEGER NOT NULL CHECK(loop_source IN (0,1)),
+    source_section_start_samples INTEGER CHECK(source_section_start_samples IS NULL OR source_section_start_samples >= 0),
+    source_section_length_samples INTEGER CHECK(source_section_length_samples IS NULL OR source_section_length_samples > 0),
+    take_volume REAL NOT NULL CHECK(take_volume >= 0.0 AND take_volume <= 16.0),
+    take_pan REAL NOT NULL CHECK(take_pan >= -1.0 AND take_pan <= 1.0),
+    take_playback_rate REAL NOT NULL CHECK(take_playback_rate > 0.0),
+    PRIMARY KEY(item_id, take_index),
+    CHECK((source_section_start_samples IS NULL) = (source_section_length_samples IS NULL))
+);
+"#;
+const MIGRATION_67_MIDI_TAKES: &str = r#"
+CREATE TABLE IF NOT EXISTS midi_item_takes (
+    item_id INTEGER NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+    take_index INTEGER NOT NULL CHECK(take_index >= 0),
+    name TEXT NOT NULL,
+    source_offset_ticks INTEGER NOT NULL CHECK(source_offset_ticks >= 0),
+    loop_source INTEGER NOT NULL CHECK(loop_source IN (0, 1)),
+    source_loop_length_ticks INTEGER NOT NULL CHECK(source_loop_length_ticks >= 0),
+    PRIMARY KEY(item_id, take_index)
+);
+CREATE TABLE IF NOT EXISTS midi_item_take_state (
+    item_id INTEGER PRIMARY KEY REFERENCES items(id) ON DELETE CASCADE,
+    active_take_index INTEGER NOT NULL CHECK(active_take_index >= 0)
+);
+
+CREATE TABLE IF NOT EXISTS midi_take_events (
+    item_id INTEGER NOT NULL,
+    take_index INTEGER NOT NULL,
+    event_kind INTEGER NOT NULL CHECK(event_kind BETWEEN 0 AND 7),
+    position INTEGER NOT NULL CHECK(position >= 0),
+    note_id INTEGER CHECK(note_id IS NULL OR note_id >= 0),
+    target_kind INTEGER,
+    tick INTEGER NOT NULL CHECK(tick >= 0),
+    channel INTEGER NOT NULL DEFAULT 0 CHECK(channel BETWEEN 0 AND 15),
+    data1 INTEGER NOT NULL DEFAULT 0 CHECK(data1 BETWEEN 0 AND 16383),
+    data2 INTEGER NOT NULL DEFAULT 0 CHECK(data2 BETWEEN 0 AND 127),
+    data3 INTEGER NOT NULL DEFAULT 0 CHECK(data3 BETWEEN 0 AND 127),
+    duration INTEGER NOT NULL DEFAULT 0 CHECK(duration >= 0),
+    value INTEGER NOT NULL DEFAULT 0 CHECK(value BETWEEN 0 AND 16383),
+    payload BLOB,
+    source_order INTEGER NOT NULL DEFAULT 0 CHECK(source_order BETWEEN 0 AND 4294967295),
+    note_off_order INTEGER CHECK(note_off_order IS NULL OR note_off_order BETWEEN 0 AND 4294967295),
+    PRIMARY KEY(item_id, take_index, event_kind, position),
+    FOREIGN KEY(item_id, take_index)
+        REFERENCES midi_item_takes(item_id, take_index) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS midi_take_events_by_tick
+    ON midi_take_events(item_id, take_index, event_kind, tick, position);
 "#;
 
 /// SQLite persistence failures, including incompatible project files.
@@ -422,7 +805,10 @@ impl std::error::Error for StorageError {
 #[cfg(test)]
 mod arrangement_view_state_tests {
     use super::{ProjectStore, StorageError};
-    use crate::{ArrangementViewState, FxAutomationLaneViewState, VolumeAutomationLaneViewState};
+    use crate::{
+        ArrangementTimeRangeState, ArrangementViewState, CURRENT_SCHEMA_VERSION,
+        FxAutomationLaneViewState, VolumeAutomationLaneViewState,
+    };
     use aaadaw_core::{DawAction, Project, TrackFxPlugin};
 
     #[test]
@@ -442,6 +828,7 @@ mod arrangement_view_state_tests {
             })
             .unwrap();
         let view_state = ArrangementViewState {
+            folder_compact: Vec::new(),
             volume_lanes: vec![VolumeAutomationLaneViewState {
                 track_id: track_id.value(),
                 visible: false,
@@ -457,6 +844,20 @@ mod arrangement_view_state_tests {
                 stepped: false,
                 height: 48.0,
             }],
+            time_selection: Some(ArrangementTimeRangeState {
+                start_seconds: 1.25,
+                end_seconds: 2.5,
+            }),
+            loop_points: Some(ArrangementTimeRangeState {
+                start_seconds: 3.5,
+                end_seconds: 3.5,
+            }),
+            repeat_enabled: true,
+            snap_enabled: false,
+            snap_grid: crate::GridDivision::DottedEighth,
+            midi_editor_snap_grid: crate::GridDivision::ThirtySecondTriplet,
+            swing_grid_enabled: true,
+            swing_amount_percent: -73,
         };
 
         let directory = tempfile::tempdir().unwrap();
@@ -489,6 +890,155 @@ mod arrangement_view_state_tests {
     }
 
     #[test]
+    fn schema_51_projects_default_repeat_off_and_persist_it_per_project() {
+        use rusqlite::Connection;
+
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("repeat-schema-51.aaadaw");
+        let mut store = ProjectStore::open(&path).unwrap();
+        let saved_state = ArrangementViewState {
+            repeat_enabled: true,
+            ..ArrangementViewState::default()
+        };
+        store
+            .save_with_arrangement_view_state(&Project::new(), &saved_state)
+            .unwrap();
+        drop(store);
+
+        let connection = Connection::open(&path).unwrap();
+        connection
+            .execute_batch(
+                "ALTER TABLE arrangement_view_meta DROP COLUMN repeat_enabled; \
+                 PRAGMA user_version = 51;",
+            )
+            .unwrap();
+        drop(connection);
+
+        let mut store = ProjectStore::open(&path).unwrap();
+        assert_eq!(store.schema_version().unwrap(), CURRENT_SCHEMA_VERSION);
+        assert_eq!(
+            store.load_arrangement_view_state().unwrap(),
+            Some(ArrangementViewState::default())
+        );
+        store
+            .save_with_arrangement_view_state(&Project::new(), &saved_state)
+            .unwrap();
+        assert_eq!(
+            store.load_arrangement_view_state().unwrap(),
+            Some(saved_state)
+        );
+        store.close().unwrap();
+    }
+
+    #[test]
+    fn schema_54_projects_gain_default_snap_and_swing_settings() {
+        use rusqlite::Connection;
+
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("snap-grid-schema-54.aaadaw");
+        let mut store = ProjectStore::open(&path).unwrap();
+        let saved_state = ArrangementViewState {
+            repeat_enabled: true,
+            ..ArrangementViewState::default()
+        };
+        store
+            .save_with_arrangement_view_state(&Project::new(), &saved_state)
+            .unwrap();
+        drop(store);
+
+        let connection = Connection::open(&path).unwrap();
+        connection
+            .execute_batch(
+                "ALTER TABLE arrangement_view_meta DROP COLUMN snap_enabled; \
+                 ALTER TABLE arrangement_view_meta DROP COLUMN snap_grid; \
+                 ALTER TABLE arrangement_view_meta DROP COLUMN midi_editor_snap_grid; \
+                 ALTER TABLE arrangement_view_meta DROP COLUMN swing_grid_enabled; \
+                 ALTER TABLE arrangement_view_meta DROP COLUMN swing_amount_percent; \
+                 UPDATE arrangement_view_meta SET state_version = 1; \
+                 PRAGMA user_version = 54;",
+            )
+            .unwrap();
+        drop(connection);
+
+        let mut store = ProjectStore::open(&path).unwrap();
+        assert_eq!(store.schema_version().unwrap(), CURRENT_SCHEMA_VERSION);
+        assert_eq!(
+            store.load_arrangement_view_state().unwrap(),
+            Some(saved_state.clone())
+        );
+        store
+            .save_with_arrangement_view_state(&Project::new(), &saved_state)
+            .unwrap();
+        assert_eq!(
+            store.load_arrangement_view_state().unwrap(),
+            Some(saved_state)
+        );
+        store.close().unwrap();
+    }
+
+    #[test]
+    fn schema_37_projects_gain_empty_time_ranges_and_invalid_ranges_roll_back() {
+        use rusqlite::Connection;
+
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("time-range-schema-37.aaadaw");
+        let mut project = Project::new();
+        project
+            .apply(DawAction::CreateTrack {
+                index: 0,
+                name: "Original".to_owned(),
+            })
+            .unwrap();
+        let initial_state = ArrangementViewState {
+            time_selection: Some(ArrangementTimeRangeState {
+                start_seconds: 1.0,
+                end_seconds: 2.0,
+            }),
+            loop_points: Some(ArrangementTimeRangeState {
+                start_seconds: 3.0,
+                end_seconds: 3.0,
+            }),
+            ..ArrangementViewState::default()
+        };
+
+        let mut store = ProjectStore::open(&path).unwrap();
+        store
+            .save_with_arrangement_view_state(&project, &initial_state)
+            .unwrap();
+        let invalid_state = ArrangementViewState {
+            time_selection: Some(ArrangementTimeRangeState {
+                start_seconds: 2.0,
+                end_seconds: 1.0,
+            }),
+            ..ArrangementViewState::default()
+        };
+        assert!(matches!(
+            store.save_with_arrangement_view_state(&Project::new(), &invalid_state),
+            Err(StorageError::InvalidStoredData(_))
+        ));
+        assert_eq!(store.load().unwrap().tracks()[0].name(), "Original");
+        assert_eq!(
+            store.load_arrangement_view_state().unwrap(),
+            Some(initial_state)
+        );
+        drop(store);
+
+        let connection = Connection::open(&path).unwrap();
+        connection
+            .execute_batch("DROP TABLE arrangement_time_ranges; PRAGMA user_version = 37;")
+            .unwrap();
+        drop(connection);
+
+        let store = ProjectStore::open(&path).unwrap();
+        assert_eq!(store.schema_version().unwrap(), CURRENT_SCHEMA_VERSION);
+        assert_eq!(store.load().unwrap().tracks()[0].name(), "Original");
+        assert_eq!(
+            store.load_arrangement_view_state().unwrap(),
+            Some(ArrangementViewState::default())
+        );
+    }
+
+    #[test]
     fn invalid_view_state_does_not_partially_replace_the_saved_project() {
         let mut project = Project::new();
         project
@@ -503,6 +1053,7 @@ mod arrangement_view_state_tests {
         store.save(&project).unwrap();
 
         let invalid_view_state = ArrangementViewState {
+            folder_compact: Vec::new(),
             volume_lanes: Vec::new(),
             fx_lanes: vec![FxAutomationLaneViewState {
                 track_id: 1,
@@ -515,6 +1066,10 @@ mod arrangement_view_state_tests {
                 stepped: false,
                 height: 48.0,
             }],
+            time_selection: None,
+            loop_points: None,
+            repeat_enabled: false,
+            ..ArrangementViewState::default()
         };
         assert!(matches!(
             store.save_with_arrangement_view_state(&Project::new(), &invalid_view_state),
@@ -522,6 +1077,230 @@ mod arrangement_view_state_tests {
         ));
         assert_eq!(store.load().unwrap().tracks()[0].name(), "Original");
         store.close().unwrap();
+    }
+}
+
+#[cfg(test)]
+mod project_marker_storage_tests {
+    use super::ProjectStore;
+    use crate::CURRENT_SCHEMA_VERSION;
+    use aaadaw_core::{DawAction, Project};
+    use rusqlite::Connection;
+
+    #[test]
+    fn project_markers_round_trip_and_schema_34_migrates_without_markers() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("markers.aaadaw");
+        let mut project = Project::new();
+        project
+            .apply(DawAction::InsertProjectMarker {
+                position_ticks: 1_920,
+                name: "Verse".to_owned(),
+            })
+            .unwrap();
+        project
+            .apply(DawAction::InsertProjectMarker {
+                position_ticks: 960,
+                name: "Intro".to_owned(),
+            })
+            .unwrap();
+        let verse_id = project
+            .markers()
+            .iter()
+            .find(|marker| marker.name() == "Verse")
+            .unwrap()
+            .id();
+        project
+            .apply(DawAction::SetProjectMarkerVisibility {
+                marker_id: verse_id,
+                visible: false,
+            })
+            .unwrap();
+        project
+            .apply(DawAction::SetProjectMarkersVisibleOnRuler { visible: false })
+            .unwrap();
+        let expected = project.markers().to_vec();
+
+        let mut store = ProjectStore::open(&path).unwrap();
+        store.save(&project).unwrap();
+        assert_eq!(store.load().unwrap().markers(), expected);
+        assert!(!store.load().unwrap().show_project_markers());
+        drop(store);
+
+        let connection = Connection::open(&path).unwrap();
+        connection
+            .execute_batch("DROP INDEX project_markers_by_position; DROP TABLE project_markers; PRAGMA user_version = 34;")
+            .unwrap();
+        drop(connection);
+
+        let store = ProjectStore::open(&path).unwrap();
+        assert_eq!(store.load().unwrap().markers().len(), 0);
+        let schema_version: i64 = store
+            .connection
+            .pragma_query_value(None, "user_version", |row| row.get(0))
+            .unwrap();
+        assert_eq!(schema_version, i64::from(CURRENT_SCHEMA_VERSION));
+    }
+
+    #[test]
+    fn schema_35_marker_rows_migrate_to_visible_numbers_without_losing_stable_ids() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("markers-schema-35.aaadaw");
+        let mut project = Project::new();
+        for (number, position_ticks, name) in [(5, 960, "Five"), (10, 1_920, "Ten")] {
+            project
+                .apply(DawAction::InsertNumberedProjectMarker {
+                    number,
+                    position_ticks,
+                    name: name.to_owned(),
+                })
+                .unwrap();
+        }
+
+        let mut store = ProjectStore::open(&path).unwrap();
+        store.save(&project).unwrap();
+        store
+            .connection
+            .execute_batch(
+                "ALTER TABLE project_markers DROP COLUMN marker_number; PRAGMA user_version = 35;",
+            )
+            .unwrap();
+        drop(store);
+
+        let store = ProjectStore::open(&path).unwrap();
+        let markers = store.load().unwrap().markers().to_vec();
+        assert_eq!(markers[0].id().value(), 0);
+        assert_eq!(markers[0].number(), 1);
+        assert_eq!(markers[1].id().value(), 1);
+        assert_eq!(markers[1].number(), 2);
+        assert_eq!(markers[0].name(), "Five");
+        assert_eq!(markers[1].name(), "Ten");
+    }
+
+    #[test]
+    fn project_marker_round_trip_preserves_sparse_and_duplicate_numbers() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("markers-number-round-trip.aaadaw");
+        let mut project = Project::new();
+        for (number, position_ticks, name) in [
+            (5, 960, "Five"),
+            (10, 1_920, "Ten earlier"),
+            (10, 2_880, "Ten later"),
+        ] {
+            project
+                .apply(DawAction::InsertNumberedProjectMarker {
+                    number,
+                    position_ticks,
+                    name: name.to_owned(),
+                })
+                .unwrap();
+        }
+        let expected = project.markers().to_vec();
+
+        let mut store = ProjectStore::open(&path).unwrap();
+        store.save(&project).unwrap();
+        assert_eq!(store.load().unwrap().markers(), expected);
+    }
+
+    #[test]
+    fn project_regions_round_trip_and_schema_36_migrates_without_regions() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("regions.aaadaw");
+        let mut project = Project::new();
+        project
+            .apply(DawAction::CreateTrack {
+                index: 0,
+                name: "Drums".to_owned(),
+            })
+            .unwrap();
+        let drums = project.tracks()[0].id();
+        project
+            .apply(DawAction::InsertProjectRegion {
+                start_ticks: 1_920,
+                end_ticks: 3_840,
+                name: "Verse".to_owned(),
+            })
+            .unwrap();
+        project
+            .apply(DawAction::InsertProjectRegion {
+                start_ticks: 0,
+                end_ticks: 1_920,
+                name: "Intro".to_owned(),
+            })
+            .unwrap();
+        let hidden_region_id = project.regions()[0].id();
+        project
+            .apply(DawAction::SetProjectRegionRenderMatrix {
+                region_id: hidden_region_id,
+                render_master_mix: true,
+                render_track_ids: vec![drums],
+            })
+            .unwrap();
+        project
+            .apply(DawAction::SetProjectRegionVisibility {
+                region_id: hidden_region_id,
+                visible: false,
+            })
+            .unwrap();
+        project
+            .apply(DawAction::SetProjectRegionsVisibleOnRuler { visible: false })
+            .unwrap();
+        let expected = project.regions().to_vec();
+
+        let mut store = ProjectStore::open(&path).unwrap();
+        store.save(&project).unwrap();
+        assert_eq!(store.load().unwrap().regions(), expected);
+        assert!(!store.load().unwrap().show_project_regions());
+        drop(store);
+
+        let connection = Connection::open(&path).unwrap();
+        connection
+            .execute_batch(
+                "DROP TABLE project_region_render_tracks; DROP INDEX project_regions_by_start; DROP TABLE project_regions; PRAGMA user_version = 36;",
+            )
+            .unwrap();
+        drop(connection);
+
+        let store = ProjectStore::open(&path).unwrap();
+        assert!(store.load().unwrap().regions().is_empty());
+        let schema_version: i64 = store
+            .connection
+            .pragma_query_value(None, "user_version", |row| row.get(0))
+            .unwrap();
+        assert_eq!(schema_version, i64::from(CURRENT_SCHEMA_VERSION));
+    }
+
+    #[test]
+    fn schema_47_region_visibility_migration_defaults_to_visible() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("regions-schema-47.aaadaw");
+        let mut project = Project::new();
+        project
+            .apply(DawAction::InsertProjectRegion {
+                start_ticks: 0,
+                end_ticks: 1_920,
+                name: "Intro".to_owned(),
+            })
+            .unwrap();
+        let mut store = ProjectStore::open(&path).unwrap();
+        store.save(&project).unwrap();
+        drop(store);
+
+        let connection = Connection::open(&path).unwrap();
+        connection
+            .execute_batch(
+                "ALTER TABLE project_regions DROP COLUMN visible;
+                 ALTER TABLE project_meta DROP COLUMN show_project_regions;
+                 PRAGMA user_version = 47;",
+            )
+            .unwrap();
+        drop(connection);
+
+        let store = ProjectStore::open(&path).unwrap();
+        let loaded = store.load().unwrap();
+        assert!(loaded.show_project_regions());
+        assert!(loaded.regions()[0].is_visible());
+        assert_eq!(store.schema_version().unwrap(), CURRENT_SCHEMA_VERSION);
     }
 }
 
@@ -2076,12 +2855,33 @@ impl ProjectStore {
         let state_version = self
             .connection
             .query_row(
-                "SELECT state_version FROM arrangement_view_meta WHERE singleton = 1",
+                "SELECT state_version, repeat_enabled, snap_enabled, snap_grid, \
+                 midi_editor_snap_grid, swing_grid_enabled, swing_amount_percent \
+                 FROM arrangement_view_meta WHERE singleton = 1",
                 [],
-                |row| row.get::<_, i64>(0),
+                |row| {
+                    Ok((
+                        row.get::<_, i64>(0)?,
+                        row.get::<_, i64>(1)?,
+                        row.get::<_, i64>(2)?,
+                        row.get::<_, i64>(3)?,
+                        row.get::<_, i64>(4)?,
+                        row.get::<_, i64>(5)?,
+                        row.get::<_, i64>(6)?,
+                    ))
+                },
             )
             .optional()?;
-        let Some(state_version) = state_version else {
+        let Some((
+            state_version,
+            repeat_enabled,
+            snap_enabled,
+            snap_grid,
+            midi_editor_snap_grid,
+            swing_grid_enabled,
+            swing_amount_percent,
+        )) = state_version
+        else {
             return Ok(None);
         };
         if state_version != 1 {
@@ -2090,7 +2890,32 @@ impl ProjectStore {
             ));
         }
 
-        let mut view_state = ArrangementViewState::default();
+        let mut view_state = ArrangementViewState {
+            repeat_enabled: match repeat_enabled {
+                0 => false,
+                1 => true,
+                _ => return Err(StorageError::InvalidStoredData("invalid Repeat state")),
+            },
+            snap_enabled: match snap_enabled {
+                0 => false,
+                1 => true,
+                _ => return Err(StorageError::InvalidStoredData("invalid Snap state")),
+            },
+            snap_grid: GridDivision::from_storage_id(snap_grid)
+                .ok_or(StorageError::InvalidStoredData("invalid Arrangement grid"))?,
+            midi_editor_snap_grid: GridDivision::from_storage_id(midi_editor_snap_grid)
+                .ok_or(StorageError::InvalidStoredData("invalid MIDI Editor grid"))?,
+            swing_grid_enabled: match swing_grid_enabled {
+                0 => false,
+                1 => true,
+                _ => return Err(StorageError::InvalidStoredData("invalid Swing state")),
+            },
+            swing_amount_percent: i16::try_from(swing_amount_percent)
+                .ok()
+                .filter(|value| (-100..=100).contains(value))
+                .ok_or(StorageError::InvalidStoredData("invalid Swing amount"))?,
+            ..ArrangementViewState::default()
+        };
         let mut volume_statement = self
             .connection
             .prepare("SELECT track_id, visible FROM arrangement_volume_lanes ORDER BY track_id")?;
@@ -2144,26 +2969,123 @@ impl ProjectStore {
                 height,
             });
         }
+        let mut statement = self
+            .connection
+            .prepare("SELECT track_id, mode FROM arrangement_folder_compact ORDER BY track_id")?;
+        let rows =
+            statement.query_map([], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)))?;
+        for row in rows {
+            let (id, mode) = row?;
+            if !(0..=2).contains(&mode) {
+                return Err(StorageError::InvalidStoredData(
+                    "invalid folder compact mode",
+                ));
+            }
+            view_state
+                .folder_compact
+                .push(crate::FolderCompactViewState {
+                    track_id: from_sql_u64(id)?,
+                    mode: mode as u8,
+                });
+        }
+        if let Some((selection_columns, loop_columns)) = self
+            .connection
+            .query_row(
+                "SELECT time_selection_start_seconds, time_selection_end_seconds, \
+                 loop_start_seconds, loop_end_seconds FROM arrangement_time_ranges WHERE singleton = 1",
+                [],
+                |row| {
+                    Ok((
+                        (row.get::<_, Option<f64>>(0)?, row.get::<_, Option<f64>>(1)?),
+                        (row.get::<_, Option<f64>>(2)?, row.get::<_, Option<f64>>(3)?),
+                    ))
+                },
+            )
+            .optional()?
+        {
+            view_state.time_selection = time_range_from_columns(selection_columns, false)?;
+            view_state.loop_points = time_range_from_columns(loop_columns, true)?;
+        }
         Ok(Some(view_state))
     }
 
     /// Loads a project. A newly created, empty database yields a default project.
     pub fn load(&self) -> Result<Project, StorageError> {
+        let (title, author, text, show_on_load, word_wrap) = self.connection.query_row(
+            "SELECT title, author, notes, show_on_load, word_wrap FROM project_notes WHERE singleton = 1", [],
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?, row.get::<_, i64>(3)?, row.get::<_, i64>(4)?)))?;
+        if !matches!(show_on_load, 0 | 1) || !matches!(word_wrap, 0 | 1) {
+            return Err(StorageError::InvalidStoredData(
+                "invalid project notes display preferences",
+            ));
+        }
+        let notes = aaadaw_core::ProjectNotes {
+            title,
+            author,
+            text,
+            show_on_load: show_on_load == 1,
+            word_wrap: word_wrap == 1,
+        };
+
+        let frame_rate = self.connection.query_row(
+            "SELECT frame_rate FROM project_timecode WHERE singleton = 1",
+            [],
+            |row| row.get::<_, i64>(0),
+        )?;
+        let frame_rate = u32::try_from(frame_rate)
+            .ok()
+            .and_then(aaadaw_core::FrameRate::from_storage_code)
+            .ok_or(StorageError::InvalidStoredData("unsupported frame rate"))?;
+        let master_mix = self
+            .connection
+            .query_row(
+                "SELECT volume_db, pan FROM project_master_mix WHERE singleton = 1",
+                [],
+                |row| Ok((row.get::<_, f32>(0)?, row.get::<_, f32>(1)?)),
+            )
+            .map_err(StorageError::from)
+            .and_then(|(volume, pan)| {
+                aaadaw_core::MasterMix::new(volume, pan)
+                    .map_err(|_| StorageError::InvalidStoredData("invalid Master mix"))
+            })?;
         let metadata = self
             .connection
             .query_row(
-                "SELECT sample_rate, ppq, initial_tempo_bpm FROM project_meta WHERE singleton = 1",
+                "SELECT sample_rate, ppq, initial_tempo_bpm, pan_mode, start_measure, bpm_basis, base_ruler_label_spacing_on_measure, project_start_time_offset_seconds, project_start_time_fractional_frame_offset_allowed, force_tempo_changes_to_whole_samples, show_project_markers, show_project_regions FROM project_meta WHERE singleton = 1",
                 [],
                 |row| {
                     Ok((
                         row.get::<_, i64>(0)?,
                         row.get::<_, i64>(1)?,
                         row.get::<_, f64>(2)?,
+                        row.get::<_, i64>(3)?,
+                        row.get::<_, i64>(4)?,
+                        row.get::<_, i64>(5)?,
+                        row.get::<_, i64>(6)?,
+                        row.get::<_, f64>(7)?,
+                        row.get::<_, i64>(8)?,
+                        row.get::<_, i64>(9)?,
+                        row.get::<_, i64>(10)?,
+                        row.get::<_, i64>(11)?,
                     ))
                 },
             )
             .optional()?;
-        let Some((sample_rate, ppq, initial_tempo_bpm)) = metadata else {
+        let Some((
+            sample_rate,
+            ppq,
+            initial_tempo_bpm,
+            pan_mode,
+            start_measure,
+            bpm_basis,
+            base_ruler_label_spacing_on_measure,
+            project_start_time_offset_seconds,
+            project_start_time_fractional_frame_offset_allowed,
+            force_tempo_changes_to_whole_samples,
+            show_project_markers,
+            show_project_regions,
+        )) = metadata
+        else {
             let rows: i64 = self.connection.query_row(
                 "SELECT (SELECT COUNT(*) FROM tracks) + (SELECT COUNT(*) FROM items) + \
             (SELECT COUNT(*) FROM midi_notes) + (SELECT COUNT(*) FROM audio_items) + \
@@ -2173,7 +3095,11 @@ impl ProjectStore {
                 [],
                 |row| row.get(0),
             )?;
-            return if rows == 0 {
+            return if rows == 0
+                && master_mix == aaadaw_core::MasterMix::default()
+                && frame_rate == aaadaw_core::FrameRate::default()
+                && notes == aaadaw_core::ProjectNotes::default()
+            {
                 Ok(Project::new())
             } else {
                 Err(StorageError::InvalidStoredData(
@@ -2181,13 +3107,82 @@ impl ProjectStore {
                 ))
             };
         };
+        let start_measure = i32::try_from(start_measure).map_err(|_| {
+            StorageError::InvalidStoredData("project start measure is out of range")
+        })?;
+        let bpm_basis = u32::try_from(bpm_basis)
+            .ok()
+            .and_then(BpmBasis::from_storage_code)
+            .ok_or(StorageError::InvalidStoredData("unsupported BPM basis"))?;
+        let base_ruler_label_spacing_on_measure = match base_ruler_label_spacing_on_measure {
+            0 => false,
+            1 => true,
+            _ => {
+                return Err(StorageError::InvalidStoredData(
+                    "unsupported ruler label spacing mode",
+                ));
+            }
+        };
+        let project_start_time_fractional_frame_offset_allowed =
+            match project_start_time_fractional_frame_offset_allowed {
+                0 => false,
+                1 => true,
+                _ => {
+                    return Err(StorageError::InvalidStoredData(
+                        "unsupported fractional frame offset mode",
+                    ));
+                }
+            };
+        let force_tempo_changes_to_whole_samples = match force_tempo_changes_to_whole_samples {
+            0 => false,
+            1 => true,
+            _ => {
+                return Err(StorageError::InvalidStoredData(
+                    "unsupported whole-sample tempo mode",
+                ));
+            }
+        };
+        let show_project_markers = match show_project_markers {
+            0 => false,
+            1 => true,
+            _ => {
+                return Err(StorageError::InvalidStoredData(
+                    "unsupported project marker lane visibility",
+                ));
+            }
+        };
+        let show_project_regions = match show_project_regions {
+            0 => false,
+            1 => true,
+            _ => {
+                return Err(StorageError::InvalidStoredData(
+                    "unsupported project region lane visibility",
+                ));
+            }
+        };
 
         let settings = ProjectSettings::new(
             from_sql_u32(sample_rate)?,
             from_sql_u32(ppq)?,
             initial_tempo_bpm,
         )
-        .map_err(|error| StorageError::Snapshot(SnapshotError::InvalidTimebase(error)))?;
+        .map_err(|error| StorageError::Snapshot(SnapshotError::InvalidTimebase(error)))?
+        .with_frame_rate(frame_rate)
+        .with_pan_mode(match pan_mode {
+            0 => PanMode::LegacyMonoStereo,
+            1 => PanMode::ZeroDbBalance,
+            _ => return Err(StorageError::InvalidStoredData("unsupported pan mode")),
+        })
+        .with_start_measure(start_measure)
+        .with_bpm_basis(bpm_basis)
+        .map_err(|error| StorageError::Snapshot(SnapshotError::InvalidTimebase(error)))?
+        .with_base_ruler_label_spacing_on_measure(base_ruler_label_spacing_on_measure)
+        .with_project_start_time_offset_seconds(project_start_time_offset_seconds)
+        .map_err(|error| StorageError::Snapshot(SnapshotError::InvalidTimebase(error)))?
+        .with_project_start_time_fractional_frame_offset_allowed(
+            project_start_time_fractional_frame_offset_allowed,
+        )
+        .with_force_tempo_changes_to_whole_samples(force_tempo_changes_to_whole_samples);
 
         let tracks = read_tracks(&self.connection)?;
         let audio_items = read_audio_items(&self.connection)?;
@@ -2199,12 +3194,20 @@ impl ProjectStore {
         }
         let tempo_points = read_tempo_points(&self.connection)?;
         let meter_points = read_meter_points(&self.connection)?;
+        let markers = read_project_markers(&self.connection)?;
+        let regions = read_project_regions(&self.connection)?;
 
         Project::from_snapshot(ProjectSnapshot {
+            notes,
             settings,
+            master_mix,
             tracks,
             audio_items,
             midi_items,
+            markers,
+            show_project_markers,
+            show_project_regions,
+            regions,
             tempo_points,
             meter_points,
         })
@@ -2271,6 +3274,104 @@ fn ensure_audio_asset_metadata_columns(connection: &Connection) -> Result<(), St
          ON audio_assets(storage_key) WHERE storage_key IS NOT NULL",
     )?;
     Ok(())
+}
+
+fn ensure_audio_item_loop_columns(connection: &Connection) -> Result<(), StorageError> {
+    if !table_has_column(connection, "audio_items", "loop_source")? {
+        connection.execute_batch(
+            "ALTER TABLE audio_items ADD COLUMN loop_source INTEGER NOT NULL DEFAULT 0 CHECK(loop_source IN (0, 1));",
+        )?;
+    }
+    if !table_has_column(connection, "audio_items", "source_section_length_samples")? {
+        connection.execute_batch(
+            "ALTER TABLE audio_items ADD COLUMN source_section_length_samples INTEGER CHECK(source_section_length_samples IS NULL OR source_section_length_samples > 0);",
+        )?;
+    }
+    Ok(())
+}
+
+fn ensure_audio_item_loop_section_start_column(
+    connection: &Connection,
+) -> Result<(), StorageError> {
+    if !table_has_column(connection, "audio_items", "source_section_start_samples")? {
+        connection.execute_batch(
+            "ALTER TABLE audio_items ADD COLUMN source_section_start_samples INTEGER CHECK(source_section_start_samples IS NULL OR source_section_start_samples >= 0);",
+        )?;
+    }
+    Ok(())
+}
+
+fn ensure_audio_item_take_schema(connection: &Connection) -> Result<(), StorageError> {
+    if !table_has_column(connection, "audio_items", "active_take_index")? {
+        connection.execute_batch(
+            "ALTER TABLE audio_items ADD COLUMN active_take_index INTEGER NOT NULL DEFAULT 0 CHECK(active_take_index >= 0);",
+        )?;
+    }
+    connection.execute_batch(MIGRATION_66_AUDIO_TAKES)?;
+    Ok(())
+}
+
+fn ensure_audio_item_mute_column(connection: &Connection) -> Result<(), StorageError> {
+    if !table_has_column(connection, "audio_items", "muted")? {
+        connection.execute_batch(
+            "ALTER TABLE audio_items ADD COLUMN muted INTEGER NOT NULL DEFAULT 0 CHECK(muted IN (0, 1));",
+        )?;
+    }
+    Ok(())
+}
+
+fn ensure_audio_item_phase_column(connection: &Connection) -> Result<(), StorageError> {
+    if !table_has_column(connection, "audio_items", "phase_inverted")? {
+        connection.execute_batch(
+            "ALTER TABLE audio_items ADD COLUMN phase_inverted INTEGER NOT NULL DEFAULT 0 CHECK(phase_inverted IN (0, 1));",
+        )?;
+    }
+    Ok(())
+}
+
+fn ensure_audio_item_signed_source_offset_column(
+    connection: &Connection,
+) -> Result<(), StorageError> {
+    if !table_has_column(connection, "audio_items", "signed_source_offset_samples")? {
+        connection.execute_batch(
+            "ALTER TABLE audio_items ADD COLUMN signed_source_offset_samples INTEGER NOT NULL DEFAULT 0;\
+             UPDATE audio_items SET signed_source_offset_samples = source_offset_samples;",
+        )?;
+    }
+    Ok(())
+}
+
+fn ensure_midi_item_mute_column(connection: &Connection) -> Result<(), StorageError> {
+    if !table_has_column(connection, "items", "muted")? {
+        connection.execute_batch(
+            "ALTER TABLE items ADD COLUMN muted INTEGER NOT NULL DEFAULT 0 CHECK(muted IN (0, 1));",
+        )?;
+    }
+    Ok(())
+}
+
+fn table_exists(connection: &Connection, table: &str) -> Result<bool, StorageError> {
+    Ok(connection.query_row(
+        "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?1)",
+        [table],
+        |row| row.get(0),
+    )?)
+}
+
+fn table_has_column(
+    connection: &Connection,
+    table: &str,
+    column: &str,
+) -> Result<bool, StorageError> {
+    let mut statement = connection.prepare(&format!("PRAGMA table_info({table})"))?;
+    let mut rows = statement.query([])?;
+    while let Some(row) = rows.next()? {
+        let name: String = row.get(1)?;
+        if name == column {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 fn sha256_reader_with_cancel(
@@ -2357,6 +3458,371 @@ fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
             15 => transaction.execute_batch(MIGRATION_15)?,
             16 => transaction.execute_batch(MIGRATION_16)?,
             17 => transaction.execute_batch(MIGRATION_17)?,
+            18 => transaction.execute_batch(MIGRATION_18)?,
+            19 => transaction.execute_batch(MIGRATION_19)?,
+            20 => transaction.execute_batch(MIGRATION_20)?,
+            21 => transaction.execute_batch(MIGRATION_21)?,
+            22 => transaction.execute_batch(MIGRATION_22)?,
+            23 => transaction.execute_batch(MIGRATION_23)?,
+            24 => transaction.execute_batch(MIGRATION_24)?,
+            25 => transaction.execute_batch(MIGRATION_25)?,
+            26 => transaction.execute_batch(MIGRATION_26)?,
+            27 => transaction.execute_batch(MIGRATION_27)?,
+            28 => transaction.execute_batch(MIGRATION_28)?,
+            29 => {
+                if !table_has_column(&transaction, "project_meta", "start_measure")? {
+                    transaction.execute_batch(MIGRATION_29)?;
+                }
+            }
+            30 => {
+                if !table_has_column(&transaction, "project_meta", "bpm_basis")? {
+                    transaction.execute_batch(MIGRATION_30)?;
+                }
+            }
+            31 => {
+                if !table_has_column(
+                    &transaction,
+                    "project_meta",
+                    "base_ruler_label_spacing_on_measure",
+                )? {
+                    transaction.execute_batch(MIGRATION_31)?;
+                }
+            }
+            32 => {
+                if !table_has_column(
+                    &transaction,
+                    "project_meta",
+                    "project_start_time_offset_seconds",
+                )? {
+                    transaction.execute_batch(MIGRATION_32)?;
+                }
+            }
+            33 => {
+                if !table_has_column(
+                    &transaction,
+                    "project_meta",
+                    "project_start_time_fractional_frame_offset_allowed",
+                )? {
+                    transaction.execute_batch(MIGRATION_33)?;
+                }
+            }
+            34 => {
+                if !table_has_column(
+                    &transaction,
+                    "project_meta",
+                    "force_tempo_changes_to_whole_samples",
+                )? {
+                    transaction.execute_batch(MIGRATION_34)?;
+                }
+            }
+            35 => transaction.execute_batch(MIGRATION_35)?,
+            36 => {
+                if !table_has_column(&transaction, "project_markers", "marker_number")? {
+                    transaction.execute_batch(MIGRATION_36)?;
+                }
+            }
+            37 => transaction.execute_batch(MIGRATION_37)?,
+            38 => transaction.execute_batch(MIGRATION_38)?,
+            39 => {
+                transaction.execute_batch(AUDIO_ITEMS_TABLE)?;
+                if !table_has_column(&transaction, "audio_items", "volume")? {
+                    transaction.execute_batch(MIGRATION_39)?;
+                }
+            }
+            40 => {
+                transaction.execute_batch(AUDIO_ITEMS_TABLE)?;
+                if !table_has_column(&transaction, "audio_items", "take_volume")? {
+                    transaction.execute_batch(MIGRATION_40_TAKE_VOLUME)?;
+                }
+                if !table_has_column(&transaction, "audio_items", "take_pan")? {
+                    transaction.execute_batch(MIGRATION_40_TAKE_PAN)?;
+                }
+            }
+            41 => transaction.execute_batch(MIGRATION_41)?,
+            42 => {
+                if table_exists(&transaction, "audio_items")? {
+                    ensure_audio_item_loop_columns(&transaction)?;
+                }
+            }
+            43 => {
+                if table_exists(&transaction, "audio_items")? {
+                    ensure_audio_item_loop_columns(&transaction)?;
+                    ensure_audio_item_loop_section_start_column(&transaction)?;
+                    transaction.execute_batch(
+                        "UPDATE audio_items SET source_section_start_samples = source_offset_samples \
+                         WHERE loop_source = 1 AND source_section_length_samples IS NOT NULL \
+                         AND source_section_start_samples IS NULL;",
+                    )?;
+                }
+            }
+            44 => {
+                if table_exists(&transaction, "audio_items")? {
+                    ensure_audio_item_mute_column(&transaction)?;
+                }
+            }
+            45 => {
+                if table_exists(&transaction, "items")? {
+                    ensure_midi_item_mute_column(&transaction)?;
+                }
+            }
+            46 => {
+                if table_exists(&transaction, "audio_items")? {
+                    ensure_audio_item_phase_column(&transaction)?;
+                }
+            }
+            47 => {
+                if !table_has_column(&transaction, "project_meta", "show_project_markers")? {
+                    transaction.execute_batch(
+                        "ALTER TABLE project_meta ADD COLUMN show_project_markers INTEGER NOT NULL DEFAULT 1 CHECK(show_project_markers IN (0,1));",
+                    )?;
+                }
+                if !table_has_column(&transaction, "project_markers", "visible")? {
+                    transaction.execute_batch(
+                        "ALTER TABLE project_markers ADD COLUMN visible INTEGER NOT NULL DEFAULT 1 CHECK(visible IN (0,1));",
+                    )?;
+                }
+            }
+            48 => {
+                if !table_has_column(&transaction, "project_meta", "show_project_regions")? {
+                    transaction.execute_batch(
+                        "ALTER TABLE project_meta ADD COLUMN show_project_regions INTEGER NOT NULL DEFAULT 1 CHECK(show_project_regions IN (0,1));",
+                    )?;
+                }
+                if !table_has_column(&transaction, "project_regions", "visible")? {
+                    transaction.execute_batch(
+                        "ALTER TABLE project_regions ADD COLUMN visible INTEGER NOT NULL DEFAULT 1 CHECK(visible IN (0,1));",
+                    )?;
+                }
+            }
+            49 => {
+                if !table_has_column(&transaction, "audio_items", "signed_source_offset_samples")? {
+                    transaction.execute_batch(MIGRATION_49)?;
+                }
+            }
+            50 => transaction.execute_batch(MIGRATION_50)?,
+            51 => {
+                if !table_has_column(&transaction, "items", "loop_source")? {
+                    transaction.execute_batch(
+                        "ALTER TABLE items ADD COLUMN loop_source INTEGER NOT NULL DEFAULT 1 CHECK(loop_source IN (0, 1));",
+                    )?;
+                }
+                if !table_has_column(&transaction, "items", "source_loop_length_ticks")? {
+                    transaction.execute_batch(MIGRATION_51)?;
+                }
+            }
+            52 => {
+                if table_exists(&transaction, "arrangement_view_meta")?
+                    && !table_has_column(&transaction, "arrangement_view_meta", "repeat_enabled")?
+                {
+                    transaction.execute_batch(MIGRATION_52)?;
+                }
+            }
+            53 => {
+                if !table_has_column(&transaction, "project_regions", "render_master_mix")? {
+                    transaction.execute_batch(
+                        "ALTER TABLE project_regions ADD COLUMN render_master_mix INTEGER NOT NULL DEFAULT 0 CHECK(render_master_mix IN (0,1));",
+                    )?;
+                }
+                transaction.execute_batch(MIGRATION_53)?;
+            }
+            54 => {
+                if table_exists(&transaction, "audio_items")?
+                    && !table_has_column(&transaction, "audio_items", "name")?
+                {
+                    transaction.execute_batch(MIGRATION_54)?;
+                }
+            }
+            55 => {
+                for (column, migration) in [
+                    (
+                        "snap_enabled",
+                        "ALTER TABLE arrangement_view_meta ADD COLUMN snap_enabled INTEGER NOT NULL DEFAULT 1 CHECK(snap_enabled IN (0, 1));",
+                    ),
+                    (
+                        "snap_grid",
+                        "ALTER TABLE arrangement_view_meta ADD COLUMN snap_grid INTEGER NOT NULL DEFAULT 2 CHECK(snap_grid BETWEEN 0 AND 14);",
+                    ),
+                    (
+                        "midi_editor_snap_grid",
+                        "ALTER TABLE arrangement_view_meta ADD COLUMN midi_editor_snap_grid INTEGER NOT NULL DEFAULT 5 CHECK(midi_editor_snap_grid BETWEEN 0 AND 14);",
+                    ),
+                    (
+                        "swing_grid_enabled",
+                        "ALTER TABLE arrangement_view_meta ADD COLUMN swing_grid_enabled INTEGER NOT NULL DEFAULT 0 CHECK(swing_grid_enabled IN (0, 1));",
+                    ),
+                    (
+                        "swing_amount_percent",
+                        "ALTER TABLE arrangement_view_meta ADD COLUMN swing_amount_percent INTEGER NOT NULL DEFAULT 50 CHECK(swing_amount_percent BETWEEN -100 AND 100);",
+                    ),
+                ] {
+                    if !table_has_column(&transaction, "arrangement_view_meta", column)? {
+                        transaction.execute_batch(migration)?;
+                    }
+                }
+            }
+            56 => {
+                if table_exists(&transaction, "items")?
+                    && !table_has_column(&transaction, "items", "start_tick_subtick")?
+                {
+                    transaction.execute_batch(MIGRATION_56)?;
+                }
+            }
+            57 => {
+                if table_exists(&transaction, "audio_items")?
+                    && !table_has_column(&transaction, "audio_items", "take_playback_rate")?
+                {
+                    transaction.execute_batch(
+                        "ALTER TABLE audio_items ADD COLUMN take_playback_rate REAL NOT NULL DEFAULT 1.0 CHECK (take_playback_rate > 0.0);",
+                    )?;
+                }
+            }
+            58 => {
+                if table_exists(&transaction, "track_sends")?
+                    && !table_has_column(&transaction, "track_sends", "midi_enabled")?
+                {
+                    transaction.execute_batch(
+                        "ALTER TABLE track_sends ADD COLUMN midi_enabled INTEGER NOT NULL DEFAULT 1 CHECK(midi_enabled IN (0, 1));",
+                    )?;
+                }
+            }
+            59 => {
+                if !table_has_column(&transaction, "midi_notes", "channel")? {
+                    transaction.execute_batch(
+                        "ALTER TABLE midi_notes ADD COLUMN channel INTEGER NOT NULL DEFAULT 0 CHECK(channel BETWEEN 0 AND 15);",
+                    )?;
+                }
+                if !table_exists(&transaction, "midi_controllers")? {
+                    transaction.execute_batch(CREATE_MIDI_CONTROLLERS_59)?;
+                } else if !table_has_column(&transaction, "midi_controllers", "channel")? {
+                    transaction.execute_batch(MIGRATION_59_CONTROLLERS)?;
+                }
+                if !table_exists(&transaction, "midi_pitch_bends")? {
+                    transaction.execute_batch(CREATE_MIDI_PITCH_BENDS_59)?;
+                } else if !table_has_column(&transaction, "midi_pitch_bends", "channel")? {
+                    transaction.execute_batch(MIGRATION_59_PITCH_BENDS)?;
+                }
+            }
+            60 => {
+                if !table_exists(&transaction, "midi_program_changes")? {
+                    transaction.execute_batch(MIGRATION_60_PROGRAM_CHANGES)?;
+                }
+            }
+            61 => transaction.execute_batch(MIGRATION_61_MIDI_AFTERTOUCH)?,
+            62 => {
+                if !table_has_column(&transaction, "midi_notes", "off_velocity")? {
+                    transaction.execute_batch(MIGRATION_62_NOTE_OFF_VELOCITY)?;
+                }
+            }
+            63 => transaction.execute_batch(MIGRATION_63_MIDI_OPAQUE_EVENTS)?,
+            64 => transaction.execute_batch(MIGRATION_64_MIDI_EVENT_ORDER)?,
+            65 => {
+                if !table_has_column(&transaction, "midi_event_order", "note_off_order")? {
+                    transaction.execute_batch(MIGRATION_65_MIDI_NOTE_OFF_ORDER)?;
+                }
+            }
+            66 => {
+                if table_exists(&transaction, "audio_items")?
+                    && !table_has_column(&transaction, "audio_items", "active_take_index")?
+                {
+                    transaction.execute_batch(
+                        "ALTER TABLE audio_items ADD COLUMN active_take_index INTEGER NOT NULL DEFAULT 0 CHECK(active_take_index >= 0);",
+                    )?;
+                }
+                transaction.execute_batch(MIGRATION_66_AUDIO_TAKES)?;
+            }
+            67 => transaction.execute_batch(MIGRATION_67_MIDI_TAKES)?,
+            68 => {
+                if !table_has_column(&transaction, "items", "active_take_name_is_empty")? {
+                    transaction.execute_batch(MIGRATION_68_MIDI_ACTIVE_EMPTY_TAKE)?;
+                }
+            }
+            69 => {
+                if !table_has_column(&transaction, "items", "source_offset_negative")? {
+                    transaction.execute_batch(
+                        "ALTER TABLE items ADD COLUMN source_offset_negative INTEGER NOT NULL DEFAULT 0 CHECK(source_offset_negative IN (0, 1));",
+                    )?;
+                }
+                if table_exists(&transaction, "midi_item_takes")?
+                    && !table_has_column(&transaction, "midi_item_takes", "source_offset_negative")?
+                {
+                    transaction.execute_batch(
+                        "ALTER TABLE midi_item_takes ADD COLUMN source_offset_negative INTEGER NOT NULL DEFAULT 0 CHECK(source_offset_negative IN (0, 1));",
+                    )?;
+                }
+            }
+            70 => {
+                if table_exists(&transaction, "audio_items")?
+                    && !table_has_column(&transaction, "audio_items", "active_take_is_empty")?
+                {
+                    transaction.execute_batch(
+                        "ALTER TABLE audio_items ADD COLUMN active_take_is_empty INTEGER NOT NULL DEFAULT 0 CHECK(active_take_is_empty IN (0, 1));",
+                    )?;
+                }
+                if table_exists(&transaction, "audio_item_takes")?
+                    && !table_has_column(&transaction, "audio_item_takes", "is_empty")?
+                {
+                    transaction.execute_batch(
+                        "ALTER TABLE audio_item_takes ADD COLUMN is_empty INTEGER NOT NULL DEFAULT 0 CHECK(is_empty IN (0, 1));",
+                    )?;
+                }
+            }
+            71 => {
+                if table_exists(&transaction, "track_sends")? {
+                    if !table_has_column(&transaction, "track_sends", "midi_source_channel")? {
+                        transaction.execute_batch(
+                            "ALTER TABLE track_sends ADD COLUMN midi_source_channel INTEGER CHECK(midi_source_channel BETWEEN 0 AND 15);",
+                        )?;
+                    }
+                    if !table_has_column(&transaction, "track_sends", "midi_destination_channel")? {
+                        transaction.execute_batch(
+                            "ALTER TABLE track_sends ADD COLUMN midi_destination_channel INTEGER CHECK(midi_destination_channel BETWEEN 0 AND 15);",
+                        )?;
+                    }
+                }
+            }
+            72 => {
+                if table_exists(&transaction, "track_sends")? {
+                    if !table_has_column(&transaction, "track_sends", "midi_source_bus")? {
+                        transaction.execute_batch(
+                            "ALTER TABLE track_sends ADD COLUMN midi_source_bus INTEGER CHECK(midi_source_bus BETWEEN 0 AND 15);",
+                        )?;
+                    }
+                    if !table_has_column(&transaction, "track_sends", "midi_destination_bus")? {
+                        transaction.execute_batch(
+                            "ALTER TABLE track_sends ADD COLUMN midi_destination_bus INTEGER CHECK(midi_destination_bus BETWEEN 0 AND 15);",
+                        )?;
+                    }
+                }
+            }
+            73 => {
+                if table_exists(&transaction, "track_sends")? {
+                    if !table_has_column(&transaction, "track_sends", "source_channels")? {
+                        transaction.execute_batch(
+                            "ALTER TABLE track_sends ADD COLUMN source_channels INTEGER NOT NULL DEFAULT 0 CHECK(source_channels BETWEEN 0 AND 2);",
+                        )?;
+                    }
+                    if !table_has_column(&transaction, "track_sends", "destination_channels")? {
+                        transaction.execute_batch(
+                            "ALTER TABLE track_sends ADD COLUMN destination_channels INTEGER NOT NULL DEFAULT 0 CHECK(destination_channels BETWEEN 0 AND 2);",
+                        )?;
+                    }
+                }
+            }
+            74 => transaction.execute_batch(
+                "CREATE TABLE IF NOT EXISTS track_hardware_outputs (
+                    id INTEGER PRIMARY KEY CHECK(id >= 0),
+                    track_id INTEGER NOT NULL REFERENCES tracks(id) ON DELETE CASCADE,
+                    position INTEGER NOT NULL CHECK(position >= 0),
+                    volume_db REAL NOT NULL,
+                    pan REAL NOT NULL CHECK(pan BETWEEN -1 AND 1),
+                    muted INTEGER NOT NULL CHECK(muted IN (0, 1)),
+                    phase_inverted INTEGER NOT NULL CHECK(phase_inverted IN (0, 1)),
+                    send_mode INTEGER NOT NULL DEFAULT 0 CHECK(send_mode BETWEEN 0 AND 3),
+                    source_channels INTEGER NOT NULL DEFAULT 0 CHECK(source_channels BETWEEN 0 AND 2),
+                    destination_channels INTEGER NOT NULL DEFAULT 0 CHECK(destination_channels BETWEEN 0 AND 2),
+                    UNIQUE(track_id, position)
+                );",
+            )?,
             missing => return Err(StorageError::MissingMigration(missing - 1)),
         }
         transaction.pragma_update(None, "user_version", next_version)?;
@@ -2364,6 +3830,13 @@ fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
         version = next_version;
     }
     connection.execute_batch(AUDIO_ITEMS_TABLE)?;
+    ensure_audio_item_loop_columns(connection)?;
+    ensure_audio_item_loop_section_start_column(connection)?;
+    ensure_audio_item_take_schema(connection)?;
+    ensure_audio_item_mute_column(connection)?;
+    ensure_audio_item_phase_column(connection)?;
+    ensure_audio_item_signed_source_offset_column(connection)?;
+    ensure_midi_item_mute_column(connection)?;
     connection.execute_batch(AUDIO_ASSETS_TABLE)?;
     ensure_audio_asset_metadata_columns(connection)?;
     Ok(())
@@ -2373,32 +3846,72 @@ fn write_snapshot(
     transaction: &Transaction<'_>,
     snapshot: &ProjectSnapshot,
 ) -> Result<(), StorageError> {
+    transaction.execute("DELETE FROM project_region_render_tracks", [])?;
+    transaction.execute("DELETE FROM track_hardware_outputs", [])?;
+    transaction.execute("DELETE FROM track_sends", [])?;
+    transaction.execute("DELETE FROM track_razor_edit_areas", [])?;
     transaction.execute("DELETE FROM midi_notes", [])?;
+    transaction.execute("DELETE FROM midi_item_take_state", [])?;
+    transaction.execute("DELETE FROM midi_item_takes", [])?;
     transaction.execute("DELETE FROM midi_controllers", [])?;
     transaction.execute("DELETE FROM midi_pitch_bends", [])?;
+    transaction.execute("DELETE FROM midi_program_changes", [])?;
+    transaction.execute("DELETE FROM midi_poly_aftertouches", [])?;
+    transaction.execute("DELETE FROM midi_channel_pressures", [])?;
+    transaction.execute("DELETE FROM midi_opaque_events", [])?;
+    transaction.execute("DELETE FROM midi_event_order", [])?;
     transaction.execute("DELETE FROM track_volume_automation", [])?;
     transaction.execute("DELETE FROM items", [])?;
+    transaction.execute("DELETE FROM audio_item_fade_curves", [])?;
+    transaction.execute("DELETE FROM audio_item_fades", [])?;
+    transaction.execute("DELETE FROM audio_item_takes", [])?;
     transaction.execute("DELETE FROM audio_items", [])?;
     transaction.execute("DELETE FROM tracks", [])?;
     transaction.execute("DELETE FROM tempo_points", [])?;
     transaction.execute("DELETE FROM meter_points", [])?;
+    transaction.execute("DELETE FROM project_markers", [])?;
+    transaction.execute("DELETE FROM project_regions", [])?;
     transaction.execute("DELETE FROM project_meta", [])?;
-
-    let settings = snapshot.settings;
+    transaction.execute("DELETE FROM project_master_mix", [])?;
     transaction.execute(
-        "INSERT INTO project_meta(singleton, sample_rate, ppq, initial_tempo_bpm) \
-         VALUES(1, ?1, ?2, ?3)",
+        "INSERT INTO project_master_mix(singleton, volume_db, pan) VALUES(1, ?1, ?2)",
+        params![snapshot.master_mix.volume_db(), snapshot.master_mix.pan()],
+    )?;
+
+    transaction.execute("DELETE FROM project_notes", [])?;
+    transaction.execute("INSERT INTO project_notes(singleton, title, author, notes, show_on_load, word_wrap) VALUES(1, ?1, ?2, ?3, ?4, ?5)", params![snapshot.notes.title, snapshot.notes.author, snapshot.notes.text, snapshot.notes.show_on_load, snapshot.notes.word_wrap])?;
+    let settings = snapshot.settings;
+    transaction.execute("DELETE FROM project_timecode", [])?;
+    transaction.execute(
+        "INSERT INTO project_timecode(singleton, frame_rate) VALUES(1, ?1)",
+        params![i64::from(settings.frame_rate().storage_code())],
+    )?;
+    transaction.execute(
+        "INSERT INTO project_meta(singleton, sample_rate, ppq, initial_tempo_bpm, pan_mode, start_measure, bpm_basis, base_ruler_label_spacing_on_measure, project_start_time_offset_seconds, project_start_time_fractional_frame_offset_allowed, force_tempo_changes_to_whole_samples, show_project_markers, show_project_regions) \
+         VALUES(1, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
         params![
             i64::from(settings.sample_rate()),
             i64::from(settings.ppq()),
-            settings.initial_tempo_bpm()
+            settings.initial_tempo_bpm(),
+            match settings.pan_mode() {
+                PanMode::LegacyMonoStereo => 0,
+                PanMode::ZeroDbBalance => 1,
+            },
+            i64::from(settings.start_measure()),
+            i64::from(settings.bpm_basis().storage_code()),
+            settings.base_ruler_label_spacing_on_measure(),
+            settings.project_start_time_offset_seconds(),
+            settings.project_start_time_fractional_frame_offset_allowed(),
+            settings.force_tempo_changes_to_whole_samples(),
+            snapshot.show_project_markers,
+            snapshot.show_project_regions,
         ],
     )?;
 
     for (position, track) in snapshot.tracks.iter().enumerate() {
         transaction.execute(
-            "INSERT INTO tracks(id, position, name, volume_db, pan, muted, solo, record_armed, instrument_id, instrument_path, instrument_state, is_bus, output_track_id, frozen_audio_item_id) \
-             VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+            "INSERT INTO tracks(id, position, name, volume_db, pan, muted, solo, record_armed, instrument_id, instrument_path, instrument_state, is_bus, output_track_id, frozen_audio_item_id, main_send_enabled, is_folder, parent_track_id, phase_inverted) \
+             VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)",
             params![
                 to_sql_integer(track.id)?,
                 usize_to_sql(position)?,
@@ -2413,12 +3926,64 @@ fn write_snapshot(
                 track.instrument.as_ref().and_then(|instrument| instrument.state.as_deref()),
                 track.is_bus,
                 track.output_track_id.map(to_sql_integer).transpose()?,
-                track.frozen_audio_item_id.map(to_sql_integer).transpose()?
+                track.frozen_audio_item_id.map(to_sql_integer).transpose()?,
+                track.main_send_enabled,
+                track.is_folder,
+                track.parent_track_id.map(to_sql_integer).transpose()?,
+                track.phase_inverted
             ],
         )?;
     }
 
     for track in &snapshot.tracks {
+        for (position, send) in track.sends.iter().enumerate() {
+            transaction.execute("INSERT INTO track_sends(id, source_track_id, position, destination_track_id, volume_db, pan, muted, phase_inverted, tap, midi_enabled, midi_source_channel, midi_destination_channel, midi_source_bus, midi_destination_bus, source_channels, destination_channels) VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)", params![
+                to_sql_integer(send.id)?, to_sql_integer(track.id)?, usize_to_sql(position)?,
+                to_sql_integer(send.destination_track_id)?, f64::from(send.parameters.volume_db),
+                f64::from(send.parameters.pan), send.parameters.muted, send.parameters.phase_inverted,
+                match send.parameters.tap { aaadaw_core::AudioSendTap::PostFader => 0, aaadaw_core::AudioSendTap::PreFx => 1, aaadaw_core::AudioSendTap::PreFader => 3 },
+                send.parameters.midi_enabled,
+                send.parameters.midi_source_channel.map(i64::from),
+                send.parameters.midi_destination_channel.map(i64::from),
+                send.parameters.midi_source_bus.map(i64::from),
+                send.parameters.midi_destination_bus.map(i64::from),
+                match send.parameters.source_channels {
+                    aaadaw_core::AudioSendSourceChannels::Stereo => 0,
+                    aaadaw_core::AudioSendSourceChannels::Channel1 => 1,
+                    aaadaw_core::AudioSendSourceChannels::Channel2 => 2,
+                },
+                match send.parameters.destination_channels {
+                    aaadaw_core::AudioSendDestinationChannels::Stereo => 0,
+                    aaadaw_core::AudioSendDestinationChannels::Channel1 => 1,
+                    aaadaw_core::AudioSendDestinationChannels::Channel2 => 2,
+                },
+            ])?;
+        }
+        for (position, output) in track.hardware_outputs.iter().enumerate() {
+            transaction.execute(
+                "INSERT INTO track_hardware_outputs(id, track_id, position, volume_db, pan, muted, phase_inverted, send_mode, source_channels, destination_channels) VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                params![
+                    to_sql_integer(output.id)?,
+                    to_sql_integer(track.id)?,
+                    usize_to_sql(position)?,
+                    f64::from(output.parameters.volume_db),
+                    f64::from(output.parameters.pan),
+                    output.parameters.muted,
+                    output.parameters.phase_inverted,
+                    i64::from(output.parameters.send_mode.native_value()),
+                    match output.parameters.source_channels {
+                        aaadaw_core::AudioSendSourceChannels::Stereo => 0,
+                        aaadaw_core::AudioSendSourceChannels::Channel1 => 1,
+                        aaadaw_core::AudioSendSourceChannels::Channel2 => 2,
+                    },
+                    match output.parameters.destination_channels {
+                        aaadaw_core::AudioSendDestinationChannels::Stereo => 0,
+                        aaadaw_core::AudioSendDestinationChannels::Channel1 => 1,
+                        aaadaw_core::AudioSendDestinationChannels::Channel2 => 2,
+                    },
+                ],
+            )?;
+        }
         for (position, point) in track.volume_automation.iter().enumerate() {
             transaction.execute(
                 "INSERT INTO track_volume_automation(track_id, position, sample, gain_db) \
@@ -2428,6 +3993,18 @@ fn write_snapshot(
                     usize_to_sql(position)?,
                     to_sql_integer(point.sample())?,
                     f64::from(point.gain_db()),
+                ],
+            )?;
+        }
+        for (position, area) in track.razor_edit_areas.iter().enumerate() {
+            transaction.execute(
+                "INSERT INTO track_razor_edit_areas(track_id, position, start_sample, end_sample) \
+                 VALUES(?1, ?2, ?3, ?4)",
+                params![
+                    to_sql_integer(track.id)?,
+                    usize_to_sql(position)?,
+                    to_sql_integer(area.start_sample())?,
+                    to_sql_integer(area.end_sample())?,
                 ],
             )?;
         }
@@ -2486,57 +4063,124 @@ fn write_snapshot(
 
     for (position, item) in snapshot.audio_items.iter().enumerate() {
         transaction.execute(
-            "INSERT INTO audio_items(id, track_id, position, media_ref, start_sample, \
-             source_offset_samples, length_samples) VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            "INSERT INTO audio_items(id, track_id, position, media_ref, name, start_sample, \
+             source_offset_samples, signed_source_offset_samples, length_samples, volume, take_volume, take_pan, take_playback_rate, muted, phase_inverted, loop_source, \
+             source_section_start_samples, source_section_length_samples, active_take_index, active_take_is_empty) \
+             VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20)",
             params![
                 to_sql_integer(item.id)?,
                 to_sql_integer(item.track_id)?,
                 usize_to_sql(position)?,
-                item.media_ref,
+                if item.active_take_is_empty { EMPTY_AUDIO_TAKE_MEDIA_REF } else { &item.media_ref },
+                item.name,
                 to_sql_integer(item.start_sample)?,
-                to_sql_integer(item.source_offset_samples)?,
-                to_sql_integer(item.length_samples)?
+                item.source_offset_samples.max(0),
+                item.source_offset_samples,
+                to_sql_integer(item.length_samples)?,
+                f64::from(item.volume),
+                f64::from(item.take_volume),
+                f64::from(item.take_pan),
+                item.take_playback_rate,
+                item.muted,
+                item.phase_inverted,
+                item.loop_source,
+                item.source_section_start_samples
+                    .map(to_sql_integer)
+                    .transpose()?,
+                item.source_section_length_samples
+                    .map(to_sql_integer)
+                    .transpose()?,
+                i64::from(item.active_take_index),
+                item.active_take_is_empty,
             ],
         )?;
+        for take in &item.other_takes {
+            transaction.execute(
+                "INSERT INTO audio_item_takes(item_id, take_index, media_ref, name, source_offset_samples, \
+                 phase_inverted, loop_source, source_section_start_samples, source_section_length_samples, \
+                 take_volume, take_pan, take_playback_rate, is_empty) \
+                 VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+                params![
+                    to_sql_integer(item.id)?,
+                    i64::from(take.index),
+                    if take.is_empty { EMPTY_AUDIO_TAKE_MEDIA_REF } else { &take.media_ref },
+                    take.name,
+                    take.source_offset_samples,
+                    take.phase_inverted,
+                    take.loop_source,
+                    take.source_section_start_samples.map(to_sql_integer).transpose()?,
+                    take.source_section_length_samples.map(to_sql_integer).transpose()?,
+                    f64::from(take.volume),
+                    f64::from(take.pan),
+                    take.playback_rate,
+                    take.is_empty,
+                ],
+            )?;
+        }
+        transaction.execute(
+            "INSERT INTO audio_item_fades(item_id, fade_in_samples, fade_out_samples, fade_in_shape, fade_out_shape) VALUES(?1, ?2, ?3, ?4, ?5)",
+            params![to_sql_integer(item.id)?, item.fades.fade_in.length_samples(), item.fades.fade_out.length_samples(), legacy_fade_code(item.fades.fade_in.curve()), legacy_fade_code(item.fades.fade_out.curve())],
+        )?;
+        let in_parameters = native_fade_parameters(item.fades.fade_in.curve());
+        let out_parameters = native_fade_parameters(item.fades.fade_out.curve());
+        if in_parameters.is_some() || out_parameters.is_some() {
+            transaction.execute("INSERT INTO audio_item_fade_curves(item_id, in_curvature, in_s, out_curvature, out_s) VALUES(?1, ?2, ?3, ?4, ?5)",
+                params![to_sql_integer(item.id)?, in_parameters.map(|p| p.curvature()), in_parameters.map(|p| p.s_parameter()), out_parameters.map(|p| p.curvature()), out_parameters.map(|p| p.s_parameter())])?;
+        }
     }
 
     for (position, item) in snapshot.midi_items.iter().enumerate() {
+        let (source_offset_ticks, source_offset_negative) =
+            signed_midi_offset_to_sql(item.source_offset_ticks)?;
         transaction.execute(
-            "INSERT INTO items(id, track_id, position, start_tick, length_ticks, name, source_offset_ticks) \
-             VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            "INSERT INTO items(id, track_id, position, start_tick, start_tick_subtick, length_ticks, name, source_offset_ticks, loop_source, source_loop_length_ticks, muted, active_take_name_is_empty, source_offset_negative) \
+             VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
             params![
                 to_sql_integer(item.id)?,
                 to_sql_integer(item.track_id)?,
                 usize_to_sql(position)?,
                 to_sql_integer(item.start_tick)?,
+                i64::from(item.start_tick_subtick),
                 to_sql_integer(item.length_ticks)?,
-                item.name,
-                to_sql_integer(item.source_offset_ticks)?
+                if item.name.is_empty() {
+                    EMPTY_ACTIVE_MIDI_TAKE_NAME
+                } else {
+                    item.name.as_str()
+                },
+                source_offset_ticks,
+                item.loop_source,
+                to_sql_integer(item.source_loop_length_ticks)?,
+                item.muted,
+                item.name.is_empty(),
+                source_offset_negative,
             ],
         )?;
         for (position, note) in item.notes.iter().enumerate() {
             transaction.execute(
-                "INSERT INTO midi_notes(id, item_id, position, pitch, tick, duration, velocity) \
-                 VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                "INSERT INTO midi_notes(id, item_id, position, pitch, channel, tick, duration, velocity, off_velocity) \
+                 VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
                 params![
                     to_sql_integer(note.id)?,
                     to_sql_integer(item.id)?,
                     usize_to_sql(position)?,
                     i64::from(note.data.pitch),
+                    i64::from(note.data.channel),
                     to_sql_integer(note.data.tick)?,
                     to_sql_integer(note.data.duration)?,
-                    i64::from(note.data.velocity)
+                    i64::from(note.data.velocity),
+                    i64::from(note.data.off_velocity)
                 ],
             )?;
         }
         for (position, controller) in item.controllers.iter().enumerate() {
             transaction.execute(
-                "INSERT INTO midi_controllers(item_id, position, controller, tick, value) \
-                 VALUES(?1, ?2, ?3, ?4, ?5)",
+                "INSERT INTO midi_controllers(item_id, position, controller, channel, tick, value) \
+                 VALUES(?1, ?2, ?3, ?4, ?5, ?6)",
                 params![
                     to_sql_integer(item.id)?,
                     usize_to_sql(position)?,
                     i64::from(controller.controller),
+                    i64::from(controller.channel),
                     to_sql_integer(controller.tick)?,
                     i64::from(controller.value)
                 ],
@@ -2544,15 +4188,158 @@ fn write_snapshot(
         }
         for (position, bend) in item.pitch_bends.iter().enumerate() {
             transaction.execute(
-                "INSERT INTO midi_pitch_bends(item_id, position, tick, value) \
-                 VALUES(?1, ?2, ?3, ?4)",
+                "INSERT INTO midi_pitch_bends(item_id, position, channel, tick, value) \
+                 VALUES(?1, ?2, ?3, ?4, ?5)",
                 params![
                     to_sql_integer(item.id)?,
                     usize_to_sql(position)?,
+                    i64::from(bend.channel),
                     to_sql_integer(bend.tick)?,
                     i64::from(bend.value)
                 ],
             )?;
+        }
+        for (position, event) in item.program_changes.iter().enumerate() {
+            transaction.execute(
+                "INSERT INTO midi_program_changes(item_id, position, channel, tick, program) \
+                 VALUES(?1, ?2, ?3, ?4, ?5)",
+                params![
+                    to_sql_integer(item.id)?,
+                    usize_to_sql(position)?,
+                    i64::from(event.channel),
+                    to_sql_integer(event.tick)?,
+                    i64::from(event.program)
+                ],
+            )?;
+        }
+        for (position, event) in item.poly_aftertouches.iter().enumerate() {
+            transaction.execute(
+                "INSERT INTO midi_poly_aftertouches(item_id, position, channel, tick, note, value) \
+                 VALUES(?1, ?2, ?3, ?4, ?5, ?6)",
+                params![
+                    to_sql_integer(item.id)?,
+                    usize_to_sql(position)?,
+                    i64::from(event.channel),
+                    to_sql_integer(event.tick)?,
+                    i64::from(event.note),
+                    i64::from(event.value)
+                ],
+            )?;
+        }
+        for (position, event) in item.channel_pressures.iter().enumerate() {
+            transaction.execute(
+                "INSERT INTO midi_channel_pressures(item_id, position, channel, tick, value) \
+                 VALUES(?1, ?2, ?3, ?4, ?5)",
+                params![
+                    to_sql_integer(item.id)?,
+                    usize_to_sql(position)?,
+                    i64::from(event.channel),
+                    to_sql_integer(event.tick)?,
+                    i64::from(event.value)
+                ],
+            )?;
+        }
+        for (position, event) in item.opaque_events.iter().enumerate() {
+            let (event_kind, meta_type, data) = match &event.kind {
+                MidiOpaqueEventKind::Meta { kind, data } => (0_i64, Some(i64::from(*kind)), data),
+                MidiOpaqueEventKind::SystemExclusive { status: 0xF0, data } => (1, None, data),
+                MidiOpaqueEventKind::SystemExclusive { status: 0xF7, data } => (2, None, data),
+                MidiOpaqueEventKind::SystemExclusive { .. } => {
+                    return Err(StorageError::InvalidStoredData(
+                        "unsupported MIDI SysEx status",
+                    ));
+                }
+            };
+            transaction.execute(
+                "INSERT INTO midi_opaque_events(item_id, position, tick, source_order, event_kind, meta_type, data) \
+                 VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                params![
+                    to_sql_integer(item.id)?,
+                    usize_to_sql(position)?,
+                    to_sql_integer(event.tick)?,
+                    i64::from(event.order),
+                    event_kind,
+                    meta_type,
+                    data.as_slice(),
+                ],
+            )?;
+        }
+        for (position, event) in item.event_order.iter().enumerate() {
+            let (event_kind, tick, channel, data1, data2, data3, duration) = match event.target {
+                MidiEventOrderTarget::Note(note) => (
+                    0_i64,
+                    note.tick,
+                    note.channel,
+                    i64::from(note.pitch),
+                    i64::from(note.velocity),
+                    i64::from(note.off_velocity),
+                    note.duration,
+                ),
+                MidiEventOrderTarget::Controller(controller) => (
+                    1,
+                    controller.tick,
+                    controller.channel,
+                    i64::from(controller.controller),
+                    i64::from(controller.value),
+                    0,
+                    0,
+                ),
+                MidiEventOrderTarget::PitchBend(bend) => {
+                    (2, bend.tick, bend.channel, i64::from(bend.value), 0, 0, 0)
+                }
+                MidiEventOrderTarget::ProgramChange(change) => (
+                    3,
+                    change.tick,
+                    change.channel,
+                    i64::from(change.program),
+                    0,
+                    0,
+                    0,
+                ),
+                MidiEventOrderTarget::PolyAftertouch(aftertouch) => (
+                    4,
+                    aftertouch.tick,
+                    aftertouch.channel,
+                    i64::from(aftertouch.note),
+                    i64::from(aftertouch.value),
+                    0,
+                    0,
+                ),
+                MidiEventOrderTarget::ChannelPressure(pressure) => (
+                    5,
+                    pressure.tick,
+                    pressure.channel,
+                    i64::from(pressure.value),
+                    0,
+                    0,
+                    0,
+                ),
+            };
+            transaction.execute(
+                "INSERT INTO midi_event_order(item_id, position, source_order, event_kind, tick, channel, data1, data2, data3, duration, note_off_order) \
+                 VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+                params![
+                    to_sql_integer(item.id)?,
+                    usize_to_sql(position)?,
+                    i64::from(event.order),
+                    event_kind,
+                    to_sql_integer(tick)?,
+                    i64::from(channel),
+                    data1,
+                    data2,
+                    data3,
+                    to_sql_integer(duration)?,
+                    event.note_off_order.map(i64::from),
+                ],
+            )?;
+        }
+
+        transaction.execute(
+            "INSERT INTO midi_item_take_state(item_id, active_take_index) VALUES(?1, ?2)",
+            params![to_sql_integer(item.id)?, i64::from(item.active_take_index)],
+        )?;
+        for take in &item.other_takes {
+            write_midi_take(transaction, item.id, take)?;
         }
     }
 
@@ -2576,6 +4363,309 @@ fn write_snapshot(
             ],
         )?;
     }
+    for marker in &snapshot.markers {
+        transaction.execute(
+            "INSERT INTO project_markers(id, position_ticks, name, marker_number, visible) VALUES(?1, ?2, ?3, ?4, ?5)",
+            params![
+                to_sql_integer(marker.id)?,
+                to_sql_integer(marker.position_ticks)?,
+                marker.name,
+                i64::from(marker.number),
+                marker.visible
+            ],
+        )?;
+    }
+    for region in &snapshot.regions {
+        transaction.execute(
+            "INSERT INTO project_regions(id, region_number, start_ticks, end_ticks, name, visible, render_master_mix) VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            params![
+                to_sql_integer(region.id)?,
+                i64::from(region.number),
+                to_sql_integer(region.start_ticks)?,
+                to_sql_integer(region.end_ticks)?,
+                region.name,
+                region.visible,
+                region.render_master_mix
+            ],
+        )?;
+        for (position, track_id) in region.render_track_ids.iter().copied().enumerate() {
+            transaction.execute(
+                "INSERT INTO project_region_render_tracks(region_id, track_id, position) VALUES(?1, ?2, ?3)",
+                params![
+                    to_sql_integer(region.id)?,
+                    to_sql_integer(track_id)?,
+                    usize_to_sql(position)?
+                ],
+            )?;
+        }
+    }
+    Ok(())
+}
+
+fn write_midi_take(
+    transaction: &Transaction<'_>,
+    item_id: u64,
+    take: &MidiItemTakeSnapshot,
+) -> Result<(), StorageError> {
+    let (source_offset_ticks, source_offset_negative) =
+        signed_midi_offset_to_sql(take.source_offset_ticks)?;
+    transaction.execute(
+        "INSERT INTO midi_item_takes(item_id, take_index, name, source_offset_ticks, loop_source, source_loop_length_ticks, source_offset_negative) \
+         VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+        params![
+            to_sql_integer(item_id)?,
+            i64::from(take.index),
+            take.name,
+            source_offset_ticks,
+            take.loop_source,
+            to_sql_integer(take.source_loop_length_ticks)?,
+            source_offset_negative,
+        ],
+    )?;
+    let insert = |kind: i64,
+                  position: usize,
+                  note_id: Option<u64>,
+                  target_kind: Option<i64>,
+                  tick: u64,
+                  channel: u8,
+                  data1: i64,
+                  data2: i64,
+                  data3: i64,
+                  duration: u64,
+                  value: i64,
+                  payload: Option<&[u8]>,
+                  source_order: u32,
+                  note_off_order: Option<u32>| {
+        transaction.execute(
+            "INSERT INTO midi_take_events(item_id, take_index, event_kind, position, note_id, target_kind, tick, channel, data1, data2, data3, duration, value, payload, source_order, note_off_order) \
+             VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
+            params![
+                to_sql_integer(item_id)?, i64::from(take.index), kind,
+                usize_to_sql(position)?, note_id.map(to_sql_integer).transpose()?, target_kind,
+                to_sql_integer(tick)?, i64::from(channel), data1, data2, data3,
+                to_sql_integer(duration)?, value, payload, i64::from(source_order),
+                note_off_order.map(i64::from),
+            ],
+        )?;
+        Ok::<(), StorageError>(())
+    };
+    for (position, note) in take.notes.iter().enumerate() {
+        insert(
+            0,
+            position,
+            Some(note.id),
+            None,
+            note.data.tick,
+            note.data.channel,
+            i64::from(note.data.pitch),
+            i64::from(note.data.velocity),
+            i64::from(note.data.off_velocity),
+            note.data.duration,
+            0,
+            None,
+            0,
+            None,
+        )?;
+    }
+    for (position, event) in take.controllers.iter().enumerate() {
+        insert(
+            1,
+            position,
+            None,
+            None,
+            event.tick,
+            event.channel,
+            i64::from(event.controller),
+            i64::from(event.value),
+            0,
+            0,
+            0,
+            None,
+            0,
+            None,
+        )?;
+    }
+    for (position, event) in take.pitch_bends.iter().enumerate() {
+        insert(
+            2,
+            position,
+            None,
+            None,
+            event.tick,
+            event.channel,
+            0,
+            0,
+            0,
+            0,
+            i64::from(event.value),
+            None,
+            0,
+            None,
+        )?;
+    }
+    for (position, event) in take.program_changes.iter().enumerate() {
+        insert(
+            3,
+            position,
+            None,
+            None,
+            event.tick,
+            event.channel,
+            i64::from(event.program),
+            0,
+            0,
+            0,
+            0,
+            None,
+            0,
+            None,
+        )?;
+    }
+    for (position, event) in take.poly_aftertouches.iter().enumerate() {
+        insert(
+            4,
+            position,
+            None,
+            None,
+            event.tick,
+            event.channel,
+            i64::from(event.note),
+            0,
+            0,
+            0,
+            i64::from(event.value),
+            None,
+            0,
+            None,
+        )?;
+    }
+    for (position, event) in take.channel_pressures.iter().enumerate() {
+        insert(
+            5,
+            position,
+            None,
+            None,
+            event.tick,
+            event.channel,
+            0,
+            0,
+            0,
+            0,
+            i64::from(event.value),
+            None,
+            0,
+            None,
+        )?;
+    }
+    for (position, event) in take.opaque_events.iter().enumerate() {
+        let (event_kind, data1, data) = match &event.kind {
+            MidiOpaqueEventKind::Meta { kind, data } => (0, i64::from(*kind), data.as_slice()),
+            MidiOpaqueEventKind::SystemExclusive { status: 0xF0, data } => (1, 0, data.as_slice()),
+            MidiOpaqueEventKind::SystemExclusive { status: 0xF7, data } => (2, 0, data.as_slice()),
+            MidiOpaqueEventKind::SystemExclusive { .. } => {
+                return Err(StorageError::InvalidStoredData(
+                    "unsupported MIDI SysEx status",
+                ));
+            }
+        };
+        insert(
+            6,
+            position,
+            None,
+            Some(event_kind),
+            event.tick,
+            0,
+            data1,
+            0,
+            0,
+            0,
+            0,
+            Some(data),
+            event.order,
+            None,
+        )?;
+    }
+    for (position, event) in take.event_order.iter().enumerate() {
+        let (target_kind, tick, channel, data1, data2, data3, duration, value) = match event.target
+        {
+            MidiEventOrderTarget::Note(note) => (
+                0,
+                note.tick,
+                note.channel,
+                i64::from(note.pitch),
+                i64::from(note.velocity),
+                i64::from(note.off_velocity),
+                note.duration,
+                0,
+            ),
+            MidiEventOrderTarget::Controller(event) => (
+                1,
+                event.tick,
+                event.channel,
+                i64::from(event.controller),
+                i64::from(event.value),
+                0,
+                0,
+                0,
+            ),
+            MidiEventOrderTarget::PitchBend(event) => (
+                2,
+                event.tick,
+                event.channel,
+                0,
+                0,
+                0,
+                0,
+                i64::from(event.value),
+            ),
+            MidiEventOrderTarget::ProgramChange(event) => (
+                3,
+                event.tick,
+                event.channel,
+                i64::from(event.program),
+                0,
+                0,
+                0,
+                0,
+            ),
+            MidiEventOrderTarget::PolyAftertouch(event) => (
+                4,
+                event.tick,
+                event.channel,
+                i64::from(event.note),
+                0,
+                0,
+                0,
+                i64::from(event.value),
+            ),
+            MidiEventOrderTarget::ChannelPressure(event) => (
+                5,
+                event.tick,
+                event.channel,
+                0,
+                0,
+                0,
+                0,
+                i64::from(event.value),
+            ),
+        };
+        insert(
+            7,
+            position,
+            None,
+            Some(target_kind),
+            tick,
+            channel,
+            data1,
+            data2,
+            data3,
+            duration,
+            value,
+            None,
+            event.order,
+            event.note_off_order,
+        )?;
+    }
     Ok(())
 }
 
@@ -2583,12 +4673,71 @@ fn write_arrangement_view_state(
     transaction: &Transaction<'_>,
     view_state: &ArrangementViewState,
 ) -> Result<(), StorageError> {
+    validate_time_range(view_state.time_selection, false)?;
+    validate_time_range(view_state.loop_points, true)?;
+    if !(-100..=100).contains(&view_state.swing_amount_percent) {
+        return Err(StorageError::InvalidStoredData("invalid Swing amount"));
+    }
+    transaction.execute("DELETE FROM arrangement_folder_compact", [])?;
+    for folder in &view_state.folder_compact {
+        if folder.mode > 2 {
+            return Err(StorageError::InvalidStoredData(
+                "invalid folder compact mode",
+            ));
+        }
+        transaction.execute(
+            "INSERT INTO arrangement_folder_compact(track_id, mode) VALUES(?1, ?2)",
+            params![to_sql_integer(folder.track_id)?, folder.mode],
+        )?;
+    }
     transaction.execute("DELETE FROM arrangement_volume_lanes", [])?;
     transaction.execute("DELETE FROM arrangement_fx_lanes", [])?;
     transaction.execute(
-        "INSERT INTO arrangement_view_meta(singleton, state_version) VALUES(1, 1) \
-         ON CONFLICT(singleton) DO UPDATE SET state_version = excluded.state_version",
-        [],
+        "INSERT INTO arrangement_view_meta(\
+         singleton, state_version, repeat_enabled, snap_enabled, snap_grid, \
+         midi_editor_snap_grid, swing_grid_enabled, swing_amount_percent) \
+         VALUES(1, 1, ?1, ?2, ?3, ?4, ?5, ?6) \
+         ON CONFLICT(singleton) DO UPDATE SET state_version = excluded.state_version, \
+         repeat_enabled = excluded.repeat_enabled, snap_enabled = excluded.snap_enabled, \
+         snap_grid = excluded.snap_grid, midi_editor_snap_grid = excluded.midi_editor_snap_grid, \
+         swing_grid_enabled = excluded.swing_grid_enabled, \
+         swing_amount_percent = excluded.swing_amount_percent",
+        params![
+            if view_state.repeat_enabled {
+                1_i64
+            } else {
+                0_i64
+            },
+            if view_state.snap_enabled {
+                1_i64
+            } else {
+                0_i64
+            },
+            view_state.snap_grid.storage_id(),
+            view_state.midi_editor_snap_grid.storage_id(),
+            if view_state.swing_grid_enabled {
+                1_i64
+            } else {
+                0_i64
+            },
+            i64::from(view_state.swing_amount_percent),
+        ],
+    )?;
+    transaction.execute(
+        "INSERT INTO arrangement_time_ranges(\
+         singleton, time_selection_start_seconds, time_selection_end_seconds, \
+         loop_start_seconds, loop_end_seconds) VALUES(1, ?1, ?2, ?3, ?4) \
+         ON CONFLICT(singleton) DO UPDATE SET \
+         time_selection_start_seconds = excluded.time_selection_start_seconds, \
+         time_selection_end_seconds = excluded.time_selection_end_seconds, \
+         loop_start_seconds = excluded.loop_start_seconds, \
+         loop_end_seconds = excluded.loop_end_seconds",
+        params![
+            view_state.time_selection.map(|range| range.start_seconds),
+            view_state.time_selection.map(|range| range.end_seconds),
+            view_state.loop_points.map(|range| range.start_seconds),
+            view_state.loop_points.map(|range| range.end_seconds),
+        ],
     )?;
     for lane in &view_state.volume_lanes {
         transaction.execute(
@@ -2631,8 +4780,51 @@ fn write_arrangement_view_state(
     Ok(())
 }
 
+fn validate_time_range(
+    range: Option<crate::ArrangementTimeRangeState>,
+    allow_zero_length: bool,
+) -> Result<(), StorageError> {
+    if range.is_some_and(|range| {
+        !range.start_seconds.is_finite()
+            || !range.end_seconds.is_finite()
+            || if allow_zero_length {
+                range.start_seconds > range.end_seconds
+            } else {
+                range.start_seconds >= range.end_seconds
+            }
+    }) {
+        return Err(StorageError::InvalidStoredData(
+            "invalid Arrangement time range",
+        ));
+    }
+    Ok(())
+}
+
+fn time_range_from_columns(
+    columns: (Option<f64>, Option<f64>),
+    allow_zero_length: bool,
+) -> Result<Option<crate::ArrangementTimeRangeState>, StorageError> {
+    match columns {
+        (None, None) => Ok(None),
+        (Some(start_seconds), Some(end_seconds)) => {
+            let range = crate::ArrangementTimeRangeState {
+                start_seconds,
+                end_seconds,
+            };
+            validate_time_range(Some(range), allow_zero_length)?;
+            Ok(Some(range))
+        }
+        _ => Err(StorageError::InvalidStoredData(
+            "incomplete Arrangement time range",
+        )),
+    }
+}
+
 fn read_tracks(connection: &Connection) -> Result<Vec<TrackSnapshot>, StorageError> {
+    let mut sends = read_audio_sends(connection)?;
+    let mut hardware_outputs = read_audio_hardware_outputs(connection)?;
     let mut volume_automation = read_volume_automation(connection)?;
+    let mut razor_edit_areas = read_razor_edit_areas(connection)?;
     let mut fx_chains = HashMap::<i64, Vec<TrackFxPluginSnapshot>>::new();
     let mut parameter_values = HashMap::<(i64, i64), Vec<TrackFxParameterValueSnapshot>>::new();
     let mut fx_statement = connection.prepare(
@@ -2767,7 +4959,7 @@ fn read_tracks(connection: &Connection) -> Result<Vec<TrackSnapshot>, StorageErr
     }
 
     let mut statement = connection.prepare(
-        "SELECT id, position, name, volume_db, pan, muted, solo, record_armed, instrument_id, instrument_path, instrument_state, is_bus, output_track_id, frozen_audio_item_id \
+        "SELECT id, position, name, volume_db, pan, muted, solo, record_armed, instrument_id, instrument_path, instrument_state, is_bus, output_track_id, frozen_audio_item_id, main_send_enabled, is_folder, parent_track_id, phase_inverted \
          FROM tracks ORDER BY position",
     )?;
     let rows = statement
@@ -2787,10 +4979,15 @@ fn read_tracks(connection: &Connection) -> Result<Vec<TrackSnapshot>, StorageErr
                 row.get::<_, bool>(11)?,
                 row.get::<_, Option<i64>>(12)?,
                 row.get::<_, Option<i64>>(13)?,
+                row.get::<_, bool>(14)?,
+                row.get::<_, bool>(15)?,
+                row.get::<_, Option<i64>>(16)?,
+                row.get::<_, bool>(17)?,
             ))
         })?
         .collect::<Result<Vec<_>, _>>()?;
-    rows.into_iter()
+    let tracks = rows
+        .into_iter()
         .map(
             |(
                 id,
@@ -2807,6 +5004,10 @@ fn read_tracks(connection: &Connection) -> Result<Vec<TrackSnapshot>, StorageErr
                 is_bus,
                 output_track_id,
                 frozen_audio_item_id,
+                main_send_enabled,
+                is_folder,
+                parent_track_id,
+                phase_inverted,
             )| {
                 let _ = from_sql_u64(position)?;
                 let instrument = match (instrument_id, instrument_path) {
@@ -2831,6 +5032,12 @@ fn read_tracks(connection: &Connection) -> Result<Vec<TrackSnapshot>, StorageErr
                     name,
                     is_bus,
                     output_track_id: output_track_id.map(from_sql_u64).transpose()?,
+                    phase_inverted,
+                    main_send_enabled,
+                    is_folder,
+                    parent_track_id: parent_track_id.map(from_sql_u64).transpose()?,
+                    sends: sends.remove(&id).unwrap_or_default(),
+                    hardware_outputs: hardware_outputs.remove(&id).unwrap_or_default(),
                     volume_db: volume_db as f32,
                     pan: pan as f32,
                     muted,
@@ -2839,11 +5046,55 @@ fn read_tracks(connection: &Connection) -> Result<Vec<TrackSnapshot>, StorageErr
                     instrument,
                     fx_chain: fx_chains.remove(&id).unwrap_or_default(),
                     volume_automation: volume_automation.remove(&id).unwrap_or_default(),
+                    razor_edit_areas: razor_edit_areas.remove(&id).unwrap_or_default(),
                     frozen_audio_item_id: frozen_audio_item_id.map(from_sql_u64).transpose()?,
                 })
             },
         )
-        .collect()
+        .collect::<Result<Vec<_>, StorageError>>()?;
+    if !sends.is_empty() {
+        return Err(StorageError::InvalidStoredData(
+            "audio sends reference a missing source",
+        ));
+    }
+    if !razor_edit_areas.is_empty() {
+        return Err(StorageError::InvalidStoredData(
+            "razor edit areas reference a missing track",
+        ));
+    }
+    Ok(tracks)
+}
+
+fn read_razor_edit_areas(
+    connection: &Connection,
+) -> Result<HashMap<i64, Vec<RazorEditArea>>, StorageError> {
+    let mut statement = connection.prepare(
+        "SELECT track_id, position, start_sample, end_sample \
+         FROM track_razor_edit_areas ORDER BY track_id, position",
+    )?;
+    let rows = statement
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, i64>(1)?,
+                row.get::<_, i64>(2)?,
+                row.get::<_, i64>(3)?,
+            ))
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut areas = HashMap::<i64, Vec<RazorEditArea>>::new();
+    for (track_id, position, start_sample, end_sample) in rows {
+        let position = from_sql_u64(position)?;
+        let track_areas = areas.entry(track_id).or_default();
+        if usize::try_from(position).ok() != Some(track_areas.len()) {
+            return Err(StorageError::InvalidStoredData("razor edit area order"));
+        }
+        track_areas.push(
+            RazorEditArea::new(from_sql_u64(start_sample)?, from_sql_u64(end_sample)?)
+                .ok_or(StorageError::InvalidStoredData("razor edit area range"))?,
+        );
+    }
+    Ok(areas)
 }
 
 fn read_volume_automation(
@@ -2872,10 +5123,193 @@ fn read_volume_automation(
     Ok(points_by_track)
 }
 
+fn legacy_fade_code(curve: aaadaw_core::FadeCurve) -> u8 {
+    match curve {
+        aaadaw_core::FadeCurve::Legacy(shape) => shape.code(),
+        aaadaw_core::FadeCurve::Native(_) => 0,
+    }
+}
+
+fn native_fade_parameters(
+    curve: aaadaw_core::FadeCurve,
+) -> Option<aaadaw_core::FadeCurveParameters> {
+    match curve {
+        aaadaw_core::FadeCurve::Legacy(_) => None,
+        aaadaw_core::FadeCurve::Native(parameters) => Some(parameters),
+    }
+}
+
+fn read_native_fade_curve(
+    curvature: Option<f64>,
+    s: Option<f64>,
+) -> Result<Option<aaadaw_core::FadeCurve>, StorageError> {
+    match (curvature, s) {
+        (None, None) => Ok(None),
+        (Some(curvature), Some(s)) => aaadaw_core::FadeCurveParameters::new(curvature, s)
+            .map(|p| Some(aaadaw_core::FadeCurve::Native(p)))
+            .map_err(|_| StorageError::Snapshot(SnapshotError::InvalidProjectData)),
+        _ => Err(StorageError::Snapshot(SnapshotError::InvalidProjectData)),
+    }
+}
+
 fn read_audio_items(connection: &Connection) -> Result<Vec<AudioItemSnapshot>, StorageError> {
+    let mut curves = HashMap::new();
+    let mut curve_statement = connection.prepare(
+        "SELECT item_id, in_curvature, in_s, out_curvature, out_s FROM audio_item_fade_curves",
+    )?;
+    let curve_rows = curve_statement.query_map([], |row| {
+        Ok((
+            row.get::<_, i64>(0)?,
+            row.get::<_, Option<f64>>(1)?,
+            row.get::<_, Option<f64>>(2)?,
+            row.get::<_, Option<f64>>(3)?,
+            row.get::<_, Option<f64>>(4)?,
+        ))
+    })?;
+    for row in curve_rows {
+        let (id, in_curvature, in_s, out_curvature, out_s) = row?;
+        let fade_in = read_native_fade_curve(in_curvature, in_s)?;
+        let fade_out = read_native_fade_curve(out_curvature, out_s)?;
+        if fade_in.is_none() && fade_out.is_none() {
+            return Err(StorageError::Snapshot(SnapshotError::InvalidProjectData));
+        }
+        curves.insert(from_sql_u64(id)?, (fade_in, fade_out));
+    }
+    let mut fades = HashMap::new();
+    let mut fade_statement = connection.prepare("SELECT item_id, fade_in_samples, fade_out_samples, fade_in_shape, fade_out_shape FROM audio_item_fades")?;
+    let fade_rows = fade_statement.query_map([], |row| {
+        Ok((
+            row.get::<_, i64>(0)?,
+            row.get::<_, f64>(1)?,
+            row.get::<_, f64>(2)?,
+            row.get::<_, u8>(3)?,
+            row.get::<_, u8>(4)?,
+        ))
+    })?;
+    for row in fade_rows {
+        let (id, fade_in, fade_out, in_shape, out_shape) = row?;
+        let invalid = || StorageError::Snapshot(SnapshotError::InvalidProjectData);
+        let in_shape = aaadaw_core::FadeShape::from_code(in_shape).ok_or_else(invalid)?;
+        let out_shape = aaadaw_core::FadeShape::from_code(out_shape).ok_or_else(invalid)?;
+        let (in_curve, out_curve) = curves.remove(&from_sql_u64(id)?).unwrap_or((None, None));
+        fades.insert(
+            from_sql_u64(id)?,
+            aaadaw_core::AudioItemFades {
+                fade_in: aaadaw_core::AudioFade::with_curve(
+                    fade_in,
+                    in_curve.unwrap_or(aaadaw_core::FadeCurve::Legacy(in_shape)),
+                )
+                .map_err(|_| invalid())?,
+                fade_out: aaadaw_core::AudioFade::with_curve(
+                    fade_out,
+                    out_curve.unwrap_or(aaadaw_core::FadeCurve::Legacy(out_shape)),
+                )
+                .map_err(|_| invalid())?,
+            },
+        );
+    }
+    if !curves.is_empty() {
+        return Err(StorageError::Snapshot(SnapshotError::InvalidProjectData));
+    }
+    let mut other_takes = HashMap::<u64, Vec<aaadaw_core::AudioItemTakeSnapshot>>::new();
+    let mut take_statement = connection.prepare(
+        "SELECT item_id, take_index, media_ref, name, source_offset_samples, phase_inverted, \
+         loop_source, source_section_start_samples, source_section_length_samples, take_volume, \
+         take_pan, take_playback_rate, is_empty FROM audio_item_takes ORDER BY item_id, take_index",
+    )?;
+    let take_rows = take_statement
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, i64>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, String>(3)?,
+                row.get::<_, i64>(4)?,
+                row.get::<_, i64>(5)?,
+                row.get::<_, i64>(6)?,
+                row.get::<_, Option<i64>>(7)?,
+                row.get::<_, Option<i64>>(8)?,
+                row.get::<_, f64>(9)?,
+                row.get::<_, f64>(10)?,
+                row.get::<_, f64>(11)?,
+                row.get::<_, i64>(12)?,
+            ))
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    for (
+        item_id,
+        take_index,
+        media_ref,
+        name,
+        source_offset_samples,
+        phase_inverted_value,
+        loop_source_value,
+        source_section_start_samples,
+        source_section_length_samples,
+        volume,
+        pan,
+        playback_rate,
+        is_empty_value,
+    ) in take_rows
+    {
+        let invalid = || StorageError::Snapshot(SnapshotError::InvalidProjectData);
+        let phase_inverted = match phase_inverted_value {
+            0 => false,
+            1 => true,
+            _ => return Err(invalid()),
+        };
+        let loop_source = match loop_source_value {
+            0 => false,
+            1 => true,
+            _ => return Err(invalid()),
+        };
+        let is_empty = match is_empty_value {
+            0 => false,
+            1 => true,
+            _ => return Err(invalid()),
+        };
+        if is_empty && media_ref != EMPTY_AUDIO_TAKE_MEDIA_REF {
+            return Err(invalid());
+        }
+        if !volume.is_finite()
+            || !(0.0..=16.0).contains(&volume)
+            || !pan.is_finite()
+            || !(-1.0..=1.0).contains(&pan)
+            || !playback_rate.is_finite()
+            || playback_rate <= 0.0
+        {
+            return Err(invalid());
+        }
+        let source_section_start_samples =
+            source_section_start_samples.map(from_sql_u64).transpose()?;
+        let source_section_length_samples = source_section_length_samples
+            .map(from_sql_u64)
+            .transpose()?;
+        if source_section_start_samples.is_some() != source_section_length_samples.is_some() {
+            return Err(invalid());
+        }
+        other_takes.entry(from_sql_u64(item_id)?).or_default().push(
+            aaadaw_core::AudioItemTakeSnapshot {
+                index: u32::try_from(from_sql_u64(take_index)?).map_err(|_| invalid())?,
+                media_ref: if is_empty { String::new() } else { media_ref },
+                is_empty,
+                name,
+                source_offset_samples,
+                phase_inverted,
+                loop_source,
+                source_section_start_samples,
+                source_section_length_samples,
+                volume: volume as f32,
+                pan: pan as f32,
+                playback_rate,
+            },
+        );
+    }
     let mut statement = connection.prepare(
-        "SELECT id, track_id, position, media_ref, start_sample, source_offset_samples, \
-         length_samples FROM audio_items ORDER BY position",
+        "SELECT id, track_id, position, media_ref, name, start_sample, signed_source_offset_samples, \
+         length_samples, volume, take_volume, take_pan, take_playback_rate, muted, phase_inverted, loop_source, \
+         source_section_start_samples, source_section_length_samples, active_take_index, active_take_is_empty \
+         FROM audio_items ORDER BY position",
     )?;
     let rows = statement
         .query_map([], |row| {
@@ -2884,32 +5318,425 @@ fn read_audio_items(connection: &Connection) -> Result<Vec<AudioItemSnapshot>, S
                 row.get::<_, i64>(1)?,
                 row.get::<_, i64>(2)?,
                 row.get::<_, String>(3)?,
+                row.get::<_, String>(4)?,
+                row.get::<_, i64>(5)?,
+                row.get::<_, i64>(6)?,
+                row.get::<_, i64>(7)?,
+                row.get::<_, f64>(8)?,
+                row.get::<_, f64>(9)?,
+                row.get::<_, f64>(10)?,
+                row.get::<_, f64>(11)?,
+                row.get::<_, i64>(12)?,
+                row.get::<_, i64>(13)?,
+                row.get::<_, i64>(14)?,
+                row.get::<_, Option<i64>>(15)?,
+                row.get::<_, Option<i64>>(16)?,
+                row.get::<_, i64>(17)?,
+                row.get::<_, i64>(18)?,
+            ))
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    let items = rows
+        .into_iter()
+        .map(
+            |(
+                id,
+                track_id,
+                position,
+                media_ref,
+                name,
+                start_sample,
+                source_offset,
+                length,
+                volume,
+                take_volume,
+                take_pan,
+                take_playback_rate,
+                muted,
+                phase_inverted_value,
+                loop_source,
+                source_section_start,
+                source_section_length,
+                active_take_index,
+                active_take_is_empty_value,
+            )| {
+                let _ = from_sql_u64(position)?;
+                if !volume.is_finite() || !(0.0..=16.0).contains(&volume) {
+                    return Err(StorageError::Snapshot(SnapshotError::InvalidProjectData));
+                }
+                if !take_volume.is_finite()
+                    || !(0.0..=16.0).contains(&take_volume)
+                    || !take_pan.is_finite()
+                    || !(-1.0..=1.0).contains(&take_pan)
+                    || !take_playback_rate.is_finite()
+                    || take_playback_rate <= 0.0
+                {
+                    return Err(StorageError::Snapshot(SnapshotError::InvalidProjectData));
+                }
+                let loop_source = match loop_source {
+                    0 => false,
+                    1 => true,
+                    _ => return Err(StorageError::Snapshot(SnapshotError::InvalidProjectData)),
+                };
+                let muted = match muted {
+                    0 => false,
+                    1 => true,
+                    _ => return Err(StorageError::Snapshot(SnapshotError::InvalidProjectData)),
+                };
+                let phase_inverted = match phase_inverted_value {
+                    0 => false,
+                    1 => true,
+                    _ => return Err(StorageError::Snapshot(SnapshotError::InvalidProjectData)),
+                };
+                let active_take_is_empty = match active_take_is_empty_value {
+                    0 => false,
+                    1 => true,
+                    _ => return Err(StorageError::Snapshot(SnapshotError::InvalidProjectData)),
+                };
+                if active_take_is_empty && media_ref != EMPTY_AUDIO_TAKE_MEDIA_REF {
+                    return Err(StorageError::Snapshot(SnapshotError::InvalidProjectData));
+                }
+                let source_section_start_samples =
+                    source_section_start.map(from_sql_u64).transpose()?;
+                let source_section_length_samples =
+                    source_section_length.map(from_sql_u64).transpose()?;
+                if source_section_length_samples.is_some() != source_section_start_samples.is_some()
+                {
+                    return Err(StorageError::Snapshot(SnapshotError::InvalidProjectData));
+                }
+                Ok(AudioItemSnapshot {
+                    fades: fades.remove(&from_sql_u64(id)?).unwrap_or_default(),
+                    volume: volume as f32,
+                    take_volume: take_volume as f32,
+                    take_pan: take_pan as f32,
+                    take_playback_rate,
+                    id: from_sql_u64(id)?,
+                    track_id: from_sql_u64(track_id)?,
+                    media_ref: if active_take_is_empty {
+                        String::new()
+                    } else {
+                        media_ref
+                    },
+                    name,
+                    start_sample: from_sql_u64(start_sample)?,
+                    source_offset_samples: source_offset,
+                    length_samples: from_sql_u64(length)?,
+                    muted,
+                    phase_inverted,
+                    loop_source,
+                    source_section_start_samples,
+                    source_section_length_samples,
+                    active_take_index: u32::try_from(from_sql_u64(active_take_index)?)
+                        .map_err(|_| StorageError::Snapshot(SnapshotError::InvalidProjectData))?,
+                    active_take_is_empty,
+                    other_takes: other_takes.remove(&from_sql_u64(id)?).unwrap_or_default(),
+                })
+            },
+        )
+        .collect::<Result<Vec<_>, StorageError>>()?;
+    if !fades.is_empty() {
+        return Err(StorageError::Snapshot(SnapshotError::InvalidProjectData));
+    }
+    if !other_takes.is_empty() {
+        return Err(StorageError::Snapshot(SnapshotError::InvalidProjectData));
+    }
+    Ok(items)
+}
+
+struct StoredMidiTake {
+    snapshot: MidiItemTakeSnapshot,
+}
+
+fn read_midi_takes(
+    connection: &Connection,
+) -> Result<HashMap<u64, (u32, Vec<MidiItemTakeSnapshot>)>, StorageError> {
+    let mut statement = connection.prepare(
+        "SELECT item_id, take_index, name, source_offset_ticks, loop_source, source_loop_length_ticks, source_offset_negative \
+         FROM midi_item_takes ORDER BY item_id, take_index",
+    )?;
+    let rows = statement
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, i64>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, i64>(3)?,
                 row.get::<_, i64>(4)?,
                 row.get::<_, i64>(5)?,
                 row.get::<_, i64>(6)?,
             ))
         })?
         .collect::<Result<Vec<_>, _>>()?;
-    rows.into_iter()
-        .map(
-            |(id, track_id, position, media_ref, start_sample, source_offset, length)| {
-                let _ = from_sql_u64(position)?;
-                Ok(AudioItemSnapshot {
-                    id: from_sql_u64(id)?,
-                    track_id: from_sql_u64(track_id)?,
-                    media_ref,
-                    start_sample: from_sql_u64(start_sample)?,
-                    source_offset_samples: from_sql_u64(source_offset)?,
-                    length_samples: from_sql_u64(length)?,
-                })
-            },
-        )
-        .collect()
+    let mut takes_by_item: HashMap<u64, Vec<StoredMidiTake>> = HashMap::new();
+    for (item_id, index, name, source_offset, loop_source, loop_length, source_offset_negative) in
+        rows
+    {
+        let loop_source = match loop_source {
+            0 => false,
+            1 => true,
+            _ => {
+                return Err(StorageError::InvalidStoredData(
+                    "invalid MIDI take loop flag",
+                ));
+            }
+        };
+        takes_by_item
+            .entry(from_sql_u64(item_id)?)
+            .or_default()
+            .push(StoredMidiTake {
+                snapshot: MidiItemTakeSnapshot {
+                    index: from_sql_u32(index)?,
+                    name,
+                    source_offset_ticks: from_sql_signed_midi_offset(
+                        source_offset,
+                        source_offset_negative,
+                    )?,
+                    loop_source,
+                    source_loop_length_ticks: from_sql_u64(loop_length)?,
+                    notes: Vec::new(),
+                    controllers: Vec::new(),
+                    pitch_bends: Vec::new(),
+                    program_changes: Vec::new(),
+                    poly_aftertouches: Vec::new(),
+                    channel_pressures: Vec::new(),
+                    opaque_events: Vec::new(),
+                    event_order: Vec::new(),
+                },
+            });
+    }
+
+    let mut statement = connection.prepare(
+        "SELECT item_id, take_index, event_kind, position, note_id, target_kind, tick, channel, data1, data2, data3, duration, value, payload, source_order, note_off_order \
+         FROM midi_take_events ORDER BY item_id, take_index, event_kind, position",
+    )?;
+    let rows = statement
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, i64>(1)?,
+                row.get::<_, i64>(2)?,
+                row.get::<_, i64>(3)?,
+                row.get::<_, Option<i64>>(4)?,
+                row.get::<_, Option<i64>>(5)?,
+                row.get::<_, i64>(6)?,
+                row.get::<_, i64>(7)?,
+                row.get::<_, i64>(8)?,
+                row.get::<_, i64>(9)?,
+                row.get::<_, i64>(10)?,
+                row.get::<_, i64>(11)?,
+                row.get::<_, i64>(12)?,
+                row.get::<_, Option<Vec<u8>>>(13)?,
+                row.get::<_, i64>(14)?,
+                row.get::<_, Option<i64>>(15)?,
+            ))
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    for (
+        item_id,
+        take_index,
+        kind,
+        _position,
+        note_id,
+        target_kind,
+        tick,
+        channel,
+        data1,
+        data2,
+        data3,
+        duration,
+        value,
+        payload,
+        source_order,
+        note_off_order,
+    ) in rows
+    {
+        let item_id = from_sql_u64(item_id)?;
+        let take_index = from_sql_u32(take_index)?;
+        let take = takes_by_item
+            .get_mut(&item_id)
+            .and_then(|takes| {
+                takes
+                    .iter_mut()
+                    .find(|take| take.snapshot.index == take_index)
+            })
+            .ok_or(StorageError::InvalidStoredData(
+                "MIDI take event references a missing take",
+            ))?;
+        let tick = from_sql_u64(tick)?;
+        let channel = from_sql_u8(channel)?;
+        let data1_u8 = || from_sql_u8(data1);
+        let value_u8 = || from_sql_u8(value);
+        let source_order = from_sql_u32(source_order)?;
+        match kind {
+            0 => take.snapshot.notes.push(MidiNoteSnapshot {
+                id: from_sql_u64(
+                    note_id.ok_or(StorageError::InvalidStoredData("MIDI take note has no ID"))?,
+                )?,
+                data: MidiNoteData {
+                    pitch: from_sql_u8(data1)?,
+                    channel,
+                    tick,
+                    duration: from_sql_u64(duration)?,
+                    velocity: from_sql_u8(data2)?,
+                    off_velocity: from_sql_u8(data3)?,
+                },
+            }),
+            1 => take.snapshot.controllers.push(MidiControllerData {
+                controller: data1_u8()?,
+                channel,
+                tick,
+                value: from_sql_u8(data2)?,
+            }),
+            2 => take.snapshot.pitch_bends.push(MidiPitchBendData {
+                channel,
+                tick,
+                value: from_sql_u16(value)?,
+            }),
+            3 => take.snapshot.program_changes.push(MidiProgramChangeData {
+                channel,
+                tick,
+                program: data1_u8()?,
+            }),
+            4 => take
+                .snapshot
+                .poly_aftertouches
+                .push(MidiPolyAftertouchData {
+                    channel,
+                    tick,
+                    note: data1_u8()?,
+                    value: value_u8()?,
+                }),
+            5 => take
+                .snapshot
+                .channel_pressures
+                .push(MidiChannelPressureData {
+                    channel,
+                    tick,
+                    value: value_u8()?,
+                }),
+            6 => {
+                let event_kind = target_kind.ok_or(StorageError::InvalidStoredData(
+                    "MIDI opaque take event has no kind",
+                ))?;
+                let data = payload.ok_or(StorageError::InvalidStoredData(
+                    "MIDI opaque take event has no payload",
+                ))?;
+                let kind = match event_kind {
+                    0 => MidiOpaqueEventKind::Meta {
+                        kind: data1_u8()?,
+                        data,
+                    },
+                    1 => MidiOpaqueEventKind::SystemExclusive { status: 0xF0, data },
+                    2 => MidiOpaqueEventKind::SystemExclusive { status: 0xF7, data },
+                    _ => {
+                        return Err(StorageError::InvalidStoredData(
+                            "invalid MIDI opaque take event kind",
+                        ));
+                    }
+                };
+                take.snapshot.opaque_events.push(MidiOpaqueEventData {
+                    tick,
+                    order: source_order,
+                    kind,
+                });
+            }
+            7 => {
+                let target_kind = target_kind.ok_or(StorageError::InvalidStoredData(
+                    "MIDI take event order has no target kind",
+                ))?;
+                let target = match target_kind {
+                    0 => MidiEventOrderTarget::Note(MidiNoteData {
+                        pitch: from_sql_u8(data1)?,
+                        channel,
+                        tick,
+                        duration: from_sql_u64(duration)?,
+                        velocity: from_sql_u8(data2)?,
+                        off_velocity: from_sql_u8(data3)?,
+                    }),
+                    1 => MidiEventOrderTarget::Controller(MidiControllerData {
+                        controller: data1_u8()?,
+                        channel,
+                        tick,
+                        value: from_sql_u8(data2)?,
+                    }),
+                    2 => MidiEventOrderTarget::PitchBend(MidiPitchBendData {
+                        channel,
+                        tick,
+                        value: from_sql_u16(value)?,
+                    }),
+                    3 => MidiEventOrderTarget::ProgramChange(MidiProgramChangeData {
+                        channel,
+                        tick,
+                        program: data1_u8()?,
+                    }),
+                    4 => MidiEventOrderTarget::PolyAftertouch(MidiPolyAftertouchData {
+                        channel,
+                        tick,
+                        note: data1_u8()?,
+                        value: value_u8()?,
+                    }),
+                    5 => MidiEventOrderTarget::ChannelPressure(MidiChannelPressureData {
+                        channel,
+                        tick,
+                        value: value_u8()?,
+                    }),
+                    _ => {
+                        return Err(StorageError::InvalidStoredData(
+                            "invalid MIDI take event-order target",
+                        ));
+                    }
+                };
+                take.snapshot.event_order.push(MidiEventOrderData {
+                    target,
+                    order: source_order,
+                    note_off_order: note_off_order.map(from_sql_u32).transpose()?,
+                });
+            }
+            _ => {
+                return Err(StorageError::InvalidStoredData(
+                    "invalid MIDI take event kind",
+                ));
+            }
+        }
+    }
+
+    let mut statement = connection
+        .prepare("SELECT item_id, active_take_index FROM midi_item_take_state ORDER BY item_id")?;
+    let state_rows = statement
+        .query_map([], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)))?
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut active_indices = HashMap::with_capacity(state_rows.len());
+    for (item_id, index) in state_rows {
+        active_indices.insert(from_sql_u64(item_id)?, from_sql_u32(index)?);
+    }
+
+    let mut result = HashMap::new();
+    for (item_id, mut takes) in takes_by_item {
+        takes.sort_by_key(|take| take.snapshot.index);
+        let active_index =
+            active_indices
+                .remove(&item_id)
+                .ok_or(StorageError::InvalidStoredData(
+                    "MIDI alternate takes have no active-take state",
+                ))?;
+        result.insert(
+            item_id,
+            (
+                active_index,
+                takes.into_iter().map(|take| take.snapshot).collect(),
+            ),
+        );
+    }
+    for (item_id, active_index) in active_indices {
+        result.insert(item_id, (active_index, Vec::new()));
+    }
+    Ok(result)
 }
 
 fn read_midi_items(connection: &Connection) -> Result<(Vec<MidiItemSnapshot>, bool), StorageError> {
+    let mut takes_by_item = read_midi_takes(connection)?;
     let mut note_statement = connection.prepare(
-        "SELECT item_id, id, position, pitch, tick, duration, velocity \
+        "SELECT item_id, id, position, pitch, channel, tick, duration, velocity, off_velocity \
          FROM midi_notes ORDER BY item_id, position",
     )?;
     let note_rows = note_statement
@@ -2922,18 +5749,24 @@ fn read_midi_items(connection: &Connection) -> Result<(Vec<MidiItemSnapshot>, bo
                 row.get::<_, i64>(4)?,
                 row.get::<_, i64>(5)?,
                 row.get::<_, i64>(6)?,
+                row.get::<_, i64>(7)?,
+                row.get::<_, i64>(8)?,
             ))
         })?
         .collect::<Result<Vec<_>, _>>()?;
     let mut notes_by_item: HashMap<u64, Vec<(u64, MidiNoteSnapshot)>> = HashMap::new();
-    for (item_id, note_id, position, pitch, tick, duration, velocity) in note_rows {
+    for (item_id, note_id, position, pitch, channel, tick, duration, velocity, off_velocity) in
+        note_rows
+    {
         let note = MidiNoteSnapshot {
             id: from_sql_u64(note_id)?,
             data: MidiNoteData {
+                channel: from_sql_u8(channel)?,
                 pitch: from_sql_u8(pitch)?,
                 tick: from_sql_u64(tick)?,
                 duration: from_sql_u64(duration)?,
                 velocity: from_sql_u8(velocity)?,
+                off_velocity: from_sql_u8(off_velocity)?,
             },
         };
         notes_by_item
@@ -2943,7 +5776,7 @@ fn read_midi_items(connection: &Connection) -> Result<(Vec<MidiItemSnapshot>, bo
     }
 
     let mut controller_statement = connection.prepare(
-        "SELECT item_id, position, controller, tick, value \
+        "SELECT item_id, position, controller, channel, tick, value \
          FROM midi_controllers ORDER BY item_id, position",
     )?;
     let controller_rows = controller_statement
@@ -2954,17 +5787,19 @@ fn read_midi_items(connection: &Connection) -> Result<(Vec<MidiItemSnapshot>, bo
                 row.get::<_, i64>(2)?,
                 row.get::<_, i64>(3)?,
                 row.get::<_, i64>(4)?,
+                row.get::<_, i64>(5)?,
             ))
         })?
         .collect::<Result<Vec<_>, _>>()?;
     let mut controllers_by_item: HashMap<u64, Vec<(u64, MidiControllerData)>> = HashMap::new();
-    for (item_id, position, controller, tick, value) in controller_rows {
+    for (item_id, position, controller, channel, tick, value) in controller_rows {
         controllers_by_item
             .entry(from_sql_u64(item_id)?)
             .or_default()
             .push((
                 from_sql_u64(position)?,
                 MidiControllerData {
+                    channel: from_sql_u8(channel)?,
                     controller: from_sql_u8(controller)?,
                     tick: from_sql_u64(tick)?,
                     value: from_sql_u8(value)?,
@@ -2973,7 +5808,7 @@ fn read_midi_items(connection: &Connection) -> Result<(Vec<MidiItemSnapshot>, bo
     }
 
     let mut bend_statement = connection.prepare(
-        "SELECT item_id, position, tick, value \
+        "SELECT item_id, position, channel, tick, value \
          FROM midi_pitch_bends ORDER BY item_id, position",
     )?;
     let bend_rows = bend_statement
@@ -2983,25 +5818,272 @@ fn read_midi_items(connection: &Connection) -> Result<(Vec<MidiItemSnapshot>, bo
                 row.get::<_, i64>(1)?,
                 row.get::<_, i64>(2)?,
                 row.get::<_, i64>(3)?,
+                row.get::<_, i64>(4)?,
             ))
         })?
         .collect::<Result<Vec<_>, _>>()?;
     let mut bends_by_item: HashMap<u64, Vec<(u64, MidiPitchBendData)>> = HashMap::new();
-    for (item_id, position, tick, value) in bend_rows {
+    for (item_id, position, channel, tick, value) in bend_rows {
         bends_by_item
             .entry(from_sql_u64(item_id)?)
             .or_default()
             .push((
                 from_sql_u64(position)?,
                 MidiPitchBendData {
+                    channel: from_sql_u8(channel)?,
                     tick: from_sql_u64(tick)?,
                     value: from_sql_u16(value)?,
                 },
             ));
     }
 
+    let mut program_statement = connection.prepare(
+        "SELECT item_id, position, channel, tick, program \
+         FROM midi_program_changes ORDER BY item_id, position",
+    )?;
+    let program_rows = program_statement
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, i64>(1)?,
+                row.get::<_, i64>(2)?,
+                row.get::<_, i64>(3)?,
+                row.get::<_, i64>(4)?,
+            ))
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut programs_by_item: HashMap<u64, Vec<(u64, MidiProgramChangeData)>> = HashMap::new();
+    for (item_id, position, channel, tick, program) in program_rows {
+        programs_by_item
+            .entry(from_sql_u64(item_id)?)
+            .or_default()
+            .push((
+                from_sql_u64(position)?,
+                MidiProgramChangeData {
+                    channel: from_sql_u8(channel)?,
+                    tick: from_sql_u64(tick)?,
+                    program: from_sql_u8(program)?,
+                },
+            ));
+    }
+
+    let mut poly_statement = connection.prepare(
+        "SELECT item_id, position, channel, tick, note, value \
+         FROM midi_poly_aftertouches ORDER BY item_id, position",
+    )?;
+    let poly_rows = poly_statement
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, i64>(1)?,
+                row.get::<_, i64>(2)?,
+                row.get::<_, i64>(3)?,
+                row.get::<_, i64>(4)?,
+                row.get::<_, i64>(5)?,
+            ))
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut poly_by_item: HashMap<u64, Vec<(u64, MidiPolyAftertouchData)>> = HashMap::new();
+    for (item_id, position, channel, tick, note, value) in poly_rows {
+        poly_by_item
+            .entry(from_sql_u64(item_id)?)
+            .or_default()
+            .push((
+                from_sql_u64(position)?,
+                MidiPolyAftertouchData {
+                    channel: from_sql_u8(channel)?,
+                    tick: from_sql_u64(tick)?,
+                    note: from_sql_u8(note)?,
+                    value: from_sql_u8(value)?,
+                },
+            ));
+    }
+
+    let mut pressure_statement = connection.prepare(
+        "SELECT item_id, position, channel, tick, value \
+         FROM midi_channel_pressures ORDER BY item_id, position",
+    )?;
+    let pressure_rows = pressure_statement
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, i64>(1)?,
+                row.get::<_, i64>(2)?,
+                row.get::<_, i64>(3)?,
+                row.get::<_, i64>(4)?,
+            ))
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut pressures_by_item: HashMap<u64, Vec<(u64, MidiChannelPressureData)>> = HashMap::new();
+    for (item_id, position, channel, tick, value) in pressure_rows {
+        pressures_by_item
+            .entry(from_sql_u64(item_id)?)
+            .or_default()
+            .push((
+                from_sql_u64(position)?,
+                MidiChannelPressureData {
+                    channel: from_sql_u8(channel)?,
+                    tick: from_sql_u64(tick)?,
+                    value: from_sql_u8(value)?,
+                },
+            ));
+    }
+
+    let mut opaque_statement = connection.prepare(
+        "SELECT item_id, position, tick, source_order, event_kind, meta_type, data \
+         FROM midi_opaque_events ORDER BY item_id, position",
+    )?;
+    let opaque_rows = opaque_statement
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, i64>(1)?,
+                row.get::<_, i64>(2)?,
+                row.get::<_, i64>(3)?,
+                row.get::<_, i64>(4)?,
+                row.get::<_, Option<i64>>(5)?,
+                row.get::<_, Vec<u8>>(6)?,
+            ))
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut opaque_by_item: HashMap<u64, Vec<(u64, MidiOpaqueEventData)>> = HashMap::new();
+    for (item_id, position, tick, source_order, event_kind, meta_type, data) in opaque_rows {
+        let kind = match (event_kind, meta_type) {
+            (0, Some(meta_type)) => MidiOpaqueEventKind::Meta {
+                kind: from_sql_u8(meta_type)?,
+                data,
+            },
+            (1, None) => MidiOpaqueEventKind::SystemExclusive { status: 0xF0, data },
+            (2, None) => MidiOpaqueEventKind::SystemExclusive { status: 0xF7, data },
+            _ => {
+                return Err(StorageError::InvalidStoredData(
+                    "invalid MIDI opaque event kind",
+                ));
+            }
+        };
+        opaque_by_item
+            .entry(from_sql_u64(item_id)?)
+            .or_default()
+            .push((
+                from_sql_u64(position)?,
+                MidiOpaqueEventData {
+                    tick: from_sql_u64(tick)?,
+                    order: from_sql_u32(source_order)?,
+                    kind,
+                },
+            ));
+    }
+
+    let mut order_statement = connection.prepare(
+        "SELECT item_id, position, source_order, event_kind, tick, channel, data1, data2, data3, duration, note_off_order \
+         FROM midi_event_order ORDER BY item_id, position",
+    )?;
+    let order_rows = order_statement
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, i64>(1)?,
+                row.get::<_, i64>(2)?,
+                row.get::<_, i64>(3)?,
+                row.get::<_, i64>(4)?,
+                row.get::<_, i64>(5)?,
+                row.get::<_, i64>(6)?,
+                row.get::<_, i64>(7)?,
+                row.get::<_, i64>(8)?,
+                row.get::<_, i64>(9)?,
+                row.get::<_, Option<i64>>(10)?,
+            ))
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut event_order_by_item: HashMap<u64, Vec<(u64, MidiEventOrderData)>> = HashMap::new();
+    for (
+        item_id,
+        position,
+        source_order,
+        event_kind,
+        tick,
+        channel,
+        data1,
+        data2,
+        data3,
+        duration,
+        note_off_order,
+    ) in order_rows
+    {
+        let tick = from_sql_u64(tick)?;
+        let channel = from_sql_u8(channel)?;
+        let data2 = from_sql_u8(data2)?;
+        let data3 = from_sql_u8(data3)?;
+        let duration = from_sql_u64(duration)?;
+        let target = match event_kind {
+            0 => MidiEventOrderTarget::Note(MidiNoteData {
+                pitch: u8::try_from(data1).map_err(|_| {
+                    StorageError::InvalidStoredData("invalid MIDI note order pitch")
+                })?,
+                channel,
+                tick,
+                duration,
+                velocity: data2,
+                off_velocity: data3,
+            }),
+            1 => MidiEventOrderTarget::Controller(MidiControllerData {
+                controller: u8::try_from(data1).map_err(|_| {
+                    StorageError::InvalidStoredData("invalid MIDI controller order number")
+                })?,
+                channel,
+                tick,
+                value: data2,
+            }),
+            2 => MidiEventOrderTarget::PitchBend(MidiPitchBendData {
+                channel,
+                tick,
+                value: u16::try_from(data1).map_err(|_| {
+                    StorageError::InvalidStoredData("invalid MIDI pitch-bend order value")
+                })?,
+            }),
+            3 => MidiEventOrderTarget::ProgramChange(MidiProgramChangeData {
+                channel,
+                tick,
+                program: u8::try_from(data1).map_err(|_| {
+                    StorageError::InvalidStoredData("invalid MIDI Program Change order value")
+                })?,
+            }),
+            4 => MidiEventOrderTarget::PolyAftertouch(MidiPolyAftertouchData {
+                channel,
+                tick,
+                note: u8::try_from(data1).map_err(|_| {
+                    StorageError::InvalidStoredData("invalid MIDI poly-aftertouch order note")
+                })?,
+                value: data2,
+            }),
+            5 => MidiEventOrderTarget::ChannelPressure(MidiChannelPressureData {
+                channel,
+                tick,
+                value: u8::try_from(data1).map_err(|_| {
+                    StorageError::InvalidStoredData("invalid MIDI channel-pressure order value")
+                })?,
+            }),
+            _ => {
+                return Err(StorageError::InvalidStoredData(
+                    "invalid MIDI event order kind",
+                ));
+            }
+        };
+        event_order_by_item
+            .entry(from_sql_u64(item_id)?)
+            .or_default()
+            .push((
+                from_sql_u64(position)?,
+                MidiEventOrderData {
+                    target,
+                    order: from_sql_u32(source_order)?,
+                    note_off_order: note_off_order.map(from_sql_u32).transpose()?,
+                },
+            ));
+    }
+
     let mut item_statement = connection.prepare(
-        "SELECT id, track_id, position, start_tick, length_ticks, name, source_offset_ticks \
+        "SELECT id, track_id, position, start_tick, start_tick_subtick, length_ticks, name, source_offset_ticks, loop_source, source_loop_length_ticks, muted, active_take_name_is_empty, source_offset_negative \
          FROM items ORDER BY position",
     )?;
     let item_rows = item_statement
@@ -3012,33 +6094,129 @@ fn read_midi_items(connection: &Connection) -> Result<(Vec<MidiItemSnapshot>, bo
                 row.get::<_, i64>(2)?,
                 row.get::<_, i64>(3)?,
                 row.get::<_, i64>(4)?,
-                row.get::<_, String>(5)?,
-                row.get::<_, i64>(6)?,
+                row.get::<_, i64>(5)?,
+                row.get::<_, String>(6)?,
+                row.get::<_, i64>(7)?,
+                row.get::<_, i64>(8)?,
+                row.get::<_, i64>(9)?,
+                row.get::<_, i64>(10)?,
+                row.get::<_, i64>(11)?,
+                row.get::<_, i64>(12)?,
             ))
         })?
         .collect::<Result<Vec<_>, _>>()?;
     let mut items = Vec::with_capacity(item_rows.len());
-    for (id, track_id, position, start_tick, length_ticks, name, source_offset_ticks) in item_rows {
+    for (
+        id,
+        track_id,
+        position,
+        start_tick,
+        start_tick_subtick,
+        length_ticks,
+        name,
+        source_offset_ticks,
+        loop_source,
+        source_loop_length_ticks,
+        muted,
+        active_take_name_is_empty,
+        source_offset_negative,
+    ) in item_rows
+    {
+        let muted = match muted {
+            0 => false,
+            1 => true,
+            _ => return Err(StorageError::Snapshot(SnapshotError::InvalidProjectData)),
+        };
+        let loop_source = match loop_source {
+            0 => false,
+            1 => true,
+            _ => return Err(StorageError::Snapshot(SnapshotError::InvalidProjectData)),
+        };
         let id = from_sql_u64(id)?;
         let _ = from_sql_u64(position)?;
         let notes = notes_by_item.remove(&id).unwrap_or_default();
         let controllers = controllers_by_item.remove(&id).unwrap_or_default();
         let pitch_bends = bends_by_item.remove(&id).unwrap_or_default();
+        let program_changes = programs_by_item.remove(&id).unwrap_or_default();
+        let poly_aftertouches = poly_by_item.remove(&id).unwrap_or_default();
+        let channel_pressures = pressures_by_item.remove(&id).unwrap_or_default();
+        let opaque_events = opaque_by_item.remove(&id).unwrap_or_default();
+        let event_order = event_order_by_item.remove(&id).unwrap_or_default();
+        let name = match active_take_name_is_empty {
+            0 => name,
+            1 if name == EMPTY_ACTIVE_MIDI_TAKE_NAME
+                && notes.is_empty()
+                && controllers.is_empty()
+                && pitch_bends.is_empty()
+                && program_changes.is_empty()
+                && poly_aftertouches.is_empty()
+                && channel_pressures.is_empty()
+                && opaque_events.is_empty()
+                && event_order.is_empty() =>
+            {
+                String::new()
+            }
+            1 => {
+                return Err(StorageError::InvalidStoredData(
+                    "invalid empty active MIDI Take name marker",
+                ));
+            }
+            _ => {
+                return Err(StorageError::InvalidStoredData(
+                    "invalid empty active MIDI Take flag",
+                ));
+            }
+        };
+        let (active_take_index, other_takes) = match takes_by_item.remove(&id) {
+            Some((active_index, other_takes)) => (active_index, other_takes),
+            None => (0, Vec::new()),
+        };
         items.push(MidiItemSnapshot {
             id,
             track_id: from_sql_u64(track_id)?,
             name,
+            active_take_index,
+            other_takes,
             start_tick: from_sql_u64(start_tick)?,
-            source_offset_ticks: from_sql_u64(source_offset_ticks)?,
+            start_tick_subtick: from_sql_u8(start_tick_subtick)?,
+            source_offset_ticks: from_sql_signed_midi_offset(
+                source_offset_ticks,
+                source_offset_negative,
+            )?,
+            loop_source,
+            source_loop_length_ticks: from_sql_u64(source_loop_length_ticks)?,
             length_ticks: from_sql_u64(length_ticks)?,
+            muted,
             notes: notes.into_iter().map(|(_, note)| note).collect(),
             controllers: controllers.into_iter().map(|(_, event)| event).collect(),
             pitch_bends: pitch_bends.into_iter().map(|(_, event)| event).collect(),
+            program_changes: program_changes
+                .into_iter()
+                .map(|(_, event)| event)
+                .collect(),
+            poly_aftertouches: poly_aftertouches
+                .into_iter()
+                .map(|(_, event)| event)
+                .collect(),
+            channel_pressures: channel_pressures
+                .into_iter()
+                .map(|(_, event)| event)
+                .collect(),
+            opaque_events: opaque_events.into_iter().map(|(_, event)| event).collect(),
+            event_order: event_order.into_iter().map(|(_, event)| event).collect(),
         });
     }
     Ok((
         items,
-        !notes_by_item.is_empty() || !controllers_by_item.is_empty() || !bends_by_item.is_empty(),
+        !notes_by_item.is_empty()
+            || !controllers_by_item.is_empty()
+            || !bends_by_item.is_empty()
+            || !programs_by_item.is_empty()
+            || !poly_by_item.is_empty()
+            || !pressures_by_item.is_empty()
+            || !opaque_by_item.is_empty()
+            || !event_order_by_item.is_empty()
+            || !takes_by_item.is_empty(),
     ))
 }
 
@@ -3089,6 +6267,116 @@ fn read_meter_points(connection: &Connection) -> Result<Vec<MeterPointSnapshot>,
         .collect()
 }
 
+fn read_project_markers(
+    connection: &Connection,
+) -> Result<Vec<ProjectMarkerSnapshot>, StorageError> {
+    let mut statement = connection.prepare(
+        "SELECT id, marker_number, position_ticks, name, visible FROM project_markers ORDER BY position_ticks, id",
+    )?;
+    let rows = statement
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, i64>(1)?,
+                row.get::<_, i64>(2)?,
+                row.get::<_, String>(3)?,
+                row.get::<_, i64>(4)?,
+            ))
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    rows.into_iter()
+        .map(|(id, number, position_ticks, name, visible)| {
+            let visible = match visible {
+                0 => false,
+                1 => true,
+                _ => {
+                    return Err(StorageError::InvalidStoredData(
+                        "unsupported project marker visibility",
+                    ));
+                }
+            };
+            Ok(ProjectMarkerSnapshot {
+                id: from_sql_u64(id)?,
+                number: from_sql_u32(number)?,
+                position_ticks: from_sql_u64(position_ticks)?,
+                name,
+                visible,
+            })
+        })
+        .collect()
+}
+
+fn read_project_regions(
+    connection: &Connection,
+) -> Result<Vec<ProjectRegionSnapshot>, StorageError> {
+    let mut render_tracks_by_region = HashMap::<u64, Vec<u64>>::new();
+    {
+        let mut statement = connection.prepare(
+            "SELECT region_id, track_id FROM project_region_render_tracks ORDER BY region_id, position",
+        )?;
+        let rows =
+            statement.query_map([], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)))?;
+        for row in rows {
+            let (region_id, track_id) = row?;
+            render_tracks_by_region
+                .entry(from_sql_u64(region_id)?)
+                .or_default()
+                .push(from_sql_u64(track_id)?);
+        }
+    }
+    let mut statement = connection.prepare(
+        "SELECT id, region_number, start_ticks, end_ticks, name, visible, render_master_mix FROM project_regions ORDER BY start_ticks, id",
+    )?;
+    let rows = statement
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, i64>(1)?,
+                row.get::<_, i64>(2)?,
+                row.get::<_, i64>(3)?,
+                row.get::<_, String>(4)?,
+                row.get::<_, i64>(5)?,
+                row.get::<_, i64>(6)?,
+            ))
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    rows.into_iter()
+        .map(
+            |(id, number, start_ticks, end_ticks, name, visible, render_master_mix)| {
+                let visible = match visible {
+                    0 => false,
+                    1 => true,
+                    _ => {
+                        return Err(StorageError::InvalidStoredData(
+                            "unsupported project region visibility",
+                        ));
+                    }
+                };
+                let render_master_mix = match render_master_mix {
+                    0 => false,
+                    1 => true,
+                    _ => {
+                        return Err(StorageError::InvalidStoredData(
+                            "unsupported project region Master render assignment",
+                        ));
+                    }
+                };
+                let id = from_sql_u64(id)?;
+                Ok(ProjectRegionSnapshot {
+                    id,
+                    number: from_sql_u32(number)?,
+                    start_ticks: from_sql_u64(start_ticks)?,
+                    end_ticks: from_sql_u64(end_ticks)?,
+                    name,
+                    visible,
+                    render_master_mix,
+                    render_track_ids: render_tracks_by_region.remove(&id).unwrap_or_default(),
+                })
+            },
+        )
+        .collect()
+}
+
 fn tempo_curve_to_sql(curve: TempoCurve) -> i64 {
     match curve {
         TempoCurve::Step => 0,
@@ -3110,6 +6398,31 @@ fn tempo_curve_from_sql(value: i64) -> Result<TempoCurve, StorageError> {
 
 fn to_sql_integer(value: u64) -> Result<i64, StorageError> {
     i64::try_from(value).map_err(|_| StorageError::IntegerOutOfRange(value))
+}
+
+fn signed_midi_offset_to_sql(value: i64) -> Result<(i64, i64), StorageError> {
+    let magnitude = value.checked_abs().ok_or(StorageError::InvalidStoredData(
+        "MIDI source offset is out of range",
+    ))?;
+    Ok((magnitude, i64::from(value < 0)))
+}
+
+fn from_sql_signed_midi_offset(magnitude: i64, negative: i64) -> Result<i64, StorageError> {
+    if magnitude < 0 {
+        return Err(StorageError::InvalidStoredData(
+            "invalid MIDI source offset magnitude",
+        ));
+    }
+    match negative {
+        0 => Ok(magnitude),
+        1 if magnitude > 0 => Ok(-magnitude),
+        1 => Err(StorageError::InvalidStoredData(
+            "invalid negative zero MIDI source offset",
+        )),
+        _ => Err(StorageError::InvalidStoredData(
+            "invalid MIDI source offset sign",
+        )),
+    }
 }
 
 fn usize_to_sql(value: usize) -> Result<i64, StorageError> {
@@ -3200,4 +6513,888 @@ mod saved_snapshot_tests {
 
         store.close().unwrap();
     }
+}
+
+#[cfg(test)]
+mod loop_source_storage_tests {
+    use super::ProjectStore;
+    use aaadaw_core::{DawAction, MidiItemPosition, MidiNoteData, Project};
+    use rusqlite::Connection;
+
+    #[test]
+    fn audio_item_name_round_trips_and_schema_53_migrates() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("audio-item-name.aaadaw");
+        let mut project = Project::new();
+        project
+            .apply(DawAction::CreateTrack {
+                index: 0,
+                name: "Audio".to_owned(),
+            })
+            .unwrap();
+        project
+            .apply(DawAction::InsertAudioItem {
+                track_id: project.tracks()[0].id(),
+                media_ref: "asset://source.wav".to_owned(),
+                start_sample: 0,
+                source_offset_samples: 0,
+                length_samples: 4_800,
+            })
+            .unwrap();
+        let item_id = project.audio_items()[0].id();
+        project
+            .apply(DawAction::SetAudioItemName {
+                item_id,
+                name: "Verse guitar".to_owned(),
+            })
+            .unwrap();
+
+        let mut store = ProjectStore::open(&path).unwrap();
+        store.save(&project).unwrap();
+        assert_eq!(
+            store.load().unwrap().audio_items()[0].name(),
+            "Verse guitar"
+        );
+        store
+            .connection
+            .execute_batch("ALTER TABLE audio_items DROP COLUMN name; PRAGMA user_version = 53;")
+            .unwrap();
+        store.close().unwrap();
+
+        let store = ProjectStore::open(&path).unwrap();
+        assert_eq!(
+            store.schema_version().unwrap(),
+            super::CURRENT_SCHEMA_VERSION
+        );
+        assert_eq!(store.load().unwrap().audio_items()[0].name(), "");
+    }
+
+    #[test]
+    fn audio_take_playback_rate_round_trips_and_schema_56_migrates_to_unity() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("audio-take-rate.aaadaw");
+        let mut project = Project::new();
+        project
+            .apply(DawAction::CreateTrack {
+                index: 0,
+                name: "Audio".to_owned(),
+            })
+            .unwrap();
+        project
+            .apply(DawAction::InsertAudioItem {
+                track_id: project.tracks()[0].id(),
+                media_ref: "asset://source.wav".to_owned(),
+                start_sample: 0,
+                source_offset_samples: 0,
+                length_samples: 48_000,
+            })
+            .unwrap();
+        let item_id = project.audio_items()[0].id();
+        project
+            .apply(DawAction::SetAudioItemTakePlaybackRate {
+                item_id,
+                rate: 1.25,
+            })
+            .unwrap();
+
+        let mut store = ProjectStore::open(&path).unwrap();
+        store.save(&project).unwrap();
+        assert_eq!(
+            store.load().unwrap().audio_items()[0].take_playback_rate(),
+            1.25
+        );
+        store
+            .connection
+            .execute_batch(
+                "ALTER TABLE audio_items DROP COLUMN take_playback_rate; PRAGMA user_version=56;",
+            )
+            .unwrap();
+        store.close().unwrap();
+
+        let store = ProjectStore::open(&path).unwrap();
+        assert_eq!(
+            store.schema_version().unwrap(),
+            super::CURRENT_SCHEMA_VERSION
+        );
+        assert_eq!(
+            store.load().unwrap().audio_items()[0].take_playback_rate(),
+            1.0
+        );
+    }
+
+    #[test]
+    fn empty_audio_takes_round_trip_and_schema_69_adds_explicit_empty_markers() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("audio-empty-take.aaadaw");
+        let mut project = Project::new();
+        project
+            .apply(DawAction::CreateTrack {
+                index: 0,
+                name: "Audio".to_owned(),
+            })
+            .unwrap();
+        project
+            .apply(DawAction::InsertAudioItem {
+                track_id: project.tracks()[0].id(),
+                media_ref: "asset://source.wav".to_owned(),
+                start_sample: 0,
+                source_offset_samples: 0,
+                length_samples: 4_800,
+            })
+            .unwrap();
+        let item_id = project.audio_items()[0].id();
+        project
+            .apply(DawAction::AddEmptyAudioItemTakeBefore { item_id })
+            .unwrap();
+        project
+            .apply(DawAction::SetAudioItemActiveTake {
+                item_id,
+                take_index: 0,
+            })
+            .unwrap();
+        project
+            .apply(DawAction::AddEmptyAudioItemTakeAfter { item_id })
+            .unwrap();
+
+        let mut store = ProjectStore::open(&path).unwrap();
+        store.save(&project).unwrap();
+        let loaded = store.load().unwrap();
+        assert_eq!(loaded.snapshot(), project.snapshot());
+        assert!(loaded.audio_items()[0].active_take_is_empty());
+        assert!(
+            loaded.audio_items()[0]
+                .other_takes()
+                .iter()
+                .any(|take| take.is_empty())
+        );
+        assert_eq!(loaded.audio_items()[0].media_ref(), "");
+        store.close().unwrap();
+
+        let connection = rusqlite::Connection::open(&path).unwrap();
+        connection
+            .execute_batch(
+                "ALTER TABLE audio_items DROP COLUMN active_take_is_empty; \
+                 ALTER TABLE audio_item_takes DROP COLUMN is_empty; \
+                 PRAGMA user_version = 69;",
+            )
+            .unwrap();
+        drop(connection);
+        let store = ProjectStore::open(&path).unwrap();
+        assert_eq!(
+            store.schema_version().unwrap(),
+            super::CURRENT_SCHEMA_VERSION
+        );
+    }
+
+    #[test]
+    fn loop_source_metadata_round_trips_with_audio_items() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("loop-source.aaadaw");
+        let mut project = Project::new();
+        project
+            .apply(DawAction::CreateTrack {
+                index: 0,
+                name: "Loop source".to_owned(),
+            })
+            .unwrap();
+        project
+            .apply(DawAction::InsertLoopedAudioItem {
+                track_id: project.tracks()[0].id(),
+                media_ref: "asset://loop-source".to_owned(),
+                start_sample: 10,
+                source_offset_samples: 120,
+                phase_inverted: false,
+                source_section_start_samples: 100,
+                length_samples: 4_800,
+                muted: false,
+                source_section_length_samples: 2_400,
+            })
+            .unwrap();
+        let item_id = project.audio_items()[0].id();
+        project
+            .apply(DawAction::SetAudioItemLoopSource {
+                item_id,
+                enabled: false,
+            })
+            .unwrap();
+        project
+            .apply(DawAction::SetAudioItemMute {
+                item_id,
+                muted: true,
+            })
+            .unwrap();
+
+        let mut store = ProjectStore::open(&path).unwrap();
+        store.save(&project).unwrap();
+        store.close().unwrap();
+
+        let store = ProjectStore::open(&path).unwrap();
+        let loaded = store.load().unwrap();
+        let item = &loaded.audio_items()[0];
+        assert!(!item.is_loop_source());
+        assert!(item.is_muted());
+        assert_eq!(item.source_section_start_samples(), Some(100));
+        assert_eq!(item.source_section_length_samples(), Some(2_400));
+    }
+
+    #[test]
+    fn schema_43_audio_items_migrate_with_mute_disabled() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("schema-43-item-mute.aaadaw");
+        let mut project = Project::new();
+        project
+            .apply(DawAction::CreateTrack {
+                index: 0,
+                name: "Legacy".to_owned(),
+            })
+            .unwrap();
+        project
+            .apply(DawAction::InsertAudioItem {
+                track_id: project.tracks()[0].id(),
+                media_ref: "asset://legacy-mute".to_owned(),
+                start_sample: 0,
+                source_offset_samples: 0,
+                length_samples: 4_800,
+            })
+            .unwrap();
+
+        let mut store = ProjectStore::open(&path).unwrap();
+        store.save(&project).unwrap();
+        store
+            .connection
+            .execute_batch(
+                "ALTER TABLE audio_items DROP COLUMN muted;\
+                 PRAGMA user_version = 43;",
+            )
+            .unwrap();
+        store.close().unwrap();
+
+        let store = ProjectStore::open(&path).unwrap();
+        assert_eq!(
+            store.schema_version().unwrap(),
+            super::CURRENT_SCHEMA_VERSION
+        );
+        let loaded = store.load().unwrap();
+        assert!(!loaded.audio_items()[0].is_muted());
+    }
+
+    #[test]
+    fn midi_item_mute_round_trips_and_schema_44_defaults_to_unmuted() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("midi-item-mute.aaadaw");
+        let mut project = Project::new();
+        project
+            .apply(DawAction::CreateTrack {
+                index: 0,
+                name: "MIDI".to_owned(),
+            })
+            .unwrap();
+        project
+            .apply(DawAction::InsertMidiItem {
+                track_id: project.tracks()[0].id(),
+                start_tick: 0,
+                length_ticks: 960,
+            })
+            .unwrap();
+        let item_id = project.midi_items()[0].id();
+        project
+            .apply(DawAction::SetMidiItemMute {
+                item_id,
+                muted: true,
+            })
+            .unwrap();
+        let mut store = ProjectStore::open(&path).unwrap();
+        store.save(&project).unwrap();
+        store
+            .connection
+            .execute_batch("ALTER TABLE items DROP COLUMN muted; PRAGMA user_version = 44;")
+            .unwrap();
+        store.close().unwrap();
+
+        let store = ProjectStore::open(&path).unwrap();
+        let loaded = store.load().unwrap();
+        assert!(!loaded.midi_items()[0].is_muted());
+        assert_eq!(
+            store.schema_version().unwrap(),
+            super::CURRENT_SCHEMA_VERSION
+        );
+    }
+
+    #[test]
+    fn schema_41_audio_items_migrate_with_looping_disabled() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("schema-41.aaadaw");
+        let mut project = Project::new();
+        project
+            .apply(DawAction::CreateTrack {
+                index: 0,
+                name: "Legacy".to_owned(),
+            })
+            .unwrap();
+        project
+            .apply(DawAction::InsertAudioItem {
+                track_id: project.tracks()[0].id(),
+                media_ref: "asset://legacy".to_owned(),
+                start_sample: 0,
+                source_offset_samples: 240,
+                length_samples: 4_800,
+            })
+            .unwrap();
+
+        let mut store = ProjectStore::open(&path).unwrap();
+        store.save(&project).unwrap();
+        store
+            .connection
+            .execute_batch(
+                "ALTER TABLE audio_items DROP COLUMN source_section_start_samples;\
+                 ALTER TABLE audio_items DROP COLUMN source_section_length_samples;\
+                 ALTER TABLE audio_items DROP COLUMN loop_source;\
+                 PRAGMA user_version = 41;",
+            )
+            .unwrap();
+        store.close().unwrap();
+
+        let store = ProjectStore::open(&path).unwrap();
+        assert_eq!(
+            store.schema_version().unwrap(),
+            super::CURRENT_SCHEMA_VERSION
+        );
+        let loaded = store.load().unwrap();
+        let item = &loaded.audio_items()[0];
+        assert!(!item.is_loop_source());
+        assert_eq!(item.source_section_length_samples(), None);
+    }
+
+    #[test]
+    fn schema_42_loop_source_migration_sets_section_start_to_existing_offset() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("schema-42-loop-source.aaadaw");
+        let mut project = Project::new();
+        project
+            .apply(DawAction::CreateTrack {
+                index: 0,
+                name: "Legacy loop".to_owned(),
+            })
+            .unwrap();
+        project
+            .apply(DawAction::InsertLoopedAudioItem {
+                track_id: project.tracks()[0].id(),
+                media_ref: "asset://legacy-loop".to_owned(),
+                start_sample: 0,
+                source_offset_samples: 240,
+                phase_inverted: false,
+                source_section_start_samples: 200,
+                length_samples: 4_800,
+                muted: false,
+                source_section_length_samples: 1_200,
+            })
+            .unwrap();
+
+        let mut store = ProjectStore::open(&path).unwrap();
+        store.save(&project).unwrap();
+        store
+            .connection
+            .execute_batch(
+                "ALTER TABLE audio_items DROP COLUMN source_section_start_samples;\
+                 PRAGMA user_version = 42;",
+            )
+            .unwrap();
+        store.close().unwrap();
+
+        let store = ProjectStore::open(&path).unwrap();
+        assert_eq!(
+            store.schema_version().unwrap(),
+            super::CURRENT_SCHEMA_VERSION
+        );
+        let loaded = store.load().unwrap();
+        let item = &loaded.audio_items()[0];
+        assert!(item.is_loop_source());
+        assert_eq!(item.source_section_start_samples(), Some(240));
+        assert_eq!(item.source_section_length_samples(), Some(1_200));
+        assert_eq!(item.source_offset_samples(), 0);
+    }
+
+    #[test]
+    fn schema_49_signed_source_offset_migrates_and_round_trips_negative_offsets() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory
+            .path()
+            .join("schema-49-signed-source-offset.aaadaw");
+        let mut project = Project::new();
+        project
+            .apply(DawAction::CreateTrack {
+                index: 0,
+                name: "Signed source".to_owned(),
+            })
+            .unwrap();
+        project
+            .apply(DawAction::InsertAudioItem {
+                track_id: project.tracks()[0].id(),
+                media_ref: "asset://signed-source".to_owned(),
+                start_sample: 0,
+                source_offset_samples: 120,
+                length_samples: 4_800,
+            })
+            .unwrap();
+
+        let mut store = ProjectStore::open(&path).unwrap();
+        store.save(&project).unwrap();
+        drop(store);
+
+        let connection = Connection::open(&path).unwrap();
+        connection
+            .execute_batch(
+                "ALTER TABLE audio_items DROP COLUMN signed_source_offset_samples;
+                 PRAGMA user_version = 48;",
+            )
+            .unwrap();
+        drop(connection);
+
+        let mut store = ProjectStore::open(&path).unwrap();
+        assert_eq!(
+            store.schema_version().unwrap(),
+            super::CURRENT_SCHEMA_VERSION
+        );
+        let mut migrated = store.load().unwrap();
+        assert_eq!(migrated.audio_items()[0].source_offset_samples(), 120);
+        let migrated_columns: (i64, i64) = store
+            .connection
+            .query_row(
+                "SELECT source_offset_samples, signed_source_offset_samples FROM audio_items",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(migrated_columns, (120, 120));
+
+        let item = migrated.audio_items()[0].clone();
+        migrated
+            .apply(DawAction::SetAudioItemLoopSource {
+                item_id: item.id(),
+                enabled: false,
+            })
+            .unwrap();
+        migrated
+            .apply(DawAction::EditAudioItem {
+                item_id: item.id(),
+                media_ref: item.media_ref().to_owned(),
+                start_sample: item.start_sample(),
+                source_offset_samples: -7,
+                length_samples: item.length_samples(),
+            })
+            .unwrap();
+        store.save(&migrated).unwrap();
+        drop(store);
+
+        let store = ProjectStore::open(&path).unwrap();
+        assert_eq!(
+            store.load().unwrap().audio_items()[0].source_offset_samples(),
+            -7
+        );
+        let negative_columns: (i64, i64) = store
+            .connection
+            .query_row(
+                "SELECT source_offset_samples, signed_source_offset_samples FROM audio_items",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(negative_columns, (0, -7));
+    }
+
+    #[test]
+    fn schema_50_makes_bounded_source_offsets_relative_to_the_section() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("bounded-offset-v49.aaadaw");
+        let mut project = Project::new();
+        project
+            .apply(DawAction::CreateTrack {
+                index: 0,
+                name: "Bounded source".to_owned(),
+            })
+            .unwrap();
+        project
+            .apply(DawAction::InsertLoopedAudioItem {
+                track_id: project.tracks()[0].id(),
+                media_ref: "asset://bounded-source".to_owned(),
+                start_sample: 0,
+                source_offset_samples: 4_800,
+                length_samples: 48_000,
+                muted: false,
+                phase_inverted: false,
+                source_section_start_samples: 144_000,
+                source_section_length_samples: 144_000,
+            })
+            .unwrap();
+
+        let mut store = ProjectStore::open(&path).unwrap();
+        store.save(&project).unwrap();
+        store
+            .connection
+            .execute_batch(
+                "UPDATE audio_items
+                 SET source_offset_samples = 148800,
+                     signed_source_offset_samples = 148800;
+                 PRAGMA user_version = 49;",
+            )
+            .unwrap();
+        store.close().unwrap();
+
+        let store = ProjectStore::open(&path).unwrap();
+        assert_eq!(
+            store.schema_version().unwrap(),
+            super::CURRENT_SCHEMA_VERSION
+        );
+        let loaded = store.load().unwrap();
+        let item = &loaded.audio_items()[0];
+        assert_eq!(item.source_offset_samples(), 4_800);
+        assert_eq!(item.source_section_start_samples(), Some(144_000));
+        assert_eq!(item.source_section_length_samples(), Some(144_000));
+        let columns: (i64, i64) = store
+            .connection
+            .query_row(
+                "SELECT source_offset_samples, signed_source_offset_samples FROM audio_items",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(columns, (4_800, 4_800));
+    }
+
+    #[test]
+    fn midi_loop_metadata_round_trips_through_snapshots_and_sqlite() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("midi-loop-source.aaadaw");
+        let mut project = Project::new();
+        project
+            .apply(DawAction::CreateTrack {
+                index: 0,
+                name: "MIDI loop".to_owned(),
+            })
+            .unwrap();
+        project
+            .apply(DawAction::InsertMidiItem {
+                track_id: project.tracks()[0].id(),
+                start_tick: 0,
+                length_ticks: 960,
+            })
+            .unwrap();
+        let item_id = project.midi_items()[0].id();
+        project
+            .apply(DawAction::EditMidiItemPlacement {
+                item_id,
+                start_tick: 0,
+                length_ticks: 1_500,
+                source_offset_ticks: 240,
+            })
+            .unwrap();
+        let exact_position = MidiItemPosition::new(1_080, 100).unwrap();
+        project
+            .apply(DawAction::SetMidiItemPosition {
+                item_id,
+                position: exact_position,
+            })
+            .unwrap();
+
+        let mut store = ProjectStore::open(&path).unwrap();
+        store.save(&project).unwrap();
+        store.close().unwrap();
+        let store = ProjectStore::open(&path).unwrap();
+        let loaded = store.load().unwrap();
+        let item = &loaded.midi_items()[0];
+        assert!(item.is_loop_source());
+        assert_eq!(item.source_loop_length_ticks(), 960);
+        assert_eq!(item.source_offset_ticks(), 240);
+        assert_eq!(item.length_ticks(), 1_500);
+        assert_eq!(item.start_position(), exact_position);
+    }
+
+    #[test]
+    fn schema_55_midi_items_migrate_with_zero_fractional_ppq() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("midi-subtick-schema-55.aaadaw");
+        let mut project = Project::new();
+        project
+            .apply(DawAction::CreateTrack {
+                index: 0,
+                name: "Legacy MIDI".to_owned(),
+            })
+            .unwrap();
+        project
+            .apply(DawAction::InsertMidiItem {
+                track_id: project.tracks()[0].id(),
+                start_tick: 964,
+                length_ticks: 960,
+            })
+            .unwrap();
+        let mut store = ProjectStore::open(&path).unwrap();
+        store.save(&project).unwrap();
+        store
+            .connection
+            .execute_batch(
+                "ALTER TABLE items DROP COLUMN start_tick_subtick;
+                 PRAGMA user_version = 55;",
+            )
+            .unwrap();
+        store.close().unwrap();
+
+        let store = ProjectStore::open(&path).unwrap();
+        assert_eq!(
+            store.schema_version().unwrap(),
+            super::CURRENT_SCHEMA_VERSION
+        );
+        let loaded = store.load().unwrap();
+        let item = &loaded.midi_items()[0];
+        assert_eq!(item.start_tick(), 964);
+        assert_eq!(item.start_position().subtick(), 0);
+    }
+
+    #[test]
+    fn schema_50_midi_items_migrate_with_looping_and_event_extent() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("schema-50-midi-loop-source.aaadaw");
+        let mut project = Project::new();
+        project
+            .apply(DawAction::CreateTrack {
+                index: 0,
+                name: "Legacy MIDI".to_owned(),
+            })
+            .unwrap();
+        project
+            .apply(DawAction::InsertMidiItem {
+                track_id: project.tracks()[0].id(),
+                start_tick: 0,
+                length_ticks: 1_300,
+            })
+            .unwrap();
+        let item_id = project.midi_items()[0].id();
+        project
+            .apply(DawAction::AddMidiNotes {
+                item_id,
+                notes: vec![MidiNoteData {
+                    channel: 0,
+                    pitch: 60,
+                    tick: 1_080,
+                    duration: 120,
+                    velocity: 100,
+                    off_velocity: 0,
+                }],
+            })
+            .unwrap();
+        project
+            .apply(DawAction::EditMidiItem {
+                item_id,
+                start_tick: 0,
+                length_ticks: 480,
+            })
+            .unwrap();
+
+        let mut store = ProjectStore::open(&path).unwrap();
+        store.save(&project).unwrap();
+        store
+            .connection
+            .execute_batch(
+                "ALTER TABLE items DROP COLUMN source_loop_length_ticks;
+                 ALTER TABLE items DROP COLUMN loop_source;
+                 UPDATE items SET length_ticks = 480;
+                 PRAGMA user_version = 50;",
+            )
+            .unwrap();
+        store.close().unwrap();
+
+        let store = ProjectStore::open(&path).unwrap();
+        let migrated = store.load().unwrap();
+        let item = &migrated.midi_items()[0];
+        assert!(item.is_loop_source());
+        assert_eq!(item.source_loop_length_ticks(), 1_200);
+        assert_eq!(item.length_ticks(), 480);
+    }
+
+    #[test]
+    fn negative_offset_round_trips_with_disabled_bounded_source_section() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("bounded-source-preroll.aaadaw");
+        let mut project = Project::new();
+        project
+            .apply(DawAction::CreateTrack {
+                index: 0,
+                name: "Bounded pre-roll".to_owned(),
+            })
+            .unwrap();
+        project
+            .apply(DawAction::InsertLoopedAudioItem {
+                track_id: project.tracks()[0].id(),
+                media_ref: "asset://bounded-preroll".to_owned(),
+                start_sample: 0,
+                source_offset_samples: 120,
+                length_samples: 4_800,
+                muted: false,
+                phase_inverted: false,
+                source_section_start_samples: 200,
+                source_section_length_samples: 2_400,
+            })
+            .unwrap();
+        let item_id = project.audio_items()[0].id();
+        project
+            .apply(DawAction::SetAudioItemLoopSource {
+                item_id,
+                enabled: false,
+            })
+            .unwrap();
+        project
+            .apply(DawAction::EditAudioItem {
+                item_id,
+                media_ref: "asset://bounded-preroll".to_owned(),
+                start_sample: 0,
+                source_offset_samples: -7,
+                length_samples: 4_800,
+            })
+            .unwrap();
+
+        let mut store = ProjectStore::open(&path).unwrap();
+        store.save(&project).unwrap();
+        store.close().unwrap();
+        let store = ProjectStore::open(&path).unwrap();
+        let loaded = store.load().unwrap();
+        let item = &loaded.audio_items()[0];
+        assert!(!item.is_loop_source());
+        assert_eq!(item.source_offset_samples(), -7);
+        assert_eq!(item.source_section_start_samples(), Some(200));
+        assert_eq!(item.source_section_length_samples(), Some(2_400));
+    }
+}
+
+fn read_audio_sends(
+    connection: &Connection,
+) -> Result<HashMap<i64, Vec<aaadaw_core::AudioSendSnapshot>>, StorageError> {
+    let mut statement = connection.prepare("SELECT id, source_track_id, destination_track_id, volume_db, pan, muted, phase_inverted, tap, midi_enabled, midi_source_channel, midi_destination_channel, midi_source_bus, midi_destination_bus, source_channels, destination_channels FROM track_sends ORDER BY source_track_id, position")?;
+    let mut rows = statement.query([])?;
+    let mut sends: HashMap<i64, Vec<aaadaw_core::AudioSendSnapshot>> = HashMap::new();
+    while let Some(row) = rows.next()? {
+        sends
+            .entry(row.get(1)?)
+            .or_default()
+            .push(aaadaw_core::AudioSendSnapshot {
+                id: from_sql_u64(row.get(0)?)?,
+                destination_track_id: from_sql_u64(row.get(2)?)?,
+                parameters: aaadaw_core::AudioSendParameters {
+                    volume_db: row.get::<_, f64>(3)? as f32,
+                    pan: row.get::<_, f64>(4)? as f32,
+                    muted: row.get(5)?,
+                    phase_inverted: row.get(6)?,
+                    midi_enabled: row.get(8)?,
+                    midi_source_channel: row.get(9)?,
+                    midi_destination_channel: row.get(10)?,
+                    midi_source_bus: row.get(11)?,
+                    midi_destination_bus: row.get(12)?,
+                    source_channels: match row.get::<_, i64>(13)? {
+                        0 => aaadaw_core::AudioSendSourceChannels::Stereo,
+                        1 => aaadaw_core::AudioSendSourceChannels::Channel1,
+                        2 => aaadaw_core::AudioSendSourceChannels::Channel2,
+                        _ => {
+                            return Err(StorageError::InvalidStoredData(
+                                "invalid audio send source channels",
+                            ));
+                        }
+                    },
+                    destination_channels: match row.get::<_, i64>(14)? {
+                        0 => aaadaw_core::AudioSendDestinationChannels::Stereo,
+                        1 => aaadaw_core::AudioSendDestinationChannels::Channel1,
+                        2 => aaadaw_core::AudioSendDestinationChannels::Channel2,
+                        _ => {
+                            return Err(StorageError::InvalidStoredData(
+                                "invalid audio send destination channels",
+                            ));
+                        }
+                    },
+                    tap: match row.get::<_, i64>(7)? {
+                        0 => aaadaw_core::AudioSendTap::PostFader,
+                        1 => aaadaw_core::AudioSendTap::PreFx,
+                        3 => aaadaw_core::AudioSendTap::PreFader,
+                        _ => return Err(StorageError::InvalidStoredData("invalid audio send tap")),
+                    },
+                },
+            });
+    }
+    Ok(sends)
+}
+
+fn read_audio_hardware_outputs(
+    connection: &Connection,
+) -> Result<HashMap<i64, Vec<aaadaw_core::AudioHardwareOutputSnapshot>>, StorageError> {
+    let mut statement = connection.prepare(
+        "SELECT id, track_id, position, volume_db, pan, muted, phase_inverted, send_mode, source_channels, destination_channels \
+         FROM track_hardware_outputs ORDER BY track_id, position",
+    )?;
+    let rows = statement
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, i64>(1)?,
+                row.get::<_, i64>(2)?,
+                row.get::<_, f64>(3)?,
+                row.get::<_, f64>(4)?,
+                row.get::<_, bool>(5)?,
+                row.get::<_, bool>(6)?,
+                row.get::<_, i64>(7)?,
+                row.get::<_, i64>(8)?,
+                row.get::<_, i64>(9)?,
+            ))
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut outputs = HashMap::<i64, Vec<aaadaw_core::AudioHardwareOutputSnapshot>>::new();
+    for (id, track_id, position, volume_db, pan, muted, phase_inverted, tap, source, destination) in
+        rows
+    {
+        let _ = from_sql_u64(position)?;
+        let send_mode = u8::try_from(tap)
+            .ok()
+            .and_then(aaadaw_core::AudioHardwareOutputSendMode::from_native_value)
+            .ok_or(StorageError::InvalidStoredData(
+                "invalid hardware output send mode",
+            ))?;
+        let source_channels = match source {
+            0 => aaadaw_core::AudioSendSourceChannels::Stereo,
+            1 => aaadaw_core::AudioSendSourceChannels::Channel1,
+            2 => aaadaw_core::AudioSendSourceChannels::Channel2,
+            _ => {
+                return Err(StorageError::InvalidStoredData(
+                    "invalid hardware output source channels",
+                ));
+            }
+        };
+        let destination_channels = match destination {
+            0 => aaadaw_core::AudioSendDestinationChannels::Stereo,
+            1 => aaadaw_core::AudioSendDestinationChannels::Channel1,
+            2 => aaadaw_core::AudioSendDestinationChannels::Channel2,
+            _ => {
+                return Err(StorageError::InvalidStoredData(
+                    "invalid hardware output destination channels",
+                ));
+            }
+        };
+        let parameters = aaadaw_core::AudioHardwareOutputParameters {
+            send_mode,
+            source_channels,
+            destination_channels,
+            volume_db: volume_db as f32,
+            pan: pan as f32,
+            muted,
+            phase_inverted,
+        };
+        if !parameters.volume_db.is_finite()
+            || !parameters.pan.is_finite()
+            || !(-1.0..=1.0).contains(&parameters.pan)
+        {
+            return Err(StorageError::InvalidStoredData("invalid hardware output"));
+        }
+        outputs
+            .entry(track_id)
+            .or_default()
+            .push(aaadaw_core::AudioHardwareOutputSnapshot {
+                id: from_sql_u64(id)?,
+                parameters,
+            });
+    }
+    Ok(outputs)
 }
