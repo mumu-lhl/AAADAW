@@ -24,12 +24,12 @@ use crate::timeline::{SnapGrid, TimelineEvent};
 #[cfg(all(feature = "jack-backend", feature = "pipewire-backend"))]
 use aaadaw_app::PlaybackBackend;
 use aaadaw_core::{
-    AudioSendDestinationChannels, AudioSendParameters, AudioSendSourceChannels, DawAction, ItemId,
-    MidiChannelPressureData, MidiControllerData, MidiFileFormat, MidiFileProjectImport,
-    MidiImportedMarker, MidiImportedMeterPoint, MidiImportedTempoPoint, MidiImportedTrack,
-    MidiItemPosition, MidiItemTakeSnapshot, MidiNoteData, MidiOpaqueEventData, MidiOpaqueEventKind,
-    MidiPitchBendData, MidiPolyAftertouchData, MidiProgramChangeData, Project, RazorEditArea,
-    TrackFxPlugin, TrackId,
+    AudioHardwareOutputParameters, AudioSendDestinationChannels, AudioSendParameters,
+    AudioSendSourceChannels, DawAction, ItemId, MidiChannelPressureData, MidiControllerData,
+    MidiFileFormat, MidiFileProjectImport, MidiImportedMarker, MidiImportedMeterPoint,
+    MidiImportedTempoPoint, MidiImportedTrack, MidiItemPosition, MidiItemTakeSnapshot,
+    MidiNoteData, MidiOpaqueEventData, MidiOpaqueEventKind, MidiPitchBendData,
+    MidiPolyAftertouchData, MidiProgramChangeData, Project, RazorEditArea, TrackFxPlugin, TrackId,
 };
 use aaadaw_media::{AudioStreamDecoder, AudioWaveform};
 use aaadaw_storage::{ArrangementViewState, ProjectSessionLock, ProjectStore};
@@ -33286,6 +33286,45 @@ fn routing_send_channel_maps_are_undoable_and_redoable() {
     );
     let _ = app.update(Message::Redo);
     assert_eq!(app.project.tracks()[0].sends()[0].parameters(), mapped);
+}
+
+#[test]
+fn hardware_output_controls_commit_and_participate_in_undo_redo() {
+    let mut app = App::default();
+    let _ = app.update(Message::AddTrack);
+    let source = app.project.tracks()[0].id();
+    app.routing_track_id = Some(source);
+    let _ = app.update(Message::RoutingChange(
+        DawAction::CreateAudioHardwareOutput {
+            track_id: source,
+            parameters: AudioHardwareOutputParameters::default(),
+        },
+    ));
+    let output_id = app.project.tracks()[0].hardware_outputs()[0].id();
+    assert!(app.project.tracks()[0].sends().is_empty());
+
+    let _ = app.update(Message::RoutingSendDraft(output_id, false, "-3".into()));
+    let _ = app.update(Message::RoutingSendDraft(output_id, true, "0.25".into()));
+    let _ = app.update(Message::CommitRoutingSend(output_id));
+    let expected = AudioHardwareOutputParameters {
+        volume_db: -3.0,
+        pan: 0.25,
+        ..AudioHardwareOutputParameters::default()
+    };
+    assert_eq!(
+        app.project.tracks()[0].hardware_outputs()[0].parameters(),
+        expected
+    );
+    let _ = app.update(Message::Undo);
+    assert_eq!(
+        app.project.tracks()[0].hardware_outputs()[0].parameters(),
+        AudioHardwareOutputParameters::default()
+    );
+    let _ = app.update(Message::Redo);
+    assert_eq!(
+        app.project.tracks()[0].hardware_outputs()[0].parameters(),
+        expected
+    );
 }
 
 #[test]

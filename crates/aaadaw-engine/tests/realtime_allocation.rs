@@ -293,6 +293,36 @@ fn render_callback_does_not_allocate_on_the_rendering_thread() {
     loop_graph.transport_mut().start();
     let mut loop_output = [[0.0; 2]; 128];
 
+    let mut hardware_project = Project::default();
+    hardware_project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Hardware output callback".to_owned(),
+        })
+        .unwrap();
+    let hardware_track = hardware_project.tracks()[0].id();
+    hardware_project
+        .apply(DawAction::CreateAudioHardwareOutput {
+            track_id: hardware_track,
+            parameters: aaadaw_core::AudioHardwareOutputParameters {
+                volume_db: -3.0,
+                source_channels: aaadaw_core::AudioSendSourceChannels::Channel2,
+                destination_channels: aaadaw_core::AudioSendDestinationChannels::Channel1,
+                ..Default::default()
+            },
+        })
+        .unwrap();
+    let (mut hardware_producer, hardware_consumer) = pcm_stream(128 * 128).unwrap();
+    let hardware_samples = vec![0.125; 128 * 128];
+    assert_eq!(
+        hardware_producer.push_samples(&hardware_samples),
+        hardware_samples.len()
+    );
+    let mut hardware_graph =
+        AudioRenderGraph::new(&hardware_project, vec![hardware_consumer], 128).unwrap();
+    hardware_graph.transport_mut().start();
+    let mut hardware_output = [[0.0; 2]; 128];
+
     let tracking = AllocationTracking::start();
     let mut last_stats = None;
     let mut midi_events_seen = 0;
@@ -330,6 +360,9 @@ fn render_callback_does_not_allocate_on_the_rendering_thread() {
         let stats = graph
             .render_with_midi(&mut midi_output, &mut output)
             .expect("preallocated MIDI and audio callback block should render");
+        hardware_graph
+            .render_into_realtime(&mut hardware_output)
+            .expect("prepared hardware output route should render without callback allocation");
         loop_graph
             .render_into(&mut loop_output)
             .expect("repeating callback should render from preallocated storage");

@@ -121,6 +121,7 @@ pub struct Track {
     pub(crate) output_track: Option<TrackId>,
     pub(crate) main_send_enabled: bool,
     pub(crate) sends: Vec<crate::AudioSend>,
+    pub(crate) hardware_outputs: Vec<crate::AudioHardwareOutput>,
     pub(crate) volume_db: f32,
     pub(crate) pan: f32,
     pub(crate) pan_mode: crate::PanMode,
@@ -347,6 +348,11 @@ impl Track {
     /// Ordered sender-owned post-fader audio connections.
     pub fn sends(&self) -> &[crate::AudioSend] {
         &self.sends
+    }
+
+    /// Returns the direct audio-device outputs owned by this track.
+    pub fn hardware_outputs(&self) -> &[crate::AudioHardwareOutput] {
+        &self.hardware_outputs
     }
 
     /// Returns the inherited project gain policy.

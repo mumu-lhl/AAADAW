@@ -1,5 +1,6 @@
 use aaadaw_core::{
-    AudioSendDestinationChannels, AudioSendParameters, AudioSendSourceChannels, DawAction, Project,
+    AudioHardwareOutputParameters, AudioSendDestinationChannels, AudioSendParameters,
+    AudioSendSourceChannels, DawAction, Project,
 };
 use aaadaw_engine::{AudioItemStream, AudioRenderGraph, pcm_stream, stereo_pcm_stream};
 
@@ -116,6 +117,39 @@ fn receiver_solo_closes_unrelated_source_outputs_while_source_solo_opens_all_pat
         // source solo suppresses receiver-owned .25 and opens its three .125 paths.
         assert_eq!(output, [[0.375, 0.375]]);
     }
+}
+
+#[test]
+fn hardware_output_reaches_device_only_on_realtime_path_and_bypasses_main_send() {
+    let mut project = project();
+    let source = project.tracks()[1].id();
+    project
+        .apply(DawAction::SetTrackMainSend {
+            track_id: source,
+            enabled: false,
+        })
+        .unwrap();
+    project
+        .apply(DawAction::CreateAudioHardwareOutput {
+            track_id: source,
+            parameters: AudioHardwareOutputParameters {
+                volume_db: -6.0,
+                pan: 0.0,
+                ..Default::default()
+            },
+        })
+        .unwrap();
+
+    let mut offline = graph(&project, [0.0, 0.25, 0.0], 1);
+    let mut output = [[0.0; 2]; 1];
+    offline.render_into(&mut output).unwrap();
+    assert_eq!(output, [[0.0, 0.0]]);
+
+    let mut realtime = graph(&project, [0.0, 0.25, 0.0], 1);
+    realtime.render_into_realtime(&mut output).unwrap();
+    let expected = 0.25 * 10.0_f32.powf(-6.0 / 20.0);
+    assert!((output[0][0] - expected).abs() < 1.0e-6);
+    assert!((output[0][1] - expected).abs() < 1.0e-6);
 }
 
 #[test]
@@ -278,6 +312,98 @@ fn audio_send_channel_pairs_match_reaper_stereo_and_mono_conversion() {
         assert_eq!(
             output[0], expected,
             "{source_channels:?} → {destination_channels:?}"
+        );
+    }
+}
+
+#[test]
+fn hardware_output_channel_pairs_match_device_stereo_mapping() {
+    let cases = [
+        (
+            AudioSendSourceChannels::Stereo,
+            AudioSendDestinationChannels::Stereo,
+            [0.25, 0.75],
+        ),
+        (
+            AudioSendSourceChannels::Stereo,
+            AudioSendDestinationChannels::Channel1,
+            [0.5, 0.0],
+        ),
+        (
+            AudioSendSourceChannels::Stereo,
+            AudioSendDestinationChannels::Channel2,
+            [0.0, 0.5],
+        ),
+        (
+            AudioSendSourceChannels::Channel1,
+            AudioSendDestinationChannels::Stereo,
+            [0.25, 0.25],
+        ),
+        (
+            AudioSendSourceChannels::Channel1,
+            AudioSendDestinationChannels::Channel1,
+            [0.25, 0.0],
+        ),
+        (
+            AudioSendSourceChannels::Channel1,
+            AudioSendDestinationChannels::Channel2,
+            [0.0, 0.25],
+        ),
+        (
+            AudioSendSourceChannels::Channel2,
+            AudioSendDestinationChannels::Stereo,
+            [0.75, 0.75],
+        ),
+        (
+            AudioSendSourceChannels::Channel2,
+            AudioSendDestinationChannels::Channel1,
+            [0.75, 0.0],
+        ),
+        (
+            AudioSendSourceChannels::Channel2,
+            AudioSendDestinationChannels::Channel2,
+            [0.0, 0.75],
+        ),
+    ];
+    for (source_channels, destination_channels, expected) in cases {
+        let mut project = project();
+        let source = project.tracks()[1].id();
+        project
+            .apply(DawAction::SetTrackMainSend {
+                track_id: source,
+                enabled: false,
+            })
+            .unwrap();
+        project
+            .apply(DawAction::CreateAudioHardwareOutput {
+                track_id: source,
+                parameters: AudioHardwareOutputParameters {
+                    source_channels,
+                    destination_channels,
+                    ..Default::default()
+                },
+            })
+            .unwrap();
+        project
+            .apply(DawAction::InsertAudioItem {
+                track_id: source,
+                media_ref: "asset://hardware-output-channel-map".into(),
+                start_sample: 0,
+                source_offset_samples: 0,
+                length_samples: 1,
+            })
+            .unwrap();
+        let (mut producer, consumer) = stereo_pcm_stream(1).unwrap();
+        producer.set_stereo_content(true);
+        assert_eq!(producer.push_frames(&[[0.25, 0.75]]), 1);
+        let stream = AudioItemStream::new_stereo(project.audio_items()[0].id(), consumer);
+        let mut graph = AudioRenderGraph::new_for_audio_items(&project, vec![stream], 1).unwrap();
+        graph.transport_mut().start();
+        let mut output = [[0.0; 2]; 1];
+        graph.render_into_realtime(&mut output).unwrap();
+        assert_eq!(
+            output[0], expected,
+            "hardware {source_channels:?} → {destination_channels:?}"
         );
     }
 }

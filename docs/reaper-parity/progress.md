@@ -3041,4 +3041,4 @@ AAADAW 的 Send 控件增加源/目标声道选择，工程 schema 73 保存两�
 
 REAPER 7.82 / Linux / Default 7 的隔离工程实测 `CreateTrackSend(source, nil)` 创建 category 2 Hardware Output，category 0 普通 Send 数仍为 0。默认源/目标均为 stereo 1/2、0 dB、Pan 0、未静音、未反相、Send Mode 0；channel 编码 0/1024/1025 与 Send Mode 0–3 均可读写，并保存了原厂 RPP。探针及哈希见[Hardware Output 验证页](../verification/reaper-parity/hardware-outputs.md)。
 
-这是行为调研基线，不是功能完成：当前 Xvfb 没有音频设备，实时声样本、Send Mode tap、Master FX/gain bypass、Main Send 交互及离线渲染语义仍待测。矩阵 `ROUTE-HW-OUTPUT-001` 保持 `in_progress`；AAADAW 仍缺实体 Hardware Output sink，P3 未关闭。
+硬件输出首个实现切片已进入产品：Routing 窗口可编辑独立 Hardware Output，schema 74 保存路由，实时 CPAL/JACK/PipeWire 回调通过预分配缓冲直出当前设备 1/2，并能绕过 Main Send；离线渲染不包含此路由。已在 AAADAW 桌面二进制中打开 Routing 窗口并创建硬件输出，截图见[界面验证](../verification/reaper-parity/images/hardware-output-routing-aaadaw.png)，这仅验证 UI 渲染。Send Mode 独立保留 REAPER 0–3 数值，模式 2（弃用的 Post-FX）与 3（Post-FX）仍分别序列化。这个切片尚未达到验收：Xvfb 没有音频设备，硬件输出的 Send Mode、Master FX/gain、Main Send、mute/solo 与离线渲染行为仍待用实时声样本对照 REAPER。矩阵 `ROUTE-HW-OUTPUT-001` 保持 `in_progress`，P3 未关闭。

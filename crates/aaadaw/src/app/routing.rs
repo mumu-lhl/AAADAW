@@ -88,6 +88,9 @@ impl App {
                 | DawAction::CreateAudioSend { .. }
                 | DawAction::UpdateAudioSend { .. }
                 | DawAction::DeleteAudioSend { .. }
+                | DawAction::CreateAudioHardwareOutput { .. }
+                | DawAction::UpdateAudioHardwareOutput { .. }
+                | DawAction::DeleteAudioHardwareOutput { .. }
         ) {
             self.status = "Invalid routing command".into();
         } else if self.project_graph_edit_busy() {
@@ -99,25 +102,35 @@ impl App {
     }
 
     pub(super) fn set_routing_send_draft(&mut self, id: SendId, is_pan: bool, value: String) {
-        let Some(send) = self
-            .routing_track_id
-            .and_then(|source| {
-                self.project
-                    .tracks()
+        let Some(track) = self.routing_track_id.and_then(|source| {
+            self.project
+                .tracks()
+                .iter()
+                .find(|track| track.id() == source)
+        }) else {
+            return;
+        };
+        let Some((volume_db, pan)) = track
+            .sends()
+            .iter()
+            .find(|send| send.id() == id)
+            .map(|send| (send.parameters().volume_db, send.parameters().pan))
+            .or_else(|| {
+                track
+                    .hardware_outputs()
                     .iter()
-                    .find(|track| track.id() == source)
+                    .find(|output| output.id() == id)
+                    .map(|output| (output.parameters().volume_db, output.parameters().pan))
             })
-            .and_then(|track| track.sends().iter().find(|send| send.id() == id))
         else {
             return;
         };
-        let parameters = send.parameters();
         let draft = self
             .routing_send_drafts
             .entry(id)
             .or_insert_with(|| SendDraft {
-                volume_db: parameters.volume_db.to_string(),
-                pan: parameters.pan.to_string(),
+                volume_db: volume_db.to_string(),
+                pan: pan.to_string(),
             });
         if is_pan {
             draft.pan = value;
@@ -130,15 +143,22 @@ impl App {
         let Some(source) = self.routing_track_id else {
             return;
         };
-        let Some(send) = self
+        let Some(track) = self
             .project
             .tracks()
             .iter()
             .find(|track| track.id() == source)
-            .and_then(|track| track.sends().iter().find(|send| send.id() == id))
         else {
             return;
         };
+        let send = track.sends().iter().find(|send| send.id() == id);
+        let hardware_output = track
+            .hardware_outputs()
+            .iter()
+            .find(|output| output.id() == id);
+        if send.is_none() && hardware_output.is_none() {
+            return;
+        }
         let Some(draft) = self.routing_send_drafts.get(&id) else {
             return;
         };
@@ -146,15 +166,27 @@ impl App {
             self.status = "Send volume and pan must be numbers".into();
             return;
         };
-        let mut parameters = send.parameters();
-        parameters.volume_db = volume_db;
-        parameters.pan = pan;
-        let accepted = self.apply_routing_change(DawAction::UpdateAudioSend {
-            track_id: source,
-            send_id: id,
-            destination: send.destination(),
-            parameters,
-        });
+        let action = if let Some(send) = send {
+            let mut parameters = send.parameters();
+            parameters.volume_db = volume_db;
+            parameters.pan = pan;
+            DawAction::UpdateAudioSend {
+                track_id: source,
+                send_id: id,
+                destination: send.destination(),
+                parameters,
+            }
+        } else {
+            let mut parameters = hardware_output.expect("route was checked").parameters();
+            parameters.volume_db = volume_db;
+            parameters.pan = pan;
+            DawAction::UpdateAudioHardwareOutput {
+                track_id: source,
+                send_id: id,
+                parameters,
+            }
+        };
+        let accepted = self.apply_routing_change(action);
         if accepted {
             self.routing_send_drafts.remove(&id);
         }

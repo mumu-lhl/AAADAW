@@ -153,7 +153,7 @@ impl ProcessData {
             return 0;
         }
 
-        match graph.render_into(&mut self.scratch[..frame_count]) {
+        match graph.render_into_realtime(&mut self.scratch[..frame_count]) {
             Ok(stats) => {
                 for (frame, bytes) in self.scratch[..frame_count]
                     .iter()

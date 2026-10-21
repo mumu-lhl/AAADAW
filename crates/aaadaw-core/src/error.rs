@@ -27,6 +27,9 @@ pub enum ActionError {
     AudioSendNotFound {
         send_id: crate::SendId,
     },
+    AudioHardwareOutputNotFound {
+        send_id: crate::SendId,
+    },
     /// The requested route would create a routing cycle.
     TrackRoutingCycle,
     /// A receiving track cannot be deleted while tracks are routed through it.
@@ -209,6 +212,7 @@ impl fmt::Display for ActionError {
             Self::InvalidAudioSend => formatter.write_str("audio send parameters are invalid"),
             Self::SendIdExhausted => formatter.write_str("audio send identifiers are exhausted"),
             Self::AudioSendNotFound { send_id } => write!(formatter, "audio send {} does not exist", send_id.value()),
+            Self::AudioHardwareOutputNotFound { send_id } => write!(formatter, "audio hardware output {} does not exist", send_id.value()),
             Self::InvalidTrackOutput => {
                 formatter.write_str("track output must name a different track or Master")
             }

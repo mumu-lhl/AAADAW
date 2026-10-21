@@ -288,14 +288,14 @@ impl Callback {
             for event in &mut self.midi_output_scratch {
                 *event = None;
             }
-            graph.render_with_midi_input(
+            graph.render_with_midi_input_realtime(
                 &mut self.midi_output_scratch,
                 &self.midi_input_scratch[..input_count],
                 &mut self.scratch[..frames],
             )
         };
         #[cfg(not(target_os = "android"))]
-        let render_result = graph.render_into(&mut self.scratch[..frames]);
+        let render_result = graph.render_into_realtime(&mut self.scratch[..frames]);
         match render_result {
             Ok(stats) => {
                 #[cfg(target_os = "android")]

@@ -27,7 +27,7 @@ use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 /// Latest database schema version understood by this release.
-pub const CURRENT_SCHEMA_VERSION: u32 = 73;
+pub const CURRENT_SCHEMA_VERSION: u32 = 74;
 const EMPTY_AUDIO_TAKE_MEDIA_REF: &str = "aaadaw:empty-audio-take";
 
 const EMPTY_ACTIVE_MIDI_TAKE_NAME: &str = "__AAADAW_EMPTY_ACTIVE_MIDI_TAKE__";
@@ -3808,6 +3808,21 @@ fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
                     }
                 }
             }
+            74 => transaction.execute_batch(
+                "CREATE TABLE IF NOT EXISTS track_hardware_outputs (
+                    id INTEGER PRIMARY KEY CHECK(id >= 0),
+                    track_id INTEGER NOT NULL REFERENCES tracks(id) ON DELETE CASCADE,
+                    position INTEGER NOT NULL CHECK(position >= 0),
+                    volume_db REAL NOT NULL,
+                    pan REAL NOT NULL CHECK(pan BETWEEN -1 AND 1),
+                    muted INTEGER NOT NULL CHECK(muted IN (0, 1)),
+                    phase_inverted INTEGER NOT NULL CHECK(phase_inverted IN (0, 1)),
+                    send_mode INTEGER NOT NULL DEFAULT 0 CHECK(send_mode BETWEEN 0 AND 3),
+                    source_channels INTEGER NOT NULL DEFAULT 0 CHECK(source_channels BETWEEN 0 AND 2),
+                    destination_channels INTEGER NOT NULL DEFAULT 0 CHECK(destination_channels BETWEEN 0 AND 2),
+                    UNIQUE(track_id, position)
+                );",
+            )?,
             missing => return Err(StorageError::MissingMigration(missing - 1)),
         }
         transaction.pragma_update(None, "user_version", next_version)?;
@@ -3832,6 +3847,7 @@ fn write_snapshot(
     snapshot: &ProjectSnapshot,
 ) -> Result<(), StorageError> {
     transaction.execute("DELETE FROM project_region_render_tracks", [])?;
+    transaction.execute("DELETE FROM track_hardware_outputs", [])?;
     transaction.execute("DELETE FROM track_sends", [])?;
     transaction.execute("DELETE FROM track_razor_edit_areas", [])?;
     transaction.execute("DELETE FROM midi_notes", [])?;
@@ -3942,6 +3958,31 @@ fn write_snapshot(
                     aaadaw_core::AudioSendDestinationChannels::Channel2 => 2,
                 },
             ])?;
+        }
+        for (position, output) in track.hardware_outputs.iter().enumerate() {
+            transaction.execute(
+                "INSERT INTO track_hardware_outputs(id, track_id, position, volume_db, pan, muted, phase_inverted, send_mode, source_channels, destination_channels) VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                params![
+                    to_sql_integer(output.id)?,
+                    to_sql_integer(track.id)?,
+                    usize_to_sql(position)?,
+                    f64::from(output.parameters.volume_db),
+                    f64::from(output.parameters.pan),
+                    output.parameters.muted,
+                    output.parameters.phase_inverted,
+                    i64::from(output.parameters.send_mode.native_value()),
+                    match output.parameters.source_channels {
+                        aaadaw_core::AudioSendSourceChannels::Stereo => 0,
+                        aaadaw_core::AudioSendSourceChannels::Channel1 => 1,
+                        aaadaw_core::AudioSendSourceChannels::Channel2 => 2,
+                    },
+                    match output.parameters.destination_channels {
+                        aaadaw_core::AudioSendDestinationChannels::Stereo => 0,
+                        aaadaw_core::AudioSendDestinationChannels::Channel1 => 1,
+                        aaadaw_core::AudioSendDestinationChannels::Channel2 => 2,
+                    },
+                ],
+            )?;
         }
         for (position, point) in track.volume_automation.iter().enumerate() {
             transaction.execute(
@@ -4781,6 +4822,7 @@ fn time_range_from_columns(
 
 fn read_tracks(connection: &Connection) -> Result<Vec<TrackSnapshot>, StorageError> {
     let mut sends = read_audio_sends(connection)?;
+    let mut hardware_outputs = read_audio_hardware_outputs(connection)?;
     let mut volume_automation = read_volume_automation(connection)?;
     let mut razor_edit_areas = read_razor_edit_areas(connection)?;
     let mut fx_chains = HashMap::<i64, Vec<TrackFxPluginSnapshot>>::new();
@@ -4995,6 +5037,7 @@ fn read_tracks(connection: &Connection) -> Result<Vec<TrackSnapshot>, StorageErr
                     is_folder,
                     parent_track_id: parent_track_id.map(from_sql_u64).transpose()?,
                     sends: sends.remove(&id).unwrap_or_default(),
+                    hardware_outputs: hardware_outputs.remove(&id).unwrap_or_default(),
                     volume_db: volume_db as f32,
                     pan: pan as f32,
                     muted,
@@ -7274,4 +7317,84 @@ fn read_audio_sends(
             });
     }
     Ok(sends)
+}
+
+fn read_audio_hardware_outputs(
+    connection: &Connection,
+) -> Result<HashMap<i64, Vec<aaadaw_core::AudioHardwareOutputSnapshot>>, StorageError> {
+    let mut statement = connection.prepare(
+        "SELECT id, track_id, position, volume_db, pan, muted, phase_inverted, send_mode, source_channels, destination_channels \
+         FROM track_hardware_outputs ORDER BY track_id, position",
+    )?;
+    let rows = statement
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, i64>(1)?,
+                row.get::<_, i64>(2)?,
+                row.get::<_, f64>(3)?,
+                row.get::<_, f64>(4)?,
+                row.get::<_, bool>(5)?,
+                row.get::<_, bool>(6)?,
+                row.get::<_, i64>(7)?,
+                row.get::<_, i64>(8)?,
+                row.get::<_, i64>(9)?,
+            ))
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut outputs = HashMap::<i64, Vec<aaadaw_core::AudioHardwareOutputSnapshot>>::new();
+    for (id, track_id, position, volume_db, pan, muted, phase_inverted, tap, source, destination) in
+        rows
+    {
+        let _ = from_sql_u64(position)?;
+        let send_mode = u8::try_from(tap)
+            .ok()
+            .and_then(aaadaw_core::AudioHardwareOutputSendMode::from_native_value)
+            .ok_or(StorageError::InvalidStoredData(
+                "invalid hardware output send mode",
+            ))?;
+        let source_channels = match source {
+            0 => aaadaw_core::AudioSendSourceChannels::Stereo,
+            1 => aaadaw_core::AudioSendSourceChannels::Channel1,
+            2 => aaadaw_core::AudioSendSourceChannels::Channel2,
+            _ => {
+                return Err(StorageError::InvalidStoredData(
+                    "invalid hardware output source channels",
+                ));
+            }
+        };
+        let destination_channels = match destination {
+            0 => aaadaw_core::AudioSendDestinationChannels::Stereo,
+            1 => aaadaw_core::AudioSendDestinationChannels::Channel1,
+            2 => aaadaw_core::AudioSendDestinationChannels::Channel2,
+            _ => {
+                return Err(StorageError::InvalidStoredData(
+                    "invalid hardware output destination channels",
+                ));
+            }
+        };
+        let parameters = aaadaw_core::AudioHardwareOutputParameters {
+            send_mode,
+            source_channels,
+            destination_channels,
+            volume_db: volume_db as f32,
+            pan: pan as f32,
+            muted,
+            phase_inverted,
+        };
+        if !parameters.volume_db.is_finite()
+            || !parameters.pan.is_finite()
+            || !(-1.0..=1.0).contains(&parameters.pan)
+        {
+            return Err(StorageError::InvalidStoredData("invalid hardware output"));
+        }
+        outputs
+            .entry(track_id)
+            .or_default()
+            .push(aaadaw_core::AudioHardwareOutputSnapshot {
+                id: from_sql_u64(id)?,
+                parameters,
+            });
+    }
+    Ok(outputs)
 }

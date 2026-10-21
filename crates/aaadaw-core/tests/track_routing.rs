@@ -1,4 +1,7 @@
-use aaadaw_core::{ActionError, DawAction, Project};
+use aaadaw_core::{
+    ActionError, AudioHardwareOutputParameters, AudioHardwareOutputSendMode,
+    AudioSendDestinationChannels, AudioSendSourceChannels, DawAction, Project,
+};
 
 #[test]
 fn bus_track_routes_are_undoable_and_survive_snapshot_round_trip() {
@@ -101,4 +104,61 @@ fn routing_accepts_ordinary_targets_and_rejects_cycles_and_dependent_deletion() 
         Err(ActionError::TrackHasRoutingDependents { track_id: bus_a })
     );
     assert_eq!(project.tracks()[0].output_track(), Some(bus_a));
+}
+
+#[test]
+fn hardware_outputs_are_independent_routes_with_undo_and_snapshot_support() {
+    let mut project = Project::new();
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Direct out".to_owned(),
+        })
+        .unwrap();
+    let track_id = project.tracks()[0].id();
+    let parameters = AudioHardwareOutputParameters {
+        send_mode: AudioHardwareOutputSendMode::PreFx,
+        source_channels: AudioSendSourceChannels::Channel2,
+        destination_channels: AudioSendDestinationChannels::Channel1,
+        volume_db: -6.0,
+        pan: -0.25,
+        muted: true,
+        phase_inverted: true,
+    };
+    project
+        .apply(DawAction::CreateAudioHardwareOutput {
+            track_id,
+            parameters,
+        })
+        .unwrap();
+    let output = &project.tracks()[0].hardware_outputs()[0];
+    let output_id = output.id();
+    assert_eq!(output.parameters(), parameters);
+
+    let mut updated = parameters;
+    updated.muted = false;
+    project
+        .apply(DawAction::UpdateAudioHardwareOutput {
+            track_id,
+            send_id: output_id,
+            parameters: updated,
+        })
+        .unwrap();
+    assert_eq!(
+        project.tracks()[0].hardware_outputs()[0].parameters(),
+        updated
+    );
+    project.undo().unwrap();
+    assert_eq!(
+        project.tracks()[0].hardware_outputs()[0].parameters(),
+        parameters
+    );
+    project.redo().unwrap();
+
+    let restored = Project::from_snapshot(project.snapshot()).unwrap();
+    assert_eq!(restored.tracks()[0].hardware_outputs()[0].id(), output_id);
+    assert_eq!(
+        restored.tracks()[0].hardware_outputs()[0].parameters(),
+        updated
+    );
 }

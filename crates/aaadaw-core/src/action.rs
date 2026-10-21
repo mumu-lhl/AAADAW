@@ -199,6 +199,22 @@ pub enum DawAction {
         track_id: TrackId,
         send_id: crate::SendId,
     },
+    /// Add a direct audio connection from a track to the active device output.
+    CreateAudioHardwareOutput {
+        track_id: TrackId,
+        parameters: crate::AudioHardwareOutputParameters,
+    },
+    /// Change one direct audio-device output while retaining its identity and order.
+    UpdateAudioHardwareOutput {
+        track_id: TrackId,
+        send_id: crate::SendId,
+        parameters: crate::AudioHardwareOutputParameters,
+    },
+    /// Remove one direct audio-device output.
+    DeleteAudioHardwareOutput {
+        track_id: TrackId,
+        send_id: crate::SendId,
+    },
     /// Route a track to another track, or directly to Master when `output_track` is `None`.
     SetTrackOutput {
         track_id: TrackId,

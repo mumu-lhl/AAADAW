@@ -167,7 +167,10 @@ impl ProcessHandler for JackProcessHandler {
             return Control::Continue;
         }
 
-        match self.graph.render_into(&mut self.scratch[..frame_count]) {
+        match self
+            .graph
+            .render_into_realtime(&mut self.scratch[..frame_count])
+        {
             Ok(stats) => {
                 for ((left_sample, right_sample), frame) in
                     left.iter_mut().zip(right).zip(&self.scratch[..frame_count])

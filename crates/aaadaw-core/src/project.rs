@@ -1262,6 +1262,11 @@ enum ProjectEvent {
         before: Vec<crate::AudioSend>,
         after: Vec<crate::AudioSend>,
     },
+    TrackHardwareOutputsChanged {
+        track_id: TrackId,
+        before: Vec<crate::AudioHardwareOutput>,
+        after: Vec<crate::AudioHardwareOutput>,
+    },
     TrackCreated {
         index: usize,
         track: Track,
@@ -1606,6 +1611,15 @@ impl ProjectEvent {
                 before,
                 after,
             } => Self::TrackSendsChanged {
+                track_id: *track_id,
+                before: after.clone(),
+                after: before.clone(),
+            },
+            Self::TrackHardwareOutputsChanged {
+                track_id,
+                before,
+                after,
+            } => Self::TrackHardwareOutputsChanged {
                 track_id: *track_id,
                 before: after.clone(),
                 after: before.clone(),
@@ -3370,6 +3384,14 @@ impl Project {
                             parameters: send.parameters,
                         })
                         .collect(),
+                    hardware_outputs: track
+                        .hardware_outputs
+                        .iter()
+                        .map(|output| crate::AudioHardwareOutputSnapshot {
+                            id: output.id.value(),
+                            parameters: output.parameters,
+                        })
+                        .collect(),
                     volume_db: track.volume_db,
                     pan: track.pan,
                     muted: track.muted,
@@ -3721,6 +3743,17 @@ impl Project {
                     parameters: send.parameters,
                 });
             }
+            let mut hardware_outputs = Vec::new();
+            for output in track.hardware_outputs {
+                if !send_ids.insert(output.id) || !output.parameters.is_valid() {
+                    return Err(SnapshotError::InvalidProjectData);
+                }
+                max_send_id = Some(max_send_id.map_or(output.id, |max: u64| max.max(output.id)));
+                hardware_outputs.push(crate::AudioHardwareOutput {
+                    id: crate::SendId::from_value(output.id),
+                    parameters: output.parameters,
+                });
+            }
             tracks.push(Track {
                 id: TrackId::from_raw(track.id),
                 name: track.name,
@@ -3730,6 +3763,7 @@ impl Project {
                 output_track: track.output_track_id.map(TrackId::from_raw),
                 main_send_enabled: track.main_send_enabled,
                 sends,
+                hardware_outputs,
                 volume_db: track.volume_db,
                 pan: track.pan,
                 pan_mode: settings.pan_mode(),
@@ -4571,6 +4605,7 @@ impl Project {
                     output_track: None,
                     main_send_enabled: true,
                     sends: Vec::new(),
+                    hardware_outputs: Vec::new(),
                     volume_db: 0.0,
                     pan: 0.0,
                     pan_mode: state.pan_mode,
@@ -4607,6 +4642,7 @@ impl Project {
                     output_track: None,
                     main_send_enabled: true,
                     sends: Vec::new(),
+                    hardware_outputs: Vec::new(),
                     volume_db: 0.0,
                     pan: 0.0,
                     pan_mode: state.pan_mode,
@@ -4869,6 +4905,77 @@ impl Project {
                 ProjectEvent::TrackSendsChanged {
                     track_id,
                     before: track.sends.clone(),
+                    after,
+                }
+            }
+            DawAction::CreateAudioHardwareOutput {
+                track_id,
+                parameters,
+            } => {
+                let next = ids
+                    .next_send_id
+                    .checked_add(1)
+                    .ok_or(ActionError::SendIdExhausted)?;
+                let track = state
+                    .tracks
+                    .iter()
+                    .find(|track| track.id == track_id)
+                    .ok_or(ActionError::TrackNotFound { track_id })?;
+                if !parameters.is_valid() {
+                    return Err(ActionError::InvalidAudioSend);
+                }
+                let mut after = track.hardware_outputs.clone();
+                after.push(crate::AudioHardwareOutput {
+                    id: crate::SendId::from_value(ids.next_send_id),
+                    parameters,
+                });
+                ids.next_send_id = next;
+                ProjectEvent::TrackHardwareOutputsChanged {
+                    track_id,
+                    before: track.hardware_outputs.clone(),
+                    after,
+                }
+            }
+            DawAction::UpdateAudioHardwareOutput {
+                track_id,
+                send_id,
+                parameters,
+            } => {
+                let track = state
+                    .tracks
+                    .iter()
+                    .find(|track| track.id == track_id)
+                    .ok_or(ActionError::TrackNotFound { track_id })?;
+                let mut after = track.hardware_outputs.clone();
+                let output = after
+                    .iter_mut()
+                    .find(|output| output.id == send_id)
+                    .ok_or(ActionError::AudioHardwareOutputNotFound { send_id })?;
+                if !parameters.is_valid() {
+                    return Err(ActionError::InvalidAudioSend);
+                }
+                output.parameters = parameters;
+                ProjectEvent::TrackHardwareOutputsChanged {
+                    track_id,
+                    before: track.hardware_outputs.clone(),
+                    after,
+                }
+            }
+            DawAction::DeleteAudioHardwareOutput { track_id, send_id } => {
+                let track = state
+                    .tracks
+                    .iter()
+                    .find(|track| track.id == track_id)
+                    .ok_or(ActionError::TrackNotFound { track_id })?;
+                let mut after = track.hardware_outputs.clone();
+                let index = after
+                    .iter()
+                    .position(|output| output.id == send_id)
+                    .ok_or(ActionError::AudioHardwareOutputNotFound { send_id })?;
+                after.remove(index);
+                ProjectEvent::TrackHardwareOutputsChanged {
+                    track_id,
+                    before: track.hardware_outputs.clone(),
                     after,
                 }
             }
@@ -7373,6 +7480,21 @@ impl Project {
                     return Err(ActionError::HistoryInvariantViolation);
                 }
                 track.sends = after.clone();
+            }
+            ProjectEvent::TrackHardwareOutputsChanged {
+                track_id,
+                before,
+                after,
+            } => {
+                let track = state
+                    .tracks
+                    .iter_mut()
+                    .find(|track| track.id == *track_id)
+                    .ok_or(ActionError::HistoryInvariantViolation)?;
+                if track.hardware_outputs != *before {
+                    return Err(ActionError::HistoryInvariantViolation);
+                }
+                track.hardware_outputs = after.clone();
             }
 
             ProjectEvent::TrackCreated { index, track } => {

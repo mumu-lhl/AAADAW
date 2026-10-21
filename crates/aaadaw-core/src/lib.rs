@@ -63,6 +63,7 @@ pub use track::{
 };
 
 pub use routing::{
-    AudioSend, AudioSendDestinationChannels, AudioSendParameters, AudioSendSnapshot,
-    AudioSendSourceChannels, AudioSendTap, SendId,
+    AudioHardwareOutput, AudioHardwareOutputParameters, AudioHardwareOutputSendMode,
+    AudioHardwareOutputSnapshot, AudioSend, AudioSendDestinationChannels, AudioSendParameters,
+    AudioSendSnapshot, AudioSendSourceChannels, AudioSendTap, SendId,
 };

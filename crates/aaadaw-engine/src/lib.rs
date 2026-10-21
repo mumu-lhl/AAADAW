@@ -145,8 +145,8 @@ pub use transport::{
 };
 
 use aaadaw_core::{
-    AudioSendDestinationChannels, AudioSendSourceChannels, AudioSendTap, ItemId, PanMode, Track,
-    TrackId, VolumeAutomationPoint,
+    AudioHardwareOutputParameters, AudioHardwareOutputSendMode, AudioSendDestinationChannels,
+    AudioSendSourceChannels, AudioSendTap, ItemId, PanMode, Track, TrackId, VolumeAutomationPoint,
 };
 use std::cell::Cell;
 use std::f64::consts::FRAC_PI_4;
@@ -169,6 +169,7 @@ struct TrackGains {
     output_track_index: Option<usize>,
     main_send_enabled: bool,
     sends: Vec<CompiledSend>,
+    hardware_outputs: Vec<CompiledHardwareOutput>,
     is_bus: bool,
     live: Arc<LiveTrackGains>,
     mix_ramp: Cell<GainRamp>,
@@ -182,6 +183,16 @@ struct CompiledSend {
     source_channels: AudioSendSourceChannels,
     destination_channels: AudioSendDestinationChannels,
     destination: usize,
+    left_gain: f32,
+    right_gain: f32,
+    muted: bool,
+}
+
+#[derive(Clone, Debug)]
+struct CompiledHardwareOutput {
+    send_mode: AudioHardwareOutputSendMode,
+    source_channels: AudioSendSourceChannels,
+    destination_channels: AudioSendDestinationChannels,
     left_gain: f32,
     right_gain: f32,
     muted: bool,
@@ -690,6 +701,32 @@ impl MixerPlan {
                             source_channels: parameters.source_channels,
                             destination_channels: parameters.destination_channels,
                             destination,
+                            left_gain: gains.stereo_left * phase,
+                            right_gain: gains.stereo_right * phase,
+                            muted: parameters.muted,
+                        })
+                    })
+                    .collect::<Result<Vec<_>, MixerPlanError>>()?,
+                hardware_outputs: track
+                    .hardware_outputs()
+                    .iter()
+                    .map(|output| {
+                        let parameters: AudioHardwareOutputParameters = output.parameters();
+                        let pan = match parameters.source_channels {
+                            AudioSendSourceChannels::Stereo => parameters.pan,
+                            AudioSendSourceChannels::Channel1
+                            | AudioSendSourceChannels::Channel2 => 0.0,
+                        };
+                        let gains =
+                            gain_coefficients(parameters.volume_db, pan, PanMode::ZeroDbBalance)
+                                .ok_or(MixerPlanError::InvalidTrackGain {
+                                    track_id: track.id().value(),
+                                })?;
+                        let phase = if parameters.phase_inverted { -1.0 } else { 1.0 };
+                        Ok(CompiledHardwareOutput {
+                            send_mode: parameters.send_mode,
+                            source_channels: parameters.source_channels,
+                            destination_channels: parameters.destination_channels,
                             left_gain: gains.stereo_left * phase,
                             right_gain: gains.stereo_right * phase,
                             muted: parameters.muted,
@@ -1761,6 +1798,30 @@ fn add_routed_send_buffer(source: &[[f32; 2]], destination: &mut [[f32; 2]], sen
     }
 }
 
+fn add_routed_hardware_output_buffer(
+    source: &[[f32; 2]],
+    destination: &mut [[f32; 2]],
+    output: &CompiledHardwareOutput,
+) {
+    for (frame, input) in destination.iter_mut().zip(source) {
+        let (source_left, source_right) = match output.source_channels {
+            AudioSendSourceChannels::Stereo => (input[0], input[1]),
+            AudioSendSourceChannels::Channel1 => (input[0], input[0]),
+            AudioSendSourceChannels::Channel2 => (input[1], input[1]),
+        };
+        let left = source_left * output.left_gain;
+        let right = source_right * output.right_gain;
+        match output.destination_channels {
+            AudioSendDestinationChannels::Stereo => {
+                frame[0] += left;
+                frame[1] += right;
+            }
+            AudioSendDestinationChannels::Channel1 => frame[0] += (left + right) * 0.5,
+            AudioSendDestinationChannels::Channel2 => frame[1] += (left + right) * 0.5,
+        }
+    }
+}
+
 struct RenderGraphSources {
     streams: Vec<AudioItemPcmConsumer>,
     positions: Vec<Option<AudioStreamPosition>>,
@@ -2023,6 +2084,7 @@ pub struct AudioRenderGraph {
     instruments: Vec<InstrumentRoute>,
     effects: Vec<FxRoute>,
     track_effect_buffers: TrackEffectBuffers,
+    hardware_output_scratch: Vec<[f32; 2]>,
     post_fader_scratch: Vec<[f32; 2]>,
     pre_fx_scratch: Vec<[f32; 2]>,
     pre_fader_scratch: Vec<[f32; 2]>,
@@ -2347,6 +2409,7 @@ impl AudioRenderGraph {
             instruments: instrument_routes,
             effects: effect_routes,
             track_effect_buffers,
+            hardware_output_scratch: vec![[0.0, 0.0]; max_block_frames],
             post_fader_scratch: vec![[0.0; 2]; max_block_frames],
             pre_fx_scratch: vec![[0.0; 2]; max_block_frames],
             pre_fader_scratch: vec![[0.0; 2]; max_block_frames],
@@ -2928,7 +2991,16 @@ impl AudioRenderGraph {
         &mut self,
         output: &mut [[f32; 2]],
     ) -> Result<AudioRenderStats, AudioGraphError> {
-        self.render_callback(false, &[], &mut [], output)
+        self.render_callback(false, false, &[], &mut [], output)
+    }
+
+    /// Renders one real device block, including track hardware outputs in addition to the
+    /// project Master output. Offline renders intentionally use [`Self::render_into`] instead.
+    pub fn render_into_realtime(
+        &mut self,
+        output: &mut [[f32; 2]],
+    ) -> Result<AudioRenderStats, AudioGraphError> {
+        self.render_callback(false, true, &[], &mut [], output)
     }
 
     /// Renders audio and writes note events for the same half-open callback
@@ -2938,7 +3010,7 @@ impl AudioRenderGraph {
         midi_output: &mut [Option<ScheduledMidiEvent>],
         output: &mut [[f32; 2]],
     ) -> Result<AudioRenderStats, AudioGraphError> {
-        self.render_callback(true, &[], midi_output, output)
+        self.render_callback(true, false, &[], midi_output, output)
     }
 
     /// Renders scheduled MIDI output and injects bounded live input into matching instruments.
@@ -2947,6 +3019,27 @@ impl AudioRenderGraph {
     /// prepared on the control thread; the audio callback does not allocate or lock.
     pub fn render_with_midi_input(
         &mut self,
+        midi_output: &mut [Option<ScheduledMidiEvent>],
+        midi_input: &[Option<ScheduledMidiEvent>],
+        output: &mut [[f32; 2]],
+    ) -> Result<AudioRenderStats, AudioGraphError> {
+        self.render_with_midi_input_mode(false, midi_output, midi_input, output)
+    }
+
+    /// Device-callback variant of [`Self::render_with_midi_input`] that includes direct track
+    /// Hardware Outputs in the current device signal.
+    pub fn render_with_midi_input_realtime(
+        &mut self,
+        midi_output: &mut [Option<ScheduledMidiEvent>],
+        midi_input: &[Option<ScheduledMidiEvent>],
+        output: &mut [[f32; 2]],
+    ) -> Result<AudioRenderStats, AudioGraphError> {
+        self.render_with_midi_input_mode(true, midi_output, midi_input, output)
+    }
+
+    fn render_with_midi_input_mode(
+        &mut self,
+        include_hardware_outputs: bool,
         midi_output: &mut [Option<ScheduledMidiEvent>],
         midi_input: &[Option<ScheduledMidiEvent>],
         output: &mut [[f32; 2]],
@@ -2960,7 +3053,13 @@ impl AudioRenderGraph {
                 channel: event.channel,
             });
         }
-        self.render_callback(true, midi_input, midi_output, output)
+        self.render_callback(
+            true,
+            include_hardware_outputs,
+            midi_input,
+            midi_output,
+            output,
+        )
     }
 
     fn midi_output_event_allowed(&self, event: &ScheduledMidiEvent) -> bool {
@@ -3131,6 +3230,7 @@ impl AudioRenderGraph {
     fn render_callback(
         &mut self,
         include_midi: bool,
+        include_hardware_outputs: bool,
         midi_input: &[Option<ScheduledMidiEvent>],
         midi_output: &mut [Option<ScheduledMidiEvent>],
         output: &mut [[f32; 2]],
@@ -3145,7 +3245,13 @@ impl AudioRenderGraph {
             || !self.transport.is_playing()
             || self.transport.loop_range().is_none()
         {
-            return self.render_block(include_midi, midi_input, midi_output, output);
+            return self.render_block(
+                include_midi,
+                include_hardware_outputs,
+                midi_input,
+                midi_output,
+                output,
+            );
         }
         if midi_input.len() > MIDI_INPUT_EVENTS_PER_BLOCK {
             return Err(AudioGraphError::MidiInputEventBufferFull {
@@ -3274,6 +3380,7 @@ impl AudioRenderGraph {
                 };
                 let stats = self.render_block(
                     include_midi,
+                    include_hardware_outputs,
                     &input_scratch[..input_count],
                     midi_output_segment,
                     &mut output[output_start..output_end],
@@ -3318,6 +3425,7 @@ impl AudioRenderGraph {
     fn render_block(
         &mut self,
         include_midi: bool,
+        include_hardware_outputs: bool,
         midi_input: &[Option<ScheduledMidiEvent>],
         midi_output: &mut [Option<ScheduledMidiEvent>],
         output: &mut [[f32; 2]],
@@ -3550,6 +3658,9 @@ impl AudioRenderGraph {
             });
         }
         output.fill([0.0, 0.0]);
+        if include_hardware_outputs {
+            self.hardware_output_scratch[..output.len()].fill([0.0, 0.0]);
+        }
         for buffer in self.track_effect_buffers.iter_mut().flatten() {
             buffer[..output.len()].fill([0.0, 0.0]);
         }
@@ -3964,9 +4075,39 @@ impl AudioRenderGraph {
                     );
                 }
             }
+            if include_hardware_outputs && !track.live.muted.load(Ordering::Acquire) {
+                for hardware_output in &track.hardware_outputs {
+                    if !hardware_output.muted
+                        && (self.solo_audible_tracks[track_index]
+                            || self.solo_bus_subtrees[track_index])
+                    {
+                        add_routed_hardware_output_buffer(
+                            match hardware_output.send_mode {
+                                AudioHardwareOutputSendMode::PostFader => post_fader,
+                                AudioHardwareOutputSendMode::PreFx => {
+                                    &self.pre_fx_scratch[..output.len()]
+                                }
+                                AudioHardwareOutputSendMode::DeprecatedPostFx
+                                | AudioHardwareOutputSendMode::PostFx => {
+                                    &self.pre_fader_scratch[..output.len()]
+                                }
+                            },
+                            &mut self.hardware_output_scratch[..output.len()],
+                            hardware_output,
+                        );
+                    }
+                }
+            }
         }
 
         self.master_mix.process(output);
+        if include_hardware_outputs {
+            let hardware_output = &self.hardware_output_scratch[..output.len()];
+            for (master, hardware) in output.iter_mut().zip(hardware_output) {
+                master[0] += hardware[0];
+                master[1] += hardware[1];
+            }
+        }
         let master_guard = self.master_output_safety.process(output);
         if was_playing && midi_is_processed && block.frame_count > 0 {
             self.last_midi_sample_end = next_midi_cursor.sample_end;

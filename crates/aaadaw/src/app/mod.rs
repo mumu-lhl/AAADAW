@@ -1736,6 +1736,9 @@ fn action_rebuilds_playback_graph(action: &DawAction) -> bool {
         | DawAction::CreateAudioSend { .. }
         | DawAction::UpdateAudioSend { .. }
         | DawAction::DeleteAudioSend { .. }
+        | DawAction::CreateAudioHardwareOutput { .. }
+        | DawAction::UpdateAudioHardwareOutput { .. }
+        | DawAction::DeleteAudioHardwareOutput { .. }
         | DawAction::SetTrackFxChain { .. }
         | DawAction::SetTempo { .. }
         | DawAction::DeleteTempoPoint { .. }

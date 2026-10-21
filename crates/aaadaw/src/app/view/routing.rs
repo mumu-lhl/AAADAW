@@ -1,8 +1,8 @@
 use super::super::{App, Message};
 use super::tokens;
 use aaadaw_core::{
-    AudioSendDestinationChannels, AudioSendParameters, AudioSendSourceChannels, AudioSendTap,
-    DawAction, TrackId,
+    AudioHardwareOutputParameters, AudioHardwareOutputSendMode, AudioSendDestinationChannels,
+    AudioSendParameters, AudioSendSourceChannels, AudioSendTap, DawAction, TrackId,
 };
 use iced::widget::{
     button, checkbox, column, container, pick_list, row, rule, scrollable, text, text_input,
@@ -18,6 +18,19 @@ impl fmt::Display for Tap {
             AudioSendTap::PostFader => "Post-fader (Post-pan)",
             AudioSendTap::PreFx => "Pre-FX",
             AudioSendTap::PreFader => "Pre-fader (Post-FX)",
+        })
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct HardwareOutputMode(AudioHardwareOutputSendMode);
+impl fmt::Display for HardwareOutputMode {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self.0 {
+            AudioHardwareOutputSendMode::PostFader => "Post-fader (Post-pan)",
+            AudioHardwareOutputSendMode::PreFx => "Pre-FX",
+            AudioHardwareOutputSendMode::DeprecatedPostFx => "Post-FX",
+            AudioHardwareOutputSendMode::PostFx => "Post-FX",
         })
     }
 }
@@ -461,6 +474,157 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
                 .padding(tokens::PANEL_PADDING)
                 .style(container::bordered_box),
         );
+    }
+    if routing_destination_filter.is_none() {
+        sends = sends
+            .push(rule::horizontal(1))
+            .push(text("Hardware Outputs").size(16))
+            .push(
+                button("Add hardware output").on_press(Message::RoutingChange(
+                    DawAction::CreateAudioHardwareOutput {
+                        track_id: source,
+                        parameters: AudioHardwareOutputParameters::default(),
+                    },
+                )),
+            );
+        for output in track.hardware_outputs() {
+            let id = output.id();
+            let parameters = output.parameters();
+            let volume = app.routing_send_drafts.get(&id).map_or_else(
+                || parameters.volume_db.to_string(),
+                |draft| draft.volume_db.clone(),
+            );
+            let pan = app
+                .routing_send_drafts
+                .get(&id)
+                .map_or_else(|| parameters.pan.to_string(), |draft| draft.pan.clone());
+            let controls = column![
+                row![
+                    text("Track → device output").size(11).width(Length::Fill),
+                    button("Remove").on_press(Message::RoutingChange(
+                        DawAction::DeleteAudioHardwareOutput {
+                            track_id: source,
+                            send_id: id,
+                        },
+                    )),
+                ]
+                .spacing(tokens::ROW_GAP),
+                pick_list(
+                    [
+                        HardwareOutputMode(AudioHardwareOutputSendMode::PostFader),
+                        HardwareOutputMode(AudioHardwareOutputSendMode::PreFx),
+                        HardwareOutputMode(AudioHardwareOutputSendMode::PostFx),
+                    ],
+                    Some(HardwareOutputMode(parameters.send_mode)),
+                    move |mode| Message::RoutingChange(DawAction::UpdateAudioHardwareOutput {
+                        track_id: source,
+                        send_id: id,
+                        parameters: AudioHardwareOutputParameters {
+                            send_mode: mode.0,
+                            ..parameters
+                        },
+                    }),
+                )
+                .width(Length::Fill),
+                row![
+                    column![
+                        text("Track source").size(11),
+                        pick_list(
+                            [
+                                SourceChannels(AudioSendSourceChannels::Stereo),
+                                SourceChannels(AudioSendSourceChannels::Channel1),
+                                SourceChannels(AudioSendSourceChannels::Channel2),
+                            ],
+                            Some(SourceChannels(parameters.source_channels)),
+                            move |channels| Message::RoutingChange(
+                                DawAction::UpdateAudioHardwareOutput {
+                                    track_id: source,
+                                    send_id: id,
+                                    parameters: AudioHardwareOutputParameters {
+                                        source_channels: channels.0,
+                                        ..parameters
+                                    },
+                                },
+                            ),
+                        ),
+                    ]
+                    .width(Length::Fill),
+                    text("→"),
+                    column![
+                        text("Device channels").size(11),
+                        pick_list(
+                            [
+                                DestinationChannels(AudioSendDestinationChannels::Stereo),
+                                DestinationChannels(AudioSendDestinationChannels::Channel1),
+                                DestinationChannels(AudioSendDestinationChannels::Channel2),
+                            ],
+                            Some(DestinationChannels(parameters.destination_channels)),
+                            move |channels| Message::RoutingChange(
+                                DawAction::UpdateAudioHardwareOutput {
+                                    track_id: source,
+                                    send_id: id,
+                                    parameters: AudioHardwareOutputParameters {
+                                        destination_channels: channels.0,
+                                        ..parameters
+                                    },
+                                },
+                            ),
+                        ),
+                    ]
+                    .width(Length::Fill),
+                ]
+                .spacing(tokens::ROW_GAP),
+                row![
+                    column![
+                        text("Volume · dB").size(11),
+                        text_input("0", &volume)
+                            .on_input(move |value| { Message::RoutingSendDraft(id, false, value) })
+                            .on_submit(Message::CommitRoutingSend(id)),
+                    ],
+                    column![
+                        text("Pan · -1 to 1").size(11),
+                        text_input("0", &pan)
+                            .on_input(move |value| Message::RoutingSendDraft(id, true, value))
+                            .on_submit(Message::CommitRoutingSend(id)),
+                    ],
+                    button("Apply").on_press(Message::CommitRoutingSend(id)),
+                ]
+                .spacing(tokens::ROW_GAP),
+                row![
+                    checkbox(parameters.muted)
+                        .label("Mute")
+                        .on_toggle(move |muted| Message::RoutingChange(
+                            DawAction::UpdateAudioHardwareOutput {
+                                track_id: source,
+                                send_id: id,
+                                parameters: AudioHardwareOutputParameters {
+                                    muted,
+                                    ..parameters
+                                },
+                            },
+                        )),
+                    checkbox(parameters.phase_inverted)
+                        .label("Invert phase")
+                        .on_toggle(move |phase_inverted| Message::RoutingChange(
+                            DawAction::UpdateAudioHardwareOutput {
+                                track_id: source,
+                                send_id: id,
+                                parameters: AudioHardwareOutputParameters {
+                                    phase_inverted,
+                                    ..parameters
+                                },
+                            },
+                        )),
+                ]
+                .spacing(tokens::SECTION_GAP),
+            ]
+            .spacing(tokens::ROW_GAP);
+            sends = sends.push(
+                container(controls)
+                    .padding(tokens::PANEL_PADDING)
+                    .style(container::bordered_box),
+            );
+        }
     }
     if let Some(destination_name) = focused_destination_name {
         return column![

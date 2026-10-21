@@ -3310,6 +3310,85 @@ fn audio_sends_round_trip_with_duplicate_targets_order_ids_and_foreign_keys() {
 }
 
 #[test]
+fn hardware_outputs_round_trip_independently_from_track_sends() {
+    let path = project_path();
+    let mut project = Project::new();
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Direct output".into(),
+        })
+        .unwrap();
+    let track_id = project.tracks()[0].id();
+    project
+        .apply(DawAction::CreateAudioHardwareOutput {
+            track_id,
+            parameters: aaadaw_core::AudioHardwareOutputParameters {
+                send_mode: aaadaw_core::AudioHardwareOutputSendMode::DeprecatedPostFx,
+                source_channels: aaadaw_core::AudioSendSourceChannels::Channel2,
+                destination_channels: aaadaw_core::AudioSendDestinationChannels::Channel1,
+                volume_db: -9.5,
+                pan: 0.35,
+                muted: true,
+                phase_inverted: true,
+            },
+        })
+        .unwrap();
+    let expected = project.snapshot();
+    let mut store = ProjectStore::open(&path).unwrap();
+    assert_eq!(store.schema_version().unwrap(), CURRENT_SCHEMA_VERSION);
+    store.save(&project).unwrap();
+    store.close().unwrap();
+
+    let restored = ProjectStore::open(&path).unwrap().load().unwrap();
+    assert_eq!(restored.snapshot(), expected);
+    assert!(restored.tracks()[0].sends().is_empty());
+    assert_eq!(restored.tracks()[0].hardware_outputs().len(), 1);
+    let connection = Connection::open(&path).unwrap();
+    connection
+        .pragma_update(None, "foreign_keys", true)
+        .unwrap();
+    assert!(connection.execute(
+        "INSERT INTO track_hardware_outputs(id, track_id, position, volume_db, pan, muted, phase_inverted) VALUES(900, 9999, 0, 0, 0, 0, 0)",
+        [],
+    ).is_err());
+    drop(connection);
+    assert_eq!(
+        ProjectStore::load_read_only(&path).unwrap().snapshot(),
+        expected
+    );
+    remove_database(&path);
+}
+
+#[test]
+fn schema_73_migrates_the_hardware_output_collection() {
+    let path = project_path();
+    let mut project = Project::new();
+    project
+        .apply(DawAction::CreateTrack {
+            index: 0,
+            name: "Legacy project".into(),
+        })
+        .unwrap();
+    let expected = project.snapshot();
+    let mut store = ProjectStore::open(&path).unwrap();
+    store.save(&project).unwrap();
+    store.close().unwrap();
+
+    let connection = Connection::open(&path).unwrap();
+    connection
+        .execute_batch("DROP TABLE track_hardware_outputs; PRAGMA user_version = 73;")
+        .unwrap();
+    drop(connection);
+
+    let store = ProjectStore::open(&path).unwrap();
+    assert_eq!(store.schema_version().unwrap(), CURRENT_SCHEMA_VERSION);
+    assert_eq!(store.load().unwrap().snapshot(), expected);
+    store.close().unwrap();
+    remove_database(&path);
+}
+
+#[test]
 fn schema_eighteen_adds_empty_sends_and_preserves_main_outputs_and_mix_policy() {
     let path = project_path();
     let mut project = Project::new();
