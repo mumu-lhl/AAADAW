@@ -50,6 +50,7 @@ mod region_render_matrix;
 mod render;
 mod routing;
 mod routing_matrix;
+mod routing_wiring;
 mod settings;
 mod tempo_map;
 mod tokens;

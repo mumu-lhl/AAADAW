@@ -95,25 +95,42 @@ pub(super) fn view(app: &App) -> Element<'_, Message> {
         matrix_rows.push(row(cells).spacing(4).align_y(Alignment::Center).into());
     }
 
-    let matrix = scrollable(column(matrix_rows).spacing(4))
-        .direction(scrollable::Direction::Both {
-            vertical: scrollable::Scrollbar::default(),
-            horizontal: scrollable::Scrollbar::default(),
-        })
-        .width(Length::Fill)
-        .height(Length::Fill);
+    let matrix: Element<'_, Message> = if app.routing_matrix_wiring {
+        super::routing_wiring::view(app, graph_busy)
+    } else {
+        scrollable(column(matrix_rows).spacing(4))
+            .direction(scrollable::Direction::Both {
+                vertical: scrollable::Scrollbar::default(),
+                horizontal: scrollable::Scrollbar::default(),
+            })
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .into()
+    };
+    let title = if app.routing_matrix_wiring {
+        "Track Wiring Diagram"
+    } else {
+        "Routing Matrix"
+    };
+    let description = if app.routing_matrix_wiring {
+        "Drag a track output to another track input; select a wire to edit its route."
+    } else {
+        "Connect tracks; select an active send to edit it."
+    };
+    let switch_label = if app.routing_matrix_wiring {
+        "Routing Matrix"
+    } else {
+        "Wiring"
+    };
     let content = column![
         row![
             column![
-                text("Routing Matrix").size(20),
-                text(format!(
-                    "{} tracks · Connect tracks; select an active send to edit it.",
-                    tracks.len()
-                ))
-                .size(11),
+                text(title).size(20),
+                text(format!("{} tracks · {description}", tracks.len())).size(11),
             ]
             .spacing(2),
             iced::widget::Space::new().width(Length::Fill),
+            button(switch_label).on_press(Message::ToggleRoutingMatrixWiring),
             button("Close").on_press(Message::CloseRoutingMatrix),
         ]
         .spacing(10)

@@ -642,6 +642,7 @@ struct App {
     marker_manager_window_id: Option<iced::window::Id>,
     region_render_matrix_window_id: Option<iced::window::Id>,
     routing_matrix_window_id: Option<iced::window::Id>,
+    routing_matrix_wiring: bool,
     selected_render_markers: HashSet<MarkerId>,
     selected_render_regions: HashSet<RegionId>,
     active_menu: Option<MainMenu>,
@@ -5136,6 +5137,7 @@ impl App {
                     | Message::SetRegionRenderMatrixTrack(_, _, _)
                     | Message::OpenRoutingMatrix
                     | Message::CloseRoutingMatrix
+                    | Message::ToggleRoutingMatrixWiring
                     | Message::SetRoutingMatrixMainSend(_, _)
                     | Message::SetRoutingMatrixSend(_, _)
                     | Message::MarkerManagerFilterChanged(_)
@@ -5960,6 +5962,9 @@ impl App {
             Message::CloseRegionRenderMatrix => task = self.close_region_render_matrix(),
             Message::OpenRoutingMatrix => task = self.open_routing_matrix(),
             Message::CloseRoutingMatrix => task = self.close_routing_matrix(),
+            Message::ToggleRoutingMatrixWiring => {
+                self.routing_matrix_wiring = !self.routing_matrix_wiring;
+            }
             Message::SetRoutingMatrixMainSend(track_id, enabled) => {
                 self.set_routing_matrix_main_send(track_id, enabled)
             }

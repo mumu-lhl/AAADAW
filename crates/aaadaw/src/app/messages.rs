@@ -1061,6 +1061,7 @@ pub(crate) enum Message {
     OpenMarkerManager,
     OpenRoutingMatrix,
     CloseRoutingMatrix,
+    ToggleRoutingMatrixWiring,
     SetRoutingMatrixMainSend(TrackId, bool),
     SetRoutingMatrixSend(TrackId, TrackId),
     OpenRegionRenderMatrix,

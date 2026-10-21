@@ -33220,6 +33220,16 @@ fn routing_matrix_cells_add_routes_and_send_deletion_remains_individually_undoab
 }
 
 #[test]
+fn routing_matrix_switches_between_grid_and_wiring_views() {
+    let mut app = App::default();
+    assert!(!app.routing_matrix_wiring);
+    let _ = app.update(Message::ToggleRoutingMatrixWiring);
+    assert!(app.routing_matrix_wiring);
+    let _ = app.update(Message::ToggleRoutingMatrixWiring);
+    assert!(!app.routing_matrix_wiring);
+}
+
+#[test]
 fn routing_send_drafts_commit_atomically_and_invalid_values_preserve_project() {
     let mut app = App::default();
     let _ = app.update(Message::AddTrack);

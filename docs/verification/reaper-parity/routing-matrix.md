@@ -32,4 +32,4 @@ The focused application regression covers Main Send and Send creation Undo/Redo,
 
 ## Open differences
 
-This is a basic internal-track matrix, not the complete REAPER Routing Matrix. Hardware audio/MIDI outputs, channel-pair routing, wiring view, matrix filters and grouping, the native compact Send popup, and detailed theme/layout matching remain open. The AAADAW settings view filters the same source/destination pair and includes all parallel Sends, but it is a separate window. P3 and `ROUTE-SEND-001` remain `in_progress`.
+This is a basic internal-track matrix, not the complete REAPER Routing Matrix. Hardware audio/MIDI outputs in the matrix, channel-pair routing, matrix filters and grouping, the native compact Send popup, and detailed theme/layout matching remain open. AAADAW now has an initial Wiring canvas, documented in [Track Wiring](routing-wiring.md); its fixed node layout and connector behavior do not yet match REAPER. The AAADAW settings view filters the same source/destination pair and includes all parallel Sends, but it is a separate window. P3 and `ROUTE-SEND-001` remain `in_progress`.
